@@ -11,10 +11,12 @@ table ten times its size, as the guard's worlds are.
 
 from __future__ import annotations
 
+import gc
 import sqlite3
 import subprocess
 import sys
 import threading
+import weakref
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -298,9 +300,104 @@ def test_sql_on_a_connection_without_a_step_counter_is_reported_never_zero(
         raise sqlite3.ProgrammingError("no progress handler here")
 
     with monkeypatch.context() as patch:
-        patch.setattr(_counters.TracedConnection, "set_progress_handler", refuse)
+        patch.setattr(_counters, "_install_progress", refuse)
         window = _run(root, connection, "SELECT * FROM claims")
     assert window.unexplained and "no step counter" in window.unexplained[0]
+
+
+# -- a connection's lifetime and its own callbacks cannot lose the count (F-009, F-010) --
+
+SUM = "SELECT sum(other) FROM claims"
+
+
+def test_a_connection_closed_and_collected_inside_the_window_keeps_its_steps(root: Path) -> None:
+    measured = []
+    for rows in SIZES:
+        _claims(root, rows=rows, name=f"claims-{rows}.sqlite3").close()
+        with counting(root) as window:
+            connection = sqlite3.connect(root / f"claims-{rows}.sqlite3")
+            connection.execute(SUM).fetchall()
+            connection.close()
+            gone = weakref.ref(connection)
+            del connection
+            gc.collect()
+            assert gone() is None
+        measured.append(_steps(window))
+    assert _grows(*measured), measured
+
+
+def test_a_nested_connection_on_the_measuring_thread_keeps_its_steps(root: Path) -> None:
+    measured = []
+    for rows in SIZES:
+        name = f"claims-{rows}.sqlite3"
+        _claims(root, rows=rows, name=name).close()
+
+        def scanned(name: str = name) -> int:
+            inner = sqlite3.connect(root / name)
+            try:
+                return int(inner.execute(SUM).fetchone()[0])
+            finally:
+                inner.close()
+
+        outer = sqlite3.connect(root / "outer.sqlite3")
+        outer.create_function("scanned", 0, scanned)
+        with counting(root) as window:
+            outer.execute("SELECT scanned()").fetchall()
+            gc.collect()
+        outer.close()
+        measured.append(_steps(window))
+    assert _grows(*measured), measured
+
+
+def test_removing_the_progress_handler_inside_a_window_does_not_stop_the_count(
+    root: Path,
+) -> None:
+    removed, between = [], []
+    for connection in _sizes(root):
+        with counting(root) as window:
+            connection.set_progress_handler(None, 0)
+            connection.execute(SCAN).fetchall()
+        removed.append(_steps(window))
+        with counting(root) as window:
+            cursor = connection.execute(SCAN)
+            connection.set_progress_handler(None, 0)
+            cursor.fetchall()
+        between.append(_steps(window))
+    assert _grows(*removed), removed
+    assert _grows(*between), between
+
+
+def test_a_replaced_progress_handler_runs_behind_the_count_and_is_restored(root: Path) -> None:
+    measured = []
+    for connection in _sizes(root):
+        calls: list[int] = []
+        with counting(root) as window:
+            connection.set_progress_handler(lambda: calls.append(1) or 0, 10)
+            connection.execute(SCAN).fetchall()
+        measured.append(_steps(window))
+        # Every counted step, and no attribution statement, reached its handler.
+        assert window.attribution and len(calls) == _steps(window) // 10
+        connection.execute(SCAN).fetchall()
+        assert len(calls) > _steps(window) // 10  # its own again after the window
+        with counting(root) as window:
+            connection.set_progress_handler(lambda: 1, 1)
+            with pytest.raises(sqlite3.OperationalError, match="interrupted"):
+                connection.execute(SCAN).fetchall()
+            connection.set_progress_handler(None, 0)
+    assert _grows(*measured), measured
+
+
+def test_a_replaced_trace_callback_runs_behind_the_count(root: Path) -> None:
+    connection = _claims(root)
+    seen: list[str] = []
+    with counting(root) as window:
+        connection.set_trace_callback(seen.append)
+        connection.execute(SCAN).fetchall()
+        connection.set_trace_callback(None)
+        connection.execute(SCAN).fetchall()
+    assert window.attribution  # its statements never reached the connection's callback
+    assert seen == [SCAN]
+    assert window.counts["sql_statements"] == 2 and _steps(window) > 2 * ROWS
 
 
 # -- attribution names the work, and never decides a count ------------------------------

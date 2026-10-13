@@ -43,14 +43,21 @@ called every ``STEP_EVERY`` VM instructions (removed when the window closes; a
 connection opened inside the window gets one at once); it counts only on the
 measuring thread, so ``sql_vm_steps`` is the measured work itself, not an
 inference from plans. The trace callback attributes each connection's steps to
-the statement it last started there. A statement traced on the measuring thread
-on a connection that took no handler is recorded in ``unexplained``, which fails
-the window: its work would go uncounted. One instruction is one step whatever it
-does inside: a B-tree seek is one step at any table size, which is what lets a
-per-key lookup stay flat, but so is ``OP_Count`` (``SELECT count(*) FROM t``
-with no ``WHERE`` counts the table's pages inside one step), a sorter's sort
-(its input rows are counted as they are fed), ``PRAGMA integrity_check`` and a
-SQL function's own work. Those are this counter's blind spots.
+the statement it last started there. The window holds every connection state it
+counts on, so the steps of a connection closed and collected inside the window
+(a short-lived reader, a nested connection in a SQL function) still reach it.
+The guard owns each traced connection's progress handler and trace callback:
+code that sets its own, or removes one, has its callback chained behind the
+guard's (and restored after the window), never in its place. A statement traced
+on the measuring thread on a connection that took no handler is recorded in
+``unexplained``, which fails the window: its work would go uncounted.
+
+One instruction is one step whatever it does inside: a B-tree seek is one step
+at any table size, which is what lets a per-key lookup stay flat, but so is
+``OP_Count`` (``SELECT count(*) FROM t`` with no ``WHERE`` counts the table's
+pages inside one step), a sorter's sort (its input rows are counted as they are
+fed), ``PRAGMA integrity_check`` and a SQL function's own Python work (SQL it
+runs on a traced connection is counted). Those are this counter's blind spots.
 
 Attribution only. When the window closes, its top statements by VM steps
 (literals masked) are compiled once more, as ``EXPLAIN QUERY PLAN`` and as
@@ -129,6 +136,9 @@ class Window:
     paths: dict[str, Counter[tuple[str, str]]] = field(default_factory=dict)
     #: The top statements by VM steps, with their tables and cursors (``attribute``).
     attribution: list[dict[str, Any]] = field(default_factory=list)
+    #: Every connection state this window counts on, held strongly: a connection closed
+    #: and collected inside the window still hands over its last statement's steps.
+    states: list[Any] = field(default_factory=list)
 
     def measuring(self) -> bool:
         return threading.get_ident() == self.thread
@@ -283,6 +293,9 @@ ATTRIBUTED = 10
 
 @dataclass
 class _ConnectionState:
+    """One traced connection's counting state. A window holds every state it counts on,
+    so the steps of a connection closed and collected inside the window still reach it."""
+
     database: str
     #: The statement this connection last started (literals masked), and its call path.
     current: str | None = None
@@ -291,12 +304,46 @@ class _ConnectionState:
     steps: int = 0
     #: Whether this window's progress handler is set on the connection.
     counting: bool = False
+    #: The connection's own progress handler and interval, set through the public method:
+    #: chained behind the measuring handler while a window is open, restored after.
+    handler: Callable[[], int] | None = None
+    every: int = 0
+    since: int = 0
+    #: The connection's own trace callback, called after the guard's.
+    trace: Callable[[str], object] | None = None
+
+
+def _install_progress(connection: sqlite3.Connection, handler: Any, every: int) -> None:
+    sqlite3.Connection.set_progress_handler(connection, handler, every)
 
 
 class TracedConnection(sqlite3.Connection):
-    """A connection under the scale root: weakly referenced, with its counting state."""
+    """A connection under the scale root: weakly referenced, with its counting state.
+
+    The guard owns its progress handler and trace callback: setting either through the
+    public methods records the connection's own callback, which the guard's then calls,
+    so no code under measurement can remove or replace the counting.
+    """
 
     scale_state: _ConnectionState
+
+    def set_progress_handler(self, progress_handler: Any, n: int) -> None:
+        state = self.__dict__.get("scale_state")
+        if state is None:
+            _install_progress(self, progress_handler, n)
+            return
+        state.handler, state.every, state.since = (
+            (progress_handler, n, 0) if progress_handler is not None and n > 0 else (None, 0, 0)
+        )
+        if not state.counting:
+            _install_progress(self, state.handler, state.every)
+
+    def set_trace_callback(self, trace_callback: Any) -> None:
+        state = self.__dict__.get("scale_state")
+        if state is None:
+            sqlite3.Connection.set_trace_callback(self, trace_callback)
+        else:
+            state.trace = trace_callback
 
 
 _CONNECTIONS: weakref.WeakSet[TracedConnection] = weakref.WeakSet()
@@ -326,10 +373,19 @@ def _masked(sql: str) -> str:
     return _LITERALS.sub("?", sql.strip())[:240]
 
 
+#: True while a closed window attributes its statements: no connection's own callbacks run.
+_ATTRIBUTING = False
+
+
 def _on_step(state: _ConnectionState) -> int:
     window = _WINDOW
     if window is not None and window.measuring():
         state.steps += STEP_EVERY
+    if state.handler is not None and not _ATTRIBUTING:
+        state.since += STEP_EVERY
+        if state.since >= state.every:
+            state.since = 0
+            return int(state.handler() or 0)
     return 0
 
 
@@ -365,6 +421,8 @@ def _call_path() -> str:
 
 
 def _on_statement(reference: Any, state: _ConnectionState, sql: str) -> None:
+    if state.trace is not None and not _ATTRIBUTING:
+        state.trace(sql)
     window = _WINDOW
     if window is None or not window.measuring() or not _under(state.database, window.prefixes):
         return
@@ -379,15 +437,26 @@ def _on_statement(reference: Any, state: _ConnectionState, sql: str) -> None:
         window.unexplained.append(f"no step counter on its connection :: {masked[:160]}")
 
 
-def _count_steps(connection: TracedConnection) -> None:
+def _count_steps(connection: TracedConnection, window: Window) -> None:
     state = connection.scale_state
-    state.steps, state.current, state.path = 0, None, ""
+    state.steps, state.current, state.path, state.since = 0, None, "", 0
+    window.states.append(state)
     try:
-        connection.set_progress_handler(functools.partial(_on_step, state), STEP_EVERY)
+        _install_progress(connection, functools.partial(_on_step, state), STEP_EVERY)
     except sqlite3.Error:
         state.counting = False  # closed, or bound to another thread: it runs nothing here
     else:
         state.counting = True
+
+
+def _stop_counting(connection: TracedConnection) -> None:
+    state = connection.scale_state
+    if state.counting:
+        state.counting = False
+        try:
+            _install_progress(connection, state.handler, state.every)
+        except sqlite3.Error:
+            pass  # closed: nothing left to restore
 
 
 @contextmanager
@@ -408,12 +477,12 @@ def trace_sqlite(root: Path) -> Iterator[None]:
         assert isinstance(connection, TracedConnection)
         state = _ConnectionState(database)
         connection.scale_state = state
-        connection.set_trace_callback(
-            functools.partial(_on_statement, weakref.ref(connection), state)
+        sqlite3.Connection.set_trace_callback(
+            connection, functools.partial(_on_statement, weakref.ref(connection), state)
         )
         _CONNECTIONS.add(connection)
         if _WINDOW is not None:
-            _count_steps(connection)
+            _count_steps(connection, _WINDOW)
         return connection
 
     sqlite3.connect = connect  # type: ignore[assignment]
@@ -673,7 +742,7 @@ def _attribute(window: Window) -> list[dict[str, Any]]:
 def counting(root: Path) -> Iterator[Window]:
     """Count the work the calling thread does against the instance under ``root``."""
 
-    global _WINDOW, _REBINDER
+    global _WINDOW, _REBINDER, _ATTRIBUTING
     assert _WINDOW is None, "measured windows do not nest"
     _install_audit_hook()
     if _REBINDER is None:
@@ -681,21 +750,24 @@ def counting(root: Path) -> Iterator[Window]:
     window = Window(prefixes=_prefixes(root))
     _REBINDER.install()
     for connection in list(_CONNECTIONS):
-        _count_steps(connection)
+        _count_steps(connection, window)
     _WINDOW = window
     try:
         yield window
     finally:
         _WINDOW = None
         _REBINDER.remove()
-        for connection in list(_CONNECTIONS):
-            state = connection.scale_state
+        for state in window.states:
             _flush(state, window)
-            state.counting, state.current = False, None
-            try:
-                connection.set_progress_handler(None, 0)
-            except sqlite3.Error:
-                pass
+            state.current = None
         for name in COUNTERS:
             window.counts.setdefault(name, 0)
-        window.attribution = _attribute(window)
+        # Attribution's own statements run while the guard's handler is still set and
+        # never reach a connection's own progress handler or trace callback.
+        _ATTRIBUTING = True
+        try:
+            window.attribution = _attribute(window)
+        finally:
+            _ATTRIBUTING = False
+            for connection in list(_CONNECTIONS):
+                _stop_counting(connection)
