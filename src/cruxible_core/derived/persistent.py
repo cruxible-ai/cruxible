@@ -478,6 +478,22 @@ class PCounts:
             node = node[index]
         return key
 
+    def __iter__(self) -> Iterator[int]:
+        """Every value, ascending, once per count (whole-collection reads only)."""
+
+        def walk(node: Any, level: int, prefix: int) -> Iterator[int]:
+            for index, child in enumerate(node):
+                if not child:
+                    continue
+                key = prefix | (index << (_BITS * level))
+                if level == 0:
+                    yield from (key for _ in range(child))
+                else:
+                    yield from walk(child, level - 1, key)
+
+        if self._root is not None:
+            yield from walk(self._root, self._levels - 1, 0)
+
     def __len__(self) -> int:
         return self._size
 

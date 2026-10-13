@@ -10,9 +10,11 @@ and a file's bytes differ between two generations exactly when its stamp does.
 
 The index is rebuildable and instance-internal. It holds the parsed inputs
 (Subjects, Claims, ClaimTypes, the latest sequence of every ledger path), the
-reverse indexes a change is traced through (the Claims that ever pointed at a
-Subject, the Subjects of each kind, the sequences of the live Claims, and the
-commits of each change's review notes),
+reverse indexes a change is traced through (each Subject's live Claims and
+live incoming edges, the live Claims of each predicate and short name, the
+Subjects of each kind, the sequences of the live Claims, and the commits of
+each change's review notes), the maxima the stamps read over Claims of every
+lifecycle (each Subject's Claims, and every Claim that ever pointed at it),
 the rendered files and each file's digest. ``advance_floor_index`` moves it
 forward by reading only the paths the change records touched since, and
 re-renders only the files those paths reach: a Subject is restamped only when
@@ -129,8 +131,6 @@ class FloorInputs:
     claims: PMap[str, ClaimArtifactAny]
     # Every ClaimType in the tree, any lifecycle, by ClaimType path.
     claim_types: PMap[str, ClaimType]
-    # Subject path -> the paths of its Claims, any lifecycle.
-    by_subject: PMap[str, PSet[str]]
     # Subject-valued Claim path -> its revisions to this generation, as a
     # shared chain: every Subject it ever pointed at, and at which sequence.
     objects: PMap[str, _Revisions] = field(default_factory=PMap)
@@ -138,16 +138,24 @@ class FloorInputs:
     documents: PSet[str] = EMPTY_PSET
     capture_contracts: PMap[str, CaptureContract] = field(default_factory=PMap)
     # Derived from the fields above and patched with them, so a render traces a
-    # change instead of scanning: Subject path -> every Claim that ever pointed
-    # at it; predicate -> its Claims; short name -> the Claims whose field
-    # shows it (``<kind>.<short>`` on a Subject of ``<kind>``); the ClaimTypes
-    # by predicate and the live predicates; the contracts by digest (and each
-    # contract path's digest); and the latest sequence of each source path
-    # (claims/, documents/, capture-contracts/), whose maximum stamps
-    # sources/LEDGER.
-    pointed: PMap[str, PSet[str]] = field(default_factory=PMap)
+    # change instead of scanning. What a render shows comes from live Claims
+    # only, so the indexes a change is traced through hold live Claims only:
+    # Subject path -> its live Claims; Subject path -> the live Claims whose
+    # object is it now; predicate -> its live Claims; short name -> the live
+    # Claims whose field shows it (``<kind>.<short>`` on a Subject of
+    # ``<kind>``). What a stamp reads of every lifecycle is kept as counts of
+    # latest sequences, read for their maximum: Subject path -> its Claims',
+    # and Subject path -> those of every Claim that ever pointed at it.
+    # Then the ClaimTypes by predicate and the live predicates; the contracts
+    # by digest (and each contract path's digest); and the latest sequence of
+    # each source path (claims/, documents/, capture-contracts/), whose
+    # maximum stamps sources/LEDGER.
+    live_by_subject: PMap[str, PSet[str]] = field(default_factory=PMap)
+    live_incoming: PMap[str, PSet[str]] = field(default_factory=PMap)
     by_predicate: PMap[str, PSet[str]] = field(default_factory=PMap)
     by_shadow: PMap[str, PSet[str]] = field(default_factory=PMap)
+    claims_latest: PMap[str, PCounts] = field(default_factory=PMap)
+    pointed_latest: PMap[str, PCounts] = field(default_factory=PMap)
     types: PMap[str, ClaimType] = field(default_factory=PMap)
     live_predicates: PSet[str] = EMPTY_PSET
     contracts_by_digest: PMap[str, CaptureContract] = field(default_factory=PMap)
@@ -159,14 +167,6 @@ class FloorInputs:
         """The latest sequence of any source path: when sources/LEDGER last changed."""
 
         return self.source_latest.max(0)
-
-    def pointed_at(self) -> Mapping[str, PSet[str]]:
-        """Subject path -> every Claim that ever pointed at it, any lifecycle."""
-
-        return self.pointed
-
-    def predicates(self) -> tuple[Mapping[str, ClaimType], PSet[str]]:
-        return self.types, self.live_predicates
 
 
 @dataclass(frozen=True)
@@ -532,6 +532,31 @@ class _Moves:
                 index.discard(key)
 
 
+class _CountMoves:
+    """Values to add to and remove from a key -> ``PCounts`` index, applied once per key."""
+
+    def __init__(self) -> None:
+        self._added: dict[str, list[int]] = {}
+        self._removed: dict[str, list[int]] = {}
+
+    def move(self, key: str, value: int, *, present: bool) -> None:
+        (self._added if present else self._removed).setdefault(key, []).append(value)
+
+    def apply(self, index: Any) -> None:
+        """Apply to a ``PMapEvolver`` of key -> ``PCounts``: one path per value."""
+
+        for key in {*self._added, *self._removed}:
+            counts = index.get(key, EMPTY_PCOUNTS)
+            for value in self._removed.get(key, ()):
+                counts = counts.remove(value)
+            for value in self._added.get(key, ()):
+                counts = counts.add(value)
+            if counts:
+                index[key] = counts
+            else:
+                index.discard(key)
+
+
 def _count(index: Any, key: Any, delta: int) -> None:
     """Add ``delta`` to one counter of a ``PMapEvolver``, dropping it at zero."""
 
@@ -574,19 +599,28 @@ def build_floor_inputs(
     claims = held["claim"]
     latest = history.latest_sequences(at_most=location.sequence)
     objects = _object_histories(instance, history, claims, claims, at_most=location.sequence)
-    by_subject: dict[str, set[str]] = {}
+    live_by_subject: dict[str, set[str]] = {}
+    live_incoming: dict[str, set[str]] = {}
     by_predicate: dict[str, set[str]] = {}
     by_shadow: dict[str, set[str]] = {}
+    claims_latest: dict[str, list[int]] = {}
     for path, claim in claims.items():
-        by_subject.setdefault(claim.statement.subject.artifact_path, set()).add(path)
+        subject = claim.statement.subject.artifact_path
+        claims_latest.setdefault(subject, []).append(latest.get(path, 0))
+        if claim.lifecycle.state != "live":
+            continue
+        live_by_subject.setdefault(subject, set()).add(path)
         by_predicate.setdefault(claim.statement.predicate, set()).add(path)
         short = _shadow(claim)
         if short is not None:
             by_shadow.setdefault(short, set()).add(path)
-    pointed: dict[str, set[str]] = {}
+        target = _object(claim)
+        if target is not None:
+            live_incoming.setdefault(target, set()).add(path)
+    pointed_latest: dict[str, list[int]] = {}
     for claim_file, revisions in objects.items():
         for target in revisions.targets:
-            pointed.setdefault(target, set()).add(claim_file)
+            pointed_latest.setdefault(target, []).append(latest.get(claim_file, 0))
     source_latest = PCounts(
         sequence for path, sequence in latest.items() if path.startswith(_SOURCE_PREFIXES)
     )
@@ -602,13 +636,15 @@ def build_floor_inputs(
         subjects=PMap(held["subject"]),
         claims=PMap(claims),
         claim_types=PMap(held["claim_type"]),
-        by_subject=PMap((key, PSet(found)) for key, found in by_subject.items()),
         objects=PMap(objects),
         documents=PSet(held["document"]),
         capture_contracts=PMap(held["contract"]),
-        pointed=PMap((key, PSet(found)) for key, found in pointed.items()),
+        live_by_subject=PMap((key, PSet(found)) for key, found in live_by_subject.items()),
+        live_incoming=PMap((key, PSet(found)) for key, found in live_incoming.items()),
         by_predicate=PMap((key, PSet(found)) for key, found in by_predicate.items()),
         by_shadow=PMap((key, PSet(found)) for key, found in by_shadow.items()),
+        claims_latest=PMap((key, PCounts(found)) for key, found in claims_latest.items()),
+        pointed_latest=PMap((key, PCounts(found)) for key, found in pointed_latest.items()),
         types=PMap(types),
         live_predicates=PSet(
             predicate for predicate, item in types.items() if item.lifecycle.state == "live"
@@ -654,6 +690,7 @@ def _patch_floor_inputs(
             source_latest = source_latest.remove(was)
         if now is not None:
             source_latest = source_latest.add(now)
+    latest_now = latest.persistent()
     wanted = [path for path in changed if path.startswith(_INPUT_PREFIXES)]
     blobs = instance.blobs_at(target.git_oid, wanted) if wanted else {}
     subjects = inputs.subjects.evolver()
@@ -668,8 +705,10 @@ def _patch_floor_inputs(
     live_added: list[str] = []
     live_removed: list[str] = []
     subject_moves = _Moves()
+    incoming_moves = _Moves()
     predicate_moves = _Moves()
     shadow_moves = _Moves()
+    claims_latest_moves = _CountMoves()
     for path in wanted:
         content = blobs.get(path)
         value: Any
@@ -686,14 +725,24 @@ def _patch_floor_inputs(
                 claims.discard(path)
             else:
                 claims[path] = new
-            for item, present in ((old, False), (new, True)):
+            for item, present, at in (
+                (old, False, inputs.latest.get(path, 0)),
+                (new, True, latest_now.get(path, 0)),
+            ):
                 if item is None:
                     continue
-                subject_moves.move(item.statement.subject.artifact_path, path, present=present)
+                subject = item.statement.subject.artifact_path
+                claims_latest_moves.move(subject, at, present=present)
+                if item.lifecycle.state != "live":
+                    continue
+                subject_moves.move(subject, path, present=present)
                 predicate_moves.move(item.statement.predicate, path, present=present)
                 short = _shadow(item)
                 if short is not None:
                     shadow_moves.move(short, path, present=present)
+                edge_target = _object(item)
+                if edge_target is not None:
+                    incoming_moves.move(edge_target, path, present=present)
         elif path.startswith(CLAIM_TYPES_PREFIX):
             old_type = claim_types.get(path)
             if old_type is not None:
@@ -721,8 +770,12 @@ def _patch_floor_inputs(
                 contract_digests[path] = digest
             else:
                 contracts.discard(path)
-    by_subject = inputs.by_subject.evolver()
-    subject_moves.apply(by_subject)
+    live_by_subject = inputs.live_by_subject.evolver()
+    subject_moves.apply(live_by_subject)
+    live_incoming = inputs.live_incoming.evolver()
+    incoming_moves.apply(live_incoming)
+    claims_latest = inputs.claims_latest.evolver()
+    claims_latest_moves.apply(claims_latest)
     by_predicate = inputs.by_predicate.evolver()
     predicate_moves.apply(by_predicate)
     by_shadow = inputs.by_shadow.evolver()
@@ -740,20 +793,27 @@ def _patch_floor_inputs(
         known=before,
         since=inputs.generation,
     )
-    pointer_moves = _Moves()
+    pointer_moves = _CountMoves()
     for path in touched_claims:
         found = histories.get(path)
         if found is None:
             objects.discard(path)
         else:
             objects[path] = found
-        gained, lost = _target_moves(before[path], found)
+        was, now = inputs.latest.get(path, 0), latest_now.get(path, 0)
+        if was == now:
+            gained, lost = _target_moves(before[path], found)
+        else:
+            # Its latest sequence moved, so every Subject it ever pointed at
+            # restamps with it: those are the affected output.
+            lost = set(() if before[path] is None else before[path].targets)
+            gained = set(() if found is None else found.targets)
         for item in lost:
-            pointer_moves.move(item, path, present=False)
+            pointer_moves.move(item, was, present=False)
         for item in gained:
-            pointer_moves.move(item, path, present=True)
-    pointed = inputs.pointed.evolver()
-    pointer_moves.apply(pointed)
+            pointer_moves.move(item, now, present=True)
+    pointed_latest = inputs.pointed_latest.evolver()
+    pointer_moves.apply(pointed_latest)
     types_now = types.persistent()
     live = inputs.live_predicates
     if live_added or live_removed:
@@ -773,17 +833,19 @@ def _patch_floor_inputs(
         FloorInputs(
             generation=target.sequence,
             coordinate=AcceptedCoordinate.from_internal(coordinate),
-            latest=latest.persistent(),
+            latest=latest_now,
             subjects=subjects.persistent(),
             claims=claims_now,
             claim_types=claim_types.persistent(),
-            by_subject=by_subject.persistent(),
             objects=objects.persistent(),
             documents=inputs.documents.update(documents_added, documents_removed),
             capture_contracts=contracts.persistent(),
-            pointed=pointed.persistent(),
+            live_by_subject=live_by_subject.persistent(),
+            live_incoming=live_incoming.persistent(),
             by_predicate=by_predicate.persistent(),
             by_shadow=by_shadow.persistent(),
+            claims_latest=claims_latest.persistent(),
+            pointed_latest=pointed_latest.persistent(),
             types=types_now,
             live_predicates=live,
             contracts_by_digest=contracts_by_digest.persistent(),
@@ -842,16 +904,16 @@ class _Stamps:
         self._names[key] = best
         return best
 
-    def incoming(self, pointed: Iterable[str], edges: Iterable[ClaimArtifactAny]) -> int:
+    def incoming(self, path: str, edges: Iterable[ClaimArtifactAny]) -> int:
         """When the edges pointing at a Subject last changed.
 
-        ``pointed`` is every Claim that ever pointed at it, so an edge moved
-        away still restamps its old target; ``edges`` are the live ones shown.
+        Every Claim that ever pointed at it counts, read as the maximum of
+        their maintained latest sequences, so an edge moved away still
+        restamps its old target; ``edges`` are the live ones shown.
         """
 
-        best = 0
-        for claim_file in pointed:
-            best = max(best, self._latest(claim_file))
+        counts = self._inputs.pointed_latest.get(path)
+        best = 0 if counts is None else counts.max(0)
         for claim in edges:
             source = self._inputs.subjects.get(claim.statement.subject.artifact_path)
             if source is not None:
@@ -859,10 +921,13 @@ class _Stamps:
         return best
 
     def subject(self, path: str, live: Iterable[ClaimArtifactAny]) -> int:
+        """Its own path, its Claims of any lifecycle (one maintained maximum), its fields' names."""
+
         shell = self._inputs.subjects[path]
         best = self._latest(path)
-        for claim_file in self._inputs.by_subject.get(path, ()):
-            best = max(best, self._latest(claim_file))
+        counts = self._inputs.claims_latest.get(path)
+        if counts is not None:
+            best = max(best, counts.max(0))
         for claim in live:
             best = max(best, self.name(claim.statement.predicate, shell.subject_kind))
         return best
@@ -882,9 +947,12 @@ def _affected_subjects(old: FloorInputs, new: FloorInputs, changed: Collection[s
     """Every Subject whose stamp could read a changed path, in either generation.
 
     A Subject's stamp reads its own path, its Claims, every Claim that ever
-    pointed at it, the edges' source Subjects and the ClaimTypes (and
-    short-name shadows) of the fields it and its edges show. A Subject outside
-    this set reads none of the changed paths, so its stamp and bytes hold.
+    pointed at it, the live edges' source Subjects and the ClaimTypes (and
+    short-name shadows) of the fields it and its live edges show. A Subject
+    outside this set reads none of the changed paths, so its stamp and bytes
+    hold. A changed Subject reaches the targets of its live edges only (a
+    retired Claim shows no edge), and a changed ClaimType the live Claims of
+    its predicate and shadow only: the work is what the change can render.
     """
 
     affected: set[str] = set()
@@ -894,7 +962,7 @@ def _affected_subjects(old: FloorInputs, new: FloorInputs, changed: Collection[s
         if path.startswith(SUBJECTS_PREFIX):
             affected.add(path)
             for inputs in sides:
-                for claim_file in inputs.by_subject.get(path, ()):
+                for claim_file in inputs.live_by_subject.get(path, ()):
                     target = _object(inputs.claims.get(claim_file))
                     if target is not None:
                         affected.add(target)
@@ -946,7 +1014,7 @@ def _live_sequence(inputs: FloorInputs, claim_file: str) -> int | None:
 def _all_live_sequences(inputs: FloorInputs) -> dict[int, int]:
     counts: dict[int, int] = {}
     for path in inputs.subjects:
-        for claim_file in inputs.by_subject.get(path, ()):
+        for claim_file in inputs.live_by_subject.get(path, ()):
             sequence = _live_sequence(inputs, claim_file)
             if sequence is not None:
                 counts[sequence] = counts.get(sequence, 0) + 1
@@ -1022,7 +1090,6 @@ def render_floor(
     types, live_predicates = inputs.types, inputs.live_predicates
     stamps = _Stamps(inputs, live_predicates)
     values = ValueRenderer(instance)
-    pointed = inputs.pointed
     subjects = (PMap() if previous is None else previous.subjects).evolver()
     files = _Files(previous)
     kind_moves = _Moves()
@@ -1053,23 +1120,17 @@ def render_floor(
                 files.drop(file_path)
             continue
         live = sorted(
-            (
-                claim
-                for claim_file in inputs.by_subject.get(path, ())
-                if (claim := inputs.claims[claim_file]).lifecycle.state == "live"
-            ),
+            (inputs.claims[claim_file] for claim_file in inputs.live_by_subject.get(path, ())),
             key=lambda item: item.identity.name.encode(),
         )
         edges = [
             edge
-            for claim_file in pointed.get(path, ())
-            if (edge := inputs.claims.get(claim_file)) is not None
-            and edge.lifecycle.state == "live"
-            and _object(edge) == path
-            and edge.statement.subject.artifact_path in inputs.subjects
+            for claim_file in inputs.live_incoming.get(path, ())
+            if (edge := inputs.claims[claim_file]).statement.subject.artifact_path
+            in inputs.subjects
         ]
         own = stamps.subject(path, live)
-        changed_at = max(own, stamps.incoming(pointed.get(path, ()), edges))
+        changed_at = max(own, stamps.incoming(path, edges))
         if kept is not None and (kept.changed_at, kept.own_changed_at) == (changed_at, own):
             continue
         part = render_subject(
@@ -1151,8 +1212,9 @@ def render_floor(
         reached = {path for path in changed if path.startswith(CLAIMS_PREFIX)}
         for path in changed:
             if path.startswith(SUBJECTS_PREFIX):
-                reached.update(old.by_subject.get(path, ()))
-                reached.update(inputs.by_subject.get(path, ()))
+                # Only a live Claim has a live sequence: a retired one is not reached.
+                reached.update(old.live_by_subject.get(path, ()))
+                reached.update(inputs.live_by_subject.get(path, ()))
         for claim_file in reached:
             before = _live_sequence(old, claim_file)
             after = _live_sequence(inputs, claim_file)

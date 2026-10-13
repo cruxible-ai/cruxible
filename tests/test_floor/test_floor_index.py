@@ -369,7 +369,7 @@ def test_a_claim_type_change_reaches_only_the_claims_showing_it() -> None:
     inputs: Any = SimpleNamespace(
         claims=claims,
         claim_types={},
-        by_subject={},
+        live_by_subject={},
         objects=PMap(),
         by_predicate={
             "project.work_item.a.b": PSet(["claims/1.json", "claims/2.json"]),
@@ -383,3 +383,106 @@ def test_a_claim_type_change_reaches_only_the_claims_showing_it() -> None:
         "subjects/project.work_item/wi-1.json",
         "subjects/other.kind/y.json",
     }
+
+
+def test_a_subject_change_reads_the_same_whatever_its_retired_claims() -> None:
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.claims import SubjectClaimObject
+    from cruxible_core.derived.persistent import PCounts, PMap, PSet
+    from cruxible_core.service.floor.floor_index import _affected_subjects, _Stamps
+
+    path = "subjects/k/one.json"
+    measured: dict[int, int] = {}
+    for retired in (64, 512):
+        work = [0]
+
+        class Counting(dict):  # type: ignore[type-arg]
+            def get(self, key: Any, default: Any = None) -> Any:
+                work[0] += 1
+                return super().get(key, default)
+
+            def __getitem__(self, key: Any) -> Any:
+                work[0] += 1
+                return super().__getitem__(key)
+
+        def claim(state: str, target: str | None = None) -> Any:
+            # A Subject-valued Claim names its target; a literal one names none.
+            obj = (
+                None
+                if target is None
+                else SubjectClaimObject.model_construct(
+                    address=SimpleNamespace(artifact_path=target)
+                )
+            )
+            return SimpleNamespace(
+                lifecycle=SimpleNamespace(state=state),
+                statement=SimpleNamespace(
+                    subject=SimpleNamespace(artifact_path=path), predicate="k.status", object=obj
+                ),
+            )
+
+        # Half the retired Claims are edges to former targets, half literals.
+        claims = Counting(
+            {
+                f"claims/retired-{index}.json": claim(
+                    "retired", f"subjects/k/former-{index}.json" if index % 2 else None
+                )
+                for index in range(retired)
+            }
+        )
+        claims["claims/live.json"] = live = claim("live")
+        inputs: Any = SimpleNamespace(
+            subjects={path: SimpleNamespace(subject_kind="k")},
+            claims=claims,
+            claim_types={},
+            objects=PMap(),
+            live_by_subject={path: PSet(["claims/live.json"])},
+            by_predicate={},
+            by_shadow={},
+            latest=Counting({path: 1024, **{key: 1 for key in claims}}),
+            # Every lifecycle counts toward the stamps, as maintained maxima.
+            claims_latest=PMap({path: PCounts([1] * (retired + 1))}),
+            pointed_latest=PMap({path: PCounts([3] * retired)}),
+        )
+        # The shell change reaches no former target of a retired edge.
+        assert _affected_subjects(inputs, inputs, [path]) == {path}
+        stamps = _Stamps(inputs, PSet())
+        assert stamps.subject(path, [live]) == 1024
+        assert stamps.incoming(path, []) == 3
+        measured[retired] = work[0]
+    # Retired Claims render nothing: the same reads at 64 and at 512 of them.
+    assert measured[64] == measured[512]
+
+
+def test_warm_indexes_hold_live_claims_only_and_match_a_cold_build(tmp_path: Any) -> None:
+    instance, _owner = seed_write_surface(tmp_path)
+    add_lead_field(instance)
+    _write(instance, _set(WI1, "lead", WI2), _set(WI1, "status", "ready"))
+    advance_floor_index(instance)
+    _write(instance, _set(WI1, "lead", WI3))
+    _write(instance, {"op": "retire", "target": {"subject": WI1, "field": "status"}})
+    _write(instance, {"op": "retire", "target": {"subject": WI1, "field": "lead"}})
+    warm = advance_floor_index(instance)
+    cold = _cold(instance)
+    for name in ("live_by_subject", "live_incoming", "by_predicate", "by_shadow"):
+        assert dict(getattr(warm.inputs, name)) == dict(getattr(cold.inputs, name)), name
+        for members in getattr(warm.inputs, name).values():
+            for claim_file in members:
+                assert warm.inputs.claims[claim_file].lifecycle.state == "live", name
+    for name in ("claims_latest", "pointed_latest"):
+        assert {key: list(value) for key, value in getattr(warm.inputs, name).items()} == {
+            key: list(value) for key, value in getattr(cold.inputs, name).items()
+        }, name
+    # The retired edge shows nowhere, yet both its targets still stamp with it.
+    wi1 = f"subjects/{WI1}.json"
+    retired = [
+        path
+        for path, claim in warm.inputs.claims.items()
+        if claim.statement.subject.artifact_path == wi1 and claim.lifecycle.state != "live"
+    ]
+    assert retired and not set(retired) & set(warm.inputs.live_by_subject.get(wi1, ()))
+    for target in (f"subjects/{WI2}.json", f"subjects/{WI3}.json"):
+        assert target not in warm.inputs.live_incoming
+        assert target in warm.inputs.pointed_latest
+    assert _bytes(warm) == _bytes(cold)
