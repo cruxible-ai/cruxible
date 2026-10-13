@@ -1,0 +1,82 @@
+{
+ "generated_by": "cruxible-core 01266892449a39e29caa1508c3cb6d764874032f lowering cruxible-provider-runtime 0.2.0's export, over cruxible-providers 84cfdba1522423ef16354cca7c8f2d0e2261737c",
+ "packages": {
+  "cruxible-provider-docs": {
+   "document_sha256": "3e57e8cd69bbb8e2c9912858d32d419aa9b66d4e5825f4088dce9da9d3c48594",
+   "registrations": {
+    "doc.to_markdown": {
+     "artifact_digest": "sha256:a7125c3b6e2d7d9400339c287b365bba2f0259952fd117780820b93f6ddc4dc6",
+     "bytes_sha256": "7a161f668a54b63a579ff5db1aa69a1c05f72be3058a3ebb0c00aecbb82e3d64"
+    },
+    "ocr.extract": {
+     "artifact_digest": "sha256:9fecc643a6e83601fc17668490517ada712369756cf283f6f29b7cca7b53cd68",
+     "bytes_sha256": "3b2fa5ddea6d4369ec12b5ec0c503acb2a590322bc3d161c565ffc3d6ca9fe14"
+    }
+   }
+  },
+  "cruxible-provider-noop": {
+   "document_sha256": "4d958c6ce784a6df864c558de3637a640ecb75be40155db77a650d89227de325",
+   "registrations": {
+    "noop.echo": {
+     "artifact_digest": "sha256:e8f19be656b8e697119e9f7285da3fc143d2c645940d42bae676709527d4c01a",
+     "bytes_sha256": "ea5a97d43bf690f0d945c7bc0354559cec6f73ec0900983cfe29b566af180596"
+    }
+   }
+  },
+  "cruxible-provider-quant": {
+   "document_sha256": "a0d81b75f984b137552cf6d1dc39722291c8cc968369b9c692f9fd72a03dd2b0",
+   "registrations": {
+    "calc.calibrate": {
+     "artifact_digest": "sha256:03585242e4cd453e34357066df45aa70a0e0658df77fb902da3f6bce7d385134",
+     "bytes_sha256": "8103231d1781c13d75503c84883fff2b06b462b59552049db7b2e6805f4c3ca0"
+    },
+    "calc.reduce": {
+     "artifact_digest": "sha256:ab1db3c2442180a1284ab57087d23f391b968f868ddeb4c5198b4e674ca5c3f5",
+     "bytes_sha256": "31b12241fa3d4382177f46630f354c32f5b396ab82bd1d449b1b44dcb4c9b3b8"
+    },
+    "match.record": {
+     "artifact_digest": "sha256:aa5c7412630b26722dbb08d1585795848d5a3400038aef24432575c8abb254b5",
+     "bytes_sha256": "d7baa02a6d14f20b5574d8f139c5c49899a411347e21245a1f6bb327f38e1e4d"
+    },
+    "score.rank": {
+     "artifact_digest": "sha256:73fcafd218ef9d12bd61d136b5628359308d7fc16ac3f906a33e07996a45356b",
+     "bytes_sha256": "4cca35f332ff6e2334ee5afa4a1ab97797c1fb794565feaec47ca5c47d809893"
+    },
+    "stat.test": {
+     "artifact_digest": "sha256:09cbbf0679e10d0ad49f010dc36e8de910132f754f3e5db3e6d2f6230296a539",
+     "bytes_sha256": "8b1763eb97877999ba414f54c3418a833ec1cbddb32191ae51a827ee3a1d8306"
+    },
+    "ts.anomaly": {
+     "artifact_digest": "sha256:0acbfb7648d7d99bd57d6a8176b91fd12431a42140483711ed998a88b2486045",
+     "bytes_sha256": "2ad9933a33ddafe606e5fc735b339ba766f22c73324b70c43943425880f183f2"
+    },
+    "ts.forecast": {
+     "artifact_digest": "sha256:85f1d7dd001f359e4ca95e51be3761b6fae8ca11b2672aabb50cd25c0a11f8d7",
+     "bytes_sha256": "abad2e6c1a31f54ffcfe6a42bc8d85597c2c2e04529b179c5655daff3b43b04d"
+    }
+   }
+  },
+  "cruxible-provider-web": {
+   "document_sha256": "5bd9053b54c992eccb080de08718399cbff256d4e4ba840698a3d3ff6ab77e46",
+   "registrations": {
+    "search.web": {
+     "artifact_digest": "sha256:3f776d67f9f0cf325b0ca6948651d62ea51963e24d59839926ef470f26add0d4",
+     "bytes_sha256": "b2d66113da9aa5694b26fd25db301bf2cebe74e04942de7c7993262cd128ac20"
+    },
+    "web.fetch": {
+     "artifact_digest": "sha256:f6302734bbe87d342144d0444e136ca71e9cd899e12a5d6ea121ba4d97d9681c",
+     "bytes_sha256": "346e4a6f6639ee27323b4e75abb1e125f75fc5a7104dcdd39304745bceb34738"
+    }
+   }
+  },
+  "cruxible-provider-workspace": {
+   "document_sha256": "4f1aea5c481498312d97cd4017061e4e37ed691bb1a1cae5a4e9f8ef7548dbfe",
+   "registrations": {
+    "workspace.file": {
+     "artifact_digest": "sha256:cd2a9e79cffc78f843773dffb67c06d5939e4500f70bc3b5f80cad10d0a22411",
+     "bytes_sha256": "1a6ce47654ff6e0a3842062801dcd3b5b78b014dea8133a663c89c31316c8fa9"
+    }
+   }
+  }
+ }
+}
