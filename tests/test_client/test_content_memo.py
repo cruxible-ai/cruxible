@@ -58,7 +58,7 @@ def test_a_parse_runs_once_per_exact_bytes_and_a_refusal_is_never_kept(monkeypat
         parse_claim_type(content, path="claim-types/other.json")
     assert parsed == [path, "claim-types/other.json", "claim-types/other.json"]
     # The digest of the remembered value is the one computed afresh.
-    assert claim_type_digest(again) == claim_types._claim_type_digest(value)
+    assert claim_type_digest(again) == claim_type_digest(value)
 
 
 def test_digests_follow_the_current_content_of_shallowly_frozen_models():

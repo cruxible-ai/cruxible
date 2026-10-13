@@ -241,6 +241,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("InputAcquisitionRule", "max_age"): "VALIDITY WINDOW",
     ("JournalHeadStatementV1", "asserted_at"): "ASSERTION TIME",
     ("JournalPartitionHeadV1", "sequence"): "SETTLEMENT ORDER",
+    # The journal head a resolution fold reached (perf B9).
+    ("_ResolutionFold", "head_sequence"): "SETTLEMENT ORDER",
     ("JournalRangeV1", "first_sequence"): "SETTLEMENT ORDER",
     ("JournalRangeV1", "last_sequence"): "SETTLEMENT ORDER",
     ("JournalSegmentDescriptorV1", "first_sequence"): "SETTLEMENT ORDER",

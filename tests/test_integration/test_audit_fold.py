@@ -809,6 +809,8 @@ class _FakeHistoryReader:
         return next(item for item in self.histories if item.sequence == sequence)
 
     def generation(self, sequence):  # type: ignore[no-untyped-def]
+        if sequence == 0:
+            return SimpleNamespace(git_oid="genesis")
         return SimpleNamespace(git_oid=self._generation(sequence).oid)
 
     def read_member_law_evidence(self, location, _records):  # type: ignore[no-untyped-def]
@@ -839,7 +841,7 @@ def test_history_index_carries_backing_only_verification_and_resets_on_statement
     }
     fake = SimpleNamespace(
         accepted_history=lambda: histories,
-        blobs_at=lambda oid, paths: {p: trees[oid][p] for p in paths if p in trees[oid]},
+        blobs_at=lambda oid, paths: {p: trees[oid][p] for p in paths if p in trees.get(oid, {})},
         accepted_history_reader=lambda: nullcontext(_FakeHistoryReader(histories, trees)),
         retained_record_reader=lambda: None,
     )
