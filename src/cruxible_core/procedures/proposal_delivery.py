@@ -654,6 +654,9 @@ class _KeyedReference:
     path: str | None = None
     #: It resolved to no Subject (``key_missing``) at the admitted base.
     missing: bool = False
+    #: The terminal Subject item carrying this key when the reference was frozen
+    #: to the live Subject holding it instead: that item must land there too.
+    sibling: str | None = None
 
     def described(self) -> dict[str, object]:
         return {"subject_kind": self.kind, "key": dict(self.spelled)}
@@ -663,9 +666,11 @@ class _SubjectKeys:
     """Resolve the Subjects a terminal's Claim items name by key (v3 items).
 
     A reference is frozen once, against the admitted base and the terminal's
-    own Subject items: a key one of those items carries names that item (a
-    creation-member reference, ``subject-creation-v1``, which shared lowering
-    resolves to the path it finally assigns or reuses); any other key resolves
+    own Subject items: a key one of those items carries names the one live
+    Subject of the base holding it, when there is exactly one (the item reuses
+    it), else that item (a creation-member reference, ``subject-creation-v1``,
+    which shared lowering resolves to the path it finally assigns or reuses);
+    any other key resolves
     through the one resolver (``IdentityView.resolve_key_reference``: exact
     live id, alias, key, exact retired id) over the base. None refuses
     (``key_missing``: create it with a Subject item), several refuse as
@@ -691,6 +696,8 @@ class _SubjectKeys:
         self.base = base
         self.base_tree = base_tree
         self.created: dict[tuple[str, str], str] = {}
+        #: Subject items asking for a further holder of their key (``create_new``).
+        self.creating_new: set[str] = set()
         self.view: IdentityView | None = None
         self.references: list[_KeyedReference] = []
 
@@ -710,6 +717,8 @@ class _SubjectKeys:
             held = self.created.get(slot)
             identity = member.member_identity
             self.created[slot] = identity if held in {None, identity} else self._SEVERAL
+            if member.create_new:
+                self.creating_new.add(identity)
 
     def bind(self, view: IdentityView) -> None:
         """Freeze references against ``view`` (the admitted base)."""
@@ -756,10 +765,20 @@ class _SubjectKeys:
                 f"Several Subject items of this terminal hold this {kind} key; name one by id.",
                 code="cruxible.subject.key_ambiguous",
             )
+        assert self.view is not None, "references are frozen against the bound base"
         if member is not None:
+            if member not in self.creating_new:
+                # The terminal's Subject item restates a Subject the base already
+                # holds (it lowers to that Subject, creating nothing): name the live
+                # Subject, so an item restating one of its live Claims targets that
+                # Claim's lineage and revises it or changes nothing.
+                held = self.view.holders(kind, key)
+                if len(held) == 1:
+                    frozen.path = held[0]
+                    frozen.sibling = member
+                    return SemanticAddress.whole_artifact(held[0])
             frozen.creation = member
             return SemanticAddress.subject_creation(kind, member.rpartition("@")[2])
-        assert self.view is not None, "references are frozen against the bound base"
         resolution = self.view.resolve_key_reference(kind, key, single_text=frozen.single_text)
         if resolution.ambiguous:
             holders = [f"subjects/{item}.json" for item in resolution.candidates]
@@ -846,6 +865,11 @@ class _SubjectKeys:
                 reference.kind, reference.key, single_text=reference.single_text
             )
             now: object = final.path if not final.ambiguous else list(final.candidates)
+            if now == frozen and reference.sibling is not None and reference.sibling in creations:
+                # Frozen to the live holder its Subject item restates: the item
+                # must reuse that Subject, not create another holder of the key
+                # (the terminal moved the live Subject's key away).
+                now = creations[reference.sibling][0]
             if now != frozen:
                 changed.append(
                     {
