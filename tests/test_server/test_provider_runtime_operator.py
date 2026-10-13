@@ -16,7 +16,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-import cruxible_core.procedures.execution as execution_module
 import cruxible_core.runtime.playbill_manager as playbill_manager_module
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.acquisition_policies import (
@@ -83,13 +82,12 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
 )
 from cruxible_core.ledger.bootstrap import seeded_procedure_runtime_policy
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV5,
-    ProcedureRunAdmissionV5,
+    PreparedProcedureRunV9,
+    ProcedureRunAdmissionV9,
     procedure_admission_digest,
     procedure_line_run_id,
     procedure_semantic_replay_key_digest,
 )
-from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.providers.provider_local_runtime import (
     LocalProviderDeploymentV1,
     ProviderSpawnDeadline,
@@ -114,7 +112,6 @@ from cruxible_core.service.procedures.procedures import service_execute_direct_p
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._p2b1_support import (
     accepted_interface,
-    install_demo_classifier,
     interface_registration,
     provider_v2,
 )
@@ -127,7 +124,7 @@ from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
     _Authority,
     _Contracts,
-    _prepared_v5,
+    _prepared_acquisition_run,
 )
 from tests.test_providers.test_provider_local_driver import _fake_interpreter
 from tests.test_server.test_playbill_line_run_refusals import (
@@ -211,7 +208,7 @@ def _procedure_bound_to_provider(accepted_provider: AcceptedProvider):  # type: 
 
 
 def _complete_line_for_admission(
-    admission: ProcedureRunAdmissionV5,
+    admission: ProcedureRunAdmissionV9,
     accepted_procedure,  # type: ignore[no-untyped-def]
     *,
     accepted_provider: AcceptedProvider,
@@ -248,16 +245,16 @@ def _complete_line_for_admission(
 
 
 def _rebind_prepared_line(
-    prepared: PreparedProcedureRunV5,
+    prepared: PreparedProcedureRunV9,
     accepted_line: AcceptedLineSpec,
-) -> PreparedProcedureRunV5:
+) -> PreparedProcedureRunV9:
     plan = prepared.acquisition_plan.model_copy(
         update={"line_spec_digest": accepted_line.artifact_digest}
     )
     plan_digest = procedure_acquisition_plan_digest(plan)
     fields = {
         name: getattr(prepared.admission, name)
-        for name in ProcedureRunAdmissionV5.model_fields
+        for name in ProcedureRunAdmissionV9.model_fields
         if name != "tag"
     }
     fields.update(
@@ -269,12 +266,12 @@ def _rebind_prepared_line(
             "run_id": "RUN-" + "0" * 64,
         }
     )
-    provisional = ProcedureRunAdmissionV5.model_construct(**fields)
+    provisional = ProcedureRunAdmissionV9.model_construct(**fields)
     provisional = provisional.model_copy(
         update={"semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional)}
     )
     admission_digest = procedure_admission_digest(provisional)
-    admission = ProcedureRunAdmissionV5.model_validate(
+    admission = ProcedureRunAdmissionV9.model_validate(
         {
             **provisional.model_dump(mode="python"),
             "admission_binding_digest": admission_digest,
@@ -286,7 +283,7 @@ def _rebind_prepared_line(
             ),
         }
     )
-    return PreparedProcedureRunV5.model_validate(
+    return PreparedProcedureRunV9.model_validate(
         {
             **prepared.model_dump(mode="python"),
             "admission": admission,
@@ -429,7 +426,7 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         implementation_digest=implementation.implementation_digest,
         entrypoint=admitted_binding.entrypoint,
         input={"value": "served"},
-        input_bucket="size=small",
+        input_bucket="legacy=none",
         budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
     )
 
@@ -448,7 +445,7 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
 
     accepted_procedure = _procedure_bound_to_provider(accepted_provider)
     (state_root / "line-service").mkdir()
-    prepared, line_fixture = _prepared_v5(
+    prepared, line_fixture = _prepared_acquisition_run(
         accepted_procedure,
         state_root / "line-service",
         provider=accepted_provider,
@@ -484,16 +481,9 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
         admission=prepared.admission,
         accepted_line=accepted_line,
     )
-    assert isinstance(bound, ProcedureRunAdmissionV5)
-    prepared = PreparedProcedureRunV5.model_validate(
+    assert isinstance(bound, ProcedureRunAdmissionV9)
+    prepared = PreparedProcedureRunV9.model_validate(
         {**prepared.model_dump(mode="python"), "admission": bound}
-    )
-    classifier_registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(classifier_registry)
-    monkeypatch.setattr(
-        execution_module,
-        "PROVIDER_BUCKET_CLASSIFIER_REGISTRY",
-        classifier_registry,
     )
 
     result = service_execute_direct_procedure(
@@ -913,9 +903,8 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
     Line, evaluates its law and mandate, derives the occurrence, binds the
     Provider through the DAEMON's own runtime operator -- constructed from the
     operator-written `daemon/provider-runtime.json` in the server state root --
-    and spawns the sealed interpreter as a real child process. Only the bucket
-    classifier registry is installed (the RAT-9 allowance); nothing on the route,
-    the service, the admission, or the invoker is patched.
+    and spawns the sealed interpreter as a real child process. Nothing on the
+    route, the service, the admission, or the invoker is patched.
     """
 
     client, instance_id, reviewer_key_path = playbill_http
@@ -1078,14 +1067,6 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         pytest.fail("Line runtime setup must read only selected accepted artifacts")
 
     monkeypatch.setattr(instance, "tree_at", unexpected_tree)
-
-    classifier_registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(classifier_registry)
-    monkeypatch.setattr(
-        execution_module,
-        "PROVIDER_BUCKET_CLASSIFIER_REGISTRY",
-        classifier_registry,
-    )
 
     identity_digest = line_identity_digest(line.identity)
     response = client.post(

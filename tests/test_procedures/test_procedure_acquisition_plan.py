@@ -21,6 +21,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureSourceCaptureAssociation,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
+    procedure_provider_bindings,
 )
 from cruxible_client.contracts.provider_execution import (
     ProviderBudgetTranslation,
@@ -29,9 +30,9 @@ from cruxible_client.contracts.provider_execution import (
     VerifiedProviderBinding,
 )
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV5,
+    PreparedProcedureRunV9,
     ProcedureRunAdmissionV3,
-    ProcedureRunAdmissionV5,
+    ProcedureRunAdmissionV9,
     procedure_admission_digest,
     procedure_line_run_id,
     procedure_semantic_replay_key_digest,
@@ -52,7 +53,7 @@ from tests.test_procedures.test_procedure_execution import (
 
 def _plan_and_admission(
     tmp_path: Path,
-) -> tuple[ProcedureAcquisitionPlan, ProcedureRunAdmissionV5]:
+) -> tuple[ProcedureAcquisitionPlan, ProcedureRunAdmissionV9]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
@@ -96,9 +97,6 @@ def _plan_and_admission(
         interface_artifact_digest=classification.interface_artifact_digest,
         interface_id="demo.interface",
         interface_digest=classification.interface_digest,
-        vocabulary_digest=classification.vocabulary_digest,
-        classifier_digest=classification.classifier_digest,
-        accepted_bucket_selectors=classification.accepted_bucket_selectors,
         implementation_digest=binding.implementation_digest,
         effect_class=binding.effect_class,
         contract_input_digest=_digest("contract-in"),
@@ -126,14 +124,14 @@ def _plan_and_admission(
     fields.update(
         {
             "run_id": "RUN-" + "0" * 64,
-            "resolved_provider_bindings": v4.resolved_provider_bindings,
+            "resolved_provider_bindings": procedure_provider_bindings(plan.external_occurrences),
             "acquisition_plan_digest": procedure_acquisition_plan_digest(plan),
             "exhaust_access_binding_digest": None,
             "semantic_replay_key_digest": "sha256:" + "0" * 64,
             "admission_binding_digest": "sha256:" + "0" * 64,
         }
     )
-    provisional = ProcedureRunAdmissionV5.model_construct(**fields)
+    provisional = ProcedureRunAdmissionV9.model_construct(**fields)
     replay_key = procedure_semantic_replay_key_digest(provisional)
     provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
     admission_digest = procedure_admission_digest(provisional)
@@ -143,7 +141,7 @@ def _plan_and_admission(
         admission_binding_digest=admission_digest,
         occurrence_evaluation_time=provisional.occurrence_evaluation_time,
     )
-    admission = ProcedureRunAdmissionV5.model_validate(
+    admission = ProcedureRunAdmissionV9.model_validate(
         {
             **provisional.model_dump(mode="python"),
             "run_id": run_id,
@@ -153,7 +151,7 @@ def _plan_and_admission(
     return plan, admission
 
 
-def test_v5_semantic_key_commits_plan_digest_but_not_attempt(tmp_path: Path) -> None:
+def test_acquisition_semantic_key_commits_plan_digest_but_not_attempt(tmp_path: Path) -> None:
     _plan, admission = _plan_and_admission(tmp_path)
     baseline = admission.semantic_replay_key_digest
     changed_plan = admission.model_copy(update={"acquisition_plan_digest": _digest("changed-plan")})
@@ -183,7 +181,7 @@ def test_exhaust_carrier_presence_law_fails_closed(tmp_path: Path) -> None:
         occurrence_evaluation_time=provisional.occurrence_evaluation_time,
     )
     with pytest.raises(ValidationError, match="exhaust_binding_carrier_required"):
-        ProcedureRunAdmissionV5.model_validate(
+        ProcedureRunAdmissionV9.model_validate(
             {
                 **provisional.model_dump(mode="python"),
                 "admission_binding_digest": admission_digest,
@@ -194,7 +192,7 @@ def test_exhaust_carrier_presence_law_fails_closed(tmp_path: Path) -> None:
 
 def test_exhaust_carrier_presence_law_has_a_typed_admission_emitter(tmp_path: Path) -> None:
     _plan, admission = _plan_and_admission(tmp_path)
-    invalid = ProcedureRunAdmissionV5.model_construct(
+    invalid = ProcedureRunAdmissionV9.model_construct(
         **{
             **admission.model_dump(mode="python"),
             "exhaust_access_binding_digest": _digest("unexpected-exhaust"),
@@ -208,14 +206,14 @@ def test_exhaust_carrier_presence_law_has_a_typed_admission_emitter(tmp_path: Pa
     assert refusal.code == "exhaust_binding_carrier_required"  # type: ignore[union-attr]
 
 
-def test_prepared_v5_requires_exact_plan_and_complete_provider_coverage(tmp_path: Path) -> None:
+def test_prepared_run_requires_exact_plan_and_complete_provider_coverage(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
     direct = _prepare(accepted, fixture, _StateReader())
     plan, admission = _plan_and_admission(tmp_path / "other")
     manifest = ProcedureAdmissionMaterialManifest(members=())
 
-    prepared = PreparedProcedureRunV5(
+    prepared = PreparedProcedureRunV9(
         admission=admission,
         accepted_state_materials=direct.accepted_state_materials,
         admission_material_manifest=manifest,
@@ -238,7 +236,7 @@ def test_prepared_v5_requires_exact_plan_and_complete_provider_coverage(tmp_path
     replay_key = procedure_semantic_replay_key_digest(provisional)
     provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
     admission_digest = procedure_admission_digest(provisional)
-    empty_plan_admission = ProcedureRunAdmissionV5.model_validate(
+    empty_plan_admission = ProcedureRunAdmissionV9.model_validate(
         {
             **provisional.model_dump(mode="python"),
             "admission_binding_digest": admission_digest,
@@ -251,7 +249,7 @@ def test_prepared_v5_requires_exact_plan_and_complete_provider_coverage(tmp_path
         }
     )
     with pytest.raises(ValidationError, match="does not cover admitted Provider bindings"):
-        PreparedProcedureRunV5.model_validate(
+        PreparedProcedureRunV9.model_validate(
             {
                 **prepared.model_dump(mode="python"),
                 "admission": empty_plan_admission,
@@ -281,7 +279,7 @@ def test_prepared_v5_requires_exact_plan_and_complete_provider_coverage(tmp_path
     replay_key = procedure_semantic_replay_key_digest(provisional)
     provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
     admission_digest = procedure_admission_digest(provisional)
-    duplicate_admission = ProcedureRunAdmissionV5.model_validate(
+    duplicate_admission = ProcedureRunAdmissionV9.model_validate(
         {
             **provisional.model_dump(mode="python"),
             "admission_binding_digest": admission_digest,
@@ -294,13 +292,45 @@ def test_prepared_v5_requires_exact_plan_and_complete_provider_coverage(tmp_path
         }
     )
     with pytest.raises(ValidationError, match="does not cover admitted Provider bindings"):
-        PreparedProcedureRunV5.model_validate(
+        PreparedProcedureRunV9.model_validate(
             {
                 **prepared.model_dump(mode="python"),
                 "admission": duplicate_admission,
                 "acquisition_plan": duplicate_plan,
                 "acquisition_plan_digest": duplicate_plan_digest,
             }
+        )
+
+
+def test_prepared_run_bindings_are_exactly_the_plans_own(tmp_path: Path) -> None:
+    """A V9 binding names interface, contract digest, Provider and implementation,
+    all read off its planned occurrence, and no classification at all."""
+
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    direct = _prepare(accepted, fixture, _StateReader())
+    plan, admission = _plan_and_admission(tmp_path / "other")
+    manifest = ProcedureAdmissionMaterialManifest(members=())
+    (binding,) = admission.resolved_provider_bindings
+    assert binding.model_dump(mode="json") == {
+        "tag": "playbill-procedure-provider-binding-v3",
+        "node_id": binding.node_id,
+        "interface": {"kind": "ProviderInterface", "name": "demo.interface"},
+        "interface_digest": plan.external_occurrences[0].interface_digest,
+        "provider_artifact_digest": plan.external_occurrences[0].provider_artifact_digest,
+        "implementation_digest": plan.external_occurrences[0].implementation_digest,
+        "effect_class": plan.external_occurrences[0].effect_class,
+        "secret_binding_identity_digests": [],
+    }
+    other = binding.model_copy(update={"effect_class": "external_mutation"})
+    with pytest.raises(ValidationError, match="not the acquisition plan's own"):
+        PreparedProcedureRunV9(
+            admission=admission.model_copy(update={"resolved_provider_bindings": (other,)}),
+            accepted_state_materials=direct.accepted_state_materials,
+            admission_material_manifest=manifest,
+            admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+            acquisition_plan=plan,
+            acquisition_plan_digest=procedure_acquisition_plan_digest(plan),
         )
 
 

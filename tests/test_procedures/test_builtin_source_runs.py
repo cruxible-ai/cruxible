@@ -64,7 +64,7 @@ def _context(binding: Any, payload: dict[str, object], *, output_bytes: int = 1 
         implementation_digest=binding.implementation_digest,
         entrypoint=binding.entrypoint,
         input=payload,
-        input_bucket="content_kind=text;byte_size=tiny",
+        input_bucket="legacy=none",
         budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=5.0, output_bytes=output_bytes),
     )
 
@@ -106,6 +106,9 @@ def test_a_degraded_provider_lane_still_admits_and_runs_the_built_in(tmp_path: P
     )
     assert outcome.envelope.status == "ok"
     assert outcome.envelope.output["content"]["lines"] == ["high"]
+    # The output's bucket is the adapter's own reading of the bytes, never the
+    # context's meaningless placeholder.
+    assert outcome.envelope.output["input_bucket"] == "content_kind=text;byte_size=tiny"
     assert outcome.egress.observer_backend == "core.in-process"
     assert outcome.verified_binding == binding
     # A subprocess occurrence still refuses on the degraded lane.

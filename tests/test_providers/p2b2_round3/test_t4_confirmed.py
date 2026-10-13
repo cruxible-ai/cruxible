@@ -27,7 +27,6 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretReference,
 )
 from cruxible_core.procedures.execution import ProcedureExecutor
-from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.providers.provider_local_runtime import (
     FileProviderSecretStore,
     ProviderLocalRuntimeRefused,
@@ -40,12 +39,11 @@ from cruxible_core.providers.provider_outcomes import (
 from cruxible_core.providers.provider_process_leases import (
     ProviderProcessLeaseStore,
 )
-from tests.core_support._p2b1_support import install_demo_classifier
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
     _Invoker,
-    _prepared_v5,
+    _prepared_acquisition_run,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -189,9 +187,7 @@ def _project(root: Path, monkeypatch: pytest.MonkeyPatch, code: str):  # type: i
     accepted = _accepted_one_provider()
     workspace = root / code
     workspace.mkdir(parents=True, exist_ok=True)
-    prepared, fixture = _prepared_v5(accepted, workspace)
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
+    prepared, fixture = _prepared_acquisition_run(accepted, workspace)
     ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -200,7 +196,6 @@ def _project(root: Path, monkeypatch: pytest.MonkeyPatch, code: str):  # type: i
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=_Refusing(),
-        provider_classifier_registry=registry,
     ).execute(prepared, accepted)
     records = tuple(
         fixture.journal.all_records(
@@ -238,9 +233,7 @@ def test_a_degraded_lane_refusal_preserves_its_typed_reason_at_projection(
     accepted = _accepted_one_provider()
     workspace = short_root / "degraded"
     workspace.mkdir(parents=True)
-    prepared, fixture = _prepared_v5(accepted, workspace)
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
+    prepared, fixture = _prepared_acquisition_run(accepted, workspace)
     ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -249,7 +242,6 @@ def test_a_degraded_lane_refusal_preserves_its_typed_reason_at_projection(
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
-        provider_classifier_registry=registry,
     ).execute(prepared, accepted)
     records = tuple(
         fixture.journal.all_records(

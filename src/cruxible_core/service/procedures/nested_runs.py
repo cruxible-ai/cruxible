@@ -21,11 +21,13 @@ from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import CaptureTerminalEgressSink
 from cruxible_core.procedures.execution import (
+    NestedProcedureRunAdmission,
     ProcedureBoundaryRefused,
     ProcedureClockProtocol,
     ProcedureRunAdmissionV1,
-    ProcedureRunAdmissionV8,
     ProcedureRunResultV1,
+    nested_admission,
+    procedure_parent_binding,
 )
 from cruxible_core.procedures.inbox_delivery import InboxTerminalEgressSink
 from cruxible_core.procedures.nested import (
@@ -43,7 +45,7 @@ from cruxible_core.storage.material_reservations import (
 
 
 def retained_delegation(
-    instance: PlaybillInstance, admission: ProcedureRunAdmissionV8
+    instance: PlaybillInstance, admission: NestedProcedureRunAdmission
 ) -> ProcedureDelegation:
     """Rebuild delegation from the recorded parent call, never a caller's ancestry claim."""
     from cruxible_core.exhaust.records import parse_journal_payload
@@ -55,7 +57,9 @@ def retained_delegation(
     )
     from cruxible_core.storage.cas import BodyAccessContext
 
-    binding = admission.parent_binding
+    binding = procedure_parent_binding(admission)
+    if binding is None:
+        raise ProcedureRunRecoveryRequired("Nested recovery requires a delegation binding")
     records = _records_for_run(instance, binding.parent_run_id)
     access = BodyAccessContext(principal_id="nested-recovery", can_read_body=True)
     payloads = [
@@ -121,8 +125,9 @@ def retained_delegation(
         ParentInvocationContext(parent, accepted, node, remaining, None), child
     )
     delegation.authority(admission)
-    if isinstance(parent, ProcedureRunAdmissionV8):
-        retained_delegation(instance, parent)
+    nested_parent = nested_admission(parent)
+    if nested_parent is not None:
+        retained_delegation(instance, nested_parent)
     return delegation
 
 
@@ -164,10 +169,9 @@ class ServedNestedProcedureRunner:
             _plan_direct_external_run,
         )
 
+        parent_binding = procedure_parent_binding(admission)
         ancestors = (
-            tuple(pin.target for pin in admission.parent_binding.ancestors)
-            if isinstance(admission, ProcedureRunAdmissionV8)
-            else ()
+            () if parent_binding is None else tuple(pin.target for pin in parent_binding.ancestors)
         )
 
         def visit(

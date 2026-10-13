@@ -16,6 +16,7 @@ needs a new revision (and so a new implementation digest and genesis seed set).
 from __future__ import annotations
 
 import ast
+import base64
 import hashlib
 import json
 from importlib.resources import files
@@ -44,14 +45,18 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST,
     WORKSPACE_FILE_BUILTIN_REVISION,
     WORKSPACE_FILE_FIXTURES,
-    WorkspaceFileBucketClassifier,
     workspace_file_accepted_registration,
     workspace_file_builtin_identity,
     workspace_file_builtin_provider,
 )
 from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS, genesis_seed_files
 from cruxible_core.providers.builtin_runtime import BUILTIN_IMPLEMENTATIONS
-from cruxible_core.providers.builtin_workspace_file import WorkspaceFile, classify
+from cruxible_core.providers.builtin_workspace_file import (
+    MAX_STRUCTURED_BYTES,
+    WorkspaceFile,
+    decode_declared_bytes,
+    input_bucket_label,
+)
 from cruxible_core.providers.provider_classifiers import (
     PROVIDER_BUCKET_CLASSIFIER_REGISTRY,
     core_provider_bucket_conformance_fixtures,
@@ -94,14 +99,26 @@ def _envelope_digest(payload: object, bucket: str) -> tuple[str, dict[str, Any]]
     return "sha256:" + hashlib.sha256(raw).hexdigest(), document
 
 
+#: What core now sends as the run context's bucket. The golden digests were
+#: taken with the measured bucket in the context; the adapter derives the
+#: output's bucket from the bytes, so they reproduce under the placeholder.
+PLACEHOLDER = "legacy=none"
+
+
+def _measured(payload: object) -> str | None:
+    data = decode_declared_bytes(payload)  # type: ignore[arg-type]
+    return None if data is None else input_bucket_label(data)
+
+
 def test_the_port_reproduces_the_package_on_every_registration_fixture() -> None:
     fixtures = {fixture.fixture_id: fixture for fixture in WORKSPACE_FILE_FIXTURES}
     assert sorted(fixtures) == sorted(item["fixture_id"] for item in GOLDEN["fixtures"])
     for expected in GOLDEN["fixtures"]:
         fixture = fixtures[expected["fixture_id"]]
-        assert classify(fixture.canonical_input) == expected["input_bucket"]  # type: ignore[arg-type]
-        digest, document = _envelope_digest(fixture.canonical_input, expected["input_bucket"])
+        assert _measured(fixture.canonical_input) == expected["input_bucket"]
+        digest, document = _envelope_digest(fixture.canonical_input, PLACEHOLDER)
         assert document["status"] == "ok"
+        assert document["output"]["input_bucket"] == expected["input_bucket"]
         assert digest == expected["envelope_sha256"], expected["fixture_id"]
 
 
@@ -109,12 +126,34 @@ def test_the_port_reproduces_the_package_on_every_registration_fixture() -> None
 def test_the_port_reproduces_the_package_on_edge_and_refusal_vectors(
     vector: dict[str, Any],
 ) -> None:
-    assert classify(vector["input"]) == vector["measured_bucket"]
-    digest, document = _envelope_digest(vector["input"], vector["input_bucket"])
+    assert _measured(vector["input"]) == vector["measured_bucket"]
+    digest, document = _envelope_digest(vector["input"], PLACEHOLDER)
     assert document["status"] == vector["status"]
     if "refusal_code" in vector:
         assert document["refusal"]["code"] == vector["refusal_code"]
     assert digest == vector["envelope_sha256"]
+
+
+def test_the_built_in_refuses_more_than_one_mebibyte_typed() -> None:
+    """Admission no longer holds files above 1 MiB back; the adapter refuses them."""
+
+    for length, status in ((MAX_STRUCTURED_BYTES, "ok"), (MAX_STRUCTURED_BYTES + 1, "refused")):
+        data = b"a" * length
+        payload = {
+            "logical_source": "fixtures/large",
+            "commitment_digest": f"sha256:{'c0' * 32}",
+            "content_encoding": "base64",
+            "bytes": base64.b64encode(data).decode("ascii"),
+            "byte_length": len(data),
+            "bytes_digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
+        }
+        _digest, document = _envelope_digest(payload, PLACEHOLDER)
+        assert document["status"] == status
+    assert document["refusal"]["code"] == "provider_declined"
+    assert document["refusal"]["detail"] == {
+        "byte_length": MAX_STRUCTURED_BYTES + 1,
+        "max_bytes": MAX_STRUCTURED_BYTES,
+    }
 
 
 def test_the_behaviour_revision_and_derived_identity_are_frozen() -> None:
@@ -161,13 +200,6 @@ def test_the_registration_keeps_the_package_definition_and_fixtures_exactly() ->
         registration.classifier_digest
         in PROVIDER_BUCKET_CLASSIFIER_REGISTRY.installed_classifier_digests
     )
-
-
-def test_the_compiler_owned_classifier_agrees_with_the_adapter() -> None:
-    classifier = WorkspaceFileBucketClassifier()
-    for fixture in WORKSPACE_FILE_FIXTURES:
-        measured = classifier.classify(fixture.canonical_input, deadline=None)
-        assert measured == fixture.measured_bucket_id == classify(fixture.canonical_input)  # type: ignore[arg-type]
 
 
 def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> None:

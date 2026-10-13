@@ -1001,7 +1001,9 @@ class ProviderInvocationCaptureEvidence(_StrictCaptureModel):
     interface_digest: str
     implementation_digest: str
     materialization_digest: str
-    input_bucket: str
+    # Historical, mirrored from the invocation receipt: present only for a call
+    # admitted before core stopped classifying inputs.
+    input_bucket: str | None = Field(default=None, exclude_if=lambda value: value is None)
     invocation_receipt_digest: str
     source_read_receipt_digest: str | None = Field(
         default=None, exclude_if=lambda value: value is None

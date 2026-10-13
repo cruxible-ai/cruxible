@@ -193,10 +193,10 @@ def test_r6_regression_shape() -> None:
     assert "provider_runtime_invoker=invoker," in text
     # Real subprocess (the fake interpreter is an executable python shim).
     assert "_fake_interpreter" in text
-    # Only the classifier registry is patched: no double may stand in for the
-    # daemon-owned invoker, the direct preparation, or the served Line service.
+    # Nothing is patched: no double may stand in for the daemon-owned invoker,
+    # the direct preparation, or the served Line service.
     patches = set(re.findall(r'monkeypatch\.setattr\(\s*([\w_.]+),\s*\n?\s*"([\w_]+)"', text))
-    assert patches == {("execution_module", "PROVIDER_BUCKET_CLASSIFIER_REGISTRY")}, patches
+    assert patches == set(), patches
     assert "prepare_direct_procedure_run" not in text
     # The served Line route's own regression sits past that window; the same
     # anti-double law has to reach it or the one test proving the route is
@@ -208,10 +208,7 @@ def test_r6_regression_shape() -> None:
     # Since 27d733208 the served route also patches ``instance.tree_at`` -- but
     # only with a tripwire that fails the test if the whole accepted tree is
     # read. That polices selective reads; it stands in for nothing.
-    assert served_patches == {
-        ("execution_module", "PROVIDER_BUCKET_CLASSIFIER_REGISTRY"),
-        ("instance", "tree_at"),
-    }, served_patches
+    assert served_patches == {("instance", "tree_at")}, served_patches
     assert 'monkeypatch.setattr(instance, "tree_at", unexpected_tree)' in served
     tripwire = served[served.index("def unexpected_tree(") :]
     tripwire = tripwire[: tripwire.index("monkeypatch.setattr(instance")]

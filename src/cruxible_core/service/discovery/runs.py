@@ -222,13 +222,12 @@ def _arming_run(instance: PlaybillInstance, run_id: str, admission: object) -> s
 
     from cruxible_core.procedures.execution import (
         ProcedureRunAdmissionV2,
-        ProcedureRunAdmissionV8,
+        procedure_parent_binding,
     )
 
     current_id, current = run_id, admission
     seen = {run_id}
-    while isinstance(current, ProcedureRunAdmissionV8):
-        binding = current.parent_binding
+    while (binding := procedure_parent_binding(current)) is not None:
         if binding.parent_run_id in seen:
             return None
         seen.add(binding.parent_run_id)

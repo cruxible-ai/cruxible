@@ -47,6 +47,7 @@ from cruxible_core.procedures.egress import (
     procedure_producer_receipt_digest,
 )
 from cruxible_core.procedures.execution import (
+    ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS,
     ProcedureAdmissionBoundPayloadV5,
     parse_admission_payload,
     procedure_line_journal_stream,
@@ -427,11 +428,7 @@ class JournalProducerReceiptResolver:
                 self._produced(stored, payload)
                 continue
             if record.event_kind == "admission_bound" and isinstance(payload, dict):
-                if payload.get("tag") not in {
-                    "playbill-procedure-admission-bound-payload-v5",
-                    "playbill-procedure-admission-bound-payload-v7",
-                    "playbill-procedure-admission-bound-payload-v8",
-                }:
+                if payload.get("tag") not in ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS:
                     continue
                 try:
                     bound_payload = parse_admission_payload(payload)

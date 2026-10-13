@@ -18,9 +18,7 @@ from cruxible_core.procedures.execution import (
     ProcedureExecutor,
     prepare_direct_procedure_run,
 )
-from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._p2b1_support import install_demo_classifier
 from tests.test_procedures.test_procedure_execution import (
     NOW,
     _Authority,
@@ -35,7 +33,7 @@ from tests.test_procedures.test_procedure_execution import (
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
     _Invoker,
-    _prepared_v5,
+    _prepared_acquisition_run,
 )
 
 
@@ -210,9 +208,7 @@ def test_provider_replay_requires_every_durable_completion_via_public_executor(
     tmp_path,
 ) -> None:  # type: ignore[no-untyped-def]
     accepted = _accepted_one_provider()
-    prepared, fixture = _prepared_v5(accepted, tmp_path)
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
+    prepared, fixture = _prepared_acquisition_run(accepted, tmp_path)
     first = ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -221,7 +217,6 @@ def test_provider_replay_requires_every_durable_completion_via_public_executor(
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=_Invoker(),
-        provider_classifier_registry=registry,
     ).execute(prepared, accepted)
     assert first.status == "succeeded"
 

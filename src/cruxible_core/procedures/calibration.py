@@ -23,6 +23,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
+    ProcedureRunReceiptV7,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.settled_outcomes import (
@@ -197,6 +198,7 @@ ProcedureCalibrationRunReceiptV1 = (
     | ProcedureRunReceiptV4
     | ProcedureRunReceiptV5
     | ProcedureRunReceipt
+    | ProcedureRunReceiptV7
 )
 
 
@@ -216,6 +218,7 @@ def _public_run_receipt_digest(receipt: ProcedureCalibrationRunReceiptV1) -> str
         "playbill-procedure-run-receipt-v4": "playbill-procedure-run-receipt-v4",
         "playbill-procedure-run-receipt-v5": "playbill-procedure-run-receipt-v5",
         "playbill-procedure-run-receipt-v6": "playbill-procedure-run-receipt-v6",
+        "playbill-procedure-run-receipt-v7": "playbill-procedure-run-receipt-v7",
     }
     return typed_digest(
         Sha256Value,

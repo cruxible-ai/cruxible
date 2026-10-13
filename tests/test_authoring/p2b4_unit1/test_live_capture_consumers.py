@@ -49,13 +49,11 @@ from cruxible_core.procedures.egress import (
 )
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.proposals.proposals import AuthenticatedActor
-from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
 from tests.core_support._p2b1_support import (
     accepted_interface,
     accepted_provider,
-    install_demo_classifier,
 )
 from tests.core_support._pc_c_support import capture_contract
 from tests.core_support._support import generate_client
@@ -225,8 +223,6 @@ def run_capture_producers(
         fencing_token="writer",
         expected_head=head,
     )
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
     rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
         requested_terminal_rung=0,
@@ -248,7 +244,6 @@ def run_capture_producers(
         provider_runtime_invoker=_SourceInvoker(
             observed_at=prepared.admission.occurrence_evaluation_time
         ),
-        provider_classifier_registry=registry,
         capture_contracts={contract_digest: contract},
         acquisition_policy=policy,
         effective_rung=rung,

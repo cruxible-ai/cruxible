@@ -17,17 +17,19 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
 from cruxible_core.procedures.egress import EffectiveRungV1
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV5,
-    PreparedProcedureRunV8,
+    NestedProcedureRunAdmission,
+    PreparedProcedureRunV9,
     ProcedureParentBindingV1,
     ProcedureRunAdmissionV1,
     ProcedureRunAdmissionV2,
     ProcedureRunAdmissionV7,
-    ProcedureRunAdmissionV8,
+    ProcedureRunAdmissionV9,
     ProcedureRunResultV1,
+    nested_admission,
     procedure_admission_digest,
     procedure_direct_partition,
     procedure_line_run_id,
+    procedure_parent_binding,
     procedure_semantic_replay_key_digest,
     procedure_semantic_run_id,
 )
@@ -90,17 +92,13 @@ class ParentInvocationContext:
 
     @property
     def binding(self) -> ProcedureParentBindingV1:
-        ancestors = (
-            self.admission.parent_binding.ancestors
-            if isinstance(self.admission, ProcedureRunAdmissionV8)
-            else ()
-        )
+        grandparent = procedure_parent_binding(self.admission)
         return ProcedureParentBindingV1(
             parent_run_id=self.admission.run_id,
             parent_admission_digest=self.admission.admission_binding_digest,
             node_id=self.node.node_id,
             ancestors=(
-                *ancestors,
+                *(() if grandparent is None else grandparent.ancestors),
                 ArtifactPin(
                     role="procedure",
                     target=self.accepted.procedure.identity,
@@ -108,11 +106,7 @@ class ParentInvocationContext:
                 ),
             ),
             activation_policies=(
-                *(
-                    self.admission.parent_binding.activation_policies
-                    if isinstance(self.admission, ProcedureRunAdmissionV8)
-                    else ()
-                ),
+                *(() if grandparent is None else grandparent.activation_policies),
                 self.admission.activation_policy,
             ),
         )
@@ -139,7 +133,7 @@ class ParentInvocationContext:
             }
         )
 
-    def bind(self, prepared: PreparedProcedureRunV5) -> PreparedProcedureRunV8:
+    def bind(self, prepared: PreparedProcedureRunV9) -> PreparedProcedureRunV9:
         """Reuse the shared planner, then bind its child admission to this occurrence."""
         parent = self.admission
         fields = {
@@ -177,7 +171,7 @@ class ParentInvocationContext:
         )
         plan_digest = procedure_acquisition_plan_digest(plan)
         fields["acquisition_plan_digest"] = plan_digest
-        provisional = ProcedureRunAdmissionV8.model_construct(**fields)
+        provisional = ProcedureRunAdmissionV9.model_construct(**fields)
         replay_key = procedure_semantic_replay_key_digest(provisional)
         provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
         digest = procedure_admission_digest(provisional)
@@ -191,7 +185,7 @@ class ParentInvocationContext:
                 occurrence_evaluation_time=provisional.occurrence_evaluation_time,
             )
         )
-        admission = ProcedureRunAdmissionV8.model_validate(
+        admission = ProcedureRunAdmissionV9.model_validate(
             {
                 **provisional.model_dump(mode="python"),
                 "run_id": run_id,
@@ -199,7 +193,7 @@ class ParentInvocationContext:
                 "journal_partition_id": procedure_direct_partition(replay_key),
             }
         )
-        return PreparedProcedureRunV8.model_validate(
+        return PreparedProcedureRunV9.model_validate(
             {
                 **prepared.model_dump(mode="python", exclude={"tag", "admission"}),
                 "admission": admission,
@@ -208,7 +202,7 @@ class ParentInvocationContext:
             }
         )
 
-    def verify(self, child: ProcedureRunAdmissionV8, accepted: AcceptedProcedure) -> None:
+    def verify(self, child: NestedProcedureRunAdmission, accepted: AcceptedProcedure) -> None:
         definition = accepted.procedure.definition
         caps = constrained_caps(definition.hard_caps, self.admission.hard_caps)
         if (
@@ -254,7 +248,7 @@ class ProcedureDelegation:
     context: ParentInvocationContext
     child: AcceptedProcedure
 
-    def authority(self, admission: ProcedureRunAdmissionV8) -> ArtifactPin:
+    def authority(self, admission: NestedProcedureRunAdmission) -> ArtifactPin:
         self.context.verify(admission, self.child)
         return self.context.binding.ancestors[0]
 
@@ -263,10 +257,11 @@ def authority_procedure(
     admission: ProcedureRunAdmissionV1,
     delegation: ProcedureDelegation | None = None,
 ) -> ArtifactPin:
-    if isinstance(admission, ProcedureRunAdmissionV8):
+    nested = nested_admission(admission)
+    if nested is not None:
         if delegation is None:
             raise ExecutionError("nested terminal requires verified parent delegation")
-        return delegation.authority(admission)
+        return delegation.authority(nested)
     if delegation is not None:
         raise ExecutionError("standalone run cannot claim delegated authority")
     return ArtifactPin(

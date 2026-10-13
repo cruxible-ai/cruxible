@@ -237,6 +237,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
+    ProcedureRunReceiptV7,
     ProcedureRunReceiptWithheld,
     ProcedureSourceObservation,
     ProcedureTerminal,
@@ -1435,6 +1436,7 @@ class ProcedureRunState(BaseModel):
         | ProcedureRunReceiptV4
         | ProcedureRunReceiptV5
         | ProcedureRunReceipt
+        | ProcedureRunReceiptV7
         | ProcedureRunReceiptWithheld
         | None
     ) = None
