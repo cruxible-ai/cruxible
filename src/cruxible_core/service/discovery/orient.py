@@ -607,7 +607,7 @@ def _attention(
     caller_rung: int | None,
     surface: OrientSurface,
     caller_tools: tuple[str, ...] | None,
-    heads: ReadHeads,
+    heads: ReadHeads | None,
     provider_lane: contracts.ProviderLaneStatus | None = None,
     consumers_running: bool = False,
 ) -> tuple[OrientAttention, bool]:
@@ -964,7 +964,12 @@ def service_playbill_orient(
 
     # One set of heads for the whole read: the attention summary and the Claim
     # tally answer as of the same door, landing and re-observation positions.
-    heads = read_heads(instance, coordinate=coordinate)
+    # Heads that cannot be read (an unreadable door) leave attention to report
+    # its queue unreadable and the Claim counts to record their own positions.
+    try:
+        heads: ReadHeads | None = read_heads(instance, coordinate=coordinate)
+    except CruxibleError:
+        heads = None
     attention, upgrade = _attention(
         instance,
         coordinate=coordinate,
@@ -1052,7 +1057,7 @@ def _claim_counts(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
-    heads: ReadHeads,
+    heads: ReadHeads | None = None,
 ) -> OrientClaimCounts:
     """Every accepted Claim counted by status: from the next facts' tally.
 
@@ -1062,10 +1067,10 @@ def _claim_counts(
     overlay next's rows use. Only where next folds (the worker disabled or not
     yet run, a historical coordinate) or a slot did not resolve does the
     remembered resolution answer, and a miss derive the statuses once. Both
-    read at ``heads``, the ones orient's attention read at.
+    read at ``heads``, the ones orient's attention read at (None: recorded here).
     """
 
-    from cruxible_core.consumers.next.facts import claim_status_tally
+    from cruxible_core.consumers.next.facts import claim_status_tally, read_positions
     from cruxible_core.storage.read_positions import reading_at
 
     tally = claim_status_tally(
@@ -1073,7 +1078,7 @@ def _claim_counts(
     )
     if tally is not None:
         return OrientClaimCounts(**tally)
-    with reading_at(heads.positions):
+    with reading_at(read_positions(instance) if heads is None else heads.positions):
         return _derived_claim_counts(instance, coordinate, evaluation_time=evaluation_time)
 
 
