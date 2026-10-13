@@ -142,6 +142,24 @@ def isolate_cli_context(
         monkeypatch.delenv("CRUXIBLE_STATE_ROOT", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def isolate_daemon_checkpoint_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test inherits the daemon's quiet-period replay checkpoints.
+
+    ``run_server`` reaches ``server.app._serve``, which turns quiet checkpoints on
+    for the process-wide instance manager (a daemon summarizes an off-stride head
+    5 s after acceptances pause). Tests that drive ``run_server`` with uvicorn
+    stubbed left it on for every later test in the same xdist worker, so a
+    deferred summary could land inside another test's "a preview writes
+    nothing" window. The setting is restored after every test.
+    """
+
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+
+    manager = get_playbill_manager()
+    monkeypatch.setattr(manager, "quiet_checkpoint_seconds", manager.quiet_checkpoint_seconds)
+
+
 def test_owned_roots(base_temp: Path) -> tuple[Path, ...]:
     """The directories a test is allowed to have put a workspace binding in.
 
