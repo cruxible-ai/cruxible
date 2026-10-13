@@ -490,12 +490,25 @@ class ContentAddressedBodyStore:
         """Make ``content`` addressable under ``name`` only once it is complete.
 
         The bytes are written and fsynced under a private temporary name in the
-        shard, read back and checked against the address, and only then linked
-        to the object name. A reader, or a concurrent writer of the same body,
-        therefore never meets a partially written object: before the link the
-        name does not exist, after it the bytes are whole. ``link`` never
-        replaces an object, so a writer that loses the race verifies the
-        winner's object and reports that it published nothing.
+        shard, read back through the same descriptor and checked against the
+        address, and only then linked to the object name. A reader, or a
+        concurrent writer of the same body, therefore never meets a partially
+        written object: before the link the name does not exist, after it the
+        bytes are whole. ``link`` never replaces an object, so a writer that
+        loses the race verifies the winner's object and reports that it
+        published nothing.
+
+        The link resolves the temporary name again, so it is bound to the
+        verified inode rather than trusted: it does not follow a symlink, the
+        verified descriptor stays open until publication is confirmed (its
+        inode cannot be freed and its number reused), and afterwards the
+        object name, looked up in the held shard without following links,
+        must be that same regular inode with the size and modification time
+        that were verified. Anything else standing at the name was put there
+        by this link (the name did not exist before it, and no CAS writer
+        replaces a name), so it is withdrawn and the store refuses. The
+        private mode of the shard and temporary file narrows who could
+        substitute the temporary name; it is not what proves identity.
         """
 
         temporary = f".{name}.{uuid4().hex}.tmp"
@@ -504,7 +517,7 @@ class ContentAddressedBodyStore:
             try:
                 descriptor = os.open(
                     temporary,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                     0o600,
                     dir_fd=directory,
                 )
@@ -516,23 +529,52 @@ class ContentAddressedBodyStore:
                     view = view[written:]
                 os.fchmod(descriptor, 0o600)
                 os.fsync(descriptor)
+                chunks = []
+                offset = 0
+                while chunk := os.pread(descriptor, 1 << 20, offset):
+                    chunks.append(chunk)
+                    offset += len(chunk)
+                verified = os.fstat(descriptor)
             except OSError as exc:
                 raise CasError("CAS body could not be stored durably") from exc
-            finally:
-                if descriptor is not None:
-                    os.close(descriptor)
-            landed = _read_descriptor(temporary, dir_fd=directory)
-            if landed is None or self.digest_bytes(landed[1]).tagged != digest:
+            if (
+                not stat.S_ISREG(verified.st_mode)
+                or self.digest_bytes(b"".join(chunks)).tagged != digest
+            ):
                 raise CasError("CAS body did not land as written")
             try:
-                os.link(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+                os.link(
+                    temporary,
+                    name,
+                    src_dir_fd=directory,
+                    dst_dir_fd=directory,
+                    follow_symlinks=False,
+                )
             except FileExistsError:
                 self._verified_bytes(digest)
                 return False
             except OSError as exc:
                 raise CasError("CAS body could not be stored durably") from exc
+            try:
+                published = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                held = os.fstat(descriptor)
+            except OSError as exc:
+                raise CasError("CAS publication could not be confirmed") from exc
+            if not (
+                stat.S_ISREG(published.st_mode)
+                and (published.st_dev, published.st_ino) == (verified.st_dev, verified.st_ino)
+                and (held.st_size, held.st_mtime_ns) == (verified.st_size, verified.st_mtime_ns)
+            ):
+                try:
+                    os.unlink(name, dir_fd=directory)
+                    os.fsync(directory)
+                except OSError:
+                    pass
+                raise CasError("CAS publication did not link the verified body")
             return True
         finally:
+            if descriptor is not None:
+                os.close(descriptor)
             try:
                 os.unlink(temporary, dir_fd=directory)
             except OSError:
