@@ -776,6 +776,49 @@ def test_a_restarted_reader_carries_its_clean_checkpoint_across_history_commits(
     owner.close()
 
 
+def test_a_preview_names_the_root_so_a_later_history_commit_keeps_the_checkpoint(tmp_path):
+    """A preview's evidence store binds the root without writing; the next commit carries.
+
+    A restarted process whose first proposal access was a dry run (detached
+    reads), followed by a write whose history sync moves the shared file before
+    any proposal read, keeps its clean checkpoint (perf E3).
+    """
+
+    from cruxible_core.indexes.history.history_index import (
+        AcceptedHistoryIndex,
+        commit_working_write,
+        detached_history_reads,
+    )
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    instance._accepted_history_index.close()
+    owner = AcceptedHistoryIndex(index_path)
+    marker = (evidence.root / ".proposal-source.json").read_bytes()
+    with detached_history_reads():
+        ProposalEvidenceStore(evidence.root, index=owner.proposals, transport=instance._ledger)
+    assert (evidence.root / ".proposal-source.json").read_bytes() == marker
+    with owner._lock:
+        writer = owner._write_connection()
+        writer.execute("BEGIN IMMEDIATE")
+        before = owner._file_stamp()
+        writer.execute("CREATE TABLE IF NOT EXISTS scratch_history_commit (n INTEGER)")
+        writer.execute("DROP TABLE scratch_history_commit")
+        after = commit_working_write(writer, owner._file_stamp, before)
+        assert after != before
+        owner.proposals.database_committed(before, after)
+        writer.rollback()
+    reopened = ProposalEvidenceStore(
+        evidence.root, index=owner.proposals, transport=instance._ledger
+    )
+    assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    assert owner.proposals.reconstructions == 0
+    owner.close()
+
+
 def test_history_commits_before_the_first_proposal_read_keep_the_checkpoint(tmp_path):
     """A restart's history sync, before any proposal read, leaves the checkpoint clean (E3).
 

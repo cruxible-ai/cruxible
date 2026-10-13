@@ -325,14 +325,17 @@ class ProposalIndex:
         """
         if self._root is not None and not self._history_commits:
             return
-        # A preview writes no source checkpoint: the replay waits for a writer.
-        if history_reads_detached() or not self._lock.acquire(blocking=False):
+        if not self._lock.acquire(blocking=False):
             return
         try:
             if self._root is None:
+                # Naming the root writes nothing, so a preview may do it too.
                 self._root = root
-            # Replay, in order, the history-only commits made before this
-            # component existed; a gap (another writer) stops the carry.
+            if history_reads_detached():
+                # A preview writes no source checkpoint: the replay waits for a writer.
+                return
+            # Replay, in order, the history-only commits made before the root
+            # was known; a gap (another writer) stops the carry.
             commits = tuple(self._history_commits)
             self._history_commits.clear()
             for before, after in commits:
@@ -348,6 +351,11 @@ class ProposalIndex:
         the file it describes is exactly the file this history-only transaction
         started from, so the checkpoint still describes it afterwards.
         """
+        if self._root is None and self._stamp is None:
+            # Not yet told its evidence root: keep the commit for bind_source_root.
+            if len(self._history_commits) < 256:
+                self._history_commits.append((before, after))
+            return
         if (
             self._root is not None
             and before is not None
