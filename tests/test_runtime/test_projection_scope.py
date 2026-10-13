@@ -76,6 +76,40 @@ def test_a_handle_carrying_a_candidate_overlay_is_closed_never_reused(
         assert len(binds) == 2
 
 
+def test_a_double_close_returns_a_handle_once_and_never_to_two_holders(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-003: one checkout, one return, however often it is closed."""
+
+    head = instance.accepted_coordinate()
+    with instance.projection_scope():
+        handle = instance.bind_accepted_projection(head)
+        handle.close()
+        handle.close()
+        first = instance.bind_accepted_projection(head)
+        second = instance.bind_accepted_projection(head)
+        assert first is handle and second is not first
+        first.close()
+        second.close()
+
+
+def test_scope_exit_closes_handles_still_checked_out_and_unwinds_on_error(
+    instance: PlaybillInstance,
+) -> None:
+    head = instance.accepted_coordinate()
+    with instance.projection_scope():
+        outstanding = instance.bind_accepted_projection(head)
+        returned = instance.bind_accepted_projection(head)
+        returned.close()
+    assert outstanding._closed and returned._closed
+    assert outstanding._release is None and returned._release is None
+    with pytest.raises(RuntimeError, match="unwind"):
+        with instance.projection_scope():
+            held = instance.bind_accepted_projection(head)
+            raise RuntimeError("unwind")
+    assert held._closed and held._release is None
+
+
 def test_a_write_reads_the_same_answers_with_far_fewer_binds(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
