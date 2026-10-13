@@ -218,7 +218,7 @@ from cruxible_core.service.discovery.curation import (
     validate_playbill_curation_observe_request,
 )
 from cruxible_core.service.discovery.next import (
-    NextRequestV1,
+    NextRequest,
     service_playbill_next,
     validate_playbill_next_request,
 )
@@ -2282,7 +2282,7 @@ def _caller_authoring_refusal(instance_id: str) -> AuthoringRefusal | None:
 def playbill_next(
     instance_id: str,
     *,
-    request: NextRequestV1 | Mapping[str, object],
+    request: NextRequest | Mapping[str, object],
 ) -> contracts.NextResult:
     check_permission("cruxible_next", instance_id=instance_id)
     lane_state, lane_code, lane_detail = (

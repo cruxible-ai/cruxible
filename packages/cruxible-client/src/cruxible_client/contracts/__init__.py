@@ -1565,7 +1565,7 @@ class NextStatus(BaseModel):
 class NextResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-next-result-v1", "playbill-next-result-v2"] = "playbill-next-result-v1"
+    tag: Literal["playbill-next-result-v2"] = "playbill-next-result-v2"
     coordinate: AcceptedCoordinate
     evaluation_time: str
     observed_domains: list[
@@ -1597,7 +1597,7 @@ class NextResult(BaseModel):
     # Set only on a delta. Items are the changed rows while result_digest names
     # the complete current queue, so callers may echo it as the next cursor.
     delta_since: str | None = None
-    attestation_head_digest: str | None = None
+    attestation_head_digest: str
     removed_item_ids: list[str] = Field(
         default_factory=list,
         exclude_if=lambda value: not value,
@@ -1612,16 +1612,16 @@ class NextResult(BaseModel):
             raise ValueError("removed next item IDs must be ASCII byte-sorted and unique")
         return value
 
+    @field_validator("attestation_head_digest")
+    @classmethod
+    def _attestation_head(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
     @model_validator(mode="after")
-    def _attestation_coordinate(self) -> "NextResult":
-        if (self.tag == "playbill-next-result-v2") != (self.attestation_head_digest is not None):
-            raise ValueError("Next v2 alone requires an attestation evidence head")
-        if self.attestation_head_digest is not None:
-            Sha256Value.from_tagged(self.attestation_head_digest)
-        if self.removed_item_ids and (
-            self.tag != "playbill-next-result-v2" or not self.delta_since
-        ):
-            raise ValueError("removed next item IDs are valid only on a v2 delta")
+    def _page_shape(self) -> "NextResult":
+        if self.removed_item_ids and not self.delta_since:
+            raise ValueError("removed next item IDs are valid only on a delta")
         if len(self.items) > self.total_items:
             raise ValueError("a next page cannot carry more rows than its answer")
         if self.next_cursor is not None and len(self.items) == self.total_items:

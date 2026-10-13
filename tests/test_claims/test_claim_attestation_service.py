@@ -51,7 +51,6 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.discovery.next import (
     NextRequest,
-    NextRequestV1,
     service_playbill_next,
 )
 from cruxible_core.service.evidence.claim_attestations import (
@@ -671,7 +670,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
 
     legacy = unfolded_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             evaluation_time=RECORDED_AT,
             access_profile=access,
         ),

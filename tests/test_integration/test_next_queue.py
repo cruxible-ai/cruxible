@@ -40,7 +40,7 @@ from cruxible_core.service.discovery.next import (
     NextAccessProfileInvalid,
     NextDriftObservation,
     NextReason,
-    NextRequestV1,
+    NextRequest,
     NextSourceObservationV3,
     NextWorkspaceObservation,
     NextWorkspaceObservationInvalid,
@@ -81,7 +81,7 @@ def _access() -> CoverageAccessProfile:
 
 def test_next_is_deterministic_and_excludes_the_removed_brief_reason(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
-    request = NextRequestV1(
+    request = NextRequest(
         evaluation_time=EVALUATION_TIME,
         access_profile=_access(),
     )
@@ -111,7 +111,7 @@ def test_provider_lane_degradation_is_typed_status_with_hand_edit_repair(
     instance, _owner = seed_claims(tmp_path)
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             evaluation_time=EVALUATION_TIME,
             access_profile=_access(),
         ),
@@ -153,7 +153,7 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
         "playbill-next-test-observed-v1",
         {"citation_id": citation.citation_id},
     ).tagged
-    request = NextRequestV1(
+    request = NextRequest(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=_access(),
@@ -286,7 +286,7 @@ def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
 
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             evaluation_time=EVALUATION_TIME,
             access_profile=CoverageAccessProfile(
                 profile_id="public-next-test",
@@ -342,7 +342,7 @@ def test_backing_only_successor_keeps_edited_predecessor_span_in_drift_queue(
 
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             evaluation_time=EVALUATION_TIME,
             access_profile=_access(),
             workspace_observation=NextWorkspaceObservation(
@@ -409,7 +409,7 @@ def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path
     ):
         return service_playbill_next(
             current,
-            request=NextRequestV1(
+            request=NextRequest(
                 evaluation_time=EVALUATION_TIME,
                 access_profile=access_profile,
                 workspace_observation=NextWorkspaceObservation(
@@ -493,7 +493,7 @@ def test_malformed_capture_snapshot_never_hides_another_citations_repair(
 
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             evaluation_time=EVALUATION_TIME,
             access_profile=_access(),
             workspace_observation=NextWorkspaceObservation(
@@ -549,7 +549,7 @@ def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: P
 
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             evaluation_time=EVALUATION_TIME,
             access_profile=_access(),
         ),
@@ -597,7 +597,7 @@ def test_two_values_of_a_many_valued_predicate_are_not_a_conflict(tmp_path: Path
 
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=_access()),
+        request=NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access()),
     )
 
     assert not [item for item in result.items if item.reason == "claim_conflicted"]
@@ -626,7 +626,7 @@ def test_a_claim_not_yet_in_effect_is_not_reported_uncovered(tmp_path: Path) -> 
 
     result = service_playbill_next(
         instance,
-        request=NextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=_access()),
+        request=NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access()),
     )
 
     assert not [
@@ -661,7 +661,7 @@ def test_a_caller_without_instance_access_is_told_nothing_about_claims(tmp_path:
     def reasons(profile: CoverageAccessProfile) -> set[str]:
         result = service_playbill_next(
             instance,
-            request=NextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=profile),
+            request=NextRequest(evaluation_time=EVALUATION_TIME, access_profile=profile),
         )
         return {item.reason for item in result.items} & claim_reasons
 

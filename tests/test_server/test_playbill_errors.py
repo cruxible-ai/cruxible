@@ -206,7 +206,7 @@ def test_http_next_maps_raw_source_observation_to_typed_refusal(
     response = client.post(
         f"/api/v1/{instance_id}/next",
         json={
-            "tag": "playbill-next-request-v1",
+            "tag": "playbill-next-request-v2",
             "evaluation_time": "2026-08-26T16:00:00+00:00",
             "access_profile": {
                 "tag": "playbill-coverage-access-profile-v1",
@@ -330,12 +330,16 @@ def test_http_next_accepts_the_callers_surface_and_tools(
         },
     }
 
-    for tag in ("playbill-next-request-v1", "playbill-next-request-v2"):
-        for view in (
-            {"caller_surface": "sdk"},
-            {"caller_surface": "mcp", "caller_tools": ["cruxible_next"]},
-        ):
-            response = client.post(f"/api/v1/{instance_id}/next", json=body | {"tag": tag} | view)
-            assert response.status_code == 200, response.text
+    for view in (
+        {"caller_surface": "sdk"},
+        {"caller_surface": "mcp", "caller_tools": ["cruxible_next"]},
+    ):
+        response = client.post(f"/api/v1/{instance_id}/next", json=body | view)
+        assert response.status_code == 200, response.text
+    # One request version is served; the retired v1 tag is refused, never read as v2.
+    retired = client.post(
+        f"/api/v1/{instance_id}/next", json=body | {"tag": "playbill-next-request-v1"}
+    )
+    assert retired.status_code == 422, retired.text
     unknown = client.post(f"/api/v1/{instance_id}/next", json=body | {"caller_surface": "web"})
     assert unknown.status_code == 422, unknown.text

@@ -19,7 +19,6 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.service.discovery.next import (
     DEFAULT_EXPIRING_WITHIN_MICROSECONDS,
     NextRequest,
-    NextRequestV1,
     claim_unsure_holds,
     service_playbill_next,
     summarize_playbill_next,
@@ -60,29 +59,26 @@ def _drain(instance, at: datetime = EVALUATION_TIME) -> None:  # type: ignore[no
         WORKER.run(manager, "instance", work, now=at)
 
 
-def _stored(instance, at: datetime, version: int = 2):  # type: ignore[no-untyped-def]
+def _stored(instance, at: datetime):  # type: ignore[no-untyped-def]
     return consumer.stored_claim_queue(
         instance,
         coordinate=instance.accepted_coordinate(),
         door_head=instance.claim_attestation_evidence_store().head(),
         evaluation_time=at,
-        version=version,
     )
 
 
 def _assert_equivalent(instance, at: datetime, *, expect_stored: bool) -> None:  # type: ignore[no-untyped-def]
     claims = _all_claims(instance)
-    for version, model in ((1, NextRequestV1), (2, NextRequest)):
-        if version == 2:
-            assert (_stored(instance, at, version) is not None) == expect_stored
-        for surface, rung in ((None, None), ("sdk", 0), ("mcp", 1)):
-            request = model(evaluation_time=at, access_profile=_access(), caller_surface=surface)
-            served = service_playbill_next(instance, request=request, caller_rung=rung)
-            # Force only the queue lookup to miss; health and every other input remain identical.
-            with patch.object(consumer, "stored_claim_queue", return_value=None):
-                live = service_playbill_next(instance, request=request, caller_rung=rung)
-            assert served.model_dump_json() == live.model_dump_json()
-            assert served.items == live.items and served.result_digest == live.result_digest
+    assert (_stored(instance, at) is not None) == expect_stored
+    for surface, rung in ((None, None), ("sdk", 0), ("mcp", 1)):
+        request = NextRequest(evaluation_time=at, access_profile=_access(), caller_surface=surface)
+        served = service_playbill_next(instance, request=request, caller_rung=rung)
+        # Force only the queue lookup to miss; health and every other input remain identical.
+        with patch.object(consumer, "stored_claim_queue", return_value=None):
+            live = service_playbill_next(instance, request=request, caller_rung=rung)
+        assert served.model_dump_json() == live.model_dump_json()
+        assert served.items == live.items and served.result_digest == live.result_digest
     request = NextRequest(evaluation_time=at, access_profile=_access())
     served_summary = summarize_playbill_next(instance, request=request)
     held = claim_unsure_holds(
@@ -492,7 +488,7 @@ def test_request_observations_merge_with_stored_rows_exactly(tmp_path: Path) -> 
     instance, _owner = _instance_with_query(tmp_path)
     request = _rich_request(instance)
     _drain(instance, request.evaluation_time)
-    assert _stored(instance, request.evaluation_time, version=1) is not None
+    assert _stored(instance, request.evaluation_time) is not None
     served = service_playbill_next(instance, request=request)
     with patch.object(consumer, "stored_claim_queue", return_value=None):
         live = service_playbill_next(instance, request=request)
@@ -616,9 +612,8 @@ def test_orient_profile_reuses_inside_the_interval_and_falls_back_at_valid_until
         assert served == service_playbill_next(instance, request=edge)
 
 
-def _next_outcome(instance, version: int):  # type: ignore[no-untyped-def]
-    model = NextRequestV1 if version == 1 else NextRequest
-    request = model(evaluation_time=EVALUATION_TIME, access_profile=_access())
+def _next_outcome(instance):  # type: ignore[no-untyped-def]
+    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
     try:
         return service_playbill_next(instance, request=request).model_dump_json()
     except Exception as exc:  # noqa: BLE001 - the refusal itself is the outcome compared
@@ -645,22 +640,21 @@ def _assert_stalled_without_retry(instance) -> None:  # type: ignore[no-untyped-
     assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
 
 
-@pytest.mark.parametrize("version", (1, 2))
 @pytest.mark.parametrize("keep_mtime", (False, True), ids=("rewrite", "rewrite-keep-mtime"))
 def test_a_body_rewritten_in_place_is_never_served_from_the_stored_queue(
-    tmp_path: Path, version: int, keep_mtime: bool
+    tmp_path: Path, keep_mtime: bool
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
     _drain(instance)
-    assert _stored(instance, EVALUATION_TIME, version) is not None
+    assert _stored(instance, EVALUATION_TIME) is not None
 
     _rewrite_backing(instance, keep_mtime=keep_mtime)
 
     # Served and live agree: both refuse the corrupt backing.
-    assert _stored(instance, EVALUATION_TIME, version) is None
-    served = _next_outcome(instance, version)
+    assert _stored(instance, EVALUATION_TIME) is None
+    served = _next_outcome(instance)
     with patch.object(consumer, "stored_claim_queue", return_value=None):
-        assert served == _next_outcome(instance, version)
+        assert served == _next_outcome(instance)
     assert served[0] == "CasError"
 
     # Matching withdraws the queue and asks for one rebuild; a rebuild that fails
@@ -670,11 +664,10 @@ def test_a_body_rewritten_in_place_is_never_served_from_the_stored_queue(
     with pytest.raises(Exception, match="CAS object bytes"):
         WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
     _assert_stalled_without_retry(instance)
-    assert _stored(instance, EVALUATION_TIME, version) is None
+    assert _stored(instance, EVALUATION_TIME) is None
 
 
-@pytest.mark.parametrize("version", (1, 2))
-def test_a_body_rewritten_during_a_fold_is_not_published(tmp_path: Path, version: int) -> None:
+def test_a_body_rewritten_during_a_fold_is_not_published(tmp_path: Path) -> None:
     from cruxible_core.service.discovery import next as next_module
 
     instance, _owner = seed_claims(tmp_path)
@@ -687,17 +680,17 @@ def test_a_body_rewritten_during_a_fold_is_not_published(tmp_path: Path, version
         nonlocal calls
         snapshot = original(*args, **kwargs)
         calls += 1
-        if calls == 2:
-            # Both wire versions are folded; the body changes before the publish.
+        if calls == 1:
+            # The body changes after the fold, before the publish.
             _rewrite_backing(instance, keep_mtime=True)
         return snapshot
 
     with patch.object(next_module, "build_stored_claim_queue", rewritten):
         WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
-    assert _stored(instance, EVALUATION_TIME, version) is None
-    served = _next_outcome(instance, version)
+    assert _stored(instance, EVALUATION_TIME) is None
+    served = _next_outcome(instance)
     with patch.object(consumer, "stored_claim_queue", return_value=None):
-        assert served == _next_outcome(instance, version)
+        assert served == _next_outcome(instance)
     assert served[0] == "CasError"
     (work,) = WORKER.due(instance, now=EVALUATION_TIME)
     with pytest.raises(Exception, match="CAS object bytes"):
@@ -779,41 +772,36 @@ def _retired_dependency(derivation):  # type: ignore[no-untyped-def]
 _DERIVED_AT = datetime.fromisoformat("2026-10-02T00:00:00+00:00")
 
 
-def _derived_outcome(instance, version: int):  # type: ignore[no-untyped-def]
-    model = NextRequestV1 if version == 1 else NextRequest
-    request = model(evaluation_time=_DERIVED_AT, access_profile=_access())
+def _derived_outcome(instance):  # type: ignore[no-untyped-def]
+    request = NextRequest(evaluation_time=_DERIVED_AT, access_profile=_access())
     try:
         return service_playbill_next(instance, request=request).model_dump_json()
     except Exception as exc:  # noqa: BLE001 - the refusal itself is the outcome compared
         return (type(exc).__name__, str(exc))
 
 
-@pytest.mark.parametrize("version", (1, 2))
 def test_a_retired_dependency_capture_rewritten_after_publish_is_not_served(
     world,  # noqa: F811
-    version: int,
 ) -> None:
     from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
 
     capture = _retired_dependency(world)
     instance = world.instance
     _drain(instance, _DERIVED_AT)
-    assert _stored(instance, _DERIVED_AT, version) is not None
+    assert _stored(instance, _DERIVED_AT) is not None
     # Read by the dependency facts of a retired Claim, not by live resolution.
     assert capture in _recorded_bodies(instance)
 
     _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=True)
-    assert _stored(instance, _DERIVED_AT, version) is None
-    served = _derived_outcome(instance, version)
+    assert _stored(instance, _DERIVED_AT) is None
+    served = _derived_outcome(instance)
     with patch.object(consumer, "stored_claim_queue", return_value=None):
-        assert served == _derived_outcome(instance, version)
+        assert served == _derived_outcome(instance)
     assert served[0] == "CasError"
 
 
-@pytest.mark.parametrize("version", (1, 2))
 def test_a_retired_dependency_capture_rewritten_during_a_fold_is_not_published(
     world,  # noqa: F811
-    version: int,
 ) -> None:
     from cruxible_core.service.discovery import next as next_module
     from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
@@ -827,17 +815,17 @@ def test_a_retired_dependency_capture_rewritten_during_a_fold_is_not_published(
         nonlocal calls
         snapshot = original(*args, **kwargs)
         calls += 1
-        if calls == 2:
+        if calls == 1:
             _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=True)
         return snapshot
 
     with patch.object(next_module, "build_stored_claim_queue", rewritten):
         _drain(instance, _DERIVED_AT)
     assert calls == 2
-    assert _stored(instance, _DERIVED_AT, version) is None
-    served = _derived_outcome(instance, version)
+    assert _stored(instance, _DERIVED_AT) is None
+    served = _derived_outcome(instance)
     with patch.object(consumer, "stored_claim_queue", return_value=None):
-        assert served == _derived_outcome(instance, version)
+        assert served == _derived_outcome(instance)
 
 
 def test_a_historical_admission_account_capture_is_in_the_observed_set(tmp_path: Path) -> None:

@@ -155,7 +155,6 @@ from cruxible_core.service.proposals.publications import (
 from cruxible_core.storage.cas import BodyAccessContext
 
 NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
-NEXT_RESULT_DIGEST_DOMAIN = "playbill-next-result-v1"
 NEXT_RESULT_V2_DIGEST_DOMAIN = "playbill-next-result-v2"
 DEFAULT_EXPIRING_WITHIN_MICROSECONDS = 604_800_000_000
 MAX_DEPENDENCY_LINEAGE_NODES = 4096
@@ -476,8 +475,8 @@ class NextWorkspaceObservation(_StrictNextModel):
         return self
 
 
-class NextRequestV1(_StrictNextModel):
-    tag: Literal["playbill-next-request-v1"] = "playbill-next-request-v1"
+class NextRequest(_StrictNextModel):
+    tag: Literal["playbill-next-request-v2"] = "playbill-next-request-v2"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime
     access_profile: CoverageAccessProfile
@@ -508,16 +507,12 @@ class NextRequestV1(_StrictNextModel):
     caller_tools: tuple[str, ...] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    at_attestation_head_digest: str | None = None
 
     @field_validator("evaluation_time")
     @classmethod
     def _time(cls, value: datetime) -> datetime:
         return ensure_utc(value)
-
-
-class NextRequest(NextRequestV1):
-    tag: Literal["playbill-next-request-v2"] = "playbill-next-request-v2"  # type: ignore[assignment]
-    at_attestation_head_digest: str | None = None
 
     @field_validator("at_attestation_head_digest")
     @classmethod
@@ -527,17 +522,13 @@ class NextRequest(NextRequestV1):
         return value
 
 
-PlaybillNextRequestAny: TypeAlias = NextRequestV1 | NextRequest
-
-
 def validate_playbill_next_request(
-    value: PlaybillNextRequestAny | Mapping[str, object],
-) -> PlaybillNextRequestAny:
-    if isinstance(value, (NextRequestV1, NextRequest)):
+    value: NextRequest | Mapping[str, object],
+) -> NextRequest:
+    if isinstance(value, NextRequest):
         return value
     try:
-        model = NextRequest if value.get("tag") == "playbill-next-request-v2" else NextRequestV1
-        return model.model_validate(value)
+        return NextRequest.model_validate(value)
     except ValidationError as exc:
         roots = {str(item["loc"][0]) for item in exc.errors() if item["loc"]}
         if "access_profile" in roots:
@@ -791,8 +782,8 @@ class PlaybillNextStatusV1(_StrictNextModel):
         return self
 
 
-class PlaybillNextResultV1(_StrictNextModel):
-    tag: Literal["playbill-next-result-v1"] = "playbill-next-result-v1"
+class PlaybillNextResultV2(_StrictNextModel):
+    tag: Literal["playbill-next-result-v2"] = "playbill-next-result-v2"
     coordinate: AcceptedCoordinate
     evaluation_time: datetime
     observed_domains: tuple[NextDomain, ...]
@@ -811,6 +802,11 @@ class PlaybillNextResultV1(_StrictNextModel):
     # current whole-queue cursor. The server remembers that full queue so the
     # digest remains usable on the next call.
     delta_since: str | None = None
+    attestation_head_digest: str
+    removed_item_ids: tuple[str, ...] = Field(
+        default_factory=tuple,
+        exclude_if=lambda value: not value,
+    )
 
     @field_validator("evaluation_time")
     @classmethod
@@ -822,37 +818,6 @@ class PlaybillNextResultV1(_StrictNextModel):
     def _digest(cls, value: str) -> str:
         Sha256Value.from_tagged(value)
         return value
-
-    @model_validator(mode="after")
-    def _shape(self) -> "PlaybillNextResultV1":
-        if set(self.observed_domains).intersection(self.unobserved_domains):
-            raise ValueError("next observed and unobserved domains overlap")
-        if set((*self.observed_domains, *self.unobserved_domains)) != set(_ALL_DOMAINS):
-            raise ValueError("next result must account for every observation domain")
-        if self.items != tuple(sorted(self.items, key=_item_sort_key)):
-            raise ValueError("next items do not follow the deterministic order")
-        if len(self.items) > self.total_items:
-            raise ValueError("a next page cannot carry more rows than its answer")
-        if self.next_cursor is not None and len(self.items) == self.total_items:
-            raise ValueError("a next answer carried whole has no further page")
-        if self.whole_queue and self.result_digest != playbill_next_result_digest(self):
-            raise ValueError("next result digest does not reproduce")
-        return self
-
-    @property
-    def whole_queue(self) -> bool:
-        """Whether `items` is the entire queue the digest names: no delta, no paging."""
-
-        return self.delta_since is None and len(self.items) == self.total_items
-
-
-class PlaybillNextResultV2(PlaybillNextResultV1):
-    tag: Literal["playbill-next-result-v2"] = "playbill-next-result-v2"  # type: ignore[assignment]
-    attestation_head_digest: str
-    removed_item_ids: tuple[str, ...] = Field(
-        default_factory=tuple,
-        exclude_if=lambda value: not value,
-    )
 
     @field_validator("attestation_head_digest")
     @classmethod
@@ -870,15 +835,31 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
         return value
 
     @model_validator(mode="after")
-    def _v2_digest(self) -> "PlaybillNextResultV2":
+    def _shape(self) -> "PlaybillNextResultV2":
+        if set(self.observed_domains).intersection(self.unobserved_domains):
+            raise ValueError("next observed and unobserved domains overlap")
+        if set((*self.observed_domains, *self.unobserved_domains)) != set(_ALL_DOMAINS):
+            raise ValueError("next result must account for every observation domain")
+        if self.items != tuple(sorted(self.items, key=_item_sort_key)):
+            raise ValueError("next items do not follow the deterministic order")
+        if len(self.items) > self.total_items:
+            raise ValueError("a next page cannot carry more rows than its answer")
+        if self.next_cursor is not None and len(self.items) == self.total_items:
+            raise ValueError("a next answer carried whole has no further page")
+        if self.whole_queue and self.result_digest != playbill_next_result_digest(self):
+            raise ValueError("next result digest does not reproduce")
         if self.removed_item_ids and self.delta_since is None:
             raise ValueError("removed next item IDs are valid only on a delta")
         carried_ids = frozenset(item.item_id for item in self.items)
         if not set(self.removed_item_ids).issubset(carried_ids):
             raise ValueError("removed next item IDs must name carried delta rows")
-        if self.whole_queue and self.result_digest != playbill_next_result_digest(self):
-            raise ValueError("next v2 result digest does not reproduce")
         return self
+
+    @property
+    def whole_queue(self) -> bool:
+        """Whether `items` is the entire queue the digest names: no delta, no paging."""
+
+        return self.delta_since is None and len(self.items) == self.total_items
 
 
 _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
@@ -2071,14 +2052,13 @@ def build_stored_claim_queue(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    attestation_head: str | None,
+    attestation_head: str,
     evaluation_time: datetime,
 ) -> _StoredClaimQueue:
     """Materialize only Claim rows and hold coverage, before caller presentation.
 
     Each family contributes its comparisons to the invariance interval. Hold
     coverage is fixed on that interval too, so serving it needs no history reads.
-    A V1 queue has no door observations; the worker retains both wire versions.
     """
 
     boundaries: set[datetime] = set()
@@ -2095,7 +2075,7 @@ def build_stored_claim_queue(
         time_boundaries=boundaries,
     )
     store = instance.claim_attestation_evidence_store()
-    events = () if attestation_head is None else store.fold_events(at_head=attestation_head)
+    events = store.fold_events(at_head=attestation_head)
     rows = _claim_rows(
         instance,
         coordinate=coordinate,
@@ -2113,9 +2093,7 @@ def build_stored_claim_queue(
         coordinate=coordinate,
         claims=claims,
         door_events=events,
-        door_history=None
-        if attestation_head is None
-        else lambda: store.events(at_head=attestation_head),
+        door_history=lambda: store.events(at_head=attestation_head),
         evaluation_time=evaluation_time,
         time_boundaries=boundaries,
     )
@@ -2235,7 +2213,7 @@ def claim_unsure_holds(
     from cruxible_core.consumers.next.queue import stored_claim_queue
 
     stored = stored_claim_queue(
-        instance, coordinate=coordinate, door_head=head, evaluation_time=evaluation_time, version=2
+        instance, coordinate=coordinate, door_head=head, evaluation_time=evaluation_time
     )
     if stored is not None:
         return stored.held_claims & {claim.identity.qualified for claim in live}
@@ -2245,7 +2223,7 @@ def claim_unsure_holds(
         coordinate=coordinate,
         claims=live,
         door_events=door_events,
-        door_history=None if head is None else (lambda: store.events(at_head=head)),
+        door_history=lambda: store.events(at_head=head),
         evaluation_time=evaluation_time,
     )
     if not holds:
@@ -2290,21 +2268,15 @@ def _item_sort_key(item: PlaybillNextItemV1) -> tuple[int, bytes, bytes, bytes]:
     )
 
 
-def playbill_next_result_digest(result: PlaybillNextResultV1 | PlaybillNextResultV2) -> str:
+def playbill_next_result_digest(result: PlaybillNextResultV2) -> str:
     payload = result.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("result_digest")
     payload.pop("total_items")
     payload.pop("next_cursor")
-    domain = (
-        NEXT_RESULT_V2_DIGEST_DOMAIN
-        if isinstance(result, PlaybillNextResultV2)
-        else NEXT_RESULT_DIGEST_DOMAIN
-    )
-    if isinstance(result, PlaybillNextResultV2):
-        payload.pop("delta_since")
-        payload.pop("removed_item_ids", None)
-    return typed_digest(Sha256Value, domain, payload).tagged
+    payload.pop("delta_since")
+    payload.pop("removed_item_ids", None)
+    return typed_digest(Sha256Value, NEXT_RESULT_V2_DIGEST_DOMAIN, payload).tagged
 
 
 def _resolve_coordinate(
@@ -5566,7 +5538,7 @@ def _caller_queue(
 @dataclass(frozen=True)
 class _NextQueue:
     coordinate: AcceptedProjectionCoordinate
-    attestation_head: str | None
+    attestation_head: str
     observed: tuple[NextDomain, ...]
     unobserved: tuple[NextDomain, ...]
     consumer_healths: tuple[ConsumerHealth, ...]
@@ -5578,7 +5550,7 @@ class _NextQueue:
 def _next_queue(
     instance: PlaybillInstance,
     *,
-    request: PlaybillNextRequestAny,
+    request: NextRequest,
     caller_principal_id: str | None,
     caller_rung: int | None,
     read_context: ClaimVerdictReadContext | None = None,
@@ -5588,12 +5560,9 @@ def _next_queue(
 
     coordinate = _resolve_coordinate(instance, request.at)
     public_coordinate = AcceptedCoordinate.from_internal(coordinate)
-    attestation_head: str | None = None
-    door_events: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...] = ()
-    if isinstance(request, NextRequest):
-        store = instance.claim_attestation_evidence_store()
-        attestation_head = request.at_attestation_head_digest or store.head()
-        door_events = store.fold_events(at_head=attestation_head)
+    store = instance.claim_attestation_evidence_store()
+    attestation_head = request.at_attestation_head_digest or store.head()
+    door_events = store.fold_events(at_head=attestation_head)
     from cruxible_core.consumers.next.queue import stored_claim_queue
 
     stored = None
@@ -5604,9 +5573,8 @@ def _next_queue(
         stored = stored_claim_queue(
             instance,
             coordinate=coordinate,
-            door_head=attestation_head or instance.claim_attestation_evidence_store().head(),
+            door_head=attestation_head,
             evaluation_time=request.evaluation_time,
-            version=2 if isinstance(request, NextRequest) else 1,
         )
     # One request evaluates a Claim's verdict at exactly one coordinate and one
     # evaluation time, so the folds that need it share the result instead of
@@ -5761,13 +5729,7 @@ def _next_queue(
             coordinate=coordinate,
             claims=parsed_claims or (),
             door_events=door_events,
-            door_history=(
-                None
-                if attestation_head is None
-                else lambda: instance.claim_attestation_evidence_store().events(
-                    at_head=attestation_head
-                )
-            ),
+            door_history=lambda: store.events(at_head=attestation_head),
             evaluation_time=request.evaluation_time,
         )
         if (stored is not None or parsed_claims is not None)
@@ -5834,13 +5796,13 @@ def summarize_playbill_next(
 def service_playbill_next(
     instance: PlaybillInstance,
     *,
-    request: PlaybillNextRequestAny,
+    request: NextRequest,
     provider_lane: ProviderLaneStatus | None = None,
     consumers_running: bool = False,
     caller_principal_id: str | None = None,
     caller_rung: int | None = None,
     caller_authoring_refusal: AuthoringRefusal | None = None,
-) -> PlaybillNextResultV1 | PlaybillNextResultV2:
+) -> PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue.
 
     `caller_principal_id` is the daemon's authenticated caller, passed beside
@@ -5957,21 +5919,15 @@ def service_playbill_next(
         "status": status,
         "items": items,
         "total_items": len(items),
+        "attestation_head_digest": attestation_head,
     }
-    result_model: type[PlaybillNextResultV1] | type[PlaybillNextResultV2]
-    if isinstance(request, NextRequest):
-        assert attestation_head is not None
-        result_model = PlaybillNextResultV2
-        values["attestation_head_digest"] = attestation_head
-    else:
-        result_model = PlaybillNextResultV1
-    provisional = result_model.model_construct(
+    provisional = PlaybillNextResultV2.model_construct(
         _fields_set=None,
         result_digest="sha256:" + "0" * 64,
         **values,
     )
     result_digest = playbill_next_result_digest(provisional)
-    full = result_model.model_validate({**values, "result_digest": result_digest})
+    full = PlaybillNextResultV2.model_validate({**values, "result_digest": result_digest})
     scope = _queue_scope(
         instance,
         request,
@@ -6002,7 +5958,7 @@ _QUEUE_MEMO_LOCK = RLock()
 
 def _queue_scope(
     instance: PlaybillInstance,
-    request: PlaybillNextRequestAny,
+    request: NextRequest,
     *,
     caller_principal_id: str | None,
     caller_rung: int | None = None,
@@ -6038,11 +5994,11 @@ def _remember_queue(
 
 
 def _delta_of(
-    full: PlaybillNextResultV1 | PlaybillNextResultV2,
+    full: PlaybillNextResultV2,
     *,
     since: str,
     scope: str,
-) -> PlaybillNextResultV1 | PlaybillNextResultV2:
+) -> PlaybillNextResultV2:
     """Return the reproducible symmetric difference from a remembered queue."""
 
     with _QUEUE_MEMO_LOCK:
@@ -6066,16 +6022,16 @@ def _delta_of(
     # request idempotent and prevents a subset from overwriting the full queue
     # in the per-process memo (delta_since is intentionally outside v2's
     # accepted-state digest preimage).
-    update: dict[str, object] = {
-        "items": changed,
-        "total_items": len(changed),
-        "delta_since": since,
-    }
-    if isinstance(full, PlaybillNextResultV2):
-        update["removed_item_ids"] = tuple(
-            sorted(previous_ids - current_ids, key=lambda item: item.encode("ascii"))
-        )
-    return full.model_copy(update=update)
+    return full.model_copy(
+        update={
+            "items": changed,
+            "total_items": len(changed),
+            "delta_since": since,
+            "removed_item_ids": tuple(
+                sorted(previous_ids - current_ids, key=lambda item: item.encode("ascii"))
+            ),
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -6085,7 +6041,7 @@ class _Continuation:
     result_digest: str
     evaluation_time: datetime
     at: AcceptedCoordinate
-    attestation_head_digest: str | None
+    attestation_head_digest: str
     delta_since: str | None
     offset: int
 
@@ -6096,18 +6052,14 @@ def _cursor_mismatch(detail: str) -> NextCursorMismatch:
     )
 
 
-def _cursor(answer: PlaybillNextResultV1 | PlaybillNextResultV2, *, offset: int) -> str:
+def _cursor(answer: PlaybillNextResultV2, *, offset: int) -> str:
     return base64.urlsafe_b64encode(
         canonical_json(
             {
                 "result_digest": answer.result_digest,
                 "evaluation_time": format_datetime(answer.evaluation_time),
                 "at": answer.coordinate.model_dump(mode="json"),
-                "attestation_head_digest": (
-                    answer.attestation_head_digest
-                    if isinstance(answer, PlaybillNextResultV2)
-                    else None
-                ),
+                "attestation_head_digest": answer.attestation_head_digest,
                 "delta_since": answer.delta_since,
                 "offset": offset,
             }
@@ -6126,7 +6078,11 @@ def _continuation_of(cursor: str) -> _Continuation:
         offset = payload["offset"]
         raw_time = payload["evaluation_time"]
         # A decoded cursor is caller input: every field is typed before use.
-        if not isinstance(result_digest, str) or not isinstance(raw_time, str):
+        if (
+            not isinstance(result_digest, str)
+            or not isinstance(head, str)
+            or not isinstance(raw_time, str)
+        ):
             raise ValueError("cursor fields are malformed")
         for digest in (result_digest, head, since):
             if digest is not None:
@@ -6155,31 +6111,27 @@ def _continuation_of(cursor: str) -> _Continuation:
 
 
 def _continued(
-    request: PlaybillNextRequestAny,
+    request: NextRequest,
     continuation: _Continuation,
-) -> PlaybillNextRequestAny:
+) -> NextRequest:
     """Re-read exactly the answer the cursor's first page was answered from."""
 
-    update: dict[str, object] = {
-        "at": continuation.at,
-        "evaluation_time": continuation.evaluation_time,
-        "since_result_digest": continuation.delta_since,
-    }
-    if isinstance(request, NextRequest):
-        if continuation.attestation_head_digest is None:
-            raise _cursor_mismatch("the cursor continues a v1 queue")
-        update["at_attestation_head_digest"] = continuation.attestation_head_digest
-    elif continuation.attestation_head_digest is not None:
-        raise _cursor_mismatch("the cursor continues a v2 queue")
-    return request.model_copy(update=update)
+    return request.model_copy(
+        update={
+            "at": continuation.at,
+            "evaluation_time": continuation.evaluation_time,
+            "since_result_digest": continuation.delta_since,
+            "at_attestation_head_digest": continuation.attestation_head_digest,
+        }
+    )
 
 
 def _page_of(
-    answer: PlaybillNextResultV1 | PlaybillNextResultV2,
+    answer: PlaybillNextResultV2,
     *,
     limit: int,
     continuation: _Continuation | None,
-) -> PlaybillNextResultV1 | PlaybillNextResultV2:
+) -> PlaybillNextResultV2:
     """Return one page of the answer, refusing a cursor minted for another one.
 
     The cursor's pins re-read the same queue unless accepted state, the
@@ -6205,7 +6157,7 @@ def _page_of(
         "total_items": len(answer.items),
         "next_cursor": None if end >= len(answer.items) else _cursor(answer, offset=end),
     }
-    if isinstance(answer, PlaybillNextResultV2) and answer.removed_item_ids:
+    if answer.removed_item_ids:
         carried = frozenset(item.item_id for item in rows)
         update["removed_item_ids"] = tuple(
             item_id for item_id in answer.removed_item_ids if item_id in carried
@@ -6217,7 +6169,6 @@ __all__ = [
     "DEFAULT_EXPIRING_WITHIN_MICROSECONDS",
     "claim_unsure_holds",
     "NEXT_ITEM_ID_DOMAIN",
-    "NEXT_RESULT_DIGEST_DOMAIN",
     "NEXT_RESULT_V2_DIGEST_DOMAIN",
     "NextAccessProfileInvalid",
     "NextAcceptedStateInvalid",
@@ -6225,9 +6176,7 @@ __all__ = [
     "NextCursorMismatch",
     "NextDriftObservation",
     "PlaybillNextItemV1",
-    "NextRequestV1",
     "NextRequest",
-    "PlaybillNextResultV1",
     "PlaybillNextResultV2",
     "NextSourceObservationV3",
     "NextSourceObservation",

@@ -22,7 +22,7 @@ from cruxible_core.cli.commands.playbill import _NEXT_STATUS_ATTENTION
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE
 from cruxible_core.service.discovery.next import (
-    NextRequestV1,
+    NextRequest,
     NextWorkspaceObservation,
     service_playbill_next,
 )
@@ -218,7 +218,7 @@ def test_a_procedure_catalog_is_checked_only_where_the_workspace_asks_for_one(
     def status(observation):  # type: ignore[no-untyped-def]
         return _status(
             instance,
-            NextRequestV1(
+            NextRequest(
                 evaluation_time=EVALUATION_TIME,
                 access_profile=_access(),
                 workspace_observation=observation,
@@ -384,7 +384,7 @@ def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path:
     assert due.line_dispatch.repair is not None
     assert due.line_dispatch.repair.command == f"cruxible line dispatch {identity}"
     assert _attention(due) == (("line_dispatch", due.line_dispatch),)
-    hidden = NextRequestV1(
+    hidden = NextRequest(
         evaluation_time=now,
         access_profile=_access().model_copy(update={"permitted_access_classes": ("public",)}),
     )
@@ -502,7 +502,7 @@ def test_worker_findings_report_how_current_they_are(
         {"kind": "next", "state": "disabled"}
     ]
 
-    hidden = NextRequestV1(
+    hidden = NextRequest(
         evaluation_time=late,
         access_profile=_access().model_copy(update={"permitted_access_classes": ("public",)}),
     )

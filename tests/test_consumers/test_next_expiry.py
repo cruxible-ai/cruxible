@@ -58,9 +58,7 @@ def test_expiry_fire_rebuilds_at_its_recorded_time_and_serving_resumes(tmp_path:
         NEXT_QUEUE.run(
             SimpleNamespace(get=lambda _id: instance), "inst", work, now=edge + timedelta(days=100)
         )
-        assert [call.kwargs["evaluation_time"] for call in fold.call_args_list] == [
-            fire.fired_at
-        ] * 2
+        assert [call.kwargs["evaluation_time"] for call in fold.call_args_list] == [fire.fired_at]
     assert _inputs(instance) == before and _stored(instance, edge) is not None
     assert not _queue_work(instance)
     with patch.object(next_module, "_claim_rows", side_effect=AssertionError("live fold")):
@@ -174,7 +172,7 @@ def test_a_queue_is_not_published_when_its_deadline_cannot_be_armed(tmp_path: Pa
     assert not _queue_work(instance)
 
 
-def test_the_earliest_wire_version_bound_arms_the_deadline(tmp_path: Path) -> None:
+def test_the_published_queue_bound_arms_the_deadline(tmp_path: Path) -> None:
     from cruxible_client.contracts.temporal import format_datetime
 
     instance, _owner = _freshness_world(tmp_path)
@@ -183,14 +181,12 @@ def test_the_earliest_wire_version_bound_arms_the_deadline(tmp_path: Path) -> No
     build = next_module.build_stored_claim_queue
     earlier = AT + timedelta(seconds=1)
 
-    def narrower_v1(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def narrower(*args, **kwargs):  # type: ignore[no-untyped-def]
         snapshot = build(*args, **kwargs)
         assert snapshot.valid_until is not None and earlier < snapshot.valid_until
-        if kwargs["attestation_head"] is None:
-            return snapshot.model_copy(update={"valid_until": earlier})
-        return snapshot
+        return snapshot.model_copy(update={"valid_until": earlier})
 
-    with patch.object(next_module, "build_stored_claim_queue", side_effect=narrower_v1):
+    with patch.object(next_module, "build_stored_claim_queue", side_effect=narrower):
         NEXT_QUEUE.run(SimpleNamespace(get=lambda _id: instance), "inst", work, now=AT)
     with sqlite3.connect(journal_path(instance)) as connection:
         assert connection.execute(

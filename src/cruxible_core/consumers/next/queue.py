@@ -53,7 +53,7 @@ CREATE TABLE progress (
  target_coordinate TEXT NOT NULL, target_door TEXT NOT NULL, target_fingerprint TEXT,
  target_expire INTEGER NOT NULL DEFAULT 0, expire INTEGER NOT NULL DEFAULT 0,
  coordinate TEXT, door TEXT, generation INTEGER NOT NULL DEFAULT 0,
- checked_at TEXT, input_fingerprint TEXT, bodies TEXT, v1 TEXT, v2 TEXT,
+ checked_at TEXT, input_fingerprint TEXT, bodies TEXT, v2 TEXT,
  failed_coordinate TEXT, failed_door TEXT, failed_fingerprint TEXT, failed_expire INTEGER,
  failed_bodies TEXT,
  last_error TEXT, last_error_at TEXT
@@ -82,7 +82,6 @@ def stored_claim_queue(
     coordinate: AcceptedProjectionCoordinate,
     door_head: str,
     evaluation_time: datetime,
-    version: int,
 ) -> _StoredClaimQueue | None:
     """Read only a matching current-head projection; a miss does no background work."""
 
@@ -94,7 +93,7 @@ def stored_claim_queue(
         if connection is None:
             return None
         row = connection.execute(
-            "SELECT coordinate,door,input_fingerprint,expire,bodies,v1,v2 FROM progress"
+            "SELECT coordinate,door,input_fingerprint,expire,bodies,v2 FROM progress"
         ).fetchone()
     if row is None or row[0] != AcceptedCoordinate.from_internal(coordinate).model_dump_json():
         return None
@@ -102,7 +101,7 @@ def stored_claim_queue(
         return None
     if row[3] != latest_sequence(instance, action="next.expire"):
         return None
-    payload = row[5 if version == 1 else 6]
+    payload = row[5]
     if payload is None or row[4] is None or not _bodies_hold(instance, row[4]):
         return None
     stored = _StoredClaimQueue.model_validate_json(payload)
@@ -203,19 +202,10 @@ class ClaimQueuePart:
                     instance, after=work.item[3] - 1, action="next.expire", limit=1
                 )
                 evaluated_at = event.fired_at
-            # Both wire versions are served. V1 ignores door observations, so
-            # keeping both ready avoids read-triggered work or a full live fold.
-            # Their resolution derivation shares the existing verdict memo.
-            # Every CAS object either fold reads or checks is observed, whichever
+            # Every CAS object the fold reads or checks is observed, whichever
             # row family reads it.
             with observe_bodies() as observation:
                 try:
-                    v1 = build_stored_claim_queue(
-                        instance,
-                        coordinate=coordinate,
-                        attestation_head=None,
-                        evaluation_time=evaluated_at,
-                    )
                     v2 = build_stored_claim_queue(
                         instance,
                         coordinate=coordinate,
@@ -236,18 +226,17 @@ class ClaimQueuePart:
             bodies = observed if observation.complete else None
             with instance.accepted_history_reader(at=public) as history:
                 generation = history.sequence
-            boundaries = [bound for bound in (v1.valid_until, v2.valid_until) if bound is not None]
             # Arm before publishing: a crash cannot leave a served queue without
             # its refresh signal. A restarted fold may replace the same deadline.
-            if boundaries:
-                schedule_deadline(instance, "next.expire", min(boundaries))
+            if v2.valid_until is not None:
+                schedule_deadline(instance, "next.expire", v2.valid_until)
             else:
                 cancel_deadline(instance, "next.expire")
             with _STATE.open(instance) as connection:
                 assert connection is not None
                 connection.execute(
                     "UPDATE progress SET coordinate=?,door=?,generation=?,checked_at=?,"
-                    "input_fingerprint=?,bodies=?,v1=?,v2=?,expire=?,"
+                    "input_fingerprint=?,bodies=?,v2=?,expire=?,"
                     "failed_coordinate=NULL,failed_door=NULL,failed_bodies=NULL,"
                     "failed_fingerprint=NULL,failed_expire=NULL,last_error=NULL,last_error_at=NULL",
                     (
@@ -257,7 +246,6 @@ class ClaimQueuePart:
                         format_datetime(now),
                         fingerprint,
                         bodies,
-                        v1.model_dump_json(),
                         v2.model_dump_json(),
                         work.item[3],
                     ),

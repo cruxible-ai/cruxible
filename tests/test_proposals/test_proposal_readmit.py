@@ -327,7 +327,7 @@ def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
 
     from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.service.authoring.documents import AcceptedCoordinate
-    from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
+    from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
     from cruxible_core.service.proposals.proposals import (
         proposal_readmission,
         service_withdraw_playbill_proposal,
@@ -336,7 +336,7 @@ def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
     def stale_rows() -> list[str]:
         queue = service_playbill_next(
             instance,
-            request=NextRequestV1(
+            request=NextRequest(
                 evaluation_time=datetime(2026, 8, 22, 12, tzinfo=UTC),
                 access_profile=CoverageAccessProfile(
                     profile_id="readmit", permitted_access_classes=("instance",)

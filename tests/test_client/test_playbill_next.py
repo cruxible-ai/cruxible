@@ -71,7 +71,7 @@ def test_client_sends_explicit_time_access_and_workspace_observation() -> None:
         return httpx.Response(
             200,
             json={
-                "tag": "playbill-next-result-v1",
+                "tag": "playbill-next-result-v2",
                 "coordinate": COORDINATE,
                 "evaluation_time": "2026-08-24T18:00:00.000000Z",
                 "observed_domains": ["accepted_state", "workspace_floor"],
@@ -80,6 +80,7 @@ def test_client_sends_explicit_time_access_and_workspace_observation() -> None:
                 "items": [],
                 "total_items": 0,
                 "result_digest": "sha256:" + "5" * 64,
+                "attestation_head_digest": "sha256:" + "7" * 64,
             },
         )
 
@@ -276,7 +277,7 @@ def test_client_sends_a_page_size_and_cursor_and_reads_the_page() -> None:
         return httpx.Response(
             200,
             json={
-                "tag": "playbill-next-result-v1",
+                "tag": "playbill-next-result-v2",
                 "coordinate": COORDINATE,
                 "evaluation_time": "2026-08-24T18:00:00.000000Z",
                 "observed_domains": ["accepted_state"],
@@ -290,6 +291,7 @@ def test_client_sends_a_page_size_and_cursor_and_reads_the_page() -> None:
                 "total_items": 3,
                 "next_cursor": "page-three",
                 "result_digest": "sha256:" + "5" * 64,
+                "attestation_head_digest": "sha256:" + "7" * 64,
             },
         )
 
@@ -320,8 +322,17 @@ def test_client_refuses_an_incoherent_page() -> None:
         "status": HEALTHY_STATUS,
         "items": [_item("sha256:" + "6" * 64)],
         "result_digest": "sha256:" + "5" * 64,
+        "attestation_head_digest": "sha256:" + "7" * 64,
     }
     with pytest.raises(ValidationError, match="more rows than its answer"):
         contracts.NextResult.model_validate(body | {"total_items": 0})
     with pytest.raises(ValidationError, match="no further page"):
         contracts.NextResult.model_validate(body | {"total_items": 1, "next_cursor": "x"})
+    # One result version is served: a v1 result, or one without its attestation head, is refused.
+    with pytest.raises(ValidationError):
+        contracts.NextResult.model_validate(
+            body | {"total_items": 1, "tag": "playbill-next-result-v1"}
+        )
+    headless = {key: value for key, value in body.items() if key != "attestation_head_digest"}
+    with pytest.raises(ValidationError, match="attestation_head_digest"):
+        contracts.NextResult.model_validate(headless | {"total_items": 1})

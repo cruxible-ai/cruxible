@@ -88,7 +88,6 @@ from cruxible_core.server.playbill_request_models import (
     LedgerMirrorRequest,
     LedgerPublishRequest,
     NextRequest,
-    NextRequestV1,
     PlaybillAuthoringCompileRequest,
     PlaybillAuthoringCompileRequestV3,
     ProposalReadmitRequest,
@@ -1180,7 +1179,7 @@ def procedure_readings(
 )
 def next_work(
     instance_id: str,
-    req: NextRequestV1 | NextRequest,
+    req: NextRequest,
 ) -> contracts.NextResult:
     return playbill_api.playbill_next(
         resolve_server_instance_id(instance_id),

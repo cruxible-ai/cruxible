@@ -289,10 +289,10 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillCurationAcceptFixedRequestV1", "accepted_generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationSuppressRequestV1", "until_generation"): "SETTLEMENT ORDER",
     ("PlaybillDocumentHistoryEntry", "sequence"): "SETTLEMENT ORDER",
-    ("NextRequestV1", "evaluation_time"): "EVALUATION INSTANT",
-    ("NextRequestV1", "expiring_within"): "VALIDITY WINDOW",
+    ("NextRequest", "evaluation_time"): "EVALUATION INSTANT",
+    ("NextRequest", "expiring_within"): "VALIDITY WINDOW",
     ("NextResult", "evaluation_time"): "EVALUATION INSTANT",
-    ("PlaybillNextResultV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillNextResultV2", "evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureClaimRetirementItem", "effective_until"): "VALIDITY WINDOW",
     ("ProcedureRunState", "evaluation_time"): "EVALUATION INSTANT",
     # When the daemon last tried to push. An assertion about an attempt, not a

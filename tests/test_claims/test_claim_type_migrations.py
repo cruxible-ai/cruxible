@@ -87,7 +87,7 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.claims.claims import _claim_law_evidence
-from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
+from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
 from tests.core_support._adoption_fixture import _query_definition
 from tests.core_support._subject_kind_support import declare_created_kinds
 from tests.core_support._support import client_material, initialize_local
@@ -849,7 +849,7 @@ def _accept_claim_type_only(
 def _next(instance):  # type: ignore[no-untyped-def]
     return service_playbill_next(
         instance,
-        request=NextRequestV1(
+        request=NextRequest(
             evaluation_time=datetime(2026, 8, 26, 12, tzinfo=UTC),
             access_profile=CoverageAccessProfile(
                 profile_id="migration-test",

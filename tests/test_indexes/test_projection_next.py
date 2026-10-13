@@ -59,7 +59,7 @@ from cruxible_core.service.claims.claims import (
     service_list_playbill_claims,
 )
 from cruxible_core.service.discovery.next import (
-    NextRequestV1,
+    NextRequest,
     NextSourceObservationV3,
     NextWorkspaceObservation,
     _procedure_catalog_health,
@@ -204,7 +204,7 @@ def _request(
     start_byte: int = 0,
     complete: bool = True,
     marker_notes: tuple[str, ...] = (),
-) -> NextRequestV1:
+) -> NextRequest:
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     stamp = ProjectionBlockStampV1(
         source_id="corpus.runbook",
@@ -220,7 +220,7 @@ def _request(
         start_byte=start_byte,
         end_byte=start_byte + 100,
     )
-    return NextRequestV1(
+    return NextRequest(
         at=coordinate,
         evaluation_time=evaluation_time,
         access_profile=CoverageAccessProfile(
@@ -246,7 +246,7 @@ def _request(
     )
 
 
-def _projection_rows(instance: PlaybillInstance, request: NextRequestV1):  # type: ignore[no-untyped-def]
+def _projection_rows(instance: PlaybillInstance, request: NextRequest):  # type: ignore[no-untyped-def]
     """Every projection finding, whether it heads its block's row or rides inside it."""
 
     return tuple(
@@ -401,7 +401,7 @@ def test_a_malformed_presentation_policy_fails_the_projection_advisory_closed(
             bindings=(),
         ),
     )
-    request = NextRequestV1(
+    request = NextRequest(
         evaluation_time=NOW,
         access_profile=CoverageAccessProfile(
             profile_id="presentation-policy-fail-closed",
@@ -443,7 +443,7 @@ def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(before).model_dump(mode="json")
     )
-    request = NextRequestV1(
+    request = NextRequest(
         evaluation_time=NOW,
         access_profile=CoverageAccessProfile(
             profile_id="procedure-service-test",
@@ -480,7 +480,7 @@ def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
         result = service_playbill_next(instance, request=request)
         unobserved = service_playbill_next(
             instance,
-            request=NextRequestV1(
+            request=NextRequest(
                 evaluation_time=NOW,
                 access_profile=request.access_profile,
             ),
@@ -523,7 +523,7 @@ def test_many_unprojected_procedures_coalesce_without_a_cardinality_cap(
             for index in range(25)
         )
 
-    request = NextRequestV1(
+    request = NextRequest(
         evaluation_time=NOW,
         access_profile=CoverageAccessProfile(
             profile_id="many-procedures",
