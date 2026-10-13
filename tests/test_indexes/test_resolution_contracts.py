@@ -512,27 +512,20 @@ def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) 
     assert activation_coordinate["generation_root"] == accepting_coordinate.generation_root
 
 
-def test_a_resolution_book_extends_from_its_last_head_and_equals_a_full_fold(
-    tmp_path, monkeypatch
-) -> None:
-    """Each append folds only the records after the last folded head (perf B9)."""
-
-    from cruxible_core.procedures import resolution as resolution_module
-    from cruxible_core.procedures.resolution import resolution_book_at_head
+def _resolution_partition(tmp_path, name: str = "b9"):  # type: ignore[no-untyped-def]
+    """A journal partition of one derived resolution contract, with its writer."""
 
     accepted = _accepted()
     activation = derive_resolution_activations(
         accepted, accepted_coordinate=_coordinate(), activated_at=NOW
     )[2]
-    evidence = (ProcedureProofReferenceV1(kind="query_receipt", digest=_digest("q")),)
-    journal_root = tmp_path / "journal"
-    journal_root.mkdir()
-    cas_root = tmp_path / "cas"
-    cas_root.mkdir()
-    journal = LocalJournalBackend(journal_root)
-    bodies = ContentAddressedBodyStore(cas_root)
+    root = tmp_path / name
+    (root / "journal").mkdir(parents=True)
+    (root / "cas").mkdir()
+    journal = LocalJournalBackend(root / "journal")
+    bodies = ContentAddressedBodyStore(root / "cas")
     stream = JournalStreamIdentityV1(
-        instance_id="instance-b9",
+        instance_id=f"instance-{name}",
         journal_family=PROCEDURE_EXHAUST_JOURNAL_FAMILY,
         stream_id="procedures",
     )
@@ -544,35 +537,23 @@ def test_a_resolution_book_extends_from_its_last_head_and_equals_a_full_fold(
         expected_head=journal.read_head(stream, partition_id),
     )
     writer = ProcedureExhaustWriter(journal=journal, bodies=bodies, fencing_token="writer")
-    folded: list[int] = []
-    extend = resolution_module.ProcedureResolutionBook.extend
+    return activation, journal, bodies, stream, partition_id, writer
 
-    def counted(self, records, *, bodies):  # type: ignore[no-untyped-def]
-        folded.append(len(records))
-        return extend(self, records, bodies=bodies)
 
-    monkeypatch.setattr(resolution_module.ProcedureResolutionBook, "extend", counted)
-
-    def full() -> resolution_module.ProcedureResolutionBook:
-        book = resolution_module.ProcedureResolutionBook((activation,))
-        extend(book, journal.all_records(stream, partition_id), bodies=bodies)
-        return book
-
-    previous = None
-    for sequence in range(1, 5):
-        resolution = build_procedure_resolution(
-            activation,
-            sequence=sequence,
-            verdict="satisfied",
-            value={"count": sequence},
-            evidence_refs=evidence,
-            observed_at=NOW + timedelta(seconds=10 * sequence),
-            recorded_at=NOW + timedelta(seconds=10 * sequence),
-            actor_context=_actor(),
-        )
-        append_procedure_resolution(
-            writer, activation=activation, resolution=resolution, stream=stream
-        )
+def _answer(activation, writer, stream, sequence: int, *, overturn: bool):  # type: ignore[no-untyped-def]
+    evidence = (ProcedureProofReferenceV1(kind="query_receipt", digest=_digest("q")),)
+    resolution = build_procedure_resolution(
+        activation,
+        sequence=sequence,
+        verdict="satisfied",
+        value={"count": sequence},
+        evidence_refs=evidence,
+        observed_at=NOW + timedelta(seconds=10 * sequence),
+        recorded_at=NOW + timedelta(seconds=10 * sequence),
+        actor_context=_actor(),
+    )
+    append_procedure_resolution(writer, activation=activation, resolution=resolution, stream=stream)
+    if overturn:
         append_resolution_disposition(
             writer,
             activation=activation,
@@ -587,14 +568,171 @@ def test_a_resolution_book_extends_from_its_last_head_and_equals_a_full_fold(
             ),
             stream=stream,
         )
-        book, head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
-        expected = full()
+    return resolution
+
+
+def _replayed(activation, journal, bodies, stream, partition_id):  # type: ignore[no-untyped-def]
+    book = ProcedureResolutionBook((activation,))
+    book.replay(journal.all_records(stream, partition_id), bodies=bodies)
+    return book
+
+
+def _same_answers(view, book, activation) -> None:  # type: ignore[no-untyped-def]
+    contract = activation.contract_id
+    resolutions = book.resolutions.get(contract, [])
+    assert view.resolution_count(contract) == len(resolutions)
+    assert view.latest_resolution(contract) == (resolutions[-1] if resolutions else None)
+    assert view.latest_non_overturned(contract) == book.latest_non_overturned(contract)
+    for item in resolutions:
+        assert view.resolution_by_id(item.resolution_id) == book.resolution_by_id(
+            item.resolution_id
+        )
+        dispositions = book.dispositions.get(item.resolution_id, [])
+        assert view.disposition_count(item.resolution_id) == len(dispositions)
+        assert view.last_disposition_verdict(item.resolution_id) == (
+            dispositions[-1].verdict if dispositions else None
+        )
+
+
+def test_a_resolution_book_extends_from_its_last_head_and_equals_a_full_replay(
+    tmp_path, monkeypatch
+) -> None:
+    """Each append folds only the records after the last folded head (perf B9)."""
+
+    from cruxible_core.procedures import resolution as module
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    activation, journal, bodies, stream, partition_id, writer = _resolution_partition(tmp_path)
+    folded: list[int] = []
+    extend = module._ResolutionFold.extend
+
+    def counted(self, records, **kwargs):  # type: ignore[no-untyped-def]
+        folded.append(len(records))
+        return extend(self, records, **kwargs)
+
+    monkeypatch.setattr(module._ResolutionFold, "extend", counted)
+    for sequence in range(1, 5):
+        _answer(activation, writer, stream, sequence, overturn=True)
+        view, head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
         assert head == journal.read_head(stream, partition_id)
-        assert dict(book.resolutions) == dict(expected.resolutions)
-        assert dict(book.dispositions) == dict(expected.dispositions)
-        assert book.resolution_records == expected.resolution_records
-        assert book.event_kinds == expected.event_kinds
-        previous = book
-    assert previous is not None
+        replayed = _replayed(activation, journal, bodies, stream, partition_id)
+        _same_answers(view, replayed, activation)
+        latest = view.latest_resolution(activation.contract_id)
+        assert latest is not None
+        record = view.resolution_record(latest.resolution_id)
+        assert record is not None and record.record.event_kind == "resolution"
+    _answer(activation, writer, stream, 5, overturn=False)
+    view, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    replayed = _replayed(activation, journal, bodies, stream, partition_id)
+    _same_answers(view, replayed, activation)
     # After the first fold, each append and read folds only what it has not seen.
     assert max(folded[1:]) <= 2, folded
+
+
+def test_a_returned_resolution_never_reaches_the_kept_fold(tmp_path) -> None:
+    """Review F-004: values handed out are detached copies of the immutable fold."""
+
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    activation, journal, bodies, stream, partition_id, writer = _resolution_partition(tmp_path)
+    _answer(activation, writer, stream, 1, overturn=False)
+    view, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    poisoned = view.latest_non_overturned(activation.contract_id)
+    assert poisoned is not None
+    poisoned.value["count"] = 999
+    record = view.resolution_record(poisoned.resolution_id)
+    assert record is not None
+    again, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    kept = again.latest_non_overturned(activation.contract_id)
+    assert kept is not None and kept.value == {"count": 1}
+    replayed = _replayed(activation, journal, bodies, stream, partition_id)
+    assert kept == replayed.latest_non_overturned(activation.contract_id)
+
+
+@pytest.mark.parametrize("damage", ["erase", "corrupt", "same_bytes_new_file"])
+def test_a_kept_fold_refuses_exactly_as_a_replay_after_payload_damage(tmp_path, damage) -> None:
+    """Review F-002: the kept fold is reused only while every payload it rests on holds."""
+
+    from cruxible_client.contracts.errors import CasError
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    activation, journal, bodies, stream, partition_id, writer = _resolution_partition(tmp_path)
+    first = _answer(activation, writer, stream, 1, overturn=True)
+    view, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    assert view.resolution_count(activation.contract_id) == 1
+    digest = next(
+        stored.record.payload_digest
+        for stored in journal.all_records(stream, partition_id)
+        if stored.record.event_kind == "resolution"
+    )
+    path = bodies._path(digest)
+    original = path.read_bytes()
+    if damage == "erase":
+        assert bodies.erase(digest)
+    else:
+        path.unlink()
+        path.write_bytes(b"{}" if damage == "corrupt" else original)
+    if damage == "same_bytes_new_file":
+        view, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+        replayed = _replayed(activation, journal, bodies, stream, partition_id)
+        _same_answers(view, replayed, activation)
+        _answer(activation, writer, stream, 2, overturn=False)
+        view, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+        replayed = _replayed(activation, journal, bodies, stream, partition_id)
+        _same_answers(view, replayed, activation)
+        return
+    with pytest.raises(CasError) as replayed:
+        _replayed(activation, journal, bodies, stream, partition_id)
+    with pytest.raises(CasError) as kept:
+        resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    assert str(kept.value) == str(replayed.value)
+    # An append after the damage refuses too, as the full replay before it did.
+    with pytest.raises(CasError):
+        _answer(activation, writer, stream, 2, overturn=False)
+    assert first.sequence == 1
+
+
+def test_a_fixed_append_and_lookup_cost_the_same_at_two_history_sizes(
+    tmp_path, monkeypatch
+) -> None:
+    """Review F-005: no copy or search grows with the partition; only identity checks do."""
+
+    from cruxible_core.procedures import resolution as module
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    def work(history: int, name: str) -> tuple[int, int, int]:
+        activation, journal, bodies, stream, partition_id, writer = _resolution_partition(
+            tmp_path, name
+        )
+        for sequence in range(1, history + 1):
+            _answer(activation, writer, stream, sequence, overturn=True)
+        resolution_book_at_head(journal, stream, activation, bodies=bodies)
+        counts = {"read": 0, "loads": 0, "stat": 0}
+        read, identity, loads = bodies.read, bodies.file_identity, module.pickle.loads
+
+        def counted_read(*args, **kwargs):  # type: ignore[no-untyped-def]
+            counts["read"] += 1
+            return read(*args, **kwargs)
+
+        def counted_identity(*args, **kwargs):  # type: ignore[no-untyped-def]
+            counts["stat"] += 1
+            return identity(*args, **kwargs)
+
+        def counted_loads(*args, **kwargs):  # type: ignore[no-untyped-def]
+            counts["loads"] += 1
+            return loads(*args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(bodies, "read", counted_read)
+            patch.setattr(bodies, "file_identity", counted_identity)
+            patch.setattr(module.pickle, "loads", counted_loads)
+            _answer(activation, writer, stream, history + 1, overturn=False)
+            view, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+            assert view.latest_non_overturned(activation.contract_id) is not None
+        return counts["read"], counts["loads"], counts["stat"]
+
+    small, large = work(2, "small"), work(6, "large")
+    # Payload reads and value detachments are fixed by the change.
+    assert small[:2] == large[:2], (small, large)
+    # The validity check is one identity stat per retained payload (reported in Cost).
+    assert large[2] > small[2]

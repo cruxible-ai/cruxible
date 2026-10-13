@@ -119,9 +119,9 @@ from cruxible_core.procedures.readings import (
 )
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
-    ProcedureResolutionBook,
     ProcedureResolutionV1,
     ProcedureResolutionV2,
+    ResolutionBookView,
     ResolutionContractActivationV1,
     _expectation_holds,
     append_procedure_resolution,
@@ -428,7 +428,7 @@ class _ContractState:
     activation: ResolutionContractActivationV1
     #: Whether the partition through ``head`` holds a resolution_activation record.
     has_activation_record: bool
-    book: ProcedureResolutionBook
+    book: ResolutionBookView
     latest: ProcedureResolutionV1 | ProcedureResolutionV2 | None
     latest_record: StoredProcedureJournalRecordV1 | None
     head: JournalPartitionHeadV1
@@ -446,10 +446,10 @@ def _contract_state(
     book, head = resolution_book_at_head(journal, stream, activation, bodies=instance.body_store())
     assert head is not None  # a local journal always has its index
     latest = book.latest_non_overturned(activation.contract_id)
-    latest_record = None if latest is None else book.resolution_records.get(latest.resolution_id)
+    latest_record = None if latest is None else book.resolution_record(latest.resolution_id)
     return _ContractState(
         activation=activation,
-        has_activation_record="resolution_activation" in book.event_kinds,
+        has_activation_record=book.has_event_kind("resolution_activation"),
         book=book,
         latest=latest,
         latest_record=latest_record,
@@ -1372,7 +1372,7 @@ def service_measure_playbill_procedure(
                 )
                 resolution = build_procedure_resolution(
                     activation,
-                    sequence=len(state.book.resolutions.get(activation.contract_id, ())) + 1,
+                    sequence=state.book.resolution_count(activation.contract_id) + 1,
                     verdict=evidence.verdict,
                     value=evidence.value,
                     evidence_refs=evidence.evidence_refs,
@@ -1515,7 +1515,7 @@ def _credit_reading(
     accepted: AcceptedProcedure,
     activation: ResolutionContractActivationV1,
     resolution: ProcedureResolutionV1,
-    book: ProcedureResolutionBook,
+    book: ResolutionBookView,
     grain: ProcedureRunGrainRecordV1,
     actor_context: GovernedActorContext,
     recorded_at: datetime,
