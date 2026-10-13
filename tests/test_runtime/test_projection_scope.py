@@ -110,6 +110,30 @@ def test_scope_exit_closes_handles_still_checked_out_and_unwinds_on_error(
     assert held._closed and held._release is None
 
 
+def test_work_deferred_to_scope_exit_runs_once_after_every_hold_is_released(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_core.indexes import sqlite
+    from cruxible_core.runtime.instance import _PROJECTION_POOL
+
+    head = instance.accepted_coordinate()
+    seen: list[tuple[bool, int]] = []
+    with instance.projection_scope():
+        handle = instance.bind_accepted_projection(head)
+        handle.close()  # idle in the pool: still holding its piece
+        key = sqlite._hold_key(handle.manifest_path)
+        pool = _PROJECTION_POOL.get()
+        assert pool is not None
+        for _twice in range(2):
+            assert pool.after_close(
+                "evict", lambda: seen.append((handle._closed, sqlite._HOLDS.counts.get(key, 0)))
+            )
+        assert seen == []
+    assert seen == [(True, 0)]
+    # Outside a scope (or on a closed pool) the caller runs the work itself.
+    assert not pool.after_close("evict", lambda: None)
+
+
 def test_a_write_reads_the_same_answers_with_far_fewer_binds(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
