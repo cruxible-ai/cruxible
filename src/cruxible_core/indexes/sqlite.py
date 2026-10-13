@@ -657,6 +657,43 @@ def _source_repository(path: str) -> Any:
     )
 
 
+class ProjectionEvicted(ProjectionIntegrityError):
+    """The coordinate was evicted while it was being bound; binding again rebuilds it."""
+
+
+_HOLD_OPEN = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+
+
+def lock_piece_shared(piece: Path, manifest: Path) -> int:
+    """Open ``piece`` and hold it from eviction; the descriptor is the hold.
+
+    A shared ``flock`` for the life of a handle, in any process: eviction
+    takes the exclusive lock without waiting and skips a held piece. Raises
+    ``ProjectionEvicted`` when eviction removed the piece or its manifest
+    before the hold was taken.
+    """
+
+    import fcntl
+
+    try:
+        descriptor = os.open(piece, _HOLD_OPEN)
+    except FileNotFoundError as exc:
+        raise ProjectionEvicted("projection piece was evicted while binding") from exc
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH)
+        held = os.fstat(descriptor)
+        try:
+            named = os.stat(piece, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise ProjectionEvicted("projection piece was evicted while binding") from exc
+        if (held.st_dev, held.st_ino) != (named.st_dev, named.st_ino) or not manifest.exists():
+            raise ProjectionEvicted("projection piece was evicted while binding")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
 class ProjectionHandle:
     """An immutable read handle whose complete build was verified exactly once."""
 
@@ -669,8 +706,11 @@ class ProjectionHandle:
         connection: sqlite3.Connection,
         accepted: AcceptedProjectionCoordinate,
         source_descriptor: int | None = None,
+        hold_descriptor: int | None = None,
     ) -> None:
         self._source_descriptor = source_descriptor
+        # The shared lock that keeps this piece from eviction while the handle lives.
+        self._hold_descriptor = hold_descriptor
         self.manifest_path = manifest_path
         self.manifest = manifest
         self.piece_paths = piece_paths
@@ -678,8 +718,6 @@ class ProjectionHandle:
         self.accepted = accepted
         self._closed = False
         self._verification_identity: tuple[object, ...] | None = None
-        # Called once when the handle closes: releases a retention hold.
-        self.on_close: Callable[[], None] | None = None
         from cruxible_core.indexes.typed_state import TypedStateReader
 
         self.typed = TypedStateReader(
@@ -933,10 +971,10 @@ class ProjectionHandle:
                 if self._source_descriptor is not None:
                     os.close(self._source_descriptor)
                     self._source_descriptor = None
+                if self._hold_descriptor is not None:
+                    os.close(self._hold_descriptor)
+                    self._hold_descriptor = None
                 self._closed = True
-                release, self.on_close = self.on_close, None
-                if release is not None:
-                    release()
 
     def __enter__(self) -> "ProjectionHandle":
         if self._closed:
@@ -952,12 +990,43 @@ def bind_projection(
     *,
     expected: AcceptedProjectionCoordinate,
 ) -> ProjectionHandle:
-    """Verify one complete manifest and return a handle that does no per-read rehash."""
+    """Verify one complete manifest and return a handle that does no per-read rehash.
+
+    The handle holds its piece from eviction (``lock_piece_shared``) until it
+    closes. A manifest or piece evicted before the hold is taken raises
+    ``ProjectionEvicted``, and binding again rebuilds the coordinate.
+    """
 
     # The first bind in a process fixes which authentication records it trusts
     # here, before any later read could be answered from a replaced piece.
     _trusted_stamps(manifest_path.parent)
+    if not manifest_path.exists() and not manifest_path.is_symlink():
+        raise ProjectionEvicted("projection manifest must be a regular file: it is absent")
     manifest = load_projection_manifest(manifest_path)
+    if not manifest.pieces:
+        raise ProjectionIntegrityError("PB-B supports one-piece serving only")
+    piece_name = manifest.pieces[0].name
+    try:
+        hold = lock_piece_shared(manifest_path.parent / piece_name, manifest_path)
+    except ProjectionEvicted:
+        raise
+    except OSError as exc:
+        raise ProjectionIntegrityError(f"projection piece is missing: {piece_name}") from exc
+    try:
+        handle = _bind_held_projection(manifest_path, manifest, expected=expected)
+    except BaseException:
+        os.close(hold)
+        raise
+    handle._hold_descriptor = hold
+    return handle
+
+
+def _bind_held_projection(
+    manifest_path: Path,
+    manifest: ProjectionManifest,
+    *,
+    expected: AcceptedProjectionCoordinate,
+) -> ProjectionHandle:
     if not _manifest_matches_coordinate(manifest, expected):
         raise ProjectionIntegrityError("projection manifest differs from the accepted coordinate")
     if len(manifest.pieces) != 1:
@@ -1220,12 +1289,14 @@ def detect_projection_orphans(publication_directory: Path) -> tuple[ProjectionOr
 
 
 __all__ = [
+    "ProjectionEvicted",
     "ProjectionHandle",
     "bind_projection",
     "canonical_logical_export",
     "detect_projection_orphans",
     "initialize_projection_database",
     "load_projection_manifest",
+    "lock_piece_shared",
     "physical_file_digest",
     "projection_logical_digest",
     "reset_projection_verification_memo",

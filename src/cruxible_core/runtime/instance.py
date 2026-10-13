@@ -123,18 +123,19 @@ from cruxible_core.indexes.history.history_index import (
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
+    AssemblerRequest,
     projection_manifest_name,
 )
-from cruxible_core.indexes.projection_retention import (
-    evict_projections,
-    hold_projection,
-    release_projection,
-    retention_lock,
-)
+from cruxible_core.indexes.projection_retention import evict_projection, retention_lock
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.indexes.proposals.proposal_note_reader import proposal_note_snapshot
 from cruxible_core.indexes.serving import bind_current_projection
-from cruxible_core.indexes.sqlite import ProjectionHandle, bind_projection
+from cruxible_core.indexes.sqlite import (
+    ProjectionEvicted,
+    ProjectionHandle,
+    bind_projection,
+    load_projection_manifest,
+)
 from cruxible_core.indexes.typed_sqlite import parse_static_owners
 from cruxible_core.ledger.activation import ActivationPublisher, ActivationResult
 from cruxible_core.ledger.bootstrap import (
@@ -324,6 +325,16 @@ LEDGER_START_COMPACTION_LOOSE_OBJECTS = 256
 _log = structlog.get_logger("cruxible.ledger_upkeep")
 
 
+def _generation_at(recovered: RecoveredInstanceState, sequence: int) -> RecoveredGeneration:
+    """The replayed generation at ``sequence`` (history is held in sequence order)."""
+
+    if 0 <= sequence < len(recovered.history):
+        generation = recovered.history[sequence]
+        if generation.sequence == sequence:
+            return generation
+    return next(item for item in recovered.history if item.sequence == sequence)
+
+
 class PlaybillInstance:
     """A verified opt-in Cruxible substrate rooted outside agent workspaces."""
 
@@ -392,6 +403,12 @@ class PlaybillInstance:
         self._compacted_stride: int | None = None
         # The accepted day consumption receipts were last folded on.
         self._consumption_folded_on: date | None = None
+        # Projection eviction: the cutoff sequence already applied (None until
+        # the first pass in this process), and the manifests at or before it
+        # still on disk (held then, or rebuilt on a miss since), by sequence.
+        self._eviction_lock = threading.Lock()
+        self._evicted_through: int | None = None
+        self._beyond_window: dict[str, int] = {}
         # Retired accepted candidates rebuilt from their records, by digest.
         self._settled_candidates: dict[str, SettledCandidate] = {}
         self._quiet_checkpoints: QuietCheckpointWriter | None = None
@@ -2388,8 +2405,8 @@ class PlaybillInstance:
         paths = self._validated_paths(self.root, self.descriptor.storage)
         directory = paths["projections"]
         if verified == self.accepted_coordinate():
-            current = bind_current_projection(directory, expected=verified)
-            return self._projection_sources(self._held(current))
+            # The serving head is never evicted; its handle holds its piece too.
+            return self._projection_sources(bind_current_projection(directory, expected=verified))
         # Naming the manifest needs only this coordinate. The replay-proven
         # coordinates of every generation are built only for a rebuild, so a
         # bind at a base behind the head costs the same at any history length.
@@ -2403,61 +2420,129 @@ class PlaybillInstance:
             output_staging_directory=directory / f".stage-historical-bind-{secrets.token_hex(12)}"
         )
         manifest_path = directory / projection_manifest_name(request)
-        # Held before the manifest is looked for, so this process never evicts
-        # it between the look and the bind.
-        hold_projection(directory, manifest_path.name)
-        try:
-            if not manifest_path.exists():
-                # Only replay-proven coordinates reach this point. Rebuild a
-                # missing historical projection (never built, or evicted past
-                # retention) under its own compiler, without changing serving
-                # or rewriting the accepted record/receipt.
-                with retention_lock(directory):
-                    if not manifest_path.exists():
-                        assembler.accepted_coordinates_by_sequence = (
-                            self._accepted_coordinates_by_sequence()
-                        )
-                        assembler.assemble(request)
-            handle = bind_projection(manifest_path, expected=verified)
-        except BaseException:
-            release_projection(directory, manifest_path.name)
-            raise
-        handle.on_close = lambda: release_projection(directory, manifest_path.name)
-        return self._projection_sources(handle)
+        for _attempt in range(3):
+            if manifest_path.exists():
+                try:
+                    # The handle holds its piece from eviction; one evicted
+                    # between the look and the hold is bound again, rebuilt.
+                    return self._projection_sources(
+                        bind_projection(manifest_path, expected=verified)
+                    )
+                except ProjectionEvicted:
+                    continue
+            # Only replay-proven coordinates reach this point. Rebuild a missing
+            # historical projection (never built, or evicted past retention)
+            # under its own compiler, without changing serving or rewriting the
+            # accepted record/receipt. Eviction waits on the same lock, and the
+            # handle's hold is taken before it is released.
+            rebuilt = False
+            with retention_lock(directory):
+                if not manifest_path.exists():
+                    assembler.accepted_coordinates_by_sequence = (
+                        self._accepted_coordinates_by_sequence()
+                    )
+                    assembler.assemble(request)
+                    rebuilt = True
+                handle = bind_projection(manifest_path, expected=verified)
+            if rebuilt:
+                self._built_beyond_window(verified, manifest_path.name)
+            return self._projection_sources(handle)
+        raise ProjectionEvicted("projection was evicted on every bind attempt")
 
-    @staticmethod
-    def _held(handle: ProjectionHandle) -> ProjectionHandle:
-        """Keep a bound projection from eviction until its handle closes."""
+    def _built_beyond_window(
+        self, coordinate: AcceptedProjectionCoordinate, manifest_name: str
+    ) -> None:
+        """Remember a coordinate rebuilt on a miss, so the next pass can evict it again."""
 
-        directory, name = handle.manifest_path.parent, handle.manifest_path.name
-        hold_projection(directory, name)
-        handle.on_close = lambda: release_projection(directory, name)
-        return handle
+        with self.accepted_history_reader() as history:
+            location = history.generation_for_oid(coordinate.git_oid)
+        if location is not None:
+            with self._eviction_lock:
+                self._beyond_window[manifest_name] = location.sequence
+
+    def _manifest_name_for(self, generation: RecoveredGeneration, directory: Path) -> str:
+        return projection_manifest_name(
+            AssemblerRequest(
+                instance_id=self.descriptor.instance_id,
+                repository_path=str(self._ledger.path.resolve(strict=True)),
+                git_object_format=self.descriptor.git_object_format,
+                git_oid=generation.oid,
+                semantic_root=generation.semantic_root.tagged,
+                generation_root=generation.generation_root.tagged,
+                compiler_digest=generation.compiler.rule_digest,
+                schema_version=generation.compiler.schema_version,
+                output_staging_directory=str(directory),
+            )
+        )
 
     def evict_projection_pieces(self) -> tuple[str, ...]:
-        """Evict accepted projection pieces past retention; returns the evicted git oids.
+        """Evict accepted projection pieces past retention; returns the evicted manifest names.
 
-        Kept: the serving head, the last ``retention.generations`` accepted
-        generations, the bases of open proposals, and every coordinate a
-        handle in this process holds. An evicted coordinate is rebuilt when
-        it is next bound. Runs after each activation and at open.
+        Kept: every generation after the cutoff (the head's sequence less
+        ``retention.generations``, taken once from one snapshot, so a
+        generation accepted meanwhile is always after it), which includes the
+        serving head and every open proposal's base (an open proposal is
+        evaluated at the head; a stale one is rebuilt if it is read), and
+        every piece a reader holds in any process. An evicted coordinate is
+        rebuilt when it is next bound.
+
+        Each pass after the first handles only the generations that crossed
+        the cutoff since the last pass, plus the pieces left beyond it (held
+        then, or rebuilt on a miss since). The first pass in a process (at
+        open) reads the directory once. Runs after each activation and at open.
         """
 
         with self._state_lock:
             recovered = self._recovered
-        keep = {item.oid for item in recovered.history[-self.retention.generations :]}
-        keep.add(recovered.coordinate.git_oid)
-        keep.update(self._open_proposal_bases())
+        cutoff = recovered.head.sequence - self.retention.generations
         directory = self._validated_paths(self.root, self.descriptor.storage)["projections"]
-        with self.accepted_history_reader() as history:
-            # Only accepted generations outside the window: a build of a
-            # generation not on main is in flight or recovery's to retire.
-            return evict_projections(
-                directory,
-                evictable=lambda oid: (
-                    oid not in keep and history.generation_for_oid(oid) is not None
-                ),
-            )
+        evicted: list[str] = []
+        with self._eviction_lock, retention_lock(directory):
+            beyond = self._beyond_window
+            if self._evicted_through is None:
+                candidates = self._listed_beyond(directory, recovered, cutoff)
+            else:
+                candidates = {
+                    self._manifest_name_for(_generation_at(recovered, sequence), directory): (
+                        sequence
+                    )
+                    for sequence in range(max(self._evicted_through + 1, 0), cutoff + 1)
+                }
+            for name, sequence in list(beyond.items()):
+                candidates.setdefault(name, sequence)
+            for name, sequence in candidates.items():
+                if sequence > cutoff:
+                    beyond.pop(name, None)
+                    continue
+                outcome = evict_projection(directory, name)
+                if outcome is False:
+                    beyond[name] = sequence
+                else:
+                    beyond.pop(name, None)
+                    if outcome:
+                        evicted.append(name)
+            if self._evicted_through is None or cutoff > self._evicted_through:
+                self._evicted_through = cutoff
+        return tuple(evicted)
+
+    def _listed_beyond(
+        self, directory: Path, recovered: RecoveredInstanceState, cutoff: int
+    ) -> dict[str, int]:
+        """The first pass in a process: every accepted manifest at or before the cutoff."""
+
+        by_oid = {generation.oid: generation.sequence for generation in recovered.history}
+        found: dict[str, int] = {}
+        for name in os.listdir(directory):
+            if not (name.startswith("projection-") and name.endswith(".json")):
+                continue
+            try:
+                manifest = load_projection_manifest(directory / name)
+            except ProjectionIntegrityError:
+                continue  # recovery sweeps malformed and old-schema manifests
+            sequence = by_oid.get(manifest.git_oid)
+            if sequence is not None and sequence <= cutoff:
+                found[name] = sequence
+        return found
 
     def _housekeeping(self, step: str, run: Callable[[], object]) -> None:
         """Run one retention step; a failure is logged, never the caller's failure.
@@ -2495,23 +2580,6 @@ class PlaybillInstance:
         from cruxible_core.exhaust.consumption import fold_consumption_receipts
 
         fold_consumption_receipts(self, now=at, days=self.retention.days)
-
-    def _open_proposal_bases(self) -> set[str]:
-        """The evaluated bases of admitted candidates no generation has settled or withdrawn."""
-
-        evidence = self.proposal_evidence()
-        if evidence.index is None:
-            return set()
-        with evidence.index.read(evidence) as connection:
-            return {
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT DISTINCT evaluated_base_oid FROM proposals "
-                    "WHERE evaluation_status='candidate' AND withdrawal_path IS NULL "
-                    "AND admission_path IS NOT NULL AND accepted_sequence IS NULL "
-                    "AND evaluated_base_oid IS NOT NULL"
-                )
-            }
 
     @contextmanager
     def holding_accepted_head(self) -> Iterator[str]:

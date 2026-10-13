@@ -100,47 +100,132 @@ def test_a_held_coordinate_survives_eviction_until_its_handle_closes(tmp_path: P
         assert handle.typed is not None
     finally:
         handle.close()
-    assert instance.evict_projection_pieces() == (behind.git_oid,)
+    assert len(instance.evict_projection_pieces()) == 1
     assert behind.git_oid not in _manifest_oids(instance)
 
 
-def test_open_evicts_past_retention_and_keeps_an_open_proposal_base(
+def test_open_evicts_past_retention_and_an_evicted_base_rebuilds_when_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_client.contracts.write import WriteRequest
     from cruxible_core.runtime import retention
-    from cruxible_core.service.authoring.write_verbs import service_playbill_write
-    from tests.core_support._write_support import caller
 
     instance, _owner = seed_write_surface(tmp_path)
-    for value in ("ready", "blocked"):
+    for value in ("ready", "blocked", "done"):
         _write(instance, _set(WI1, "status", value))
-    base = instance.accepted_coordinate()
-    held = service_playbill_write(
-        instance,
-        request=WriteRequest.model_validate(
-            {
-                "because": "Left open.",
-                "accept": "never",
-                "changes": [_set(WI1, "title", "One")],
-            }
-        ),
-        caller=caller(),
-    )
-    assert held.status != "accepted"
-    _write(instance, _set(WI1, "status", "done"))
     oids = _history_oids(instance)
-    assert {oids[-3], base.git_oid} <= _manifest_oids(instance)
-    # Reopening under a one-generation window evicts the rest, but an open
-    # proposal's evaluated base is kept with the head.
+    behind = instance.coordinate_for_oid(oids[-3])
+    assert oids[-3] in _manifest_oids(instance)
+    # Reopening under a one-generation window keeps only the head: an open
+    # proposal is evaluated at the head, and an older base is rebuilt on a read.
     monkeypatch.setattr(retention, "DEFAULT_RETENTION", RetentionSettings(generations=1))
     monkeypatch.setattr(
         "cruxible_core.runtime.instance.DEFAULT_RETENTION", RetentionSettings(generations=1)
     )
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate() == instance.accepted_coordinate()
-    assert _manifest_oids(reopened) == {oids[-1], base.git_oid}
+    assert _manifest_oids(reopened) == {oids[-1]}
     assert _pieces(reopened) == _referenced_pieces(reopened)
+    with reopened.bind_accepted_projection(behind) as projection:
+        assert projection.accepted.git_oid == behind.git_oid
+
+
+def test_an_activation_during_a_pass_never_loses_the_new_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+    import time
+
+    from cruxible_core.runtime import instance as instance_module
+
+    instance, _owner = seed_write_surface(tmp_path)
+    for value in ("ready", "blocked", "done"):
+        _write(instance, _set(WI1, "status", value))
+    before = instance.accepted_coordinate()
+    evict = instance_module.evict_projection
+    writers: list[threading.Thread] = []
+
+    def interleaved(directory: Path, name: str) -> bool | None:
+        if not writers:
+            # Another request accepts a generation while this pass runs.
+            writer = threading.Thread(target=_write, args=(instance, _set(WI1, "title", "New")))
+            writers.append(writer)
+            writer.start()
+            deadline = time.monotonic() + 60
+            while instance.accepted_coordinate() == before and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert instance.accepted_coordinate() != before
+        return evict(directory, name)
+
+    monkeypatch.setattr(instance_module, "evict_projection", interleaved)
+    instance.retention = RetentionSettings(generations=1)
+    instance.evict_projection_pieces()
+    writers[0].join(60)
+    head = instance.accepted_coordinate()
+    assert head != before and head.git_oid in _manifest_oids(instance)
+    with instance.bind_accepted_projection(head) as projection:
+        assert projection.accepted.git_oid == head.git_oid
+
+
+def test_a_bind_holds_its_piece_and_one_evicted_before_its_hold_rebuilds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.indexes import sqlite
+
+    instance, _owner = seed_write_surface(tmp_path)
+    for value in ("ready", "blocked"):
+        _write(instance, _set(WI1, "status", value))
+    behind = _coordinate(instance, 1)
+    directory = _projections(instance)
+    handle = instance.bind_accepted_projection(behind)
+    name = handle.manifest_path.name
+    try:
+        # A held piece refuses the exclusive lock eviction takes, in any process.
+        with projection_retention.retention_lock(directory):
+            assert projection_retention.evict_projection(directory, name) is False
+        assert behind.git_oid in _manifest_oids(instance)
+    finally:
+        handle.close()
+    # Evicted between the manifest check and the hold: the bind binds again.
+    hold = sqlite.lock_piece_shared
+    evicted: list[bool] = []
+
+    def evict_first(piece: Path, manifest: Path) -> int:
+        if not evicted:
+            with projection_retention.retention_lock(directory):
+                evicted.append(bool(projection_retention.evict_projection(directory, name)))
+        return hold(piece, manifest)
+
+    monkeypatch.setattr(sqlite, "lock_piece_shared", evict_first)
+    with instance.bind_accepted_projection(behind) as projection:
+        assert evicted == [True]
+        assert projection.accepted.git_oid == behind.git_oid
+    assert behind.git_oid in _manifest_oids(instance)
+
+
+def test_each_pass_handles_only_the_generations_that_crossed_the_cutoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.runtime import instance as instance_module
+
+    instance, _owner = seed_write_surface(tmp_path)
+    instance.retention = RetentionSettings(generations=2)
+    for value in ("ready", "blocked", "done", "ready"):
+        _write(instance, _set(WI1, "status", value))
+    tried: list[str] = []
+    evict = instance_module.evict_projection
+
+    def counted(directory: Path, name: str) -> bool | None:
+        tried.append(name)
+        return evict(directory, name)
+
+    monkeypatch.setattr(instance_module, "evict_projection", counted)
+    for value in ("blocked", "done", "ready"):
+        tried.clear()
+        left_beyond = len(instance._beyond_window)
+        _write(instance, _set(WI1, "status", value))
+        # One generation leaves the window per acceptance, whatever the
+        # history, plus any piece a read held at an earlier pass.
+        assert 1 <= len(tried) <= 1 + left_beyond
 
 
 def test_eviction_deletes_the_manifest_before_its_piece(

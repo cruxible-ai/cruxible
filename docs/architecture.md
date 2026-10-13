@@ -122,11 +122,13 @@ of rebuildable and raw operational state; nothing a signed or authoritative
 record references is deleted under it.
 
 - **Projection pieces.** Each accepted generation's projection is a full SQLite
-  piece. The serving head, the last 64 accepted generations, the bases of open
-  proposals and any coordinate a read in the daemon holds are kept; every
-  other piece is evicted after each activation and when the instance opens,
-  its manifest before its piece. Binding an evicted coordinate (`--at`, a
-  pinned read, an old base) rebuilds it from the ledger and the body store.
+  piece. The serving head and the last 64 accepted generations are kept (an
+  open proposal is evaluated at the head, so its base is among them), and so
+  is any piece a reader holds open in any process. Each activation evicts the
+  generation that left the window, and the daemon's open evicts the backlog,
+  each manifest before its piece. Binding an evicted coordinate (`--at`, a
+  pinned read, a stale proposal's base) rebuilds it from the ledger and the
+  body store.
 - **Accepted proposals' candidates and approvals.** An accepted proposal's
   change-set record carries every field of its candidate and the approvals
   settlement verified, so after activation the candidate file and the
