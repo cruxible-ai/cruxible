@@ -1732,6 +1732,14 @@ def _evidence_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     original = path.read_bytes()
     _drain(instance, now=EVALUATION_TIME)
     path.unlink()
+    # Out-of-band deletion: the landing log still has the body present at a read's
+    # position, and a read never re-checks the file, so next still answers.
+    assert all(
+        item.reason != "evidence_unavailable"
+        for item in service_playbill_next(instance, request=_request(instance)).items
+    )
+    # The evidence sweep comes due (its daily trigger fires in the drain) and finds
+    # it; a derivation that needs the bytes meanwhile reads them as unavailable.
     _drain(instance, now=EVALUATION_TIME + timedelta(days=1))
 
     row = _row(instance, "evidence_unavailable", _request(instance))

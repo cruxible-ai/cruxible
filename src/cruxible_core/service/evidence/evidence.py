@@ -57,7 +57,11 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     parse_claim_law_evidence,
 )
-from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
+from cruxible_client.contracts.errors import (
+    CasError,
+    ClaimNotFoundError,
+    ProposalIntegrityError,
+)
 from cruxible_client.contracts.laws import CLAIM_LAW_V2_REVISION_9
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.providers import ProviderV1, parse_provider
@@ -789,6 +793,7 @@ def _current_replay_available(
             readers=readers,
             store=PositionedBodies(store),
             consulted=objects,
+            positioned=True,
         )
         if bodies is not None:
             bodies.update(
@@ -859,18 +864,25 @@ def _replay_available(
     readers: Mapping[str, ExternalSourceReaderProtocol],
     store: Any = None,
     consulted: list[str] | None = None,
+    positioned: bool = False,
 ) -> bool:
     store = store if store is not None else instance.body_store()
     noted = consulted if consulted is not None else []
     noted.append(capture_digest_value)
     if not store.verify(capture_digest_value):
         return False
-    envelope = parse_capture_envelope(
-        store.read(
-            capture_digest_value,
-            access=BodyAccessContext(principal_id="playbill-verdict", can_read_body=True),
-        )
-    )
+    access = BodyAccessContext(principal_id="playbill-verdict", can_read_body=True)
+    try:
+        body = store.read(capture_digest_value, access=access)
+    except CasError:
+        if not positioned or _cas_file_identity(store, capture_digest_value) is not None:
+            # Bytes rotted in place refuse, as the fold refuses (R4).
+            raise
+        # Present at the read's landing position, but deleted out of band (the
+        # evidence sweep finds that, not each read): the evidence cannot be
+        # replayed, as the fold answers for an absent body.
+        return False
+    envelope = parse_capture_envelope(body)
     if isinstance(envelope.source, CasSourceReference):
         noted.append(envelope.source.content_digest)
         return bool(store.verify(envelope.source.content_digest))
