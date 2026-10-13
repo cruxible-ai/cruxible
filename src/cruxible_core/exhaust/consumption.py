@@ -13,6 +13,7 @@ the raw receipts not yet folded.
 from __future__ import annotations
 
 import fcntl
+import heapq
 import os
 import secrets
 import threading
@@ -624,6 +625,29 @@ class _Tally:
     operations: dict[str, Counter[str]] = field(default_factory=dict)
     audit: dict[str, Counter[str]] = field(default_factory=dict)
     audit_distinct: dict[str, int] = field(default_factory=dict)
+    # Unfolded receipts by when they were recorded, oldest first: a heap,
+    # whose entries folded or removed since are skipped as they come up. A
+    # fold's cutoff pops only the entries before it, into ``overdue``
+    # (receipt id -> recorded time) until a fold takes them.
+    expiry: list[tuple[datetime, str]] = field(default_factory=list)
+    overdue: dict[str, datetime] = field(default_factory=dict)
+
+    def due(self, cutoff: datetime) -> list[str]:
+        """The unfolded receipts recorded before ``cutoff``, sorted.
+
+        The work is the receipts that became due since the last call (and
+        stale heap entries, each popped once), never the receipts still young.
+        """
+
+        while self.expiry and self.expiry[0][0] < cutoff:
+            recorded, receipt_id = heapq.heappop(self.expiry)
+            if receipt_id in self.raw:
+                self.overdue[receipt_id] = recorded
+        return sorted(
+            receipt_id
+            for receipt_id, recorded in self.overdue.items()
+            if recorded < cutoff and receipt_id in self.raw
+        )
 
     def _count(self, identity: ArtifactIdentity, operation: str, delta: int) -> None:
         key = identity.qualified
@@ -688,6 +712,7 @@ class _Tally:
                 # two can never count one receipt; refuse rather than double.
                 raise ReviewOperationalStoreError("a consumption receipt was folded twice")
             self.folded_ids.add(receipt_id)
+            self.overdue.pop(receipt_id, None)
             raw = self.raw.pop(receipt_id, None)
             if raw is None:
                 continue
@@ -719,6 +744,7 @@ class _Tally:
             # the same touch. Keep the original bytes, count the stable ID once.
             raw = self.raw[receipt_id] = _Raw(receipt, event)
             self._raw_contribution(receipt, 1)
+            heapq.heappush(self.expiry, (event.recorded_at, receipt_id))
         raw.partitions.add(name)
         self.legacy_unfolded += int(legacy)
 
@@ -733,6 +759,7 @@ class _Tally:
                 if not raw.partitions:
                     self._raw_contribution(raw.receipt, -1)
                     del self.raw[receipt_id]
+                    self.overdue.pop(receipt_id, None)
         self.spent.pop(name, None)
         self.seen.pop(name, None)
         self.partition_ids.pop(name, None)
@@ -889,12 +916,9 @@ def fold_consumption_receipts(
         for _attempt in range(8):
             tally = _tally(store)
             with _TALLIES_LOCK:
-                # The unfolded receipts are those of the last retention window.
-                due = sorted(
-                    receipt_id
-                    for receipt_id, raw in tally.raw.items()
-                    if raw.event.recorded_at < cutoff
-                )
+                # From the tally's expiry heap: only the receipts now past the
+                # cutoff are visited, not the window's younger ones.
+                due = tally.due(cutoff)
                 chosen = {receipt_id: tally.raw[receipt_id].receipt for receipt_id in due}
                 expected = tally.fold_head
             if not due:

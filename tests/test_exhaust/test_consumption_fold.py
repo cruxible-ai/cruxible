@@ -235,3 +235,34 @@ def test_a_read_after_one_new_receipt_applies_only_that_receipt(
     _read(instance, NOW, "late")
     consumption_aggregate(instance)
     assert sum(applied) == 1
+
+
+def test_a_fold_visits_only_the_receipts_that_came_due() -> None:
+    import heapq
+
+    visited: dict[int, int] = {}
+    for size in (64, 512):
+        tally = consumption._Tally()
+        young = [(NEW + timedelta(seconds=index), f"young-{index}") for index in range(size)]
+        for recorded, receipt_id in [*young, (OLD, "old")]:
+            heapq.heappush(tally.expiry, (recorded, receipt_id))
+            tally.raw[receipt_id] = object()  # type: ignore[assignment]
+        cutoff = NOW - timedelta(days=14)
+        assert tally.due(cutoff) == ["old"]
+        # The young receipts were not visited: they stay where they were.
+        visited[size] = size + 1 - len(tally.expiry)
+        assert len(tally.expiry) == size and list(tally.overdue) == ["old"]
+        # Asked again before a fold takes it: the same answer, from ``overdue``.
+        assert tally.due(cutoff) == ["old"]
+    assert visited[64] == visited[512] == 1
+
+
+def test_a_fold_empties_what_came_due_and_keeps_the_window(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    _read(instance, OLD, "status")
+    _read(instance, NEW, "status", reader="other")
+    result = fold_consumption_receipts(instance, now=NOW, days=14)
+    assert result.folded == 1
+    tally = consumption._tally(instance.review_operational_store())
+    assert tally.overdue == {}
+    assert len(tally.raw) == 1 and len(tally.expiry) == 1

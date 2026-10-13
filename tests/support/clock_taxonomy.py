@@ -206,6 +206,10 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # The retention cutoff a fold compares receipts' recorded instants with: the
     # accepted head's commit time (the writer's own timestamp) less the window.
     ("ConsumptionFoldV1", "folded_before"): "ASSERTION TIME",
+    # Unfolded receipts' recorded instants, in the tally's expiry queue and
+    # once a fold's cutoff has passed them: the events' own recorded_at.
+    ("_Tally", "expiry"): "ASSERTION TIME",
+    ("_Tally", "overdue"): "ASSERTION TIME",
     ("ConsumptionObservationGapV1", "unobserved_from_generation"): "SETTLEMENT ORDER",
     ("ConsumptionObservationResumeV1", "observed_from_generation"): "SETTLEMENT ORDER",
     ("CoverageManifestFileV1", "written_at"): "ASSERTION TIME",
