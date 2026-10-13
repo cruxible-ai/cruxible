@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import os
+import select
 import selectors
 import signal
 import stat
@@ -20,7 +21,7 @@ from contextlib import contextmanager
 from contextvars import Context
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal, Protocol, cast
+from typing import Annotated, Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -1615,18 +1616,59 @@ def _collect_child_output(
 
 
 def _process_exited_without_reaping(pid: int) -> bool:
-    """Observe child exit without releasing its pid for reuse."""
+    """Observe child exit without releasing its pid for reuse.
 
-    try:
-        waitid = getattr(os, "waitid")
-        result = waitid(
-            os.P_PID,
-            pid,
-            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+    ``os.waitid(..., WNOWAIT)`` is the primary path (Linux; macOS from Python
+    3.13). Where it is missing (macOS Python 3.11/3.12) a kqueue ``NOTE_EXIT``
+    registration observes the exit instead; neither path reaps the child.
+    """
+
+    waitid = getattr(os, "waitid", None)
+    if waitid is not None:
+        try:
+            result = waitid(
+                os.P_PID,
+                pid,
+                os.WEXITED | os.WNOHANG | os.WNOWAIT,
+            )
+        except ChildProcessError:
+            return True
+        return result is not None
+    return _process_exited_via_kqueue(pid)
+
+
+def _process_exited_via_kqueue(pid: int) -> bool:
+    """Observe an unreaped child's exit through kqueue without reaping it.
+
+    Registering ``NOTE_EXIT`` on a child that already exited (a zombie, since the
+    caller has not reaped it) returns an event at once: either the exit note or
+    an ``ESRCH`` error event. A live child returns no event.
+    """
+
+    # kqueue names are absent from the Linux stubs; this path only runs where
+    # os.waitid is missing (macOS before Python 3.13).
+    select_module: Any = select
+    kqueue_factory = getattr(select_module, "kqueue", None)
+    if kqueue_factory is None:
+        raise ProviderLocalRuntimeRefused(
+            "provider_process_lease_invalid",
+            "provider exit cannot be observed without reaping on this platform",
         )
-    except ChildProcessError:
-        return True
-    return result is not None
+    queue = kqueue_factory()
+    try:
+        event = select_module.kevent(
+            pid,
+            filter=select_module.KQ_FILTER_PROC,
+            flags=select_module.KQ_EV_ADD | select_module.KQ_EV_ONESHOT,
+            fflags=select_module.KQ_NOTE_EXIT,
+        )
+        try:
+            events = queue.control([event], 1, 0)
+        except ProcessLookupError:
+            return True
+        return bool(events)
+    finally:
+        queue.close()
 
 
 def _terminate_process_group(
