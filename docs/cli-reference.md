@@ -2573,6 +2573,33 @@ same proposal and refuses the same way. Withdraw it with `cruxible proposal
 withdraw`; the Line's next due occurrence settles against the current head
 under a new operation key.
 
+## action
+
+~~~text
+cruxible action run NAME [--wait] [--wait-timeout SECONDS] [--json]
+~~~
+
+Fire one registered internal action (`floor.refresh`, `evidence.sweep`,
+`prediction.anchor_retry`, or `curation.detect`) by hand, outside any
+Trigger's schedule. The fire is appended to the same trigger journal a
+Trigger's own schedule writes to -- the manual fire's occurrence records
+that it was manual and the writer principal -- so the owning consumer's
+`due()` picks it up exactly as it would a scheduled fire; NAME need not have
+any live Trigger aimed at it at all. An unregistered NAME is refused naming
+every registered action. Tier: GOVERNED_WRITE. The result names the fired
+event's journal sequence (`event_id`) and `fired_at`.
+
+Without `--wait` this only records the fire; the daemon's own next tick (or,
+for `floor.refresh`, the daemon's own floor render) picks it up whenever it
+next runs. `--wait` (default timeout 30s, up to 300s via `--wait-timeout`)
+additionally runs the owning consumer's due work inline and reports
+`outcome.status`: `completed` (with what it did), or `timed_out`. Not every
+action admits an inline run yet: `floor.refresh`'s delivery is admitted one
+render at a time per instance, which is only safe to await from the daemon's
+own HTTP admission path, so `--wait` on it reports `outcome.status` of
+`not_waited` with the reason; use `cruxible floor deliver-now` for a
+synchronous floor receipt instead.
+
 ## inbox
 
 ~~~text

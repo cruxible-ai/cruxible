@@ -71,6 +71,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("retire",): "active",
     ("write",): "active",
     ("claim", "attest"): "active",
+    ("action", "run"): "active",
     ("prediction", "propose"): "active",
     ("prediction", "settle"): "active",
     ("claim", "recover-attestation"): "active",
@@ -605,6 +606,18 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         },
         module="playbill",
         attr="claim_group",
+    ),
+    "action": _group(
+        "Fire a registered internal action on demand.",
+        {
+            "run": _command(
+                "playbill",
+                "run_action",
+                "Fire one registered internal action by hand.",
+            ),
+        },
+        module="playbill",
+        attr="action_group",
     ),
     "prediction": _group(
         "Propose, settle and list predictions.",

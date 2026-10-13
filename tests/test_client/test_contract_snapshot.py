@@ -94,6 +94,9 @@ def test_client_reads_package_version_and_served_snapshot_from_version_probe() -
 def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
     current = generate_contract_manifest()
     assert set(current["models"]) == {
+        "ActionRunOutcome",
+        "ActionRunRequest",
+        "ActionRunResult",
         "ClaimVersionReference",
         "ConsumerStatus",
         "ResolutionContractInput",
@@ -314,6 +317,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "ExecutedWorkspaceFileSourceRequestV2",
     }
     assert set(current["literal_aliases"]) == {
+        "ActionRunOutcomeStatus",
         "ProcedureMeasurementRefusalCode",
         "ProcedureRunnable",
         "LineEnablementOutcome",

@@ -161,6 +161,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
 
 # HTTP/CLI operations that share the same runtime boundary without being MCP tools.
 RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
+    "cruxible_action_run": PermissionMode.GOVERNED_WRITE,
     "cruxible_init": PermissionMode.ADMIN,
     "cruxible_host_create": PermissionMode.ADMIN,
     "cruxible_host_workspace_detach": PermissionMode.ADMIN,

@@ -736,6 +736,20 @@ def settle_prediction(
     )
 
 
+@router.post(
+    "/{instance_id}/actions/run",
+    response_model=contracts.ActionRunResult,
+)
+def run_action(
+    instance_id: str,
+    req: contracts.ActionRunRequest,
+) -> contracts.ActionRunResult:
+    return playbill_api.playbill_action_run(
+        resolve_server_instance_id(instance_id),
+        request=req,
+    )
+
+
 @router.get(
     "/{instance_id}/authoring/intents",
     response_model=contracts.AuthoringIntentListRecord,

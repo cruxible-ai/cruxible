@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
@@ -247,6 +248,30 @@ def latest_sequence(instance: Any, *, action: str) -> int:
                 "SELECT coalesce(max(sequence),0) FROM events WHERE action=?", (action,)
             ).fetchone()[0]
         )
+
+
+def fire_manual(instance: Any, *, action: str, principal: str, now: datetime) -> TriggerEvent:
+    """Append one manual fire of a registered internal action, by hand.
+
+    The event carries no Trigger (``trigger_id`` is NULL, exactly as a
+    worker's own deadline fires) but its occurrence records that it was
+    manual and who asked for it, so every part's own ``due()`` -- which reads
+    this journal by action name alone, never by whether a Trigger exists --
+    picks it up exactly as it would a scheduled fire. Every manual fire is
+    its own occurrence (never coalesced), unlike a timer instant.
+    """
+
+    if action not in INTERNAL_ACTIONS:
+        raise ValueError(f"{action!r} is not a registered internal action")
+    occurrence = f"manual:{principal}:{uuid4().hex}"
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        cursor = connection.execute(
+            "INSERT INTO events(action,trigger_id,due_at,fired_at,occurrence) VALUES (?,?,?,?,?)",
+            (action, None, format_datetime(now), format_datetime(now), occurrence),
+        )
+        assert cursor.lastrowid is not None
+        return TriggerEvent(cursor.lastrowid, action, None, now, now)
 
 
 def _deadline_name(name: str) -> str:

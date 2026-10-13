@@ -1110,6 +1110,19 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.SettleResult)
 
+    def run_internal_action(
+        self,
+        instance_id: str,
+        *,
+        request: contracts.ActionRunRequest,
+    ) -> contracts.ActionRunResult:
+        """Fire one registered internal action on demand; see ``ActionRunRequest``."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/actions/run",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.ActionRunResult)
+
     def get_authoring_intent(
         self,
         instance_id: str,

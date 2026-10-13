@@ -8,6 +8,16 @@ from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.actions import (
+    ActionRunOutcome as ActionRunOutcome,
+)
+from cruxible_client.contracts.actions import (
+    ActionRunOutcomeStatus as ActionRunOutcomeStatus,
+)
+from cruxible_client.contracts.actions import (
+    ActionRunRequest as ActionRunRequest,
+)
+from cruxible_client.contracts.actions import ActionRunResult as ActionRunResult
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.authoring.inputs import AuthoringInput
 from cruxible_client.contracts.authoring.models import (

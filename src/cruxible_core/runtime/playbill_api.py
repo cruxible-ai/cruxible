@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -290,6 +290,8 @@ from cruxible_core.service.proposals.review import (
 from cruxible_core.storage.cas import BodyAccessContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from cruxible_client.contracts.triggers import InternalActionSpec
+    from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
     from cruxible_core.service.discovery.operational_viewer import OperationalViewer
 
 _ProposalResultT = TypeVar("_ProposalResultT")
@@ -1512,6 +1514,124 @@ def playbill_settle_prediction(
         actor_context=actor_context,
         recorded_at=actor_context.timestamp,
     )
+
+
+def playbill_action_run(
+    instance_id: str,
+    *,
+    request: contracts.ActionRunRequest,
+) -> contracts.ActionRunResult:
+    """Fire one registered internal action by hand, outside any Trigger's schedule.
+
+    The fire is appended to the same trigger journal every Trigger-aimed and
+    deadline fire shares, so the owning consumer's own ``due()`` -- which
+    reads that journal by action name, never by whether a Trigger exists --
+    picks it up exactly as it would a scheduled fire. ``request.wait`` runs
+    that consumer's due work inline instead of leaving pickup to its own next
+    pass; see ``ActionRunOutcome`` for which actions that covers.
+    """
+
+    from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
+    from cruxible_core.triggers.journal import fire_manual
+
+    check_permission("cruxible_action_run", instance_id=instance_id)
+    spec = INTERNAL_ACTIONS.get(request.action)
+    if spec is None:
+        raise ConfigError(
+            f"Internal action {request.action!r} is not registered; choose one of: "
+            + ", ".join(sorted(INTERNAL_ACTIONS))
+            + "."
+        )
+    actor_context = _write_actor_context(instance_id)
+    if actor_context is None:
+        raise AuthenticationError(
+            "Firing an internal action requires an authenticated actor identity"
+        )
+    manager = get_playbill_manager()
+    instance = manager.get(instance_id)
+    event = fire_manual(
+        instance, action=spec.name, principal=actor_context.actor_id, now=actor_context.timestamp
+    )
+    outcome = (
+        _run_action_now(
+            manager,
+            instance_id,
+            spec,
+            now=actor_context.timestamp,
+            timeout_seconds=request.wait_timeout_seconds,
+        )
+        if request.wait
+        else contracts.ActionRunOutcome(status="not_waited")
+    )
+    return contracts.ActionRunResult(
+        action=spec.name, event_id=event.sequence, fired_at=event.fired_at, outcome=outcome
+    )
+
+
+def _run_action_now(
+    manager: PlaybillInstanceManager,
+    instance_id: str,
+    spec: InternalActionSpec,
+    *,
+    now: datetime,
+    timeout_seconds: float,
+) -> contracts.ActionRunOutcome:
+    """Run the action's owning consumer inline, bounded by ``timeout_seconds``.
+
+    ``next`` parts (``evidence``, ``prediction``, ``curation``) admit a safe
+    inline run: they are plain function calls with no cross-request admission
+    to coordinate. ``floor.refresh`` does not: a floor render is admitted one
+    at a time per instance (``FLOOR_ADMISSION``), and that admission is only
+    safe to await from the one sanctioned async route shape
+    (``export_floor``, ``floor_delta``, ``deliver_playbill_floor_now``), never
+    from a synchronous call on a request-marked thread. Firing it manually
+    here still records the fire for the daemon's own tick; a synchronous
+    receipt is `cruxible floor deliver-now` (``cruxible_floor_deliver_now``).
+    """
+
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeoutError
+
+    if spec.consumer == "floor":
+        return contracts.ActionRunOutcome(
+            status="not_waited",
+            detail={
+                "reason": (
+                    "floor.refresh delivery is admitted one render at a time per instance; "
+                    "the fire is recorded for the daemon's own tick. For a synchronous "
+                    "receipt, use `cruxible floor deliver-now`."
+                )
+            },
+        )
+    if spec.consumer != "next":
+        raise ConfigError(f"Internal action {spec.name!r} has no runnable consumer in this version")
+
+    from cruxible_core.consumers.next import NEXT_QUEUE
+    from cruxible_core.server.config import get_disabled_consumers
+
+    if NEXT_QUEUE.name in get_disabled_consumers():
+        raise ConfigError("The 'next' consumer is disabled on this daemon; cannot wait for it")
+
+    def drain() -> dict[str, Any]:
+        instance = manager.get(instance_id)
+        runs = 0
+        for _pass in range(64):
+            NEXT_QUEUE.match(instance, now=now, daemon_id="action-run")
+            units = tuple(NEXT_QUEUE.due(instance, now=now))
+            if not units:
+                return {"units_run": runs}
+            for unit in units:
+                NEXT_QUEUE.run(manager, instance_id, unit, now=now)
+                runs += 1
+        return {"units_run": runs, "note": "due work remained after 64 passes"}
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(drain)
+        try:
+            detail = future.result(timeout=timeout_seconds)
+        except FutureTimeoutError:
+            return contracts.ActionRunOutcome(status="timed_out")
+    return contracts.ActionRunOutcome(status="completed", detail=detail)
 
 
 def playbill_authoring_get(
