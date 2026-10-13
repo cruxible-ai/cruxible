@@ -248,3 +248,16 @@ def test_every_registered_internal_action_names_the_part_that_performs_it(tmp_pa
                 kind.run(manager, "instance", work, now=EVALUATION_TIME)
                 refresh.assert_called_once_with(instance, "instance", follow_fire=True)
 
+
+def test_reopening_a_state_on_its_own_thread_fails_instead_of_waiting(tmp_path: Path) -> None:
+    instance = SimpleNamespace(
+        root=tmp_path, descriptor=SimpleNamespace(storage=SimpleNamespace(exhaust="exhaust"))
+    )
+    with facts._STATE.open(instance) as connection:
+        assert connection is not None
+        # The lock is not reentrant: a nested open would wait on itself forever.
+        with pytest.raises(RuntimeError, match="already open on this thread"):
+            with facts._STATE.open(instance):
+                pass
+    with facts._STATE.open(instance) as connection:
+        assert connection is not None

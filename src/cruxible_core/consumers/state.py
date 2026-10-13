@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 _LOCKS: dict[Path, threading.Lock] = {}
+#: The thread holding each path's lock: opening it again there would wait forever.
+_HOLDERS: dict[Path, int] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
@@ -50,9 +52,15 @@ class DisposableState:
                 yield None
                 return
             path.parent.mkdir(mode=0o700, parents=True)
+        key = path.resolve()
         with _LOCKS_GUARD:
-            lock = _LOCKS.setdefault(path.resolve(), threading.Lock())
+            lock = _LOCKS.setdefault(key, threading.Lock())
+            if _HOLDERS.get(key) == threading.get_ident():
+                # Fail at once rather than deadlock on this thread's own lock.
+                raise RuntimeError(f"the {self.directory} state is already open on this thread")
         with lock:
+            with _LOCKS_GUARD:
+                _HOLDERS[key] = threading.get_ident()
             connection = sqlite3.connect(path, timeout=30)
             try:
                 if _schema_rows(connection) != self.expected:
@@ -61,6 +69,8 @@ class DisposableState:
                 connection.commit()
             finally:
                 connection.close()
+                with _LOCKS_GUARD:
+                    _HOLDERS.pop(key, None)
 
     def _rebuild(self, connection: sqlite3.Connection) -> None:
         # Dropping a table drops its indexes and triggers. The schema seeds
