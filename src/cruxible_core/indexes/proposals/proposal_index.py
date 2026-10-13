@@ -184,8 +184,10 @@ class ProposalIndex:
         on_commit: Callable[[tuple[int, ...] | None, tuple[int, ...]], None],
         connections: list[sqlite3.Connection],
         shutdown_proof: dict[str, Any],
+        history_commits: list[tuple[tuple[int, ...] | None, tuple[int, ...]]] | None = None,
     ) -> None:
         self.path, self._lock = path, lock
+        self._history_commits = history_commits if history_commits is not None else []
         self._file_stamp, self._on_commit = file_stamp, on_commit
         self._connections, self._shutdown_proof = connections, shutdown_proof
         self._connection: sqlite3.Connection | None = None
@@ -312,12 +314,35 @@ class ProposalIndex:
         finally:
             temporary.unlink(missing_ok=True)
 
+    def bind_source_root(self, root: Path) -> None:
+        """Name the evidence root this index serves before its first read.
+
+        A history-only commit can then carry the source checkpoint forward even
+        when it precedes every proposal read of this process (see
+        ``database_committed``).
+        """
+        with self._lock:
+            if self._root is None:
+                self._root = root
+            # Replay, in order, the history-only commits made before this
+            # component existed; a gap (another writer) stops the carry.
+            commits = tuple(self._history_commits)
+            self._history_commits.clear()
+            for before, after in commits:
+                self.database_committed(before, after)
+
     def database_committed(self, before: tuple[int, ...] | None, after: tuple[int, ...]) -> None:
-        """Publish C's captured stamp while it retains reacquired SQLite ownership."""
+        """Publish C's captured stamp while it retains reacquired SQLite ownership.
+
+        Before this process has synchronized the proposal rows (``_stamp`` is
+        unknown) the checkpoint's own recorded database stamp stands in for it:
+        the file it describes is exactly the file this history-only transaction
+        started from, so the checkpoint still describes it afterwards.
+        """
         if (
             self._root is not None
             and before is not None
-            and self._stamp == before
+            and self._stamp in (before, None)
             and after[:2] == before[:2]
         ):
             marker = self._marker(self._root)

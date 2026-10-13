@@ -904,6 +904,7 @@ EnvelopeLoader = Callable[[int, PriorMemberSequences], Sequence[ArtifactEnvelope
 
 
 _HISTORY_CHAIN_SEED = "sha256:" + "0" * 64
+_UNANNOUNCED_COMMIT_LIMIT = 256
 
 
 def _generation_rows_digest(connection: sqlite3.Connection, previous: str, sequence: int) -> str:
@@ -1080,6 +1081,10 @@ class AcceptedHistoryIndex:
         self._writer: sqlite3.Connection | None = None
         self._writer_identity: tuple[int, ...] | None = None
         self._close_writer: Callable[[], None] | None = None
+        # History-only commits made before the proposal component existed, in
+        # order: it carries its source checkpoint across them once it learns its
+        # evidence root (ProposalIndex.bind_source_root).
+        self._unannounced_commits: list[tuple[tuple[int, ...] | None, tuple[int, ...]]] = []
         self.generations_checked = 0
         self.generations_written = 0
         self.artifact_rows_written = 0
@@ -1100,6 +1105,7 @@ class AcceptedHistoryIndex:
                     on_commit=self.proposal_committed,
                     connections=self._connections,
                     shutdown_proof=self._proposal_close_state,
+                    history_commits=self._unannounced_commits,
                 )
             return self._proposals
 
@@ -1400,6 +1406,13 @@ class AcceptedHistoryIndex:
                     published_stamp = commit_working_write(writer, self._file_stamp, before_commit)
                     if published_stamp != before_commit and hasattr(self, "_proposals"):
                         self._proposals.database_committed(before_commit, published_stamp)
+                    elif published_stamp != before_commit:
+                        if len(self._unannounced_commits) < _UNANNOUNCED_COMMIT_LIMIT:
+                            self._unannounced_commits.append((before_commit, published_stamp))
+                        else:
+                            # Too long a run to replay: the checkpoint simply goes stale.
+                            self._unannounced_commits.clear()
+                            self._unannounced_commits.append((None, published_stamp))
                 except BaseException:
                     writer.rollback()
                     raise

@@ -116,6 +116,8 @@ class ProposalEvidenceStore:
             raise ProposalIntegrityError("proposal evidence root must be an existing directory")
         self.root = root.resolve(strict=True)
         self.index = index
+        if index is not None:
+            index.bind_source_root(self.root)
         self.transport = transport
         self._pending_records: dict[str, dict[str, Path]] | None = None
         self.proposals = self._directory("proposals")

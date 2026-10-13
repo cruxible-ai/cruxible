@@ -772,3 +772,35 @@ def test_a_restarted_reader_carries_its_clean_checkpoint_across_history_commits(
         assert reopened.read_admission(first.admission.proposal_id) == first.admission
     assert owner.proposals.reconstructions == 0
     owner.close()
+
+
+def test_history_commits_before_the_first_proposal_read_keep_the_checkpoint(tmp_path):
+    """A restart's history sync, before any proposal read, leaves the checkpoint clean (E3).
+
+    The history-only commits a process makes before its proposal component
+    exists are replayed onto the source checkpoint once the evidence root is
+    known, so the first proposal read is still a clean snapshot.
+    """
+
+    from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    instance._accepted_history_index.close()
+    # Without a recorded readiness the restart re-derives (and here rewrites)
+    # every generation: a history-only transaction that moves the file.
+    index_path.with_name(index_path.name + ".verified.json").unlink()
+    owner = AcceptedHistoryIndex(index_path)
+    before = owner._file_stamp()
+    with owner.read(instance._recovered, lambda _n, _prior: []):
+        pass
+    assert owner._file_stamp() != before and owner._unannounced_commits
+    reopened = ProposalEvidenceStore(
+        evidence.root, index=owner.proposals, transport=instance._ledger
+    )
+    assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    assert owner.proposals.reconstructions == 0
+    owner.close()
