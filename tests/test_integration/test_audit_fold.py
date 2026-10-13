@@ -808,6 +808,9 @@ class _FakeHistoryReader:
     def _generation(self, sequence):  # type: ignore[no-untyped-def]
         return next(item for item in self.histories if item.sequence == sequence)
 
+    def generation(self, sequence):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(git_oid=self._generation(sequence).oid)
+
     def read_member_law_evidence(self, location, _records):  # type: ignore[no-untyped-def]
         record = self._generation(location.sequence).record
         return next(item for item in record.law_evidence if item.path == location.member_path)
@@ -997,8 +1000,14 @@ def _walked_history_index(
     )
 
 
-def test_the_indexed_history_index_equals_the_walk_over_every_generation(tmp_path: Path) -> None:
-    """Perf E1: the audit's history facts come from the history index, sized by these Claims."""
+def test_the_indexed_history_index_equals_the_walk_over_every_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Perf E1: the audit's history facts come from the history index, sized by these Claims.
+
+    Review F-006: no page enumerates accepted history; each generation that
+    touched the audited Claims is one primary-key lookup.
+    """
 
     from cruxible_client.contracts.write import WriteRequest
     from cruxible_core.service.authoring.write_verbs import service_playbill_write
@@ -1027,7 +1036,32 @@ def test_the_indexed_history_index_equals_the_walk_over_every_generation(tmp_pat
     facts_at_head = build_accepted_query_facts(instance, coordinate=head)
     current = {row.accepted.path: row for row in facts_at_head.claims}
     sequence = instance.accepted_history()[-1].sequence
-    for target in (sequence, sequence - 1):
-        assert _history_index(
-            instance, current_claims=current, target_generation=target
-        ) == _walked_history_index(instance, current_claims=current, target_generation=target)
+    from cruxible_core.indexes.history.history_index import HistoryReader
+
+    expected = {
+        target: _walked_history_index(instance, current_claims=current, target_generation=target)
+        for target in (sequence, sequence - 1)
+    }
+    lookups: list[int] = []
+    real_generation = HistoryReader.generation
+
+    def counted(self, wanted):  # type: ignore[no-untyped-def]
+        lookups.append(wanted)
+        return real_generation(self, wanted)
+
+    monkeypatch.setattr(HistoryReader, "generation", counted)
+    monkeypatch.setattr(
+        instance, "accepted_history", lambda: pytest.fail("audit enumerated accepted history")
+    )
+    for target, walked in expected.items():
+        lookups.clear()
+        assert _history_index(instance, current_claims=current, target_generation=target) == walked
+        with instance.accepted_history_reader() as reader:
+            touched = {
+                found
+                for versions in reader.member_versions(tuple(current)).values()
+                for found, _digest in versions
+                if found <= target
+            }
+        # Only generations that touched the audited Claims (and genesis) are looked up.
+        assert lookups and set(lookups) <= touched | {0}, (lookups, touched)

@@ -196,12 +196,12 @@ class _AuditHistoryIndex:
 
 
 def _generation(instance: PlaybillInstance, coordinate: AcceptedCoordinate) -> int:
-    matches = tuple(
-        item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if len(matches) != 1:
+    # The history index's OID lookup, not a walk of every accepted generation.
+    with instance.accepted_history_reader() as retained:
+        location = retained.generation_for_oid(coordinate.git_oid)
+    if location is None:
         raise AuditCoordinateNotAccepted("audit coordinate is not accepted here")
-    return matches[0]
+    return location.sequence
 
 
 def _resolve_coordinate(
@@ -310,20 +310,17 @@ def _history_index(
     first: dict[tuple[str, str], int] = {}
     actors: dict[tuple[str, str], str] = {}
     attestations: dict[tuple[str, str, str], int] = {}
-    oids = {
-        generation.sequence: generation.oid
-        for generation in instance.accepted_history()
-        if generation.sequence <= target_generation
-    }
     records = instance.retained_record_reader()
     with instance.accepted_history_reader() as retained:
-        changed_at: dict[int, set[str]] = {0: set(paths)} if paths and 0 in oids else {}
+        changed_at: dict[int, set[str]] = {0: set(paths)} if paths else {}
         for path, versions in retained.member_versions(ordered).items():
             for sequence, _digest in versions:
                 if sequence <= target_generation:
                     changed_at.setdefault(sequence, set()).add(path)
         for sequence in sorted(changed_at):
-            tree = instance.blobs_at(oids[sequence], tuple(sorted(changed_at[sequence])))
+            # One primary-key lookup per generation that touched these Claims.
+            oid = retained.generation(sequence).git_oid
+            tree = instance.blobs_at(oid, tuple(sorted(changed_at[sequence])))
             for path in changed_at[sequence]:
                 raw = tree.get(path)
                 if raw is not None:
@@ -347,11 +344,10 @@ def _history_index(
                     (location.member_path, law.statement_digest, attestation.attestation_digest),
                     location.sequence,
                 )
-    for path, row in current_claims.items():
-        key = (path, row.accepted.statement_digest)
-        first.setdefault(key, target_generation)
-        lineages[path].add(row.accepted.artifact_digest)
-    with instance.accepted_history_reader() as retained:
+        for path, row in current_claims.items():
+            key = (path, row.accepted.statement_digest)
+            first.setdefault(key, target_generation)
+            lineages[path].add(row.accepted.artifact_digest)
         for path, row in current_claims.items():
             for item in row.attestations:
                 if isinstance(item, AcceptedClaimAttestationEvidence):
