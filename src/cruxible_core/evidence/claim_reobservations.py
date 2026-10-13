@@ -485,6 +485,29 @@ class ClaimReobservationStore:
 
     # -- reads --------------------------------------------------------------
 
+    def records_after(self, sequence: int) -> tuple[tuple[int, str], ...]:
+        """Each journal record after ``sequence``: its sequence and the lineage it re-observed.
+
+        Read from the journal, the authority, never the projection (which has no
+        index on sequence alone): a follower pays one payload read per record past
+        its cursor, whatever the journal holds.
+        """
+
+        journal = self._journal(create=False)
+        if journal is None:
+            return ()
+        records: list[tuple[int, str]] = []
+        for stored in journal.select_records(
+            self.stream, partition_id=_PARTITION, first_sequence=sequence + 1
+        ):
+            payload = parse_journal_payload(
+                self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
+            )
+            if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
+                raise ValueError("invalid Claim re-observation record")
+            records.append((stored.record.sequence, str(payload["claim_id"])))
+        return tuple(records)
+
     def history(self, claim_id: str) -> tuple[ReobservationRecord, ...]:
         """Every re-observation ever recorded for one lineage, in capture order.
 
@@ -524,6 +547,20 @@ def reobservation_journal_signature(root: Path, *, exhaust: str, instance_id: st
     changes it. ``None`` when nothing was ever recorded.
     """
 
+    found = reobservation_journal_identity(root, exhaust=exhaust, instance_id=instance_id)
+    return None if found is None else found[1]
+
+
+def reobservation_journal_identity(
+    root: Path, *, exhaust: str, instance_id: str
+) -> tuple[str, str] | None:
+    """The re-observation log's file (device and inode) and its full signature, from one stat.
+
+    The file names the journal a cursor was kept against: a journal rebuilt
+    from nothing is a different file. The signature moves with every append.
+    ``None`` when nothing was ever recorded.
+    """
+
     stream = JournalStreamIdentityV1(
         instance_id=instance_id,
         journal_family=CLAIM_REOBSERVATION_JOURNAL_FAMILY,
@@ -534,7 +571,10 @@ def reobservation_journal_signature(root: Path, *, exhaust: str, instance_id: st
         stat = log.stat()
     except FileNotFoundError:
         return None
-    return f"{stat.st_dev}:{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
+    return (
+        f"{stat.st_dev}:{stat.st_ino}",
+        f"{stat.st_dev}:{stat.st_ino}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}",
+    )
 
 
 @dataclass(frozen=True)
@@ -799,6 +839,7 @@ __all__ = [
     "ReobservationReading",
     "ReobservationRecord",
     "cited_reobservation_keys",
+    "reobservation_journal_identity",
     "reobservation_journal_signature",
     "reobservations_at",
 ]

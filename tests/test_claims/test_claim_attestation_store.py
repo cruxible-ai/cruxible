@@ -494,3 +494,53 @@ def test_corrupt_pointer_with_two_maximal_roots_refuses_recovery_ambiguous(
 
     with pytest.raises(ClaimAttestationStoreError, match="recovery_ambiguous"):
         _store(tmp_path / "left").head()
+
+
+def test_events_after_a_root_reads_only_what_was_published_since(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    empty = store.head()
+    # Before the store exists its empty root is a valid cursor with nothing after it.
+    assert store.events_after(empty) == (empty, ())
+    receipts = []
+    for ordinal in range(3):
+        attestation = _attestation(
+            claim_id=f"CLM-{ordinal:032x}", attested_at=NOW + timedelta(seconds=ordinal)
+        )
+        receipts.append(
+            store.append(
+                attestation=attestation, verification_account=_account(attestation), note=None
+            )
+        )
+    head = store.head()
+    assert head == receipts[-1].current_head
+    everything = store.events()
+
+    after_empty = store.events_after(empty)
+    assert after_empty[0] == head
+    assert [(position, event, payload) for position, event, payload in after_empty[1]] == [
+        (index + 1, event, payload) for index, (event, payload) in enumerate(everything)
+    ]
+    # A cursor at the first event's root reads the two published after it, and
+    # loads none of the earlier objects to do so.
+    loaded: list[str] = []
+    load = ClaimAttestationEvidenceStore._load_object
+
+    def counting(self, kind, digest, model):  # type: ignore[no-untyped-def]
+        loaded.append(kind)
+        return load(self, kind, digest, model)
+
+    monkeypatch.setattr(ClaimAttestationEvidenceStore, "_load_object", counting)
+    store._event_pair_cache.clear()
+    after_first = store.events_after(receipts[0].recorded_head)
+    assert [event.event_digest for _position, event, _payload in after_first[1]] == [
+        receipts[1].event_digest,
+        receipts[2].event_digest,
+    ]
+    assert [position for position, *_rest in after_first[1]] == [2, 3]
+    assert loaded.count("event") == 2
+    assert store.events_after(head) == (head, ())
+
+    with pytest.raises(ClaimAttestationStoreError, match="attestation_head_unknown"):
+        store.events_after("sha256:" + "9" * 64)
