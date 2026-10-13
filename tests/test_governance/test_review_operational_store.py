@@ -327,3 +327,76 @@ def test_lock_symlink_refuses_without_following_target(tmp_path: Path) -> None:
     with pytest.raises(ReviewOperationalStoreError, match="lock path is not trustworthy"):
         instance.review_operational_store().head()
     assert target.read_text(encoding="utf-8") == "untouched"
+
+
+def _curation_append(store: ReviewOperationalStore, coordinate, partition: str, event_id: str):  # type: ignore[no-untyped-def]
+    return store.append(
+        family="curation",
+        partition_id=partition,
+        event_id=event_id,
+        payload={"event_id": event_id},
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+    )
+
+
+def test_a_reader_rereads_only_the_sequences_written_since_it_last_looked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.curation.review_operational import reset_review_operational_replays
+
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    store = instance.review_operational_store()
+    for partition in ("one", "two", "three"):
+        for index in range(4):
+            _curation_append(store, coordinate, partition, f"{partition}-{index}")
+    _append(store, coordinate)
+    store.head()
+    assert len(store.events()) == 13
+    loaded: list[int] = []
+    load_event = ReviewOperationalStore._load_event
+
+    def counted(self, directory, family, partition_id, sequence, previous):  # type: ignore[no-untyped-def]
+        loaded.append(sequence)
+        return load_event(self, directory, family, partition_id, sequence, previous)
+
+    monkeypatch.setattr(ReviewOperationalStore, "_load_event", counted)
+    # Nothing moved: the head and the events come from the replay.
+    head = store.head()
+    assert store.head() is head
+    assert len(store.events(family="curation")) == 12
+    assert loaded == []
+    # An append reads back only the partition it extends, from its new sequence.
+    _curation_append(store, coordinate, "two", "two-4")
+    moved = store.head()
+    assert loaded == [4]
+    assert moved != head
+    assert "two-4" in {payload["event_id"] for _event, payload in store.events()}
+    assert len(store.events()) == 14 and loaded == [4]
+    # A fresh process (no replay) agrees with the warm one.
+    monkeypatch.undo()
+    reset_review_operational_replays()
+    assert store.head() == moved
+    assert len(store.events()) == 14
+
+
+def test_a_replaced_touch_log_makes_the_next_reader_list_the_store_again(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    store = instance.review_operational_store()
+    _curation_append(store, coordinate, "one", "one-0")
+    assert len(store.events()) == 1
+    root = Path(instance.inspect().storage_directories["exhaust"]) / "review-operational-v1"
+    # Another writer's partition whose touch the log no longer names.
+    other = ReviewOperationalStore(
+        Path(instance.inspect().storage_directories["exhaust"]),
+        instance_id=instance.descriptor.instance_id,
+    )
+    _curation_append(other, coordinate, "two", "two-0")
+    (root / "partitions.log").unlink()
+    assert {payload["event_id"] for _event, payload in store.events()} == {"one-0", "two-0"}

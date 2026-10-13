@@ -72,10 +72,12 @@ def _entry(name: str, **extra):  # type: ignore[no-untyped-def]
 
 
 def _bytes(store: ReviewOperationalStore) -> dict[str, bytes]:
+    # The touch log only tells readers which partitions to re-read; it is not
+    # store content (a retry names a partition again).
     return {
         str(path.relative_to(store.root)): path.read_bytes()
         for path in sorted(store.root.rglob("*"))
-        if path.is_file()
+        if path.is_file() and path.name != "partitions.log"
     }
 
 

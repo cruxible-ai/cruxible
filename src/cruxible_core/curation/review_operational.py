@@ -3,6 +3,14 @@
 This store records what one daemon served or mechanically observed.  Its files
 are not ledger members and must never participate in semantic, generation, or
 candidate identity.
+
+Readers keep a per-process replay of every partition they verified, and
+``partitions.log`` names each partition a writer touched, written under the
+store lock before the partition changes. A reader reads only the log lines
+added since it last looked and re-reads only those partitions, from the first
+sequence it has not verified; ``head`` is rebuilt only when a partition moved.
+A partition is verified once per process; a log that is replaced, truncated or
+missing makes the next reader list the whole store again.
 """
 
 from __future__ import annotations
@@ -12,8 +20,10 @@ import json
 import os
 import shutil
 import stat
-from collections.abc import Sequence
+import threading
+from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Literal, TypeAlias
@@ -39,6 +49,17 @@ ReviewOperationalFamily: TypeAlias = Literal[
 ]
 REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT = 256
 _UNCHECKED_PARTITION_HEAD = object()
+_FAMILIES: tuple[ReviewOperationalFamily, ...] = (
+    "audit",
+    "block_observation",
+    "block_scan",
+    "consumption",
+    "curation",
+)
+# Each line names one partition a writer touched: "<family>\t<directory name>".
+_TOUCH_LOG = "partitions.log"
+# Past this size, a reader that has read the whole log starts a new one.
+_TOUCH_LOG_COMPACT_BYTES = 1 << 20
 
 
 class ReviewOperationalStoreError(CruxibleError):
@@ -259,6 +280,63 @@ def _exclusive_write(path: Path, content: bytes) -> None:
     _fsync_directory(path.parent)
 
 
+_Loaded: TypeAlias = tuple[tuple["PlaybillReviewOperationalEventV1", dict[str, object]], ...]
+
+
+@dataclass
+class _PartitionReplay:
+    """One partition's verified events, and whether it moved since they were read."""
+
+    partition_id: str | None = None
+    events: list[tuple[PlaybillReviewOperationalEventV1, dict[str, object]]] = field(
+        default_factory=list
+    )
+    event_ids: dict[object, int] = field(default_factory=dict)
+    dirty: bool = True
+
+    def extend(
+        self, loaded: Iterable[tuple[PlaybillReviewOperationalEventV1, dict[str, object]]]
+    ) -> None:
+        for event, payload in loaded:
+            self.event_ids.setdefault(payload.get("event_id"), len(self.events))
+            self.events.append((event, payload))
+
+
+@dataclass
+class _StoreReplay:
+    """What one process verified of one store, and how far it read the touch log."""
+
+    listed: bool = False
+    log_identity: tuple[int, int] | None = None
+    log_offset: int = 0
+    manifest: ReviewOperationalStoreManifestV1 | None = None
+    # (family, directory name) -> its replay.
+    partitions: dict[tuple[str, str], _PartitionReplay] = field(default_factory=dict)
+    head: ReviewOperationalHeadV1 | None = None
+    family_events: dict[str, _Loaded] = field(default_factory=dict)
+
+    def touched(self, family: str, name: str) -> None:
+        self.partitions.setdefault((family, name), _PartitionReplay()).dirty = True
+        self.head = None
+        self.family_events.pop(family, None)
+
+
+_REPLAYS: dict[tuple[str, str], _StoreReplay] = {}
+_REPLAYS_LOCK = threading.Lock()
+
+
+def _replay(root: Path, instance_id: str) -> _StoreReplay:
+    with _REPLAYS_LOCK:
+        return _REPLAYS.setdefault((str(root), instance_id), _StoreReplay())
+
+
+def reset_review_operational_replays() -> None:
+    """Forget every in-process replay, so the next read verifies the whole store again."""
+
+    with _REPLAYS_LOCK:
+        _REPLAYS.clear()
+
+
 class ReviewOperationalStore:
     """Canonical immutable operational events with replay-derived heads."""
 
@@ -466,6 +544,160 @@ class ReviewOperationalStore:
             raise ReviewOperationalStoreError("operational event payload digest does not reproduce")
         return event, payload
 
+    # -- the per-process replay -------------------------------------------------
+
+    def _touch(self, family: ReviewOperationalFamily, directory: Path) -> None:
+        """Name a partition in the touch log before it changes; the caller holds the lock."""
+
+        path = self.root / _TOUCH_LOG
+        if path.is_symlink():
+            raise ReviewOperationalStoreError("operational touch log is not trustworthy")
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags, 0o600)
+        try:
+            os.write(descriptor, f"{family}\t{directory.name}\n".encode("ascii"))
+        finally:
+            os.close(descriptor)
+
+    def _list_partitions(self, replay: _StoreReplay) -> None:
+        replay.partitions.clear()
+        replay.family_events.clear()
+        replay.head = None
+        replay.manifest = None
+        partitions = self.root / "partitions"
+        if not partitions.is_dir():
+            return
+        for family in _FAMILIES:
+            family_root = partitions / family
+            if not family_root.exists() and not family_root.is_symlink():
+                continue
+            if family_root.is_symlink() or not family_root.is_dir():
+                raise ReviewOperationalStoreError("operational family root is invalid")
+            for name in os.listdir(family_root):
+                if not name.startswith("."):
+                    replay.partitions[(family, name)] = _PartitionReplay()
+
+    def _sync(self, *, compact: bool = False) -> _StoreReplay:
+        """This process's replay, moved forward by the touch log; the caller holds the lock.
+
+        ``compact`` (writers only) starts a new log once this one is large and
+        fully applied here.
+        """
+
+        replay = _replay(self.root, self.instance_id)
+        path = self.root / _TOUCH_LOG
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            metadata = None
+        if metadata is not None and not stat.S_ISREG(metadata.st_mode):
+            raise ReviewOperationalStoreError("operational touch log is not trustworthy")
+        identity = None if metadata is None else (metadata.st_dev, metadata.st_ino)
+        size = 0 if metadata is None else metadata.st_size
+        if not replay.listed or identity != replay.log_identity or size < replay.log_offset:
+            # A new process, or a log replaced or cut short: list the store again.
+            self._list_partitions(replay)
+            replay.listed = True
+        elif size > replay.log_offset:
+            with path.open("rb") as stream:
+                stream.seek(replay.log_offset)
+                added = stream.read(size - replay.log_offset)
+            # Only whole lines: a writer holds the lock, so none is partial.
+            size = replay.log_offset + added.rfind(b"\n") + 1
+            for line in added[: size - replay.log_offset].splitlines():
+                family, _separator, name = line.decode("ascii").partition("\t")
+                if family in _FAMILIES and name:
+                    replay.touched(family, name)
+        replay.log_identity = identity
+        replay.log_offset = size
+        if compact and size > _TOUCH_LOG_COMPACT_BYTES and not is_previewing():
+            # Everything named so far is applied here; a fresh log makes every
+            # other process list the store once.
+            staged = self.root / f".{_TOUCH_LOG}.new"
+            staged.unlink(missing_ok=True)
+            os.close(os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+            os.replace(staged, path)
+            fresh = path.lstat()
+            replay.log_identity = (fresh.st_dev, fresh.st_ino)
+            replay.log_offset = 0
+        return replay
+
+    def _manifest(self, replay: _StoreReplay) -> ReviewOperationalStoreManifestV1:
+        if replay.manifest is None:
+            replay.manifest = self._load_manifest()
+        return replay.manifest
+
+    def _replayed(
+        self, replay: _StoreReplay, family: ReviewOperationalFamily, name: str
+    ) -> _PartitionReplay | None:
+        """One partition's verified events, reading only the sequences not yet verified."""
+
+        held = replay.partitions.get((family, name))
+        if held is not None and not held.dirty:
+            return held
+        directory = self.root / "partitions" / family / name
+        if not directory.exists() and not directory.is_symlink():
+            replay.partitions.pop((family, name), None)
+            return None
+        if directory.is_symlink() or not directory.is_dir():
+            raise ReviewOperationalStoreError("operational partition root is invalid")
+        events_directory = directory / "events"
+        if (
+            events_directory.is_symlink()
+            or not events_directory.is_dir()
+            or (directory / "payloads").is_symlink()
+            or not (directory / "payloads").is_dir()
+        ):
+            raise ReviewOperationalStoreError("operational partition is invalid")
+        names = [item for item in os.listdir(events_directory) if item.endswith(".json")]
+        held = held or _PartitionReplay()
+        if held.partition_id is None or len(names) < len(held.events):
+            # Unread, emptied or cut back: verify the whole chain.
+            held = _PartitionReplay()
+            if names:
+                first = events_directory / min(names)
+                try:
+                    partition_id = PlaybillReviewOperationalEventV1.model_validate_json(
+                        first.read_bytes()
+                    ).partition_id
+                except (OSError, ValidationError, ValueError) as exc:
+                    raise ReviewOperationalStoreError("operational event is malformed") from exc
+                held.partition_id = partition_id
+                held.extend(self._load_partition(family, partition_id))
+        elif len(names) > len(held.events):
+            previous = held.events[-1][0].event_digest
+            for sequence in range(len(held.events), len(names)):
+                event, payload = self._load_event(
+                    directory, family, held.partition_id, sequence, previous
+                )
+                held.extend(((event, payload),))
+                previous = event.event_digest
+        held.dirty = False
+        replay.partitions[(family, name)] = held
+        return held
+
+    def _family_events(self, replay: _StoreReplay, family: ReviewOperationalFamily) -> _Loaded:
+        known = replay.family_events.get(family)
+        if known is not None:
+            return known
+        loaded: list[tuple[PlaybillReviewOperationalEventV1, dict[str, object]]] = []
+        for key in sorted(name for held_family, name in replay.partitions if held_family == family):
+            held = self._replayed(replay, family, key)
+            if held is None:
+                continue
+            if not held.events:
+                raise ReviewOperationalStoreError("operational partition is empty")
+            loaded.extend(held.events)
+        replay.family_events[family] = tuple(loaded)
+        return replay.family_events[family]
+
+    def _target(
+        self, replay: _StoreReplay, family: ReviewOperationalFamily, partition_id: str
+    ) -> tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...]:
+        directory = self._partition_directory(family, partition_id, create=False)
+        held = self._replayed(replay, family, directory.name)
+        return () if held is None else tuple(held.events)
+
     def append(
         self,
         *,
@@ -490,24 +722,23 @@ class ReviewOperationalStore:
                 coordinate=coordinate, generation=generation, initialized_at=recorded_at
             )
             directory = self._partition_directory(family, partition_id, create=True)
-            existing = (
-                self._load_partition(family, partition_id)
-                if any((directory / "events").glob("*.json"))
-                else ()
-            )
-            for event, prior_payload in existing:
-                if prior_payload.get("event_id") == event_id:
-                    if event.payload_digest != payload_digest:
-                        raise ReviewOperationalStoreError(
-                            "operational event identity has conflicting payload bytes"
-                        )
-                    return event
+            replay = self._sync(compact=True)
+            held = self._replayed(replay, family, directory.name)
+            existing = () if held is None else held.events
+            if held is not None and event_id in held.event_ids:
+                event = existing[held.event_ids[event_id]][0]
+                if event.payload_digest != payload_digest:
+                    raise ReviewOperationalStoreError(
+                        "operational event identity has conflicting payload bytes"
+                    )
+                return event
             latest = existing[-1][0].event_digest if existing else None
             if (
                 expected_latest_event_digest is not _UNCHECKED_PARTITION_HEAD
                 and expected_latest_event_digest != latest
             ):
                 raise ReviewOperationalConcurrentChangeError
+            self._touch(family, directory)
             return self._append_verified(
                 directory=directory,
                 family=family,
@@ -545,10 +776,9 @@ class ReviewOperationalStore:
         with self._locked():
             existing: tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...] = ()
             if self.root.exists():
-                self._load_manifest()
-                directory = self._partition_directory(family, partition_id, create=False)
-                if any((directory / "events").glob("*.json")):
-                    existing = self._load_partition(family, partition_id)
+                replay = self._sync()
+                self._manifest(replay)
+                existing = self._target(replay, family, partition_id)
             for event, prior_payload in existing:
                 if prior_payload.get("event_id") == event_id:
                     if event.payload_digest != payload_digest:
@@ -595,6 +825,7 @@ class ReviewOperationalStore:
                 result = self._load_event(directory, family, partition_id, 0, previous)
                 _fsync_directory(directory.parent)
                 return result
+            self._touch(family, directory)
             event = self._publish_partition(
                 directory=directory,
                 family=family,
@@ -630,10 +861,8 @@ class ReviewOperationalStore:
         with self._locked():
             if not self.root.exists() and not self.root.is_symlink():
                 return ()
-            directory = self._partition_directory(family, partition_id, create=False)
-            if not directory.exists() and not directory.is_symlink():
-                return ()
-            return tuple(payload for _event, payload in self._load_partition(family, partition_id))
+            replay = self._sync()
+            return tuple(payload for _event, payload in self._target(replay, family, partition_id))
 
     def append_batch(
         self,
@@ -688,6 +917,7 @@ class ReviewOperationalStore:
                     _fsync_directory(family_root)
                     results.append(prior)
                     continue
+                self._touch(family, directory)
                 event = self._publish_partition(
                     directory=directory,
                     family=family,
@@ -809,63 +1039,37 @@ class ReviewOperationalStore:
     def events(
         self, *, family: ReviewOperationalFamily | None = None
     ) -> tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...]:
+        """Every verified event, by family, partition directory and sequence."""
         with self._locked():
             if not self.root.exists() and not self.root.is_symlink():
                 return ()
-            self._load_manifest()
+            replay = self._sync()
+            self._manifest(replay)
             loaded: list[tuple[PlaybillReviewOperationalEventV1, dict[str, object]]] = []
-            families: tuple[ReviewOperationalFamily, ...] = (
-                (family,)
-                if family is not None
-                else (
-                    "audit",
-                    "block_observation",
-                    "block_scan",
-                    "consumption",
-                    "curation",
-                )
-            )
-            for current_family in families:
-                family_root = self.root / "partitions" / current_family
-                if not family_root.exists():
-                    continue
-                if family_root.is_symlink() or not family_root.is_dir():
-                    raise ReviewOperationalStoreError("operational family root is invalid")
-                for directory in sorted(family_root.iterdir(), key=lambda item: item.name):
-                    if directory.is_symlink() or not directory.is_dir():
-                        raise ReviewOperationalStoreError("operational partition root is invalid")
-                    event_paths = tuple(sorted((directory / "events").glob("*.json")))
-                    if not event_paths:
-                        raise ReviewOperationalStoreError("operational partition is empty")
-                    try:
-                        first = PlaybillReviewOperationalEventV1.model_validate_json(
-                            event_paths[0].read_bytes()
-                        )
-                    except (OSError, ValidationError, ValueError) as exc:
-                        raise ReviewOperationalStoreError("operational event is malformed") from exc
-                    loaded.extend(self._load_partition(current_family, first.partition_id))
+            for current in _FAMILIES if family is None else (family,):
+                loaded.extend(self._family_events(replay, current))
             return tuple(loaded)
 
     def head(self) -> ReviewOperationalHeadV1:
+        """Every partition's head, rebuilt only when a partition moved since the last one."""
         with self._locked():
             if not self.root.exists() and not self.root.is_symlink():
                 return build_review_operational_head(
                     initialized_coordinate=None, initialized_generation=None, partitions=()
                 )
-            manifest = self._load_manifest()
+            replay = self._sync()
+            if replay.head is not None:
+                return replay.head
+            manifest = self._manifest(replay)
             heads: list[ReviewOperationalPartitionHeadV1] = []
-            for event, _payload in self.events_unlocked():
-                if heads and (
-                    heads[-1].family == event.family
-                    and heads[-1].partition_id == event.partition_id
-                ):
-                    heads[-1] = ReviewOperationalPartitionHeadV1(
-                        family=event.family,
-                        partition_id=event.partition_id,
-                        sequence=event.sequence,
-                        event_digest=event.event_digest,
-                    )
-                else:
+            for family in _FAMILIES:
+                for name in sorted(key for held, key in replay.partitions if held == family):
+                    held_replay = self._replayed(replay, family, name)
+                    if held_replay is None:
+                        continue
+                    if not held_replay.events:
+                        raise ReviewOperationalStoreError("operational partition is empty")
+                    event = held_replay.events[-1][0]
                     heads.append(
                         ReviewOperationalPartitionHeadV1(
                             family=event.family,
@@ -874,36 +1078,12 @@ class ReviewOperationalStore:
                             event_digest=event.event_digest,
                         )
                     )
-            return build_review_operational_head(
+            replay.head = build_review_operational_head(
                 initialized_coordinate=manifest.initialized_coordinate,
                 initialized_generation=manifest.initialized_generation,
                 partitions=tuple(heads),
             )
-
-    def events_unlocked(
-        self,
-    ) -> tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...]:
-        loaded: list[tuple[PlaybillReviewOperationalEventV1, dict[str, object]]] = []
-        for family in ("audit", "block_observation", "block_scan", "consumption", "curation"):
-            family_root = self.root / "partitions" / family
-            if not family_root.exists():
-                continue
-            if family_root.is_symlink() or not family_root.is_dir():
-                raise ReviewOperationalStoreError("operational family root is invalid")
-            for directory in sorted(family_root.iterdir(), key=lambda item: item.name):
-                if directory.is_symlink() or not directory.is_dir():
-                    raise ReviewOperationalStoreError("operational partition root is invalid")
-                paths = tuple(sorted((directory / "events").glob("*.json")))
-                if not paths:
-                    raise ReviewOperationalStoreError("operational partition is empty")
-                try:
-                    first = PlaybillReviewOperationalEventV1.model_validate_json(
-                        paths[0].read_bytes()
-                    )
-                except (OSError, ValidationError, ValueError) as exc:
-                    raise ReviewOperationalStoreError("operational event is malformed") from exc
-                loaded.extend(self._load_partition(family, first.partition_id))
-        return tuple(loaded)
+            return replay.head
 
 
 __all__ = [
@@ -919,6 +1099,7 @@ __all__ = [
     "ReviewOperationalStore",
     "ReviewOperationalStoreError",
     "build_review_operational_head",
+    "reset_review_operational_replays",
     "review_operational_event_digest",
     "review_operational_head_digest",
     "review_operational_partition_genesis_digest",
