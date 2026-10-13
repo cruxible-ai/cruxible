@@ -360,6 +360,7 @@ from cruxible_core.query.engine import (
     evaluate_claim_query,
     query_execution_receipt,
 )
+from cruxible_core.runtime.phase_timing import timed_operation, timed_phase
 from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 if TYPE_CHECKING:
@@ -5014,6 +5015,7 @@ def _candidate_record_v1(
     )
 
 
+@timed_phase("evaluate")
 def evaluate_proposal_tree(
     *,
     base_tree: Mapping[str, bytes],
@@ -5562,6 +5564,8 @@ class ProposalService:
             candidate=candidate,
         )
 
+    @timed_operation("propose")
+    @timed_phase("admission")
     def submit(
         self,
         *,

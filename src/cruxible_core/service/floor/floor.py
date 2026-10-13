@@ -528,7 +528,13 @@ def service_export_playbill_floor(
 
     render = floor_render_at(instance, coordinate)
     files = dict(render.files)
-    if "discovery" in parts:
+    if "discovery" not in parts:
+        manifest = render.manifest()
+    else:
+        # The index's files carry their digests; only the cards are hashed here.
+        inventory = {
+            path: (*render.digests[path], changed) for path, (_content, changed) in files.items()
+        }
         for path, content in _discovery_files(
             instance,
             coordinate=coordinate,
@@ -537,16 +543,14 @@ def service_export_playbill_floor(
             external_readers=external_readers,
         ).items():
             files[path] = (content, render.generation)
-    manifest = build_floor_manifest(
-        renderer=render.renderer,
-        coordinate=render.inputs.coordinate,
-        generation=render.generation,
-        notes_digest=render.notes_digest,
-        files={
-            path: (_content_digest(content), len(content), changed)
-            for path, (content, changed) in files.items()
-        },
-    )
+            inventory[path] = (_content_digest(content), len(content), render.generation)
+        manifest = build_floor_manifest(
+            renderer=render.renderer,
+            coordinate=render.inputs.coordinate,
+            generation=render.generation,
+            notes_digest=render.notes_digest,
+            files=inventory,
+        )
     return {
         MANIFEST_PATH: render_floor_manifest(manifest),
         **{item.path: files[item.path][0] for item in manifest.files},

@@ -8,18 +8,23 @@ index advances by), so the delta, its tombstones and the base manifest digest
 are a deterministic function of (head, base) for one renderer, whatever the
 index held when it was asked. A missing, unknown, newer or foreign base gets
 the whole floor.
+
+Nothing is hashed here: every file's digest was taken once, when the index
+rendered it, and each floor's manifest digest is built once per render. A base
+the index rendered recently is read from memory, and the files to compare are
+the union of the forward steps since that base; only a base outside them is
+patched back to and compared whole.
 """
 
 from __future__ import annotations
 
 import base64
+from collections.abc import Iterable
 
 from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.floor import (
     FloorDelta,
     FloorHead,
-    content_digest,
-    floor_manifest_digest,
     seal_floor_delta,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -29,16 +34,22 @@ from cruxible_core.service.floor.floor_index import (
     advance_floor_index,
     floor_render_at,
     floor_render_from,
+    recent_floor_render,
 )
 
 
-def _file(path: str, content: bytes, changed_at: int) -> dict[str, object]:
+def _file(render: FloorRender, path: str) -> dict[str, object]:
+    content, changed_at = render.files[path]
     return {
         "path": path,
         "content_b64": base64.b64encode(content).decode("ascii"),
-        "sha256": content_digest(content),
+        "sha256": render.digests[path][0],
         "changed_at": changed_at,
     }
+
+
+def _byte_order(paths: Iterable[str]) -> list[str]:
+    return sorted(paths, key=lambda item: item.encode("utf-8"))
 
 
 def _base_render(
@@ -53,6 +64,9 @@ def _base_render(
         return None
     if base_generation < 0 or base_generation > head.generation:
         return None
+    recent = recent_floor_render(instance, head, base_generation)
+    if recent is not None:
+        return recent
     try:
         return floor_render_from(instance, head, base_generation)
     except CruxibleError:
@@ -94,7 +108,7 @@ def service_playbill_floor_delta(
             compiler_digest=accepted.compiler_digest,
             notes_digest=render.notes_digest,
         ).model_dump(mode="json"),
-        "head_manifest_digest": floor_manifest_digest(render.manifest()),
+        "head_manifest_digest": render.manifest_digest,
     }
     base = _base_render(instance, render, base_generation, base_renderer)
     if base is None:
@@ -104,18 +118,25 @@ def service_playbill_floor_delta(
                 "kind": "full",
                 "base_generation": None,
                 "base_manifest_digest": None,
-                "files": [
-                    _file(path, content, changed)
-                    for path, (content, changed) in render.files.items()
-                ],
+                "files": [_file(render, path) for path in _byte_order(render.files)],
                 "tombstones": [],
             }
         )
+    # The files that can differ: those the head's forward steps since the
+    # base touched; without such a chain, every file of either floor.
+    candidates = render.changed_paths_since(base.generation)
+    if candidates is None:
+        candidates = frozenset({*render.files, *base.files})
     files = []
-    for path, (content, changed) in render.files.items():
-        if changed > base.generation:
-            files.append(_file(path, content, changed))
-        elif base.files.get(path) != (content, changed):
+    tombstones = []
+    for path in _byte_order(candidates):
+        held = render.files.get(path)
+        if held is None:
+            if path in base.files:
+                tombstones.append(path)
+        elif held[1] > base.generation:
+            files.append(_file(render, path))
+        elif base.files.get(path) != held:
             # A file no input of which moved since the base must be its bytes.
             raise ProjectionIntegrityError(
                 f"floor file {path} changed without its stamp moving past the base"
@@ -125,12 +146,9 @@ def service_playbill_floor_delta(
             **payload,
             "kind": "delta",
             "base_generation": base.generation,
-            "base_manifest_digest": floor_manifest_digest(base.manifest()),
+            "base_manifest_digest": base.manifest_digest,
             "files": files,
-            "tombstones": sorted(
-                (path for path in base.files if path not in render.files),
-                key=lambda item: item.encode("utf-8"),
-            ),
+            "tombstones": tombstones,
         }
     )
 

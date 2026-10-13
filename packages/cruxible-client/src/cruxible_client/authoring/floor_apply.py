@@ -13,10 +13,19 @@ everything before it writes anything:
    every file). A delta whose base the directory does not hold, and is not
    already at the head of, is ``base_mismatch``: nothing is written and the
    caller asks for a full floor;
-3. the bytes actually installed: every file the delta does not touch already
-   holds its head bytes, and nothing else is there. A delta that finds a
-   corrupted, missing or stray file is ``base_mismatch`` too; a full floor
-   repairs it, removing stale files but never the client's own
+3. the bytes actually installed: every file the delta does not touch still
+   holds its manifest bytes, and nothing else is there. Each untouched file
+   is checked by its stat (a regular file of its manifest size), and read
+   and hashed again only when its change time is no older than the
+   installed manifest (or the floor directory's last entry change, if
+   earlier): a file changed since the floor was last verified. A directory
+   whose entries changed since then is listed, so a stray entry or another
+   spelling of a floor path is found. Every file the delta writes or
+   removes is checked under its exact spelling, as a regular file (a removed
+   path may also be a link, which is unlinked, never followed) or absent. A
+   delta that finds a corrupted, missing, stray or aliased entry is
+   ``base_mismatch`` too; a full floor reads the whole directory and repairs
+   it, removing stale files but never the client's own
    (``projections/INDEX`` and ``sources/INDEX``).
 
 Then each touched file is written atomically (a staged file renamed over it),
@@ -80,10 +89,14 @@ def _split(path: str) -> tuple[tuple[str, ...], str]:
     return tuple(parts[:-1]), parts[-1]
 
 
+class _PathEscape(FloorApplyError):
+    """A link or a file stands where a floor directory belongs."""
+
+
 def _escape(parts: tuple[str, ...], exc: OSError) -> FloorApplyError:
     where = "/".join(parts) or "."
     if exc.errno in {errno.ELOOP, errno.ENOTDIR, errno.EMLINK}:
-        return FloorApplyError(
+        return _PathEscape(
             f"floor path escapes the floor directory through a link or a file: {where}"
         )
     return FloorApplyError(f"floor directory {where} is unusable: {exc}")
@@ -272,6 +285,170 @@ def _walk(root: int) -> _Installed:
     return installed
 
 
+class _Mismatch(Exception):
+    """A touched entry is not what a delta may write over or remove."""
+
+
+# A file is re-read when its change time is within this of the floor's last
+# verification: older ones are proven by the stat alone. One second covers
+# clock slew; filesystem timestamps are at least that fine.
+_RECENT_NS = 1_000_000_000
+
+
+def _changed(metadata: os.stat_result) -> int:
+    return max(metadata.st_mtime_ns, metadata.st_ctime_ns)
+
+
+def _inspect(
+    root: int,
+    delta_files: set[str],
+    tombstones: set[str],
+) -> _Installed:
+    """The installed floor a delta builds on, verified at the cost of a stat per file.
+
+    Reads the manifest first. Its write time (or, if earlier, the floor
+    root's last entry change) is when this directory was last verified: an
+    untouched file whose change time is older holds its manifest bytes unless
+    its stat says otherwise, and a directory whose entries are older holds
+    exactly what it held then. Anything newer is read again: files are
+    hashed against the manifest, directories listed for strays and aliases.
+    The delta's own files are hashed and its tombstones classified, as a
+    write needs. Raises ``_Mismatch`` naming the first damaged entry.
+    """
+
+    installed = _Installed()
+    if FLOOR_MANIFEST_PATH not in os.listdir(root):
+        # No manifest under its exact spelling: there is no base to verify.
+        return installed
+    manifest_stat = os.stat(FLOOR_MANIFEST_PATH, dir_fd=root, follow_symlinks=False)
+    if not stat.S_ISREG(manifest_stat.st_mode):
+        raise _Mismatch(FLOOR_MANIFEST_PATH)
+    installed.manifest = _read_at(root, FLOOR_MANIFEST_PATH)
+    local = _manifest(installed.manifest)
+    if local is None:
+        return installed
+    verified = min(manifest_stat.st_mtime_ns, os.fstat(root).st_mtime_ns) - _RECENT_NS
+    expected = {item.path: (item.content_digest, item.byte_length) for item in local.files}
+    by_parent: dict[tuple[str, ...], set[str]] = {}
+    for path in (*expected, *delta_files, *tombstones):
+        parts, name = _split(path)
+        by_parent.setdefault(parts, set()).add(name)
+    for path in FLOOR_LOCAL_PATHS:
+        parts, name = _split(path)
+        by_parent.setdefault(parts, set())
+    for parts in list(by_parent):
+        for end in range(len(parts)):
+            by_parent.setdefault(parts[:end], set()).add(parts[end])
+    local_names: dict[tuple[str, ...], set[str]] = {}
+    for path in FLOOR_LOCAL_PATHS:
+        parts, name = _split(path)
+        local_names.setdefault(parts, set()).add(name)
+    for parts in sorted(by_parent, key=len):
+        try:
+            with _directory(root, parts, create=False) as directory:
+                if directory is None:
+                    # Absent: every untouched file under it is missing.
+                    missing = next(
+                        (
+                            path
+                            for path in expected
+                            if path.startswith("/".join(parts) + "/")
+                            and path not in delta_files
+                            and path not in tombstones
+                        ),
+                        None,
+                    )
+                    if missing is not None:
+                        raise _Mismatch(missing)
+                    continue
+                if parts == () or _changed(os.fstat(directory)) >= verified:
+                    allowed = by_parent[parts] | local_names.get(parts, set())
+                    if parts == ():
+                        allowed |= {FLOOR_MANIFEST_PATH}
+                    _check_spellings(parts, os.listdir(directory), allowed, installed)
+                for name in sorted(by_parent[parts]):
+                    path = "/".join((*parts, name))
+                    if path not in expected and path not in delta_files and path not in tombstones:
+                        continue  # a directory on the way, checked as its own parent
+                    _check_entry(
+                        directory,
+                        path,
+                        name,
+                        expected,
+                        delta_files,
+                        tombstones,
+                        verified,
+                        installed,
+                    )
+        except _PathEscape as exc:
+            raise _Mismatch("/".join(parts)) from exc
+    return installed
+
+
+def _check_spellings(
+    parts: tuple[str, ...], entries: Iterable[str], allowed: set[str], installed: _Installed
+) -> None:
+    """Every entry of one listed directory is an expected name, spelled exactly.
+
+    Anything else -- a stray, or another spelling of a floor path -- is a
+    mismatch; the client's own files are accepted under any spelling, as a
+    full floor keeps them.
+    """
+
+    for entry in entries:
+        path = "/".join((*parts, entry))
+        if FLOOR_STAGING_NAME.fullmatch(entry):
+            installed.staged.add(path)
+        elif entry not in allowed and floor_path_key(path) not in _LOCAL_KEYS:
+            raise _Mismatch(path)
+
+
+def _check_entry(
+    directory: int,
+    path: str,
+    name: str,
+    expected: dict[str, tuple[str, int]],
+    delta_files: set[str],
+    tombstones: set[str],
+    verified: int,
+    installed: _Installed,
+) -> None:
+    """Classify one entry; an untouched file must still hold its manifest bytes."""
+
+    untouched = path in expected and path not in delta_files and path not in tombstones
+    try:
+        metadata = os.stat(name, dir_fd=directory, follow_symlinks=False)
+    except FileNotFoundError:
+        if untouched:
+            raise _Mismatch(path) from None
+        return  # a file the delta writes, or a removed path already gone
+    if stat.S_ISDIR(metadata.st_mode):
+        installed.directories.add(path)
+        if untouched:
+            raise _Mismatch(path)
+        return
+    if not stat.S_ISREG(metadata.st_mode):
+        installed.others.add(path)
+        if untouched:
+            raise _Mismatch(path)
+        return
+    if path in delta_files:
+        content = _read_at(directory, name)
+        installed.files[path] = "sha256:" + hashlib.sha256(content).hexdigest()
+        return
+    if not untouched:
+        installed.files[path] = ""  # a removed path still present
+        return
+    digest, size = expected[path]
+    if metadata.st_size != size:
+        raise _Mismatch(path)
+    if _changed(metadata) >= verified:
+        # Changed since the floor was last verified: read it again.
+        if "sha256:" + hashlib.sha256(_read_at(directory, name)).hexdigest() != digest:
+            raise _Mismatch(path)
+    installed.files[path] = digest
+
+
 def _manifest(content: bytes | None) -> FloorManifest | None:
     if content is None:
         return None
@@ -376,7 +553,13 @@ def apply_floor_delta(floor_dir: Path, delta: FloorDelta) -> FloorApplyResult:
     except ValueError as exc:
         raise FloorApplyError(str(exc)) from exc
     with _floor_root(floor_dir) as root:
-        installed = _walk(root)
+        if delta.kind == "full":
+            installed = _walk(root)
+        else:
+            try:
+                installed = _inspect(root, set(decoded), set(delta.tombstones))
+            except _Mismatch as exc:
+                return _mismatch(delta, f"the installed floor differs from its manifest at {exc}")
         head_files = _head_files(delta, _manifest(installed.manifest))
         if head_files is None:
             return _mismatch(
@@ -404,40 +587,37 @@ def apply_floor_delta(floor_dir: Path, delta: FloorDelta) -> FloorApplyResult:
                 "the floor this delta builds differs from its head manifest digest"
             )
         wanted = {item.path: item.content_digest for item in head.files}
-        # Installed entries are matched to the floor by exact spelling only.
-        # Anything spelled otherwise -- a case or normalization alias of a floor
-        # file, the manifest or a directory -- is never taken for it: a delta
-        # refuses it, and a full floor removes it and writes the one spelling.
-        stray = {path for path in installed.files if path not in wanted} | installed.others
-        # The directories a floor needs: those its files (and the client's own)
-        # live under, by exact spelling. Any other is stale or an alias.
-        needed = _parents(wanted) | _parents(installed.local) | _parents(FLOOR_LOCAL_PATHS)
         stale_directories: set[str] = set()
         if delta.kind == "delta":
-            # Touched files may hold base or head bytes (a crash between them);
-            # every other file must already hold its head bytes, and nothing
-            # else may be there: no stray file or link, and no directory the
-            # base and head floors do not both account for.
-            stray -= set(delta.tombstones)
-            allowed = needed | _parents(delta.tombstones)
-            unexpected = sorted(installed.directories - allowed)
-            damaged = sorted(
+            # Only the delta's own entries were read. Each file it writes may
+            # hold base or head bytes (a crash between them), or be absent;
+            # each path it removes may be a file or a link. A directory where
+            # either goes refuses the delta: a full floor repairs it.
+            blocked = sorted(
                 path
-                for path, digest in wanted.items()
-                if path not in decoded and installed.files.get(path) != digest
+                for path in (*decoded, *delta.tombstones)
+                if path in installed.directories or (path in decoded and path in installed.others)
             )
-            if damaged or stray or unexpected:
-                named = (damaged or sorted(stray) or unexpected)[0]
-                return _mismatch(delta, f"the installed floor differs from its manifest at {named}")
+            if blocked:
+                return _mismatch(
+                    delta, f"the installed floor differs from its manifest at {blocked[0]}"
+                )
             removals = {
                 path
                 for path in delta.tombstones
                 if path in installed.files or path in installed.others
             }
         else:
-            removals = stray
-            # A full floor is exact: every directory it does not need goes, with
-            # all it holds (its files are strays already), deepest first.
+            # Installed entries are matched to the floor by exact spelling only.
+            # Anything spelled otherwise -- a case or normalization alias of a
+            # floor file, the manifest or a directory -- is never taken for it:
+            # a full floor removes it and writes the one spelling.
+            removals = {path for path in installed.files if path not in wanted} | installed.others
+            # The directories a floor needs: those its files (and the client's
+            # own) live under, by exact spelling. Any other is stale or an alias;
+            # every one goes, with all it holds (its files are strays already),
+            # deepest first.
+            needed = _parents(wanted) | _parents(installed.local) | _parents(FLOOR_LOCAL_PATHS)
             stale_directories = installed.directories - needed
         writes = {
             path: content

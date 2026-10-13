@@ -73,13 +73,7 @@ from cruxible_core.curation.review_operational import (
     ReviewOperationalStoreError,
     build_review_operational_head,
 )
-from cruxible_core.exhaust.consumption import (
-    QUALIFYING_CONSUMPTION_OPERATIONS,
-    ConsumptionEpochV1,
-    ConsumptionObservationGapV1,
-    ConsumptionObservationResumeV1,
-    ConsumptionReceiptV1,
-)
+from cruxible_core.exhaust.consumption import consumption_audit_touch_counts
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import ClaimFactRowV1, claim_row_visibility
@@ -240,52 +234,10 @@ def _operational_input_head(instance: PlaybillInstance) -> ReviewOperationalHead
     )
 
 
-_OBSERVATION_MARKER_TAGS = frozenset(
-    {
-        ConsumptionObservationGapV1.model_fields["tag"].default,
-        ConsumptionObservationResumeV1.model_fields["tag"].default,
-    }
-)
-
-
 def _audit_consumption_touch_counts(instance: PlaybillInstance) -> dict[str, int]:
-    """Fold raw verified receipts under audit's per-reader demand cap."""
+    """Distinct qualifying reader keys per artifact, folded counters and raw receipts alike."""
 
-    events = instance.review_operational_store().events(family="consumption")
-    epoch: ConsumptionEpochV1 | None = None
-    touches: dict[str, set[tuple[str, bytes, bytes, str]]] = {}
-    for _event, payload in events:
-        if payload.get("tag") == "playbill-consumption-epoch-v1":
-            parsed_epoch = ConsumptionEpochV1.model_validate(payload)
-            if epoch is not None and parsed_epoch != epoch:
-                raise ReviewOperationalStoreError("consumption epoch is not unique")
-            epoch = parsed_epoch
-            continue
-        if payload.get("tag") in _OBSERVATION_MARKER_TAGS:
-            # Gap and resume markers bound unobserved periods for dead-vocabulary
-            # detection; they record no read and carry no demand.
-            continue
-        if payload.get("tag") != "playbill-consumption-receipt-v1":
-            raise ReviewOperationalStoreError("consumption partition has an unknown payload")
-        receipt = ConsumptionReceiptV1.model_validate(payload)
-        if receipt.operation not in QUALIFYING_CONSUMPTION_OPERATIONS:
-            continue
-        identity = receipt.response_artifact_identity
-        # Operation is absent so one reader cannot heat an artifact by trying
-        # more verbs.  Access profile is also absent: it is delivery/visibility
-        # context, not an independent reader-demand signal, so profile changes
-        # must not reheat the same reader/coordinate/artifact.
-        key = (
-            receipt.reader_principal_id,
-            canonical_bytes(receipt.accepted_coordinate.model_dump(mode="json")),
-            canonical_bytes(identity.model_dump(mode="json")),
-            receipt.response_artifact_digest,
-        )
-        touches.setdefault(identity.qualified, set()).add(key)
-    return {
-        identity: len(touches[identity])
-        for identity in sorted(touches, key=lambda item: item.encode("utf-8"))
-    }
+    return consumption_audit_touch_counts(instance)
 
 
 def _history_index(

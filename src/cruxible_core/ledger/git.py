@@ -39,6 +39,7 @@ from cruxible_core.derived.derived_state import (
     same_row,
 )
 from cruxible_core.governance.keys import raw_public_key_hex_from_openssh
+from cruxible_core.runtime.phase_timing import timed_phase
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
@@ -1624,6 +1625,64 @@ class GitLedger:
             finally:
                 os.close(descriptor)
             _fsync_directory(self.path)
+
+    def loose_object_count(self) -> int:
+        """How many loose objects the ledger holds (Python writes every object loose)."""
+
+        for line in self._git(["count-objects", "-v"]).decode().splitlines():
+            key, _separator, value = line.partition(":")
+            if key == "count":
+                return int(value.strip())
+        return 0
+
+    def compact_objects(self) -> None:
+        """Pack every reachable object and write the commit-graph.
+
+        Safe beside live writers: nothing reads an object by its loose path
+        except the write dedup (a packed object is simply written loose again),
+        a generation's objects stay loose until a ref reaches them, and the
+        commit-graph is replaced atomically. Unreachable loose objects are
+        left for ``prune_unreachable``.
+        """
+
+        self._git(["repack", "-a", "-d", "-q"])
+        self._git(["commit-graph", "write", "--reachable"])
+
+    def pack_refs(self) -> None:
+        """Pack every ref; the caller holds the review projection and activation locks.
+
+        Those exclude the review, slot and main writers; the note lock taken
+        here excludes note writers, so no ref update meets a held ref lock.
+        """
+
+        with self._note_lock():
+            self._git(["pack-refs", "--all", "--prune"])
+
+    def prune_unreachable(self) -> bool:
+        """Delete unreachable loose objects, only while no writer can be in flight.
+
+        A generation's and a proposal's objects exist before the ref that
+        reaches them, and the write dedup reuses an old loose object without
+        refreshing it, so this runs only quiesced: the caller holds the review
+        projection and activation locks, and this takes the note lock and the
+        in-flight generations lock exclusively without waiting. Returns False
+        (nothing pruned) when a generation attempt is in flight.
+        """
+
+        descriptor = os.open(self.path / _IN_FLIGHT_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            try:
+                with self._note_lock():
+                    self._git(["prune", "--expire=now"])
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+        return True
 
     def collect_unreachable_generation(self, oid: str) -> tuple[str, ...]:
         """Delete only loose objects proven reachable solely from one losing generation."""
@@ -3415,6 +3474,7 @@ def _close_batch_readers() -> None:
         reader.close()
 
 
+@timed_phase("git")
 def _command(
     arguments: Sequence[str],
     *,

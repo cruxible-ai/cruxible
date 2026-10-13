@@ -931,7 +931,11 @@ def _write_workspace_local(
 
 
 def _write_floor_local(workspace: Path, relative: str, text: str) -> None:
-    _write_workspace_local(workspace, f"{FLOOR_PATH}/{relative}", text.encode("utf-8"))
+    """Write one client-owned floor file, leaving it untouched when its bytes hold."""
+
+    _write_workspace_local(
+        workspace, f"{FLOOR_PATH}/{relative}", text.encode("utf-8"), only_if_changed=True
+    )
 
 
 def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
@@ -987,6 +991,9 @@ def write_projection_index(workspace: str | Path) -> int | None:
       block -- with its role, the ref it is bound to, and the generation that
       ref last changed. A bound file that does not exist is left out; ``next``
       reports it for repair.
+
+    Each INDEX file is rewritten only when its bytes change, so a refresh that
+    moved nothing the workspace binds writes nothing here.
 
     Returns the number of ``projections/INDEX`` lines, or ``None`` when there
     is no v5 floor.

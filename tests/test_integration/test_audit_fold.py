@@ -376,17 +376,19 @@ def test_audit_caps_self_heating_without_changing_receipts_or_other_consumers(
     assert _audit_consumption_touch_counts(instance) == {claim.claim.identity.qualified: 4}
 
     store = instance.review_operational_store()
-    original_events = store.events
+    original_changes = store.family_changes
     consumption_reads = 0
 
-    def counted_events(*, family=None):  # type: ignore[no-untyped-def]
+    def counted_changes(family, cursor):  # type: ignore[no-untyped-def]
         nonlocal consumption_reads
         if family == "consumption":
             consumption_reads += 1
-        return original_events(family=family)
+        return original_changes(family, cursor)
 
     monkeypatch.setattr(instance, "review_operational_store", lambda: store)
-    monkeypatch.setattr(store, "events", counted_events)
+    # The audit reads the maintained consumption tally, advanced from the store's
+    # change feed, never the whole consumption history.
+    monkeypatch.setattr(store, "family_changes", counted_changes)
     accepted_before = instance.accepted_coordinate()
     first = service_playbill_audit(instance, request=_request(), actor_context=_actor())
     second = service_playbill_audit(instance, request=_request(), actor_context=_actor())

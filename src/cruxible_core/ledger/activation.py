@@ -34,6 +34,7 @@ from cruxible_core.proposals.settlement import (
     VerifiedGenerationBundle,
     render_generation_descriptor,
 )
+from cruxible_core.runtime.phase_timing import timed_phase
 from cruxible_core.storage.cas import BodyProjectionProtocol
 
 MAIN_CAS: Final = "main.cas"
@@ -104,6 +105,7 @@ class ActivationPublisher:
         self.resolve_claim_digest = resolve_claim_digest
         self.defer_checkpoint = defer_checkpoint
 
+    @timed_phase("projection")
     def prebuild(
         self,
         bundle: VerifiedGenerationBundle,
@@ -150,6 +152,7 @@ class ActivationPublisher:
             delta=delta,
         )
 
+    @timed_phase("publish")
     def activate(
         self,
         bundle: VerifiedGenerationBundle,

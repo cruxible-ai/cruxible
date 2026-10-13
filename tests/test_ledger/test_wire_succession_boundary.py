@@ -325,10 +325,10 @@ def test_replaying_a_crossed_ledger_reproduces_each_generation_in_its_own_versio
 
     instance, _builder = crossed_ledger
     reopened = _reopen(instance)
-    from cruxible_core.ledger.recovery import _candidate_from_record
+    from cruxible_core.ledger.recovery import candidate_from_change_set_record
 
     reproduced = [
-        _candidate_from_record(generation.record)
+        candidate_from_change_set_record(generation.record)
         for generation in reopened.accepted_history()[1:]
         if generation.record is not None
     ]

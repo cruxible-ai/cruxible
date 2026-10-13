@@ -115,6 +115,46 @@ copy of the other.
 Indexes, search engines or graph databases that accelerate reads are
 projections of accepted state and can be rebuilt from it.
 
+## Retention
+
+One setting (`RetentionSettings`: 64 generations, 14 days) bounds what is kept
+of rebuildable and raw operational state; nothing a signed or authoritative
+record references is deleted under it.
+
+- **Projection pieces.** Each accepted generation's projection is a full SQLite
+  piece. The serving head and the last 64 accepted generations are kept (an
+  open proposal is evaluated at the head, so its base is among them), and so
+  is any piece a reader holds open in any process. Each activation evicts the
+  generation that left the window, and the daemon's open evicts the backlog,
+  each manifest before its piece. A piece skipped because a reader in the
+  daemon held it is evicted by the pass after that reader closes it; one
+  another process held then waits for the daemon's next open. Binding an
+  evicted coordinate (`--at`, a pinned read, a stale proposal's base)
+  rebuilds it from the ledger and the body store, including when the
+  coordinate is evicted while the bind is reading it and another reader
+  rebuilds it before that read's failure is classified.
+- **Accepted proposals' candidates and approvals.** An accepted proposal's
+  change-set record carries every field of its candidate and the approvals
+  settlement verified, so after activation the candidate file and the
+  approval files the record holds byte for byte are deleted, and `proposal
+  inspect`, review, status and the proposal index read them from the record;
+  an approval submitted later is read beside the record's.
+  Withdrawn, rejected and refused proposals' evidence, and any approval the
+  record does not hold, are kept.
+- **Consumption receipts.** Raw receipts are kept 14 days, then fold into
+  counters (touches per artifact and operation, and the audit's distinct
+  reader keys) that remember every receipt they counted, so a read served
+  again is never counted twice; only folded receipts are removed. Folds run
+  one at a time and each lands only if no other fold landed since it chose
+  its receipts.
+- **Line coverage.** An idle Line's coverage that moved only in time advances
+  the dispatch projection and is not journaled.
+- **The ledger.** Every ref, note and archived proposal is kept. Objects are
+  written loose; every 64 accepted generations the daemon packs them
+  (`repack -a -d`), packs refs and writes the commit-graph, off the
+  acceptance path, and at start, before serving, it also prunes unreachable
+  loose objects, the one step that is safe only while no writer is in flight.
+
 ## Repository ownership
 
 The daemon implementation lives directly under `src/cruxible_core/`, grouped by

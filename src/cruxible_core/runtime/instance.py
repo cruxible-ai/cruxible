@@ -14,10 +14,11 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from contextvars import Context, ContextVar
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import structlog
 from pydantic import ValidationError
 
 from cruxible_client.contracts.approval_policy import (
@@ -122,12 +123,25 @@ from cruxible_core.indexes.history.history_index import (
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
+    AssemblerRequest,
     projection_manifest_name,
+)
+from cruxible_core.indexes.projection_retention import (
+    evict_or_wait,
+    held_here,
+    released_pieces,
+    retention_lock,
 )
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.indexes.proposals.proposal_note_reader import proposal_note_snapshot
 from cruxible_core.indexes.serving import bind_current_projection
-from cruxible_core.indexes.sqlite import ProjectionHandle, ProjectionPool, bind_projection
+from cruxible_core.indexes.sqlite import (
+    ProjectionEvicted,
+    ProjectionHandle,
+    ProjectionPool,
+    bind_projection,
+    load_projection_manifest,
+)
 from cruxible_core.indexes.typed_sqlite import parse_static_owners
 from cruxible_core.ledger.activation import ActivationPublisher, ActivationResult
 from cruxible_core.ledger.bootstrap import (
@@ -154,12 +168,17 @@ from cruxible_core.ledger.ledger_mirror import (
 from cruxible_core.ledger.recovery import (
     RecoveredGeneration,
     RecoveredInstanceState,
+    candidate_from_change_set_record,
     prepared_generation_for_handoff,
     recover_instance,
 )
 from cruxible_core.ledger.witness import WitnessSink
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationAdapter
-from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+from cruxible_core.proposals.proposal_evidence import (
+    ProposalEvidenceStore,
+    SettledCandidate,
+    SettledCandidateLocator,
+)
 from cruxible_core.proposals.proposals import (
     ExhaustPromotionVerifierProtocol,
     ProposalReceiveLimits,
@@ -172,6 +191,8 @@ from cruxible_core.proposals.settlement import (
     prepare_generation,
     render_generation_descriptor,
 )
+from cruxible_core.runtime.phase_timing import phase
+from cruxible_core.runtime.retention import DEFAULT_RETENTION, RetentionSettings
 from cruxible_core.storage.cas import (
     CasObjectMetadata,
     ContentAddressedBodyStore,
@@ -305,6 +326,26 @@ def _path_binding(root: Path, entries: tuple[tuple[str, Any], ...]) -> _PathBind
     return os.path.realpath(root), tuple(components)
 
 
+# Live ledger compaction (repack, pack-refs, commit-graph) runs once per this
+# many accepted generations, on the advisory thread after a write; the daemon
+# also compacts and prunes each instance at start, before serving.
+LEDGER_COMPACTION_STRIDE = 64
+# At start, a ledger with fewer loose objects than this is left as it is.
+LEDGER_START_COMPACTION_LOOSE_OBJECTS = 256
+
+_log = structlog.get_logger("cruxible.ledger_upkeep")
+
+
+def _generation_at(recovered: RecoveredInstanceState, sequence: int) -> RecoveredGeneration:
+    """The replayed generation at ``sequence`` (history is held in sequence order)."""
+
+    if 0 <= sequence < len(recovered.history):
+        generation = recovered.history[sequence]
+        if generation.sequence == sequence:
+            return generation
+    return next(item for item in recovered.history if item.sequence == sequence)
+
+
 class PlaybillInstance:
     """A verified opt-in Cruxible substrate rooted outside agent workspaces."""
 
@@ -331,6 +372,9 @@ class PlaybillInstance:
         #: records through it. Tests replace it here.
         self.recording_clock: Callable[[], datetime] = utc_now
         self.derived = DerivedState()
+        #: What rebuildable and raw operational state is kept (projection
+        #: generations, raw-receipt days). Tests replace it here.
+        self.retention: RetentionSettings = DEFAULT_RETENTION
         # Compiled semantic facts per owner version; see TypedStateReader.facts_for.
         self._owner_facts = self.derived.memo(
             "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
@@ -365,6 +409,18 @@ class PlaybillInstance:
         self._receive_limits = ProposalReceiveLimits()
         self._mirror_condition = threading.Condition()
         self._mirror_thread: threading.Thread | None = None
+        # The compaction stride (head sequence // stride) last compacted at;
+        # None until the first advisory pass after open records it.
+        self._compacted_stride: int | None = None
+        # The accepted day consumption receipts were last folded on.
+        self._consumption_folded_on: date | None = None
+        # Projection eviction: the cutoff sequence already applied (None until
+        # the first pass in this process). A piece at or before it that a
+        # handle here held is tried again when the hold is released.
+        self._eviction_lock = threading.Lock()
+        self._evicted_through: int | None = None
+        # Retired accepted candidates rebuilt from their records, by digest.
+        self._settled_candidates: dict[str, SettledCandidate] = {}
         self._quiet_checkpoints: QuietCheckpointWriter | None = None
         # Read services keyed by accepted coordinate park their derived
         # history indexes here so activation drops them with one clear().
@@ -734,6 +790,8 @@ class PlaybillInstance:
             recovered,
             promotion_verifier,
         )
+        if not is_previewing():
+            instance._housekeeping("projection_eviction", instance.evict_projection_pieces)
         if (
             descriptor.mirror_url is not None
             and descriptor.decommissioned is None
@@ -1667,6 +1725,7 @@ class PlaybillInstance:
 
         try:
             self._reconcile_proposal_review_refs()
+            self._compact_ledger_on_stride()
             if self._workspace_advertiser is None:
                 return NOT_ATTACHED_ADVERTISEMENT
             return self._workspace_advertiser()
@@ -1676,6 +1735,60 @@ class PlaybillInstance:
                 workspace_path=None,
                 failure_code="unexpected_failure",
             )
+
+    def _compact_ledger_on_stride(self) -> None:
+        """Compact the ledger once each time the head crosses a stride, off the acceptance path."""
+
+        with self._state_lock:
+            stride = self._recovered.head.sequence // LEDGER_COMPACTION_STRIDE
+        if self._compacted_stride is None:
+            self._compacted_stride = stride
+            return
+        if stride <= self._compacted_stride or is_previewing():
+            return
+        self._compacted_stride = stride
+        try:
+            self.compact_ledger()
+        except Exception as exc:
+            # Compaction is housekeeping: the next stride retries.
+            _log.warning(
+                "ledger_compaction_failed",
+                instance_id=self.descriptor.instance_id,
+                reason=f"{type(exc).__name__}: {exc}",
+            )
+
+    def compact_ledger(self, *, prune: bool = False) -> bool:
+        """Pack objects and refs and write the commit-graph; prune only when asked.
+
+        Packing and the commit-graph are safe beside live writers; refs are
+        packed while the review projection and activation locks exclude every
+        ref writer. ``prune`` deletes unreachable loose objects and is for the
+        daemon's start, before it serves: it also waits for no generation in
+        flight, and is skipped (returning False) if one is.
+        """
+
+        refuse_write_while_previewing("ledger compaction")
+        self._ledger.compact_objects()
+        pruned = False
+        with self.review_projection_lock(), self._ledger.activation_lock():
+            self._ledger.pack_refs()
+            if prune:
+                pruned = self._ledger.prune_unreachable()
+        return pruned
+
+    def compact_ledger_at_start(self) -> bool:
+        """The daemon's start pass: retention, then compact and prune a loose ledger.
+
+        Retention folds due receipts and retires every accepted candidate a
+        record already carries (the backlog), before anything is served.
+        """
+
+        self._housekeeping("consumption_fold", self.fold_consumption_if_due)
+        self._housekeeping("candidate_retirement", self.retire_settled_candidates)
+        if self._ledger.loose_object_count() < LEDGER_START_COMPACTION_LOOSE_OBJECTS:
+            return False
+        self.compact_ledger(prune=True)
+        return True
 
     @contextmanager
     def review_projection_lock(self) -> Iterator[None]:
@@ -1744,10 +1857,22 @@ class PlaybillInstance:
         # slots remain intact for the delivery recovery path.
         retired_targets = {}
         assert evidence.index is not None
-        for target, oid in self._ledger.proposal_refs().items():
-            rows = evidence.index.rows(
-                evidence, "target_ref=? AND candidate_commit_oid=?", (target, oid)
-            )
+        slots = self._ledger.proposal_refs()
+        # One snapshot of the index answers every slot.
+        slot_rows: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        if slots:
+            with evidence.index.read(evidence) as connection:
+                for target, oid in slots.items():
+                    slot_rows[(target, oid)] = [
+                        dict(row)
+                        for row in connection.execute(
+                            "SELECT * FROM proposals WHERE target_ref=? AND candidate_commit_oid=? "
+                            "ORDER BY proposal_id",
+                            (target, oid),
+                        )
+                    ]
+        for target, oid in slots.items():
+            rows = slot_rows[(target, oid)]
             if not rows or any(row["proposal_id"] in active_ids for row in rows):
                 continue
             complete = [
@@ -1820,8 +1945,101 @@ class PlaybillInstance:
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
         return ProposalEvidenceStore(
-            paths["exhaust"], index=self._accepted_history_index.proposals, transport=self._ledger
+            paths["exhaust"],
+            index=self._accepted_history_index.proposals,
+            transport=self._ledger,
+            settled=self._settled_candidate,
         )
+
+    def _settled_candidate(self, candidate_digest: str) -> SettledCandidate | None:
+        """A retired accepted candidate, rebuilt from the change-set record its locator names."""
+
+        known = self._settled_candidates.get(candidate_digest)
+        if known is not None:
+            return known
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        locator = ProposalEvidenceStore(paths["exhaust"]).read_settled_locator(candidate_digest)
+        if locator is None:
+            return None
+        with self._state_lock:
+            history = self._recovered.history
+        generation = history[locator.sequence] if locator.sequence < len(history) else None
+        record = None if generation is None else generation.record
+        if (
+            generation is None
+            or record is None
+            or generation.oid != locator.git_oid
+            or record.changeset_digest != locator.changeset_digest
+            or record.candidate_digest != candidate_digest
+        ):
+            raise ProposalIntegrityError(
+                "a retired candidate's locator names no accepted change-set record of it"
+            )
+        settled = SettledCandidate(
+            candidate=candidate_from_change_set_record(record), approvals=record.approvals
+        )
+        self._settled_candidates[candidate_digest] = settled
+        return settled
+
+    def retire_settled_candidates(self, sequences: Iterable[int] | None = None) -> int:
+        """Delete accepted candidates' files (and the approvals their records hold).
+
+        ``sequences`` names the accepted generations to retire (default: the
+        backlog sweep at daemon start, every accepted candidate whose file is
+        still there, found from the candidate files and the history index).
+        Each accepted proposal's change-set record carries its candidate and
+        the approvals settlement verified, so every reader then answers from
+        the record. Withdrawn, rejected and refused proposals' evidence is
+        never touched. Returns how many candidate files were removed.
+        """
+
+        if is_previewing():
+            return 0
+        with self._state_lock:
+            history = self._recovered.history
+        evidence = self.proposal_evidence()
+        if sequences is None:
+            present = [
+                "sha256:" + path.name.removesuffix(".json")
+                for path in evidence.candidates.glob("*.json")
+            ]
+            with self.accepted_history_reader() as reader:
+                located = (reader.generation_for_candidate(digest) for digest in present)
+                selected: Iterable[int] = sorted(
+                    location.sequence for location in located if location is not None
+                )
+        else:
+            selected = sequences
+        removed = 0
+        for sequence in selected:
+            generation = history[sequence]
+            record = generation.record
+            if record is None or record.candidate_digest is None:
+                continue
+            digest = record.candidate_digest
+            name = digest.removeprefix("sha256:")
+            if (
+                not (evidence.candidates / f"{name}.json").exists()
+                and not (evidence.approvals / name).exists()
+            ):
+                continue
+            settled = SettledCandidate(
+                candidate=candidate_from_change_set_record(record), approvals=record.approvals
+            )
+            locator = SettledCandidateLocator(
+                candidate_digest=digest,
+                sequence=sequence,
+                git_oid=generation.oid,
+                changeset_digest=record.changeset_digest,
+            )
+            # The approval writer's locks: no approval is written or its note
+            # rendered while this candidate's files go.
+            with self.review_projection_lock(), self.approval_note_lock(digest):
+                candidate_removed, _approvals_removed = evidence.retire_settled_candidate(
+                    locator, settled
+                )
+            removed += int(candidate_removed)
+        return removed
 
     def refusal_index(self) -> RefusalIndex:
         """The derived index of earlier refusals (retired Claims, rejected proposals).
@@ -2344,31 +2562,183 @@ class PlaybillInstance:
             compiler_digest=coordinate.compiler.rule_digest,
         )
         paths = self._validated_paths(self.root, self.descriptor.storage)
+        directory = paths["projections"]
         if verified == self.accepted_coordinate():
-            return self._projection_sources(
-                bind_current_projection(paths["projections"], expected=verified)
-            )
+            # The serving head is never evicted; its handle holds its piece too.
+            return self._projection_sources(bind_current_projection(directory, expected=verified))
         # Naming the manifest needs only this coordinate. The replay-proven
         # coordinates of every generation are built only for a rebuild, so a
         # bind at a base behind the head costs the same at any history length.
         assembler = ProjectionAssembler(
             self._ledger,
             accepted=verified,
-            publication_directory=paths["projections"],
+            publication_directory=directory,
             bodies=ContentAddressedBodyStore(paths["cas"]),
         )
         request = assembler.request(
-            output_staging_directory=paths["projections"]
-            / f".stage-historical-bind-{secrets.token_hex(12)}"
+            output_staging_directory=directory / f".stage-historical-bind-{secrets.token_hex(12)}"
         )
-        manifest_path = paths["projections"] / projection_manifest_name(request)
-        if not manifest_path.exists():
+        manifest_path = directory / projection_manifest_name(request)
+        for _attempt in range(3):
+            if manifest_path.exists():
+                try:
+                    # The handle holds its piece from eviction; one evicted
+                    # between the look and the hold is bound again, rebuilt.
+                    return self._projection_sources(
+                        bind_projection(manifest_path, expected=verified)
+                    )
+                except ProjectionEvicted:
+                    continue
             # Only replay-proven coordinates reach this point. Rebuild a missing
-            # historical projection under its own compiler, without changing
-            # serving or rewriting the accepted record/receipt.
-            assembler.accepted_coordinates_by_sequence = self._accepted_coordinates_by_sequence()
-            assembler.assemble(request)
-        return self._projection_sources(bind_projection(manifest_path, expected=verified))
+            # historical projection (never built, or evicted past retention)
+            # under its own compiler, without changing serving or rewriting the
+            # accepted record/receipt. Eviction waits on the same lock, and the
+            # handle's hold is taken before it is released.
+            rebuilt = False
+            with retention_lock(directory):
+                if not manifest_path.exists():
+                    assembler.accepted_coordinates_by_sequence = (
+                        self._accepted_coordinates_by_sequence()
+                    )
+                    assembler.assemble(request)
+                    rebuilt = True
+                handle = bind_projection(manifest_path, expected=verified)
+            if rebuilt:
+                self._rebuilt_on_miss(verified, manifest_path)
+            return self._projection_sources(handle)
+        raise ProjectionEvicted("projection was evicted on every bind attempt")
+
+    def _rebuilt_on_miss(
+        self, coordinate: AcceptedProjectionCoordinate, manifest_path: Path
+    ) -> None:
+        """A piece rebuilt on a miss is held by its new handle: evict it once that is released."""
+
+        with self.accepted_history_reader() as history:
+            location = history.generation_for_oid(coordinate.git_oid)
+        if location is not None:
+            with held_here(manifest_path, location.sequence):
+                pass
+
+    def _manifest_name_for(self, generation: RecoveredGeneration, directory: Path) -> str:
+        return projection_manifest_name(
+            AssemblerRequest(
+                instance_id=self.descriptor.instance_id,
+                repository_path=str(self._ledger.path.resolve(strict=True)),
+                git_object_format=self.descriptor.git_object_format,
+                git_oid=generation.oid,
+                semantic_root=generation.semantic_root.tagged,
+                generation_root=generation.generation_root.tagged,
+                compiler_digest=generation.compiler.rule_digest,
+                schema_version=generation.compiler.schema_version,
+                output_staging_directory=str(directory),
+            )
+        )
+
+    def evict_projection_pieces(self) -> tuple[str, ...]:
+        """Evict accepted projection pieces past retention; returns the evicted manifest names.
+
+        Kept: every generation after the cutoff (the head's sequence less
+        ``retention.generations``, taken once from one snapshot, so a
+        generation accepted meanwhile is always after it), which includes the
+        serving head and every open proposal's base (an open proposal is
+        evaluated at the head; a stale one is rebuilt if it is read), and
+        every piece a reader holds in any process. An evicted coordinate is
+        rebuilt when it is next bound.
+
+        Each pass after the first tries only what changed since the last: the
+        generations that crossed the cutoff, and the pieces at or before it
+        whose hold in this process was released since (skipped while held,
+        or rebuilt on a miss and so held by the rebuilding handle). A piece
+        still held is never tried again until its release; one another
+        process held at its turn is left for the next open. The first pass in
+        a process (at open) reads the directory once. Runs after each
+        activation and at open.
+        """
+
+        with self._state_lock:
+            recovered = self._recovered
+        cutoff = recovered.head.sequence - self.retention.generations
+        directory = self._validated_paths(self.root, self.descriptor.storage)["projections"]
+        evicted: list[str] = []
+        with self._eviction_lock, retention_lock(directory):
+            if self._evicted_through is None:
+                candidates = self._listed_beyond(directory, recovered, cutoff)
+            else:
+                candidates = {
+                    self._manifest_name_for(_generation_at(recovered, sequence), directory): (
+                        sequence
+                    )
+                    for sequence in range(max(self._evicted_through + 1, 0), cutoff + 1)
+                }
+            for name, sequence in released_pieces(directory).items():
+                candidates.setdefault(name, sequence)
+            for name, sequence in candidates.items():
+                if sequence > cutoff:
+                    continue  # inside the window: the cutoff reaches it later
+                # "waiting": its release here makes it a candidate again;
+                # "held_elsewhere": the next open's directory pass retries it.
+                if evict_or_wait(directory, name, sequence) == "evicted":
+                    evicted.append(name)
+            if self._evicted_through is None or cutoff > self._evicted_through:
+                self._evicted_through = cutoff
+        return tuple(evicted)
+
+    def _listed_beyond(
+        self, directory: Path, recovered: RecoveredInstanceState, cutoff: int
+    ) -> dict[str, int]:
+        """The first pass in a process: every accepted manifest at or before the cutoff."""
+
+        by_oid = {generation.oid: generation.sequence for generation in recovered.history}
+        found: dict[str, int] = {}
+        for name in os.listdir(directory):
+            if not (name.startswith("projection-") and name.endswith(".json")):
+                continue
+            try:
+                manifest = load_projection_manifest(directory / name)
+            except ProjectionIntegrityError:
+                continue  # recovery sweeps malformed and old-schema manifests
+            sequence = by_oid.get(manifest.git_oid)
+            if sequence is not None and sequence <= cutoff:
+                found[name] = sequence
+        return found
+
+    def _housekeeping(self, step: str, run: Callable[[], object]) -> None:
+        """Run one retention step; a failure is logged, never the caller's failure.
+
+        Each step is retried by the next activation or open, and none deletes
+        anything before what keeps it readable is durable.
+        """
+
+        try:
+            run()
+        except Exception as exc:
+            _log.warning(
+                "retention_step_failed",
+                step=step,
+                instance_id=self.descriptor.instance_id,
+                reason=f"{type(exc).__name__}: {exc}",
+            )
+
+    def fold_consumption_if_due(self) -> None:
+        """Fold raw consumption receipts past ``retention.days``, once per accepted day.
+
+        The clock is the accepted head's commit time, so the cutoff follows the
+        ledger, not the wall clock. Housekeeping: a failure is logged and the
+        next accepted day retries.
+        """
+
+        if is_previewing():
+            return
+        with self._state_lock:
+            oid = self._recovered.coordinate.git_oid
+        at = self._ledger.commit_timestamps(oid)[1]
+        if self._consumption_folded_on == at.date():
+            return
+        from cruxible_core.exhaust.consumption import fold_consumption_receipts
+
+        fold_consumption_receipts(self, now=at, days=self.retention.days)
+        # Marked only once the fold completed, so a failed day is retried.
+        self._consumption_folded_on = at.date()
 
     @contextmanager
     def holding_accepted_head(self) -> Iterator[str]:
@@ -2603,13 +2973,25 @@ class PlaybillInstance:
 
             try:
                 projection = publisher.prebuild(bundle, base=base)
-                return publisher.activate(bundle, projection, base=base, on_completed=install)
+                activated = publisher.activate(bundle, projection, base=base, on_completed=install)
             except Exception:
                 # Main may have moved before a post-CAS publication failure.
                 # Repair from authority, never install a partially published
                 # outcome. Preserve the caller's failure even if repair succeeds.
                 self.refresh()
                 raise
+        if activated.status == "accepted":
+            # Outside the activation locks: eviction is unlinks, and a bind
+            # that wants an evicted coordinate rebuilds it under the same lock.
+            with phase("post_accept"):
+                with self._state_lock:
+                    head = self._recovered.head.sequence
+                self._housekeeping("projection_eviction", self.evict_projection_pieces)
+                self._housekeeping("consumption_fold", self.fold_consumption_if_due)
+                self._housekeeping(
+                    "candidate_retirement", lambda: self.retire_settled_candidates((head,))
+                )
+        return activated
 
 
 __all__ = ["DESCRIPTOR_FILE", "PlaybillInstance"]

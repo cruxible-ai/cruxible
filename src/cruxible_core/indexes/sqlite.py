@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -342,44 +343,29 @@ def retain_serving_head_stamp_locked(
     )
 
 
-def _content_stamp(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
-    """File identity and change timestamps, excluding read-induced access time.
+def piece_content_identity(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    """A piece's inode and bytes as a stat names them: device, inode, size, mtime.
 
-    The readiness digest is itself a read, and a read may advance the access
-    time: Linux ``relatime`` does whenever ctime is no older than atime, as it
-    is right after publication links the piece in and unlinks its staged name.
-    A whole ``stat_result`` comparison carries whole-second atime, so it
-    refused unchanged bytes whenever that read crossed a second boundary.
-
-    mtime and ctime are change detectors, not a guarantee against an
-    adversarial writer: a filesystem's timestamp granularity can give two
-    writes the same stamp, so a same-size rewrite can leave this tuple equal.
-    The digest compared against the manifest is what binds the bytes.
+    Linking a staged piece into place and unlinking its staged name move only
+    its ctime, so this survives publication and still moves with any write.
     """
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
-    )
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
 
 
 def record_source_built_piece(
-    path: Path, *, accepted: Any, manifest: ProjectionManifest
+    path: Path, *, accepted: Any, manifest: ProjectionManifest, hashed: os.stat_result
 ) -> dict[str, object]:
     """Mark only the assembler's completed exact source-derived output ready.
 
-    Returns the stamp recorded for it, which the assembler carries on its result
-    to serving publication.
+    ``hashed`` is the piece's stat when the assembler took the manifest's
+    physical digest from its staged name: the published inode must be that
+    one, unwritten since, so the bytes are not read a second time. Returns the
+    stamp recorded for it, which the assembler carries on its result to
+    serving publication.
     """
-    before = path.stat()
-    digest = physical_file_digest(path).tagged
     after = path.stat()
-    if (
-        _content_stamp(before) != _content_stamp(after)
-        or digest != manifest.pieces[0].physical_digest
-    ):
+    digest = manifest.pieces[0].physical_digest
+    if piece_content_identity(hashed) != piece_content_identity(after):
         raise ProjectionIntegrityError(
             "source-built projection changed before readiness publication"
         )
@@ -631,7 +617,18 @@ def _descriptor_uri(descriptor: int) -> str | None:
 
 
 def load_projection_manifest(path: Path) -> ProjectionManifest:
-    if path.is_symlink() or not path.is_file():
+    """The manifest at ``path``, or a refusal; one that is absent is refused from its ENOENT.
+
+    A manifest absent when it is looked at or read carries that
+    ``FileNotFoundError`` as its cause, so a caller can tell an absent manifest
+    (``_manifest_vanished``) from a present malformed one.
+    """
+
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError as exc:
+        raise ProjectionIntegrityError("projection manifest must be a regular file") from exc
+    if not stat.S_ISREG(metadata.st_mode):
         raise ProjectionIntegrityError("projection manifest must be a regular file")
     try:
         raw = path.read_bytes()
@@ -672,6 +669,121 @@ def _source_repository(path: str) -> Any:
     )
 
 
+class ProjectionEvicted(ProjectionIntegrityError):
+    """The coordinate was evicted while it was being bound; binding again rebuilds it."""
+
+
+def _manifest_vanished(error: BaseException) -> bool:
+    """Whether a manifest refusal came from the manifest being absent (ENOENT) when read.
+
+    Decided by the failed operation itself, never by looking at the path
+    again: another reader may have rebuilt it since.
+    """
+
+    cause = error.__cause__
+    return isinstance(cause, FileNotFoundError) or getattr(cause, "errno", None) == errno.ENOENT
+
+
+_HOLD_OPEN = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+
+
+class _PieceHolds:
+    """This process's holds by manifest path, and the pieces eviction is waiting on.
+
+    A handle counts its hold here before it takes the ``flock`` and uncounts
+    it after releasing it, so a count of zero means no handle in this process
+    holds the piece. Eviction that finds a piece held here records it as
+    waiting; the last release moves it to its directory's released set,
+    which the next eviction pass takes whole. A release is the only thing
+    that makes a held piece worth trying again, so no pass retries the rest.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.counts: dict[Path, int] = {}
+        self.waiting: dict[Path, int] = {}
+        self.released: dict[Path, dict[str, int]] = {}
+
+    def taken(self, manifest: Path) -> None:
+        with self.lock:
+            self.counts[manifest] = self.counts.get(manifest, 0) + 1
+
+    def dropped(self, manifest: Path) -> None:
+        with self.lock:
+            left = self.counts.get(manifest, 0) - 1
+            if left > 0:
+                self.counts[manifest] = left
+                return
+            self.counts.pop(manifest, None)
+            sequence = self.waiting.pop(manifest, None)
+            if sequence is not None:
+                self.released.setdefault(manifest.parent, {})[manifest.name] = sequence
+
+
+_HOLDS = _PieceHolds()
+
+
+def _hold_key(manifest: Path) -> Path:
+    return Path(os.path.abspath(manifest))
+
+
+@contextmanager
+def held_here(manifest: Path, sequence: int) -> Iterator[bool]:
+    """Whether a handle in this process holds ``manifest``'s piece, with the registry locked.
+
+    Yields True after recording the piece as waiting (``sequence`` is its
+    generation): its last release here makes it eligible again
+    (``released_pieces``). Yields False when no handle here holds it; while
+    the block runs no handle here can take or drop a hold, so a ``flock``
+    still held then is another process's.
+    """
+
+    key = _hold_key(manifest)
+    with _HOLDS.lock:
+        if _HOLDS.counts.get(key, 0) > 0:
+            _HOLDS.waiting[key] = sequence
+            yield True
+        else:
+            yield False
+
+
+def released_pieces(directory: Path) -> dict[str, int]:
+    """Take the manifests (name -> sequence) released since the last call, for ``directory``."""
+
+    with _HOLDS.lock:
+        return _HOLDS.released.pop(_hold_key(directory), {})
+
+
+def lock_piece_shared(piece: Path, manifest: Path) -> int:
+    """Open ``piece`` and hold it from eviction; the descriptor is the hold.
+
+    A shared ``flock`` for the life of a handle, in any process: eviction
+    takes the exclusive lock without waiting and skips a held piece. Raises
+    ``ProjectionEvicted`` when eviction removed the piece or its manifest
+    before the hold was taken.
+    """
+
+    import fcntl
+
+    try:
+        descriptor = os.open(piece, _HOLD_OPEN)
+    except FileNotFoundError as exc:
+        raise ProjectionEvicted("projection piece was evicted while binding") from exc
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH)
+        held = os.fstat(descriptor)
+        try:
+            named = os.stat(piece, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise ProjectionEvicted("projection piece was evicted while binding") from exc
+        if (held.st_dev, held.st_ino) != (named.st_dev, named.st_ino) or not manifest.exists():
+            raise ProjectionEvicted("projection piece was evicted while binding")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
 class ProjectionHandle:
     """An immutable read handle whose complete build was verified exactly once."""
 
@@ -684,8 +796,13 @@ class ProjectionHandle:
         connection: sqlite3.Connection,
         accepted: AcceptedProjectionCoordinate,
         source_descriptor: int | None = None,
+        hold_descriptor: int | None = None,
     ) -> None:
         self._source_descriptor = source_descriptor
+        # The shared lock that keeps this piece from eviction while the handle
+        # lives, and its entry in this process's hold registry.
+        self._hold_descriptor = hold_descriptor
+        self._hold_key: Path | None = None
         self.manifest_path = manifest_path
         self.manifest = manifest
         self.piece_paths = piece_paths
@@ -952,6 +1069,12 @@ class ProjectionHandle:
                 if self._source_descriptor is not None:
                     os.close(self._source_descriptor)
                     self._source_descriptor = None
+                if self._hold_descriptor is not None:
+                    os.close(self._hold_descriptor)
+                    self._hold_descriptor = None
+                if self._hold_key is not None:
+                    _HOLDS.dropped(self._hold_key)
+                    self._hold_key = None
                 self._closed = True
 
     def __enter__(self) -> "ProjectionHandle":
@@ -1072,12 +1195,61 @@ def bind_projection(
     *,
     expected: AcceptedProjectionCoordinate,
 ) -> ProjectionHandle:
-    """Verify one complete manifest and return a handle that does no per-read rehash."""
+    """Verify one complete manifest and return a handle that does no per-read rehash.
+
+    The handle holds its piece from eviction (``lock_piece_shared``) until it
+    closes. A manifest or piece evicted before the hold is taken raises
+    ``ProjectionEvicted``, and binding again rebuilds the coordinate.
+    """
 
     # The first bind in a process fixes which authentication records it trusts
     # here, before any later read could be answered from a replaced piece.
     _trusted_stamps(manifest_path.parent)
-    manifest = load_projection_manifest(manifest_path)
+    try:
+        manifest = load_projection_manifest(manifest_path)
+    except ProjectionIntegrityError as exc:
+        # Absent when looked at or read (ENOENT): eviction removed it, and
+        # binding again rebuilds the coordinate, even if another reader has
+        # rebuilt it since. A present malformed or untrustworthy manifest is
+        # refused as it was.
+        if _manifest_vanished(exc):
+            raise ProjectionEvicted(
+                "projection manifest must be a regular file: it was evicted while binding"
+            ) from exc
+        raise
+    if not manifest.pieces:
+        raise ProjectionIntegrityError("PB-B supports one-piece serving only")
+    piece_name = manifest.pieces[0].name
+    key = _hold_key(manifest_path)
+    # Counted before the flock and uncounted after it is released, so the
+    # registry never shows zero while this process holds the piece.
+    _HOLDS.taken(key)
+    try:
+        try:
+            hold = lock_piece_shared(manifest_path.parent / piece_name, manifest_path)
+        except ProjectionEvicted:
+            raise
+        except OSError as exc:
+            raise ProjectionIntegrityError(f"projection piece is missing: {piece_name}") from exc
+        try:
+            handle = _bind_held_projection(manifest_path, manifest, expected=expected)
+        except BaseException:
+            os.close(hold)
+            raise
+    except BaseException:
+        _HOLDS.dropped(key)
+        raise
+    handle._hold_descriptor = hold
+    handle._hold_key = key
+    return handle
+
+
+def _bind_held_projection(
+    manifest_path: Path,
+    manifest: ProjectionManifest,
+    *,
+    expected: AcceptedProjectionCoordinate,
+) -> ProjectionHandle:
     if not _manifest_matches_coordinate(manifest, expected):
         raise ProjectionIntegrityError("projection manifest differs from the accepted coordinate")
     if len(manifest.pieces) != 1:
@@ -1340,14 +1512,18 @@ def detect_projection_orphans(publication_directory: Path) -> tuple[ProjectionOr
 
 
 __all__ = [
+    "ProjectionEvicted",
     "ProjectionHandle",
     "ProjectionPool",
     "bind_projection",
     "canonical_logical_export",
     "detect_projection_orphans",
+    "held_here",
     "initialize_projection_database",
     "load_projection_manifest",
+    "lock_piece_shared",
     "physical_file_digest",
     "projection_logical_digest",
+    "released_pieces",
     "reset_projection_verification_memo",
 ]

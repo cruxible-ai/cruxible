@@ -583,3 +583,28 @@ def test_floor_verification_refuses_a_fifo_swapped_after_stat(tmp_path, monkeypa
     with pytest.raises(FloorApplyError, match="not a regular file"):
         call_with_fifo_timeout(fifo, lambda: apply_floor_delta(directory, _delta()))
     assert swapped
+
+
+def test_a_delta_reads_only_its_own_files_once_the_floor_is_verified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = _base_dir(tmp_path)
+    reads: list[str] = []
+    read_at = floor_apply._read_at
+
+    def counted(directory_fd: int, name: str, **kwargs: object) -> bytes:
+        reads.append(name)
+        return read_at(directory_fd, name, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(floor_apply, "_read_at", counted)
+    # Files older than the floor's last verification are proven by their stat.
+    monkeypatch.setattr(floor_apply, "_RECENT_NS", -(10**12))
+    assert apply_floor_delta(directory, _delta()).status == "applied"
+    assert sorted(reads) == ["b.yaml", "manifest.json"]
+    # A size change is caught by the stat alone; a full floor repairs it.
+    (directory / "current/k/a.yaml").write_bytes(b"shorter\n")
+    reads.clear()
+    assert apply_floor_delta(directory, _delta()).status == "base_mismatch"
+    full = floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5)
+    assert apply_floor_delta(directory, full).status == "applied"
+    assert _tree(directory) == _expected(tmp_path)

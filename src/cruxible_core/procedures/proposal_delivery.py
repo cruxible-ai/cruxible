@@ -160,6 +160,7 @@ from cruxible_core.proposals.delegated_authority import (
     delegated_authority_issues,
 )
 from cruxible_core.proposals.proposals import ProposalService
+from cruxible_core.runtime.phase_timing import timed_operation
 
 if TYPE_CHECKING:
     from cruxible_core.derived.derived_state import ClaimPredicateKey, SnapshotTree
@@ -1952,6 +1953,7 @@ class ProposalTerminalEgressSink:
 
     # -- settlement ---------------------------------------------------------
 
+    @timed_operation("settle")
     def _deliver_settle(
         self,
         request: TerminalEgressRequestV2,

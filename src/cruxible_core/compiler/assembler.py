@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Final, Protocol, TypeVar
 
 from cruxible_client.contracts.errors import (
     ProjectionCoordinateError,
+    ProjectionIntegrityError,
     ProjectionPublicationError,
 )
 from cruxible_client.contracts.projection_extensions import (
@@ -39,6 +40,7 @@ from cruxible_core.indexes.projection import (
 from cruxible_core.indexes.sqlite import (
     initialize_projection_database,
     physical_file_digest,
+    piece_content_identity,
     projection_logical_digest,
     record_source_built_piece,
 )
@@ -298,8 +300,14 @@ class ProjectionAssembler:
             # elsewhere recomputes them from every row.
             lambda: projection_logical_digest(staged_piece, recompute=False),
         )
+        # The one read of the piece's bytes: readiness publication checks the
+        # published inode against this stat instead of hashing it again.
+        written = staged_piece.stat()
         physical = physical_file_digest(staged_piece)
-        byte_length = staged_piece.stat().st_size
+        hashed = staged_piece.stat()
+        if piece_content_identity(written) != piece_content_identity(hashed):
+            raise ProjectionIntegrityError("projection piece changed while it was hashed")
+        byte_length = hashed.st_size
 
         final_piece = self.publication_directory / piece_name
 
@@ -365,7 +373,9 @@ class ProjectionAssembler:
         staging.rmdir()
         _fsync_directory(self.publication_directory)
 
-        stamp = record_source_built_piece(final_piece, accepted=self.accepted, manifest=manifest)
+        stamp = record_source_built_piece(
+            final_piece, accepted=self.accepted, manifest=manifest, hashed=hashed
+        )
 
         return AssemblerResult(
             manifest_path=str(final_manifest),

@@ -53,6 +53,7 @@ from cruxible_core.proposals.proposals import (
 )
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.phase_timing import phase, timed_operation
 from cruxible_core.runtime.request_scope import projection_request
 from cruxible_core.service.change_preview import admit_change_set, change_scope
 from cruxible_core.service.proposals.proposal_names import canonical_playbill_proposal_name
@@ -489,6 +490,7 @@ def _reconcile_proposal_notes(
                         instance.write_proposal_note(kind, oid, expected)
 
 
+@timed_operation("activate")
 @projection_request
 def service_activate_playbill_proposal(
     instance: PlaybillInstance,
@@ -562,12 +564,13 @@ def service_activate_playbill_proposal(
 
     # Remembered slot answers survive: each is re-validated against its own
     # reads at the new coordinate before it is served.
-    reset_claim_resolution_memo(slots=False)
-    if status == "accepted":
-        _finalize_completed_intents(instance)
-    advertisement = instance.advertise_workspace()
-    # Publish accepted main and remove the closed review branch.
-    instance.request_ledger_mirror()
+    with phase("post_accept"):
+        reset_claim_resolution_memo(slots=False)
+        if status == "accepted":
+            _finalize_completed_intents(instance)
+        advertisement = instance.advertise_workspace()
+        # Publish accepted main and remove the closed review branch.
+        instance.request_ledger_mirror()
     return ActivationReceipt(
         proposal_id=proposal_id,
         activated_by=activated_by,

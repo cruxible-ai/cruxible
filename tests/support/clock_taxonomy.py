@@ -75,6 +75,12 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 # is `observed_at` the time its attestor asserts.
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("FloorConsumerOutcome", "generation"): "SETTLEMENT ORDER",
+    # The generation a forward floor render reached.
+    ("FloorStep", "generation"): "SETTLEMENT ORDER",
+    # The accepted generation whose change-set record holds a retired candidate.
+    ("SettledCandidateLocator", "sequence"): "SETTLEMENT ORDER",
+    # The accepted generation of one revision in a floor Claim's history.
+    ("_Revisions", "sequence"): "SETTLEMENT ORDER",
     ("LineTriggerBinding", "generation"): "SETTLEMENT ORDER",
     # The accepted generation a dispatched Trigger occurrence fires on.
     ("TriggerFire", "generation"): "SETTLEMENT ORDER",
@@ -197,6 +203,13 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ConsumptionAggregateV1", "consumption_epoch_generation"): "SETTLEMENT ORDER",
     ("ConsumptionAggregateV1", "observed_since_generation"): "SETTLEMENT ORDER",
     ("ConsumptionEpochV1", "consumption_epoch_generation"): "SETTLEMENT ORDER",
+    # The retention cutoff a fold compares receipts' recorded instants with: the
+    # accepted head's commit time (the writer's own timestamp) less the window.
+    ("ConsumptionFoldV1", "folded_before"): "ASSERTION TIME",
+    # Unfolded receipts' recorded instants, in the tally's expiry queue and
+    # once a fold's cutoff has passed them: the events' own recorded_at.
+    ("_Tally", "expiry"): "ASSERTION TIME",
+    ("_Tally", "overdue"): "ASSERTION TIME",
     ("ConsumptionObservationGapV1", "unobserved_from_generation"): "SETTLEMENT ORDER",
     ("ConsumptionObservationResumeV1", "observed_from_generation"): "SETTLEMENT ORDER",
     ("CoverageManifestFileV1", "written_at"): "ASSERTION TIME",

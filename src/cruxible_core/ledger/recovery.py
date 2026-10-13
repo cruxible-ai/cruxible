@@ -415,7 +415,7 @@ def _parse_note(content: bytes, *, oid: str) -> GenerationDescriptor:
     return descriptor
 
 
-def _candidate_from_record(
+def candidate_from_change_set_record(
     record: ChangeSetRecordAnyVersion,
 ) -> CandidateRecordAnyVersion:
     """Recover the validated candidate one accepted receipt settled.
@@ -497,7 +497,7 @@ def prepared_generation_for_handoff(
         raise SettlementIntegrityError("change-set sequence is not contiguous")
     if bundle.record_path != f"changesets/cs-{record.sequence:020d}.json":
         raise SettlementIntegrityError("change-set path differs from its sequence")
-    if _candidate_from_record(record) != candidate:
+    if candidate_from_change_set_record(record) != candidate:
         raise SettlementIntegrityError("stored change-set candidate differs from preparation")
     # A knowledge.brief Claim pins its ClaimType, so the type's presence decides
     # this for every Claim carried unchanged from the accepted base (a blob
@@ -623,7 +623,7 @@ def _verify_successor(
     if record_path != expected_path:
         raise SettlementIntegrityError("change-set path differs from its sequence")
 
-    candidate = _candidate_from_record(record)
+    candidate = candidate_from_change_set_record(record)
     parent_coordinate = AcceptedProjectionCoordinate(
         instance_id=instance_id,
         repository_path=repository_path,
