@@ -13,12 +13,12 @@ whose managed root is ``root`` and fills a ``Counter`` with the work done:
 - ``git_spawns`` and ``other_spawns``: ``subprocess.Popen`` audit events, split
   on the program's name;
 - ``sql_statements``: statements SQLite ran on connections to databases under
-  ``root`` (one per execution, so ``executemany`` counts every row);
-- ``sql_scan_rows``: for each of those statements whose query plan scans a table
-  in full, that table's row count when the window closes, summed. A scan of a
-  table that does not grow with the instance weighs the same at both sizes; a
-  scan of one that does weighs its size. A scan walking an index in order under
-  a trailing ``LIMIT`` with no sort step stops early and is not weighed;
+  ``root`` (one per execution, so ``executemany`` counts every row, and each
+  trigger firing counts once);
+- ``sql_scan_rows``: for each of those executions, the rows of every table its
+  plan walks in full, as the table stands when the statement starts, summed (see
+  "SQL scans" below). A table that does not grow with the instance weighs the
+  same at both sizes; one that does weighs its size;
 - ``projection_binds``: calls of ``PlaybillInstance.bind_accepted_projection``;
 - ``cas_body_reads``: CAS bodies read and hashed
   (``ContentAddressedBodyStore._verified_bytes`` and ``.availability``);
@@ -33,8 +33,30 @@ back. The audit hook (opens and spawns) cannot be removed, so it is installed
 once and does nothing outside a window. SQLite connections outlive windows (an
 instance holds some open), so ``trace_sqlite`` installs a connect wrapper for the
 scale module's lifetime; its trace callbacks record nothing outside a window.
-Query plans are read afterwards on a separate read-only connection, never from
-inside a callback.
+
+SQL scans. Each statement is planned when it starts, from its trace callback, on
+its own connection (``EXPLAIN QUERY PLAN``; the callback ignores its own
+statements). So the plan sees that connection's temporary tables, attached
+schemas and uncommitted schema, and a database renamed or deleted before the
+window closes is planned and sized while it still exists. A plan step walks a
+table in full when it is a ``SCAN`` of it (a covering index walk included), or
+builds an automatic index over it. Its target is resolved to the real table: an
+alias (``FROM claims AS c`` plans as ``SCAN c``) through the statement's own
+``FROM``/``JOIN`` references, ``schema.table`` through that schema, and CTEs,
+views and subqueries are skipped (their own scans are separate plan steps). A
+fired trigger is planned from its body, with ``NEW.x``/``OLD.x`` read as NULL
+(``trigger_scan_rows``: Python traces a trigger firing as a repeat of the outer
+statement). Foreign-key checks are plan steps too, so a ``DELETE`` or ``UPDATE``
+whose checks walk an unindexed child table weighs that table each execution,
+though SQLite runs the check only per changed row: an over-count, never a miss.
+The schema table (``sqlite_master``) is resolved and weighs nothing: its rows are
+the schema, which no instance grows. ``DELETE`` without ``WHERE``, ``CREATE INDEX``
+and ``DROP TABLE`` walk their table. A ``LIMIT``ed walk counts only its
+``LIMIT + OFFSET`` rows, and only when that bound is established: a single-step
+plan with no ``WHERE``, ``GROUP BY``, ``HAVING`` or sort. Anything the window
+cannot resolve (a plan that fails, a target it cannot name, a statement kind it
+does not model) is recorded in ``unexplained``, which the guard treats as a
+failure, never as zero.
 """
 
 from __future__ import annotations
@@ -46,6 +68,7 @@ import re
 import sqlite3
 import sys
 import types
+import weakref
 from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -89,13 +112,14 @@ _METHOD_COUNTERS = {
 
 
 @dataclass
-class _Window:
+class Window:
     prefixes: tuple[str, ...]
     counts: Counter[str] = field(default_factory=Counter)
-    statements: list[tuple[str, str]] = field(default_factory=list)
+    #: Statements whose scans could not be resolved, with why; never counted as zero.
+    unexplained: list[str] = field(default_factory=list)
 
 
-_WINDOW: _Window | None = None
+_WINDOW: Window | None = None
 
 
 def _prefixes(root: Path) -> tuple[str, ...]:
@@ -233,9 +257,20 @@ def _counting_blobs(original: Callable[..., Any]) -> Callable[..., Any]:
 _REBINDER: _Rebinder | None = None
 
 
-# -- SQLite: traced for the module's lifetime, recorded only inside a window ----------
+# -- SQLite: traced for the module's lifetime, planned inside a window -----------------
 
 _ORIGINAL_CONNECT = sqlite3.connect
+_PLANNING = False
+
+
+class TracedConnection(sqlite3.Connection):
+    """A connection the trace callback can plan on: it holds a weak reference to it."""
+
+    scale_cache: dict[Any, Any]
+
+
+class Unexplained(Exception):
+    """A statement whose full-scan work this window cannot establish."""
 
 
 def _database_path(database: object, *, uri: bool) -> str | None:
@@ -255,10 +290,28 @@ def _database_path(database: object, *, uri: bool) -> str | None:
     return os.path.normpath(os.path.abspath(name))
 
 
-def _record(database: str, sql: str) -> None:
+def _on_statement(reference: Any, database: str, sql: str) -> None:
+    global _PLANNING
     window = _WINDOW
-    if window is not None and _under(database, window.prefixes):
-        window.statements.append((database, sql))
+    if window is None or _PLANNING or not _under(database, window.prefixes):
+        return
+    window.counts["sql_statements"] += 1
+    connection = reference()
+    if connection is None:
+        window.unexplained.append(f"connection gone: {sql[:160]}")
+        return
+    _PLANNING = True
+    try:
+        repeated = connection.scale_cache.get("last") == sql
+        connection.scale_cache["last"] = sql
+        rows = trigger_scan_rows(connection, sql) if repeated else None
+        if rows is None:
+            rows = statement_scan_rows(connection, sql)
+        window.counts["sql_scan_rows"] += rows
+    except (Unexplained, sqlite3.Error) as exc:
+        window.unexplained.append(f"{type(exc).__name__}: {exc} :: {sql[:160]}")
+    finally:
+        _PLANNING = False
 
 
 @contextmanager
@@ -268,12 +321,19 @@ def trace_sqlite(root: Path) -> Iterator[None]:
     prefixes = _prefixes(root)
 
     def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
-        connection = _ORIGINAL_CONNECT(*args, **kwargs)
         database = _database_path(
             args[0] if args else kwargs.get("database"), uri=bool(kwargs.get("uri"))
         )
-        if database is not None and _under(database, prefixes):
-            connection.set_trace_callback(functools.partial(_record, database))
+        if database is None or not _under(database, prefixes):
+            return _ORIGINAL_CONNECT(*args, **kwargs)
+        if len(args) > 5 or "factory" in kwargs:
+            raise AssertionError("the scale guard cannot trace a custom connection factory")
+        connection = _ORIGINAL_CONNECT(*args, factory=TracedConnection, **kwargs)
+        assert isinstance(connection, TracedConnection)
+        connection.scale_cache = {}
+        connection.set_trace_callback(
+            functools.partial(_on_statement, weakref.ref(connection), database)
+        )
         return connection
 
     sqlite3.connect = connect  # type: ignore[assignment]
@@ -284,101 +344,403 @@ def trace_sqlite(root: Path) -> Iterator[None]:
 
 
 _LITERALS = re.compile(r"[xX]'[0-9a-fA-F]*'|'(?:[^']|'')*'|\b\d+(?:\.\d+)?\b")
-_NOT_PLANNED = re.compile(
-    r"^\s*(?:--|BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE|PRAGMA|CREATE|DROP|ALTER|"
-    r"ATTACH|DETACH|ANALYZE|VACUUM|REINDEX)\b",
+_COMMENTS = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
+_NO_SCAN = frozenset(
+    {"BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE", "PRAGMA", "ATTACH", "DETACH"}
+)
+_PLANNED = frozenset({"SELECT", "WITH", "INSERT", "REPLACE", "UPDATE", "DELETE", "VALUES"})
+_IDENT = r'(?:"(?:[^"]|"")+"|\[[^\]]+\]|`[^`]+`|[A-Za-z_][A-Za-z0-9_$]*)'
+_REFERENCE = re.compile(
+    rf"(?P<ref>{_IDENT}(?:\s*\.\s*{_IDENT})?)\s+(?:AS\s+)?(?P<alias>{_IDENT})", re.IGNORECASE
+)
+_SUBQUERY_ALIAS = re.compile(rf"\)\s+(?:AS\s+)?(?P<alias>{_IDENT})", re.IGNORECASE)
+_CTE = re.compile(
+    rf"(?:\bWITH(?:\s+RECURSIVE)?|,)\s*(?P<name>{_IDENT})\s*(?:\([^)]*\)\s*)?AS\s+"
+    r"(?:NOT\s+)?(?:MATERIALIZED\s+)?\(",
     re.IGNORECASE,
 )
-_TRAILING_LIMIT = re.compile(r"\bLIMIT\s+\S+(?:\s+OFFSET\s+\S+)?\s*;?\s*$", re.IGNORECASE)
-_PLANS: dict[tuple[str, str], tuple[str, ...] | None] = {}
+_LIMIT = re.compile(r"\bLIMIT\s+(\d+)(?:\s+OFFSET\s+(\d+))?\s*;?\s*$", re.IGNORECASE)
+_UNBOUNDED = re.compile(r"\b(?:WHERE|GROUP|HAVING|JOIN)\b", re.IGNORECASE)
+_TRIGGER_ROW = re.compile(r"\b(?:NEW|OLD)\s*\.\s*" + _IDENT, re.IGNORECASE)
+_CREATE_INDEX = re.compile(
+    rf"^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?{_IDENT}(?:\s*\.\s*{_IDENT})?"
+    rf"\s+ON\s+(?P<table>{_IDENT})",
+    re.IGNORECASE,
+)
+_CREATE_AS = re.compile(
+    r"^CREATE\s+(?:TEMP\w*\s+)?TABLE\b.*?\bAS\s+(?P<select>SELECT\b.*)$", re.IGNORECASE | re.DOTALL
+)
+_DROP_TABLE = re.compile(
+    rf"^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?P<table>{_IDENT}(?:\s*\.\s*{_IDENT})?)",
+    re.IGNORECASE,
+)
+_DELETE_ALL = re.compile(
+    rf"^DELETE\s+FROM\s+(?P<table>{_IDENT}(?:\s*\.\s*{_IDENT})?)\s*;?\s*$", re.IGNORECASE
+)
+#: Words that can follow a table reference without being its alias.
+_KEYWORDS = frozenset(
+    """ABORT ACTION ADD AFTER ALL ALTER ALWAYS ANALYZE AND AS ASC ATTACH AUTOINCREMENT BEFORE
+    BEGIN BETWEEN BY CASCADE CASE CAST CHECK COLLATE COLUMN COMMIT CONFLICT CONSTRAINT CREATE
+    CROSS CURRENT DEFAULT DEFERRABLE DEFERRED DELETE DESC DETACH DISTINCT DO DROP EACH ELSE END
+    ESCAPE EXCEPT EXCLUDE EXCLUSIVE EXISTS EXPLAIN FAIL FILTER FIRST FOLLOWING FOR FOREIGN FROM
+    FULL GENERATED GLOB GROUP GROUPS HAVING IF IGNORE IMMEDIATE IN INDEX INDEXED INITIALLY INNER
+    INSERT INSTEAD INTERSECT INTO IS ISNULL JOIN KEY LAST LEFT LIKE LIMIT MATCH MATERIALIZED
+    NATURAL NO NOT NOTHING NOTNULL NULL NULLS OF OFFSET ON OR ORDER OTHERS OUTER OVER PARTITION
+    PLAN PRAGMA PRECEDING PRIMARY QUERY RAISE RANGE RECURSIVE REFERENCES REGEXP REINDEX RELEASE
+    RENAME REPLACE RESTRICT RETURNING RIGHT ROLLBACK ROW ROWS SAVEPOINT SELECT SET TABLE TEMP
+    TEMPORARY THEN TIES TO TRANSACTION TRIGGER UNBOUNDED UNION UNIQUE UPDATE USING VACUUM
+    VALUES VIEW VIRTUAL WHEN WHERE WINDOW WITH WITHOUT""".split()
+)
 
 
-def _full_scans(connection: sqlite3.Connection, sql: str) -> tuple[str, ...] | None:
-    try:
-        plan = connection.execute("EXPLAIN QUERY PLAN " + sql).fetchall()
-        tables = {
-            str(row[0])
-            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+def _bare(identifier: str) -> str:
+    identifier = identifier.strip()
+    if identifier[:1] in ('"', "[", "`"):
+        identifier = identifier[1:-1].replace('""', '"')
+    return identifier
+
+
+def _name(reference: str) -> tuple[str | None, str]:
+    """``schema.table`` or ``table``, unquoted."""
+
+    parts = re.split(rf"\s*\.\s*(?={_IDENT}$)", reference.strip(), maxsplit=1)
+    if len(parts) == 2:
+        return _bare(parts[0]), _bare(parts[1])
+    return None, _bare(reference)
+
+
+def _quote(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _cached(connection: TracedConnection, key: Any, compute: Callable[[], Any]) -> Any:
+    cache = connection.scale_cache
+    if key not in cache:
+        cache[key] = compute()
+    return cache[key]
+
+
+def _schema_version(connection: TracedConnection) -> tuple[tuple[str, int], ...]:
+    """Every schema's version: a cached plan or object list is good while these hold."""
+
+    return tuple(
+        (schema, int(connection.execute(f"PRAGMA {_quote(schema)}.schema_version").fetchone()[0]))
+        for schema in _schemas(connection)
+    )
+
+
+def _schemas(connection: TracedConnection) -> tuple[str, ...]:
+    """Schemas in SQLite's lookup order for an unqualified name: temp, main, attached."""
+
+    names = [str(row[1]) for row in connection.execute("PRAGMA database_list")]
+    return tuple(sorted(names, key=lambda name: (name != "temp", name != "main")))
+
+
+def _objects(connection: TracedConnection, version: Any) -> dict[str, dict[str, str]]:
+    """``schema -> {name: type}`` of every table, view and trigger."""
+
+    def read() -> dict[str, dict[str, str]]:
+        return {
+            schema: {
+                str(name): str(kind)
+                for kind, name in connection.execute(
+                    f"SELECT type, name FROM {_quote(schema)}.sqlite_master "
+                    "WHERE type IN ('table','view','trigger')"
+                )
+            }
+            for schema in _schemas(connection)
         }
-    except sqlite3.Error:
-        return None
-    details = [str(row[3]) for row in plan]
-    sorts = any("USE TEMP B-TREE" in detail for detail in details)
-    limited = _TRAILING_LIMIT.search(sql) is not None
-    scanned = []
-    for detail in details:
-        if not detail.startswith("SCAN ") or "VIRTUAL TABLE" in detail:
+
+    return _cached(connection, ("objects", version), read)  # type: ignore[no-any-return]
+
+
+_SCHEMA_TABLES = frozenset(
+    {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_temp_schema"}
+)
+
+
+def _table(
+    objects: dict[str, dict[str, str]], schema: str | None, name: str
+) -> tuple[str, str] | None:
+    if name.lower() in _SCHEMA_TABLES:
+        # The schema table itself: its rows are the schema's objects.
+        temporary = "temp" in name.lower()
+        return ("temp" if temporary else (schema or "main")), "sqlite_master"
+    for candidate in (schema,) if schema is not None else tuple(objects):
+        if objects.get(candidate, {}).get(name) == "table":
+            return candidate, name
+    return None
+
+
+def _non_base(objects: dict[str, dict[str, str]], schema: str | None, name: str) -> bool:
+    return any(
+        objects.get(candidate, {}).get(name) == "view"
+        for candidate in ((schema,) if schema is not None else tuple(objects))
+    )
+
+
+_TOKEN = re.compile(rf"{_IDENT}|\S")
+
+
+def _scope(
+    sql: str, objects: dict[str, dict[str, str]]
+) -> tuple[dict[str, set[tuple[str, str]]], set[str]]:
+    """The statement's aliases of real tables, and the names that are no base table.
+
+    A reference is ``[schema.]name [AS] alias`` wherever it stands (a name that
+    is no table, view or CTE never yields an alias); ``) [AS] alias`` names a
+    subquery; ``WITH name AS (`` and ``, name AS (`` name CTEs.
+    """
+
+    text = _COMMENTS.sub(" ", _LITERALS.sub("0", sql))
+    non_base = {_bare(match.group("name")) for match in _CTE.finditer(text)}
+    tokens = _TOKEN.findall(text)
+
+    def identifier(index: int) -> str | None:
+        if index >= len(tokens):
+            return None
+        token = tokens[index]
+        if not re.fullmatch(_IDENT, token) or token.upper() in _KEYWORDS:
+            return None
+        return _bare(token)
+
+    def alias_at(index: int) -> str | None:
+        if index < len(tokens) and tokens[index].upper() == "AS":
+            index += 1
+        return identifier(index)
+
+    aliases: dict[str, set[tuple[str, str]]] = {}
+    for index, token in enumerate(tokens):
+        if token == ")":
+            alias = alias_at(index + 1)
+            if alias is not None:
+                non_base.add(alias)
             continue
-        table = detail.split(" ")[1]
-        if table not in tables:
+        if identifier(index) is None or (index > 0 and tokens[index - 1] == "."):
             continue
-        ordered_walk = (
-            "USING INDEX" in detail
-            or "USING COVERING INDEX" in detail
-            or ("USING INTEGER PRIMARY KEY" in detail)
+        schema, name, after = None, _bare(token), index + 1
+        if after + 1 < len(tokens) and tokens[after] == "." and identifier(after + 1) is not None:
+            schema, name, after = name, _bare(tokens[after + 1]), after + 2
+        alias = alias_at(after)
+        if alias is None:
+            continue
+        cte = schema is None and name in non_base
+        table = None if cte else _table(objects, schema, name)
+        if table is not None:
+            aliases.setdefault(alias, set()).add(table)
+        elif cte or _non_base(objects, schema, name):
+            non_base.add(alias)
+    return aliases, non_base
+
+
+def _scan_targets(
+    connection: TracedConnection, sql: str, version: Any
+) -> tuple[tuple[tuple[str, str], bool], ...]:
+    """Each table a statement's plan walks in full, and whether the walk is bounded."""
+
+    def plan() -> tuple[tuple[tuple[str, str], bool], ...]:
+        rows = connection.execute("EXPLAIN QUERY PLAN " + sql).fetchall()
+        details = [str(row[3]) for row in rows]
+        objects = _objects(connection, version)
+        aliases, non_base = _scope(sql, objects)
+        bounded = (
+            len(details) == 1
+            and _LIMIT.search(sql) is not None
+            and _UNBOUNDED.search(_COMMENTS.sub(" ", _LITERALS.sub("0", sql))) is None
         )
-        if limited and not sorts and ordered_walk:
+        targets: list[tuple[tuple[str, str], bool]] = []
+        for detail in details:
+            if detail.startswith("SCAN "):
+                target = detail[len("SCAN ") :]
+            elif detail.startswith("SEARCH ") and " USING AUTOMATIC " in detail:
+                # Building the automatic index walks the whole table.
+                target = detail[len("SEARCH ") :]
+            else:
+                continue
+            if target == "CONSTANT ROW" or " VIRTUAL TABLE" in target or target.startswith("("):
+                continue
+            target = target.split(" USING ", 1)[0]
+            schema, name = _name(target)
+            if schema is None and name in aliases:
+                found = aliases[name]
+                if len(found) != 1:
+                    raise Unexplained(f"alias {name!r} names {sorted(found)}")
+                targets.append((next(iter(found)), bounded))
+                continue
+            if schema is None and name in non_base:
+                continue
+            table = _table(objects, schema, name)
+            if table is not None:
+                targets.append((table, bounded))
+            elif not _non_base(objects, schema, name):
+                raise Unexplained(f"plan step {detail!r} names no table, alias, view or CTE")
+        return tuple(targets)
+
+    return _cached(connection, ("plan", version, _LITERALS.sub("?", sql)), plan)  # type: ignore[no-any-return]
+
+
+def _rows(connection: TracedConnection, table: tuple[str, str]) -> int:
+    if table[1] == "sqlite_master":
+        # The schema table's rows are the database's schema, which no instance
+        # grows; weighing them would only dilute the growth the rule compares.
+        return 0
+    (changed,) = connection.execute("PRAGMA data_version").fetchone()
+    key = ("rows", table, connection.total_changes, changed)
+
+    def count() -> int:
+        schema, name = table
+        (rows,) = connection.execute(
+            f"SELECT count(*) FROM {_quote(schema)}.{_quote(name)}"
+        ).fetchone()
+        return int(rows)
+
+    return _cached(connection, key, count)  # type: ignore[no-any-return]
+
+
+def _body(name: str, sql: str) -> tuple[str, ...]:
+    body = re.search(r"\bBEGIN\b(.*)\bEND\s*;?\s*$", sql, re.IGNORECASE | re.DOTALL)
+    if body is None:
+        raise Unexplained(f"trigger {name!r} has no BEGIN ... END body")
+    return tuple(
+        _TRIGGER_ROW.sub("NULL", statement).strip()
+        for statement in _split_statements(body.group(1))
+        if statement.strip()
+    )
+
+
+def _triggers(
+    connection: TracedConnection, version: Any, *, name: str | None = None, table: str | None = None
+) -> tuple[str, ...]:
+    """The body statements of one named trigger, or of every trigger on one table."""
+
+    def read() -> tuple[str, ...]:
+        column, value = ("name", name) if name is not None else ("tbl_name", table)
+        found = [
+            (str(row[0]), str(row[1]))
+            for schema in _schemas(connection)
+            for row in connection.execute(
+                f"SELECT name, sql FROM {_quote(schema)}.sqlite_master "
+                f"WHERE type='trigger' AND {column}=?",
+                (value,),
+            )
+        ]
+        if name is not None and not found:
+            raise Unexplained(f"trigger {name!r} is not in any schema")
+        return tuple(statement for trigger, sql in found for statement in _body(trigger, sql))
+
+    return _cached(connection, ("triggers", version, name, table), read)  # type: ignore[no-any-return]
+
+
+_DML_TARGET = re.compile(
+    rf"^(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)"
+    rf"\s+(?P<table>{_IDENT}(?:\s*\.\s*{_IDENT})?)",
+    re.IGNORECASE,
+)
+
+
+def trigger_scan_rows(connection: TracedConnection, sql: str) -> int | None:
+    """The weight of a trace repeating its predecessor on a table with triggers, else None.
+
+    SQLite traces each fired trigger program and each statement in it, but Python
+    passes the expanded SQL of the statement being stepped: the outer one. So a
+    trace that repeats the previous one on its connection, for a statement that
+    changes a table with triggers, is a trigger firing (not another execution of
+    the outer statement), weighed as the costliest statement among that table's
+    triggers: an over-count when bodies differ, never a miss.
+    """
+
+    target = _DML_TARGET.match(sql.strip())
+    if target is None:
+        return None
+    version = _schema_version(connection)
+    bodies = _triggers(connection, version, table=_name(target.group("table"))[1])
+    if not bodies:
+        return None
+    return max(statement_scan_rows(connection, body) for body in bodies)
+
+
+def _split_statements(text: str) -> list[str]:
+    statements, current, quote = [], [], None
+    for character in text:
+        if quote is not None:
+            if character == quote:
+                quote = None
+        elif character in ("'", '"'):
+            quote = character
+        elif character == ";":
+            statements.append("".join(current))
+            current = []
             continue
-        scanned.append(table)
-    return tuple(scanned)
+        current.append(character)
+    statements.append("".join(current))
+    return statements
 
 
-def _scan_rows(statements: list[tuple[str, str]], unexplained: Counter[str]) -> int:
-    connections: dict[str, sqlite3.Connection | None] = {}
-    rows: dict[tuple[str, str], int] = {}
+def statement_scan_rows(connection: TracedConnection, sql: str) -> int:
+    """Rows of every table one statement walks in full, on its own connection, now."""
 
-    def opened(database: str) -> sqlite3.Connection | None:
-        if database not in connections:
-            try:
-                connection = _ORIGINAL_CONNECT(Path(database).as_uri() + "?mode=ro", uri=True)
-                connection.execute("PRAGMA query_only=ON")
-            except sqlite3.Error:
-                # A build file renamed or removed since: nothing left to plan against.
-                connection = None
-            connections[database] = connection
-        return connections[database]
-
+    version = _schema_version(connection)
+    text = sql.strip()
+    if text.startswith("--"):
+        name = text[2:].strip()
+        if not name.upper().startswith("TRIGGER "):
+            raise Unexplained("a traced comment that is no trigger firing")
+        return sum(
+            statement_scan_rows(connection, body)
+            for body in _triggers(connection, version, name=_bare(name[len("TRIGGER ") :]))
+        )
+    first = re.match(r"[A-Za-z]+", text)
+    keyword = first.group(0).upper() if first is not None else ""
+    if keyword in _NO_SCAN:
+        return 0
+    objects = _objects(connection, version)
+    if keyword == "CREATE":
+        index = _CREATE_INDEX.match(text)
+        if index is not None:
+            table = _table(objects, None, _bare(index.group("table")))
+            return 0 if table is None else _rows(connection, table)
+        selected = _CREATE_AS.match(text)
+        if selected is not None:
+            return statement_scan_rows(connection, selected.group("select"))
+        return 0
+    if keyword == "DROP":
+        dropped = _DROP_TABLE.match(text)
+        if dropped is None:
+            return 0
+        table = _table(objects, *_name(dropped.group("table")))
+        return 0 if table is None else _rows(connection, table)
+    if keyword == "DELETE":
+        everything = _DELETE_ALL.match(text)
+        if everything is not None:
+            table = _table(objects, *_name(everything.group("table")))
+            if table is None:
+                raise Unexplained(f"DELETE names no table: {everything.group('table')}")
+            return _rows(connection, table)
+    if keyword == "ALTER":
+        altered = re.match(
+            rf"^ALTER\s+TABLE\s+(?P<table>{_IDENT}(?:\s*\.\s*{_IDENT})?)\s+DROP\b",
+            text,
+            re.IGNORECASE,
+        )
+        if altered is None:
+            return 0  # renames and added columns change the schema only
+        table = _table(objects, *_name(altered.group("table")))
+        return 0 if table is None else _rows(connection, table)
+    if keyword not in _PLANNED:
+        raise Unexplained(f"statement kind {keyword!r} is not modelled")
     total = 0
-    try:
-        for database, sql in statements:
-            if _NOT_PLANNED.match(sql):
-                continue
-            key = (database, _LITERALS.sub("?", sql))
-            if key not in _PLANS:
-                connection = opened(database)
-                if connection is None:
-                    unexplained[key[1][:160]] += 1
-                    continue
-                _PLANS[key] = _full_scans(connection, sql)
-            scanned = _PLANS[key]
-            if scanned is None:
-                unexplained[key[1][:160]] += 1
-                continue
-            for table in scanned:
-                if (database, table) not in rows:
-                    connection = opened(database)
-                    rows[(database, table)] = (
-                        0
-                        if connection is None
-                        else int(
-                            connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
-                        )
-                    )
-                total += rows[(database, table)]
-    finally:
-        for connection in connections.values():
-            if connection is not None:
-                connection.close()
+    for table, bounded in _scan_targets(connection, text, version):
+        rows = _rows(connection, table)
+        if bounded:
+            limit = _LIMIT.search(text)
+            assert limit is not None
+            rows = min(rows, int(limit.group(1)) + int(limit.group(2) or 0))
+        total += rows
     return total
 
 
-#: Statements whose plan could not be read (another connection's temporary table,
-#: an attached schema), by literal-free text; diagnostics only.
-UNEXPLAINED: Counter[str] = Counter()
-
-
 @contextmanager
-def counting(root: Path) -> Iterator[Counter[str]]:
+def counting(root: Path) -> Iterator[Window]:
     """Count the work done against the instance under ``root`` until the block exits."""
 
     global _WINDOW, _REBINDER
@@ -386,15 +748,13 @@ def counting(root: Path) -> Iterator[Counter[str]]:
     _install_audit_hook()
     if _REBINDER is None:
         _REBINDER = _Rebinder()
-    window = _Window(prefixes=_prefixes(root))
+    window = Window(prefixes=_prefixes(root))
     _REBINDER.install()
     _WINDOW = window
     try:
-        yield window.counts
+        yield window
     finally:
         _WINDOW = None
         _REBINDER.remove()
-        window.counts["sql_statements"] = len(window.statements)
-        window.counts["sql_scan_rows"] = _scan_rows(window.statements, UNEXPLAINED)
         for name in COUNTERS:
             window.counts.setdefault(name, 0)

@@ -51,6 +51,9 @@ A route/counter that fails today carries ``xfail(strict=True)`` naming what
 grows and where (file:line), so the package lands green and a fix turns the
 case into an XPASS failure that forces removing the mark.
 
+A window holding SQL whose scans the counters cannot weigh fails its route
+(never counts as zero).
+
 Two whole-population scans are deliberate cadence work and stay out: the daily
 evidence sweep and the hourly prediction anchor retry. Both worlds retire those
 two Triggers, so no tick here ever fires them.
@@ -507,6 +510,11 @@ _COLD_REBUILD = (
     "(compiler/projection_delta.py:45-60) takes the cold projection rebuild, reading and "
     "compiling every artifact (compiler/assembler.py:403-443 via ledger/activation.py:147)"
 )
+_COLD_DIGEST = (
+    "audit#5/#16: the cold-rebuilt projection piece is verified by a logical digest over "
+    "every row of every table (indexes/sqlite.py:514 -> indexes/typed_sqlite.py:541-544, "
+    "indexes/logical_digest.py:79)"
+)
 _BODY_STORE = (
     "audit#1: storing one body moves the instance-wide evidence token "
     "(storage/cas.py:426-450), so the next queue tick refolds every Claim "
@@ -635,15 +643,18 @@ GROWS: dict[str, dict[str, str]] = {
     "procedure.settle": _grows(_SETTLE, "claim_parses", *_DIGESTS, "file_opens", "git_blob_reads"),
     "attestation.new_capture": _grows(_NEW_CAPTURE, "sql_statements", "git_blob_reads"),
     **{
-        route: _grows(
-            _COLD_REBUILD,
-            "claim_parses",
-            *_DIGESTS,
-            "file_opens",
-            "sql_statements",
-            "cas_body_reads",
-            "git_blob_reads",
-        )
+        route: {
+            **_grows(
+                _COLD_REBUILD,
+                "claim_parses",
+                *_DIGESTS,
+                "file_opens",
+                "sql_statements",
+                "cas_body_reads",
+                "git_blob_reads",
+            ),
+            "sql_scan_rows": _COLD_DIGEST,
+        }
         for route in ("authoring.attestation_member", "authoring.trigger_member")
     },
     "tick.after_body_store.queue": _grows(
@@ -718,10 +729,15 @@ def _measure(session: Session, route: Route) -> dict[str, dict[str, int]]:
             route.prepare(world)
         settle_advertisement(world.instance)
         root = world.root
-        with counting(root) as counts:
+        with counting(root) as window:
             route.run(world)
             settle_advertisement(world.instance)
-        measured[world.shape.name] = {name: counts[name] for name in COUNTERS}
+        if window.unexplained:
+            raise AssertionError(
+                f"{route.name} on {world.shape.name}: {len(window.unexplained)} SQL statements "
+                f"whose scans the guard cannot weigh: {window.unexplained[:5]}"
+            )
+        measured[world.shape.name] = {name: window.counts[name] for name in COUNTERS}
     return measured
 
 
