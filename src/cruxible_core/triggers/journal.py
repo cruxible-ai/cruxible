@@ -180,6 +180,14 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
             connection.execute("PRAGMA synchronous=FULL")
         connection.execute("BEGIN IMMEDIATE" if create else "BEGIN")
         (version,) = connection.execute("PRAGMA user_version").fetchone()
+        if (
+            version == 0
+            and not create
+            and connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is None
+        ):
+            # A journal whose creator has not committed its schema yet: none, to a reader.
+            yield None
+            return
         if version == 0 and create:
             if connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone():
                 raise ValueError("Unrecognized trigger journal; retain it for operator repair")

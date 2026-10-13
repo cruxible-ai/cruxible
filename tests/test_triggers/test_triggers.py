@@ -171,6 +171,24 @@ def test_an_unknown_journal_is_retained_instead_of_rebuilt(tmp_path: Path) -> No
         assert connection.execute("SELECT count(*) FROM events").fetchone() == (2,)
 
 
+def test_a_journal_its_creator_has_not_committed_reads_as_none(tmp_path: Path) -> None:
+    """A reader that opens the file between its creation and its schema commit
+    (a daemon creating it as a request reads it) sees no journal, not a bad one."""
+
+    from cruxible_core.triggers.journal import latest_sequence, trigger_events
+
+    world = instance(tmp_path)
+    path = journal_path(world)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sqlite3.connect(path).close()
+    assert latest_sequence(world, action="next.expire") == 0
+    assert trigger_events(world, after=0, action="next.expire", limit=1) == ()
+    # A writer still creates the schema in it.
+    fire(world, NOW + timedelta(days=1), since=NOW + timedelta(days=1))
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (3,)
+
+
 def test_timer_state_follows_the_accepted_trigger_set(tmp_path: Path) -> None:
     world = instance(tmp_path)
     (first,) = fire(world, NOW + timedelta(days=1), triggers=(SWEEP,))
