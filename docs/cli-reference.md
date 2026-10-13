@@ -389,11 +389,15 @@ generation's member paths, attestation door events, body-store landings and
 re-observations reach only the Claims and keys that read them. Each fact and
 key holds on its own evaluation-time interval; one `next.expire` deadline,
 armed at the earliest end, refreshes exactly what ended. A `next` read at the
-current accepted and door heads serves these rows; when the worker has not yet
-followed a change or a bound, the read derives just that in memory and leaves
-the worker's state untouched. A read at an earlier coordinate or a pinned door
-head folds every Claim instead, and a page cursor from a read at the heads is
-refused once either head moves. A body rewritten in place, which no log
+current accepted and door heads serves these rows, its workspace citation
+rows and `orient`'s Claim counts; when the worker has not yet followed a change
+or a bound, the read derives just that in memory, from one unmoving state of
+the logs (it derives again if a body lands meanwhile), and never writes the
+worker's state. A read at an earlier coordinate or a pinned door head folds
+every Claim instead, as does a read while the worker is disabled, not yet run
+or its state from another format. A page cursor whose first page was read at
+the live accepted and door heads is refused once either head moves; this
+holds as well when those exact current heads were supplied explicitly. A body rewritten in place, which no log
 records, reaches the Claims that read it at the next daily `evidence.sweep`,
 which compares the file identity of every body a fact consulted. The worker
 rebuilds only on first start, a new derivation format or compiler, when its
