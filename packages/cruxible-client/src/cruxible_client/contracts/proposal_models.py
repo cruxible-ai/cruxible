@@ -330,6 +330,11 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     (``refused_claims``: its statement and the Captures it cites), taken while the
     candidate is still readable, so a later proposal of the same statement on the
     same evidence resurfaces it neutrally.
+
+    A Line run whose change differs from its Line's open proposal withdraws
+    that proposal as superseded, under the run's own identity:
+    ``superseded_by`` names the successor proposal it submitted. Nothing
+    carries over to the successor; it is reviewed afresh.
     """
 
     tag: Literal["playbill-proposal-withdrawal-v1"] = "playbill-proposal-withdrawal-v1"
@@ -343,11 +348,20 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     refused_claims: tuple[RefusedClaimAny, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
+    #: The proposal a later run of the same Line submitted in this one's place.
+    superseded_by: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("proposal_id")
     @classmethod
     def _proposal_id(cls, value: str) -> str:
         ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("superseded_by")
+    @classmethod
+    def _superseded_by(cls, value: str | None) -> str | None:
+        if value is not None:
+            ProposalDigest.from_tagged(value)
         return value
 
     @field_validator("reason")
@@ -371,6 +385,10 @@ class ProposalWithdrawalRecord(_StrictProposalModel):
     def _refusals(self) -> "ProposalWithdrawalRecord":
         if self.refused_claims and self.kind != "rejected":
             raise ValueError("only a rejection keys the Claims it refused")
+        if self.superseded_by is not None and (
+            self.kind != "withdrawn" or self.superseded_by == self.proposal_id
+        ):
+            raise ValueError("only a withdrawal names the other proposal that superseded it")
         return self
 
 

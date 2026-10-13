@@ -330,8 +330,9 @@ def test_a_reference_that_a_key_move_and_recreation_would_redirect_refuses(
 
     The terminal moves ``click``'s key to ``renamed``, creates a Subject keyed
     ``click`` (core names it ``click-<hex>``), and states a Claim naming key
-    ``click``. Frozen, that reference names the new Subject item; over the final
-    state ``click`` is the id of the old Subject. The results differ, so the
+    ``click``. Frozen, that reference names the live Subject holding ``click``
+    at the base (the Subject item restates a live key); over the final state the
+    Subject item lands on the new Subject instead. The results differ, so the
     terminal refuses instead of choosing either.
     """
 
@@ -344,7 +345,7 @@ def test_a_reference_that_a_key_move_and_recreation_would_redirect_refuses(
     refusal = _unstable(instance, root, revising)
 
     (changed,) = refusal.details["references"]
-    assert changed["final"] == old and str(changed["frozen"]).startswith(f"subjects/{KIND}/click-")
+    assert changed["frozen"] == old and str(changed["final"]).startswith(f"subjects/{KIND}/click-")
 
 
 def test_a_frozen_key_missing_the_terminal_would_supply_refuses_as_unstable(
@@ -592,3 +593,52 @@ def test_a_subject_item_citing_the_runs_capture_writes_a_supported_key_claim(
         ),
     ).values
     assert row.verdict == "supported"
+
+
+def test_a_reimport_naming_live_subjects_restates_their_claims(tmp_path: Path) -> None:
+    """Re-importing a document whose Subjects already exist (the SBOM re-import):
+    the terminal's own Subject item names the live Subject, so a Claim item on
+    its key restates the live Claim -- unchanged content changes nothing, new
+    content behind the same statement revises it -- and never refuses
+    ``existing_claim_dispositions_incomplete`` on the one-valued slot."""
+
+    from datetime import timedelta
+
+    instance, owner, root, line = subject_world(tmp_path, (subject_item(), keyed_claim_item()))
+    first = _delivered(instance, delivery.run_line(instance, root, line))
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=first.proposal_id)
+    )
+    head = instance.accepted_coordinate()
+
+    same = _delivered(
+        instance, delivery.run_line(instance, root, line, at=fixtures.NOW + timedelta(hours=1))
+    )
+    assert same.proposal_id is None and same.target_paths == ()
+    assert all(child.unchanged for child in same.children), same.children
+    assert instance.accepted_coordinate() == head
+
+    # The document changes elsewhere, the severity stays: the new content
+    # revises the live Claim's lineage instead of contending with it.
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes({"advisory_id": "OSV-2026-0002", "severity": "high"})
+    )
+    revised = _delivered(
+        instance, delivery.run_line(instance, root, line, at=fixtures.NOW + timedelta(hours=2))
+    )
+    assert revised.proposal_id is not None
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(instance, proposal_id=revised.proposal_id),
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    severities = [
+        parse_claim(tree[path], path=path)
+        for path in tree
+        if path.startswith("claims/")
+        and parse_claim(tree[path], path=path).statement.predicate == SEVERITY
+    ]
+    live = [claim for claim in severities if claim.lifecycle.state == "live"]
+    assert [claim.statement.object.model_dump(mode="json")["value"] for claim in live] == ["high"]
+    assert live[0].statement.subject.artifact_path == f"subjects/{KIND}/click.json"

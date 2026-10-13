@@ -641,12 +641,14 @@ def test_the_same_operation_key_with_other_member_bytes_refuses(
 
     def deliver_then_drift(self, **kwargs):  # type: ignore[no-untyped-def]
         first = original_deliver(self, **kwargs)
-        # A second attempt of the same admitted operation prepares again and drifts.
+        # A second attempt of the same admitted operation prepares again, from
+        # its journaled preparation as recovery does, and drifts.
         drifting_prepare(
             self,
             request=kwargs["request"],
             admission=kwargs["admission"],
             evidence=self._evidence_for_test,  # type: ignore[attr-defined]
+            journaled=self._prepared_for_test,  # type: ignore[attr-defined]
         )
         with pytest.raises(terminal_services.ProposalDeliveryRefused) as caught:
             original_deliver(self, **kwargs)
@@ -661,7 +663,9 @@ def test_the_same_operation_key_with_other_member_bytes_refuses(
                 kwargs["request"], kwargs.get("manifests") or {}
             )
         self._evidence_for_test = evidence
-        return drifting_prepare(self, **kwargs)
+        prepared = drifting_prepare(self, **kwargs)
+        self._prepared_for_test = prepared
+        return prepared
 
     monkeypatch.setattr(
         delivery_module.ProposalTerminalEgressSink, "prepare_terminal_egress", remember_evidence
@@ -906,6 +910,13 @@ def test_recovery_finds_a_crashed_occurrence_after_a_completed_one_in_the_same_p
     instance, _owner, root, line, _procedure = proposal_world(tmp_path)
     first = run_line(instance, root, line)
     assert first.status == "succeeded", first.terminal
+    # The later run reads a changed file: an identical change would keep the
+    # first run's open proposal and never reach the door.
+    from cruxible_client.contracts.canonical import canonical_bytes
+
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        canonical_bytes({**fixtures.ADVISORY, "severity": "critical"})
+    )
     _crash_after(monkeypatch, after_submit=False)
     with pytest.raises(_Crash):
         run_line(instance, root, line, at=NOW + timedelta(hours=1))
@@ -925,9 +936,13 @@ def test_recovery_finds_a_crashed_occurrence_after_a_completed_one_in_the_same_p
     later = service_get_playbill_procedure_run(instance, run_id=later_run_id)
     (egress,) = later.terminal_egress
     assert egress.verdict == "delivered" and egress.proposal_id is not None
-    # Two occurrences, two operations, two proposals; the first run's is untouched.
+    # Two occurrences, two operations, two proposals; the later one supersedes
+    # the first run's, as its prepared decision said.
     assert len(_proposal_refs(instance)) == 2
-    assert egress.proposal_id != first.terminal_egress[0].proposal_id
+    first_proposal = first.terminal_egress[0].proposal_id
+    assert first_proposal is not None and egress.proposal_id != first_proposal
+    closed = instance.proposal_evidence().read_withdrawal(first_proposal)
+    assert closed is not None and closed.superseded_by == egress.proposal_id
     assert service_recover_proposal_egress(instance, recorded_at=NOW + timedelta(hours=3)) == {}
 
 

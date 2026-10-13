@@ -88,6 +88,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.results import (
     InboxPostTruncation,
+    LineOpenProposalOutcome,
     ProcedureAcquisitionPlan,
     ProcedureAdmissionMaterialManifest,
     ProcedureAdmissionRefusal,
@@ -2011,7 +2012,16 @@ def _fold_terminal_egress(
         if isinstance(capped_term, str)
         else (None if current is None else current.capped_by)
     )
+    line_open_proposal: LineOpenProposalOutcome | None = None
     if isinstance(receipt, dict):
+        if receipt.get("tag") == "playbill-terminal-egress-still-current-receipt-v1":
+            line_open_proposal = LineOpenProposalOutcome(
+                outcome="still_current", proposal_id=str(receipt.get("open_proposal_id"))
+            )
+        elif isinstance(receipt.get("superseded_proposal_id"), str):
+            line_open_proposal = LineOpenProposalOutcome(
+                outcome="superseded", proposal_id=str(receipt["superseded_proposal_id"])
+            )
         proposal_id = (
             receipt.get("proposal_id") if isinstance(receipt.get("proposal_id"), str) else None
         )
@@ -2096,6 +2106,7 @@ def _fold_terminal_egress(
             if isinstance(payload.get("inbox_truncation"), dict)
             else (None if current is None else current.inbox_truncation)
         ),
+        line_open_proposal=line_open_proposal,
     )
 
 

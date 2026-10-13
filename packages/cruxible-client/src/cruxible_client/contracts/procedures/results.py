@@ -1162,6 +1162,30 @@ class InboxPostTruncation(_StrictResultModel):
     posted: int = Field(ge=0)
 
 
+class LineOpenProposalOutcome(_StrictResultModel):
+    """How a Line run's proposal terminal stood to its Line's open proposal.
+
+    ``still_current``: the run's change equals the open proposal's (the same
+    statements on the same evidence content, the same retired Claims and the
+    same created Subjects), so nothing was proposed -- no change; open proposal
+    ``proposal_id`` still current. ``superseded``: the change differed, so the
+    run's own proposal was submitted and open proposal ``proposal_id`` was
+    withdrawn as superseded by it. Nothing carries over to the new proposal.
+    """
+
+    tag: Literal["cruxible-line-open-proposal-outcome-v1"] = (
+        "cruxible-line-open-proposal-outcome-v1"
+    )
+    outcome: Literal["still_current", "superseded"]
+    proposal_id: str
+
+    @field_validator("proposal_id")
+    @classmethod
+    def _proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+
 class ProcedureTerminalEgress(_StrictResultModel):
     """What one terminal node of a run did, reconstructed from its journal.
 
@@ -1211,6 +1235,11 @@ class ProcedureTerminalEgress(_StrictResultModel):
     inbox_truncation: InboxPostTruncation | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # A Line run's proposal terminal that kept its Line's open proposal (no
+    # change) or withdrew it as superseded by the proposal it submitted.
+    line_open_proposal: LineOpenProposalOutcome | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("operation_key", "procedure_mandate_digest", "candidate_digest")
     @classmethod
@@ -1236,6 +1265,15 @@ class ProcedureTerminalEgress(_StrictResultModel):
         # A proposal or settle terminal whose every item restated what is live
         # changed nothing: it is delivered with no proposal and no outcome.
         changed_nothing = bool(self.children) and all(child.unchanged for child in self.children)
+        still_current = (
+            self.line_open_proposal is not None
+            and self.line_open_proposal.outcome == "still_current"
+        )
+        if self.line_open_proposal is not None and (
+            self.verdict != "delivered" or self.kind != "propose_change_set"
+        ):
+            raise ValueError("only a delivered Line proposal terminal weighs its open proposal")
+        changed_nothing = changed_nothing or still_current
         delivered_settle = (
             self.verdict == "delivered" and self.kind == "settle_change_set" and not changed_nothing
         )
@@ -1528,6 +1566,7 @@ __all__ = [
     "ProcedureTerminalEgressChild",
     "ProcedureTerminalEgress",
     "InboxPostTruncation",
+    "LineOpenProposalOutcome",
     "ProcedureTerminal",
     "ServedAuthorityTerm",
     "TerminalEgressVerdict",

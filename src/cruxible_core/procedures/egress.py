@@ -992,6 +992,50 @@ class TerminalEgressUnchangedReceiptV1(TerminalEgressReceiptV1):
         return self
 
 
+#: A child of a terminal whose change is its Line's open proposal: an item that
+#: would have changed a member (``TerminalEgressChildReceiptV1``, its handle
+#: the item's own manifest digest, since nothing new was produced) or an
+#: unchanged one.
+StillCurrentChildReceiptAny = Annotated[
+    TerminalEgressChildReceiptV1 | TerminalEgressChildReceiptV3 | TerminalEgressChildReceiptV4,
+    Field(discriminator="tag"),
+]
+
+
+class TerminalEgressStillCurrentReceiptV1(TerminalEgressReceiptV1):
+    """A Line's proposal terminal whose change equals its Line's open proposal.
+
+    No change: the open proposal ``open_proposal_id`` is still current, so it
+    is kept untouched and nothing new is proposed or authorized. An unchanged
+    child still records its re-observation.
+    """
+
+    tag: Literal["playbill-terminal-egress-still-current-receipt-v1"] = (
+        "playbill-terminal-egress-still-current-receipt-v1"  # type: ignore[assignment]
+    )
+    disposition: Literal["still_current"] = "still_current"  # type: ignore[assignment]
+    open_proposal_id: str
+    children: tuple[StillCurrentChildReceiptAny, ...]
+
+    @field_validator("open_proposal_id")
+    @classmethod
+    def _open_proposal(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "TerminalEgressStillCurrentReceiptV1":
+        if self.kind != "propose_change_set":
+            raise ValueError("only a Line's proposal terminal keeps its open proposal")
+        if self.bound_artifact_digest is not None:
+            raise ValueError("a still-current terminal traversed no artifact")
+        if not self.children:
+            raise ValueError("terminal egress reports at least one delivered child")
+        if tuple(item.child_index for item in self.children) != tuple(range(len(self.children))):
+            raise ValueError("terminal egress children must be reported in fanout order")
+        return self
+
+
 class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
     """A proposal receipt that names the proposal and exact candidate it produced.
 
@@ -1012,11 +1056,21 @@ class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
     #: operation's terminal did not submit (it names no such binding): the
     #: items' reasons stay with the operation and are attached to no proposal.
     item_reasons_unattributed: bool = Field(default=False, exclude_if=lambda value: value is False)
+    #: A Line run's proposal that withdrew its Line's earlier open proposal,
+    #: whose change differed, as superseded by this one. Omitted otherwise.
+    superseded_proposal_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("proposal_id")
     @classmethod
     def _proposal(cls, value: str) -> str:
         ProposalDigest.from_tagged(value)
+        return value
+
+    @field_validator("superseded_proposal_id")
+    @classmethod
+    def _superseded(cls, value: str | None) -> str | None:
+        if value is not None:
+            ProposalDigest.from_tagged(value)
         return value
 
     @field_validator("candidate_digest")
@@ -1038,6 +1092,10 @@ class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
             raise ValueError("only proposal and settle egress report a proposal receipt")
         if (self.kind == "settle_change_set") != isinstance(self, TerminalEgressReceiptV4):
             raise ValueError("settle egress reports a settlement receipt, and only it does")
+        if self.superseded_proposal_id is not None and (
+            self.kind != "propose_change_set" or self.superseded_proposal_id == self.proposal_id
+        ):
+            raise ValueError("only a Line's proposal supersedes another proposal")
         if any(
             (child.path in self.target_paths) == isinstance(child, UNCHANGED_CHILD_RECEIPTS)
             for child in self.children
@@ -1095,6 +1153,46 @@ class TerminalEgressReceiptV4(TerminalEgressReceiptV3):
         return self
 
 
+LINE_CHANGE_SIGNATURE_DOMAIN = "cruxible-line-change-signature-v1"
+
+LineProposalDecisionV1 = Literal["propose", "still_current", "supersede"]
+
+
+class LineProposalPreparationV1(_StrictEgressModel):
+    """How a Line run's proposal terminal stands to its Line's open proposal.
+
+    Decided once, at prepare, and journaled with the preparation, so recovery
+    reproduces it rather than deciding again. ``signature`` commits to this
+    run's change (``line_change_signature``). ``propose``: the Line has no open
+    proposal, so this one is submitted as usual. ``still_current``: the open
+    proposal ``open_proposal_id`` carries the same change, so it is kept and
+    nothing is proposed. ``supersede``: it carries another change, so this one
+    is submitted and the open one withdrawn as superseded by it -- unless it
+    settled first, when nothing is withdrawn.
+    """
+
+    tag: Literal["playbill-line-proposal-preparation-v1"] = "playbill-line-proposal-preparation-v1"
+    line_id: str
+    signature: str
+    decision: LineProposalDecisionV1
+    open_proposal_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    _signature = field_validator("signature")(_tagged)
+
+    @field_validator("open_proposal_id")
+    @classmethod
+    def _open_proposal(cls, value: str | None) -> str | None:
+        if value is not None:
+            ProposalDigest.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _decision_shape(self) -> "LineProposalPreparationV1":
+        if (self.decision == "propose") != (self.open_proposal_id is None):
+            raise ValueError("exactly a decision about an open proposal names it")
+        return self
+
+
 class PreparedTerminalEgressV1(_StrictEgressModel):
     """What a preparer resolved for one effectful terminal before delivery.
 
@@ -1115,6 +1213,11 @@ class PreparedTerminalEgressV1(_StrictEgressModel):
     #: empty and no proposal is made. Omitted when none.
     unchanged: tuple[UnchangedChildReceiptAny, ...] = Field(
         default=(), exclude_if=lambda value: not value
+    )
+    #: A Line run's proposal terminal: how its change stands to the Line's open
+    #: proposal. Omitted for any other run, terminal kind, or unchanged terminal.
+    line_proposal: LineProposalPreparationV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
     )
 
     _lowering = field_validator("lowering_digest")(_tagged)
@@ -1137,6 +1240,10 @@ class PreparedTerminalEgressV1(_StrictEgressModel):
             raise ValueError("prepared target paths must be nonempty unless no item changed")
         if not self.target_paths and self.procedure_mandate_digest is not None:
             raise ValueError("a terminal that changes nothing binds no mandate")
+        if self.line_proposal is not None and not self.target_paths:
+            raise ValueError("a terminal that changes nothing has no open proposal to weigh")
+        if self.keeps_open_proposal and self.procedure_mandate_digest is not None:
+            raise ValueError("a terminal that keeps its Line's open proposal binds no mandate")
         return self
 
     @property
@@ -1144,6 +1251,18 @@ class PreparedTerminalEgressV1(_StrictEgressModel):
         """Whether every item restated what is already live: nothing to propose."""
 
         return not self.target_paths
+
+    @property
+    def keeps_open_proposal(self) -> bool:
+        """Whether the change is its Line's open proposal's: nothing new to propose."""
+
+        return self.line_proposal is not None and self.line_proposal.decision == "still_current"
+
+    @property
+    def proposes_nothing(self) -> bool:
+        """Whether delivery submits no proposal and exercises no authority."""
+
+        return self.changes_nothing or self.keeps_open_proposal
 
     @field_validator("item_paths")
     @classmethod
@@ -1597,9 +1716,14 @@ __all__ = [
     "TerminalEgressChildReceiptV4",
     "UNCHANGED_CHILD_RECEIPTS",
     "UnchangedChildReceiptAny",
+    "TerminalEgressStillCurrentReceiptV1",
     "TerminalEgressUnchangedReceiptV1",
+    "LINE_CHANGE_SIGNATURE_DOMAIN",
+    "LineProposalDecisionV1",
+    "LineProposalPreparationV1",
     "PreparedTerminalEgressV1",
     "SettleGrantHolderProtocol",
+    "StillCurrentChildReceiptAny",
     "TerminalEgressPreparerProtocol",
     "TerminalEgressRequestV1",
     "TerminalEgressRequestV2",

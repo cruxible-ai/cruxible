@@ -4655,11 +4655,12 @@ class ProcedureExecutor:
         # A proposal or settle terminal is journaled around its sink: a durable
         # `prepared` record before the sink is called, a resolving record after,
         # so recovery can finish it. That holds for one whose every item is
-        # unchanged too: its delivery records re-observations, a durable effect.
+        # unchanged, or that keeps its Line's open proposal, too: its delivery
+        # records re-observations, a durable effect.
         effectful = (
             isinstance(request, TerminalEgressRequestV2)
             and request.kind in {"propose_change_set", "settle_change_set"}
-        ) or (prepared is not None and prepared.changes_nothing)
+        ) or (prepared is not None and prepared.proposes_nothing)
         if isinstance(request, TerminalEgressRequestV2) and effectful:
             payload = {
                 **payload,
@@ -4908,9 +4909,10 @@ class ProcedureExecutor:
                 admission=admission,
                 manifests=manifests or {},
             )
-            if prepared.changes_nothing:
-                # Every item restated what is already live: there is nothing to
-                # propose and no authority to exercise, so no effectful request.
+            if prepared.proposes_nothing:
+                # Every item restated what is already live, or the change is the
+                # Line's open proposal's: there is nothing to propose and no
+                # authority to exercise, so no effectful request.
                 return request, prepared
             return (
                 build_terminal_egress_request_v2(

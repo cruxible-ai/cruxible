@@ -1,9 +1,10 @@
 """Restart recovery for enabled Lines: every uncovered range shows in next until evaluated.
 
 A daemon restart rolls an enabled Line forward-only. `line_attention` names
-each range its daemon never matched; an evaluation of that exact range finds
-what the Line's Triggers made eligible there, and only then is the range
-covered. Re-enabling does not hide a range nobody evaluated.
+each range its daemon never matched in which the Line's Triggers would have
+fired (a range with nothing due is recorded as evaluated at the restart); an
+evaluation of that exact range finds what they made eligible there, and only
+then is the range covered. Re-enabling does not hide a range nobody evaluated.
 """
 
 from __future__ import annotations
@@ -108,20 +109,58 @@ def test_a_generation_accepted_during_downtime_is_found_by_evaluating_the_gap(tm
     assert line_attention(instance, now=restarted + timedelta(seconds=2)) == ((), ())
 
 
-def test_a_gap_with_no_accepted_generation_is_covered_by_an_empty_evaluation(tmp_path):
+def _evaluated_ranges(instance):  # type: ignore[no-untyped-def]
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
+    with LineDispatchStore(instance).locked() as conn:
+        rows = conn.execute("SELECT since,until FROM evaluated ORDER BY since").fetchall()
+    return [(parse_datetime(since), parse_datetime(until)) for since, until in rows]
+
+
+def test_a_gap_with_no_accepted_generation_is_never_listed(tmp_path):
+    """Nothing was accepted while the daemon was down, so nothing was due: the
+    restart records the range as evaluated and `next` owes nothing for it."""
+
     instance, line, _, _owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
     start = READ_TIME + timedelta(seconds=10)
     _enable(instance, line, start)
     _match(instance, start + timedelta(seconds=1))
     restarted = start + timedelta(seconds=6)
     _match(instance, restarted, daemon_id="restarted")
-    (gap,), _ = line_attention(instance, now=restarted)
 
-    evaluated = _evaluate(instance, line, gap, restarted + timedelta(seconds=1))
+    assert line_attention(instance, now=restarted) == ((), ())
+    ((since, until),) = _evaluated_ranges(instance)
+    assert start < since < until == restarted
 
-    # Nothing was accepted in the range, so nothing is invented at `now`.
+
+def test_a_capture_line_restarted_with_no_capture_owes_nothing(tmp_path):
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
+    start = READ_TIME + timedelta(seconds=10)
+    _enable(instance, line, start)
+    _match(instance, start + timedelta(seconds=1))
+    restarted = start + timedelta(seconds=10)
+    _match(instance, restarted, daemon_id="restarted")
+
+    assert line_attention(instance, now=restarted) == ((), ())
+
+
+def test_an_explicit_evaluation_that_finds_nothing_records_the_range_and_says_so(tmp_path):
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
+    since = READ_TIME + timedelta(seconds=10)
+    until = since + timedelta(seconds=5)
+
+    evaluated = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=since, until=until),
+        actor=_actor(instance),
+        now=until + timedelta(seconds=1),
+    )
+
+    # Not a failure: nothing was due, and the range is covered.
     assert evaluated.status == "not_met" and evaluated.occurrences == ()
-    assert line_attention(instance, now=restarted + timedelta(seconds=1)) == ((), ())
+    assert evaluated.detail == "Nothing was due in this range; it is recorded as evaluated."
+    assert _evaluated_ranges(instance) == [(since, until)]
 
 
 def _restarted_capture_line(tmp_path):  # type: ignore[no-untyped-def]
@@ -364,6 +403,16 @@ def test_a_restarted_timed_line_ticks_next_on_its_schedule_never_at_the_restart(
 
 
 @pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
+def test_a_timed_restart_between_ticks_owes_nothing(tmp_path, timer):
+    """Down and back between two ticks: no tick was due, so no gap is listed."""
+
+    timer = replace(timer, restart=timer.first + timedelta(seconds=30), missed=())
+    instance, _line = _restarted_timed_line(tmp_path, timer)
+
+    assert line_attention(instance, now=timer.restart) == ((), ())
+
+
+@pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
 def test_evaluating_a_timed_lines_restart_gap_recovers_exactly_the_ticks_it_missed(tmp_path, timer):
     instance, line = _restarted_timed_line(tmp_path, timer)
     resumed = timer.restart + timedelta(seconds=1)
@@ -585,11 +634,13 @@ def test_a_later_tick_evaluated_first_never_stands_in_for_an_earlier_live_one(tm
     ]
     assert _queued(instance, disposition="admitted") == _queued(instance)
     assert line_attention(instance, now=matched) == ((), ())
-    # Its matching reached past both: a restart now leaves a gap only after them.
+    # Its matching reached past both: a restart now leaves a gap only after
+    # them, and with no tick due in it that gap is recorded as evaluated.
     restarted = matched + timedelta(seconds=1)
     _match(instance, restarted, daemon_id="again")
-    (gap,), _ = line_attention(instance, now=restarted)
-    assert timer.then < gap.since and gap.until == restarted
+    assert line_attention(instance, now=restarted)[0] == ()
+    since, until = _evaluated_ranges(instance)[-1]
+    assert timer.then < since and until == restarted
 
 
 @pytest.mark.parametrize("timer", TIMERS, ids=("cadence", "cron"))
@@ -961,3 +1012,128 @@ def test_a_late_dispatched_tick_records_the_ticks_instant_as_its_occurrence(tmp_
     assert state.receipt.occurrence_evaluation_time == timer.next
     # The run itself was admitted, and acted, at the daemon's later instant.
     assert state.evaluation_time == late
+
+
+# --- the automatic restart-gap check is bounded by the gap (review F-001) ----
+
+
+def _gap_check_work(tmp_path, monkeypatch, history: int):  # type: ignore[no-untyped-def]
+    """The work one automatic gap check does over one fixed gap holding one accept.
+
+    ``history`` generations were accepted and their occurrences enqueued before
+    the gap; the projection is warm, so nothing here is a cold rebuild.
+    """
+
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.service.procedures.line_dispatch import _cover_gap_with_nothing_due
+
+    tmp_path.mkdir()
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
+    actor = _actor(instance)
+    start = READ_TIME + timedelta(seconds=10)
+    for index in range(history):
+        at = start + timedelta(seconds=index * 2)
+        _accept_generation(instance, owner, f"old-{index}", at)
+        enqueued = service_evaluate_line(
+            instance,
+            line.identity.name,
+            LineEvaluateRequest(since=at, until=at + timedelta(seconds=1)),
+            actor=actor,
+            now=at + timedelta(seconds=1),
+        )
+        assert len(enqueued.occurrences) == 1
+    since = start + timedelta(seconds=history * 2 + 2)
+    until = since + timedelta(seconds=3)
+    _accept_generation(instance, owner, "in-the-gap", since + timedelta(seconds=1))
+    store = LineDispatchStore(instance)
+    with store.locked() as conn:  # warm the projection
+        assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == history
+
+    # The setup's explicit evaluations recorded their own ranges.
+    evaluated = _evaluated_ranges(instance)
+    work = {"payloads": 0, "journal_records": 0}
+    loads, select = json.loads, LocalJournalBackend.select_records
+
+    def counting_loads(*args, **kwargs):  # type: ignore[no-untyped-def]
+        value = loads(*args, **kwargs)
+        if isinstance(value, dict) and "occurrence" in value:
+            work["payloads"] += 1
+        return value
+
+    def counting_select(self, stream, **filters):  # type: ignore[no-untyped-def]
+        records = select(self, stream, **filters)
+        work["journal_records"] += len(records)
+        return records
+
+    with monkeypatch.context() as patch:
+        patch.setattr(json, "loads", counting_loads)
+        patch.setattr(LocalJournalBackend, "select_records", counting_select)
+        _cover_gap_with_nothing_due(
+            instance,
+            store,
+            line.identity.name,
+            (format_datetime(since), format_datetime(until)),
+            actor=actor,
+            now=until,
+        )
+    # The accept in the gap is due, so the gap is not recorded as evaluated.
+    assert _evaluated_ranges(instance) == evaluated
+    return work
+
+
+def test_the_restart_gap_check_costs_the_same_with_ten_times_the_history(tmp_path, monkeypatch):
+    small = _gap_check_work(tmp_path / "small", monkeypatch, 2)
+    large = _gap_check_work(tmp_path / "large", monkeypatch, 20)
+
+    # No retained occurrence outside the gap is read: the delivery of the one
+    # generation in the gap is two keyed reads by its exact occurrence identity.
+    assert small == large
+    assert large["payloads"] == 0
+
+
+def test_a_restart_gap_check_over_out_of_order_acceptances_stays_a_gap(tmp_path, monkeypatch):
+    """A bounded check never falls back to scanning every generation: it is
+    inconclusive, and the gap stays for an explicit evaluation."""
+
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.service.procedures.line_dispatch import _cover_gap_with_nothing_due
+    from cruxible_core.service.procedures.line_triggers import (
+        TriggerRange,
+        service_check_line_trigger,
+    )
+    from cruxible_core.triggers import journal as trigger_journal
+
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
+    start = READ_TIME + timedelta(seconds=10)
+    _accept_generation(instance, owner, "in-the-gap", start + timedelta(seconds=5))
+    since, until = start + timedelta(seconds=2), start + timedelta(seconds=8)
+    # Acceptance times out of order (canonical spelling is checked, parent order
+    # is not): the first generation reads as accepted after the head.
+    with instance.accepted_history_reader() as history:
+        first = history.generation(0).git_oid
+    recorded = instance.accepted_evaluation_time
+    monkeypatch.setattr(
+        instance,
+        "accepted_evaluation_time",
+        lambda git_oid: until + timedelta(days=1) if git_oid == first else recorded(git_oid),
+    )
+
+    with trigger_journal.bounded_generation_lookups():
+        with pytest.raises(trigger_journal.GenerationLookupUnbounded):
+            trigger_journal.generation_at(instance, start + timedelta(seconds=3))
+        checked = service_check_line_trigger(
+            instance, line.identity.name, TriggerRange(since=since, until=until, limit=1), now=until
+        )
+    assert checked.status == "incomplete"
+    _cover_gap_with_nothing_due(
+        instance,
+        LineDispatchStore(instance),
+        line.identity.name,
+        (format_datetime(since), format_datetime(until)),
+        actor=_actor(instance),
+        now=until,
+    )
+    assert _evaluated_ranges(instance) == []
+    # Outside the automatic check the lookup still scans, as before.
+    assert trigger_journal.generation_at(instance, start + timedelta(seconds=3)) >= 0

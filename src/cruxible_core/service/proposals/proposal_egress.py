@@ -27,7 +27,13 @@ delivery records re-observations, a durable effect: it journals the same
 `prepared` record (its v1 request and unchanged preparation) first, and
 recovery re-derives and checks the unchanged children, records them
 idempotently (an already-appended record keeps its instant), and resolves it
-with the unchanged receipt -- no proposal.
+with the unchanged receipt -- no proposal. A Line run's terminal whose change
+was its Line's open proposal's is finished the same way, as still current.
+
+A Line run's decision about its Line's open proposal (keep it, or supersede
+it) was made at prepare and journaled with the preparation; recovery hands the
+journaled preparation back to the sink, which reproduces that decision instead
+of deciding again. A superseded proposal that settled meanwhile is left alone.
 """
 
 from __future__ import annotations
@@ -367,7 +373,11 @@ def _resolve_prepared(
         if key not in {"verdict", "request", "prepared", "evidence"}
     }
     journaled = prepared_payload.get("prepared")
-    if isinstance(journaled, dict) and not journaled.get("target_paths"):
+    line_proposal = journaled.get("line_proposal") if isinstance(journaled, dict) else None
+    if isinstance(journaled, dict) and (
+        not journaled.get("target_paths")
+        or (isinstance(line_proposal, dict) and line_proposal.get("decision") == "still_current")
+    ):
         return _resolve_unchanged(
             instance,
             admission=admission,
@@ -377,6 +387,9 @@ def _resolve_prepared(
         )
     try:
         request = TerminalEgressRequestV2.model_validate(prepared_payload.get("request"))
+        journaled_preparation = (
+            None if journaled is None else PreparedTerminalEgressV1.model_validate(journaled)
+        )
     except ValidationError as exc:
         raise ProcedureRunRecoveryRequired(
             f"{ProcedureRunRecoveryRequired.code}: run {admission.run_id} journaled an "
@@ -430,6 +443,7 @@ def _resolve_prepared(
             request=request,
             admission=admission,
             evidence=evidence,
+            journaled=journaled_preparation,
         )
         if (
             prepared.target_paths != request.target_paths
@@ -471,12 +485,15 @@ def _resolve_unchanged(
     base_payload: dict[str, CanonicalValue],
     recorded_at: datetime,
 ) -> tuple[RecoveredProposalEgressDisposition, dict[str, CanonicalValue]]:
-    """Finish a terminal whose every item was unchanged, from its journaled preparation.
+    """Finish a terminal that proposes nothing, from its journaled preparation.
 
-    The items are re-derived at the admitted base and must reproduce the
-    journaled unchanged children exactly. Delivery then records each
-    re-observation idempotently -- one already appended keeps its original
-    recording instant -- and reports every child unchanged. No proposal is made.
+    Every item was unchanged, or the change was its Line's open proposal's
+    (the journaled decision, reproduced as it was made). The items are
+    re-derived at the admitted base and must reproduce the journaled
+    preparation exactly. Delivery then records each re-observation
+    idempotently -- one already appended keeps its original recording instant
+    -- and reports every child unchanged, or the open proposal still current.
+    No proposal is made.
     """
 
     try:
@@ -491,7 +508,7 @@ def _resolve_unchanged(
         request.run_id != admission.run_id
         or request.admission_binding_digest != admission.admission_binding_digest
         or request.kind not in {"propose_change_set", "settle_change_set"}
-        or not journaled.changes_nothing
+        or not journaled.proposes_nothing
     ):
         raise ProcedureRunRecoveryRequired(
             f"{ProcedureRunRecoveryRequired.code}: run {admission.run_id} journaled an "
@@ -507,7 +524,7 @@ def _resolve_unchanged(
     sink = ProposalTerminalEgressSink(instance=instance, accepted_mandates={})
     try:
         prepared = sink.prepare_terminal_egress(
-            request=request, admission=admission, evidence=evidence
+            request=request, admission=admission, evidence=evidence, journaled=journaled
         )
         if prepared != journaled:
             raise ProposalDeliveryRefused(

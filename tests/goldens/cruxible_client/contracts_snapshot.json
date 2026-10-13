@@ -61916,6 +61916,36 @@
             "title": "InvestigationBinding",
             "type": "object"
           },
+          "LineOpenProposalOutcome": {
+            "additionalProperties": false,
+            "description": "How a Line run's proposal terminal stood to its Line's open proposal.\n\n``still_current``: the run's change equals the open proposal's (the same\nstatements on the same evidence content, the same retired Claims and the\nsame created Subjects), so nothing was proposed -- no change; open proposal\n``proposal_id`` still current. ``superseded``: the change differed, so the\nrun's own proposal was submitted and open proposal ``proposal_id`` was\nwithdrawn as superseded by it. Nothing carries over to the new proposal.",
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "still_current",
+                  "superseded"
+                ],
+                "title": "Outcome",
+                "type": "string"
+              },
+              "proposal_id": {
+                "title": "Proposal Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-line-open-proposal-outcome-v1",
+                "default": "cruxible-line-open-proposal-outcome-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "outcome",
+              "proposal_id"
+            ],
+            "title": "LineOpenProposalOutcome",
+            "type": "object"
+          },
           "LineTriggerBinding": {
             "additionalProperties": false,
             "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds\nno event or window: its instant is the occurrence's own evaluation instant.",
@@ -65562,6 +65592,17 @@
                 "default": null,
                 "title": "Limiting Term"
               },
+              "line_open_proposal": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/LineOpenProposalOutcome"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "node_id": {
                 "title": "Node Id",
                 "type": "string"
@@ -66865,6 +66906,25 @@
             "title": "Limiting Term"
           }
         },
+        "line_open_proposal": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "line_open_proposal",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LineOpenProposalOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "node_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -67164,6 +67224,36 @@
               "posted"
             ],
             "title": "InboxPostTruncation",
+            "type": "object"
+          },
+          "LineOpenProposalOutcome": {
+            "additionalProperties": false,
+            "description": "How a Line run's proposal terminal stood to its Line's open proposal.\n\n``still_current``: the run's change equals the open proposal's (the same\nstatements on the same evidence content, the same retired Claims and the\nsame created Subjects), so nothing was proposed -- no change; open proposal\n``proposal_id`` still current. ``superseded``: the change differed, so the\nrun's own proposal was submitted and open proposal ``proposal_id`` was\nwithdrawn as superseded by it. Nothing carries over to the new proposal.",
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "still_current",
+                  "superseded"
+                ],
+                "title": "Outcome",
+                "type": "string"
+              },
+              "proposal_id": {
+                "title": "Proposal Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-line-open-proposal-outcome-v1",
+                "default": "cruxible-line-open-proposal-outcome-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "outcome",
+              "proposal_id"
+            ],
+            "title": "LineOpenProposalOutcome",
             "type": "object"
           },
           "PriorRefusalCoverage": {
@@ -67529,6 +67619,17 @@
             ],
             "default": null,
             "title": "Limiting Term"
+          },
+          "line_open_proposal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LineOpenProposalOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "node_id": {
             "title": "Node Id",

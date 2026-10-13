@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -272,14 +273,22 @@ def test_the_tracker_uses_one_snapshot_per_second_and_one_ps_per_snapshot(
     assert 1 <= len(ps_calls) <= 3, ps_calls
 
 
+@pytest.mark.parametrize("exit_observer", ["waitid", "kqueue"])
 def test_the_success_path_still_has_a_safe_window_to_kill_the_group(
-    short_root: Path, monkeypatch: pytest.MonkeyPatch
+    short_root: Path, monkeypatch: pytest.MonkeyPatch, exit_observer: str
 ) -> None:
     """The fix is available: `_collect_child_output` observes exit with
-    `waitid(..., WNOWAIT)`, so at the moment `_terminate_process_group` is entered
-    the child is still an unreaped zombie - its pid is NOT released and its group
-    still exists, so a `killpg` there would be safe."""
+    `waitid(..., WNOWAIT)`, or with kqueue `NOTE_EXIT` where waitid is missing
+    (macOS Python 3.11/3.12), so at the moment `_terminate_process_group` is
+    entered the child is still an unreaped zombie - its pid is NOT released and
+    its group still exists, so a `killpg` there would be safe."""
 
+    if exit_observer == "waitid" and not hasattr(os, "waitid"):
+        pytest.skip("os.waitid is unavailable on this interpreter")
+    if exit_observer == "kqueue":
+        if not hasattr(select, "kqueue"):
+            pytest.skip("kqueue is unavailable on this platform")
+        monkeypatch.delattr(os, "waitid", raising=False)
     store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     marker = short_root / "window"
     interpreter = write_child(short_root / "child.py", mode="ok", marker=marker)
@@ -312,3 +321,33 @@ def test_the_success_path_still_has_a_safe_window_to_kill_the_group(
         monkeypatch.undo()
         _kill_tree(marker)
     assert observed == [(None, True)], observed
+
+
+@pytest.mark.skipif(not hasattr(select, "kqueue"), reason="kqueue is unavailable")
+def test_kqueue_exit_observation_does_not_reap_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without os.waitid the kqueue path reports live vs exited and leaves the
+    exited child unreaped, so its pid cannot be reused before the group kill."""
+
+    monkeypatch.delattr(os, "waitid", raising=False)
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
+    )
+    try:
+        assert runtime_module._process_exited_without_reaping(process.pid) is False
+        assert process.stdin is not None
+        process.stdin.close()
+        deadline = time.monotonic() + 10
+        while not runtime_module._process_exited_without_reaping(process.pid):
+            assert time.monotonic() < deadline, "exit was never observed"
+            time.sleep(0.01)
+        # Still unreaped: the parent can collect the exit status itself.
+        reaped_pid, status = os.waitpid(process.pid, os.WNOHANG)
+        assert reaped_pid == process.pid
+        assert os.waitstatus_to_exitcode(status) == 0
+        process.returncode = 0
+    finally:
+        if process.returncode is None:
+            process.kill()
+            process.wait()

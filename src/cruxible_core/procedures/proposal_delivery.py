@@ -101,6 +101,7 @@ from cruxible_client.contracts.subject_kinds import (
     live_subject_kind,
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
+from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.authoring import lowering as authoring_lowering
 from cruxible_core.authoring.assignment_records import (
     PROCEDURE_OPERATION_ID_DOMAIN,
@@ -131,13 +132,18 @@ from cruxible_core.indexes.subject_identity import (
     tree_key_reader,
 )
 from cruxible_core.procedures.egress import (
+    LINE_CHANGE_SIGNATURE_DOMAIN,
+    LineProposalPreparationV1,
     PreparedTerminalEgressV1,
+    TerminalEgressChildReceiptV1,
     TerminalEgressChildReceiptV3,
     TerminalEgressChildReceiptV4,
     TerminalEgressReceiptV1,
     TerminalEgressReceiptV3,
+    TerminalEgressReceiptV4,
     TerminalEgressRequestV1,
     TerminalEgressRequestV2,
+    TerminalEgressStillCurrentReceiptV1,
     TerminalEgressUnchangedReceiptV1,
     UnchangedChildReceiptAny,
     settle_authority_capped_reason,
@@ -199,6 +205,53 @@ def proposal_lowering_digest(changed_members: tuple[tuple[str, bytes], ...]) -> 
                 {"path": path, "digest": "sha256:" + hashlib.sha256(content).hexdigest()}
                 for path, content in changed_members
             ]
+        },
+    ).tagged
+
+
+def line_change_signature(instance: PlaybillInstance, lowered: LoweredAuthoring) -> str:
+    """Commit to what a Line run's change says, not to the ids it minted.
+
+    Two runs of one Line carry the same change when they make the same set of
+    statements (subject, predicate, qualifier, object, and role) on the same
+    evidence content (``claim_refusal_match_key``), retire the same Claims, and
+    create the same Subjects. New-Claim ids, Capture digests and timestamps are
+    run-minted and left out. Any other changed member counts by its bytes.
+    Reads only this change's members (and the Captures its Claims cite).
+    """
+
+    from cruxible_core.proposals.refusal_index import claim_refusal_key
+
+    created = {item.path for item in lowered.subject_creations if item.record.outcome == "created"}
+    statements: set[tuple[str, str]] = set()
+    retired: set[str] = set()
+    other: set[tuple[str, str]] = set()
+    for path, content in lowered.changed_members:
+        if path in created:
+            continue
+        if path.startswith("claims/"):
+            claim = parse_claim(content, path=path)
+            if claim.lifecycle.state == "live":
+                statements.add((claim_refusal_key(instance, claim), claim.statement.role))
+            else:
+                retired.add(path)
+            continue
+        other.add((path, "sha256:" + hashlib.sha256(content).hexdigest()))
+
+    def ordered(values: set[str]) -> list[str]:
+        return sorted(values, key=lambda item: item.encode("utf-8"))
+
+    return typed_digest(
+        Sha256Value,
+        LINE_CHANGE_SIGNATURE_DOMAIN,
+        {
+            "statements": [{"match_key": key, "role": role} for key, role in sorted(statements)],
+            "retired_claims": ordered(retired),
+            "created_subjects": ordered(created),
+            "other_members": [
+                {"path": path, "digest": digest}
+                for path, digest in sorted(other, key=lambda item: item[0].encode("utf-8"))
+            ],
         },
     ).tagged
 
@@ -655,6 +708,9 @@ class _KeyedReference:
     path: str | None = None
     #: It resolved to no Subject (``key_missing``) at the admitted base.
     missing: bool = False
+    #: The terminal Subject item carrying this key when the reference was frozen
+    #: to the live Subject holding it instead: that item must land there too.
+    sibling: str | None = None
 
     def described(self) -> dict[str, object]:
         return {"subject_kind": self.kind, "key": dict(self.spelled)}
@@ -664,9 +720,11 @@ class _SubjectKeys:
     """Resolve the Subjects a terminal's Claim items name by key (v3 items).
 
     A reference is frozen once, against the admitted base and the terminal's
-    own Subject items: a key one of those items carries names that item (a
-    creation-member reference, ``subject-creation-v1``, which shared lowering
-    resolves to the path it finally assigns or reuses); any other key resolves
+    own Subject items: a key one of those items carries names the one live
+    Subject of the base holding it, when there is exactly one (the item reuses
+    it), else that item (a creation-member reference, ``subject-creation-v1``,
+    which shared lowering resolves to the path it finally assigns or reuses);
+    any other key resolves
     through the one resolver (``IdentityView.resolve_key_reference``: exact
     live id, alias, key, exact retired id) over the base. None refuses
     (``key_missing``: create it with a Subject item), several refuse as
@@ -692,6 +750,8 @@ class _SubjectKeys:
         self.base = base
         self.base_tree = base_tree
         self.created: dict[tuple[str, str], str] = {}
+        #: Subject items asking for a further holder of their key (``create_new``).
+        self.creating_new: set[str] = set()
         self.view: IdentityView | None = None
         self.references: list[_KeyedReference] = []
 
@@ -711,6 +771,8 @@ class _SubjectKeys:
             held = self.created.get(slot)
             identity = member.member_identity
             self.created[slot] = identity if held in {None, identity} else self._SEVERAL
+            if member.create_new:
+                self.creating_new.add(identity)
 
     def bind(self, view: IdentityView) -> None:
         """Freeze references against ``view`` (the admitted base)."""
@@ -757,10 +819,20 @@ class _SubjectKeys:
                 f"Several Subject items of this terminal hold this {kind} key; name one by id.",
                 code="cruxible.subject.key_ambiguous",
             )
+        assert self.view is not None, "references are frozen against the bound base"
         if member is not None:
+            if member not in self.creating_new:
+                # The terminal's Subject item restates a Subject the base already
+                # holds (it lowers to that Subject, creating nothing): name the live
+                # Subject, so an item restating one of its live Claims targets that
+                # Claim's lineage and revises it or changes nothing.
+                held = self.view.holders(kind, key)
+                if len(held) == 1:
+                    frozen.path = held[0]
+                    frozen.sibling = member
+                    return SemanticAddress.whole_artifact(held[0])
             frozen.creation = member
             return SemanticAddress.subject_creation(kind, member.rpartition("@")[2])
-        assert self.view is not None, "references are frozen against the bound base"
         resolution = self.view.resolve_key_reference(kind, key, single_text=frozen.single_text)
         if resolution.ambiguous:
             holders = [f"subjects/{item}.json" for item in resolution.candidates]
@@ -847,6 +919,11 @@ class _SubjectKeys:
                 reference.kind, reference.key, single_text=reference.single_text
             )
             now: object = final.path if not final.ambiguous else list(final.candidates)
+            if now == frozen and reference.sibling is not None and reference.sibling in creations:
+                # Frozen to the live holder its Subject item restates: the item
+                # must reuse that Subject, not create another holder of the key
+                # (the terminal moved the live Subject's key away).
+                now = creations[reference.sibling][0]
             if now != frozen:
                 changed.append(
                     {
@@ -1381,7 +1458,15 @@ class ProposalTerminalEgressSink:
         admission: ProcedureRunAdmissionV1,
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
         evidence: Mapping[str, str] | None = None,
+        journaled: PreparedTerminalEgressV1 | None = None,
     ) -> PreparedTerminalEgressV1:
+        """Lower the terminal's items once; report what delivery will change.
+
+        ``journaled`` is the preparation recovery read back from the journal: a
+        Line run's decision about its open proposal is reproduced from it, never
+        decided again against what changed since.
+        """
+
         if request.kind not in {"propose_change_set", "settle_change_set"}:
             raise ProposalDeliveryRefused(
                 "proposal_item_invalid",
@@ -1615,6 +1700,31 @@ class ProposalTerminalEgressSink:
                     details={"item_key": item_key, "path": path},
                 )
         ordered_unchanged = tuple(sorted(unchanged.values(), key=lambda child: child.child_index))
+        line_proposal = (
+            self._line_proposal(request, admission=admission, lowered=lowered, journaled=journaled)
+            if target_paths and request.kind == "propose_change_set"
+            else None
+        )
+        if line_proposal is not None and line_proposal.decision == "still_current":
+            # The change is the Line's open proposal's: it is kept untouched, and
+            # nothing is proposed or authorized. Unchanged items still re-observe.
+            prepared = PreparedTerminalEgressV1(
+                target_paths=target_paths,
+                lowering_digest=proposal_lowering_digest(lowered.changed_members),
+                item_paths=tuple(
+                    sorted(item_paths.items(), key=lambda item: item[0].encode("utf-8"))
+                ),
+                unchanged=ordered_unchanged,
+                line_proposal=line_proposal,
+            )
+            self._prepared[(request.admission_binding_digest, request.node_id)] = PreparedProposal(
+                prepared=prepared,
+                candidate_tree={},
+                changed_members=(),
+                item_paths=item_paths,
+                rationale=rationale,
+            )
+            return prepared
         if not target_paths:
             # Every item restated what is already live: nothing to propose, no
             # mandate to bind. The terminal completes, every child unchanged.
@@ -1663,6 +1773,7 @@ class ProposalTerminalEgressSink:
             lowering_digest=proposal_lowering_digest(lowered.changed_members),
             item_paths=tuple(sorted(item_paths.items(), key=lambda item: item[0].encode("utf-8"))),
             unchanged=ordered_unchanged,
+            line_proposal=line_proposal,
         )
         # Lowering already read the base tree and reported exactly which member
         # paths moved; the door is handed those paths rather than a second
@@ -1680,6 +1791,103 @@ class ProposalTerminalEgressSink:
             ),
         )
         return prepared
+
+    def _line_proposal(
+        self,
+        request: TerminalEgressRequestV1,
+        *,
+        admission: ProcedureRunAdmissionV1,
+        lowered: LoweredAuthoring,
+        journaled: PreparedTerminalEgressV1 | None,
+    ) -> LineProposalPreparationV1 | None:
+        """A Line run's decision about its Line's open proposal; ``None`` off a Line.
+
+        One keyed read of the Line's open-proposal record and one of that
+        proposal's status. Recovery reproduces the journaled decision, after
+        checking this lowering still carries the change it was made about.
+        """
+
+        from cruxible_client.contracts.procedures.line_specs import line_identity_digest
+        from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
+        from cruxible_core.service.proposals.proposals import proposal_still_open
+
+        identity = getattr(admission, "line_identity", None)
+        if admission.invocation_origin != "line" or identity is None:
+            return None
+        line_id = line_identity_digest(identity)
+        signature = line_change_signature(self.instance, lowered)
+        if journaled is not None:
+            decided = journaled.line_proposal
+            if decided is not None and (
+                decided.line_id != line_id or decided.signature != signature
+            ):
+                raise ProposalDeliveryRefused(
+                    "effectful_operation_payload_mismatch",
+                    "Recovery re-derived another change than the one its journaled "
+                    "open-proposal decision was made about.",
+                    details={"journaled_signature": decided.signature, "signature": signature},
+                )
+            return decided
+        record = (
+            LineDispatchStore(self.instance).open_proposal(line_id, request.node_id)
+            if dispatch_root(self.instance).is_dir()
+            else None
+        )
+        if record is None or not proposal_still_open(self.instance, record.proposal_id):
+            return LineProposalPreparationV1(
+                line_id=line_id, signature=signature, decision="propose"
+            )
+        return LineProposalPreparationV1(
+            line_id=line_id,
+            signature=signature,
+            decision="still_current" if record.signature == signature else "supersede",
+            open_proposal_id=record.proposal_id,
+        )
+
+    def _supersede_open_proposal(
+        self,
+        request: TerminalEgressRequestV2,
+        decision: LineProposalPreparationV1,
+        receipt: TerminalEgressReceiptV3,
+    ) -> TerminalEgressReceiptV3:
+        """After a Line's proposal lands: supersede the open one, then record this one.
+
+        The open proposal is withdrawn as superseded by this one, under the
+        run's own identity, unless it settled first (then nothing is
+        withdrawn). Both steps are idempotent, so a redelivery repeats them.
+        """
+
+        from cruxible_core.exhaust.line_dispatch import LineDispatchStore, LineOpenProposal
+        from cruxible_core.service.proposals.proposals import service_supersede_line_proposal
+
+        now = datetime.now(timezone.utc)
+        superseded: str | None = None
+        if decision.decision == "supersede":
+            assert decision.open_proposal_id is not None  # the decision's shape
+            if decision.open_proposal_id != receipt.proposal_id and (
+                service_supersede_line_proposal(
+                    self.instance,
+                    proposal_id=decision.open_proposal_id,
+                    successor_id=receipt.proposal_id,
+                    actor_id=request.actor_context.actor_id,
+                    withdrawn_at=str(format_datetime(now)),
+                )
+            ):
+                superseded = decision.open_proposal_id
+        LineDispatchStore(self.instance).record_open_proposal(
+            LineOpenProposal(
+                line_id=decision.line_id,
+                node_id=request.node_id,
+                proposal_id=receipt.proposal_id,
+                signature=decision.signature,
+                superseded=superseded,
+            ),
+            actor=request.actor_context,
+            now=now,
+        )
+        if superseded is None:
+            return receipt
+        return receipt.model_copy(update={"superseded_proposal_id": superseded})
 
     def _subject_paths(
         self,
@@ -1736,6 +1944,33 @@ class ProposalTerminalEgressSink:
                 run_id=request.run_id,
                 node_id=request.node_id,
                 children=prepared_nothing.prepared.unchanged,
+            )
+        if (
+            not isinstance(request, TerminalEgressRequestV2)
+            and request.kind == "propose_change_set"
+            and prepared_nothing is not None
+            and prepared_nothing.prepared.keeps_open_proposal
+        ):
+            # The change is the Line's open proposal's: no change, the open
+            # proposal is still current. Unchanged items still re-observe.
+            kept = prepared_nothing.prepared
+            assert kept.line_proposal is not None and kept.line_proposal.open_proposal_id
+            self._record_reobservations(request, kept.unchanged)
+            unchanged_children = {child.item_key: child for child in kept.unchanged}
+            return TerminalEgressStillCurrentReceiptV1(
+                kind=request.kind,
+                run_id=request.run_id,
+                node_id=request.node_id,
+                open_proposal_id=kept.line_proposal.open_proposal_id,
+                children=tuple(
+                    unchanged_children.get(item.item_key)
+                    or TerminalEgressChildReceiptV1(
+                        child_index=item.child_index,
+                        item_key=item.item_key,
+                        egress_digest=item.manifest_digest,
+                    )
+                    for item in request.items
+                ),
             )
         if not isinstance(request, TerminalEgressRequestV2) or request.kind not in {
             "propose_change_set",
@@ -1822,6 +2057,13 @@ class ProposalTerminalEgressSink:
         # recovery adopted by its ref that does not name this exact operation
         # (an independent equivalent submission) is delivered as before but
         # never linked: its reasons are reported unattributed on the receipt.
+        line_proposal = prepared.prepared.line_proposal
+        if (
+            line_proposal is not None
+            and isinstance(receipt, TerminalEgressReceiptV3)
+            and not isinstance(receipt, TerminalEgressReceiptV4)
+        ):
+            receipt = self._supersede_open_proposal(request, line_proposal, receipt)
         proposal_id = getattr(receipt, "proposal_id", None)
         if prepared.item_reasons and isinstance(proposal_id, str):
             evidence = self.instance.proposal_evidence()

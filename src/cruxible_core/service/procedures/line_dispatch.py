@@ -199,7 +199,8 @@ def service_evaluate_line(
 
     A dry run only reads what the range makes eligible. Otherwise every
     occurrence found is enqueued for explicit dispatch, and a range evaluated
-    to its end is recorded, so a restart gap it covers leaves ``next``.
+    to its end is recorded, so a restart gap it covers leaves ``next`` -- one
+    that finds nothing too ("nothing was due"; status ``not_met``, a success).
     """
 
     window = TriggerRange(
@@ -224,6 +225,8 @@ def service_enqueue_line_range(
 
     instance.require_writable()
     result = service_check_line_trigger(instance, line, window, now=now, enqueue=True)
+    if result.status == "not_met" and result.detail is None:
+        result = result.model_copy(update={"detail": _NOTHING_DUE})
     store = LineDispatchStore(instance)
     with store.locked() as conn:
         enqueued = _enqueue(store, conn, result, actor, now)
@@ -241,6 +244,9 @@ def service_enqueue_line_range(
                 now=now,
             )
         return enqueued
+
+
+_NOTHING_DUE = "Nothing was due in this range; it is recorded as evaluated."
 
 
 class LineArmAuthorityLost(ExecutionError):
@@ -327,8 +333,8 @@ def _roll_over(
     now: datetime,
     daemon_id: str,
     timed: Iterable[str],
-) -> dict[str, Any]:
-    """End a segment and open its successor in one transition.
+) -> tuple[str, str]:
+    """End a segment and open its successor in one transition; return the gap between them.
 
     Two transitions could be interrupted between them, leaving an arm with no
     active segment that still reports itself armed. One record either lands
@@ -359,7 +365,63 @@ def _roll_over(
         {key: current[key] for key in _ARM_FIELDS}, instance=instance, now=now, daemon_id=daemon_id
     )
     store.append(conn, "rollover", {"stopped": stopped, "opened": opened}, actor=actor, now=now)
-    return opened
+    return stops_at, opened["starts_at"]
+
+
+def _cover_gap_with_nothing_due(
+    instance: PlaybillInstance,
+    store: LineDispatchStore,
+    line: str,
+    gap: tuple[str, str],
+    *,
+    actor: GovernedActorContext,
+    now: datetime,
+) -> None:
+    """Record a restart gap as evaluated when the Line's live Triggers had nothing due in it.
+
+    A downtime range owes explicit evaluation only if a Trigger would have
+    fired in it: a cadence or cron tick, a generation accepted, a Capture
+    landed or a window closed there. One dry-run check of exactly that range
+    (a page of one occurrence: whatever it finds, it stops) decides it once, at
+    the restart, so ``next`` never lists a range that evaluating would find
+    empty. A range with an occurrence, or a check that cannot conclude (an
+    index still catching up, or accepted generations out of acceptance-time
+    order, which a bounded lookup does not scan), stays a gap until ``line
+    evaluate`` covers it.
+
+    The check is bounded by the gap, not by history: a generation Trigger's
+    acceptance in the range is found by bisection and its delivery by the
+    occurrence's exact identity, so retained history outside the gap is
+    never read.
+    """
+
+    from cruxible_core.triggers.journal import bounded_generation_lookups
+
+    since, until = _instant(gap[0]), _instant(gap[1])
+    if since >= until:
+        return
+    try:
+        with bounded_generation_lookups():
+            result = service_check_line_trigger(
+                instance, line, TriggerRange(since=since, until=until, limit=1), now=now
+            )
+    except (CruxibleError, OSError, ValueError):
+        return  # unreadable now: the gap stays for an explicit evaluation
+    if result.status != "not_met" or result.checked_since is None:
+        return
+    with store.locked() as conn:
+        store.append(
+            conn,
+            "evaluated",
+            dict(
+                line_id=result.line_identity_digest,
+                epoch=result.occurrence_epoch,
+                since=format_datetime(result.checked_since),
+                until=format_datetime(result.checked_until),
+            ),
+            actor=actor,
+            now=now,
+        )
 
 
 def _lapse_cadence_backlog(
@@ -869,7 +931,7 @@ def service_match_listening_lines(
                 # Lapsing first leaves nothing to recover: interrupted here, the
                 # old segment still stands and the next pass rolls it over.
                 _lapse_cadence_backlog(store, conn, accepted, actor=actor, now=now)
-                _roll_over(
+                gap = _roll_over(
                     store,
                     conn,
                     current,
@@ -883,6 +945,9 @@ def service_match_listening_lines(
                         if _timed(trigger)
                     ),
                 )
+            # Interrupted before this lands, the gap only stays listed: its
+            # explicit evaluation still covers it.
+            _cover_gap_with_nothing_due(instance, store, session["line"], gap, actor=actor, now=now)
             continue
         with line_arm_boundary(instance.root, session["line_id"]), store.locked() as conn:
             current = conn.execute(
@@ -1117,7 +1182,9 @@ def line_attention(
 
     A restart rolls an enabled Line forward-only: the range between the last
     instant its daemon matched and the restart is a coverage gap until an
-    explicit ``line evaluate`` covers it, and work it matched before the
+    explicit ``line evaluate`` covers it, when its live Triggers would have
+    fired in it (a range with nothing due is recorded as evaluated at the
+    restart, ``_cover_gap_with_nothing_due``), and work it matched before the
     restart waits for ``line dispatch``. Only Lines enabled now are read (a
     disabled or stopped Line owes nothing automatic), but a range any earlier
     enablement of the Line in this epoch left uncovered stays listed until an
