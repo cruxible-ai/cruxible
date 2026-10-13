@@ -693,6 +693,9 @@ class ProjectionHandle:
         self.accepted = accepted
         self._closed = False
         self._verification_identity: tuple[object, ...] | None = None
+        # Set while the handle belongs to a request's ProjectionPool: closing it
+        # then returns it to the pool instead of closing the connection.
+        self._release: Callable[[ProjectionHandle], bool] | None = None
         from cruxible_core.indexes.typed_state import TypedStateReader
 
         self.typed = TypedStateReader(
@@ -939,6 +942,9 @@ class ProjectionHandle:
         return self.claims(tuple(row["identity"] for row in identities))
 
     def close(self) -> None:
+        release = self._release
+        if release is not None and not self._closed and release(self):
+            return
         if not self._closed:
             try:
                 self._connection.close()
@@ -955,6 +961,64 @@ class ProjectionHandle:
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
+
+
+class ProjectionPool:
+    """Bound projections one request reuses on one thread, instead of rebinding per lookup.
+
+    A handle is exclusive while a caller holds it, exactly like a fresh bind.
+    Closing it returns it here only when its connection is as the bind left it:
+    no TEMP objects (a candidate overlay's rows), no attached databases, no open
+    transaction, the bind's row factory. Anything else is really closed, so a
+    later taker never sees another caller's state. The accepted projection a
+    handle reads is immutable, so a reused handle answers what a fresh one would.
+    """
+
+    def __init__(self) -> None:
+        self._idle: dict[object, list[ProjectionHandle]] = {}
+        self._owners: list[object] = []
+        self._open = True
+        self._thread = threading.get_ident()
+
+    def take(self, key: object) -> ProjectionHandle | None:
+        if not self._open or threading.get_ident() != self._thread:
+            return None
+        idle = self._idle.get(key)
+        return idle.pop() if idle else None
+
+    def adopt(self, key: object, handle: ProjectionHandle, *, owner: object) -> ProjectionHandle:
+        """Make ``handle`` return here when its holder closes it."""
+        if self._open and threading.get_ident() == self._thread:
+            self._owners.append(owner)  # keeps ``key``'s owner identity alive
+            handle._release = lambda released: self._give_back(key, released)
+        return handle
+
+    def _give_back(self, key: object, handle: ProjectionHandle) -> bool:
+        if not self._open or threading.get_ident() != self._thread:
+            return False
+        try:
+            connection = handle._connection
+            clean = (
+                not connection.in_transaction
+                and connection.row_factory is sqlite3.Row
+                and connection.execute("SELECT count(*) FROM temp.sqlite_master").fetchone()[0] == 0
+                and {row[1] for row in connection.execute("PRAGMA database_list")}
+                <= {"main", "temp"}
+            )
+        except sqlite3.Error:
+            clean = False
+        if clean:
+            self._idle.setdefault(key, []).append(handle)
+        return clean
+
+    def close(self) -> None:
+        self._open = False
+        idle, self._idle = self._idle, {}
+        for handles in idle.values():
+            for handle in handles:
+                handle._release = None
+                handle.close()
+        self._owners.clear()
 
 
 def bind_projection(
@@ -1231,6 +1295,7 @@ def detect_projection_orphans(publication_directory: Path) -> tuple[ProjectionOr
 
 __all__ = [
     "ProjectionHandle",
+    "ProjectionPool",
     "bind_projection",
     "canonical_logical_export",
     "detect_projection_orphans",

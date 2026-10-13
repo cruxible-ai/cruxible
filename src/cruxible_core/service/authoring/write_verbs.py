@@ -169,6 +169,7 @@ from cruxible_core.indexes.subject_identity import (
 from cruxible_core.indexes.typed_state import LIVE_SLOT_CLAIM_DIGESTS_SQL, LIVE_SLOT_CLAIMS_SQL
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.request_scope import projection_request
 from cruxible_core.service.change_preview import compact_coordinate, preview_guards
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
@@ -2466,6 +2467,7 @@ def _coordinator(
     )
 
 
+@projection_request
 def service_playbill_write(
     instance: PlaybillInstance,
     *,

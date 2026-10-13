@@ -13,7 +13,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
-from contextvars import Context
+from contextvars import Context, ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -127,7 +127,7 @@ from cruxible_core.indexes.projection import (
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.indexes.proposals.proposal_note_reader import proposal_note_snapshot
 from cruxible_core.indexes.serving import bind_current_projection
-from cruxible_core.indexes.sqlite import ProjectionHandle, bind_projection
+from cruxible_core.indexes.sqlite import ProjectionHandle, ProjectionPool, bind_projection
 from cruxible_core.indexes.typed_sqlite import parse_static_owners
 from cruxible_core.ledger.activation import ActivationPublisher, ActivationResult
 from cruxible_core.ledger.bootstrap import (
@@ -265,6 +265,10 @@ def _validate_client_principals(
 
 
 _VALIDATED_PATH_CAPACITY = 64
+#: The request-scoped projection pool of this thread (see ``projection_scope``).
+_PROJECTION_POOL: ContextVar[ProjectionPool | None] = ContextVar(
+    "cruxible_projection_pool", default=None
+)
 _PathBinding = tuple[str, tuple[tuple[tuple[int, int, int], ...], ...]]
 _VALIDATED_PATHS: OrderedDict[
     tuple[str, tuple[tuple[str, Any], ...]],
@@ -2184,8 +2188,62 @@ class PlaybillInstance:
         self,
         coordinate: AcceptedProjectionCoordinate,
     ) -> ProjectionHandle:
-        """Bind a current serving or retained historical immutable projection."""
+        """Bind a current serving or retained historical immutable projection.
 
+        Inside ``projection_scope`` a handle of the same coordinate that its
+        last holder closed cleanly is handed out again instead of rebinding.
+        """
+
+        pool = _PROJECTION_POOL.get()
+        if pool is None:
+            return self._bind_accepted_projection(coordinate)
+        key = (
+            id(self),
+            coordinate.git_oid,
+            coordinate.semantic_root,
+            coordinate.generation_root,
+            coordinate.compiler.rule_digest,
+        )
+        reused = pool.take(key)
+        if reused is not None:
+            try:
+                # Still one accepted generation: refused exactly as a fresh bind is.
+                self.resolve_accepted_coordinate(
+                    git_oid=coordinate.git_oid,
+                    semantic_root=coordinate.semantic_root,
+                    generation_root=coordinate.generation_root,
+                    compiler_digest=coordinate.compiler.rule_digest,
+                )
+            except BaseException:
+                reused.close()
+                raise
+            return reused
+        return pool.adopt(key, self._bind_accepted_projection(coordinate), owner=self)
+
+    @contextmanager
+    def projection_scope(self) -> Iterator[None]:
+        """One request on this thread: reuse bound projections instead of rebinding per lookup.
+
+        A write or a Line run reads the same accepted coordinate hundreds of
+        times; each fresh bind re-reads the manifests, re-opens and re-checks the
+        piece. Nested scopes join the outermost one; handles close at its exit.
+        """
+
+        if _PROJECTION_POOL.get() is not None:
+            yield
+            return
+        pool = ProjectionPool()
+        token = _PROJECTION_POOL.set(pool)
+        try:
+            yield
+        finally:
+            _PROJECTION_POOL.reset(token)
+            pool.close()
+
+    def _bind_accepted_projection(
+        self,
+        coordinate: AcceptedProjectionCoordinate,
+    ) -> ProjectionHandle:
         verified = self.resolve_accepted_coordinate(
             git_oid=coordinate.git_oid,
             semantic_root=coordinate.semantic_root,
