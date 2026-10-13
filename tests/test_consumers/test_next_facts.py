@@ -547,11 +547,13 @@ def test_an_interrupted_landing_is_followed_once_it_is_settled(tmp_path: Path) -
         with pytest.raises(CasError, match="completion row"):
             store.store(b"status: ready")
     assert store.landings.unfinished()
-    # Still behind: the tally does not serve, and the next tick's pass derives again.
-    assert _tally(instance, at) is None
+    # A read settles the landing its writer abandoned, as opening the store does,
+    # then serves the true state from the overlay; the worker is still behind.
+    assert _tally(instance, at) == _live_counts(instance, at)
+    assert not store.landings.unfinished()
     PART.match(instance, now=at, daemon_id="test")
     assert tuple(PART.due(instance, now=at))
-    # The retry finds the object present and settles the landing it interrupted.
+    # The retry finds the object present: nothing is left unfinished.
     store.store(b"status: ready")
     assert not store.landings.unfinished()
     with _counted() as work:
@@ -731,6 +733,12 @@ def _current_state(size: int) -> sqlite3.Connection:
         (facts._UNSERVABLE, (), ("claim_facts_unservable",)),
         (facts._CITATION_ERROR, (), ("claim_facts_citation_errors",)),
         (facts._BROKEN_KEYS, (), ("row_keys_with_errors",)),
+        # A read of a few keys seeks each one (F-012), whatever else is broken.
+        (
+            facts._BROKEN_OF_KEYS.format(marks="?"),
+            ("slot", "key-3"),
+            ("sqlite_autoindex_row_keys_1",),
+        ),
         (facts._BROKEN_FACTS, (), ("claim_facts_with_errors",)),
         (facts._BROKEN_RETIRED, (), ("claim_facts_with_errors",)),
         (facts._EXPIRING_SLOTS, (998, 1003), ("claim_facts_by_support_expiry",)),

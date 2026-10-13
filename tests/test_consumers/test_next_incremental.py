@@ -45,6 +45,7 @@ import pytest
 
 from cruxible_client.contracts.accepted_attestations import (
     attestation_path,
+    parse_accepted_attestation,
     render_accepted_attestation,
 )
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
@@ -336,28 +337,62 @@ def _columns(row: tuple[Any, ...] | None, family: str) -> tuple[Any, ...] | None
     return None if row is None else tuple(row[_FACT[column]] for column in _READS[family])
 
 
-def _named_since(state: World, before: _Snapshot) -> set[str]:
-    """Claims an accepted attestation member named, or whose Subject changed, since ``before``."""
+def _subscribed_keys(state: World, before: _Snapshot) -> set[tuple[str, str]]:
+    """The keys the records since ``before`` reach besides facts and landings.
 
-    from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
+    Taken from what each family reads (design 3), never from the implementation's
+    routing: a live Claim's threshold reads the examined door events and accepted
+    attestation members (of every basis) of its current version and the Subject
+    (or ClaimType) at each referent its statement names; a door reads every
+    new-capture door event and new-capture accepted member of its Claim. The
+    Claims, their versions and referents come from the accepted Claims at the head.
+    """
+
+    from cruxible_client.contracts.claims import SubjectClaimObject
 
     instance = state.instance
+    live = {claim.identity.qualified: claim for claim in _claims(state)}
+    live = {key: claim for key, claim in live.items() if claim.lifecycle.state == "live"}
+
+    def of_current_version(statement: Any) -> bool:
+        claim = live.get(statement.claim_identity.qualified)
+        return claim is not None and (
+            claim_artifact_digest(claim).tagged == statement.claim_artifact_digest
+        )
+
+    keys: set[tuple[str, str]] = set()
+    statements = [
+        payload.attestation.statement
+        for _position, _event, payload in instance.claim_attestation_evidence_store().events_after(
+            before.door
+        )[1]
+    ]
+    for statement in statements:
+        if statement.attestation_basis == "new_capture":
+            keys.add((rows.DOOR, statement.claim_identity.qualified))
+        elif of_current_version(statement):
+            keys.add((rows.THRESHOLD, statement.claim_identity.qualified))
     with instance.accepted_history_reader() as history:
         paths = history.member_paths_between(before.sequence, history.sequence)
     head = AcceptedCoordinate.from_internal(instance.accepted_coordinate()).git_oid
-    named: set[str] = set()
+    referents: set[str] = set()
     for path in paths:
         if path.startswith("attestations/"):
             content = instance.blob_at(head, path) or instance.blob_at(before.oid, path)
-            attestation = parse_accepted_attestation(content, path=path)
-            named.add(attestation.statement.claim_identity.qualified)
-        elif path.startswith("subjects/"):
-            named |= {
-                str(claim_id)
-                for read, claim_id in before.tables["fact_reads"]
-                if read == f"path:{path}"
-            }
-    return named
+            member = parse_accepted_attestation(content, path=path).statement
+            if member.attestation_basis == "new_capture":
+                keys.add((rows.DOOR, member.claim_identity.qualified))
+            if of_current_version(member):
+                keys.add((rows.THRESHOLD, member.claim_identity.qualified))
+        elif path.startswith(("subjects/", "claim-types/")):
+            referents.add(path)
+    for identity, claim in live.items():
+        named = {claim.statement.subject.artifact_path}
+        if isinstance(claim.statement.object, SubjectClaimObject):
+            named.add(claim.statement.object.address.artifact_path)
+        if named & referents:
+            keys.add((rows.THRESHOLD, identity))
+    return keys
 
 
 def _expected_keys(
@@ -400,13 +435,7 @@ def _expected_keys(
         for row in after["claim_facts"]
         if row[_FACT["lifecycle"]] == "live" and row[_FACT["res_slot"]] in res_slots
     }
-    _head, events = state.instance.claim_attestation_evidence_store().events_after(before.door)
-    for _position, _event, payload in events:
-        statement = payload.attestation.statement
-        family = rows.THRESHOLD if statement.attestation_basis == "examined_existing" else rows.DOOR
-        keys.add((family, statement.claim_identity.qualified))
-    for claim_id in _named_since(state, before):
-        keys |= {(rows.THRESHOLD, claim_id), (rows.DOOR, claim_id)}
+    keys |= _subscribed_keys(state, before)
     # Landed, erased or rewritten objects, with the Captures that consulted them.
     landings = {row.digest for row in state.instance.body_store().landings.after(before.landing)}
     consulting = {
@@ -744,7 +773,7 @@ def _door_capture(state: World, claim_id: str) -> str:
     ).capture_digest
 
 
-def _member(state: World) -> str | None:
+def _member(state: World, *, basis: str = "examined_existing") -> str | None:
     from tests.test_claims.test_claim_attestation_service import _request
 
     claims = _live_status_claims(state)
@@ -757,7 +786,9 @@ def _member(state: World) -> str | None:
         state.owner,
         claim.identity.name,
         state.root,
+        basis=basis,
         stance=state.rng.choice(("support", "unsure")),
+        captures=((_door_capture(state, claim.identity.name),) if basis == "new_capture" else None),
         attested_at=datetime.fromisoformat(timestamp.replace("Z", "+00:00")) - timedelta(seconds=1),
     ).attestation
     tree = state.instance.tree_at(state.instance.accepted_coordinate().git_oid)
@@ -964,6 +995,43 @@ def run_oracle(root: Path, seed: int, steps: int) -> World:
         if previous != state.instance.accepted_coordinate():
             _assert_answers_equal(state, f"previous coordinate after {name}", at=previous)
     return state
+
+
+@pytest.mark.parametrize("basis", ("examined_existing", "new_capture"))
+def test_an_accepted_member_reaches_only_the_families_that_read_it(
+    tmp_path: Path, basis: str
+) -> None:
+    """F-011: an examined member is read by its Claim's threshold alone; a new-capture
+    member by the threshold (its version's attestations bound the interval) and the door."""
+
+    instance, owner = seed_claims(tmp_path)
+    state = World(instance=instance, owner=owner, root=tmp_path, rng=random.Random(0))
+    facts._OVERLAYS.clear()
+    _tick(state)
+    before = _snapshot(instance)
+    assert _member(state, basis=basis)
+    _assert_answers_equal(state, f"behind after a {basis} member")
+    with instance.accepted_history_reader() as history:
+        (path,) = (
+            path
+            for path in history.member_paths_between(before.sequence, history.sequence)
+            if path.startswith("attestations/")
+        )
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate()).git_oid
+    member = parse_accepted_attestation(instance.blob_at(head, path), path=path).statement
+    assert member.attestation_basis == basis
+    identity = member.claim_identity.qualified
+    work = _tick(state)
+    after = facts.stored_tables(instance)
+    assert after is not None
+    expected = _expected_keys(
+        state, before, after, set(_expected_claims(instance, before, state.at)), set()
+    )
+    assert work.keys == expected
+    assert (rows.THRESHOLD, identity) in work.keys
+    assert ((rows.DOOR, identity) in work.keys) == (basis == "new_capture")
+    assert after == facts.rebuilt_tables(instance, at=state.at)
+    _assert_answers_equal(state, f"caught up after a {basis} member")
 
 
 @pytest.mark.parametrize("seed", SEEDS)

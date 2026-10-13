@@ -32,6 +32,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Future
@@ -62,6 +63,7 @@ from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.consumers.next import rows
 from cruxible_core.consumers.protocol import ConsumerHealth, ConsumerRepair, ConsumerWork
 from cruxible_core.consumers.state import DisposableState
+from cruxible_core.errors import ReadInputsMovingError
 from cruxible_core.indexes.typed_state import utc_microseconds
 from cruxible_core.server.config import get_disabled_consumers
 from cruxible_core.triggers.journal import (
@@ -815,9 +817,13 @@ class _Delta:
     #: Objects that landed, left or moved in place since the last pass, with the
     #: Captures that consulted them: what a door row may have read.
     landed: set[str] = field(default_factory=set)
-    #: Claims an accepted attestation member named, or whose referent Subject changed,
-    #: since the last pass: what their thresholds read besides their facts.
-    attested: set[str] = field(default_factory=set)
+    #: Accepted attestation members added or removed since the last pass, as
+    #: (Claim, basis, Claim artifact digest): a threshold reads its version's
+    #: members, a door every new-capture member of its Claim.
+    members: set[tuple[str, str, str]] = field(default_factory=set)
+    #: Subject and ClaimType member paths the generations changed: a threshold
+    #: reads its Claim's referents at them.
+    referents: set[str] = field(default_factory=set)
     #: Live Subjects by path (their kind), None for one no longer live (R9).
     subjects: dict[str, str | None] = field(default_factory=dict)
     #: Live ProcedureMandates by path (identity, expiry), None for one no longer live.
@@ -852,20 +858,29 @@ def _claim_of_path(path: str) -> str | None:
     return None if match is None else f"Claim:{match.group(1)}"
 
 
-def _attested_claims(instance: Any, paths: Iterable[str], oids: Iterable[str]) -> set[str]:
-    """The Claims accepted attestation members name, read from either end of the range."""
+def _attestation_members(
+    instance: Any, paths: Iterable[str], oids: Iterable[str]
+) -> set[tuple[str, str, str]]:
+    """(Claim, basis, Claim artifact digest) of each accepted attestation member at these
+    paths, read from either end of the range."""
 
     from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
 
-    claims: set[str] = set()
+    members: set[tuple[str, str, str]] = set()
     for path in paths:
         for oid in oids:
             content = instance.blob_at(oid, path)
             if content is not None:
-                attestation = parse_accepted_attestation(content, path=path)
-                claims.add(attestation.statement.claim_identity.qualified)
+                statement = parse_accepted_attestation(content, path=path).statement
+                members.add(
+                    (
+                        statement.claim_identity.qualified,
+                        statement.attestation_basis,
+                        statement.claim_artifact_digest,
+                    )
+                )
                 break
-    return claims
+    return members
 
 
 def _door_captures(
@@ -937,6 +952,8 @@ def _landing_rows(instance: Any, after: int, through: int) -> tuple[set[str], in
 _SUBJECTS = "subjects/"
 _MANDATES = "procedure-mandates/"
 _SHELL_PREFIXES = (_SUBJECTS, _MANDATES)
+#: The paths a Claim's statement can name as its subject or object referent.
+_REFERENT_PREFIXES = (_SUBJECTS, "claim-types/")
 
 
 def _shells(
@@ -1032,8 +1049,10 @@ class _Touched:
     landed: set[str]
     #: Subject and ProcedureMandate member paths the generations changed.
     shells: set[str] = field(default_factory=set)
-    #: Claims accepted attestation members named, or whose referent Subject changed.
-    attested: set[str] = field(default_factory=set)
+    #: Accepted attestation members the generations added or removed.
+    members: set[tuple[str, str, str]] = field(default_factory=set)
+    #: Subject and ClaimType member paths the generations changed.
+    referents: set[str] = field(default_factory=set)
 
 
 def _touched(
@@ -1060,7 +1079,8 @@ def _touched(
     claims: set[str] = set()
     keys: set[str] = set()
     shells: set[str] = set()
-    named: set[str] = set()
+    members: set[tuple[str, str, str]] = set()
+    referents: set[str] = set()
     if cursors.generation != heads.generation:
         with instance.accepted_history_reader(
             at=AcceptedCoordinate.from_internal(heads.coordinate)
@@ -1071,6 +1091,8 @@ def _touched(
             keys.add(f"path:{path}")
             if path.startswith(_SHELL_PREFIXES):
                 shells.add(path)
+            if path.startswith(_REFERENT_PREFIXES):
+                referents.add(path)
             claim = _claim_of_path(path)
             if claim is not None:
                 claims.add(claim)
@@ -1079,8 +1101,11 @@ def _touched(
                 keys.add(f"provider:Provider:{path.removeprefix('providers/')[:-5]}")
             elif path.startswith("attestations/"):
                 attested.append(path)
-        named = _attested_claims(instance, attested, (heads.generation_oid, cursors.generation_oid))
-        claims |= named
+        members = _attestation_members(
+            instance, attested, (heads.generation_oid, cursors.generation_oid)
+        )
+        # A member is a verdict input of its Claim's version.
+        claims.update(claim_id for claim_id, _basis, _digest in members)
     landing = cursors.landing
     landed: set[str] = set()
     if heads.landing != cursors.landing:
@@ -1130,8 +1155,6 @@ def _touched(
         tuple(sorted(keys)),
     )
     claims.update(str(row[1]) for row in reached)
-    # A Claim's attestation threshold reads its referent Subjects' shells.
-    named |= {str(row[1]) for row in reached if str(row[0]).startswith("path:subjects/")}
     claims.update(str(row[2]) for row in door_rows)
     return _Touched(
         claims=claims,
@@ -1140,7 +1163,8 @@ def _touched(
         at=at,
         landed=landed,
         shells=shells,
-        attested=named,
+        members=members,
+        referents=referents,
     )
 
 
@@ -1587,8 +1611,11 @@ def _dirty_keys(
     family reads moved: its threshold and door keys, its own source key, every
     slot of the (predicate, Subject) it left or joined (a slot's interval spans
     all its contenders), and every source its inputs or pins name. Besides
-    facts, a door event reaches its Claim's threshold or door key, an accepted
-    attestation member both, and a landing every key that read the body.
+    facts, each family is reached only by the records it reads (design 3): a
+    live Claim's threshold by an examined door event or an accepted
+    attestation member of its current version and by a change at one of its
+    referents; a door by a new-capture door event or accepted member of its
+    Claim; and every key by a landing of an object it read.
     """
 
     keys: set[tuple[str, str]] = set()
@@ -1600,7 +1627,11 @@ def _dirty_keys(
     targets: set[str] = set()
     for identity in replaced:
         old, new = delta.before.get(identity), after.get(identity)
-        if _moved(old, new, _THRESHOLD_READS):
+        if _moved(old, new, _THRESHOLD_READS) or (
+            new is not None
+            and new["lifecycle"] == "live"
+            and (new["subject_path"] in delta.referents or new["object_path"] in delta.referents)
+        ):
             keys.add((rows.THRESHOLD, identity))
         if _moved(old, new, _DOOR_READS):
             keys.add((rows.DOOR, identity))
@@ -1629,11 +1660,26 @@ def _dirty_keys(
             tuple(sorted(res_slots)),
         )
     )
+
+    def current_version(claim_id: str, artifact_digest: str) -> bool:
+        fact = after.get(claim_id)
+        return (
+            fact is not None
+            and fact["lifecycle"] == "live"
+            and fact["artifact_digest"] == artifact_digest
+        )
+
     for event in delta.door:
-        family = rows.THRESHOLD if event[6] == "examined_existing" else rows.DOOR
-        keys.add((family, str(event[2])))
-    for identity in delta.attested:
-        keys.update(((rows.THRESHOLD, identity), (rows.DOOR, identity)))
+        claim_id, artifact_digest, basis = str(event[2]), str(event[5]), event[6]
+        if basis == "new_capture":
+            keys.add((rows.DOOR, claim_id))
+        elif current_version(claim_id, artifact_digest):
+            keys.add((rows.THRESHOLD, claim_id))
+    for claim_id, basis, artifact_digest in delta.members:
+        if basis == "new_capture":
+            keys.add((rows.DOOR, claim_id))
+        if current_version(claim_id, artifact_digest):
+            keys.add((rows.THRESHOLD, claim_id))
     keys.update(
         (str(row[0]), str(row[1]))
         for row in _rows(
@@ -1777,6 +1823,9 @@ _EXPIRED_KEYS = (
 )
 _UNSERVABLE = "SELECT claim_id FROM claim_facts WHERE unservable=1"
 _BROKEN_KEYS = "SELECT family,key FROM row_keys WHERE error_code IS NOT NULL"
+_BROKEN_OF_KEYS = (
+    "SELECT key FROM row_keys WHERE family=? AND key IN ({marks}) AND error_code IS NOT NULL"
+)
 _BROKEN_FACTS = "SELECT claim_id FROM claim_facts WHERE error_code IS NOT NULL"
 _BROKEN_RETIRED = (
     "SELECT claim_id FROM claim_facts WHERE lifecycle='retired' AND error_code IS NOT NULL "
@@ -1879,7 +1928,8 @@ def _changes(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime)
     delta.door_root = door_root
     delta.reobs = touched.reobs
     delta.landed = touched.landed
-    delta.attested = touched.attested
+    delta.members = touched.members
+    delta.referents = touched.referents
     if touched.shells:
         delta.subjects, delta.mandates = _shells(instance, heads.coordinate, touched.shells)
     return _Change(delta, touched.at, touched.landing)
@@ -1970,21 +2020,30 @@ class ServedRows:
     subject_kinds: tuple[tuple[str, int, str], ...] | None = None
     #: Live ProcedureMandates expiring within the read's lead, in identity order.
     expiring_mandates: tuple[str, ...] | None = None
-    #: The citation commitments of the live visible Claims the read asked for, by id.
+    #: The citation commitments the read asked for, by id: of these citation ids,
+    #: or every one that names a workspace source (live visible Claims only).
     citations: dict[str, Any] | None = None
     #: Whether some live visible Claim's citations could not be read (the fold refuses).
     citation_error: bool = False
+    #: The projection-backed Claims the read asked for, by qualified identity:
+    #: (resolution status, visible), or None for a Claim whose facts failed.
+    backed: dict[str, tuple[str, bool] | None] | None = None
+    #: The heads the rows were read at; ``served_inputs_hold`` checks them again.
+    heads: _Heads | None = None
 
 
-#: Every citation commitment, or those of these citation ids: what a workspace read asks.
-CitationRequest = Literal["all"] | tuple[str, ...] | None
+#: The citation commitments a workspace read asks for: those of these citation ids, or
+#: every one naming a workspace source ("sources"), or none.
+CitationRequest = Literal["sources"] | tuple[str, ...] | None
 
 #: In-flight and recent overlays, by (instance, stored heads, current heads).
 _OVERLAYS: OrderedDict[tuple[str, str, str], Future[_Overlay | None]] = OrderedDict()
 _OVERLAYS_LOCK = threading.Lock()
 _OVERLAY_CAPACITY = 8
-#: How many times a read retries when the logs move under it before it folds.
+#: How many times a read tries when the logs move under it before it refuses, and
+#: how long it pauses before each retry: a landing in flight is usually done by then.
 _ATTEMPTS = 3
+_PAUSES = (0.01, 0.05)
 
 
 class _Unstable(Exception):
@@ -2103,21 +2162,30 @@ def _serving(
     door_head: str | None,
     evaluation_time: datetime,
     read: Callable[[sqlite3.Connection], _T],
-) -> _T | None:
+) -> tuple[_T, _Heads] | None:
     """Run ``read`` on the stored state brought to the heads and to ``evaluation_time``.
 
     Served only at the current accepted (and, when given, door) head with the
-    worker active and its state warm and valid. Whatever the worker has not
-    yet followed is replayed from the overlay and every fact or key that does
-    not hold at the instant is derived again, all in a transaction rolled back
-    after ``read`` (reads never write this state). The read is returned only
-    when every log it depended on stood still throughout; after a few
-    attempts that keep moving, or in any state that cannot serve, None: fold.
+    worker active and its state warm and valid; in any state that cannot
+    serve, None: fold. Whatever the worker has not yet followed is replayed
+    from the overlay and every fact or key that does not hold at the instant
+    is derived again, all in a transaction rolled back after ``read`` (reads
+    never write this state). The read is returned, with the heads it was read
+    at, only when every log it depended on stood still throughout. When the
+    logs move under every one of a few attempts it refuses
+    (``ReadInputsMovingError``, retryable): a fold then would read the same
+    moving logs for longer, so it is never the fallback for a moving read.
     """
 
     if not _PART.active(instance) or coordinate != instance.accepted_coordinate():
         return None
-    for _attempt in range(_ATTEMPTS):
+    for attempt in range(_ATTEMPTS):
+        if attempt:
+            # A landing whose writer is gone stays unfinished until someone settles
+            # it: settle it, as opening the store does (a live writer's is skipped),
+            # then give a landing in flight a moment to complete.
+            instance.body_store().landings.reconcile()
+            time.sleep(_PAUSES[attempt - 1])
         with _STATE.open(instance, create=False) as connection:
             if connection is None:
                 return None
@@ -2159,8 +2227,22 @@ def _serving(
                 connection.execute("ROLLBACK TO served")
                 connection.execute("RELEASE served")
         if _inputs_hold(instance, heads):
-            return result
-    return None
+            return result, heads
+    raise ReadInputsMovingError(
+        f"the accepted state, the attestation door, body landings or re-observations moved "
+        f"during each of {_ATTEMPTS} attempts to read next's stored rows"
+    )
+
+
+def served_inputs_hold(instance: Any, served: ServedRows) -> bool:
+    """Whether every log ``served`` was read from still stands where the read saw it.
+
+    A request that reads more live state after its stored rows (a projection
+    query's evidence) checks again once done: true means everything it read
+    describes one state.
+    """
+
+    return served.heads is None or _inputs_hold(instance, served.heads)
 
 
 def served_claim_rows(
@@ -2172,17 +2254,20 @@ def served_claim_rows(
     expiring_within: CanonicalDuration,
     claims: Iterable[str] | None = None,
     citations: CitationRequest = None,
+    backed: Iterable[str] = (),
 ) -> ServedRows | None:
     """The Claim rows next would fold, served from Layer 2, or None to fold.
 
     ``claims`` reads only those Claims' keys -- their threshold, door and
     dependency rows and their slots' -- instead of the whole queue.
     ``citations`` also reads the maintained citation commitments a workspace
-    observation asks about.
+    observation asks about, and ``backed`` the resolution status and
+    visibility of the Claims its projection markers are backed by.
     """
 
     selected = None if claims is None else tuple(claims)
-    return _serving(
+    wanted = tuple(sorted(set(backed)))
+    served = _serving(
         instance,
         coordinate=coordinate,
         door_head=door_head,
@@ -2195,8 +2280,13 @@ def served_claim_rows(
             expiring_within=expiring_within,
             claims=selected,
             citations=citations,
+            backed=wanted,
         ),
     )
+    if served is None:
+        return None
+    found, heads = served
+    return replace(found, heads=heads)
 
 
 def _selected_keys(connection: sqlite3.Connection, claims: Sequence[str]) -> set[tuple[str, str]]:
@@ -2219,53 +2309,35 @@ def _selected_keys(connection: sqlite3.Connection, claims: Sequence[str]) -> set
     return keys
 
 
-def _key_order(
-    instance: Any,
-    connection: sqlite3.Connection,
-    coordinate: AcceptedProjectionCoordinate,
-    family: str,
-    key: str,
-) -> tuple[int, tuple[Any, ...]]:
-    """Where the fold reaches a key: its family, then the position it is reached at.
+def _broken_keys(
+    connection: sqlite3.Connection, keys: set[tuple[str, str]] | None
+) -> set[tuple[str, str]]:
+    """The keys whose stored derivation failed: of these keys (one seek each), or all."""
 
-    The fold takes thresholds by Claim identity, slots by their first member,
-    and new-capture observations in chain order, then the accepted ones by
-    attestation instant and envelope digest: a door key is reached at its
-    Claim's first observation.
-    """
-
-    from cruxible_client.contracts.claim_attestations import claim_attestation_v2_envelope_digest
-
-    rank = rows.FAMILY_RANK.get(family, len(rows.FAMILY_RANK))
-    if family == rows.SLOT:
-        row = connection.execute(
-            "SELECT min(claim_id) FROM claim_facts WHERE conflict_slot=? AND lifecycle='live'",
-            (key,),
-        ).fetchone()
-        return rank, ((key if row is None or row[0] is None else str(row[0])).encode(),)
-    if family == rows.DOOR:
-        (position,) = connection.execute(
-            "SELECT min(chain_pos) FROM door_events WHERE claim_identity=? AND basis='new_capture'",
-            (key,),
-        ).fetchone()
-        if position is not None:
-            return rank, (0, int(position))
-        with instance.bind_accepted_projection(coordinate) as projection:
-            accepted = projection.typed.claim_attestations(
-                basis="new_capture", claim_identities=(key,)
-            )
-        first = min(
-            (
-                (
-                    utc_microseconds(envelope.statement.attested_at),
-                    claim_attestation_v2_envelope_digest(envelope).encode(),
+    if keys is None:
+        return {(str(row[0]), str(row[1])) for row in connection.execute(_BROKEN_KEYS)}
+    broken: set[tuple[str, str]] = set()
+    for family in sorted({family for family, _key in keys}):
+        wanted = sorted(key for found, key in keys if found == family)
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            broken.update(
+                (family, str(row[0]))
+                for row in connection.execute(
+                    _BROKEN_OF_KEYS.format(marks=",".join("?" for _ in chunk)), (family, *chunk)
                 )
-                for envelope in accepted
-            ),
-            default=(0, b""),
-        )
-        return rank, (1, *first)
-    return rank, (key.encode(),)
+            )
+    return broken
+
+
+def _slot_order(connection: sqlite3.Connection, slot: str) -> bytes:
+    """Where the fold reaches a slot: at its first live member, in identity order."""
+
+    row = connection.execute(
+        "SELECT min(claim_id) FROM claim_facts WHERE conflict_slot=? AND lifecycle='live'",
+        (slot,),
+    ).fetchone()
+    return (slot if row is None or row[0] is None else str(row[0])).encode()
 
 
 def _refuse_errors(
@@ -2276,23 +2348,21 @@ def _refuse_errors(
     evaluation_time: datetime,
     keys: set[tuple[str, str]] | None,
 ) -> None:
-    """Refuse as the fold refuses (R4): the first broken key it reaches, derived strictly.
+    """Refuse as the fold refuses (R4): its first failure among the broken keys, strictly.
 
-    A key whose strict derivation now succeeds is applied in its place. A
-    whole read also refuses a broken retired Claim, which the dependency fold
-    reads with every Claim's facts.
+    The fold takes its families in order -- thresholds by Claim identity,
+    slots by their first member, the door's observations in one sequence
+    across every Claim, then dependency sources -- and stops at the first
+    failure, so the broken keys are derived again strictly in that order: the
+    door's together, observation by observation (``rows.door_keys``). A key
+    whose strict derivation now succeeds is applied in its place. A whole read
+    also refuses a broken retired Claim, which the dependency fold reads with
+    every Claim's facts.
     """
 
     from cruxible_core.service.discovery.next import DEFAULT_EXPIRING_WITHIN_MICROSECONDS
 
-    broken = sorted(
-        (
-            (str(row[0]), str(row[1]))
-            for row in connection.execute(_BROKEN_KEYS)
-            if keys is None or (str(row[0]), str(row[1])) in keys
-        ),
-        key=lambda item: _key_order(instance, connection, coordinate, *item),
-    )
+    broken = _broken_keys(connection, keys)
     if broken:
         context = rows.RowContext(
             instance,
@@ -2303,10 +2373,20 @@ def _refuse_errors(
         )
         context.strict = True
         derived = rows.RowsDelta()
-        # One key at a time, in the order the fold reaches them: the first to
-        # fail refuses the read, as the fold's first failure does.
-        for family, key in broken:
-            derived.keys[(family, key)] = rows.derive_one(context, family, key)
+
+        def of(family: str) -> list[str]:
+            return sorted(
+                (key for found, key in broken if found == family), key=lambda key: key.encode()
+            )
+
+        for key in of(rows.THRESHOLD):
+            derived.keys[(rows.THRESHOLD, key)] = rows.threshold_key(context, key)
+        for key in sorted(of(rows.SLOT), key=lambda slot: _slot_order(connection, slot)):
+            derived.keys[(rows.SLOT, key)] = rows.derive_one(context, rows.SLOT, key)
+        for key, result in rows.door_keys(context, of(rows.DOOR)).items():
+            derived.keys[(rows.DOOR, key)] = result
+        for key in of(rows.SOURCE):
+            derived.keys[(rows.SOURCE, key)] = rows.source_key(context, key)
         rows.apply_dependents(connection, rows.apply(connection, derived))
     if keys is not None:
         return
@@ -2337,6 +2417,7 @@ def _read_served(
     expiring_within: CanonicalDuration,
     claims: tuple[str, ...] | None,
     citations: CitationRequest = None,
+    backed: tuple[str, ...] = (),
 ) -> ServedRows:
     from cruxible_core.service.discovery.next import DEFAULT_EXPIRING_WITHIN_MICROSECONDS
 
@@ -2399,18 +2480,49 @@ def _read_served(
         expiring_mandates=mandates,
         citations=commitments,
         citation_error=citation_error,
+        backed=_served_backings(connection, backed) if backed else None,
     )
+
+
+def _served_backings(
+    connection: sqlite3.Connection, claims: tuple[str, ...]
+) -> dict[str, tuple[str, bool] | None]:
+    """Each live backed Claim's resolution status and projection visibility, from Layer 1.
+
+    The facts hold at the read's instant, their statuses resolved over every
+    contender of each slot, and ``visible`` is the projection visibility rule
+    (the Subject accepted, the verdict and currency ones the policy shows), so
+    a projection check takes them in place of deriving its backings' verdicts.
+    A Claim whose facts or slot failed maps to None: the check derives it.
+    """
+
+    found: dict[str, tuple[str, bool] | None] = {}
+    for claim_id, status, visible, error in _rows(
+        connection,
+        "SELECT claim_id,status,visible,error_code FROM claim_facts "
+        "WHERE lifecycle='live' AND claim_id IN ({marks})",
+        claims,
+    ):
+        found[str(claim_id)] = (
+            None
+            if error is not None or status is None or visible is None
+            else (str(status), bool(visible))
+        )
+    return found
 
 
 def _served_citations(
     connection: sqlite3.Connection, citations: CitationRequest
 ) -> tuple[dict[str, Any] | None, bool]:
-    """The maintained commitments of every live visible Claim's citations (or of these ids).
+    """The maintained commitments of these citation ids, or of every one naming a source.
 
     Layer 1 keeps them for exactly the Claims the fold's inventory reads (live,
     and visible at the instant the facts hold for), so a workspace read takes
-    them from here, never from every Claim's envelopes. A Claim whose citations
-    could not be read refuses the inventory, as the fold does.
+    them from here, never from every Claim's envelopes. A source observation
+    reads only the commitments naming a source, through the source index: each
+    one is a row or a check against the observation, and a commitment naming
+    none can be neither. A Claim whose citations could not be read refuses the
+    inventory, as the fold does.
     """
 
     from cruxible_core.service.discovery.next import _CitationCommitment
@@ -2423,8 +2535,11 @@ def _served_citations(
         "original_start,original_end,whole_source,lineage_note,set_arguments"
     )
     found = (
-        connection.execute(f"SELECT {columns} FROM citation_commitments").fetchall()
-        if citations == "all"
+        connection.execute(
+            f"SELECT {columns} FROM citation_commitments INDEXED BY citation_commitments_by_source "
+            "WHERE source_id IS NOT NULL AND source_digest IS NOT NULL"
+        ).fetchall()
+        if citations == "sources"
         else _rows(
             connection,
             f"SELECT {columns} FROM citation_commitments WHERE citation_id IN ({{marks}})",
@@ -2610,18 +2725,22 @@ def claim_status_tally(
     worker has not yet followed is replayed from the overlay and every fact
     that does not hold at ``evaluation_time`` is derived again, so a worker
     behind or an instant past an interval costs the change, not the
-    population. None only where next folds (cold, disabled, historical,
-    unstable) or a live Claim's slot did not resolve.
+    population. None only where next folds (cold, disabled, historical) or a
+    live Claim's slot did not resolve; logs that keep moving refuse
+    (``ReadInputsMovingError``), as a next read does.
     """
 
-    counts = _serving(
+    served = _serving(
         instance,
         coordinate=coordinate,
         door_head=None,
         evaluation_time=evaluation_time,
         read=lambda connection: dict(connection.execute("SELECT status,count FROM tally")),
     )
-    if counts is None or counts.get("error"):
+    if served is None:
+        return None
+    counts, _heads_read = served
+    if counts.get("error"):
         return None
     return {status: int(counts.get(status, 0)) for status in TALLY_STATUSES[:-1]}
 

@@ -334,7 +334,14 @@ class ProjectionCheckContext:
         facts_reader: _AcceptedQueryFactsRead | None = None,
         verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
         resolution_statuses: Mapping[str, str] | None = None,
+        backed_states: Mapping[str, tuple[str, bool] | None] | None = None,
     ) -> None:
+        """``backed_states`` are maintained answers for the live backed Claims, by
+        qualified identity: (resolution status, visible under the projection
+        policy), as next's facts keep them at this coordinate and instant. A
+        backed Claim absent from them is not live. With every answer present
+        (none None) the backings' verdicts are not derived here."""
+
         self.instance = instance
         self.coordinate = coordinate
         self.accepted = AcceptedCoordinate.from_internal(coordinate)
@@ -352,6 +359,17 @@ class ProjectionCheckContext:
         self.queries: dict[bytes, ProjectionQueryBacking | CruxibleError | ValueError] = {}
         self.statuses: Mapping[str, str] | None = resolution_statuses
         self.visible_claim_ids: frozenset[str] | None = None
+        if backed_states is not None and all(state is not None for state in backed_states.values()):
+            known = {
+                identity: state for identity, state in backed_states.items() if state is not None
+            }
+            self.statuses = {
+                identity.removeprefix("Claim:"): status
+                for identity, (status, _visible) in known.items()
+            }
+            self.visible_claim_ids = frozenset(
+                identity for identity, (_status, visible) in known.items() if visible
+            )
         self.claim_ids = {
             b.identity.qualified
             for stamp in stamps

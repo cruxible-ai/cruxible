@@ -78,6 +78,7 @@ from cruxible_client.contracts.declared_blocks import (
     PresentationPolicyAny,
     PresentationPolicyNote,
     PresentationPolicyV1,
+    ProjectionClaimBacking,
     ProjectionCoverageObservation,
     ProjectionMarkerSummary,
     upgrade_presentation_policy,
@@ -110,6 +111,7 @@ from cruxible_core.coverage.contracts import (
 from cruxible_core.coverage.indexes import (
     WorkingOccurrence,
 )
+from cruxible_core.errors import ReadInputsMovingError
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.typed_state import utc_microseconds
@@ -4006,15 +4008,35 @@ def _workspace_items(
 
 
 def _citation_request(observation: NextWorkspaceObservation | None) -> CitationRequest:
-    """The citation commitments a workspace observation asks about: its drifted ids, or all."""
+    """The citation commitments a workspace observation asks about: its drifted ids, or
+    every commitment naming a source (an unobserved source's is a row too)."""
 
     if observation is None:
         return None
     if observation.drift_observations is not None:
         return tuple(drift.citation_id for drift in observation.drift_observations)
     if observation.source_observations is not None:
-        return "all"
+        return "sources"
     return None
+
+
+def _backed_claims(observation: NextWorkspaceObservation | None) -> tuple[str, ...]:
+    """The Claims the observed projection markers are backed by: what their checks read."""
+
+    if observation is None or observation.source_observations is None:
+        return ()
+    return tuple(
+        sorted(
+            {
+                backing.identity.qualified
+                for source in observation.source_observations
+                if isinstance(source, (NextSourceObservationV3, NextSourceObservation))
+                for marker in source.marker_summaries
+                for backing in marker.stamp.backing
+                if isinstance(backing, ProjectionClaimBacking)
+            }
+        )
+    )
 
 
 def _consumer_healths(
@@ -5290,8 +5312,17 @@ def _projection_items(
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
     resolution_statuses: Mapping[str, str] | None = None,
+    served: ServedRows | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
-    """Report shared currency assessments without suppressing sibling findings."""
+    """Report shared currency assessments without suppressing sibling findings.
+
+    With ``served`` stored rows, the Claim backings' statuses and visibility are
+    the maintained ones the same read took, and each query backing is evaluated
+    over only its own predicates' facts, as the query verb serves it: query
+    evaluation reads the verdict inputs of the Claims it selects (and their
+    Subjects and Providers), which next's facts do not keep, so no maintained
+    state can stand in for it. Folding, they share the request's facts.
+    """
 
     if (
         observation is None
@@ -5353,9 +5384,10 @@ def _projection_items(
         coordinate=coordinate,
         evaluation_time=evaluation_time,
         stamps=tuple(marker.stamp for source in sources for marker in source.marker_summaries),
-        facts_reader=facts_reader,
+        facts_reader=facts_reader if served is None else None,
         verdicts_by_identity=verdicts_by_identity,
         resolution_statuses=resolution_statuses,
+        backed_states=None if served is None else served.backed,
     )
     for source in sources:
         for marker in source.marker_summaries:
@@ -5747,7 +5779,7 @@ def _next_queue(
     public_coordinate = AcceptedCoordinate.from_internal(coordinate)
     store = instance.claim_attestation_evidence_store()
     attestation_head = request.at_attestation_head_digest or store.head()
-    from cruxible_core.consumers.next.facts import served_claim_rows
+    from cruxible_core.consumers.next.facts import served_claim_rows, served_inputs_hold
 
     # The stored rows serve a read at the head; the fold serves the rest.
     stored = (
@@ -5758,6 +5790,7 @@ def _next_queue(
             evaluation_time=request.evaluation_time,
             expiring_within=request.expiring_within,
             citations=_citation_request(request.workspace_observation),
+            backed=_backed_claims(request.workspace_observation),
         )
         if request.access_profile.permits("instance")
         else None
@@ -5850,6 +5883,7 @@ def _next_queue(
             verdicts_by_identity=verdicts_by_identity,
             facts_reader=facts_reader,
             resolution_statuses=resolution_statuses,
+            served=stored,
         ),
         *_document_items(
             instance,
@@ -5929,6 +5963,12 @@ def _next_queue(
         else None
     )
     items, held = _caller_queue(found, caller, holds)
+    if stored is not None and not served_inputs_hold(instance, stored):
+        # A row family read after the stored rows (a projection query's evidence)
+        # saw a later state than they did: no one state answers this queue.
+        raise ReadInputsMovingError(
+            "the logs next's stored rows were read from moved while the rest of the queue was read"
+        )
     return _NextQueue(
         coordinate,
         attestation_head,

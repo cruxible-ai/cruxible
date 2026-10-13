@@ -29,8 +29,10 @@ from cruxible_client.contracts.claims import claim_statement_digest
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_core.consumers.next import facts, rows
 from cruxible_core.coverage.contracts import CoverageAccessProfile
+from cruxible_core.errors import ReadInputsMovingError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.typed_state import utc_microseconds
+from cruxible_core.server.errors import error_to_response
 from cruxible_core.service.discovery import next as next_module
 from cruxible_core.service.discovery.next import (
     DEFAULT_EXPIRING_WITHIN_MICROSECONDS,
@@ -1107,9 +1109,12 @@ def test_a_catch_up_read_serves_rows_from_one_landing_state(tmp_path: Path) -> N
     _assert_equivalent(instance, EVALUATION_TIME)
 
 
-def test_a_read_with_a_landing_in_flight_waits_for_its_completion_or_folds(
+def test_a_read_with_a_landing_in_flight_refuses_retryably_and_never_folds(
     tmp_path: Path,
 ) -> None:
+    """F-006: between a landing's intent and its completion the body may move, so no
+    attempt serves; the read refuses (typed, retryable) rather than fold the moving logs."""
+
     from cruxible_core.storage.landing_log import LandingLog
 
     instance, _owner = seed_claims(tmp_path)
@@ -1121,18 +1126,149 @@ def test_a_read_with_a_landing_in_flight_waits_for_its_completion_or_folds(
     def in_flight(log, kind, digest, *, sync):  # type: ignore[no-untyped-def]
         result = original(log, kind, digest, sync=sync)
         if kind == "store" and not seen:
-            # Between the intent and its completion the body may move: no read serves.
-            seen.append(_served(instance, EVALUATION_TIME))
+            with _no_fold():
+                try:
+                    _served(instance, EVALUATION_TIME)
+                except ReadInputsMovingError as exc:
+                    seen.append(exc.error_code)
         return result
 
     with patch.object(LandingLog, "_append", in_flight):
         store.store(b"landing while a read runs\n")
-    assert seen == [None]
+    assert seen == ["cruxible.read.inputs_moving"]
+    status, body = error_to_response(ReadInputsMovingError("moving"))
+    assert (status, body.context, body.repair) == (503, {"retryable": True}, None)
     _assert_equivalent(instance, EVALUATION_TIME)
 
 
+def test_a_read_whose_logs_keep_moving_refuses_instead_of_folding_a_mix(
+    tmp_path: Path,
+) -> None:
+    """F-006: a landing after every settled attempt exhausts the attempts; the fold that
+    used to follow read one body absent, then the other, and served neither stale row.
+    next, the summary, orient and the hold flags now refuse instead, folding nothing."""
+
+    from cruxible_client.contracts.claim_types import ClaimType
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+    from tests.test_claims.test_claims import _claim_type
+
+    claim_type = ClaimType.model_validate(
+        {
+            **_claim_type().model_dump(mode="json"),
+            "artifact_format": "playbill-claim-type-v3",
+            "evidence_freshness": {"stale_after": {"microseconds": 1_000_000}},
+        }
+    )
+    instance, _owner = seed_claims(tmp_path, claim_type_override=claim_type)
+    _drain(instance)
+    store = instance.body_store()
+    store.erase(store.digest_bytes(b"status: ready").tagged)
+    settled = facts._settled_overlay
+    attempts: list[int] = []
+    landings = iter(range(1_000))
+
+    def move_after_settlement(*args, **kwargs):  # type: ignore[no-untyped-def]
+        result = settled(*args, **kwargs)
+        attempts.append(len(attempts))
+        # New bytes each time: a body already present lands nothing.
+        store.store(f"uncited racing landing {next(landings)}".encode())
+        return result
+
+    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
+    reads = (
+        lambda: service_playbill_next(instance, request=request),
+        lambda: summarize_playbill_next(instance, request=request),
+        lambda: service_playbill_orient(instance, evaluation_time=EVALUATION_TIME),
+        lambda: claim_unsure_holds(
+            instance,
+            coordinate=instance.accepted_coordinate(),
+            claims=tuple(_all_claims(instance)),
+            evaluation_time=EVALUATION_TIME,
+        ),
+    )
+    for read in reads:
+        attempts.clear()
+        facts._OVERLAYS.clear()
+        with (
+            patch.object(facts, "_settled_overlay", move_after_settlement),
+            patch(
+                "cruxible_core.service.discovery.claim_status.claim_resolution_statuses",
+                side_effect=AssertionError("population fold"),
+            ),
+            _no_fold(),
+            pytest.raises(ReadInputsMovingError),
+        ):
+            read()
+        assert len(attempts) == facts._ATTEMPTS
+    # Once the logs stand still the same read serves, exactly as the fold.
+    _assert_equivalent(instance, EVALUATION_TIME)
+
+
+def test_live_state_read_after_the_stored_rows_is_checked_against_their_heads(
+    tmp_path: Path,
+) -> None:
+    """F-006: a projection check evaluates its query over live evidence after the stored
+    rows were read; a landing in between leaves no one state behind the queue: it refuses."""
+
+    from cruxible_core.service.authoring.projection_sync import ProjectionCheckContext
+    from tests.test_discovery.test_next_request_reads import _rich_request
+    from tests.test_query.test_query_execution_service import _instance_with_query
+
+    instance, _owner = _instance_with_query(tmp_path)
+    request = _rich_request(instance)
+    _drain(instance, request.evaluation_time)
+    query = ProjectionCheckContext._query
+
+    def landing_meanwhile(self, backing):  # type: ignore[no-untyped-def]
+        instance.body_store().store(b"a landing while the projection query runs")
+        return query(self, backing)
+
+    with (
+        patch.object(ProjectionCheckContext, "_query", landing_meanwhile),
+        pytest.raises(ReadInputsMovingError),
+    ):
+        service_playbill_next(instance, request=request)
+    warm = service_playbill_next(instance, request=request)
+    with _oracle_only():
+        assert (
+            warm.model_dump_json()
+            == service_playbill_next(instance, request=request).model_dump_json()
+        )
+
+
+@contextmanager
+def _maintained_workspace_reads() -> Iterator[list[tuple[str, ...] | None]]:
+    """No citation inventory fold, no backed-Claim verdict derivation, and the query facts
+    each projection check builds: scoped to its predicates, never the whole population."""
+
+    from cruxible_core.service.authoring.projection_sync import ProjectionCheckContext
+    from cruxible_core.service.discovery import query as query_module
+
+    build = query_module._AcceptedQueryFactsRead.build
+    scopes: list[tuple[str, ...] | None] = []
+
+    def scoped(self, **kwargs):  # type: ignore[no-untyped-def]
+        scopes.append(self._predicates)
+        return build(self, **kwargs)
+
+    with (
+        patch.object(
+            next_module, "_citation_commitments", side_effect=AssertionError("inventory fold")
+        ),
+        patch.object(
+            ProjectionCheckContext,
+            "_resolve_backed_claims",
+            side_effect=AssertionError("backing verdicts derived"),
+        ),
+        patch.object(query_module._AcceptedQueryFactsRead, "build", scoped),
+    ):
+        yield scopes
+
+
 def test_workspace_reads_take_citations_from_the_maintained_table(tmp_path: Path) -> None:
-    """F-007: warm and behind workspace reads never rebuild the citation inventory."""
+    """F-007: warm and behind workspace reads never rebuild the citation inventory, take
+    their projection backings' statuses and visibility from the facts, and evaluate each
+    backing query over its own predicates only."""
 
     from tests.test_discovery.test_next_request_reads import _rich_request
     from tests.test_query.test_query_execution_service import _instance_with_query
@@ -1140,16 +1276,14 @@ def test_workspace_reads_take_citations_from_the_maintained_table(tmp_path: Path
     instance, owner = _instance_with_query(tmp_path)
     request = _rich_request(instance)
     _drain(instance, request.evaluation_time)
-    forbidden = patch.object(
-        next_module, "_citation_commitments", side_effect=AssertionError("inventory fold")
-    )
-    with forbidden:
+    with _maintained_workspace_reads() as scopes:
         warm = service_playbill_next(instance, request=request)
     with _oracle_only():
         assert (
             warm.model_dump_json()
             == service_playbill_next(instance, request=request).model_dump_json()
         )
+    assert scopes and None not in scopes
     # Behind: a door event the worker has not followed.
     _attest(
         instance,
@@ -1158,8 +1292,9 @@ def test_workspace_reads_take_citations_from_the_maintained_table(tmp_path: Path
         tmp_path,
         at=request.evaluation_time - timedelta(minutes=1),
     )
-    with forbidden:
+    with _maintained_workspace_reads() as scopes:
         behind = service_playbill_next(instance, request=request)
+    assert scopes and None not in scopes
     with _oracle_only():
         assert (
             behind.model_dump_json()
@@ -1169,8 +1304,91 @@ def test_workspace_reads_take_citations_from_the_maintained_table(tmp_path: Path
     _drain(instance, request.evaluation_time)
     with sqlite3.connect(facts._STATE.path(instance)) as connection:
         connection.execute("UPDATE claim_facts SET citation_error='CasError'")
-    with forbidden, pytest.raises(next_module.NextAcceptedStateInvalid, match="citation"):
+    with (
+        _maintained_workspace_reads(),
+        pytest.raises(next_module.NextAcceptedStateInvalid, match="citation"),
+    ):
         service_playbill_next(instance, request=request)
+
+
+def _vm_steps(connection: sqlite3.Connection, read: Any) -> int:
+    count = [0]
+
+    def tick() -> int:
+        count[0] += 1
+        return 0
+
+    connection.set_progress_handler(tick, 1)
+    try:
+        read()
+    finally:
+        connection.set_progress_handler(None, 0)
+    return count[0]
+
+
+def test_source_observations_read_only_source_citations_by_index() -> None:
+    """F-007: a source observation reads the commitments naming a source (every one is a
+    row or a check), never the others: the same work at 100 and 10,000 of those."""
+
+    steps = []
+    for size in (100, 10_000):
+        connection = sqlite3.connect(":memory:")
+        connection.executescript(facts._SCHEMA)
+        connection.executemany(
+            "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                (f"Claim:{i}", f"citation:{i}", "sha256:" + "a" * 64, 1, None, None)
+                + (None, None, 0, None, None)
+                for i in range(size)
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                (f"Claim:s{i}", f"citation:s{i}", "sha256:" + "b" * 64, 1, "fixture.items")
+                + ("sha256:" + "c" * 64, 0, 1, 0, None, None)
+                for i in range(3)
+            ),
+        )
+        found: list[Any] = []
+        steps.append(
+            _vm_steps(
+                connection,
+                lambda connection=connection: found.append(
+                    facts._served_citations(connection, "sources")
+                ),
+            )
+        )
+        commitments, error = found[0]
+        assert not error and sorted(commitments) == [f"citation:s{i}" for i in range(3)]
+    assert steps[0] == steps[1], steps
+
+
+def test_a_selected_read_seeks_only_its_own_broken_keys() -> None:
+    """F-012: a read of a few Claims looks up their keys' errors one seek each; it never
+    walks the instance's other broken keys."""
+
+    steps = []
+    for size in (100, 10_000):
+        connection = sqlite3.connect(":memory:")
+        connection.executescript(facts._SCHEMA)
+        connection.executemany(
+            "INSERT INTO row_keys VALUES (?,?,NULL,NULL,?,?)",
+            ((rows.THRESHOLD, f"Claim:unrelated-{i}", "CasError", "x") for i in range(size)),
+        )
+        steps.append(
+            _vm_steps(
+                connection,
+                lambda connection=connection: facts._refuse_errors(
+                    None,
+                    connection,
+                    coordinate=None,  # type: ignore[arg-type]
+                    evaluation_time=EVALUATION_TIME,
+                    keys={(rows.THRESHOLD, "Claim:requested"), (rows.DOOR, "Claim:requested")},
+                ),
+            )
+        )
+    assert steps[0] == steps[1], steps
 
 
 def test_orient_behind_the_worker_counts_from_the_overlay(tmp_path: Path) -> None:
@@ -1214,7 +1432,7 @@ def test_broken_keys_refuse_in_the_folds_order(tmp_path: Path) -> None:
         patch.object(
             next_module, "_claim_threshold_rows", side_effect=ProposalIntegrityError("first")
         ),
-        patch.object(rows, "door_key", side_effect=CasError("second")),
+        patch.object(rows, "door_keys", side_effect=CasError("second")),
     ):
         served = _outcome(instance, EVALUATION_TIME)
         with _oracle_only():
@@ -1251,6 +1469,64 @@ def test_broken_keys_refuse_in_the_folds_order(tmp_path: Path) -> None:
             assert served == _outcome(instance, EVALUATION_TIME)
     assert served[0] == "CasError"
     assert next_module._DoorFold.rows is fold_rows
+
+
+def test_door_refusal_follows_the_first_failing_observation_across_claims(
+    tmp_path: Path,
+) -> None:
+    """F-009: observations A1, B2, A3 in chain order; A1 succeeds, B2 and A3 fail. The
+    fold stops at B2, so the stored read must too, though A's key comes first."""
+
+    from cruxible_client.contracts.errors import CasError, ProposalIntegrityError
+    from tests.test_consumers.test_next_incremental import World, _door_capture
+
+    instance, owner = seed_claims(tmp_path)
+    _drain(instance)
+    state = World(instance=instance, owner=owner, root=tmp_path, rng=None)  # type: ignore[arg-type]
+    first, second = sorted(_all_claims(instance), key=lambda c: c.identity.qualified)[:2]
+    head = instance.claim_attestation_evidence_store().head()
+    for index, target in enumerate((first, second, first)):
+        _attest(
+            instance,
+            owner,
+            target,
+            tmp_path,
+            at=EVALUATION_TIME - timedelta(minutes=3 - index),
+            basis="new_capture",
+            stance="support",
+            captures=(_door_capture(state, target.identity.name),),
+        )
+    _head, events = instance.claim_attestation_evidence_store().events_after(head)
+    assert [payload.attestation.statement.claim_identity for _, _, payload in events] == [
+        first.identity,
+        second.identity,
+        first.identity,
+    ]
+    failures = {
+        events[1][1].event_digest: CasError,
+        events[2][1].event_digest: ProposalIntegrityError,
+    }
+    fold_rows = next_module._DoorFold.rows
+
+    def broken(self, envelope, **kwargs):  # type: ignore[no-untyped-def]
+        error = failures.get(kwargs["event_digest"])
+        if error is not None:
+            raise error("failure at this observation")
+        return fold_rows(self, envelope, **kwargs)
+
+    with patch.object(next_module._DoorFold, "rows", broken):
+        _drain(instance)
+        tables = facts.stored_tables(instance)
+        assert tables is not None
+        broken_doors = {
+            row[1]: row[4] for row in tables["row_keys"] if row[0] == rows.DOOR and row[4]
+        }
+        assert set(broken_doors) == {first.identity.qualified, second.identity.qualified}
+        served = _outcome(instance, EVALUATION_TIME)
+        with _oracle_only():
+            folded = _outcome(instance, EVALUATION_TIME)
+    assert served == folded
+    assert served[0] == "CasError"
 
 
 @pytest.mark.parametrize("mutation", ("extra", "missing"))

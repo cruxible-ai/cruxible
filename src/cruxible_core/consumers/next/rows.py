@@ -24,6 +24,7 @@ import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
@@ -406,75 +407,129 @@ def slot_rows(
 def door_key(context: RowContext, claim_id: str) -> KeyRows | None:
     """One Claim's new-capture door rows, in the fold's observation order."""
 
+    return door_keys(context, (claim_id,))[claim_id]
+
+
+@dataclass
+class _DoorPlan:
+    """One Claim's door derivation in progress: its fold and what it has produced."""
+
+    result: KeyRows
+    fold: Any
+    boundaries: set[datetime] = field(default_factory=set)
+
+
+def door_keys(context: RowContext, claim_ids: Iterable[str]) -> dict[str, KeyRows | None]:
+    """These Claims' door rows, their observations taken in the fold's one global order.
+
+    The fold takes every new-capture observation in a single sequence: the door
+    events in chain order, then the accepted attestations no event carries, by
+    attestation instant and envelope digest. Each Claim keeps its own rows and
+    reads, exactly as a key derived alone; taking the observations of several
+    Claims together, in that sequence, means a strict derivation fails at the
+    observation the fold first fails at, however the Claims interleave.
+    """
+
     from cruxible_client.contracts.claim_attestations import claim_attestation_v2_envelope_digest
     from cruxible_core.service.claims.claims import claim_law_evidence_by_artifact_for_path
     from cruxible_core.service.discovery.next import _DoorFold
 
-    result = KeyRows(DOOR, claim_id)
-    boundaries: set[datetime] = set()
-    try:
-        events = context.door_events(claim_id, basis="new_capture")
-        with context.instance.bind_accepted_projection(context.coordinate) as projection:
-            accepted = projection.typed.claim_attestations(
-                basis="new_capture", claim_identities=(claim_id,)
-            )
-        seen = {
-            claim_attestation_v2_envelope_digest(payload.attestation)
-            for _position, _event, payload in events
-        }
-        observations: list[tuple[tuple[Any, ...], Any, str | None, bool | None]] = [
-            ((0, position), payload.attestation, event.event_digest, payload.current_at_append)
-            for position, event, payload in events
-        ]
-        observations.extend(
-            (
+    found: dict[str, KeyRows | None] = {}
+    plans: dict[str, _DoorPlan] = {}
+    observations: list[tuple[tuple[Any, ...], str, Any, str | None, bool | None]] = []
+    for claim_id in sorted(set(claim_ids)):
+        result = KeyRows(DOOR, claim_id)
+        try:
+            events = context.door_events(claim_id, basis="new_capture")
+            with context.instance.bind_accepted_projection(context.coordinate) as projection:
+                accepted = projection.typed.claim_attestations(
+                    basis="new_capture", claim_identities=(claim_id,)
+                )
+            seen = {
+                claim_attestation_v2_envelope_digest(payload.attestation)
+                for _position, _event, payload in events
+            }
+            mine: list[tuple[tuple[Any, ...], str, Any, str | None, bool | None]] = [
                 (
-                    1,
-                    utc_microseconds(envelope.statement.attested_at),
-                    claim_attestation_v2_envelope_digest(envelope),
-                ),
-                envelope,
-                None,
-                None,
+                    (0, position),
+                    claim_id,
+                    payload.attestation,
+                    event.event_digest,
+                    payload.current_at_append,
+                )
+                for position, event, payload in events
+            ]
+            mine.extend(
+                (
+                    (
+                        1,
+                        utc_microseconds(envelope.statement.attested_at),
+                        claim_attestation_v2_envelope_digest(envelope),
+                    ),
+                    claim_id,
+                    envelope,
+                    None,
+                    None,
+                )
+                for envelope in accepted
+                if claim_attestation_v2_envelope_digest(envelope) not in seen
             )
-            for envelope in accepted
-            if claim_attestation_v2_envelope_digest(envelope) not in seen
-        )
-        if not observations:
-            return None
-        fold = _DoorFold(
-            context.instance,
-            context.coordinate,
-            law_by_artifact=lambda: claim_law_evidence_by_artifact_for_path(
+            if not mine:
+                found[claim_id] = None
+                continue
+            fold = _DoorFold(
                 context.instance,
-                at=context.coordinate,
-                path=claim_path(claim_id.removeprefix("Claim:")),
-            ),
-            claim_types=context.set_types,
-        )
-        for order, envelope, event_digest, current_at_append in observations:
-            rows = fold.rows(
+                context.coordinate,
+                law_by_artifact=partial(
+                    claim_law_evidence_by_artifact_for_path,
+                    context.instance,
+                    at=context.coordinate,
+                    path=claim_path(claim_id.removeprefix("Claim:")),
+                ),
+                claim_types=context.set_types,
+            )
+        except Exception as exc:  # noqa: BLE001 - recorded, and raised again on read
+            if context.strict:
+                raise
+            result.error = (_error_code(exc), str(exc))
+            found[claim_id] = result
+            continue
+        plans[claim_id] = _DoorPlan(result, fold)
+        observations.extend(mine)
+    for order, claim_id, envelope, event_digest, current_at_append in sorted(
+        observations, key=lambda observation: observation[0]
+    ):
+        plan = plans[claim_id]
+        if plan.result.error is not None:
+            continue
+        try:
+            rows = plan.fold.rows(
                 envelope,
                 event_digest=event_digest,
                 current_at_append=current_at_append,
                 evaluation_time=context.at,
-                time_boundaries=boundaries,
+                time_boundaries=plan.boundaries,
             )
-            result.rows.extend(
-                ((FAMILY_RANK[DOOR], *order, ordinal), row) for ordinal, row in enumerate(rows)
+        except Exception as exc:  # noqa: BLE001 - recorded, and raised again on read
+            if context.strict:
+                raise
+            plan.result.rows = []
+            plan.result.error = (_error_code(exc), str(exc))
+            continue
+        plan.result.rows.extend(
+            ((FAMILY_RANK[DOOR], *order, ordinal), row) for ordinal, row in enumerate(rows)
+        )
+        plan.result.reads.update(
+            f"capture:{digest}" for digest in envelope.statement.cited_capture_digests
+        )
+    for claim_id, plan in plans.items():
+        if plan.result.error is None:
+            plan.result.reads.update(
+                f"capture:{digest}" for digest in plan.fold.read_captures(claim_id)
             )
-            result.reads.update(
-                f"capture:{digest}" for digest in envelope.statement.cited_capture_digests
-            )
-        result.reads.update(f"capture:{digest}" for digest in fold.read_captures(claim_id))
-    except Exception as exc:  # noqa: BLE001 - recorded, and raised again on read
-        if context.strict:
-            raise
-        result.rows = []
-        result.error = (_error_code(exc), str(exc))
-        return result
-    result.lower, result.upper = _boundary_interval(boundaries, context.at)
-    return result
+            plan.result.lower, plan.result.upper = _boundary_interval(plan.boundaries, context.at)
+        found[claim_id] = plan.result
+    return found
 
 
 def source_key(context: RowContext, claim_id: str) -> KeyRows | None:
@@ -772,6 +827,7 @@ __all__ = [
     "apply_dependents",
     "derive",
     "derive_one",
+    "door_keys",
     "res_slot_of",
     "slot_key",
     "stored_rows",
