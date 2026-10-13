@@ -563,16 +563,6 @@ _SETTLE = (
     "service/discovery/query.py:626; via procedures/proposal_delivery.py:2014 and "
     "proposals/proposals.py:4554)"
 )
-_NEW_CAPTURE = (
-    "audit#8: a new_capture attestation walks every tree item, reading each blob "
-    "(evidence/attestation_verification.py:222 -> :160 _provider_digests -> "
-    "indexes/evaluated_state.py:74 -> service/evidence/evidence.py:303)"
-)
-_COLD_REBUILD = (
-    "audit#5: a generation with a member kind outside _LOCAL_KINDS "
-    "(compiler/projection_delta.py:45-60) takes the cold projection rebuild, reading and "
-    "compiling every artifact (compiler/assembler.py:403-443 via ledger/activation.py:147)"
-)
 _BODY_STORE = (
     "audit#1: storing one body moves the instance-wide evidence token "
     "(storage/cas.py:426-450), so the next queue tick refolds every Claim "
@@ -609,15 +599,6 @@ _LAW_HEAD = (
     "a law-location lookup per Claim (indexes/history/history_index.py:686 via "
     "service/evidence/evidence.py:926, from service/discovery/query.py:493)"
 )
-_COLD_REBUILD_SQL = (
-    "audit#5: the cold projection rebuild writes every row of a fresh projection piece "
-    "(indexes/typed_state.py:786-836, indexes/evidence/citation_sql.py:141), digests "
-    "every row (indexes/sqlite.py:514 -> indexes/typed_sqlite.py:541-544), and per keyed "
-    "Subject looks up its key Claims with a statement SQLite plans as a walk of every live "
-    "Claim (indexes/subject_identity.py:291 live_key_claims via :209 subject_key_of, :280 "
-    "refresh_subject_keys, from indexes/typed_sqlite.py:424: SEARCH claims USING INDEX "
-    "claims_by_lifecycle, for ORDER BY identity), 37x the steps for 10x the Claims"
-)
 _DIGESTS = ("canonical_encodes", "canonical_digests")
 
 
@@ -627,7 +608,7 @@ def _grows(reason: str, *counters: str) -> dict[str, str]:
 
 GROWS: dict[str, dict[str, str]] = {
     "tick.after_generation.floor": {
-        **_grows(_FLOOR_PARSE, "claim_parses", *_DIGESTS),
+        **_grows(_FLOOR_PARSE, "claim_parses", "canonical_encodes"),
         "git_blob_reads": (
             "audit#11: each floor refresh reads every Claim blob "
             "(service/floor/floor_index.py:269 -> indexes/typed_state.py:959 prefetch_members)"
@@ -768,25 +749,6 @@ GROWS: dict[str, dict[str, str]] = {
         "sql_vm_steps": _ORIENT_FOLD + _FOLD_SQL,
     },
     "procedure.settle": _grows(_SETTLE, "claim_parses", *_DIGESTS, "file_opens", "git_blob_reads"),
-    "attestation.new_capture": {
-        **_grows(_NEW_CAPTURE, "sql_statements", "git_blob_reads"),
-        "sql_vm_steps": _NEW_CAPTURE + _BLOB_READS,
-    },
-    **{
-        route: {
-            **_grows(
-                _COLD_REBUILD,
-                "claim_parses",
-                *_DIGESTS,
-                "file_opens",
-                "sql_statements",
-                "cas_body_reads",
-                "git_blob_reads",
-            ),
-            "sql_vm_steps": _COLD_REBUILD_SQL,
-        }
-        for route in ("authoring.attestation_member", "authoring.trigger_member")
-    },
     "tick.after_body_store.queue": {
         **_grows(
             _BODY_STORE,
