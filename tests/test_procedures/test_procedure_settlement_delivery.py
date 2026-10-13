@@ -441,6 +441,54 @@ def test_a_true_condition_settles_the_claim_into_accepted_state(tmp_path: Path) 
     assert record.mandate_digest == egress.procedure_mandate_digest
 
 
+def test_a_settle_submits_its_lowered_fork_with_the_full_tree_verdicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The settle terminal hands admission the lowered fork, not a whole-tree copy (perf B2).
+
+    Receive validation then judges the fork from its edits and evaluation
+    advances the accepted base over the changed paths. The verdicts are the
+    whole-tree ones: the full receive pass accepts a plain copy of the same tree,
+    and evaluating that copy yields the same candidate and diagnostics.
+    """
+
+    from cruxible_core.derived.derived_state import SnapshotTree
+    from cruxible_core.proposals import proposals as service
+
+    instance, root, line = settle_world(tmp_path)
+    real_fork, real_validate = service._receives_as_fork, service.validate_proposal_tree
+    real_evaluate = service.evaluate_proposal_tree
+    received: list[bool] = []
+    evaluated: list[str | None] = []
+
+    def receives_as_fork(tree, *, limits, base_tree):  # type: ignore[no-untyped-def]
+        verdict = real_fork(tree, limits=limits, base_tree=base_tree)
+        if isinstance(tree, SnapshotTree):
+            received.append(verdict)
+            if verdict:
+                # The whole-tree pass over plain copies accepts the same tree.
+                real_validate(dict(tree), limits=limits, base_tree=dict(base_tree))
+        return verdict
+
+    def evaluate(**kwargs):  # type: ignore[no-untyped-def]
+        outcome = real_evaluate(**kwargs)
+        copied = real_evaluate(**{**kwargs, "proposed_tree": dict(kwargs["proposed_tree"])})
+        assert copied.diagnostics == outcome.diagnostics
+        assert (copied.candidate is None) == (outcome.candidate is None)
+        digest = None if outcome.candidate is None else outcome.candidate.candidate_digest
+        assert digest == (None if copied.candidate is None else copied.candidate.candidate_digest)
+        evaluated.append(digest)
+        return outcome
+
+    monkeypatch.setattr(service, "_receives_as_fork", receives_as_fork)
+    monkeypatch.setattr(service, "evaluate_proposal_tree", evaluate)
+    state = run_settle(instance, root, line)
+    egress = _egress(state)
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "settled")
+    assert received == [True]
+    assert len(evaluated) == 1 and evaluated[0] is not None
+
+
 def test_a_false_condition_falls_back_to_an_ordinary_proposal(tmp_path: Path) -> None:
     instance, root, line = settle_world(tmp_path, only_subject="someone-else")
     base = instance.accepted_coordinate()

@@ -437,7 +437,9 @@ def test_live_slot_claim_reads_seek_the_subject_predicate_index():
     with sqlite3.connect(":memory:") as connection:
         connection.executescript(schema_sql())
         for statement, params in _slot_reads():
-            plan = [str(row[3]) for row in connection.execute("EXPLAIN QUERY PLAN " + statement, params)]
+            plan = [
+                str(row[3]) for row in connection.execute("EXPLAIN QUERY PLAN " + statement, params)
+            ]
             assert plan[0].startswith("SEARCH claims USING INDEX claims_by_subject_predicate"), plan
             assert "(subject_path=? AND predicate=?" in plan[0], plan
 
@@ -456,7 +458,12 @@ def test_live_slot_claim_reads_seek_the_subject_predicate_index():
                 found = connection.execute(statement, params).fetchall()
                 connection.set_progress_handler(None, 1)
                 # The unplussed statement (the old planner choice) answers identically.
-                assert found == connection.execute(statement.replace("+lifecycle", "lifecycle"), params).fetchall()
+                assert (
+                    found
+                    == connection.execute(
+                        statement.replace("+lifecycle", "lifecycle"), params
+                    ).fetchall()
+                )
                 assert [row[0] for row in found] == ["Claim:CLM-" + f"{1:032d}"]
                 counts.append(steps[0])
             return counts
