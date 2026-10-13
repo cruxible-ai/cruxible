@@ -538,6 +538,23 @@ class ProposalIndex:
         self._stamp = after
         self._remember(evidence.root, marker)
 
+    def _seed_clean_stamp(self, root: Path, marker: dict[str, Any], stamp: tuple[int, ...]) -> None:
+        """Adopt a clean checkpoint a snapshot just proved, as a locked sync would.
+
+        Until this process has synchronized once, ``_stamp`` is unknown, so a
+        history-only commit to the shared file (``database_committed``) cannot
+        carry the checkpoint forward and the next proposal read rebuilds every
+        record. A clean snapshot proves the same facts the clean branch of
+        ``_sync`` does; under the shared lock, and only while the file is still
+        at that stamp, it seeds them.
+        """
+        with self._lock:
+            if self._file_stamp() != stamp or self._marker(root) != marker:
+                return
+            self._root = root
+            self._stamp = stamp
+            self._remember(root, marker)
+
     def _remember(self, root: Path, marker: dict[str, Any]) -> None:
         self._shutdown_proof.clear()
         self._shutdown_proof.update(root=str(root), marker=json.loads(canonical_json(marker)))
@@ -590,6 +607,7 @@ class ProposalIndex:
             ):
                 connection.close()
                 return None
+            self._seed_clean_stamp(evidence.root, marker, stamp)
             connection.row_factory = sqlite3.Row
             return connection
         except BaseException:

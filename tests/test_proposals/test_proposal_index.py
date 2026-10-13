@@ -732,3 +732,43 @@ def test_a_pre_acceptance_index_is_reconstructed_on_the_current_schema(tmp_path)
             "SELECT accepted_sequence FROM proposals WHERE proposal_id=?", (proposal_id,)
         ).fetchone() == (1,)
     owner_index.close()
+
+
+def test_a_restarted_reader_carries_its_clean_checkpoint_across_history_commits(tmp_path):
+    """A clean snapshot after a restart seeds the checkpoint (perf E3).
+
+    History-only commits to the shared file then carry it forward, so the next
+    proposal read is a clean snapshot again instead of re-reading every
+    admission, evaluation and withdrawal record.
+    """
+
+    from cruxible_core.indexes.history.history_index import (
+        AcceptedHistoryIndex,
+        commit_working_write,
+    )
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    instance._accepted_history_index.close()
+    owner = AcceptedHistoryIndex(index_path)
+    reopened = ProposalEvidenceStore(
+        evidence.root, index=owner.proposals, transport=instance._ledger
+    )
+    assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    for _ in range(2):
+        # A history-only transaction, as an accepted generation's sync commits one.
+        with owner._lock:
+            writer = owner._write_connection()
+            writer.execute("BEGIN IMMEDIATE")
+            before = owner._file_stamp()
+            writer.execute("UPDATE history_progress SET sequence=sequence")
+            after = commit_working_write(writer, owner._file_stamp, before)
+            assert after != before
+            owner.proposals.database_committed(before, after)
+            writer.rollback()
+        assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    assert owner.proposals.reconstructions == 0
+    owner.close()
