@@ -148,9 +148,11 @@ cruxible get Line:LINE           # enablement state, pending work, recent runs
 cruxible next                    # stopped enablements, coverage gaps, stalled work
 ```
 
-- After a daemon restart, time it was down is not matched: `next` shows a
-  `line_coverage_gap` row with the exact `cruxible line evaluate LINE --since S
-  --until U`, which records every tick the range skipped as pending work, and
+- After a daemon restart, time it was down is not matched: when something was
+  due in it, `next` shows a `line_coverage_gap` row with the exact `cruxible
+  line evaluate LINE --since S --until U`, which records every tick the range
+  skipped as pending work (a range with nothing due is never a row, and an
+  evaluation that finds nothing reports `not_met` and succeeds), and
   `line_work_pending` while work waits for `cruxible line dispatch LINE`.
 - A settling Line whose settled items match earlier refusals (a retired Claim,
   or a rejected proposal, of the same statement on the same evidence) shows as

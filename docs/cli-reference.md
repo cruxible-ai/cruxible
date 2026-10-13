@@ -2216,9 +2216,12 @@ restart: the downtime is not matched, what the previous range matched but did
 not admit stays pending, and timed ticks lapse. For each enabled Line `next`
 then shows one `line_coverage_gap` row per range its daemon never matched
 (starting at the first tick a cadence or cron Trigger still owed, when its
-matching had fallen behind),
-naming the exact `cruxible line evaluate LINE --since S --until U` that covers
-it (the row leaves once an evaluation covers the range), and one
+matching had fallen behind) in which the Line's live Triggers would have fired:
+a tick on its schedule, a generation accepted, a Capture landed or a window
+closed. A downtime range with nothing due is recorded as evaluated at the
+restart and never listed. Each row names the exact
+`cruxible line evaluate LINE --since S --until U` that covers it (the row
+leaves once an evaluation covers the range). `next` also shows one
 `line_work_pending` row while work it matched before the restart, or that was
 evaluated explicitly, waits for `line dispatch`. Nothing evaluated or matched
 before a restart is dispatched automatically. Rebuilding the disposable event
@@ -2250,7 +2253,9 @@ anything. A cadence or cron Trigger matches every instant of its schedule in
 the range (on its Trigger version's grid or calendar, none at or before that
 version's acceptance) that no match or evaluation already delivered, so
 evaluating a `line_coverage_gap` range finds exactly the ticks the downtime
-skipped; a `--dry-run` without `--since` reports only the tick due next.
+skipped; a `--dry-run` without `--since` reports only the tick due next. A
+range that holds no occurrence reports `not_met` with "Nothing was due in this
+range; it is recorded as evaluated." and exits 0: the range is covered.
 `--dry-run` only reports what the range makes eligible -- `met`,
 `not_met`, or `incomplete`, the exact matching events/windows (each naming its
 Trigger), and each occurrence's dispatch status (pending, admitted, rejected,

@@ -249,3 +249,30 @@ def test_cli_line_dispatch_drains_past_a_full_page_that_stays_blocked(
     # reported once and stay pending, the three after them are admitted.
     assert [item["occurrence_id"] for item in items] == [item["occurrence_id"] for item in ordered]
     assert [item["status"] for item in items] == ["blocked"] * 2 + ["admitted"] * 3
+
+
+def test_cli_line_evaluate_of_a_range_with_nothing_due_succeeds_and_says_so(
+    playbill_http, tmp_path, monkeypatch
+):
+    """A range with no occurrence is covered, not failed: exit 0, "nothing was due"."""
+
+    _http, instance_id, _instance, line, _procedure, now, transport = _served_line_world(
+        playbill_http, tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(commands, "_server_call", lambda call, **_: call(transport, instance_id))
+
+    evaluated = CliRunner().invoke(
+        commands.line_group,
+        [
+            "evaluate",
+            line.identity.name,
+            "--since",
+            READ_TIME.isoformat(),
+            "--until",
+            now.isoformat(),
+        ],
+    )
+
+    assert evaluated.exit_code == 0, evaluated.output
+    assert "not_met (0 occurrences)" in evaluated.output
+    assert "Nothing was due in this range; it is recorded as evaluated." in evaluated.output
