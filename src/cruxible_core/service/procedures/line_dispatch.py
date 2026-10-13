@@ -102,8 +102,10 @@ _TRIGGER_CHANGED = (
     "The Triggers aimed at this Line changed; enable it again to run under the current ones."
 )
 
-# Idle polls need not retain a record per tick. A crash may leave at most this
-# checkpoint interval uncovered; restart never advances beyond durable coverage.
+# Idle polls need not move coverage per tick: time-only progress advances the
+# dispatch projection at most this often and is never journaled, so a restart
+# claims at most this interval uncovered beyond it (more only if the projection
+# itself is rebuilt, from the last coverage that matched something).
 _IDLE_COVERAGE_INTERVAL = timedelta(minutes=1)
 
 
@@ -991,19 +993,19 @@ def service_match_listening_lines(
                 trigger.trigger.identity.qualified in scan["done"] for trigger in triggers
             )
             detail = details[0] if details else None
-            if (
+            # Pending transitions have already landed independently. Time-only
+            # progress is never journaled and can wait (a Trigger's recorded
+            # reach only lags, which is conservative); event progress, partial
+            # scans and a timed Trigger's first reach cannot.
+            time_only = (
                 complete
                 and not continuing_scan
                 and scan["cursors"] == previous_cursors
                 and scan["through"] == session["positions"]
                 and detail == session.get("detail")
                 and scan["timed"].keys() <= session.get("trigger_until", {}).keys()
-                and now - evaluated_until < _IDLE_COVERAGE_INTERVAL
-            ):
-                # Pending transitions have already landed independently. Time-only
-                # progress can wait (a Trigger's recorded reach only lags, which
-                # is conservative); event progress, partial scans and a timed
-                # Trigger's first reach cannot.
+            )
+            if time_only and now - evaluated_until < _IDLE_COVERAGE_INTERVAL:
                 continue
             session["detail"] = detail
             if complete:
@@ -1020,7 +1022,10 @@ def service_match_listening_lines(
                 )
             else:
                 session["scan"] = scan
-            store.append(conn, "coverage", session, actor=actor, now=now)
+            if time_only:
+                store.advance_coverage(conn, session)
+            else:
+                store.append(conn, "coverage", session, actor=actor, now=now)
 
 
 _LINE_RETIRED = "The Line was retired; its enablement stopped and its pending work closed."

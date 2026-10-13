@@ -7,14 +7,15 @@ import os
 import stat
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 if TYPE_CHECKING:
     from cruxible_core.indexes.proposals.proposal_index import ProposalIndex
     from cruxible_core.ledger.git import GitLedger
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from cruxible_client.contracts.attestations import (
     ApprovalSubmission,
@@ -43,6 +44,7 @@ from cruxible_client.contracts.source_catalog import SourceCompilationManifest
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.proposals.candidate_review_summary import (
     CandidateReviewSummary,
+    candidate_review_summary_of,
     parse_candidate_evidence,
     read_candidate_bytes,
     read_candidate_review_summary,
@@ -58,7 +60,7 @@ from cruxible_core.proposals.proposals import (
     ProposalEvaluationRecord,
     ProposalWithdrawalRecord,
 )
-from cruxible_core.storage.preview_fence import is_previewing
+from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
 
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
 
@@ -106,17 +108,53 @@ def _exclusive_canonical_write(path: Path, payload: bytes) -> None:
     _fsync_directory(path.parent)
 
 
+@dataclass(frozen=True)
+class SettledCandidate:
+    """An accepted candidate and its approvals, as the change-set record settled them."""
+
+    candidate: CandidateRecordAnyVersion
+    approvals: tuple[ApprovalSubmission, ...]
+
+
+# Where a retired accepted candidate's settlement is found: candidates/<hex>.settled.
+SETTLED_CANDIDATE_SUFFIX = ".settled"
+
+
+class SettledCandidateLocator(BaseModel):
+    """Names the accepted generation whose change-set record holds a retired candidate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-settled-candidate-v1"] = "playbill-settled-candidate-v1"
+    candidate_digest: str
+    sequence: int = Field(ge=0)
+    git_oid: str
+    changeset_digest: str
+
+
 class ProposalEvidenceStore:
-    """Immutable out-of-band proposal/candidate evidence; never accepted authority."""
+    """Immutable out-of-band proposal/candidate evidence; never accepted authority.
+
+    An accepted proposal's candidate and approvals are redundant with its
+    change-set record, which carries every candidate field and the approvals
+    settlement verified. Once retired (``retire_settled_candidate``) the files
+    are gone and ``settled`` answers from the record instead, for every reader.
+    """
 
     def __init__(
-        self, root: Path, *, index: ProposalIndex | None = None, transport: GitLedger | None = None
+        self,
+        root: Path,
+        *,
+        index: ProposalIndex | None = None,
+        transport: GitLedger | None = None,
+        settled: Callable[[str], SettledCandidate | None] | None = None,
     ) -> None:
         if root.is_symlink() or not root.is_dir():
             raise ProposalIntegrityError("proposal evidence root must be an existing directory")
         self.root = root.resolve(strict=True)
         self.index = index
         self.transport = transport
+        self.settled = settled
         self._pending_records: dict[str, dict[str, Path]] | None = None
         self.proposals = self._directory("proposals")
         self.evaluations = self._directory("evaluations")
@@ -513,18 +551,107 @@ class ProposalEvidenceStore:
         )
 
     def read_candidate(self, candidate_digest_value: str) -> CandidateRecordAnyVersion:
-        """Read one canonical validated candidate by its frozen C_s digest."""
+        """Read one canonical validated candidate by its frozen C_s digest.
 
-        raw = read_candidate_bytes(self.candidates, candidate_digest_value)
-        assert raw is not None
+        A retired accepted candidate is rebuilt from its change-set record.
+        """
+
+        raw = read_candidate_bytes(
+            self.candidates, candidate_digest_value, missing_ok=self.settled is not None
+        )
+        if raw is None:
+            settled = None if self.settled is None else self.settled(candidate_digest_value)
+            if settled is None:
+                raise ProposalIntegrityError(
+                    "validated candidate evidence is missing or not a regular file"
+                )
+            return settled.candidate
         return parse_candidate_evidence(raw, expected_digest=candidate_digest_value)
 
     def read_candidate_review_summary_if_present(
         self, candidate_digest_value: str
     ) -> CandidateReviewSummary | None:
-        """Read immutable prose/parent metadata; absent interrupted writes stay absent."""
+        """Read immutable prose/parent metadata; absent interrupted writes stay absent.
 
-        return read_candidate_review_summary(self.candidates, candidate_digest_value)
+        A retired accepted candidate's metadata comes from its change-set record.
+        """
+
+        summary = read_candidate_review_summary(self.candidates, candidate_digest_value)
+        if summary is not None or self.settled is None:
+            return summary
+        settled = self.settled(candidate_digest_value)
+        return None if settled is None else candidate_review_summary_of(settled.candidate)
+
+    def read_settled_locator(self, candidate_digest_value: str) -> SettledCandidateLocator | None:
+        """The locator a retirement left for an accepted candidate, if it was retired."""
+
+        CandidateDigest.from_tagged(candidate_digest_value)
+        path = self.candidates / (
+            candidate_digest_value.removeprefix("sha256:") + SETTLED_CANDIDATE_SUFFIX
+        )
+        if not path.exists() and not path.is_symlink():
+            return None
+        locator = self._read_model(path, SettledCandidateLocator, label="settled candidate")
+        if locator.candidate_digest != candidate_digest_value:
+            raise ProposalIntegrityError("settled candidate locator names another candidate")
+        return locator
+
+    def retire_settled_candidate(
+        self, locator: SettledCandidateLocator, settled: SettledCandidate
+    ) -> tuple[bool, bool]:
+        """Delete an accepted candidate's file and its approvals the record also holds.
+
+        The locator is written first, so every reader finds the record before
+        the file goes. The candidate file goes only if its bytes are exactly
+        the candidate the record rebuilds; the approvals only if they are
+        exactly the approvals the record settled, so an approval submitted
+        after acceptance (or unused by a mandate) is never deleted. Returns
+        (candidate removed, approvals removed). One index publication rereads
+        the rows that name the candidate.
+        """
+
+        refuse_write_while_previewing("proposal evidence retention")
+        digest = locator.candidate_digest
+        if settled.candidate.candidate_digest != digest:
+            raise ProposalIntegrityError("settled candidate differs from its locator")
+        name = digest.removeprefix("sha256:")
+        path = self.candidates / f"{name}.json"
+        approvals = self.approvals / name
+        with self.publication():
+            locator_path = self.candidates / f"{name}{SETTLED_CANDIDATE_SUFFIX}"
+            if not locator_path.exists():
+                _exclusive_canonical_write(
+                    locator_path, canonical_bytes(locator.model_dump(mode="json")) + b"\n"
+                )
+            candidate_removed = False
+            raw = read_candidate_bytes(self.candidates, digest, missing_ok=True)
+            if raw is not None and raw == render_candidate_record(settled.candidate):
+                path.unlink()
+                _fsync_directory(self.candidates)
+                candidate_removed = True
+            approvals_removed = False
+            if approvals.is_dir() and not approvals.is_symlink():
+                files = {
+                    item.name: item.read_bytes()
+                    for item in approvals.iterdir()
+                    if item.is_file() and not item.is_symlink()
+                }
+                settled_files = {
+                    f"{submission.attestation.signer_id}.json": canonical_bytes(
+                        submission.model_dump(mode="json")
+                    )
+                    + b"\n"
+                    for submission in settled.approvals
+                }
+                if files == settled_files and len(files) == len(tuple(approvals.iterdir())):
+                    for item in files:
+                        (approvals / item).unlink()
+                    approvals.rmdir()
+                    _fsync_directory(self.approvals)
+                    approvals_removed = True
+            if self._pending_records is not None and (candidate_removed or approvals_removed):
+                self._pending_records.setdefault("candidate", {})[digest] = path
+        return candidate_removed, approvals_removed
 
     def write_approval(
         self,
@@ -549,12 +676,16 @@ class ProposalEvidenceStore:
         return path
 
     def read_approvals(self, candidate_digest_value: str) -> tuple[ApprovalSubmission, ...]:
-        """Return canonical public approvals in the verifier's required signer order."""
+        """Return canonical public approvals in the verifier's required signer order.
+
+        A retired accepted candidate's approvals are the ones its record settled.
+        """
 
         CandidateDigest.from_tagged(candidate_digest_value)
         candidate_directory = self.approvals / candidate_digest_value.removeprefix("sha256:")
         if not candidate_directory.exists():
-            return ()
+            settled = None if self.settled is None else self.settled(candidate_digest_value)
+            return () if settled is None else settled.approvals
         if candidate_directory.is_symlink() or not candidate_directory.is_dir():
             raise ProposalIntegrityError("approval evidence directory is not trustworthy")
         submissions = tuple(

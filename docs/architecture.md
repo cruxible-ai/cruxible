@@ -127,6 +127,19 @@ record references is deleted under it.
   other piece is evicted after each activation and when the instance opens,
   its manifest before its piece. Binding an evicted coordinate (`--at`, a
   pinned read, an old base) rebuilds it from the ledger and the body store.
+- **Accepted proposals' candidates and approvals.** An accepted proposal's
+  change-set record carries every field of its candidate and the approvals
+  settlement verified, so after activation the candidate file and the
+  approval files the record holds byte for byte are deleted, and `proposal
+  inspect`, review, status and the proposal index read them from the record.
+  Withdrawn, rejected and refused proposals' evidence, and any approval the
+  record does not hold, are kept.
+- **Consumption receipts.** Raw receipts are kept 14 days, then fold into
+  counters (touches per artifact and operation, and the audit's distinct
+  reader keys) that remember every receipt they counted, so a read served
+  again is never counted twice; only folded receipts are removed.
+- **Line coverage.** An idle Line's coverage that moved only in time advances
+  the dispatch projection and is not journaled.
 - **The ledger.** Every ref, note and archived proposal is kept. Objects are
   written loose; every 64 accepted generations the daemon packs them
   (`repack -a -d`), packs refs and writes the commit-graph, off the

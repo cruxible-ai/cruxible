@@ -211,6 +211,21 @@ class LineDispatchStore:
             raise ValueError("unknown Line dispatch transition")
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?)", (sequence,))
 
+    def advance_coverage(self, conn: sqlite3.Connection, session: dict[str, Any]) -> None:
+        """Move an active segment's time-only coverage in the projection, journaling nothing.
+
+        Coverage that matched nothing is not retained: the journal keeps every
+        coverage record that moved a position, cursor, detail or a timed
+        Trigger's first reach. A rebuilt projection therefore reads an idle
+        stretch as uncovered from the last of those, which only widens the
+        range a restart asks to be evaluated explicitly.
+        """
+
+        conn.execute(
+            "UPDATE sessions SET payload=? WHERE session_id=? AND active=1",
+            (json.dumps(session), session["session_id"]),
+        )
+
     def append(
         self,
         conn: sqlite3.Connection,

@@ -110,6 +110,20 @@ def parse_candidate_evidence(raw: bytes, *, expected_digest: str) -> CandidateRe
     return value
 
 
+def candidate_review_summary_of(candidate: CandidateRecordAnyVersion) -> CandidateReviewSummary:
+    """The review metadata of one validated candidate."""
+
+    members: Sequence[CandidateMember] = candidate.members
+    return CandidateReviewSummary(
+        parent_semantic_root=candidate.candidate.parent_semantic_root,
+        summary=change_set_summary(members),
+        member_roll="\n".join(
+            member_line(member)
+            for member in sorted(members, key=lambda item: item.path.encode("utf-8"))
+        ),
+    )
+
+
 def read_candidate_review_summary(directory: Path, digest: str) -> CandidateReviewSummary | None:
     """Read fresh evidence and reuse only compact metadata of its exact bytes."""
 
@@ -130,15 +144,7 @@ def read_candidate_review_summary(directory: Path, digest: str) -> CandidateRevi
             # if decoding the replacement below refuses.
             del _cache[key]
     candidate = parse_candidate_evidence(raw, expected_digest=digest)
-    members: Sequence[CandidateMember] = candidate.members
-    summary = CandidateReviewSummary(
-        parent_semantic_root=candidate.candidate.parent_semantic_root,
-        summary=change_set_summary(members),
-        member_roll="\n".join(
-            member_line(member)
-            for member in sorted(members, key=lambda item: item.path.encode("utf-8"))
-        ),
-    )
+    summary = candidate_review_summary_of(candidate)
     weight = sum(
         len(value.encode("utf-8"))
         for value in (*key, summary.parent_semantic_root, summary.summary, summary.member_roll)

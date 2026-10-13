@@ -1036,6 +1036,64 @@ class ReviewOperationalStore:
         self._crash("after_event_sync")
         return event
 
+    def remove_partitions(
+        self, *, family: ReviewOperationalFamily, partition_ids: Iterable[str]
+    ) -> int:
+        """Delete whole partitions under retention, each named in the touch log first.
+
+        Only the retention fold that has durably recorded what they held calls
+        this; it returns how many partitions were removed.
+        """
+
+        refuse_write_while_previewing("review operational retention")
+        removed = 0
+        with self._locked():
+            if not self.root.exists():
+                return 0
+            for partition_id in partition_ids:
+                directory = self._partition_directory(family, partition_id, create=False)
+                if not directory.exists() and not directory.is_symlink():
+                    continue
+                if directory.is_symlink() or not directory.is_dir():
+                    raise ReviewOperationalStoreError("operational partition root is invalid")
+                self._touch(family, directory)
+                shutil.rmtree(directory)
+                removed += 1
+            if removed:
+                _fsync_directory(self.root / "partitions" / family)
+        return removed
+
+    def truncate_partition(
+        self, *, family: ReviewOperationalFamily, partition_id: str, keep: int
+    ) -> int:
+        """Cut a chained partition back to its first ``keep`` events; returns how many went.
+
+        The chain is verified whole first. Events are removed newest first, so
+        an interrupted cut still leaves a contiguous chain from sequence zero;
+        payload files no kept event names are removed after them.
+        """
+
+        refuse_write_while_previewing("review operational retention")
+        with self._locked():
+            if not self.root.exists():
+                return 0
+            directory = self._partition_directory(family, partition_id, create=False)
+            if not directory.exists() and not directory.is_symlink():
+                return 0
+            loaded = self._load_partition(family, partition_id)
+            if len(loaded) <= keep:
+                return 0
+            kept = {event.payload_digest[7:] + ".json" for event, _payload in loaded[:keep]}
+            self._touch(family, directory)
+            for event, _payload in reversed(loaded[keep:]):
+                (directory / "events" / f"{event.sequence:020d}.json").unlink()
+            _fsync_directory(directory / "events")
+            for name in os.listdir(directory / "payloads"):
+                if name not in kept:
+                    (directory / "payloads" / name).unlink()
+            _fsync_directory(directory / "payloads")
+            return len(loaded) - keep
+
     def events(
         self, *, family: ReviewOperationalFamily | None = None
     ) -> tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...]:

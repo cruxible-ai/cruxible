@@ -14,7 +14,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from contextvars import Context
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -161,12 +161,17 @@ from cruxible_core.ledger.ledger_mirror import (
 from cruxible_core.ledger.recovery import (
     RecoveredGeneration,
     RecoveredInstanceState,
+    candidate_from_change_set_record,
     prepared_generation_for_handoff,
     recover_instance,
 )
 from cruxible_core.ledger.witness import WitnessSink
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationAdapter
-from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+from cruxible_core.proposals.proposal_evidence import (
+    ProposalEvidenceStore,
+    SettledCandidate,
+    SettledCandidateLocator,
+)
 from cruxible_core.proposals.proposals import (
     ExhaustPromotionVerifierProtocol,
     ProposalReceiveLimits,
@@ -384,6 +389,10 @@ class PlaybillInstance:
         # The compaction stride (head sequence // stride) last compacted at;
         # None until the first advisory pass after open records it.
         self._compacted_stride: int | None = None
+        # The accepted day consumption receipts were last folded on.
+        self._consumption_folded_on: date | None = None
+        # Retired accepted candidates rebuilt from their records, by digest.
+        self._settled_candidates: dict[str, SettledCandidate] = {}
         self._quiet_checkpoints: QuietCheckpointWriter | None = None
         # Read services keyed by accepted coordinate park their derived
         # history indexes here so activation drops them with one clear().
@@ -681,7 +690,7 @@ class PlaybillInstance:
             promotion_verifier,
         )
         if not is_previewing():
-            instance.evict_projection_pieces()
+            instance._housekeeping("projection_eviction", instance.evict_projection_pieces)
         if (
             descriptor.mirror_url is not None
             and descriptor.decommissioned is None
@@ -1648,8 +1657,14 @@ class PlaybillInstance:
         return pruned
 
     def compact_ledger_at_start(self) -> bool:
-        """The daemon's start pass: compact and prune a ledger that has piled up loose objects."""
+        """The daemon's start pass: retention, then compact and prune a loose ledger.
 
+        Retention folds due receipts and retires every accepted candidate a
+        record already carries (the backlog), before anything is served.
+        """
+
+        self._housekeeping("consumption_fold", self.fold_consumption_if_due)
+        self._housekeeping("candidate_retirement", self.retire_settled_candidates)
         if self._ledger.loose_object_count() < LEDGER_START_COMPACTION_LOOSE_OBJECTS:
             return False
         self.compact_ledger(prune=True)
@@ -1810,8 +1825,98 @@ class PlaybillInstance:
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
         return ProposalEvidenceStore(
-            paths["exhaust"], index=self._accepted_history_index.proposals, transport=self._ledger
+            paths["exhaust"],
+            index=self._accepted_history_index.proposals,
+            transport=self._ledger,
+            settled=self._settled_candidate,
         )
+
+    def _settled_candidate(self, candidate_digest: str) -> SettledCandidate | None:
+        """A retired accepted candidate, rebuilt from the change-set record its locator names."""
+
+        known = self._settled_candidates.get(candidate_digest)
+        if known is not None:
+            return known
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        locator = ProposalEvidenceStore(paths["exhaust"]).read_settled_locator(candidate_digest)
+        if locator is None:
+            return None
+        with self._state_lock:
+            history = self._recovered.history
+        generation = history[locator.sequence] if locator.sequence < len(history) else None
+        record = None if generation is None else generation.record
+        if (
+            generation is None
+            or record is None
+            or generation.oid != locator.git_oid
+            or record.changeset_digest != locator.changeset_digest
+            or record.candidate_digest != candidate_digest
+        ):
+            raise ProposalIntegrityError(
+                "a retired candidate's locator names no accepted change-set record of it"
+            )
+        settled = SettledCandidate(
+            candidate=candidate_from_change_set_record(record), approvals=record.approvals
+        )
+        self._settled_candidates[candidate_digest] = settled
+        return settled
+
+    def retire_settled_candidates(self, sequences: Iterable[int] | None = None) -> int:
+        """Delete accepted candidates' files (and the approvals their records hold).
+
+        ``sequences`` names the accepted generations to retire (default: the
+        backlog sweep at daemon start, every accepted candidate whose file is
+        still there, found from the candidate files and the history index).
+        Each accepted proposal's change-set record carries its candidate and
+        the approvals settlement verified, so every reader then answers from
+        the record. Withdrawn, rejected and refused proposals' evidence is
+        never touched. Returns how many candidate files were removed.
+        """
+
+        if is_previewing():
+            return 0
+        with self._state_lock:
+            history = self._recovered.history
+        evidence = self.proposal_evidence()
+        if sequences is None:
+            present = [
+                "sha256:" + path.name.removesuffix(".json")
+                for path in evidence.candidates.glob("*.json")
+            ]
+            with self.accepted_history_reader() as reader:
+                located = (reader.generation_for_candidate(digest) for digest in present)
+                selected: Iterable[int] = sorted(
+                    location.sequence for location in located if location is not None
+                )
+        else:
+            selected = sequences
+        removed = 0
+        for sequence in selected:
+            generation = history[sequence]
+            record = generation.record
+            if record is None or record.candidate_digest is None:
+                continue
+            digest = record.candidate_digest
+            name = digest.removeprefix("sha256:")
+            if (
+                not (evidence.candidates / f"{name}.json").exists()
+                and not (evidence.approvals / name).exists()
+            ):
+                continue
+            settled = SettledCandidate(
+                candidate=candidate_from_change_set_record(record), approvals=record.approvals
+            )
+            locator = SettledCandidateLocator(
+                candidate_digest=digest,
+                sequence=sequence,
+                git_oid=generation.oid,
+                changeset_digest=record.changeset_digest,
+            )
+            candidate_removed, _approvals_removed = evidence.retire_settled_candidate(
+                locator, settled
+            )
+            removed += int(candidate_removed)
+        return removed
 
     def refusal_index(self) -> RefusalIndex:
         """The derived index of earlier refusals (retired Claims, rejected proposals).
@@ -2353,6 +2458,43 @@ class PlaybillInstance:
                 ),
             )
 
+    def _housekeeping(self, step: str, run: Callable[[], object]) -> None:
+        """Run one retention step; a failure is logged, never the caller's failure.
+
+        Each step is retried by the next activation or open, and none deletes
+        anything before what keeps it readable is durable.
+        """
+
+        try:
+            run()
+        except Exception as exc:
+            _log.warning(
+                "retention_step_failed",
+                step=step,
+                instance_id=self.descriptor.instance_id,
+                reason=f"{type(exc).__name__}: {exc}",
+            )
+
+    def fold_consumption_if_due(self) -> None:
+        """Fold raw consumption receipts past ``retention.days``, once per accepted day.
+
+        The clock is the accepted head's commit time, so the cutoff follows the
+        ledger, not the wall clock. Housekeeping: a failure is logged and the
+        next accepted day retries.
+        """
+
+        if is_previewing():
+            return
+        with self._state_lock:
+            oid = self._recovered.coordinate.git_oid
+        at = self._ledger.commit_timestamps(oid)[1]
+        if self._consumption_folded_on == at.date():
+            return
+        self._consumption_folded_on = at.date()
+        from cruxible_core.exhaust.consumption import fold_consumption_receipts
+
+        fold_consumption_receipts(self, now=at, days=self.retention.days)
+
     def _open_proposal_bases(self) -> set[str]:
         """The evaluated bases of admitted candidates no generation has settled or withdrawn."""
 
@@ -2612,6 +2754,10 @@ class PlaybillInstance:
             # Outside the activation locks: eviction is unlinks, and a bind
             # that wants an evicted coordinate rebuilds it under the same lock.
             self.evict_projection_pieces()
+            self.fold_consumption_if_due()
+            with self._state_lock:
+                head = self._recovered.head.sequence
+            self.retire_settled_candidates((head,))
         return activated
 
 
