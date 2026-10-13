@@ -12,6 +12,10 @@ an index the log extends as it grows. Files are opened only for their bytes.
 A log minted over a store that already holds objects (a store from before the
 log, or bodies first stored as journal payloads) records each of them as
 ``stored`` first, so the log names every object the store held when it began.
+The seed is written whole under a scratch name and renamed over the log only
+once it is durable: a seed interrupted part way leaves no log, and the next
+open or landing seeds again. A writer locks the file the log's name holds and
+re-opens when the seed has replaced it, so no row lands in a superseded file.
 
 An operation is recoverable. Before its intent row the writer creates and
 locks a pending marker named by the digest; it publishes the completion and
@@ -51,6 +55,7 @@ if TYPE_CHECKING:
 
 LandingKind = Literal["store", "stored", "erase", "erased"]
 LOG_NAME = "landings.log"
+SEED_NAME = "landings.seed"
 PENDING_NAME = "landings.pending"
 RECORD = 96
 _HEADER = b"cruxible-landings-v1 "
@@ -135,30 +140,74 @@ class LandingLog:
 
     @contextmanager
     def _opened(self, *, write: bool) -> Iterator[int | None]:
-        flags = (os.O_RDWR | os.O_CREAT | os.O_APPEND) if write else os.O_RDONLY
+        if write:
+            with self._writing() as descriptor:
+                yield descriptor
+            return
         try:
-            descriptor = os.open(LOG_NAME, flags | _FILE, 0o600, dir_fd=self._directory)
+            descriptor = os.open(LOG_NAME, os.O_RDONLY | _FILE, dir_fd=self._directory)
         except FileNotFoundError:
-            if write:
-                raise
             yield None
             return
         except OSError as exc:
             raise CasError("the CAS landing log could not be opened") from exc
         try:
             _regular(descriptor, what="log")
-            fcntl.flock(descriptor, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
             yield descriptor
         finally:
             os.close(descriptor)
 
+    def _locked(self) -> int:
+        """Open and exclusively lock the file the log's name holds once the lock is taken.
+
+        A seed renamed over the log while this writer waited leaves it holding
+        the superseded file: it re-opens the one the name now holds.
+        """
+
+        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | _FILE
+        while True:
+            try:
+                descriptor = os.open(LOG_NAME, flags, 0o600, dir_fd=self._directory)
+            except OSError as exc:
+                raise CasError("the CAS landing log could not be opened") from exc
+            try:
+                held = _regular(descriptor, what="log")
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                try:
+                    named = os.stat(LOG_NAME, dir_fd=self._directory, follow_symlinks=False)
+                except FileNotFoundError:
+                    named = None
+                if named is not None and (named.st_dev, named.st_ino) == (
+                    held.st_dev,
+                    held.st_ino,
+                ):
+                    return descriptor
+            except BaseException:
+                os.close(descriptor)
+                raise
+            os.close(descriptor)
+
+    @contextmanager
+    def _writing(self) -> Iterator[int]:
+        """The log, exclusively locked, its seed complete: seeded first when it has none."""
+
+        descriptor = self._locked()
+        try:
+            if os.fstat(descriptor).st_size < RECORD:
+                self._seed()
+                os.close(descriptor)
+                descriptor = -1
+                descriptor = self._locked()
+            yield descriptor
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
     def _append(self, kind: LandingKind, digest: str, *, sync: bool) -> int:
-        with self._opened(write=True) as descriptor:
-            assert descriptor is not None
+        with self._writing() as descriptor:
             size = os.fstat(descriptor).st_size
-            if size < RECORD:
-                self._mint(descriptor)
-            elif size % RECORD:
+            if size % RECORD:
                 # A torn record a writer died inside: drop it before appending.
                 os.ftruncate(descriptor, size - size % RECORD)
             written = os.write(descriptor, _record(kind, digest))
@@ -168,11 +217,14 @@ class LandingLog:
                 os.fsync(descriptor)
             return os.fstat(descriptor).st_size // RECORD - 1
 
-    def _mint(self, descriptor: int) -> None:
-        """Write a new log under the caller's exclusive lock: its identity, then a
-        ``stored`` row for every object the store already holds."""
+    def _seed(self) -> None:
+        """Publish a new log under the caller's exclusive lock of the one it replaces: its
+        identity, then a ``stored`` row for every object the store already holds.
 
-        os.ftruncate(descriptor, 0)
+        Written whole and made durable under a scratch name, then renamed over the
+        log: an interrupted seed publishes nothing, and the next writer seeds again.
+        """
+
         header = _HEADER + new_id("landings", length=32).encode("ascii")
         rows = [header.ljust(RECORD - 1, b" ") + b"\n"]
         for shard in sorted(os.listdir(self._directory)):
@@ -191,18 +243,28 @@ class LandingLog:
             rows.extend(
                 _record("stored", "sha256:" + name) for name in sorted(names) if _hex(name, 64)
             )
-        view = memoryview(b"".join(rows))
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:  # pragma: no cover - a short local append
-                raise CasError("the CAS landing log could not be minted")
-            view = view[written:]
-        os.fsync(descriptor)
+        seed = os.open(
+            SEED_NAME, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _FILE, 0o600, dir_fd=self._directory
+        )
+        try:
+            _regular(seed, what="seed")
+            view = memoryview(b"".join(rows))
+            while view:
+                written = os.write(seed, view)
+                if written <= 0:  # pragma: no cover - a short local write
+                    raise CasError("the CAS landing log could not be minted")
+                view = view[written:]
+            os.fsync(seed)
+        finally:
+            os.close(seed)
+        os.rename(SEED_NAME, LOG_NAME, src_dir_fd=self._directory, dst_dir_fd=self._directory)
+        os.fsync(self._directory)
 
     def ensure(self) -> None:
-        """Mint the log over a store that holds objects but has none: one open when it exists.
+        """Seed the log over a store that holds objects but has none: one open when it exists.
 
-        An empty store keeps no log until its first landing.
+        An empty store keeps no log until its first landing. A log whose seed was
+        interrupted was never published, so this seeds it again.
         """
 
         with self._opened(write=False) as descriptor:
@@ -210,10 +272,8 @@ class LandingLog:
                 return
         if not any(_hex(name, 2) for name in os.listdir(self._directory)):
             return
-        with self._opened(write=True) as descriptor:
-            assert descriptor is not None
-            if os.fstat(descriptor).st_size < RECORD:
-                self._mint(descriptor)
+        with self._writing():
+            pass
 
     def head(self) -> LandingHead:
         """The log's identity and newest complete sequence: one header read and a stat."""
@@ -423,4 +483,12 @@ class LandingLog:
             os.close(pending)
 
 
-__all__ = ["LOG_NAME", "PENDING_NAME", "Landing", "LandingHead", "LandingKind", "LandingLog"]
+__all__ = [
+    "LOG_NAME",
+    "PENDING_NAME",
+    "SEED_NAME",
+    "Landing",
+    "LandingHead",
+    "LandingKind",
+    "LandingLog",
+]

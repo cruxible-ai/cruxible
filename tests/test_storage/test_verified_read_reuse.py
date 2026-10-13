@@ -11,7 +11,7 @@ from cruxible_client.contracts.errors import CasError, FormatError
 from cruxible_core.ledger import git as ledger_git
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.storage import cas
+from cruxible_core.storage import cas, landing_log
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.storage.landing_log import LOG_NAME, PENDING_NAME, LandingLog
 
@@ -318,6 +318,44 @@ def test_a_log_minted_over_held_objects_names_each_as_stored(tmp_path):
     head = reopened.landings.head()
     assert [(row.digest, row.kind) for row in reopened.landings.after(0)] == [(held, "stored")]
     assert reopened.landings.present(held, identity=head.identity, sequence=head.sequence)
+
+
+def test_an_interrupted_seed_publishes_nothing_and_the_next_open_seeds_again(tmp_path, monkeypatch):
+    """A seed that stops part way (its header and one body written) is never the log:
+    the next open seeds every pre-existing body, and a later open keeps that head."""
+
+    root = tmp_path / "managed" / "cas"
+    root.mkdir(parents=True)
+    store = ContentAddressedBodyStore(root)
+    held = [
+        store.store(value, journal_payload=True).digest
+        for value in (b"pre-log body A", b"pre-log body B", b"pre-log body C")
+    ]
+    assert store.landings.head().identity == ""
+    real_write = landing_log.os.write
+    writes: list[int] = []
+
+    def crash(descriptor, data):
+        if not writes:
+            writes.append(1)
+            return real_write(descriptor, bytes(data[: landing_log.RECORD * 2]))
+        raise OSError("simulated process failure during seed")
+
+    monkeypatch.setattr(landing_log.os, "write", crash)
+    with pytest.raises(OSError, match="during seed"):
+        ContentAddressedBodyStore(root)
+    monkeypatch.setattr(landing_log.os, "write", real_write)
+    assert writes
+    assert store.landings.head().identity == ""  # the partial seed was never published
+
+    recovered = ContentAddressedBodyStore(root)
+    head = recovered.landings.head()
+    assert head.identity and head.sequence == len(held)
+    assert all(
+        recovered.landings.present(digest, identity=head.identity, sequence=head.sequence)
+        for digest in held
+    )
+    assert ContentAddressedBodyStore(root).landings.head() == head
 
 
 def test_a_journal_payload_stored_again_as_evidence_is_logged_present(tmp_path):
