@@ -2158,27 +2158,49 @@ _T = TypeVar("_T")
 def _serving(
     instance: Any,
     *,
-    coordinate: AcceptedProjectionCoordinate,
+    coordinate: AcceptedProjectionCoordinate | None,
     door_head: str | None,
+    pinned: bool,
     evaluation_time: datetime,
-    read: Callable[[sqlite3.Connection], _T],
+    read: Callable[[sqlite3.Connection, AcceptedProjectionCoordinate], _T],
 ) -> tuple[_T, _Heads] | None:
     """Run ``read`` on the stored state brought to the heads and to ``evaluation_time``.
 
-    Served only at the current accepted (and, when given, door) head with the
-    worker active and its state warm and valid; in any state that cannot
-    serve, None: fold. Whatever the worker has not yet followed is replayed
-    from the overlay and every fact or key that does not hold at the instant
-    is derived again, all in a transaction rolled back after ``read`` (reads
-    never write this state). The read is returned, with the heads it was read
-    at, only when every log it depended on stood still throughout. When the
-    logs move under every one of a few attempts it refuses
-    (``ReadInputsMovingError``, retryable): a fold then would read the same
-    moving logs for longer, so it is never the fallback for a moving read.
+    A head left None follows the logs: each attempt serves at whatever head
+    is current, and the caller labels its answer with the heads returned. A
+    head given is one the caller already reads at: ``pinned``, its own pin (an
+    explicit ``--at``, a door head, a page cursor), which once it is no longer
+    current folds there (R8); otherwise one it selected and cannot trade for
+    another, so its moving is the read's inputs moving.
+
+    Served only with the worker active and its state warm and valid; in any
+    state that cannot serve, None: fold (cold, disabled, another format, a
+    rebuild due, a pin that is not current). Whatever the worker has not yet
+    followed is replayed from the overlay and every fact or key that does not
+    hold at the instant is derived again, all in a transaction rolled back
+    after ``read`` (reads never write this state). The read is returned, with
+    the heads it was read at, only when every log it depended on stood still
+    throughout; a move restarts it against the logs as they then stand, and
+    once an attempt has moved no exit folds: a fold would read the same
+    moving logs at heads no longer current. Out of attempts, ``_exhausted``.
     """
 
-    if not _PART.active(instance) or coordinate != instance.accepted_coordinate():
+    def cannot_serve(unstable: bool) -> tuple[_T, _Heads] | None:
+        return (
+            _exhausted(
+                instance,
+                coordinate=coordinate,
+                door_head=door_head,
+                evaluation_time=evaluation_time,
+                read=read,
+            )
+            if unstable
+            else None
+        )
+
+    if not _PART.active(instance):
         return None
+    unstable = False
     for attempt in range(_ATTEMPTS):
         if attempt:
             # A landing whose writer is gone stays unfinished until someone settles
@@ -2188,27 +2210,39 @@ def _serving(
             time.sleep(_PAUSES[attempt - 1])
         with _STATE.open(instance, create=False) as connection:
             if connection is None:
-                return None
+                return cannot_serve(unstable)
             original = _read_cursors(connection)
         if original is None:
-            return None
+            return cannot_serve(unstable)
+        # Read after the cursors, so the heads are never behind what they name.
         heads = _heads(instance)
-        if heads.coordinate != coordinate or door_head not in (None, heads.door_root):
-            return None
+        if (coordinate is not None and heads.coordinate != coordinate) or (
+            door_head is not None and heads.door_root != door_head
+        ):
+            # A pin that is no longer current folds there (R8); a selected head
+            # that moved never comes back, so no attempt can serve it.
+            return None if pinned else cannot_serve(True)
         if not _inputs_hold(instance, heads):
+            unstable = True
             continue
         overlay: _Overlay | None = None
         if original.heads != heads.key():
             try:
                 overlay = _overlay(instance, original, heads, now=evaluation_time)
             except _Unstable:
+                unstable = True
                 continue
-            if overlay is None or overlay.door_root != heads.door_root:
-                return None
+            if overlay is None:
+                # Only a rebuild follows these logs from the stored cursors.
+                return cannot_serve(unstable)
+            if overlay.door_root != heads.door_root:
+                unstable = True
+                continue
         with _STATE.open(instance, create=False) as connection:
             if connection is None:
-                return None
+                return cannot_serve(unstable)
             if _read_cursors(connection) != original:
+                unstable = True
                 continue
             connection.execute("SAVEPOINT served")
             try:
@@ -2217,21 +2251,54 @@ def _serving(
                 _settle(
                     instance,
                     connection,
-                    coordinate=coordinate,
+                    coordinate=heads.coordinate,
                     at=evaluation_time,
                     delta=None,
                     reading=True,
                 )
-                result = read(connection)
+                result = read(connection, heads.coordinate)
             finally:
                 connection.execute("ROLLBACK TO served")
                 connection.execute("RELEASE served")
         if _inputs_hold(instance, heads):
             return result, heads
-    raise ReadInputsMovingError(
+        unstable = True
+    return cannot_serve(True)
+
+
+def _exhausted(
+    instance: Any,
+    *,
+    coordinate: AcceptedProjectionCoordinate | None,
+    door_head: str | None,
+    evaluation_time: datetime,
+    read: Callable[[sqlite3.Connection, AcceptedProjectionCoordinate], _T],
+) -> tuple[_T, _Heads]:
+    """What a read does when its inputs moved under every attempt: the one place it lives.
+
+    Today it refuses (``ReadInputsMovingError``: HTTP 503, retryable), the
+    maintainer's decision pending. Either alternative replaces this body and
+    nothing else: (b) wait a bounded time (a second or two) for the worker's
+    cursors to reach the current heads, then return ``read`` of its committed
+    state settled to ``evaluation_time`` with the heads it holds, refusing only
+    if it has not; (c) return that committed state at once, labelled with the
+    worker's heads. A caller that follows the heads (``coordinate`` and
+    ``door_head`` None) labels its answer with them; one that gave a head may
+    take a result only at that head. A queue's final check
+    (``served_inputs_hold``) then compares the live heads seen at serving, not
+    the labels.
+    """
+
+    raise refuse_moving_read(
         f"the accepted state, the attestation door, body landings or re-observations moved "
         f"during each of {_ATTEMPTS} attempts to read next's stored rows"
     )
+
+
+def refuse_moving_read(detail: str) -> ReadInputsMovingError:
+    """The refusal of a read whose inputs moved under it (typed, retryable)."""
+
+    return ReadInputsMovingError(detail)
 
 
 def served_inputs_hold(instance: Any, served: ServedRows) -> bool:
@@ -2248,16 +2315,21 @@ def served_inputs_hold(instance: Any, served: ServedRows) -> bool:
 def served_claim_rows(
     instance: Any,
     *,
-    coordinate: AcceptedProjectionCoordinate,
-    door_head: str,
+    coordinate: AcceptedProjectionCoordinate | None,
+    door_head: str | None,
     evaluation_time: datetime,
     expiring_within: CanonicalDuration,
     claims: Iterable[str] | None = None,
     citations: CitationRequest = None,
     backed: Iterable[str] = (),
+    pinned: bool = True,
 ) -> ServedRows | None:
     """The Claim rows next would fold, served from Layer 2, or None to fold.
 
+    A ``coordinate`` or ``door_head`` left None follows the current heads, and
+    the rows carry the heads they were served at (``heads``); one given is
+    ``pinned`` by the caller (it folds there once no longer current) or, not
+    pinned, selected by it (its moving refuses: see ``_serving``).
     ``claims`` reads only those Claims' keys -- their threshold, door and
     dependency rows and their slots' -- instead of the whole queue.
     ``citations`` also reads the maintained citation commitments a workspace
@@ -2271,11 +2343,12 @@ def served_claim_rows(
         instance,
         coordinate=coordinate,
         door_head=door_head,
+        pinned=pinned,
         evaluation_time=evaluation_time,
-        read=lambda connection: _read_served(
+        read=lambda connection, at_coordinate: _read_served(
             instance,
             connection,
-            coordinate=coordinate,
+            coordinate=at_coordinate,
             evaluation_time=evaluation_time,
             expiring_within=expiring_within,
             claims=selected,
@@ -2717,7 +2790,11 @@ def _served_holds(
 
 
 def claim_status_tally(
-    instance: Any, *, coordinate: AcceptedProjectionCoordinate, evaluation_time: datetime
+    instance: Any,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    pinned: bool = True,
 ) -> dict[str, int] | None:
     """Accepted Claims counted by status from the maintained tally, or None to derive live.
 
@@ -2725,17 +2802,22 @@ def claim_status_tally(
     worker has not yet followed is replayed from the overlay and every fact
     that does not hold at ``evaluation_time`` is derived again, so a worker
     behind or an instant past an interval costs the change, not the
-    population. None only where next folds (cold, disabled, historical) or a
-    live Claim's slot did not resolve; logs that keep moving refuse
-    (``ReadInputsMovingError``), as a next read does.
+    population. ``coordinate`` is the one the caller reads at: ``pinned`` by
+    its caller (it derives live there once no longer current) or selected by
+    it (its moving refuses). None only where next folds (cold, disabled, a pin
+    not current) or a live Claim's slot did not resolve; logs that keep moving
+    refuse (``ReadInputsMovingError``), as a next read does.
     """
 
     served = _serving(
         instance,
         coordinate=coordinate,
         door_head=None,
+        pinned=pinned,
         evaluation_time=evaluation_time,
-        read=lambda connection: dict(connection.execute("SELECT status,count FROM tally")),
+        read=lambda connection, _coordinate: dict(
+            connection.execute("SELECT status,count FROM tally")
+        ),
     )
     if served is None:
         return None
