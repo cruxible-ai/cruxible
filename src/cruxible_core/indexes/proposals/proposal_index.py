@@ -325,7 +325,8 @@ class ProposalIndex:
         """
         if self._root is not None and not self._history_commits:
             return
-        if not self._lock.acquire(blocking=False):
+        # A preview writes no source checkpoint: the replay waits for a writer.
+        if history_reads_detached() or not self._lock.acquire(blocking=False):
             return
         try:
             if self._root is None:

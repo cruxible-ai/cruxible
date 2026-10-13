@@ -800,6 +800,13 @@ def test_history_commits_before_the_first_proposal_read_keep_the_checkpoint(tmp_
     with owner.read(instance._recovered, lambda _n, _prior: []):
         pass
     assert owner._file_stamp() != before and owner._unannounced_commits
+    from cruxible_core.indexes.history.history_index import detached_history_reads
+
+    marker = (evidence.root / ".proposal-source.json").read_bytes()
+    with detached_history_reads():
+        # A preview writes no source checkpoint: the replay waits for a writer.
+        ProposalEvidenceStore(evidence.root, index=owner.proposals, transport=instance._ledger)
+    assert (evidence.root / ".proposal-source.json").read_bytes() == marker
     reopened = ProposalEvidenceStore(
         evidence.root, index=owner.proposals, transport=instance._ledger
     )
