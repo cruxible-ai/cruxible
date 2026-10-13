@@ -614,20 +614,30 @@ def _boundary_interval(boundaries: set[datetime], at: datetime) -> tuple[int | N
     return utc_microseconds(lower), utc_microseconds(upper)
 
 
+def derive_one(context: RowContext, family: str, key: str) -> KeyRows | None:
+    """One key's rows, by its family's derivation."""
+
+    if family == THRESHOLD:
+        return threshold_key(context, key)
+    if family == SLOT:
+        return slot_rows(context, key, expiring_within=context.expiring_within)
+    if family == DOOR:
+        return door_key(context, key)
+    if family == SOURCE:
+        return source_key(context, key)
+    raise ValueError(f"no derivation for row family {family}")
+
+
 def derive(context: RowContext, keys: Iterable[tuple[str, str]], delta: RowsDelta) -> None:
-    """Derive these keys again into ``delta`` (sources before the dependents they feed)."""
+    """Derive these keys again into ``delta``, in any order: each reads only Layer 1.
+
+    Dependent rows are not derived here; ``apply`` reports the dependents whose
+    sources' entries moved, for ``apply_dependents``.
+    """
 
     for family, key in sorted(set(keys)):
-        if family == THRESHOLD:
-            delta.keys[(family, key)] = threshold_key(context, key)
-        elif family == SLOT:
-            delta.keys[(family, key)] = slot_rows(
-                context, key, expiring_within=context.expiring_within
-            )
-        elif family == DOOR:
-            delta.keys[(family, key)] = door_key(context, key)
-        elif family == SOURCE:
-            delta.keys[(family, key)] = source_key(context, key)
+        if family != DEPENDENCY:
+            delta.keys[(family, key)] = derive_one(context, family, key)
 
 
 def apply(connection: sqlite3.Connection, delta: RowsDelta) -> set[str]:
@@ -761,6 +771,7 @@ __all__ = [
     "apply",
     "apply_dependents",
     "derive",
+    "derive_one",
     "res_slot_of",
     "slot_key",
     "stored_rows",

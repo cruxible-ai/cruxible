@@ -260,21 +260,104 @@ def _tick(state: World) -> _Work:
     return work
 
 
-def _rewritten_claims(state: World, before: _Snapshot) -> set[str]:
-    """The Claims a sweep reaches: those that consulted a body whose identity moved."""
+def _rewritten(state: World, before: _Snapshot) -> tuple[set[str], set[str]]:
+    """What a sweep reaches: the Claims that consulted a body whose identity moved,
+    and the objects that moved (those bodies and the Captures that consulted them)."""
 
     store = state.instance.body_store()
     recorded: dict[str, set[Any]] = {}
     consulted: dict[str, set[str]] = {}
-    for body, _capture_digest, claim_id, identity in before.tables["capture_bodies"]:
+    captures: dict[str, set[str]] = {}
+    for body, capture, claim_id, identity in before.tables["capture_bodies"]:
         recorded.setdefault(body, set()).add(identity)
         consulted.setdefault(body, set()).add(claim_id)
+        captures.setdefault(body, set()).add(capture)
     found: set[str] = set()
+    moved: set[str] = set()
     for body, identities in recorded.items():
         current = store.file_identity(body)
         if identities != {None if current is None else facts._json(list(current))}:
             found |= consulted[body]
-    return found
+            moved |= {body, *captures[body]}
+    return found, moved
+
+
+#: What each Layer 2 family reads of a Claim's facts (design §3): a fact whose
+#: columns for a family did not move does not reach that family (early cutoff).
+#: Listed here from the design, not taken from the implementation.
+_READS = {
+    rows.THRESHOLD: ("path", "artifact_digest", "lifecycle", "claim_type_digest"),
+    rows.DOOR: ("path", "artifact_digest", "lifecycle", "claim_type_digest"),
+    rows.SLOT: (
+        "lifecycle",
+        "res_slot",
+        "conflict_slot",
+        "artifact_digest",
+        "claim_type_digest",
+        "verdict_json",
+        "status",
+        "set_args_json",
+        "error_code",
+        "unservable",
+        "lower_us",
+        "upper_us",
+    ),
+    rows.SOURCE: (
+        "path",
+        "artifact_digest",
+        "lifecycle",
+        "lineage_digests",
+        "lineage_complete",
+        "visible",
+        "verdict",
+        "currency",
+        "error_code",
+        "unservable",
+        "lower_us",
+        "upper_us",
+    ),
+    rows.DEPENDENCY: (
+        "path",
+        "artifact_digest",
+        "lifecycle",
+        "input_digests",
+        "pin_targets",
+        "visible",
+        "verdict",
+        "currency",
+        "unservable",
+        "lower_us",
+        "upper_us",
+    ),
+}
+
+
+def _columns(row: tuple[Any, ...] | None, family: str) -> tuple[Any, ...] | None:
+    return None if row is None else tuple(row[_FACT[column]] for column in _READS[family])
+
+
+def _named_since(state: World, before: _Snapshot) -> set[str]:
+    """Claims an accepted attestation member named, or whose Subject changed, since ``before``."""
+
+    from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
+
+    instance = state.instance
+    with instance.accepted_history_reader() as history:
+        paths = history.member_paths_between(before.sequence, history.sequence)
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate()).git_oid
+    named: set[str] = set()
+    for path in paths:
+        if path.startswith("attestations/"):
+            content = instance.blob_at(head, path) or instance.blob_at(before.oid, path)
+            attestation = parse_accepted_attestation(content, path=path)
+            named.add(attestation.statement.claim_identity.qualified)
+        elif path.startswith("subjects/"):
+            named |= {
+                str(claim_id)
+                for read, claim_id in before.tables["fact_reads"]
+                if read == f"path:{path}"
+            }
+    return named
 
 
 def _expected_keys(
@@ -282,39 +365,56 @@ def _expected_keys(
     before: _Snapshot,
     after: dict[str, list[tuple[Any, ...]]],
     claims: set[str],
+    moved_objects: set[str],
 ) -> set[tuple[str, str]]:
     """The Layer 2 keys a pass must derive, from the tables before it and the records since."""
 
     old = {str(row[0]): row for row in before.tables["claim_facts"]}
     new = {str(row[0]): row for row in after["claim_facts"]}
     keys: set[tuple[str, str]] = set()
+    res_slots: set[str] = set()
     digests: set[str] = set()
     targets: set[str] = set()
     for claim_id in claims:
-        keys |= {(rows.THRESHOLD, claim_id), (rows.DOOR, claim_id), (rows.SOURCE, claim_id)}
-        for side in (old.get(claim_id), new.get(claim_id)):
-            if side is None:
-                continue
-            if side[_FACT["lifecycle"]] == "live":
-                keys.add((rows.SLOT, str(side[_FACT["conflict_slot"]])))
-            digests.update(json.loads(side[_FACT["input_digests"]]))
-            targets.update(json.loads(side[_FACT["pin_targets"]]))
-    for claim_id in set(old) | set(new):
-        status_before = None if claim_id not in old else old[claim_id][_FACT["status"]]
-        side = new.get(claim_id)
-        status_after = None if side is None else side[_FACT["status"]]
-        if status_before != status_after and side is not None:
-            if side[_FACT["lifecycle"]] == "live":
-                keys.add((rows.SLOT, str(side[_FACT["conflict_slot"]])))
+        was, now = old.get(claim_id), new.get(claim_id)
+        for family in (rows.THRESHOLD, rows.DOOR, rows.SOURCE):
+            if _columns(was, family) != _columns(now, family):
+                keys.add((family, claim_id))
+        if _columns(was, rows.SLOT) != _columns(now, rows.SLOT):
+            for side in (was, now):
+                if side is not None and side[_FACT["lifecycle"]] == "live":
+                    res_slots.add(str(side[_FACT["res_slot"]]))
+                    keys.add((rows.SLOT, str(side[_FACT["conflict_slot"]])))
+        if _columns(was, rows.DEPENDENCY) != _columns(now, rows.DEPENDENCY):
+            for side in (was, now):
+                if side is not None:
+                    digests.update(json.loads(side[_FACT["input_digests"]]))
+                    targets.update(json.loads(side[_FACT["pin_targets"]]))
+    for claim_id in (set(old) & set(new)) - claims:
+        # A status moved by a slot's resolution, without the Claim itself replaced.
+        if old[claim_id][_FACT["status"]] != new[claim_id][_FACT["status"]]:
+            if new[claim_id][_FACT["lifecycle"]] == "live":
+                res_slots.add(str(new[claim_id][_FACT["res_slot"]]))
+    keys |= {
+        (rows.SLOT, str(row[_FACT["conflict_slot"]]))
+        for row in after["claim_facts"]
+        if row[_FACT["lifecycle"]] == "live" and row[_FACT["res_slot"]] in res_slots
+    }
     _head, events = state.instance.claim_attestation_evidence_store().events_after(before.door)
     for _position, _event, payload in events:
         statement = payload.attestation.statement
         family = rows.THRESHOLD if statement.attestation_basis == "examined_existing" else rows.DOOR
         keys.add((family, statement.claim_identity.qualified))
-    landed = {
-        f"capture:{row.digest}"
-        for row in state.instance.body_store().landings.after(before.landing)
+    for claim_id in _named_since(state, before):
+        keys |= {(rows.THRESHOLD, claim_id), (rows.DOOR, claim_id)}
+    # Landed, erased or rewritten objects, with the Captures that consulted them.
+    landings = {row.digest for row in state.instance.body_store().landings.after(before.landing)}
+    consulting = {
+        str(capture)
+        for body, capture, _claim_id, _identity in before.tables["capture_bodies"]
+        if body in landings
     }
+    landed = {f"capture:{digest}" for digest in landings | consulting | moved_objects}
     keys |= {(family, key) for read, family, key in before.tables["row_reads"] if read in landed}
     keys |= {
         (rows.SOURCE, str(claim_id))
@@ -332,21 +432,66 @@ def _expected_keys(
     return keys
 
 
+def _table_diff(
+    stored: dict[str, list[tuple[Any, ...]]], rebuilt: dict[str, list[tuple[Any, ...]]]
+) -> str:
+    """The first differing rows of each table, a stored row's JSON compared field by field."""
+
+    def fields(value: Any, path: str = "") -> dict[str, Any]:
+        found: dict[str, Any] = {}
+        if isinstance(value, dict):
+            for key in value:
+                found.update(fields(value[key], f"{path}.{key}"))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                found.update(fields(item, f"{path}[{index}]"))
+        else:
+            found[path] = value
+        return found
+
+    notes: list[str] = []
+    for table in facts.TABLES:
+        extra = sorted(set(stored[table]) - set(rebuilt[table]), key=repr)
+        missing = sorted(set(rebuilt[table]) - set(stored[table]), key=repr)
+        for got, want in list(zip(extra, missing))[:2]:
+            parts: list[str] = []
+            for index, (left, right) in enumerate(zip(got, want, strict=True)):
+                if left == right:
+                    continue
+                try:
+                    left_fields, right_fields = fields(json.loads(left)), fields(json.loads(right))
+                except (TypeError, ValueError):
+                    parts.append(f"column {index}: {left!r} != {right!r}")
+                    continue
+                parts.extend(
+                    f"{key}: {left_fields.get(key)!r} != {right_fields.get(key)!r}"
+                    for key in sorted(set(left_fields) | set(right_fields))
+                    if left_fields.get(key) != right_fields.get(key)
+                )
+            notes.append(f"{table} {got[:2]}: " + "; ".join(parts))
+        if len(extra) != len(missing):
+            notes.append(f"{table}: {len(extra)} stored-only, {len(missing)} rebuilt-only")
+    return " | ".join(notes)
+
+
 def _catch_up_and_check(state: World, before: _Snapshot, swept: bool) -> _Snapshot:
     work = _tick(state)
     after = facts.stored_tables(state.instance)
     assert after is not None
     expected = _expected_claims(state.instance, before, state.at)
+    moved_objects: set[str] = set()
     if swept:
         broken = {str(row[0]) for row in before.tables["claim_facts"] if row[_FACT["error_code"]]}
-        expected = Counter(set(expected) | _rewritten_claims(state, before) | broken)
+        rewritten, moved_objects = _rewritten(state, before)
+        expected = Counter(set(expected) | rewritten | broken)
     assert work.claims == expected, f"Layer 1 Claims differ after {state.log}"
     assert work.slots == _expected_slots(before.tables, after), f"slots differ after {state.log}"
-    assert work.keys == _expected_keys(state, before, after, set(expected)), (
+    assert work.keys == _expected_keys(state, before, after, set(expected), moved_objects), (
         f"Layer 2 keys differ after {state.log}"
     )
-    assert after == facts.rebuilt_tables(state.instance, at=state.at), (
-        f"stored tables differ from a rebuild after {state.log}"
+    rebuilt = facts.rebuilt_tables(state.instance, at=state.at)
+    assert after == rebuilt, (
+        f"stored tables differ from a rebuild after {state.log}: {_table_diff(after, rebuilt)}"
     )
     return _snapshot(state.instance)
 

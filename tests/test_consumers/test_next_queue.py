@@ -424,9 +424,25 @@ def test_restart_does_no_work_and_a_schema_mismatch_folds_until_rebuilt(tmp_path
     _drain(instance)
     WORKER.match(instance, now=EVALUATION_TIME + timedelta(days=99), daemon_id="restart")
     assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
-    with sqlite3.connect(facts._STATE.path(instance)) as connection:
+    path = facts._STATE.path(instance)
+    with sqlite3.connect(path) as connection:
         connection.execute("CREATE TABLE alien(value TEXT)")
+    stored = path.read_bytes()
+    # A read folds and leaves the incompatible state exactly as it was (R3):
+    # only the worker rebuilds it.
     assert _served(instance, EVALUATION_TIME) is None
+    assert (
+        facts.claim_status_tally(
+            instance, coordinate=instance.accepted_coordinate(), evaluation_time=EVALUATION_TIME
+        )
+        is None
+    )
+    _assert_equivalent(instance, EVALUATION_TIME, served=False)
+    assert path.read_bytes() == stored
+    # A missing state is not created by a read either.
+    path.unlink()
+    assert _served(instance, EVALUATION_TIME) is None
+    assert not path.exists()
     _drain(instance)
     assert _served(instance, EVALUATION_TIME) is not None
 
@@ -631,18 +647,16 @@ def test_layer2_derives_exactly_the_keys_a_change_reaches(tmp_path: Path) -> Non
     with _keys_derived() as derived:
         _drain(instance)
     assert derived == [set()]
-    # A door event reaches its Claim's own keys and its slot, nothing else.
+    # An examined door event leaves the Claim's facts as they were: it reaches its
+    # threshold, which reads it, and no family that reads only facts (early cutoff).
+    before = facts.stored_tables(instance)
+    assert before is not None
     _attest(instance, owner, first, tmp_path, at=EVALUATION_TIME - timedelta(minutes=1))
     with _keys_derived() as derived:
         _drain(instance)
-    assert derived == [
-        {
-            (rows.THRESHOLD, identity),
-            (rows.DOOR, identity),
-            (rows.SOURCE, identity),
-            (rows.SLOT, rows.slot_key(first, qualifier=True)),
-        }
-    ]
+    after = facts.stored_tables(instance)
+    assert after is not None and after["claim_facts"] == before["claim_facts"]
+    assert derived == [{(rows.THRESHOLD, identity)}]
     assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=EVALUATION_TIME)
     # A read at the head derives nothing either.
     with _keys_derived() as derived:
@@ -656,15 +670,14 @@ def test_an_unservable_fact_is_derived_on_every_read_and_never_persisted(tmp_pat
     identity = _current_claim(instance).identity.qualified
     with sqlite3.connect(facts._STATE.path(instance)) as connection:
         connection.execute("UPDATE claim_facts SET unservable=1 WHERE claim_id=?", (identity,))
-    # Not current for orient's counts either.
-    assert (
-        facts.claim_status_tally(
-            instance,
-            coordinate=instance.accepted_coordinate(),
-            evaluation_time=EVALUATION_TIME,
-        )
-        is None
-    )
+    # Orient's counts are taken after the same read-time derivation.
+    from tests.test_consumers.test_next_facts import _live_counts
+
+    assert facts.claim_status_tally(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+        evaluation_time=EVALUATION_TIME,
+    ) == _live_counts(instance, EVALUATION_TIME)
     derived: list[str] = []
     original = facts._claim_facts
 
@@ -1043,3 +1056,253 @@ def test_undeclared_kinds_and_expiring_mandates_come_from_the_maintained_index(
     reasons = {item.reason for item in service_playbill_next(instance, request=request).items}
     assert not {"subject_kind_undeclared", "mandate_expiring"} & reasons
     assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=EVALUATION_TIME)
+
+
+# -- review fixes: one input state, maintained citations and counts, error order -----
+
+
+def test_a_catch_up_read_serves_rows_from_one_landing_state(tmp_path: Path) -> None:
+    """F-006: a body that lands while a read derives the worker's change makes the read
+    derive again against the logs as they then stand; it never serves a mix."""
+
+    from cruxible_client.contracts.claim_types import ClaimType
+    from tests.test_claims.test_claims import _claim_type
+
+    claim_type = ClaimType.model_validate(
+        {
+            **_claim_type().model_dump(mode="json"),
+            "artifact_format": "playbill-claim-type-v3",
+            "evidence_freshness": {"stale_after": {"microseconds": 1_000_000}},
+        }
+    )
+    instance, owner = seed_claims(tmp_path, claim_type_override=claim_type)
+    _drain(instance)
+    bodies = {
+        _current_claim(instance, subject_id="wi-42").identity.qualified: b"status: ready",
+        _current_claim(instance, subject_id="wi-43").identity.qualified: b"status: blocked",
+    }
+    first_id, second_id = sorted(bodies)
+    second = next(c for c in _all_claims(instance) if c.identity.qualified == second_id)
+    store = instance.body_store()
+    store.erase(store.digest_bytes(bodies[first_id]).tagged)
+    _attest(instance, owner, second, tmp_path, at=EVALUATION_TIME - timedelta(minutes=1))
+    original = facts._claim_facts
+    moved: list[bool] = []
+
+    def concurrent(instance, context, claim, **kwargs):  # type: ignore[no-untyped-def]
+        result = original(instance, context, claim, **kwargs)
+        if claim.identity.qualified == first_id and not moved:
+            # Restore the first body, then erase the second: never both absent.
+            moved.append(True)
+            store.store(bodies[first_id])
+            store.erase(store.digest_bytes(bodies[second_id]).tagged)
+        return result
+
+    facts._OVERLAYS.clear()
+    with patch.object(facts, "_claim_facts", concurrent):
+        served = _served(instance, EVALUATION_TIME)
+    assert moved and served is not None
+    stale = {item.subject_identity for item in served.rows if item.reason == "claim_stale_evidence"}
+    assert stale == {first_id}
+    _assert_equivalent(instance, EVALUATION_TIME)
+
+
+def test_a_read_with_a_landing_in_flight_waits_for_its_completion_or_folds(
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.storage.landing_log import LandingLog
+
+    instance, _owner = seed_claims(tmp_path)
+    _drain(instance)
+    store = instance.body_store()
+    original = LandingLog._append
+    seen: list[object] = []
+
+    def in_flight(log, kind, digest, *, sync):  # type: ignore[no-untyped-def]
+        result = original(log, kind, digest, sync=sync)
+        if kind == "store" and not seen:
+            # Between the intent and its completion the body may move: no read serves.
+            seen.append(_served(instance, EVALUATION_TIME))
+        return result
+
+    with patch.object(LandingLog, "_append", in_flight):
+        store.store(b"landing while a read runs\n")
+    assert seen == [None]
+    _assert_equivalent(instance, EVALUATION_TIME)
+
+
+def test_workspace_reads_take_citations_from_the_maintained_table(tmp_path: Path) -> None:
+    """F-007: warm and behind workspace reads never rebuild the citation inventory."""
+
+    from tests.test_discovery.test_next_request_reads import _rich_request
+    from tests.test_query.test_query_execution_service import _instance_with_query
+
+    instance, owner = _instance_with_query(tmp_path)
+    request = _rich_request(instance)
+    _drain(instance, request.evaluation_time)
+    forbidden = patch.object(
+        next_module, "_citation_commitments", side_effect=AssertionError("inventory fold")
+    )
+    with forbidden:
+        warm = service_playbill_next(instance, request=request)
+    with _oracle_only():
+        assert (
+            warm.model_dump_json()
+            == service_playbill_next(instance, request=request).model_dump_json()
+        )
+    # Behind: a door event the worker has not followed.
+    _attest(
+        instance,
+        owner,
+        _all_claims(instance)[0],
+        tmp_path,
+        at=request.evaluation_time - timedelta(minutes=1),
+    )
+    with forbidden:
+        behind = service_playbill_next(instance, request=request)
+    with _oracle_only():
+        assert (
+            behind.model_dump_json()
+            == service_playbill_next(instance, request=request).model_dump_json()
+        )
+    # A citation the facts could not read refuses the inventory, as the fold does.
+    _drain(instance, request.evaluation_time)
+    with sqlite3.connect(facts._STATE.path(instance)) as connection:
+        connection.execute("UPDATE claim_facts SET citation_error='CasError'")
+    with forbidden, pytest.raises(next_module.NextAcceptedStateInvalid, match="citation"):
+        service_playbill_next(instance, request=request)
+
+
+def test_orient_behind_the_worker_counts_from_the_overlay(tmp_path: Path) -> None:
+    """F-008: public orient behind the worker never resolves the whole population."""
+
+    from cruxible_core.service.discovery.claim_status import reset_claim_resolution_memo
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    instance, owner = seed_claims(tmp_path)
+    _drain(instance)
+    instance.body_store().store(b"an uncited landing")
+    _contend(instance, owner)
+    reset_claim_resolution_memo()
+    with patch(
+        "cruxible_core.service.discovery.claim_status.claim_resolution_statuses",
+        side_effect=AssertionError("population fold"),
+    ):
+        served = service_playbill_orient(instance, evaluation_time=EVALUATION_TIME)
+    with patch.object(facts, "claim_status_tally", return_value=None):
+        folded = service_playbill_orient(instance, evaluation_time=EVALUATION_TIME)
+    assert served.model_dump_json() == folded.model_dump_json()
+
+
+def test_broken_keys_refuse_in_the_folds_order(tmp_path: Path) -> None:
+    """F-009: thresholds before doors, doors in chain order, whatever the identities."""
+
+    from cruxible_client.contracts.errors import CasError, ProposalIntegrityError
+    from tests.test_consumers.test_next_incremental import World, _door_capture
+
+    instance, owner = seed_claims(tmp_path)
+    _drain(instance)
+    claim = _current_claim(instance).identity.qualified
+    with facts._STATE.open(instance) as connection:
+        assert connection is not None
+        for family in (rows.THRESHOLD, rows.DOOR):
+            connection.execute(
+                "INSERT OR REPLACE INTO row_keys VALUES (?,?,NULL,NULL,?,?)",
+                (family, claim, "error", "injected"),
+            )
+    with (
+        patch.object(
+            next_module, "_claim_threshold_rows", side_effect=ProposalIntegrityError("first")
+        ),
+        patch.object(rows, "door_key", side_effect=CasError("second")),
+    ):
+        served = _outcome(instance, EVALUATION_TIME)
+        with _oracle_only():
+            assert served == _outcome(instance, EVALUATION_TIME)
+    assert served[0] == "ProposalIntegrityError"
+
+    # Two door Claims observed in the reverse of their identities' order.
+    state = World(instance=instance, owner=owner, root=tmp_path, rng=None)  # type: ignore[arg-type]
+    later, earlier = sorted(_all_claims(instance), key=lambda c: c.identity.qualified)[::-1][:2]
+    for target in (later, earlier):
+        _attest(
+            instance,
+            owner,
+            target,
+            tmp_path,
+            at=EVALUATION_TIME - timedelta(minutes=1),
+            basis="new_capture",
+            stance="support",
+            captures=(_door_capture(state, target.identity.name),),
+        )
+    errors: dict[str, type[Exception]] = {
+        later.identity.qualified: CasError,
+        earlier.identity.qualified: ProposalIntegrityError,
+    }
+    fold_rows = next_module._DoorFold.rows
+
+    def broken(self, envelope, **kwargs):  # type: ignore[no-untyped-def]
+        raise errors[envelope.statement.claim_identity.qualified]("door")
+
+    with patch.object(next_module._DoorFold, "rows", broken):
+        _drain(instance)
+        served = _outcome(instance, EVALUATION_TIME)
+        with _oracle_only():
+            assert served == _outcome(instance, EVALUATION_TIME)
+    assert served[0] == "CasError"
+    assert next_module._DoorFold.rows is fold_rows
+
+
+@pytest.mark.parametrize("mutation", ("extra", "missing"))
+def test_the_oracle_rejects_extra_and_missing_layer2_keys(tmp_path: Path, mutation: str) -> None:
+    """F-011: the oracle's expected keys are its own; a dirty-key set that adds an
+    unaffected family or drops a needed one fails it."""
+
+    from tests.test_consumers import test_next_incremental as oracle
+
+    instance, owner = seed_claims(tmp_path)
+    state = oracle.World(
+        instance=instance,
+        owner=owner,
+        root=tmp_path,
+        rng=__import__("random").Random(0),
+        at=EVALUATION_TIME,
+    )
+    oracle._tick(state)
+    before = oracle._snapshot(instance)
+    first = _current_claim(instance)
+    _attest(instance, owner, first, tmp_path, at=EVALUATION_TIME - timedelta(minutes=1))
+    original = facts._dirty_keys
+
+    def mutated(connection, delta, moved):  # type: ignore[no-untyped-def]
+        keys = original(connection, delta, moved)
+        if mutation == "extra":
+            return keys | {(rows.SOURCE, first.identity.qualified)}
+        return keys - {(rows.THRESHOLD, first.identity.qualified)}
+
+    with patch.object(facts, "_dirty_keys", mutated), pytest.raises(AssertionError):
+        oracle._catch_up_and_check(state, before, swept=False)
+
+
+def test_a_door_row_records_the_account_captures_it_read(tmp_path: Path) -> None:
+    """A door row reads its Claim's acceptance-time accounts: their Captures are reads of
+    the door key, so a Capture that moves reaches it even when the facts stay the same."""
+
+    instance, owner, _actor, _first, claim_id, *_rest = shared_capture_world(tmp_path)
+    claim = next(c for c in _all_claims(instance) if c.identity.name == claim_id)
+    capture = _capture(instance, claim_id, b"new observation")
+    _attest(
+        instance,
+        owner,
+        claim,
+        tmp_path,
+        at=EVALUATION_TIME - timedelta(minutes=1),
+        basis="new_capture",
+        stance="support",
+        captures=(capture,),
+    )
+    _drain(instance)
+    tables = facts.stored_tables(instance)
+    assert tables is not None
+    reads = {read for read, family, key in tables["row_reads"] if family == rows.DOOR}
+    assert {f"capture:{digest}" for digest in claim.backing.capture_digests} <= reads

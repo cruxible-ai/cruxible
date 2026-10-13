@@ -658,7 +658,6 @@ def _steps(connection: sqlite3.Connection, sql: str, parameters: tuple[Any, ...]
     ("sql", "parameters", "index"),
     (
         (facts._EARLIEST_END, (), "claim_facts_by_upper"),
-        (facts._LATEST_START, (), "claim_facts_by_lower"),
         (
             "SELECT claim_id FROM claim_facts WHERE upper_us IS NOT NULL AND upper_us<=?",
             (5,),
@@ -730,7 +729,7 @@ def _current_state(size: int) -> sqlite3.Connection:
         (facts._EXPIRED_FACTS, (1003, 1003), ("claim_facts_by_upper", "claim_facts_by_lower")),
         (facts._EXPIRED_KEYS, (1003, 1003), ("row_keys_by_upper", "row_keys_by_lower")),
         (facts._UNSERVABLE, (), ("claim_facts_unservable",)),
-        (facts._ANY_UNSERVABLE, (), ("claim_facts_unservable",)),
+        (facts._CITATION_ERROR, (), ("claim_facts_citation_errors",)),
         (facts._BROKEN_KEYS, (), ("row_keys_with_errors",)),
         (facts._BROKEN_FACTS, (), ("claim_facts_with_errors",)),
         (facts._BROKEN_RETIRED, (), ("claim_facts_with_errors",)),
@@ -762,10 +761,11 @@ def test_every_pass_and_read_probe_is_bounded_by_its_answer(
     assert _steps(small, sql, parameters) == _steps(large, sql, parameters)
 
 
-def test_the_tally_answers_only_while_the_facts_are_current(
+def test_the_tally_answers_through_the_overlay_and_folds_only_cold_or_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cruxible_core.service.discovery import orient
+    from cruxible_core.service.discovery.claim_status import reset_claim_resolution_memo
 
     instance, _owner = _freshness_world(tmp_path)
     fresh = datetime(2026, 8, 16, 20, 0, 5, tzinfo=UTC)
@@ -778,23 +778,31 @@ def test_the_tally_answers_only_while_the_facts_are_current(
     def derived(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         raise AssertionError("orient derived statuses the tally holds")
 
-    with monkeypatch.context() as patched:
-        patched.setattr(
-            "cruxible_core.service.discovery.claim_status.claim_resolution_statuses", derived
-        )
-        patched.setattr(
-            "cruxible_core.service.discovery.claim_status.remembered_resolution_statuses", derived
-        )
-        counts = orient._claim_counts(instance, coordinate, evaluation_time=fresh)
-    assert counts.model_dump() == tally
+    def counts_without_a_fold(at: datetime) -> dict[str, int]:
+        reset_claim_resolution_memo()
+        with monkeypatch.context() as patched:
+            patched.setattr(
+                "cruxible_core.service.discovery.claim_status.claim_resolution_statuses", derived
+            )
+            patched.setattr(
+                "cruxible_core.service.discovery.claim_status.remembered_resolution_statuses",
+                derived,
+            )
+            return orient._claim_counts(instance, coordinate, evaluation_time=at).model_dump()
 
-    # Past a fact's interval, after a landing, or with the worker disabled: derive live.
+    assert counts_without_a_fold(fresh) == tally
+    # Past a fact's interval and behind an unfollowed landing, the counts come from
+    # the overlay, as next's rows do, never from a population fold (F-008).
     past = datetime(2026, 8, 16, 20, 0, 10, tzinfo=UTC)
-    assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=past) is None
+    assert counts_without_a_fold(past) == _live_counts(instance, past)
+    instance.body_store().store(b"a landing the facts have not followed\n")
+    assert counts_without_a_fold(fresh) == tally
+    stored = facts.stored_tables(instance)
+    assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=fresh) == tally
+    assert facts.stored_tables(instance) == stored
+    # Disabled: derive live.
     monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
     assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=fresh) is None
     monkeypatch.delenv("CRUXIBLE_DISABLED_CONSUMERS")
-    instance.body_store().store(b"a landing the facts have not followed\n")
-    assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=fresh) is None
     _catch_up(instance, fresh)
     assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=fresh) == tally

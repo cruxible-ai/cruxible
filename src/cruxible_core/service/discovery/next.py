@@ -10,7 +10,10 @@ from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
-from typing import Annotated, Any, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
+
+if TYPE_CHECKING:
+    from cruxible_core.consumers.next.facts import CitationRequest, ServedRows
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -3314,9 +3317,12 @@ class _DoorFold:
         return self._law_index
 
     def read_captures(self, claim_id: str) -> tuple[str, ...]:
-        """The Captures this Claim's acceptance-time accounts were read from (none until read)."""
+        """The Captures this Claim's acceptance-time accounts were read from (none until read).
 
-        found = self._accounts.get(claim_id)
+        ``claim_id`` is the Claim's name or its qualified identity.
+        """
+
+        found = self._accounts.get(claim_id.removeprefix("Claim:"))
         if found is None:
             return ()
         return tuple(
@@ -3875,9 +3881,29 @@ def _workspace_items(
     observation: NextWorkspaceObservation | None,
     claims: tuple[ClaimArtifactAny, ...] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
+    served: ServedRows | None = None,
 ) -> tuple[tuple[NextDomain, ...], tuple[PlaybillNextItemV1, ...]]:
+    """Workspace rows. ``served`` carries the maintained citation commitments a
+    stored-rows read took; without it the inventory is folded from every Claim."""
+
     if observation is None:
         return (), ()
+
+    def commitments() -> Mapping[str, _CitationCommitment]:
+        if served is not None and served.citations is not None:
+            if served.citation_error:
+                raise NextAcceptedStateInvalid(
+                    f"{NextAcceptedStateInvalid.code}: citation inventory is invalid"
+                )
+            return served.citations
+        return _citation_commitments(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+            claims=claims,
+            facts_reader=facts_reader,
+        )
+
     domains: list[NextDomain] = []
     items: list[PlaybillNextItemV1] = []
     if observation.floor_status is not None or observation.installed_coordinate is not None:
@@ -3908,15 +3934,9 @@ def _workspace_items(
             )
     if observation.drift_observations is not None and access_profile.permits("instance"):
         domains.append("workspace_sources")
-        commitments = _citation_commitments(
-            instance,
-            coordinate=coordinate,
-            evaluation_time=evaluation_time,
-            claims=claims,
-            facts_reader=facts_reader,
-        )
+        drifted = commitments()
         for drift in observation.drift_observations:
-            expected = commitments.get(drift.citation_id)
+            expected = drifted.get(drift.citation_id)
             if expected is None or expected.commitment_digest != drift.expected_commitment_digest:
                 raise NextWorkspaceObservationInvalid(
                     f"{NextWorkspaceObservationInvalid.code}: "
@@ -3935,13 +3955,7 @@ def _workspace_items(
     elif observation.source_observations is not None and access_profile.permits("instance"):
         domains.append("workspace_sources")
         observed = {source.source_id: source for source in observation.source_observations}
-        commitments = _citation_commitments(
-            instance,
-            coordinate=coordinate,
-            evaluation_time=evaluation_time,
-            claims=claims,
-            facts_reader=facts_reader,
-        )
+        inventory = commitments()
         defective_scan_notes = {
             source.source_id: notes
             for source in observation.source_observations
@@ -3949,8 +3963,8 @@ def _workspace_items(
             if notes is not None
         }
         defective_commitments: dict[str, list[_CitationCommitment]] = defaultdict(list)
-        for citation_id in sorted(commitments, key=lambda item: item.encode("ascii")):
-            commitment = commitments[citation_id]
+        for citation_id in sorted(inventory, key=lambda item: item.encode("ascii")):
+            commitment = inventory[citation_id]
             if commitment.source_id is None or commitment.source_digest is None:
                 continue
             item = _source_citation_item(
@@ -3989,6 +4003,18 @@ def _workspace_items(
     ):
         domains.append("workspace_projections")
     return tuple(domains), tuple(items)
+
+
+def _citation_request(observation: NextWorkspaceObservation | None) -> CitationRequest:
+    """The citation commitments a workspace observation asks about: its drifted ids, or all."""
+
+    if observation is None:
+        return None
+    if observation.drift_observations is not None:
+        return tuple(drift.citation_id for drift in observation.drift_observations)
+    if observation.source_observations is not None:
+        return "all"
+    return None
 
 
 def _consumer_healths(
@@ -5731,6 +5757,7 @@ def _next_queue(
             door_head=attestation_head,
             evaluation_time=request.evaluation_time,
             expiring_within=request.expiring_within,
+            citations=_citation_request(request.workspace_observation),
         )
         if request.access_profile.permits("instance")
         else None
@@ -5785,6 +5812,7 @@ def _next_queue(
         observation=request.workspace_observation,
         claims=parsed_claims,
         facts_reader=facts_reader,
+        served=stored,
     )
     observed = tuple(
         domain

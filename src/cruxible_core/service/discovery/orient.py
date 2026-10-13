@@ -1040,14 +1040,14 @@ def _claim_counts(
     *,
     evaluation_time: datetime,
 ) -> OrientClaimCounts:
-    """Every accepted Claim counted by status: from the next facts' tally when it is current.
+    """Every accepted Claim counted by status: from the next facts' tally.
 
     The next worker keeps each Claim's resolution status from change records
-    and counts them as they move, so a current tally answers in a few indexed
-    reads whatever the Claim count. Otherwise (the worker behind, disabled or
-    not yet run, an instant outside its facts' intervals, a slot that did not
-    resolve) the remembered resolution answers when it holds, and a miss
-    derives the statuses once.
+    and counts them as they move; a worker behind or an instant outside its
+    facts' intervals costs the change, read through the same rolled-back
+    overlay next's rows use. Only where next folds (the worker disabled or not
+    yet run, a historical coordinate) or a slot did not resolve does the
+    remembered resolution answer, and a miss derive the statuses once.
     """
 
     from cruxible_core.consumers.next.facts import claim_status_tally
