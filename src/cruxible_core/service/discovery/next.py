@@ -2988,11 +2988,16 @@ def _bounded_claim_lineages(
     current_claims: Mapping[str, ClaimArtifactAny],
     max_nodes: int = MAX_DEPENDENCY_LINEAGE_NODES,
 ) -> tuple[dict[str, tuple[str, ...]], frozenset[str]]:
-    """Follow indexed predecessors; unrelated generations consume no traversal budget."""
+    """Follow indexed predecessors, at most ``max_nodes`` for each lineage.
+
+    Unrelated generations consume no traversal budget, and neither do other
+    Claims' lineages: whether one lineage is complete depends on its own length
+    alone, so it can be decided for one Claim without reading the others.
+    """
     lineages: dict[str, tuple[str, ...]] = {}
     incomplete: set[str] = set()
-    remaining = max_nodes
     for path, current in sorted(current_claims.items()):
+        remaining = max_nodes
         found = {claim_artifact_digest(current).tagged}
         expected = current.lifecycle.predecessor_digest
         while expected is not None and remaining > 0 and expected not in found:
