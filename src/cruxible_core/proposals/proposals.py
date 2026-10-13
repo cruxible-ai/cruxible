@@ -949,6 +949,7 @@ class ClaimQueryFactsProvider(Protocol):
         coordinate: AcceptedProjectionCoordinate,
         *,
         predicates: tuple[str, ...] | None = None,
+        subject_kinds: tuple[str, ...] | None = None,
     ) -> ClaimQueryFactsV1: ...
 
 
@@ -4553,7 +4554,9 @@ def _evaluate_scoped_members(
             timestamp=timestamp,
             facts=None
             if query_facts_provider is None
-            else lambda predicates: query_facts_provider(current, predicates=predicates),
+            else lambda predicates, subject_kinds: query_facts_provider(
+                current, predicates=predicates, subject_kinds=subject_kinds
+            ),
         )
         if issues:
             return CandidateEvaluation(

@@ -2013,8 +2013,8 @@ class ProposalTerminalEgressSink:
                     candidate_tree=prepared.candidate_tree,
                     current=head,
                     timestamp=canonical_candidate_timestamp(request.evaluation_time),
-                    facts=lambda predicates: self.instance._accepted_query_facts(
-                        self.instance, head, predicates=predicates
+                    facts=lambda predicates, subject_kinds: self.instance._accepted_query_facts(
+                        self.instance, head, predicates=predicates, subject_kinds=subject_kinds
                     ),
                     mandate_name=mandate.identity.name,
                 )

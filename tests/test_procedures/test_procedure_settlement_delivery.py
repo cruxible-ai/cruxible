@@ -1013,9 +1013,9 @@ def test_a_settle_reads_condition_facts_for_its_predicates_only(
     built = PlaybillInstance._accepted_query_facts
     asked: list[object] = []
 
-    def scoped(source, coordinate, *, predicates=None):  # type: ignore[no-untyped-def]
+    def scoped(source, coordinate, *, predicates=None, subject_kinds=None):  # type: ignore[no-untyped-def]
         asked.append(predicates)
-        return built(source, coordinate, predicates=predicates)
+        return built(source, coordinate, predicates=predicates, subject_kinds=subject_kinds)
 
     def no_materialized_tree(self, oid):  # type: ignore[no-untyped-def]
         raise AssertionError("settle delivery materialized a whole accepted tree")
@@ -1029,6 +1029,59 @@ def test_a_settle_reads_condition_facts_for_its_predicates_only(
     # predicates the condition query reads.
     expected = _condition(only_subject=None).referenced_predicates
     assert asked and all(predicates == expected for predicates in asked), asked
+
+
+def test_a_settle_builds_its_condition_facts_once_over_the_condition_kinds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delivery, admission and activation share one facts build per request (perf B7).
+
+    Each condition read asks for the condition query's entry Subject kinds, not
+    every Subject, and every target's condition result equals the one an
+    unscoped, freshly built facts projection gives.
+    """
+
+    from cruxible_core.query import engine
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.discovery import query as query_service
+
+    instance, root, line = settle_world(tmp_path)
+    kinds = _condition(only_subject=None).entry.subject_kinds
+    built, build = PlaybillInstance._accepted_query_facts, query_service.build_accepted_query_facts
+    asked: list[object] = []
+    builds: list[object] = []
+    compared: list[object] = []
+
+    def scoped(source, coordinate, *, predicates=None, subject_kinds=None):  # type: ignore[no-untyped-def]
+        asked.append(subject_kinds)
+        return built(source, coordinate, predicates=predicates, subject_kinds=subject_kinds)
+
+    def counted(source, *, coordinate, **kwargs):  # type: ignore[no-untyped-def]
+        if kwargs.get("subject_kinds") == kinds:
+            builds.append(coordinate.git_oid)
+        return build(source, coordinate=coordinate, **kwargs)
+
+    real_evaluate = engine.evaluate_claim_query
+
+    def evaluate(definition, *, facts, coordinate, **kwargs):  # type: ignore[no-untyped-def]
+        result = real_evaluate(definition, facts=facts, coordinate=coordinate, **kwargs)
+        query = getattr(definition, "query", None)
+        if getattr(getattr(query, "identity", None), "name", None) == "security.settle-condition":
+            whole = build(instance, coordinate=coordinate)
+            expected = real_evaluate(definition, facts=whole, coordinate=coordinate, **kwargs)
+            assert result == expected
+            compared.append(result.verdict)
+        return result
+
+    monkeypatch.setattr(PlaybillInstance, "_accepted_query_facts", staticmethod(scoped))
+    monkeypatch.setattr(query_service, "build_accepted_query_facts", counted)
+    monkeypatch.setattr(engine, "evaluate_claim_query", evaluate)
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    assert _egress(state).settle_outcome == "settled"
+    assert len(asked) >= 2 and all(item == kinds for item in asked), asked
+    assert len(builds) == 1, builds
+    assert compared and set(compared) == {"completed"}
 
 
 def test_every_settle_mandate_lookup_reads_its_one_path_never_the_tree(

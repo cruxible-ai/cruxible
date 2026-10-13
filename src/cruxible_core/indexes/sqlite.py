@@ -979,6 +979,17 @@ class ProjectionPool:
         self._owners: list[object] = []
         self._open = True
         self._thread = threading.get_ident()
+        self._values: dict[object, Any] = {}
+
+    def values(self) -> dict[object, Any] | None:
+        """This request's derived values, on its own thread only (else None).
+
+        Holders key them by exactly the inputs they were derived from and
+        re-check whatever can move within a request before reusing one.
+        """
+        if not self._open or threading.get_ident() != self._thread:
+            return None
+        return self._values
 
     def take(self, key: object) -> ProjectionHandle | None:
         if not self._open or threading.get_ident() != self._thread:
@@ -1019,6 +1030,7 @@ class ProjectionPool:
                 handle._release = None
                 handle.close()
         self._owners.clear()
+        self._values.clear()
 
 
 def bind_projection(

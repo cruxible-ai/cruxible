@@ -170,8 +170,10 @@ def _settle(instance, mandate, *, digest: str | None = None, payload=None):
         timestamp=TIMESTAMP,
         rebased=False,
         actor_id=actor.actor_id,
-        query_facts_provider=lambda coordinate, *, predicates=None: instance._accepted_query_facts(
-            instance, coordinate, predicates=predicates
+        query_facts_provider=lambda coordinate, *, predicates=None, subject_kinds=None: (
+            instance._accepted_query_facts(
+                instance, coordinate, predicates=predicates, subject_kinds=subject_kinds
+            )
         ),
         delegated_mandate_digest=digest or procedure_mandate_digest(mandate).tagged,
     )
