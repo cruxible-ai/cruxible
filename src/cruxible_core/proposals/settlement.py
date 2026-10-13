@@ -61,6 +61,7 @@ from cruxible_client.contracts.governance import (
     validate_approval_requirements,
 )
 from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, AcceptanceLawRegistry
+from cruxible_client.contracts.merkle import MerkleManifest
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     principal_registry_from_tree,
@@ -703,6 +704,9 @@ class VerifiedGenerationBundle:
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
     approvals: tuple[VerifiedApproval, ...]
+    #: ``members``' manifest-domain trie, as the candidate's evaluation advanced
+    #: it: a replay checkpoint reads its root instead of rebuilding the trie.
+    merkle: MerkleManifest | None = None
 
     def projection_coordinate(
         self,
@@ -935,6 +939,7 @@ def prepare_generation(
         generation_root=generation_root(descriptor),
         principals=principals,
         approvals=verified_approvals,
+        merkle=reevaluated.state.merkle,
     )
     _checkpoint("after", crash_hook)
     return bundle

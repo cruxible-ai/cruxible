@@ -1196,6 +1196,7 @@ def recover_instance(
             parent_generation_root=history[-2].generation_root.tagged,
             tree=window.tree,
             members=window.state.members,
+            merkle=window.state.merkle,
         )
     # Release the head tree before projection assembly, the peak-memory phase.
     del window

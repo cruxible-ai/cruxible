@@ -431,11 +431,21 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(
 
     expected_members = checkpoints.members_for_tree(bundle.tree)
     assert bundle.members == expected_members
+    # The summary a cold rebuild of the trie gives, byte for byte (perf B11).
+    cold = publisher._replay_checkpoint_body(
+        replace(bundle, merkle=None),
+        base=base,
+        parent=publisher.accepted_coordinates_by_sequence[0],
+    )
 
     def no_rehash(_tree):
         pytest.fail("activation checkpoint must reuse verified semantic members")
 
+    def no_trie_rebuild(_members):
+        pytest.fail("activation checkpoint must reuse the evaluated member trie")
+
     monkeypatch.setattr(checkpoints, "members_for_tree", no_rehash)
+    monkeypatch.setattr(checkpoints, "build_merkle_manifest", no_trie_rebuild)
     projection = publisher.prebuild(bundle, base=base)
     assert publisher.activate(bundle, projection, base=base).status == "accepted"
 
@@ -445,6 +455,8 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(
     assert record.body.sequence == 1
     assert record.body.git_oid == bundle.oid
     assert record.body.semantic_root == bundle.semantic_root.tagged
+    assert record.body == cold
+    assert checkpoint_digest(record.body) == checkpoint_digest(cold)
 
     monkeypatch.undo()
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)

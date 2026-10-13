@@ -98,6 +98,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.errors import CruxibleError, ReplayCheckpointError
 from cruxible_client.contracts.merkle import (
     MANIFEST_MERKLE_DOMAINS,
+    MerkleManifest,
     build_merkle_manifest,
     verify_merkle_tree,
 )
@@ -388,6 +389,7 @@ def checkpoint_body(
     parent_generation_root: str,
     tree: Mapping[str, bytes],
     members: Mapping[str, str] | None = None,
+    merkle: MerkleManifest | None = None,
 ) -> ReplayCheckpointBodyV2:
     """Summarize one already-verified accepted coordinate.
 
@@ -397,9 +399,13 @@ def checkpoint_body(
     generation's nowhere in sight, so accepting one would invite a summary that
     disagrees with its own coordinate and is discarded on the next reopen.
     `members` may be supplied only to reuse a manifest the caller already
-    computed over this exact tree.
+    computed over this exact tree, and `merkle` only with it: that manifest's
+    trie, already built (an accepted bundle carries the one its evaluation
+    advanced), whose root is the root a rebuild over `members` gives.
     """
 
+    if merkle is not None and members is None:
+        raise ValueError("a supplied member trie needs the member manifest it was built from")
     resolved = members if members is not None else members_for_tree(tree)
     principals = principal_registry_from_tree(tree, semantic_root=semantic_root)
     return ReplayCheckpointBodyV2(
@@ -413,7 +419,7 @@ def checkpoint_body(
         generation_root=generation_root,
         parent_generation_root=parent_generation_root,
         manifest_root=manifest_root_from_members(resolved).tagged,
-        merkle_root=build_merkle_manifest(resolved).root.tagged,
+        merkle_root=(merkle if merkle is not None else build_merkle_manifest(resolved)).root.tagged,
         members=dict(resolved),
         principals=principals,
     )
