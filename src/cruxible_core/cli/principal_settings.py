@@ -16,11 +16,13 @@ from __future__ import annotations
 import os
 import shlex
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 
+from cruxible_client.authoring.principal_settings import (
+    PrincipalSettings,
+    read_principal_settings,
+)
 from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
-from cruxible_core.cli.context import normalized_transport
 
 PRINCIPAL_SETTINGS_FILE = "cruxible.env"
 _TOKEN_ENV = "CRUXIBLE_SERVER_BEARER_TOKEN"
@@ -49,61 +51,6 @@ def default_key_dir(
     raw = env.get("XDG_CONFIG_HOME")
     base = Path(raw).expanduser() if raw else Path.home() / ".config"
     return (base / "cruxible" / "keys" / instance_id / principal_id).resolve()
-
-
-@dataclass(frozen=True)
-class PrincipalSettings:
-    """What a principal's ``cruxible.env`` names: who acts, on what, with which key."""
-
-    path: Path
-    #: The daemon endpoint the file was written for (``normalized_transport``).
-    transport: str | None
-    instance_id: str
-    principal_id: str
-    private_key_path: str
-    token: str | None
-
-    def environment(self) -> dict[str, str]:
-        """The variables a process that sourced this file would have."""
-
-        values = {
-            PRINCIPAL_ID_ENV: self.principal_id,
-            PRINCIPAL_KEY_ENV: self.private_key_path,
-        }
-        if self.token is not None:
-            values[PRINCIPAL_TOKEN_ENV] = self.token
-        return values
-
-
-def read_principal_settings(path: Path) -> PrincipalSettings:
-    """Parse the ``export`` lines `write_principal_settings` wrote; refuse anything else."""
-
-    values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("export "):
-            continue
-        name, _, raw = line.removeprefix("export ").partition("=")
-        words = shlex.split(raw)
-        if len(words) != 1:
-            raise ValueError(f"principal settings line for {name} is not one quoted value")
-        values[name] = words[0]
-    missing = [
-        name
-        for name in ("CRUXIBLE_INSTANCE_ID", PRINCIPAL_ID_ENV, PRINCIPAL_KEY_ENV)
-        if not values.get(name)
-    ]
-    if missing:
-        raise ValueError(f"principal settings {path} name no {', '.join(missing)}")
-    return PrincipalSettings(
-        path=path,
-        transport=normalized_transport(
-            values.get("CRUXIBLE_SERVER_URL"), values.get("CRUXIBLE_SERVER_SOCKET")
-        ),
-        instance_id=values["CRUXIBLE_INSTANCE_ID"],
-        principal_id=values[PRINCIPAL_ID_ENV],
-        private_key_path=values[PRINCIPAL_KEY_ENV],
-        token=values.get(PRINCIPAL_TOKEN_ENV),
-    )
 
 
 def _transport_lines(obj: Mapping[str, object]) -> list[str]:

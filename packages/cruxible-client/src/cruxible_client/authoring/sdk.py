@@ -35,6 +35,7 @@ from cruxible_client.authoring.context import (
     ContextResolutionError,
     resolve_context,
 )
+from cruxible_client.authoring.principal_settings import remembered_principal_settings
 from cruxible_client.authoring.procedures import ProviderBinding, procedure_record_constructor
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
 from cruxible_client.authoring.sdk_types import (
@@ -2194,7 +2195,10 @@ class Cruxible:
         The context file fills whatever is not passed. ``target`` is an ``http(s)://`` URL
         or ``unix:<socket>``; ``instance`` the instance ID; ``token`` the bearer credential
         (default ``CRUXIBLE_SERVER_BEARER_TOKEN``); ``principal_id`` the principal of an
-        auth-off daemon. ``at`` pins every read to one accepted coordinate; without it the
+        auth-off daemon (default ``CRUXIBLE_PRINCIPAL_ID``). With neither a principal nor a
+        token named, it acts as the principal the context remembers for this instance
+        (`cruxible init`, `cruxible context use --principal`), with that principal's token.
+        ``at`` pins every read to one accepted coordinate; without it the
         connection is live and reads current head. One identity read names the head; nothing
         else is read. Use it as a context manager to close it. Next: ``cx.orient()`` to see
         what exists.
@@ -2241,11 +2245,26 @@ class Cruxible:
             if token is not None
             else os.environ.get("CRUXIBLE_SERVER_BEARER_TOKEN")
         )
+        if principal_id is None:
+            principal_id = configured_principal_id()
+        if principal_id is None and raw_token is None:
+            # As the CLI does: act as the principal `cruxible init` (or `context
+            # use --principal`) remembered for this instance on this endpoint,
+            # unless the process names its own identity or credential.
+            settings = remembered_principal_settings(
+                remembered,
+                instance_id=resolved.instance_id,
+                server_url=resolved.server_url,
+                server_socket=resolved.server_socket,
+            )
+            if settings is not None:
+                principal_id = settings.principal_id
+                raw_token = settings.token
         client = CruxibleClient(
             base_url=resolved.server_url,
             socket_path=resolved.server_socket,
             token=raw_token,
-            principal_id=(principal_id if principal_id is not None else configured_principal_id()),
+            principal_id=principal_id,
         )
         try:
             client_compatibility.check_daemon_compatibility(client)
