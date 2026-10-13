@@ -9,8 +9,10 @@ on older items, and every fifth cites file evidence, so the world holds
 Captures. After the bulk, one governed proposal accepts the definitions the
 routes need (a named query, a propose Procedure and a settle Procedure with
 their Lines and mandates, an armed no-terminal Line with a generation Trigger,
-and the curation-detect Trigger), the workspace is attached with floor
-delivery, and the operator attests some Claims.
+and the curation-detect Trigger), the operator attests some Claims, the refusal
+index is built and caught up through its read path, the workspace is attached
+with floor delivery, the tick Line is enabled, and every consumer part ticks
+once.
 
 Nothing is copied: the registry holds absolute paths, so each world is built
 fresh where it lives.
@@ -720,6 +722,39 @@ def tick(world: World, part: str) -> object:
     return units
 
 
+# -- the refusal index -------------------------------------------------------------------
+
+
+def catch_up_refusal_index(world: World) -> None:
+    """Build the refusal index and bring it current through its waiting read path."""
+
+    from cruxible_core.service.procedures.settled_refusals import catch_up_settled_refusals
+
+    instance = world.instance
+    index = instance.refusal_index()
+    for _page in range(10_000):
+        if index.coverage(instance) is None:
+            break
+    else:
+        raise AssertionError("the refusal index never caught up")
+    catch_up_settled_refusals(instance, steps=10_000, wait=True)
+    assert refusals_behind(world) is False, world.shape.name
+
+
+def refusals_behind(world: World) -> bool | None:
+    """The settled-refusals part's own readiness look: None while the index is unbuilt."""
+
+    from cruxible_core.consumers.next.settled_refusals import _behind
+
+    return _behind(world.instance)
+
+
+def refusal_cursor(world: World) -> int:
+    peeked = world.instance.refusal_index().peek(world.instance)
+    assert peeked is not None, world.shape.name
+    return peeked[1].record_id
+
+
 # -- the world ----------------------------------------------------------------------------
 
 
@@ -766,6 +801,9 @@ def build_world(directory: Path, shape: Shape) -> World:
     for index in range(shape.attestations):
         subject = world.items[-1 - index]
         append_attestation(world, attestation_request(world, subject, basis="examined_existing"))
+    # The refusal index is built and caught up through its own read path (the
+    # one next and review use), so its consumer part schedules from it.
+    catch_up_refusal_index(world)
     # The workspace attaches (floor delivery on) after the bulk: an attached
     # workspace fetches the ledger after every write, which the bulk need not pay.
     attach_workspace(instance_id, str(world.workspace))

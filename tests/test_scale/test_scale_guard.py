@@ -12,8 +12,9 @@ git and other subprocess spawns, SQLite statements and the rows of full table
 scans, projection binds, CAS body reads and ledger blob reads. Counts, never
 time. Every case's outcome is the same run to run, and most counts are too. A
 route that builds new items (writes, dry runs, settles, the Line tick's run)
-varies by a few units between runs (at most 14 file opens, 10 canonical encodes
-or digests and 3 SQL statements over two runs; the audit page by one encode):
+varies by a few units between runs (in the runs observed, at most 16 file
+opens, 16 canonical encodes or digests and 3 SQL statements; parses, scan rows,
+binds, CAS and blob reads never varied):
 Claim ids and Capture digests are fresh each run, and the ledger's loose
 objects, the CAS and the Merkle trie shard by hash, so ten new items land in a
 varying number of directories. That is bounded by the change, and RATIO's
@@ -51,14 +52,24 @@ A route/counter that fails today carries ``xfail(strict=True)`` naming what
 grows and where (file:line), so the package lands green and a fix turns the
 case into an XPASS failure that forces removing the mark.
 
-A window holding SQL whose scans the counters cannot weigh fails its route
-(never counts as zero).
+A route must also have done what it stands for: a window holding SQL whose scans
+the counters cannot weigh fails the route (never zero), and each consumer tick
+checks what it found due (``Route.verify``), so a tick that silently skipped
+(an unbuilt index, nothing matched) cannot pass as cheap. The refusal index is
+built and caught up when the worlds are, so the settled-refusals part schedules
+from it: after a generation it has a generation to index, after a settle it has
+the settle terminal's record to count, and idle it reads a current index.
+Neither world holds a prediction contract, so the prediction part's ticks only
+match; that part's run path is not measured here.
 
 Two whole-population scans are deliberate cadence work and stay out: the daily
 evidence sweep and the hourly prediction anchor retry. Both worlds retire those
 two Triggers, so no tick here ever fires them.
 
-Run alone, ``CRUXIBLE_SCALE_REPORT=<path>`` writes every measurement as JSON.
+Run with ``--dist loadfile`` (as CI does) when running in parallel: the worlds
+are a module fixture, built once per worker that runs this module, so plain
+``-n`` would spread the cases and build them on every worker. Run alone,
+``CRUXIBLE_SCALE_REPORT=<path>`` writes every measurement as JSON.
 """
 
 from __future__ import annotations
@@ -187,6 +198,9 @@ class Route:
     run: Callable[[World], object]
     #: Work done before the window opens (moving the head, reopening the instance).
     prepare: Callable[[World], object] | None = None
+    #: Checked after the window closes, with what ``run`` returned: the route did
+    #: the work it stands for (a tick that was due ran), so a silent zero fails.
+    verify: Callable[[World, Any], None] | None = None
     #: counter -> why it grows today (file:line); each becomes a strict xfail.
     grows: dict[str, str] = field(default_factory=dict)
 
@@ -233,6 +247,47 @@ def _tick(part: str) -> Callable[[World], object]:
         return _worlds.tick(world, part)
 
     return run
+
+
+#: Whether a tick of each part has work after a generation: the triggers fire
+#: floor.refresh and curation.detect, the armed Line's GenerationAccepted Trigger
+#: is due, the new Claims' Captures wait for the evidence check, the queue and the
+#: floor have a new target, curation a new generation, and the refusal index a
+#: generation to catch up. Neither world holds a prediction contract, so the
+#: prediction part only ever matches. Idle, nothing is due anywhere.
+_DUE_AFTER_GENERATION = {
+    "triggers": True,
+    "line": True,
+    "floor": True,
+    "queue": True,
+    "evidence": True,
+    "prediction": False,
+    "curation": True,
+    "settled_refusals": True,
+}
+
+
+def _ticked(part: str, *, due: bool) -> Callable[[World, Any], None]:
+    def verify(world: World, units: Any) -> None:
+        assert bool(units) == due, f"{part} tick on {world.shape.name}: due {units!r}"
+        if part == "settled_refusals":
+            # The current-index path, never the unbuilt-index skip.
+            assert _worlds.refusals_behind(world) is False, world.shape.name
+
+    return verify
+
+
+def _settle_pending(world: World) -> None:
+    """A settle terminal's record waits past the refusal index's counting cursor."""
+
+    assert _worlds.refusals_behind(world) is True, world.shape.name
+    world.prepared = _worlds.refusal_cursor(world)
+
+
+def _settle_counted(world: World, units: Any) -> None:
+    assert units, f"settled_refusals tick on {world.shape.name} found nothing due"
+    assert _worlds.refusal_cursor(world) > world.prepared, world.shape.name
+    assert _worlds.refusals_behind(world) is False, world.shape.name
 
 
 def _orient(world: World) -> object:
@@ -675,8 +730,18 @@ def _routes() -> list[Route]:
     return [
         Route("write.create.dry_run", _write(lambda w: _creates(w, "dry"), dry_run=True)),
         Route("write.create", _write(lambda w: _creates(w, "new"))),
-        *(Route(f"tick.after_generation.{part}", _tick(part)) for part in ticks),
-        *(Route(f"tick.idle.{part}", _tick(part)) for part in ticks),
+        *(
+            Route(
+                f"tick.after_generation.{part}",
+                _tick(part),
+                verify=_ticked(part, due=_DUE_AFTER_GENERATION[part]),
+            )
+            for part in ticks
+        ),
+        *(
+            Route(f"tick.idle.{part}", _tick(part), verify=_ticked(part, due=False))
+            for part in ticks
+        ),
         Route("read.orient", _orient),
         Route("read.get.subject", _get(lambda w: w.subject(7))),
         Route("read.get.claim", _get(lambda w: w.claims[f"{w.subject(7)}#title"])),
@@ -694,6 +759,12 @@ def _routes() -> list[Route]:
         Route("procedure.propose", _run_line(_worlds.PROPOSE)),
         Route("procedure.propose.activate", _activate_proposal),
         Route("procedure.settle", _run_line(_worlds.SETTLE)),
+        Route(
+            "tick.after_settle.settled_refusals",
+            _tick("settled_refusals"),
+            prepare=_settle_pending,
+            verify=_settle_counted,
+        ),
         Route(
             "attestation.examined_existing",
             _append_attestation,
@@ -730,13 +801,15 @@ def _measure(session: Session, route: Route) -> dict[str, dict[str, int]]:
         settle_advertisement(world.instance)
         root = world.root
         with counting(root) as window:
-            route.run(world)
+            result = route.run(world)
             settle_advertisement(world.instance)
         if window.unexplained:
             raise AssertionError(
                 f"{route.name} on {world.shape.name}: {len(window.unexplained)} SQL statements "
                 f"whose scans the guard cannot weigh: {window.unexplained[:5]}"
             )
+        if route.verify is not None:
+            route.verify(world, result)
         measured[world.shape.name] = {name: window.counts[name] for name in COUNTERS}
     return measured
 
