@@ -10,6 +10,7 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_core.exhaust import consumption
 from cruxible_core.exhaust.consumption import (
     CONSUMPTION_EPOCH_PARTITION_ID,
     ConsumptionContextV1,
@@ -164,3 +165,73 @@ def test_receipts_inside_the_window_are_kept(tmp_path: Path) -> None:
     _read(instance, NOW - timedelta(days=13), "status")
     assert fold_consumption_receipts(instance, now=NOW, days=14).folded == 0
     assert fold_consumption_receipts(instance, now=NOW + timedelta(days=2), days=14).folded == 1
+
+
+def test_a_fold_that_loses_to_an_overlapping_fold_chooses_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    _read(instance, OLD, "status")
+    paused: list[bool] = []
+
+    def overlapping(store: object) -> None:
+        if not paused:
+            paused.append(True)
+            # While fold A holds its one-receipt choice, a second receipt
+            # arrives and fold B folds both; A's append must not land.
+            _read(instance, OLD, "status", reader="second")
+            consumption.fold_consumption_receipts(instance, now=NOW, days=14)
+
+    monkeypatch.setattr(consumption, "_before_fold_append", overlapping)
+    consumption.fold_consumption_receipts(instance, now=NOW, days=14)
+    aggregate = consumption_aggregate(instance)
+    assert aggregate.artifacts[0].total_touch_count == 2
+    assert consumption_audit_touch_counts(instance) == {"ClaimType:status": 2}
+    # A fresh process reads the same counters from the store.
+    consumption._TALLIES.clear()
+    assert consumption_aggregate(instance) == aggregate
+
+
+def test_concurrent_folds_count_every_receipt_once(tmp_path: Path) -> None:
+    import threading
+
+    instance, _owner = initialize_local(tmp_path)
+    for reader in ("a", "b", "c", "d"):
+        _read(instance, OLD, "status", reader=reader)
+    errors: list[BaseException] = []
+
+    def fold() -> None:
+        try:
+            consumption.fold_consumption_receipts(instance, now=NOW, days=14)
+        except BaseException as exc:  # pragma: no cover - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=fold) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(60)
+    assert not errors
+    consumption._TALLIES.clear()
+    assert consumption_aggregate(instance).artifacts[0].total_touch_count == 4
+
+
+def test_a_read_after_one_new_receipt_applies_only_that_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    for index in range(12):
+        _read(instance, OLD, f"field{index}")
+    fold_consumption_receipts(instance, now=NOW, days=14)
+    consumption_aggregate(instance)
+    applied: list[int] = []
+    apply = consumption._Tally.apply
+
+    def counted(self, name, events, start):  # type: ignore[no-untyped-def]
+        applied.append(len(events) - start)
+        return apply(self, name, events, start)
+
+    monkeypatch.setattr(consumption._Tally, "apply", counted)
+    _read(instance, NOW, "late")
+    consumption_aggregate(instance)
+    assert sum(applied) == 1

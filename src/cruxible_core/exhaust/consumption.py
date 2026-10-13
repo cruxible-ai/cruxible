@@ -12,11 +12,13 @@ the raw receipts not yet folded.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import secrets
 import threading
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal, TypeAlias, get_args
@@ -32,6 +34,7 @@ from cruxible_core.claims.closure import parse_dependency_artifact
 from cruxible_core.curation.review_operational import (
     REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT,
     PlaybillReviewOperationalEventV1,
+    ReviewOperationalConcurrentChangeError,
     ReviewOperationalStore,
     ReviewOperationalStoreError,
 )
@@ -554,23 +557,6 @@ class _Folded:
     audit_keys: set[str] = field(default_factory=set)
 
 
-@dataclass
-class _ConsumptionState:
-    """The consumption family read once: epoch, folded counters and unfolded raw receipts."""
-
-    epoch: ConsumptionEpochV1 | None = None
-    folded_ids: set[str] = field(default_factory=set)
-    folded: dict[str, _Folded] = field(default_factory=dict)
-    # Unfolded raw receipts by receipt id, with the event that recorded them.
-    raw: dict[str, tuple[ConsumptionReceiptV1, PlaybillReviewOperationalEventV1]] = field(
-        default_factory=dict
-    )
-    # Raw receipts a fold already counted, still on disk: (partition, receipt id).
-    spent: list[tuple[str, str]] = field(default_factory=list)
-    legacy_receipts: int = 0
-    folds: int = 0
-
-
 _PARSED: dict[str, BaseModel] = {}
 _PARSED_LOCK = threading.Lock()
 _PARSED_LIMIT = 1 << 17
@@ -601,74 +587,223 @@ def _parsed(event: PlaybillReviewOperationalEventV1, payload: dict[str, object])
     return parsed
 
 
-def _consumption_state(store: ReviewOperationalStore) -> _ConsumptionState:
-    state = _ConsumptionState()
-    receipts: list[tuple[ConsumptionReceiptV1, PlaybillReviewOperationalEventV1]] = []
-    for event, payload in store.events(family="consumption"):
-        if event.partition_id == CONSUMPTION_OBSERVATION_PARTITION_ID:
-            continue  # folded in order by _observation
-        parsed = _parsed(event, payload)
-        if isinstance(parsed, ConsumptionEpochV1):
-            if state.epoch is not None and parsed != state.epoch:
-                raise ReviewOperationalStoreError("consumption epoch is not unique")
-            state.epoch = parsed
-        elif isinstance(parsed, ConsumptionFoldV1):
-            state.folds += 1
-            state.folded_ids.update(parsed.receipt_ids)
-            for item in parsed.artifacts:
-                folded = state.folded.setdefault(
-                    item.artifact_identity.qualified, _Folded(item.artifact_identity)
-                )
-                folded.operations.update(dict(item.touches_by_operation))
-                folded.audit_keys.update(item.audit_keys)
-        else:
-            assert isinstance(parsed, ConsumptionReceiptV1)
-            if event.partition_id == CONSUMPTION_EPOCH_PARTITION_ID:
-                state.legacy_receipts += 1
-            receipts.append((parsed, event))
-    for receipt, event in receipts:
-        if receipt.receipt_id in state.folded_ids:
-            state.spent.append((event.partition_id, receipt.receipt_id))
-        else:
+@dataclass
+class _Raw:
+    """One unfolded receipt: where it is stored, and the event that first recorded it."""
+
+    receipt: ConsumptionReceiptV1
+    event: PlaybillReviewOperationalEventV1
+    partitions: set[str] = field(default_factory=set)
+
+
+@dataclass
+class _Tally:
+    """The consumption family as maintained counters, advanced from the store's change feed.
+
+    ``operations`` and ``audit`` count folded and unfolded receipts alike:
+    a fold moves a raw receipt's contribution into its counters, so no
+    reader ever sums the two separately. Audit keys are a multiset, so the
+    distinct count per artifact (``audit_distinct``) is kept as keys come and go.
+    """
+
+    cursor: tuple[int, int] | None = None
+    # Partition directory -> how many of its events are applied, and its receipt ids.
+    seen: dict[str, int] = field(default_factory=dict)
+    held: dict[str, list[str]] = field(default_factory=dict)
+    epoch: ConsumptionEpochV1 | None = None
+    fold_head: str | None = None
+    folded_ids: set[str] = field(default_factory=set)
+    raw: dict[str, _Raw] = field(default_factory=dict)
+    # Partition directory -> the folded receipt ids it still stores.
+    spent: dict[str, set[str]] = field(default_factory=dict)
+    # Partition directory -> its partition id, for the receipts a fold removes.
+    partition_ids: dict[str, str] = field(default_factory=dict)
+    legacy_unfolded: int = 0
+    legacy_events: int = 0
+    identities: dict[str, ArtifactIdentity] = field(default_factory=dict)
+    operations: dict[str, Counter[str]] = field(default_factory=dict)
+    audit: dict[str, Counter[str]] = field(default_factory=dict)
+    audit_distinct: dict[str, int] = field(default_factory=dict)
+
+    def _count(self, identity: ArtifactIdentity, operation: str, delta: int) -> None:
+        key = identity.qualified
+        self.identities.setdefault(key, identity)
+        counts = self.operations.setdefault(key, Counter())
+        counts[operation] += delta
+        if counts[operation] <= 0:
+            del counts[operation]
+        if not counts:
+            del self.operations[key]
+
+    def _key(self, identity: str, audit_key: str, delta: int) -> None:
+        keys = self.audit.setdefault(identity, Counter())
+        before = keys[audit_key]
+        keys[audit_key] = before + delta
+        if keys[audit_key] <= 0:
+            del keys[audit_key]
+        if before <= 0 < before + delta:
+            self.audit_distinct[identity] = self.audit_distinct.get(identity, 0) + 1
+        elif before > 0 >= before + delta:
+            self.audit_distinct[identity] -= 1
+            if not self.audit_distinct[identity]:
+                del self.audit_distinct[identity]
+        if not keys:
+            del self.audit[identity]
+
+    def _raw_contribution(self, receipt: ConsumptionReceiptV1, delta: int) -> None:
+        self._count(receipt.response_artifact_identity, receipt.operation, delta)
+        if receipt.operation in QUALIFYING_CONSUMPTION_OPERATIONS:
+            self._key(
+                receipt.response_artifact_identity.qualified,
+                consumption_audit_key(receipt),
+                delta,
+            )
+
+    def apply(
+        self,
+        name: str,
+        events: list[tuple[PlaybillReviewOperationalEventV1, dict[str, object]]],
+        start: int,
+    ) -> None:
+        for event, payload in events[start:]:
+            self.partition_ids.setdefault(name, event.partition_id)
+            if event.partition_id == CONSUMPTION_OBSERVATION_PARTITION_ID:
+                continue  # folded in order by _observation
+            parsed = _parsed(event, payload)
+            if isinstance(parsed, ConsumptionEpochV1):
+                if self.epoch is not None and parsed != self.epoch:
+                    raise ReviewOperationalStoreError("consumption epoch is not unique")
+                self.epoch = parsed
+            elif isinstance(parsed, ConsumptionFoldV1):
+                self.fold_head = event.event_digest
+                self._fold(parsed)
+            else:
+                assert isinstance(parsed, ConsumptionReceiptV1)
+                self._receipt(name, event, parsed)
+
+    def _fold(self, fold: ConsumptionFoldV1) -> None:
+        for receipt_id in fold.receipt_ids:
+            if receipt_id in self.folded_ids:
+                # Folds are serialized and compared against the folds head, so
+                # two can never count one receipt; refuse rather than double.
+                raise ReviewOperationalStoreError("a consumption receipt was folded twice")
+            self.folded_ids.add(receipt_id)
+            raw = self.raw.pop(receipt_id, None)
+            if raw is None:
+                continue
+            self._raw_contribution(raw.receipt, -1)
+            for partition in raw.partitions:
+                self.spent.setdefault(partition, set()).add(receipt_id)
+                if self.partition_ids.get(partition) == CONSUMPTION_EPOCH_PARTITION_ID:
+                    self.legacy_unfolded -= 1
+        for item in fold.artifacts:
+            key = item.artifact_identity.qualified
+            for operation, count in item.touches_by_operation:
+                self._count(item.artifact_identity, operation, count)
+            for audit_key in item.audit_keys:
+                self._key(key, audit_key, 1)
+
+    def _receipt(
+        self, name: str, event: PlaybillReviewOperationalEventV1, receipt: ConsumptionReceiptV1
+    ) -> None:
+        receipt_id = receipt.receipt_id
+        self.held.setdefault(name, []).append(receipt_id)
+        legacy = event.partition_id == CONSUMPTION_EPOCH_PARTITION_ID
+        self.legacy_events += int(legacy)
+        if receipt_id in self.folded_ids:
+            self.spent.setdefault(name, set()).add(receipt_id)
+            return
+        raw = self.raw.get(receipt_id)
+        if raw is None:
             # A retained chained receipt and a new independent retry represent
-            # the same touch. Keep the original bytes, fold the stable ID once.
-            state.raw.setdefault(receipt.receipt_id, (receipt, event))
-    return state
+            # the same touch. Keep the original bytes, count the stable ID once.
+            raw = self.raw[receipt_id] = _Raw(receipt, event)
+            self._raw_contribution(receipt, 1)
+        raw.partitions.add(name)
+        self.legacy_unfolded += int(legacy)
+
+    def removed(self, name: str) -> None:
+        """A partition went away: forget the receipts it stored."""
+
+        for receipt_id in self.held.pop(name, ()):
+            self.spent.get(name, set()).discard(receipt_id)
+            raw = self.raw.get(receipt_id)
+            if raw is not None:
+                raw.partitions.discard(name)
+                if not raw.partitions:
+                    self._raw_contribution(raw.receipt, -1)
+                    del self.raw[receipt_id]
+        self.spent.pop(name, None)
+        self.seen.pop(name, None)
+        self.partition_ids.pop(name, None)
+
+
+_TALLIES: dict[tuple[str, str], _Tally] = {}
+_TALLIES_LOCK = threading.Lock()
+
+
+def _tally(store: ReviewOperationalStore) -> _Tally:
+    """The store's consumption tally, advanced by what changed since it last was.
+
+    The work is the touches since the last read and the new events of the
+    partitions they name; only a first read in a process, a rebuilt replay or
+    a partition cut back by retention replays the family whole.
+    """
+
+    key = (str(store.root), store.instance_id)
+    with _TALLIES_LOCK:
+        tally = _TALLIES.setdefault(key, _Tally())
+        changes = store.family_changes("consumption", tally.cursor)
+        shrank = any(
+            events is not None and len(events) < tally.seen.get(name, 0)
+            for name, events in changes.partitions
+        )
+        if changes.full or shrank:
+            if shrank:
+                changes = store.family_changes("consumption", None)
+            tally = _TALLIES[key] = _Tally()
+        for name, events in changes.partitions:
+            if events is None:
+                tally.removed(name)
+                continue
+            start = tally.seen.get(name, 0)
+            tally.apply(name, events, start)
+            tally.seen[name] = len(events)
+        tally.cursor = changes.cursor
+        return tally
 
 
 def consumption_aggregate(instance: PlaybillInstance) -> ConsumptionAggregateV1:
+    """Per-artifact touches, folded and unfolded, from the maintained tally.
+
+    Building the answer is the size of the answer: one row per artifact.
+    """
+
     store = instance.review_operational_store()
-    state = _consumption_state(store)
+    tally = _tally(store)
     gap_open, resumed = _observation(store)
-    operations: dict[str, Counter[str]] = {}
-    identities: dict[str, ArtifactIdentity] = {}
-    for key, folded in state.folded.items():
-        identities[key] = folded.identity
-        operations.setdefault(key, Counter()).update(folded.operations)
-    for receipt, _event in state.raw.values():
-        key = receipt.response_artifact_identity.qualified
-        identities.setdefault(key, receipt.response_artifact_identity)
-        operations.setdefault(key, Counter())[receipt.operation] += 1
     aggregates: list[ConsumptionArtifactAggregateV1] = []
-    for key in sorted(operations, key=lambda item: item.encode("utf-8")):
-        counts = operations[key]
-        qualifying = tuple(
-            (operation, counts[operation])
-            for operation in QUALIFYING_CONSUMPTION_OPERATIONS
-            if counts[operation]
-        )
-        aggregates.append(
-            ConsumptionArtifactAggregateV1(
-                artifact_identity=identities[key],
-                total_touch_count=sum(counts.values()),
-                qualifying_touch_count=sum(count for _, count in qualifying),
-                touches_by_operation=qualifying,
+    with _TALLIES_LOCK:
+        for key in sorted(tally.operations, key=lambda item: item.encode("utf-8")):
+            counts = tally.operations[key]
+            qualifying = tuple(
+                (operation, counts[operation])
+                for operation in QUALIFYING_CONSUMPTION_OPERATIONS
+                if counts[operation]
             )
-        )
+            aggregates.append(
+                ConsumptionArtifactAggregateV1(
+                    artifact_identity=tally.identities[key],
+                    total_touch_count=sum(counts.values()),
+                    qualifying_touch_count=sum(count for _, count in qualifying),
+                    touches_by_operation=qualifying,
+                )
+            )
+        epoch = tally.epoch
     return ConsumptionAggregateV1(
-        initialized=state.epoch is not None,
+        initialized=epoch is not None,
         consumption_epoch_generation=(
-            None if state.epoch is None else state.epoch.consumption_epoch_generation
+            None if epoch is None else epoch.consumption_epoch_generation
         ),
         artifacts=tuple(aggregates),
         observation_gap_open=gap_open,
@@ -679,20 +814,12 @@ def consumption_aggregate(instance: PlaybillInstance) -> ConsumptionAggregateV1:
 def consumption_audit_touch_counts(instance: PlaybillInstance) -> dict[str, int]:
     """Each artifact's distinct qualifying reader keys, folded and raw, under audit's demand cap."""
 
-    state = _consumption_state(instance.review_operational_store())
-    touches: dict[str, set[str]] = {
-        key: set(folded.audit_keys) for key, folded in state.folded.items() if folded.audit_keys
-    }
-    for receipt, _event in state.raw.values():
-        if receipt.operation not in QUALIFYING_CONSUMPTION_OPERATIONS:
-            continue
-        touches.setdefault(receipt.response_artifact_identity.qualified, set()).add(
-            consumption_audit_key(receipt)
-        )
-    return {
-        identity: len(touches[identity])
-        for identity in sorted(touches, key=lambda item: item.encode("utf-8"))
-    }
+    tally = _tally(instance.review_operational_store())
+    with _TALLIES_LOCK:
+        return {
+            identity: tally.audit_distinct[identity]
+            for identity in sorted(tally.audit_distinct, key=lambda item: item.encode("utf-8"))
+        }
 
 
 @dataclass(frozen=True)
@@ -704,29 +831,120 @@ class ConsumptionFoldResult:
     removed_legacy_events: int = 0
 
 
+_FOLD_LOCKS: dict[str, threading.RLock] = {}
+_FOLD_DEPTH: dict[str, int] = {}
+_FOLD_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def _fold_lock(store: ReviewOperationalStore) -> Iterator[None]:
+    """One fold at a time per store, across threads and processes (re-entrant in a thread)."""
+
+    key = str(store.root)
+    with _FOLD_LOCKS_GUARD:
+        lock = _FOLD_LOCKS.setdefault(key, threading.RLock())
+    with lock:
+        depth = _FOLD_DEPTH.get(key, 0)
+        descriptor = None
+        if depth == 0:
+            descriptor = os.open(
+                store.exhaust_root / ".consumption-fold.lock",
+                os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        _FOLD_DEPTH[key] = depth + 1
+        try:
+            yield
+        finally:
+            _FOLD_DEPTH[key] = depth
+            if descriptor is not None:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
+
+
+def _before_fold_append(store: ReviewOperationalStore) -> None:
+    """A seam between choosing a fold's receipts and appending it (tests interleave here)."""
+
+
 def fold_consumption_receipts(
     instance: PlaybillInstance, *, now: datetime, days: int
 ) -> ConsumptionFoldResult:
     """Fold raw receipts recorded before ``now - days`` into counters, then remove them.
 
-    Counters are appended first (a fold event per batch, in the consumption
-    family's ``folds`` partition); only receipts a fold durably names are
-    removed: their singleton partitions, and the legacy chained ``receipts``
-    partition cut back to its epoch once every receipt in it is folded. A
-    crash in between leaves raw receipts a fold already counted, which every
-    reader skips and the next pass removes.
+    Folds are serialized per store, and each fold event is appended only if
+    the folds partition still ends where the receipts were chosen
+    (compare-and-swap); a fold that loses re-reads and chooses again, so no
+    receipt is ever counted by two folds. Counters are appended first; only
+    receipts a fold durably names are removed: their singleton partitions,
+    and the legacy chained ``receipts`` partition cut back to its epoch once
+    every receipt in it is folded. A crash in between leaves raw receipts a
+    fold already counted, which every reader skips and the next pass removes.
     """
 
     store = instance.review_operational_store()
-    state = _consumption_state(store)
     cutoff = ensure_utc(now) - timedelta(days=days)
-    due = sorted(
-        receipt_id
-        for receipt_id, (_receipt, event) in state.raw.items()
-        if event.recorded_at < cutoff
+    folded = 0
+    with _fold_lock(store):
+        for _attempt in range(8):
+            tally = _tally(store)
+            with _TALLIES_LOCK:
+                # The unfolded receipts are those of the last retention window.
+                due = sorted(
+                    receipt_id
+                    for receipt_id, raw in tally.raw.items()
+                    if raw.event.recorded_at < cutoff
+                )
+                chosen = {receipt_id: tally.raw[receipt_id].receipt for receipt_id in due}
+                expected = tally.fold_head
+            if not due:
+                break
+            _before_fold_append(store)
+            try:
+                folded += _append_folds(instance, store, chosen, cutoff, now, expected)
+            except ReviewOperationalConcurrentChangeError:
+                continue  # another fold landed: choose again from what is left
+            break
+        else:
+            raise ReviewOperationalStoreError("consumption folds kept racing; try again")
+        tally = _tally(store)
+        with _TALLIES_LOCK:
+            singletons = sorted(
+                tally.partition_ids[name]
+                for name, receipts in tally.spent.items()
+                if receipts and tally.partition_ids.get(name, "").startswith("event:")
+            )
+            legacy_done = tally.legacy_events > 0 and tally.legacy_unfolded == 0
+        removed = store.remove_partitions(family="consumption", partition_ids=singletons)
+        legacy = 0
+        first = store.first_payload(
+            family="consumption", partition_id=CONSUMPTION_EPOCH_PARTITION_ID
+        )
+        if (
+            legacy_done
+            and first is not None
+            and first.get("tag") == "playbill-consumption-epoch-v1"
+        ):
+            # Every receipt the legacy chain holds is folded: keep only its epoch.
+            legacy = store.truncate_partition(
+                family="consumption", partition_id=CONSUMPTION_EPOCH_PARTITION_ID, keep=1
+            )
+    return ConsumptionFoldResult(
+        folded=folded, removed_partitions=removed, removed_legacy_events=legacy
     )
-    if not due and not state.spent:
-        return ConsumptionFoldResult()
+
+
+def _append_folds(
+    instance: PlaybillInstance,
+    store: ReviewOperationalStore,
+    chosen: Mapping[str, ConsumptionReceiptV1],
+    cutoff: datetime,
+    now: datetime,
+    expected: str | None,
+) -> int:
+    """Append one fold event per batch, each compared against the folds head before it."""
+
+    due = sorted(chosen)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     with instance.accepted_history_reader() as history:
         generation = history.sequence
@@ -741,7 +959,7 @@ def fold_consumption_receipts(
         batch = due[start : start + CONSUMPTION_FOLD_BATCH]
         artifacts: dict[str, _Folded] = {}
         for receipt_id in batch:
-            receipt, _event = state.raw[receipt_id]
+            receipt = chosen[receipt_id]
             identity = receipt.response_artifact_identity
             folded = artifacts.setdefault(identity.qualified, _Folded(identity))
             folded.operations[receipt.operation] += 1
@@ -766,7 +984,7 @@ def fold_consumption_receipts(
                 )
             ),
         )
-        store.append(
+        event = store.append(
             family="consumption",
             partition_id=CONSUMPTION_FOLD_PARTITION_ID,
             event_id=fold.event_id,
@@ -775,33 +993,10 @@ def fold_consumption_receipts(
             generation=generation,
             actor_context=actor,
             recorded_at=ensure_utc(now),
+            expected_latest_event_digest=expected,
         )
-    # Only what a fold durably names is removed, read back from the store.
-    state = _consumption_state(store)
-    singletons = sorted(
-        partition for partition, _receipt_id in state.spent if partition.startswith("event:")
-    )
-    removed = store.remove_partitions(family="consumption", partition_ids=singletons)
-    legacy = 0
-    first = store.partition_payloads(
-        family="consumption", partition_id=CONSUMPTION_EPOCH_PARTITION_ID
-    )[:1]
-    if (
-        state.legacy_receipts
-        and first
-        and first[0].get("tag") == "playbill-consumption-epoch-v1"
-        and not any(
-            event.partition_id == CONSUMPTION_EPOCH_PARTITION_ID
-            for _receipt, event in state.raw.values()
-        )
-    ):
-        # Every receipt the legacy chain holds is folded: keep only its epoch.
-        legacy = store.truncate_partition(
-            family="consumption", partition_id=CONSUMPTION_EPOCH_PARTITION_ID, keep=1
-        )
-    return ConsumptionFoldResult(
-        folded=len(due), removed_partitions=removed, removed_legacy_events=legacy
-    )
+        expected = event.event_digest
+    return len(due)
 
 
 __all__ = [

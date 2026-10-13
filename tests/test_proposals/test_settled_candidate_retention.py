@@ -110,3 +110,45 @@ def test_approvals_the_record_does_not_hold_are_kept(tmp_path: Path) -> None:
     )
     assert removed == (False, False)
     assert (stray / "late-signer.json").read_bytes() == b"{}\n"
+
+
+def test_a_late_approval_keeps_the_settled_approvals_visible(tmp_path: Path) -> None:
+    from cruxible_core.governance.keys import generate_client_principal_key
+    from cruxible_core.service.authoring.documents import (
+        service_activate_playbill_proposal,
+        service_submit_playbill_approval,
+    )
+    from tests.test_ledger.test_activation import _sign
+
+    instance, owner = seed_write_surface(tmp_path)
+    pending = _write(instance, _set(WI1, "status", "ready"), accept="never")
+    proposal_id = pending.proposal.proposal_id
+    candidate = service_inspect_playbill_proposal(
+        instance, proposal_id=proposal_id
+    ).proposal.candidate
+    digest = candidate.candidate_digest
+    signed = _sign(owner, digest, candidate.candidate.parent_semantic_root)
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal_id,
+        attestation=signed.attestation,
+        authenticated_submitter="owner",
+    )
+    service_activate_playbill_proposal(instance, proposal_id=proposal_id, activated_by="owner")
+    evidence = instance.proposal_evidence()
+    settled = evidence.read_approvals(digest)
+    assert [item.attestation.signer_id for item in settled] == ["owner"]
+    # Retired with the candidate: the record now answers for them.
+    assert not (evidence.approvals / digest.removeprefix("sha256:")).exists()
+    late = generate_client_principal_key(
+        tmp_path / "late-keys",
+        principal_id="late-signer",
+        kind="ordinary",
+        forbidden_roots=(instance.root,),
+    )
+    submission = _sign(late, digest, settled[0].attestation.signing_semantic_root)
+    evidence.write_approval(digest, submission)
+    after = evidence.read_approvals(digest)
+    assert [item.attestation.signer_id for item in after] == ["late-signer", "owner"]
+    instance._settled_candidates.clear()
+    assert instance.proposal_evidence().read_approvals(digest) == after

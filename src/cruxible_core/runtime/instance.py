@@ -1930,9 +1930,12 @@ class PlaybillInstance:
                 git_oid=generation.oid,
                 changeset_digest=record.changeset_digest,
             )
-            candidate_removed, _approvals_removed = evidence.retire_settled_candidate(
-                locator, settled
-            )
+            # The approval writer's locks: no approval is written or its note
+            # rendered while this candidate's files go.
+            with self.review_projection_lock(), self.approval_note_lock(digest):
+                candidate_removed, _approvals_removed = evidence.retire_settled_candidate(
+                    locator, settled
+                )
             removed += int(candidate_removed)
         return removed
 
@@ -2576,10 +2579,11 @@ class PlaybillInstance:
         at = self._ledger.commit_timestamps(oid)[1]
         if self._consumption_folded_on == at.date():
             return
-        self._consumption_folded_on = at.date()
         from cruxible_core.exhaust.consumption import fold_consumption_receipts
 
         fold_consumption_receipts(self, now=at, days=self.retention.days)
+        # Marked only once the fold completed, so a failed day is retried.
+        self._consumption_folded_on = at.date()
 
     @contextmanager
     def holding_accepted_head(self) -> Iterator[str]:

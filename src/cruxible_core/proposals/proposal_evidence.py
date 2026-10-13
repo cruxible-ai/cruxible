@@ -678,14 +678,35 @@ class ProposalEvidenceStore:
     def read_approvals(self, candidate_digest_value: str) -> tuple[ApprovalSubmission, ...]:
         """Return canonical public approvals in the verifier's required signer order.
 
-        A retired accepted candidate's approvals are the ones its record settled.
+        A retired accepted candidate's approvals are the ones its record
+        settled together with any submitted after it (still files): every
+        signer appears once, and a file that disagrees with the record's
+        approval by the same signer refuses the read.
         """
 
         CandidateDigest.from_tagged(candidate_digest_value)
         candidate_directory = self.approvals / candidate_digest_value.removeprefix("sha256:")
-        if not candidate_directory.exists():
-            settled = None if self.settled is None else self.settled(candidate_digest_value)
-            return () if settled is None else settled.approvals
+        files: tuple[ApprovalSubmission, ...] = ()
+        if candidate_directory.exists() or candidate_directory.is_symlink():
+            files = self._read_approval_files(candidate_directory, candidate_digest_value)
+        settled = None if self.settled is None else self.settled(candidate_digest_value)
+        if settled is None:
+            return files
+        merged = {item.attestation.signer_id: item for item in settled.approvals}
+        for item in files:
+            held = merged.get(item.attestation.signer_id)
+            if held is not None and canonical_bytes(
+                held.model_dump(mode="json")
+            ) != canonical_bytes(item.model_dump(mode="json")):
+                raise ProposalIntegrityError(
+                    "an approval file differs from the settled record's approval by its signer"
+                )
+            merged[item.attestation.signer_id] = item
+        return tuple(merged[key] for key in sorted(merged, key=lambda value: value.encode("utf-8")))
+
+    def _read_approval_files(
+        self, candidate_directory: Path, candidate_digest_value: str
+    ) -> tuple[ApprovalSubmission, ...]:
         if candidate_directory.is_symlink() or not candidate_directory.is_dir():
             raise ProposalIntegrityError("approval evidence directory is not trustworthy")
         submissions = tuple(

@@ -133,13 +133,16 @@ record references is deleted under it.
   change-set record carries every field of its candidate and the approvals
   settlement verified, so after activation the candidate file and the
   approval files the record holds byte for byte are deleted, and `proposal
-  inspect`, review, status and the proposal index read them from the record.
+  inspect`, review, status and the proposal index read them from the record;
+  an approval submitted later is read beside the record's.
   Withdrawn, rejected and refused proposals' evidence, and any approval the
   record does not hold, are kept.
 - **Consumption receipts.** Raw receipts are kept 14 days, then fold into
   counters (touches per artifact and operation, and the audit's distinct
   reader keys) that remember every receipt they counted, so a read served
-  again is never counted twice; only folded receipts are removed.
+  again is never counted twice; only folded receipts are removed. Folds run
+  one at a time and each lands only if no other fold landed since it chose
+  its receipts.
 - **Line coverage.** An idle Line's coverage that moved only in time advances
   the dispatch projection and is not journaled.
 - **The ledger.** Every ref, note and archived proposal is kept. Objects are
