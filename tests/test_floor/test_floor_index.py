@@ -275,3 +275,111 @@ def test_a_warm_advance_shares_the_floor_instead_of_copying_it(
     assert max(built, default=0) <= 2
     assert warm.files[f"current/{KIND}/bulk-7.yaml"] is first.files[f"current/{KIND}/bulk-7.yaml"]
     assert _bytes(warm) == _bytes(_cold(instance))
+
+
+def _counted_chain(size: int, visits: list[int]) -> Any:
+    """A Claim history of ``size`` revisions whose nodes count every walk step through them."""
+
+    from cruxible_core.service.floor.floor_index import _Revisions
+
+    class Counted(_Revisions):
+        __slots__ = ()
+
+        def __getattribute__(self, name: str) -> Any:
+            if name in ("older", "target", "sequence"):
+                visits[0] += 1
+            return super().__getattribute__(name)
+
+    chain: Any = None
+    for sequence in range(1, size + 1):
+        chain = Counted(sequence, "subjects/k/old.json", chain)
+    visits[0] = 0
+    return chain
+
+
+def test_one_revision_extends_or_cuts_a_claim_history_without_walking_it(
+    monkeypatch: Any,
+) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.service.floor import floor_index
+
+    monkeypatch.setattr(floor_index, "_object", lambda claim: claim)
+    path = "claims/k/edge.json"
+    walked: dict[int, list[int]] = {}
+    for size in (64, 512):
+        visits = [0]
+        known = _counted_chain(size, visits)
+        history: Any = SimpleNamespace(
+            member_sequences_between=lambda paths, low, high: {path: (high,)}
+        )
+        for target, gained in (("subjects/k/old.json", False), ("subjects/k/new.json", True)):
+            found = floor_index._object_histories(
+                None,  # type: ignore[arg-type]
+                history,
+                {path: target},  # type: ignore[dict-item]
+                [path],
+                at_most=size + 1,
+                known={path: known},
+                since=size,
+            )[path]
+            # The new revision is one node over the known history, shared whole.
+            assert found.older is known and len(found) == size + 1
+            assert found.targets[target] == (size + 1 if not gained else 1)
+            added, removed = floor_index._target_moves(known, found)
+            assert added == ({target} if gained else set()) and removed == set()
+        # Cut back one generation: the older chain, shared, not rebuilt.
+        cut = floor_index._object_histories(
+            None,  # type: ignore[arg-type]
+            history,
+            {path: "subjects/k/old.json"},  # type: ignore[dict-item]
+            [path],
+            at_most=size - 1,
+            known={path: known},
+            since=size,
+        )[path]
+        assert cut is known.older
+        added, removed = floor_index._target_moves(known, cut)
+        assert added == removed == set()
+        walked[size] = visits
+    # The same one-revision change walks the same few nodes at any history length.
+    assert walked[64] == walked[512]
+    assert walked[512][0] <= 8
+
+
+def test_a_claim_type_change_reaches_only_the_claims_showing_it() -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.derived.persistent import PMap, PSet
+    from cruxible_core.service.floor.floor_index import _affected_subjects, _shadow
+
+    def claim(subject: str, predicate: str) -> Any:
+        return SimpleNamespace(
+            statement=SimpleNamespace(
+                subject=SimpleNamespace(artifact_path=subject), predicate=predicate, object=None
+            )
+        )
+
+    shown = claim("subjects/project.work_item/wi-1.json", "project.work_item.a.b")
+    other_kind = claim("subjects/other.kind/x.json", "project.work_item.a.b")
+    direct = claim("subjects/other.kind/y.json", "a.b")
+    assert _shadow(shown) == "a.b"
+    assert _shadow(other_kind) is None and _shadow(direct) is None
+    claims = {"claims/1.json": shown, "claims/2.json": other_kind, "claims/3.json": direct}
+    inputs: Any = SimpleNamespace(
+        claims=claims,
+        claim_types={},
+        by_subject={},
+        objects=PMap(),
+        by_predicate={
+            "project.work_item.a.b": PSet(["claims/1.json", "claims/2.json"]),
+            "a.b": PSet(["claims/3.json"]),
+        },
+        by_shadow={"a.b": PSet(["claims/1.json"])},
+    )
+    # The ClaimType a.b moves its own Claims and the field it shadows on
+    # project.work_item, never the same predicate on a Subject of another kind.
+    assert _affected_subjects(inputs, inputs, ["claim-types/a/b.json"]) == {
+        "subjects/project.work_item/wi-1.json",
+        "subjects/other.kind/y.json",
+    }

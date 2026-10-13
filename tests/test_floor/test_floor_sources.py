@@ -179,3 +179,156 @@ def test_a_floor_whose_manifest_lists_sources_index_is_replaced_whole(tmp_path: 
     assert installed is not None and floor_manifest_digest(installed) == full.head_manifest_digest
     assert write_projection_index(tmp_path) == 0
     assert (floor / "sources/INDEX").read_text(encoding="utf-8").startswith("# sources INDEX  0")
+
+
+def _source_claims(count: int) -> tuple[dict[str, Any], dict[str, int]]:
+    from types import SimpleNamespace
+
+    claims: dict[str, Any] = {}
+    for index in range(count):
+        claims[f"claims/c{index}.json"] = SimpleNamespace(
+            lifecycle=SimpleNamespace(state="live"),
+            identity=SimpleNamespace(name=f"c{index}"),
+            digest="sha256:a",
+        )
+    claims["claims/b.json"] = SimpleNamespace(
+        lifecycle=SimpleNamespace(state="live"),
+        identity=SimpleNamespace(name="b"),
+        digest="sha256:b",
+    )
+    return claims, {path: 1 for path in claims}
+
+
+def _contracts(**labels: str) -> dict[str, Any]:
+    from types import SimpleNamespace
+
+    return {
+        f"sha256:{key}": SimpleNamespace(identity=SimpleNamespace(name=label))
+        for key, label in labels.items()
+    }
+
+
+def test_a_shared_source_line_moves_with_its_change_not_its_citing_claims(
+    monkeypatch: Any,
+) -> None:
+    from cruxible_core.derived import persistent
+    from cruxible_core.service.floor import floor_sources
+
+    read: list[str] = []
+
+    def sources(_instance: Any, claim: Any, contracts: Any) -> Any:
+        read.append(claim.identity.name)
+        contract = contracts.get(claim.digest)
+        label = "-" if contract is None else contract.identity.name
+        return ((("shared.source", label, "-"),), frozenset({claim.digest}))
+
+    monkeypatch.setattr(floor_sources, "_claim_sources", sources)
+    walked: dict[int, int] = {}
+    for size in (64, 512):
+        claims, latest = _source_claims(size)
+        contracts = _contracts(a="contract.a", b="contract.b")
+        state = floor_sources.update_sources_ledger(
+            None,  # type: ignore[arg-type]
+            floor_sources.EMPTY_SOURCES_LEDGER,
+            claims=claims,
+            latest=latest,
+            contracts=contracts,
+            documents=(),
+            changed_claims=list(claims),
+            changed_documents=(),
+        )
+        leaves = [0]
+        original = persistent._leaves
+
+        def counting(node: Any, _original: Any = original, _leaves: list[int] = leaves) -> Any:
+            for leaf in _original(node):
+                _leaves[0] += 1
+                yield leaf
+
+        monkeypatch.setattr(persistent, "_leaves", counting)
+        read.clear()
+        # One citing Claim revised at a newer generation: its line moves.
+        latest = {**latest, "claims/c7.json": 9}
+        moved = floor_sources.update_sources_ledger(
+            None,  # type: ignore[arg-type]
+            state,
+            claims=claims,
+            latest=latest,
+            contracts=contracts,
+            documents=(),
+            changed_claims=["claims/c7.json"],
+            changed_documents=(),
+        )
+        assert read == ["c7"]
+        assert moved.rows["shared.source"].split("\t")[3:] == [str(size + 1), "9"]
+        # That Claim retired: the line's newest generation goes back, from counts.
+        retired = floor_sources.update_sources_ledger(
+            None,  # type: ignore[arg-type]
+            moved,
+            claims={key: value for key, value in claims.items() if key != "claims/c7.json"},
+            latest=latest,
+            contracts=contracts,
+            documents=(),
+            changed_claims=["claims/c7.json"],
+            changed_documents=(),
+        )
+        monkeypatch.setattr(persistent, "_leaves", original)
+        assert retired.rows["shared.source"].split("\t")[3:] == [str(size), "1"]
+        walked[size] = leaves[0]
+    # No citing Claim is read or walked to move the line: the same work at any size.
+    assert walked[64] == walked[512]
+
+
+def test_a_contract_change_rereads_only_the_claims_taken_under_it(monkeypatch: Any) -> None:
+    from cruxible_core.service.floor import floor_sources
+
+    read: list[str] = []
+
+    def sources(_instance: Any, claim: Any, contracts: Any) -> Any:
+        read.append(claim.identity.name)
+        contract = contracts.get(claim.digest)
+        label = "-" if contract is None else contract.identity.name
+        return (((f"source.{claim.digest[-1]}", label, "-"),), frozenset({claim.digest}))
+
+    monkeypatch.setattr(floor_sources, "_claim_sources", sources)
+    claims, latest = _source_claims(64)
+    state = floor_sources.update_sources_ledger(
+        None,  # type: ignore[arg-type]
+        floor_sources.EMPTY_SOURCES_LEDGER,
+        claims=claims,
+        latest=latest,
+        contracts=_contracts(a="contract.a", b="contract.b"),
+        documents=(),
+        changed_claims=list(claims),
+        changed_documents=(),
+    )
+    read.clear()
+    relabelled = floor_sources.update_sources_ledger(
+        None,  # type: ignore[arg-type]
+        state,
+        claims=claims,
+        latest=latest,
+        contracts=_contracts(a="contract.a", b="contract.b2"),
+        documents=(),
+        changed_claims=(),
+        changed_documents=(),
+        changed_contracts=["sha256:b"],
+    )
+    # The 64 Claims under the unrelated contract are not read again.
+    assert read == ["b"]
+    assert relabelled.rows["source.b"].split("\t")[1] == "contract.b2"
+    assert relabelled.rows["source.a"] is state.rows["source.a"]
+    # The contract gone: its Claim's line shows no label, still re-read alone.
+    read.clear()
+    dropped = floor_sources.update_sources_ledger(
+        None,  # type: ignore[arg-type]
+        relabelled,
+        claims=claims,
+        latest=latest,
+        contracts=_contracts(a="contract.a"),
+        documents=(),
+        changed_claims=(),
+        changed_documents=(),
+        changed_contracts=["sha256:b"],
+    )
+    assert read == ["b"] and dropped.rows["source.b"].split("\t")[1] == "-"

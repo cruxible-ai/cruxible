@@ -27,8 +27,7 @@ from __future__ import annotations
 import bisect
 import threading
 from collections.abc import Collection, Iterable, Mapping
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 from weakref import WeakKeyDictionary
 
 from cruxible_client.contracts.captures import (
@@ -45,7 +44,7 @@ from cruxible_client.contracts.source_references import (
     ExternalSourceReference,
     LedgerSourceReference,
 )
-from cruxible_core.derived.persistent import PMap
+from cruxible_core.derived.persistent import EMPTY_PCOUNTS, EMPTY_PSET, PCounts, PMap, PSet
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.floor.floor_current import stamp_text
 from cruxible_core.storage.cas import BodyAccessContext
@@ -142,13 +141,29 @@ def claim_source_pairs(
     Captures, under the coordinator's own contract, name no evidence source.
     """
 
+    return _claim_sources(instance, claim, contracts)[0]
+
+
+def _claim_sources(
+    instance: PlaybillInstance,
+    claim: ClaimArtifactAny,
+    contracts: Mapping[str, CaptureContract],
+) -> tuple[tuple[tuple[str, str, str], ...], frozenset[str]]:
+    """The Claim's pairs, and the contract digests its pairs were looked up under.
+
+    The digests are what the pairs depend on besides the immutable Captures:
+    an accepted contract at one of them changing is what can relabel them.
+    """
+
     digests = claim.backing.capture_digests
     found = capture_sources(instance, digests)
     pairs: list[tuple[str, str, str]] = []
+    looked_up: set[str] = set()
     for digest in digests:
         source = found.get(digest)
         if source is None or source.contract_digest == _SELF_SOURCE_DIGEST:
             continue
+        looked_up.add(source.contract_digest)
         contract = contracts.get(source.contract_digest)
         if contract is not None and contract.identity == (
             COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity
@@ -157,7 +172,7 @@ def claim_source_pairs(
         pairs.append(
             (source.source, "-" if contract is None else contract.identity.name, source.locator)
         )
-    return tuple(pairs)
+    return tuple(pairs), frozenset(looked_up)
 
 
 @dataclass(frozen=True)
@@ -170,19 +185,23 @@ class SourceLine:
     pairs: PMap[tuple[str, str], int]
     document: str | None = None
     document_latest: int = 0
+    # The citing Claims' latest generations, as counts with their maximum.
+    latest: PCounts = EMPTY_PCOUNTS
 
     def row(self, source: str) -> str:
         """The line: the Document of the source's name, else every distinct locator, sorted.
 
         Sets, never the first one seen, so the line is the same whatever order
-        the Claims arrive in. Its cost is this line's own membership.
+        the Claims arrive in. The work is the line's own output: its distinct
+        (label, locator) pairs; the citing count and newest generation are
+        maintained, not read off the citing Claims.
         """
 
         contracts = sorted({label for label, _locator in self.pairs}, key=str.encode)
         located = sorted(
             {locator for _label, locator in self.pairs if locator != "-"}, key=str.encode
         )
-        changed = max(max(self.claims.values(), default=0), self.document_latest)
+        changed = max(self.latest.max(0), self.document_latest)
         return "\t".join(
             (
                 source,
@@ -213,6 +232,10 @@ class SourcesLedgerState:
     rows: PMap[str, str]
     # The source names, byte-sorted.
     order: tuple[str, ...]
+    # Contract digest -> the live Claims whose Captures were taken under it,
+    # and each such Claim's digests: what a contract change can relabel.
+    by_contract: PMap[str, PSet[str]] = field(default_factory=PMap)
+    contracts_of: PMap[str, frozenset[str]] = field(default_factory=PMap)
 
     def render(self, changed_at: int) -> bytes:
         """The whole file: its bytes are the format's output, one row per source."""
@@ -234,11 +257,11 @@ def _contribution(
     claim: ClaimArtifactAny | None,
     latest: int,
     contracts: Mapping[str, CaptureContract],
-) -> SourceContribution | None:
+) -> tuple[SourceContribution | None, frozenset[str]]:
     if claim is None or claim.lifecycle.state != "live":
-        return None
-    pairs = claim_source_pairs(instance, claim, contracts)
-    return None if not pairs else (claim.identity.name, latest, pairs)
+        return None, frozenset()
+    pairs, looked_up = _claim_sources(instance, claim, contracts)
+    return (None if not pairs else (claim.identity.name, latest, pairs)), looked_up
 
 
 def build_sources_ledger(
@@ -273,51 +296,57 @@ def update_sources_ledger(
     documents: Collection[str],
     changed_claims: Iterable[str],
     changed_documents: Iterable[str],
+    changed_contracts: Iterable[str] = (),
 ) -> SourcesLedgerState:
     """``state`` with the named Claim and Document paths re-read; only their lines move.
 
-    The contracts must be the ones ``state`` was built under: a contract
-    change relabels every line, so the caller builds again instead. Work is
-    the changed paths and the lines they reach; nothing else is copied.
+    ``changed_contracts`` are the contract digests whose accepted contract
+    came, went or changed since ``state``: the Claims whose Captures were
+    taken under one of them are re-read too, since only they can be
+    relabelled. Work is the changed paths, those Claims, and the lines they
+    reach; nothing else is read or copied.
     """
 
     contributions = state.contributions.evolver()
     entries = state.documents.evolver()
-    staged: dict[str, tuple[Any, Any]] = {}
+    contracts_of = state.contracts_of.evolver()
+    contract_moves: dict[str, tuple[set[str], set[str]]] = {}
+    staged: dict[str, _LineEdit] = {}
     documented: dict[str, tuple[str | None, int]] = {}
 
-    def line(source: str) -> tuple[Any, Any]:
+    def line(source: str) -> _LineEdit:
         if source not in staged:
-            held = state.lines.get(source)
-            staged[source] = (
-                (_EMPTY_CLAIMS if held is None else held.claims).evolver(),
-                (_EMPTY_PAIRS if held is None else held.pairs).evolver(),
-            )
+            staged[source] = _LineEdit(state.lines.get(source))
         return staged[source]
 
-    for path in changed_claims:
+    reread = dict.fromkeys(changed_claims)
+    for digest in changed_contracts:
+        reread.update(dict.fromkeys(state.by_contract.get(digest, ())))
+    for path in reread:
         old = contributions.pop(path, None)
-        new = _contribution(instance, claims.get(path), latest.get(path, 0), contracts)
+        new, looked_up = _contribution(instance, claims.get(path), latest.get(path, 0), contracts)
         if new is not None:
             contributions[path] = new
+        was = contracts_of.get(path, frozenset())
+        if looked_up != was:
+            if looked_up:
+                contracts_of[path] = looked_up
+            else:
+                contracts_of.discard(path)
+            for digest in was - looked_up:
+                contract_moves.setdefault(digest, (set(), set()))[1].add(path)
+            for digest in looked_up - was:
+                contract_moves.setdefault(digest, (set(), set()))[0].add(path)
         if old == new:
             continue
         if old is not None:
             name, _latest, pairs = old
             for source, label, locator in pairs:
-                citing, counted = line(source)
-                citing.discard(name)
-                left = counted[(label, locator)] - 1
-                if left:
-                    counted[(label, locator)] = left
-                else:
-                    counted.discard((label, locator))
+                line(source).drop(name, (label, locator))
         if new is not None:
             name, at, pairs = new
             for source, label, locator in pairs:
-                citing, counted = line(source)
-                citing[name] = at
-                counted[(label, locator)] = counted.get((label, locator), 0) + 1
+                line(source).put(name, at, (label, locator))
     for path in changed_documents:
         old_entry = entries.pop(path, None)
         if old_entry is not None:
@@ -334,11 +363,13 @@ def update_sources_ledger(
     for source in {*staged, *documented}:
         held = lines.get(source)
         if source in staged:
-            line_claims = staged[source][0].persistent()
-            line_pairs = staged[source][1].persistent()
+            line_claims = staged[source].citing.persistent()
+            line_pairs = staged[source].counted.persistent()
+            line_latest = staged[source].latest
         else:
             line_claims = _EMPTY_CLAIMS if held is None else held.claims
             line_pairs = _EMPTY_PAIRS if held is None else held.pairs
+            line_latest = EMPTY_PCOUNTS if held is None else held.latest
         document, document_latest = (
             documented[source]
             if source in documented
@@ -354,7 +385,7 @@ def update_sources_ledger(
             continue
         if held is None:
             added.append(source)
-        current = SourceLine(line_claims, line_pairs, document, document_latest)
+        current = SourceLine(line_claims, line_pairs, document, document_latest, line_latest)
         lines[source] = current
         rows[source] = current.row(source)
     order = state.order
@@ -368,13 +399,49 @@ def update_sources_ledger(
             keys.insert(at, source.encode())
             names.insert(at, source)
         order = tuple(names)
+    by_contract = state.by_contract.evolver()
+    for digest, (joined, left) in contract_moves.items():
+        members = by_contract.get(digest, EMPTY_PSET).update(joined, left)
+        if members:
+            by_contract[digest] = members
+        else:
+            by_contract.discard(digest)
     return SourcesLedgerState(
         contributions.persistent(),
         entries.persistent(),
         lines.persistent(),
         rows.persistent(),
         order,
+        by_contract.persistent(),
+        contracts_of.persistent(),
     )
+
+
+class _LineEdit:
+    """One line's citing Claims, pairs and latest-generation counts, being updated."""
+
+    def __init__(self, held: SourceLine | None) -> None:
+        self.citing = (_EMPTY_CLAIMS if held is None else held.claims).evolver()
+        self.counted = (_EMPTY_PAIRS if held is None else held.pairs).evolver()
+        self.latest = EMPTY_PCOUNTS if held is None else held.latest
+
+    def drop(self, name: str, pair: tuple[str, str]) -> None:
+        at = self.citing.pop(name, None)
+        if at is not None:
+            self.latest = self.latest.remove(at)
+        left = self.counted[pair] - 1
+        if left:
+            self.counted[pair] = left
+        else:
+            self.counted.discard(pair)
+
+    def put(self, name: str, at: int, pair: tuple[str, str]) -> None:
+        before = self.citing.get(name)
+        if before is not None:
+            self.latest = self.latest.remove(before)
+        self.citing[name] = at
+        self.latest = self.latest.add(at)
+        self.counted[pair] = self.counted.get(pair, 0) + 1
 
 
 __all__ = [

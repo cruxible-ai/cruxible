@@ -393,4 +393,101 @@ class PSet(Set[T], Generic[T]):
 
 EMPTY_PSET: PSet[Any] = PSet()
 
-__all__ = ["EMPTY_PSET", "PMap", "PMapEvolver", "PSet"]
+
+_WIDTH = 1 << _BITS
+
+
+def _counted(node: Any, level: int, key: int, delta: int) -> Any:
+    """``node`` with ``delta`` added to ``key``'s count: copies one node per level."""
+
+    index = (key >> (_BITS * level)) & _MASK
+    if level == 0:
+        counts = [0] * _WIDTH if node is None else list(node)
+        counts[index] += delta
+        if counts[index] < 0:
+            raise ValueError(f"PCounts has no {key} to remove")
+        return tuple(counts) if any(counts) else None
+    children = [None] * _WIDTH if node is None else list(node)
+    children[index] = _counted(children[index], level - 1, key, delta)
+    return tuple(children) if any(child is not None for child in children) else None
+
+
+class PCounts:
+    """An immutable multiset of non-negative ints that knows its maximum.
+
+    A 32-way trie on the key's bits, most significant first, so the maximum
+    is the rightmost occupied path. ``add`` and ``remove`` copy one node per
+    level and ``max`` walks one path: each is bounded by the key's width, not
+    by how many entries there are.
+    """
+
+    __slots__ = ("_levels", "_root", "_size")
+
+    def __init__(self, items: Iterable[int] = ()) -> None:
+        self._root: Any = None
+        self._levels = 1
+        self._size = 0
+        for item in items:
+            self._root, self._levels = self._grown(item)
+            self._root = _counted(self._root, self._levels - 1, item, 1)
+            self._size += 1
+
+    def _grown(self, key: int) -> tuple[Any, int]:
+        if key < 0:
+            raise ValueError("PCounts holds non-negative ints")
+        root, levels = self._root, self._levels
+        while key >> (_BITS * levels):
+            root = None if root is None else (root, *([None] * (_WIDTH - 1)))
+            levels += 1
+        return root, levels
+
+    def _with(self, key: int, delta: int) -> PCounts:
+        root, levels = self._grown(key)
+        made: PCounts = PCounts.__new__(PCounts)
+        made._root = _counted(root, levels - 1, key, delta)
+        made._levels = levels
+        made._size = self._size + delta
+        return made
+
+    def add(self, key: int) -> PCounts:
+        return self._with(key, 1)
+
+    def remove(self, key: int) -> PCounts:
+        """One fewer ``key``; raises ``ValueError`` when there is none."""
+
+        return self._with(key, -1)
+
+    def count(self, key: int) -> int:
+        if key < 0 or key >> (_BITS * self._levels):
+            return 0
+        node = self._root
+        for level in range(self._levels - 1, -1, -1):
+            if node is None:
+                return 0
+            node = node[(key >> (_BITS * level)) & _MASK]
+        return int(node or 0)
+
+    def max(self, default: int = 0) -> int:
+        node = self._root
+        if node is None:
+            return default
+        key = 0
+        for level in range(self._levels - 1, -1, -1):
+            index = next(i for i in range(_WIDTH - 1, -1, -1) if node[i])
+            key |= index << (_BITS * level)
+            node = node[index]
+        return key
+
+    def __len__(self) -> int:
+        return self._size
+
+    def __bool__(self) -> bool:
+        return self._size > 0
+
+    def __repr__(self) -> str:
+        return f"PCounts(size={self._size}, max={self.max()})"
+
+
+EMPTY_PCOUNTS = PCounts()
+
+__all__ = ["EMPTY_PCOUNTS", "EMPTY_PSET", "PCounts", "PMap", "PMapEvolver", "PSet"]

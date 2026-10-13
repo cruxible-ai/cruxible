@@ -79,6 +79,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("FloorStep", "generation"): "SETTLEMENT ORDER",
     # The accepted generation whose change-set record holds a retired candidate.
     ("SettledCandidateLocator", "sequence"): "SETTLEMENT ORDER",
+    # The accepted generation of one revision in a floor Claim's history.
+    ("_Revisions", "sequence"): "SETTLEMENT ORDER",
     ("LineTriggerBinding", "generation"): "SETTLEMENT ORDER",
     # The accepted generation a dispatched Trigger occurrence fires on.
     ("TriggerFire", "generation"): "SETTLEMENT ORDER",

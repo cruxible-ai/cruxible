@@ -32,7 +32,7 @@ hashed again: every file's digest is taken once, when it is rendered.
 from __future__ import annotations
 
 import threading
-from collections.abc import Collection, Iterable, Mapping, Set
+from collections.abc import Collection, Iterable, Iterator, Mapping, Set
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
@@ -55,7 +55,7 @@ from cruxible_client.contracts.floor import (
 )
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject
 from cruxible_core.derived.memo import memo_get, memo_put
-from cruxible_core.derived.persistent import EMPTY_PSET, PMap, PSet
+from cruxible_core.derived.persistent import EMPTY_PCOUNTS, EMPTY_PSET, PCounts, PMap, PSet
 from cruxible_core.indexes.history.history_index import AcceptedGenerationLocation, HistoryReader
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -131,28 +131,34 @@ class FloorInputs:
     claim_types: PMap[str, ClaimType]
     # Subject path -> the paths of its Claims, any lifecycle.
     by_subject: PMap[str, PSet[str]]
-    # Subject-valued Claim path -> (sequence, object Subject path) of each of
-    # its revisions to this generation: every Subject it ever pointed at.
-    objects: PMap[str, tuple[tuple[int, str], ...]] = field(default_factory=PMap)
+    # Subject-valued Claim path -> its revisions to this generation, as a
+    # shared chain: every Subject it ever pointed at, and at which sequence.
+    objects: PMap[str, _Revisions] = field(default_factory=PMap)
     # Accepted Document paths, and CaptureContracts by path.
     documents: PSet[str] = EMPTY_PSET
     capture_contracts: PMap[str, CaptureContract] = field(default_factory=PMap)
     # Derived from the fields above and patched with them, so a render traces a
     # change instead of scanning: Subject path -> every Claim that ever pointed
-    # at it; predicate -> its Claims; Subject kind -> how many Subjects have
-    # it; the ClaimTypes by predicate and the live predicates; the contracts
-    # by digest (and each contract path's digest); and the latest sequence of
-    # the source paths (claims/, documents/, capture-contracts/) as a count per
-    # sequence, with its maximum.
+    # at it; predicate -> its Claims; short name -> the Claims whose field
+    # shows it (``<kind>.<short>`` on a Subject of ``<kind>``); the ClaimTypes
+    # by predicate and the live predicates; the contracts by digest (and each
+    # contract path's digest); and the latest sequence of each source path
+    # (claims/, documents/, capture-contracts/), whose maximum stamps
+    # sources/LEDGER.
     pointed: PMap[str, PSet[str]] = field(default_factory=PMap)
     by_predicate: PMap[str, PSet[str]] = field(default_factory=PMap)
-    subject_kinds: PMap[str, int] = field(default_factory=PMap)
+    by_shadow: PMap[str, PSet[str]] = field(default_factory=PMap)
     types: PMap[str, ClaimType] = field(default_factory=PMap)
     live_predicates: PSet[str] = EMPTY_PSET
     contracts_by_digest: PMap[str, CaptureContract] = field(default_factory=PMap)
     contract_digests: PMap[str, str] = field(default_factory=PMap)
-    source_latest: PMap[int, int] = field(default_factory=PMap)
-    sources_changed: int = 0
+    source_latest: PCounts = EMPTY_PCOUNTS
+
+    @property
+    def sources_changed(self) -> int:
+        """The latest sequence of any source path: when sources/LEDGER last changed."""
+
+        return self.source_latest.max(0)
 
     def pointed_at(self) -> Mapping[str, PSet[str]]:
         """Subject path -> every Claim that ever pointed at it, any lifecycle."""
@@ -287,6 +293,101 @@ def _object(claim: ClaimArtifactAny | None) -> str | None:
     return obj.address.artifact_path if isinstance(obj, SubjectClaimObject) else None
 
 
+class _Revisions:
+    """One Subject-valued Claim's revisions to a generation, newest first, persistent.
+
+    A node is one revision (its sequence and the Subject it pointed at) over
+    the chain before it, which it shares: extending a Claim's history by one
+    revision is one node, and cutting it back drops only the newer nodes.
+    ``targets`` counts the revisions per Subject over the whole chain, kept
+    with the same sharing, so every Subject the Claim ever pointed at is read
+    without walking its history.
+    """
+
+    __slots__ = ("length", "older", "sequence", "target", "targets")
+
+    sequence: int
+    target: str
+    older: _Revisions | None
+    length: int
+    targets: PMap[str, int]
+
+    def __init__(self, sequence: int, target: str, older: _Revisions | None) -> None:
+        self.sequence = sequence
+        self.target = target
+        self.older = older
+        self.length = 1 if older is None else older.length + 1
+        counts: PMap[str, int] = PMap() if older is None else older.targets
+        self.targets = counts.set(target, counts.get(target, 0) + 1)
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __iter__(self) -> Iterator[tuple[int, str]]:
+        """Oldest first, as ``(sequence, target)``: the whole history (cold and tests only)."""
+
+        newest_first: list[tuple[int, str]] = []
+        node: _Revisions | None = self
+        while node is not None:
+            newest_first.append((node.sequence, node.target))
+            node = node.older
+        return reversed(newest_first)
+
+    def extended(self, revisions: Iterable[tuple[int, str]]) -> _Revisions:
+        """This chain with ``revisions`` (ascending, all newer) on top: one node each."""
+
+        node = self
+        for sequence, target in revisions:
+            node = _Revisions(sequence, target, node)
+        return node
+
+    def at_most(self, sequence: int) -> _Revisions | None:
+        """The shared chain of the revisions at or before ``sequence``: drops only newer nodes."""
+
+        node: _Revisions | None = self
+        while node is not None and node.sequence > sequence:
+            node = node.older
+        return node
+
+
+def _revisions(revisions: Iterable[tuple[int, str]]) -> _Revisions | None:
+    """A chain from ``revisions`` in ascending sequence order."""
+
+    node: _Revisions | None = None
+    for sequence, target in revisions:
+        node = _Revisions(sequence, target, node)
+    return node
+
+
+def _target_moves(before: _Revisions | None, after: _Revisions | None) -> tuple[set[str], set[str]]:
+    """The Subjects a Claim newly points at (ever), and those it no longer ever points at.
+
+    Walks only the nodes the two chains do not share: the revisions added or
+    dropped between them, never the history below their common node.
+    """
+
+    if before is None or after is None:
+        # A Claim new or gone: every Subject it points at, read off the counts.
+        return set(() if after is None else after.targets), set(
+            () if before is None else before.targets
+        )
+    added: set[str] = set()
+    removed: set[str] = set()
+    old: _Revisions | None = before
+    new: _Revisions | None = after
+    while old is not new:
+        if new is not None and (old is None or new.length >= old.length):
+            if new.target not in before.targets:
+                added.add(new.target)
+            new = new.older
+        else:
+            assert old is not None
+            if old.target not in after.targets:
+                removed.add(old.target)
+            old = old.older
+    return added, removed
+
+
 def _object_histories(
     instance: PlaybillInstance,
     history: HistoryReader,
@@ -294,9 +395,9 @@ def _object_histories(
     paths: Iterable[str],
     *,
     at_most: int,
-    known: Mapping[str, tuple[tuple[int, str], ...]] | None = None,
+    known: Mapping[str, _Revisions] | None = None,
     since: int | None = None,
-) -> dict[str, tuple[tuple[int, str], ...]]:
+) -> dict[str, _Revisions]:
     """Every Subject each Subject-valued Claim pointed at, revision by revision.
 
     A Claim touched once is its current object. One revised in place is read
@@ -305,26 +406,29 @@ def _object_histories(
 
     ``known`` holds each Claim's history at generation ``since``: it is
     extended by only the sequences in ``(since, at_most]`` (or cut back to
-    ``at_most``), and a revision it names, or the one at ``at_most`` itself
-    (the current Claim), is not read again. A Claim it does not hold is read
-    whole.
+    ``at_most``), sharing the known chain below them, and a revision it names,
+    or the one at ``at_most`` itself (the current Claim), is not read again.
+    A Claim it does not hold is read whole.
     """
 
     wanted = [path for path in paths if _object(claims.get(path)) is not None]
-    histories: dict[str, list[tuple[int, str]]] = {}
+    result: dict[str, _Revisions] = {}
+    # The revisions to put on top of each Claim's base chain, by sequence.
+    added: dict[str, dict[int, str]] = {}
+    base: dict[str, _Revisions | None] = {}
     revisited: dict[int, list[str]] = {}
     whole: list[str] = []
     extended: list[str] = []
     for path in wanted:
-        prior = () if known is None or since is None else known.get(path, ())
-        if not prior or (len(prior) == 1 and prior[0][0] == 0):
+        prior = None if known is None or since is None else known.get(path)
+        if prior is None or (prior.length == 1 and prior.sequence == 0):
             whole.append(path)
             continue
         assert since is not None
         if at_most < since:
-            kept = [item for item in prior if item[0] <= at_most]
-            if kept:
-                histories[path] = kept
+            kept = prior.at_most(at_most)
+            if kept is not None:
+                result[path] = kept
             else:
                 whole.append(path)
         else:
@@ -343,23 +447,25 @@ def _object_histories(
         touched = sequences.get(path, ())
         current = _object(claims[path])
         assert current is not None
+        base[path] = None
         if len(touched) <= 1:
-            histories[path] = [(touched[0] if touched else 0, current)]
+            added[path] = {touched[0] if touched else 0: current}
             continue
-        histories[path] = []
+        added[path] = {}
         for sequence in touched:
             if sequence == at_most:
-                histories[path].append((sequence, current))
+                added[path][sequence] = current
             else:
                 revisited.setdefault(sequence, []).append(path)
     for path in extended:
         assert known is not None
         current = _object(claims[path])
         assert current is not None
-        histories[path] = list(known[path])
+        base[path] = known[path]
+        added[path] = {}
         for sequence in newer.get(path, ()):
             if sequence == at_most:
-                histories[path].append((sequence, current))
+                added[path][sequence] = current
             else:
                 revisited.setdefault(sequence, []).append(path)
     for sequence in sorted(revisited):
@@ -369,10 +475,14 @@ def _object_histories(
             content = blobs.get(path)
             target = None if content is None else _object(parse_claim(content, path=path))
             if target is not None:
-                histories[path].append((sequence, target))
-    return {
-        path: tuple(sorted(set(revisions))) for path, revisions in histories.items() if revisions
-    }
+                added[path][sequence] = target
+    for path, revisions in added.items():
+        prior_chain = base[path]
+        top = sorted(revisions.items())
+        chain = _revisions(top) if prior_chain is None else prior_chain.extended(top)
+        if chain is not None:
+            result[path] = chain
+    return result
 
 
 def _predicate_of_type_path(path: str) -> str:
@@ -380,8 +490,19 @@ def _predicate_of_type_path(path: str) -> str:
     return f"{namespace}.{name.removesuffix('.json')}"
 
 
-def _max_count_key(counts: Mapping[int, int]) -> int:
-    return max((key for key, count in counts.items() if count), default=0)
+def _shadow(claim: ClaimArtifactAny) -> str | None:
+    """The short name a Claim's field shows besides its predicate, if any.
+
+    A field ``<kind>.<short>`` of a Subject of ``<kind>`` (the kind is the
+    Subject path's first segment) reads the ClaimType of ``<short>`` too.
+    """
+
+    kind = claim.statement.subject.artifact_path.removeprefix(SUBJECTS_PREFIX).partition("/")[0]
+    predicate = claim.statement.predicate
+    prefix = f"{kind}."
+    if predicate.startswith(prefix) and len(predicate) > len(prefix):
+        return predicate[len(prefix) :]
+    return None
 
 
 class _Moves:
@@ -455,20 +576,20 @@ def build_floor_inputs(
     objects = _object_histories(instance, history, claims, claims, at_most=location.sequence)
     by_subject: dict[str, set[str]] = {}
     by_predicate: dict[str, set[str]] = {}
+    by_shadow: dict[str, set[str]] = {}
     for path, claim in claims.items():
         by_subject.setdefault(claim.statement.subject.artifact_path, set()).add(path)
         by_predicate.setdefault(claim.statement.predicate, set()).add(path)
+        short = _shadow(claim)
+        if short is not None:
+            by_shadow.setdefault(short, set()).add(path)
     pointed: dict[str, set[str]] = {}
     for claim_file, revisions in objects.items():
-        for _sequence, target in revisions:
+        for target in revisions.targets:
             pointed.setdefault(target, set()).add(claim_file)
-    source_latest: dict[int, int] = {}
-    for path, sequence in latest.items():
-        if path.startswith(_SOURCE_PREFIXES):
-            source_latest[sequence] = source_latest.get(sequence, 0) + 1
-    subject_kinds: dict[str, int] = {}
-    for shell in held["subject"].values():
-        subject_kinds[shell.subject_kind] = subject_kinds.get(shell.subject_kind, 0) + 1
+    source_latest = PCounts(
+        sequence for path, sequence in latest.items() if path.startswith(_SOURCE_PREFIXES)
+    )
     types = {item.predicate: item for item in held["claim_type"].values()}
     contract_digests = {
         path: capture_contract_digest(contract).tagged
@@ -487,7 +608,7 @@ def build_floor_inputs(
         capture_contracts=PMap(held["contract"]),
         pointed=PMap((key, PSet(found)) for key, found in pointed.items()),
         by_predicate=PMap((key, PSet(found)) for key, found in by_predicate.items()),
-        subject_kinds=PMap(subject_kinds),
+        by_shadow=PMap((key, PSet(found)) for key, found in by_shadow.items()),
         types=PMap(types),
         live_predicates=PSet(
             predicate for predicate, item in types.items() if item.lifecycle.state == "live"
@@ -496,8 +617,7 @@ def build_floor_inputs(
             (contract_digests[path], contract) for path, contract in held["contract"].items()
         ),
         contract_digests=PMap(contract_digests),
-        source_latest=PMap(source_latest),
-        sources_changed=_max_count_key(source_latest),
+        source_latest=source_latest,
     )
 
 
@@ -520,9 +640,7 @@ def _patch_floor_inputs(
     changed = sorted(touched, key=lambda item: item.encode())
     at_target = history.latest_sequences(changed, at_most=target.sequence)
     latest = inputs.latest.evolver()
-    source_latest = inputs.source_latest.evolver()
-    sources_changed = inputs.sources_changed
-    source_removed = False
+    source_latest = inputs.source_latest
     for path in changed:
         was = latest.get(path)
         now = at_target.get(path)
@@ -533,21 +651,9 @@ def _patch_floor_inputs(
         if was == now or not path.startswith(_SOURCE_PREFIXES):
             continue
         if was is not None:
-            _count(source_latest, was, -1)
-            if was == sources_changed and was not in source_latest:
-                source_removed = True
+            source_latest = source_latest.remove(was)
         if now is not None:
-            _count(source_latest, now, 1)
-    candidate = max(
-        (sequence for path, sequence in at_target.items() if path.startswith(_SOURCE_PREFIXES)),
-        default=None,
-    )
-    source_counts = source_latest.persistent()
-    if candidate is not None and candidate >= sources_changed:
-        sources_changed = candidate
-    elif source_removed:
-        # Only when the newest source path itself went away (a patch backwards).
-        sources_changed = _max_count_key(source_counts)
+            source_latest = source_latest.add(now)
     wanted = [path for path in changed if path.startswith(_INPUT_PREFIXES)]
     blobs = instance.blobs_at(target.git_oid, wanted) if wanted else {}
     subjects = inputs.subjects.evolver()
@@ -559,22 +665,18 @@ def _patch_floor_inputs(
     types = inputs.types.evolver()
     contracts_by_digest = inputs.contracts_by_digest.evolver()
     contract_digests = inputs.contract_digests.evolver()
-    subject_kinds = inputs.subject_kinds.evolver()
     live_added: list[str] = []
     live_removed: list[str] = []
     subject_moves = _Moves()
     predicate_moves = _Moves()
+    shadow_moves = _Moves()
     for path in wanted:
         content = blobs.get(path)
         value: Any
         kind, value = ("other", None) if content is None else _parse(path, content)
         if path.startswith(SUBJECTS_PREFIX):
-            old_shell = subjects.get(path)
-            if old_shell is not None:
-                _count(subject_kinds, old_shell.subject_kind, -1)
             if kind == "subject":
                 subjects[path] = value
-                _count(subject_kinds, value.subject_kind, 1)
             else:
                 subjects.discard(path)
         elif path.startswith(CLAIMS_PREFIX):
@@ -589,6 +691,9 @@ def _patch_floor_inputs(
                     continue
                 subject_moves.move(item.statement.subject.artifact_path, path, present=present)
                 predicate_moves.move(item.statement.predicate, path, present=present)
+                short = _shadow(item)
+                if short is not None:
+                    shadow_moves.move(short, path, present=present)
         elif path.startswith(CLAIM_TYPES_PREFIX):
             old_type = claim_types.get(path)
             if old_type is not None:
@@ -620,10 +725,12 @@ def _patch_floor_inputs(
     subject_moves.apply(by_subject)
     by_predicate = inputs.by_predicate.evolver()
     predicate_moves.apply(by_predicate)
+    by_shadow = inputs.by_shadow.evolver()
+    shadow_moves.apply(by_shadow)
     claims_now = claims.persistent()
     touched_claims = [path for path in wanted if path.startswith(CLAIMS_PREFIX)]
     objects = inputs.objects.evolver()
-    before = {path: inputs.objects.get(path, ()) for path in touched_claims}
+    before = {path: inputs.objects.get(path) for path in touched_claims}
     histories = _object_histories(
         instance,
         history,
@@ -640,11 +747,10 @@ def _patch_floor_inputs(
             objects.discard(path)
         else:
             objects[path] = found
-        old_targets = {item for _sequence, item in before[path]}
-        new_targets = {item for _sequence, item in found or ()}
-        for item in old_targets - new_targets:
+        gained, lost = _target_moves(before[path], found)
+        for item in lost:
             pointer_moves.move(item, path, present=False)
-        for item in new_targets - old_targets:
+        for item in gained:
             pointer_moves.move(item, path, present=True)
     pointed = inputs.pointed.evolver()
     pointer_moves.apply(pointed)
@@ -677,13 +783,12 @@ def _patch_floor_inputs(
             capture_contracts=contracts.persistent(),
             pointed=pointed.persistent(),
             by_predicate=by_predicate.persistent(),
-            subject_kinds=subject_kinds.persistent(),
+            by_shadow=by_shadow.persistent(),
             types=types_now,
             live_predicates=live,
             contracts_by_digest=contracts_by_digest.persistent(),
             contract_digests=contract_digests.persistent(),
-            source_latest=source_counts,
-            sources_changed=sources_changed,
+            source_latest=source_latest,
         ),
         touched,
     )
@@ -798,7 +903,10 @@ def _affected_subjects(old: FloorInputs, new: FloorInputs, changed: Collection[s
                 claim = inputs.claims.get(path)
                 if claim is not None:
                     affected.add(claim.statement.subject.artifact_path)
-                affected.update(target for _sequence, target in inputs.objects.get(path, ()))
+                revisions = inputs.objects.get(path)
+                if revisions is not None:
+                    # Every Subject it ever pointed at stamps with it: affected output.
+                    affected.update(revisions.targets)
         elif path.startswith(CLAIM_TYPES_PREFIX):
             type_predicates.add(_predicate_of_type_path(path))
             for inputs in sides:
@@ -807,20 +915,17 @@ def _affected_subjects(old: FloorInputs, new: FloorInputs, changed: Collection[s
                     type_predicates.add(claim_type.predicate)
     if type_predicates:
         # A field's stamp reads its ClaimType and its short-name shadow: the
-        # predicate itself and ``<kind>.<predicate>`` for every Subject kind.
+        # Claims of the predicate itself, and those whose field shows it as
+        # its short name, each from its own index.
         for inputs in sides:
-            reached = {
-                shown
-                for predicate in type_predicates
-                for shown in (predicate, *(f"{kind}.{predicate}" for kind in inputs.subject_kinds))
-            }
-            for predicate in reached:
-                for claim_file in inputs.by_predicate.get(predicate, ()):
-                    claim = inputs.claims[claim_file]
-                    affected.add(claim.statement.subject.artifact_path)
-                    target = _object(claim)
-                    if target is not None:
-                        affected.add(target)
+            for predicate in type_predicates:
+                for index in (inputs.by_predicate, inputs.by_shadow):
+                    for claim_file in index.get(predicate, ()):
+                        claim = inputs.claims[claim_file]
+                        affected.add(claim.statement.subject.artifact_path)
+                        target = _object(claim)
+                        if target is not None:
+                            affected.add(target)
     return affected
 
 
@@ -1122,12 +1227,7 @@ def render_floor(
     sources = None if previous is None else previous.sources
     source_state = None if previous is None else previous.source_state
     if sources is None or source_state is None or sources[0] != sources_changed:
-        if (
-            changed is None
-            or source_state is None
-            or any(path.startswith(CAPTURE_CONTRACTS_PREFIX) for path in changed)
-        ):
-            # A contract change relabels every line: read every Claim again.
+        if changed is None or source_state is None or old is None:
             source_state = build_sources_ledger(
                 instance,
                 claims=inputs.claims,
@@ -1145,6 +1245,18 @@ def render_floor(
                 documents=inputs.documents,
                 changed_claims=[path for path in changed if path.startswith(CLAIMS_PREFIX)],
                 changed_documents=[path for path in changed if path.startswith(DOCUMENTS_PREFIX)],
+                # A contract change relabels only the Claims whose Captures
+                # were taken under its digest, before or after.
+                changed_contracts=[
+                    digest
+                    for path in changed
+                    if path.startswith(CAPTURE_CONTRACTS_PREFIX)
+                    for digest in (
+                        old.contract_digests.get(path),
+                        inputs.contract_digests.get(path),
+                    )
+                    if digest is not None
+                ],
             )
         # The whole file is the format's output; it moves only with a source path.
         sources = (sources_changed, source_state.render(sources_changed))
