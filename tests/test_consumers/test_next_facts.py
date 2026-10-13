@@ -221,7 +221,9 @@ def _expected_slots(
         for side in (old.get(claim_id), new.get(claim_id)):
             if side is not None and side[0] == "live":
                 slots.add(str(side[1]))
-    return Counter(slots)
+    # A slot left with no live member is dropped, not resolved.
+    occupied = {str(side[1]) for side in new.values() if side[0] == "live"}
+    return Counter(slots & occupied)
 
 
 def _step(instance, at: datetime, change, *, expect: Counter[str] | None = None):  # type: ignore[no-untyped-def]
@@ -707,6 +709,17 @@ def _current_state(size: int) -> sqlite3.Connection:
         "INSERT INTO row_keys VALUES (?,?,?,?,NULL,NULL)",
         (("slot", f"key-{index}", index % 7, 1000 + index) for index in range(size)),
     )
+    connection.executemany(
+        "INSERT INTO subject_shells VALUES (?,?)",
+        ((f"subjects/k{index % 3}/s{index}.json", f"k{index % 3}") for index in range(size)),
+    )
+    connection.executemany(
+        "INSERT INTO mandate_expiries VALUES (?,?,?)",
+        (
+            (f"procedure-mandates/m{index}.json", f"ProcedureMandate:m{index}", 1000 + index)
+            for index in range(size)
+        ),
+    )
     return connection
 
 
@@ -719,8 +732,13 @@ def _current_state(size: int) -> sqlite3.Connection:
         (facts._UNSERVABLE, (), ("claim_facts_unservable",)),
         (facts._ANY_UNSERVABLE, (), ("claim_facts_unservable",)),
         (facts._BROKEN_KEYS, (), ("row_keys_with_errors",)),
+        (facts._BROKEN_FACTS, (), ("claim_facts_with_errors",)),
         (facts._BROKEN_RETIRED, (), ("claim_facts_with_errors",)),
         (facts._EXPIRING_SLOTS, (998, 1003), ("claim_facts_by_support_expiry",)),
+        (facts._FIRST_OF_KIND, ("k1",), ("subject_shells_by_kind",)),
+        (facts._EXPIRING_MANDATES, (998, 1003), ("mandate_expiries_by_expiry",)),
+        # One row per kind, kept by triggers: the same three rows at either size.
+        (facts._KIND_COUNTS, (), ()),
     ),
 )
 def test_every_pass_and_read_probe_is_bounded_by_its_answer(
@@ -733,9 +751,14 @@ def test_every_pass_and_read_probe_is_bounded_by_its_answer(
         )
         assert all(index in plan for index in indexes), plan
         # A partial index holding only the answer may be walked whole; a table never is.
-        assert not re.search(r"SCAN (claim_facts|row_keys)(?! USING)", plan), plan
+        assert not re.search(
+            r"SCAN (claim_facts|row_keys|subject_shells|mandate_expiries)(?! USING)", plan
+        ), plan
     # The same answer and the same work at a hundred Claims and at ten thousand.
-    assert small.execute(sql, parameters).fetchall() == large.execute(sql, parameters).fetchall()
+    # The same answer (its first column: counts grow with the state) and the same work.
+    assert [row[0] for row in small.execute(sql, parameters)] == [
+        row[0] for row in large.execute(sql, parameters)
+    ]
     assert _steps(small, sql, parameters) == _steps(large, sql, parameters)
 
 

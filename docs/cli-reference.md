@@ -393,9 +393,12 @@ current accepted and door heads serves these rows; when the worker has not yet
 followed a change or a bound, the read derives just that in memory and leaves
 the worker's state untouched. A read at an earlier coordinate or a pinned door
 head folds every Claim instead, and a page cursor from a read at the heads is
-refused once either head moves. The worker rebuilds only on first start, a new
-derivation format or compiler, or when its cursors no longer name positions in
-those logs. Its evidence part re-hashes the Captures live Claims cite whenever a generation
+refused once either head moves. A body rewritten in place, which no log
+records, reaches the Claims that read it at the next daily `evidence.sweep`,
+which compares the file identity of every body a fact consulted. The worker
+rebuilds only on first start, a new derivation format or compiler, when its
+cursors no longer name positions in those logs, or on
+`cruxible instance rebuild-next`. Its evidence part re-hashes the Captures live Claims cite whenever a generation
 cites one, and sweeps them all on a daily `evidence.sweep` trigger event.
 Retention is evaluated at the generation or trigger event's recorded instant. A missing or corrupt Capture envelope, a
 corrupt body, or a missing body its contract still requires to be retained is a

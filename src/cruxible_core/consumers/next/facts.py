@@ -78,9 +78,12 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 2
+FORMAT = 3
 #: The one deadline next arms: the earliest instant a stored fact or row stops holding.
 NEXT_EXPIRE = "next.expire"
+#: The daily evidence sweep: each fire compares every consulted body's file identity,
+#: the one change no record carries (a body rewritten in place, R2).
+EVIDENCE_SWEEP = "evidence.sweep"
 #: The statuses ``tally`` counts; ``error`` is a live Claim whose slot did not resolve.
 TALLY_STATUSES = ("accepted", "conflicted", "overturned", "refused", "retired", "error")
 
@@ -97,7 +100,7 @@ CREATE TABLE cursors (
  generation INTEGER NOT NULL, generation_oid TEXT NOT NULL, compiler TEXT NOT NULL,
  door_root TEXT NOT NULL, landing_log TEXT NOT NULL, landing INTEGER NOT NULL,
  reobs_journal TEXT NOT NULL, reobs_signature TEXT NOT NULL, reobs INTEGER NOT NULL,
- expire INTEGER NOT NULL, evaluated_at TEXT NOT NULL
+ expire INTEGER NOT NULL, sweep INTEGER NOT NULL, evaluated_at TEXT NOT NULL
 ) STRICT;
 CREATE TABLE claim_facts (
  claim_id TEXT PRIMARY KEY, path TEXT NOT NULL, artifact_digest TEXT NOT NULL,
@@ -160,6 +163,19 @@ CREATE TABLE citation_commitments (
 ) STRICT;
 CREATE INDEX citation_commitments_by_source ON citation_commitments(source_id,claim_id)
  WHERE source_id IS NOT NULL;
+CREATE TABLE subject_shells (path TEXT PRIMARY KEY, kind TEXT NOT NULL) STRICT, WITHOUT ROWID;
+CREATE INDEX subject_shells_by_kind ON subject_shells(kind,path);
+CREATE TABLE subject_kind_counts (kind TEXT PRIMARY KEY, live INTEGER NOT NULL) STRICT;
+CREATE TRIGGER subject_shell_added AFTER INSERT ON subject_shells BEGIN
+ INSERT OR IGNORE INTO subject_kind_counts VALUES (new.kind,0);
+ UPDATE subject_kind_counts SET live=live+1 WHERE kind=new.kind; END;
+CREATE TRIGGER subject_shell_removed AFTER DELETE ON subject_shells BEGIN
+ UPDATE subject_kind_counts SET live=live-1 WHERE kind=old.kind;
+ DELETE FROM subject_kind_counts WHERE kind=old.kind AND live=0; END;
+CREATE TABLE mandate_expiries (
+ path TEXT PRIMARY KEY, identity TEXT NOT NULL, expires_at_us INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE INDEX mandate_expiries_by_expiry ON mandate_expiries(expires_at_us,identity);
 CREATE TABLE tally (status TEXT PRIMARY KEY, count INTEGER NOT NULL) STRICT;
 INSERT INTO tally VALUES ('accepted',0),('conflicted',0),('overturned',0),('refused',0),
  ('retired',0),('error',0);
@@ -186,6 +202,9 @@ LAYER1_TABLES = (
     "claim_inputs",
     "claim_lineage",
     "claim_pins",
+    "subject_shells",
+    "subject_kind_counts",
+    "mandate_expiries",
     "tally",
 )
 #: Every table a rebuild writes, Layer 1 then Layer 2.
@@ -254,6 +273,7 @@ class _Heads:
     reobs_journal: str
     reobs_signature: str
     expire: int
+    sweep: int
 
     def key(self) -> str:
         return _json(
@@ -266,6 +286,7 @@ class _Heads:
                 self.landing,
                 self.reobs_signature,
                 self.expire,
+                self.sweep,
             ]
         )
 
@@ -283,6 +304,7 @@ class _Cursors:
     reobs_signature: str
     reobs: int
     expire: int
+    sweep: int
 
 
 def _heads(instance: Any) -> _Heads:
@@ -309,13 +331,14 @@ def _heads(instance: Any) -> _Heads:
         reobs_journal="" if journal is None else journal[0],
         reobs_signature="" if journal is None else journal[1],
         expire=latest_sequence(instance, action=NEXT_EXPIRE),
+        sweep=latest_sequence(instance, action=EVIDENCE_SWEEP),
     )
 
 
 def _read_cursors(connection: sqlite3.Connection) -> _Cursors | None:
     row = connection.execute(
         "SELECT heads,generation,generation_oid,compiler,door_root,landing_log,landing,"
-        "reobs_journal,reobs_signature,reobs,expire FROM cursors"
+        "reobs_journal,reobs_signature,reobs,expire,sweep FROM cursors"
     ).fetchone()
     return None if row is None else _Cursors(*row)
 
@@ -336,7 +359,7 @@ def _cursors_hold(instance: Any, cursors: _Cursors, heads: _Heads) -> bool:
         return False
     if cursors.reobs_journal and cursors.reobs_journal != heads.reobs_journal:
         return False
-    return cursors.expire <= heads.expire
+    return cursors.expire <= heads.expire and cursors.sweep <= heads.sweep
 
 
 # -- one Claim's facts ---------------------------------------------------------------
@@ -789,6 +812,10 @@ class _Delta:
     reobs: int = 0
     #: Digests landed since the last pass: the bodies a door row may have read.
     landed: set[str] = field(default_factory=set)
+    #: Live Subjects by path (their kind), None for one no longer live (R9).
+    subjects: dict[str, str | None] = field(default_factory=dict)
+    #: Live ProcedureMandates by path (identity, expiry), None for one no longer live.
+    mandates: dict[str, tuple[str, int] | None] = field(default_factory=dict)
 
 
 def _rows(connection: sqlite3.Connection, sql: str, keys: Sequence[str]) -> list[tuple[Any, ...]]:
@@ -896,6 +923,81 @@ def _landing_rows(instance: Any, after: int, through: int) -> tuple[set[str], in
     return landed, cursor
 
 
+_SUBJECTS = "subjects/"
+_MANDATES = "procedure-mandates/"
+_SHELL_PREFIXES = (_SUBJECTS, _MANDATES)
+
+
+def _shells(
+    instance: Any, coordinate: AcceptedProjectionCoordinate, paths: Iterable[str] | None
+) -> tuple[dict[str, str | None], dict[str, tuple[str, int] | None]]:
+    """Live Subjects' kinds and live ProcedureMandates' expiries at these paths (all on None).
+
+    One indexed read per changed path; the whole population only on a rebuild.
+    """
+
+    subjects: dict[str, str | None] = {}
+    mandates: dict[str, tuple[str, int] | None] = {}
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        if paths is None:
+            subjects.update(
+                (str(path), str(kind))
+                for path, kind in connection.execute(
+                    "SELECT path,subject_kind FROM subjects WHERE lifecycle='live'"
+                )
+            )
+            mandates.update(
+                (str(path), (str(identity), int(expires)))
+                for path, identity, expires in connection.execute(
+                    "SELECT path,identity,expires_at_us FROM procedure_mandates "
+                    "WHERE lifecycle='live'"
+                )
+            )
+            return subjects, mandates
+        for path in sorted(paths):
+            if path.startswith(_SUBJECTS):
+                row = connection.execute(
+                    "SELECT subject_kind FROM subjects WHERE path=? AND lifecycle='live'", (path,)
+                ).fetchone()
+                subjects[path] = None if row is None else str(row[0])
+            else:
+                row = connection.execute(
+                    "SELECT identity,expires_at_us FROM procedure_mandates "
+                    "WHERE path=? AND lifecycle='live'",
+                    (path,),
+                ).fetchone()
+                mandates[path] = None if row is None else (str(row[0]), int(row[1]))
+    return subjects, mandates
+
+
+def _rewritten(instance: Any, connection: sqlite3.Connection) -> set[str]:
+    """The Claims that consulted a body whose file identity no longer matches.
+
+    The landing log sees bodies arrive and leave, not a body rewritten in
+    place; the daily sweep closes that gap by comparing every consulted
+    object's identity (one stat each), the one whole-table pass this part
+    makes, and only on an ``evidence.sweep`` fire. Each fact whose derivation
+    failed is retried there too, since a failed read may have recorded nothing.
+    """
+
+    store = instance.body_store()
+    recorded: dict[str, set[str | None]] = defaultdict(set)
+    consulted: dict[str, set[str]] = defaultdict(set)
+    for body, claim_id, identity in connection.execute(
+        "SELECT body_digest,claim_id,identity FROM capture_bodies"
+    ):
+        recorded[str(body)].add(None if identity is None else str(identity))
+        consulted[str(body)].add(str(claim_id))
+    claims: set[str] = set()
+    for body, identities in recorded.items():
+        found = store.file_identity(body)
+        current = None if found is None else _json(list(found))
+        if identities != {current}:
+            claims |= consulted[body]
+    return claims
+
+
 def _expired_facts(connection: sqlite3.Connection, at: datetime) -> set[str]:
     """Claims whose stored facts do not hold at ``at``: one range on each bound's index."""
 
@@ -912,6 +1014,8 @@ class _Touched:
     landing: int
     at: datetime
     landed: set[str]
+    #: Subject and ProcedureMandate member paths the generations changed.
+    shells: set[str] = field(default_factory=set)
 
 
 def _touched(
@@ -937,6 +1041,7 @@ def _touched(
 
     claims: set[str] = set()
     keys: set[str] = set()
+    shells: set[str] = set()
     if cursors.generation != heads.generation:
         with instance.accepted_history_reader(
             at=AcceptedCoordinate.from_internal(heads.coordinate)
@@ -945,6 +1050,8 @@ def _touched(
         attested: list[str] = []
         for path in paths:
             keys.add(f"path:{path}")
+            if path.startswith(_SHELL_PREFIXES):
+                shells.add(path)
             claim = _claim_of_path(path)
             if claim is not None:
                 claims.add(claim)
@@ -988,6 +1095,10 @@ def _touched(
             if len(fires) < _FIRES_PAGE or fires[-1].sequence >= heads.expire:
                 break
             after = fires[-1].sequence
+    if heads.sweep != cursors.sweep:
+        claims |= _rewritten(instance, connection)
+        # A derivation that failed may have read nothing to compare: retry it.
+        claims.update(str(row[0]) for row in connection.execute(_BROKEN_FACTS))
     at = now if fired_at is None else fired_at
     claims |= _expired_facts(connection, at)
     claims.update(
@@ -999,7 +1110,9 @@ def _touched(
         )
     )
     claims.update(str(row[2]) for row in door_rows)
-    return _Touched(claims=claims, reobs=reobs, landing=landing, at=at, landed=landed)
+    return _Touched(
+        claims=claims, reobs=reobs, landing=landing, at=at, landed=landed, shells=shells
+    )
 
 
 def _slot_members(
@@ -1202,6 +1315,7 @@ def _rebuild(instance: Any, heads: _Heads, *, at: datetime) -> _Delta:
     delta.door = door_rows
     delta.door_root = door_root
     delta.reobs = reobs
+    delta.subjects, delta.mandates = _shells(instance, heads.coordinate, None)
     return delta
 
 
@@ -1317,6 +1431,14 @@ def _apply_facts(connection: sqlite3.Connection, delta: _Delta) -> set[str]:
     connection.executemany(
         "INSERT OR IGNORE INTO door_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", delta.door
     )
+    for path, kind in sorted(delta.subjects.items()):
+        connection.execute("DELETE FROM subject_shells WHERE path=?", (path,))
+        if kind is not None:
+            connection.execute("INSERT INTO subject_shells VALUES (?,?)", (path, kind))
+    for path, mandate in sorted(delta.mandates.items()):
+        connection.execute("DELETE FROM mandate_expiries WHERE path=?", (path,))
+        if mandate is not None:
+            connection.execute("INSERT INTO mandate_expiries VALUES (?,?,?)", (path, *mandate))
     return moved
 
 
@@ -1336,13 +1458,13 @@ def _write_cursors(
     """
 
     connection.execute(
-        "INSERT INTO cursors VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE "
+        "INSERT INTO cursors VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE "
         "SET heads=excluded.heads,generation=excluded.generation,"
         "generation_oid=excluded.generation_oid,compiler=excluded.compiler,"
         "door_root=excluded.door_root,landing_log=excluded.landing_log,"
         "landing=excluded.landing,reobs_journal=excluded.reobs_journal,"
         "reobs_signature=excluded.reobs_signature,reobs=excluded.reobs,expire=excluded.expire,"
-        "evaluated_at=excluded.evaluated_at",
+        "sweep=excluded.sweep,evaluated_at=excluded.evaluated_at",
         (
             replace(heads, landing=landing).key(),
             heads.generation,
@@ -1355,6 +1477,7 @@ def _write_cursors(
             heads.reobs_signature,
             delta.reobs,
             heads.expire,
+            heads.sweep,
             format_datetime(at),
         ),
     )
@@ -1459,6 +1582,24 @@ def _all_keys(
     return keys
 
 
+@dataclass
+class _Settlement:
+    """What one settle wrote: its Layer 1 change sets in order, then its derived keys.
+
+    Replaying it on the same stored state writes the same rows without
+    deriving anything.
+    """
+
+    facts: list[_Delta] = field(default_factory=list)
+    keys: rows.RowsDelta = field(default_factory=rows.RowsDelta)
+
+
+def _replay(connection: sqlite3.Connection, settlement: _Settlement) -> None:
+    for delta in settlement.facts:
+        _apply_facts(connection, delta)
+    rows.apply_dependents(connection, rows.apply(connection, settlement.keys))
+
+
 def _settle(
     instance: Any,
     connection: sqlite3.Connection,
@@ -1468,7 +1609,7 @@ def _settle(
     delta: _Delta | None,
     rebuild: bool = False,
     reading: bool = False,
-) -> None:
+) -> _Settlement:
     """Apply a Layer 1 change set, bring every fact and key to ``at``, derive the keys it moved.
 
     Runs inside the caller's one transaction: the worker commits it, a read
@@ -1481,11 +1622,13 @@ def _settle(
     from cruxible_core.service.discovery.next import DEFAULT_EXPIRING_WITHIN_MICROSECONDS
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
+    settlement = _Settlement()
     keys: set[tuple[str, str]] = set()
     if rebuild:
         _clear(connection)
     if delta is not None:
         keys |= _dirty_keys(connection, delta, _apply_facts(connection, delta))
+        settlement.facts.append(delta)
     again = _expired_facts(connection, at)
     if reading:
         again.update(str(row[0]) for row in connection.execute(_UNSERVABLE))
@@ -1501,6 +1644,7 @@ def _settle(
             door=_door_captures((), lambda claim_ids: _stored_door_captures(connection, claim_ids)),
         )
         keys |= _dirty_keys(connection, later, _apply_facts(connection, later))
+        settlement.facts.append(later)
     if rebuild:
         keys |= _all_keys(instance, connection, coordinate)
     keys |= _expired_keys(connection, at)
@@ -1511,9 +1655,9 @@ def _settle(
         at=at,
         expiring_within=CanonicalDuration(microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS),
     )
-    derived = rows.RowsDelta()
-    rows.derive(context, keys, derived)
-    rows.apply_dependents(connection, rows.apply(connection, derived))
+    rows.derive(context, keys, settlement.keys)
+    rows.apply_dependents(connection, rows.apply(connection, settlement.keys))
+    return settlement
 
 
 #: Every probe a pass or a read makes of the stored state: each one seek or one
@@ -1528,6 +1672,7 @@ _EXPIRED_KEYS = (
 )
 _UNSERVABLE = "SELECT claim_id FROM claim_facts WHERE unservable=1"
 _BROKEN_KEYS = "SELECT family,key FROM row_keys WHERE error_code IS NOT NULL"
+_BROKEN_FACTS = "SELECT claim_id FROM claim_facts WHERE error_code IS NOT NULL"
 _BROKEN_RETIRED = (
     "SELECT claim_id FROM claim_facts WHERE lifecycle='retired' AND error_code IS NOT NULL "
     "ORDER BY path LIMIT 1"
@@ -1535,6 +1680,12 @@ _BROKEN_RETIRED = (
 _EXPIRING_SLOTS = (
     "SELECT conflict_slot FROM claim_facts WHERE max_support_expiry_us IS NOT NULL "
     "AND max_support_expiry_us>? AND max_support_expiry_us<=? AND lifecycle='live'"
+)
+_KIND_COUNTS = "SELECT kind,live FROM subject_kind_counts ORDER BY kind"
+_FIRST_OF_KIND = "SELECT path FROM subject_shells WHERE kind=? ORDER BY path LIMIT 1"
+_EXPIRING_MANDATES = (
+    "SELECT identity FROM mandate_expiries WHERE expires_at_us>? AND expires_at_us<=? "
+    "ORDER BY identity"
 )
 _EARLIEST_END = (
     "SELECT upper_us FROM claim_facts WHERE upper_us IS NOT NULL ORDER BY upper_us LIMIT 1"
@@ -1623,6 +1774,8 @@ def _changes(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime)
     delta.door_root = door_root
     delta.reobs = touched.reobs
     delta.landed = touched.landed
+    if touched.shells:
+        delta.subjects, delta.mandates = _shells(instance, heads.coordinate, touched.shells)
     return _Change(delta, touched.at, touched.landing)
 
 
@@ -1659,6 +1812,38 @@ def catch_up(instance: Any, *, now: datetime) -> None:
         _arm(instance, _earliest_end(connection))
 
 
+@dataclass(frozen=True)
+class Rebuilt:
+    """What a repair rebuilt: Claims with facts, row keys and stored rows."""
+
+    claims: int
+    keys: int
+    rows: int
+
+
+def rebuild(instance: Any, *, now: datetime) -> Rebuilt:
+    """Drop every next table and derive them again from nothing (R6).
+
+    The operator's repair for state the worker cannot follow forward: the
+    whole population is derived, as on a cold start, and the part's error is
+    cleared. Reads fold until it lands.
+    """
+
+    _STATE.reset(instance)
+    with _OVERLAYS_LOCK:
+        for key in [key for key in _OVERLAYS if key[0] == str(instance.root)]:
+            del _OVERLAYS[key]
+    catch_up(instance, now=now)
+    _PART.match(instance, now=now, daemon_id="rebuild")
+    with _STATE.open(instance) as connection:
+        assert connection is not None
+        counts = [
+            int(connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
+            for table in ("claim_facts", "row_keys", "claim_rows")
+        ]
+    return Rebuilt(*counts)
+
+
 # -- reads -------------------------------------------------------------------------
 
 
@@ -1671,21 +1856,35 @@ class ServedRows:
 
     rows: tuple[PlaybillNextItemV1, ...]
     holds: _Holds
+    #: Each kind with live Subjects: (kind, live count, first path), in kind order.
+    #: None on a read of a few Claims' keys.
+    subject_kinds: tuple[tuple[str, int, str], ...] | None = None
+    #: Live ProcedureMandates expiring within the read's lead, in identity order.
+    expiring_mandates: tuple[str, ...] | None = None
 
 
 #: In-flight and recent overlays, by (instance, stored heads, current heads).
-_OVERLAYS: OrderedDict[tuple[str, str, str], Future[_Change | None]] = OrderedDict()
+_OVERLAYS: OrderedDict[tuple[str, str, str], Future[_Overlay | None]] = OrderedDict()
 _OVERLAYS_LOCK = threading.Lock()
 _OVERLAY_CAPACITY = 8
 
 
-def _overlay(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime) -> _Change | None:
-    """The change set past the worker's cursors, derived once per (stored, current) heads.
+@dataclass(frozen=True)
+class _Overlay:
+    """The worker's next pass, settled in memory: what a read replays instead of deriving."""
 
-    Concurrent reads of the same pair wait on the first; the result lives in
-    memory only, and each read applies it in a transaction it rolls back. A
-    read at another instant reuses it: applying it re-derives whatever does
-    not hold at that read's instant.
+    settlement: _Settlement
+    door_root: str
+
+
+def _overlay(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime) -> _Overlay | None:
+    """The settlement past the worker's cursors, derived once per (stored, current) heads.
+
+    The first reader derives the Layer 1 change set, then settles it and the
+    Layer 2 keys it dirties in a transaction it rolls back, keeping what it
+    wrote; concurrent readers of the same pair wait on that, and every read
+    replays it in its own rolled-back transaction. A read at another instant
+    derives only what does not hold at its instant.
     """
 
     key = (str(instance.root), original.heads, heads.key())
@@ -1699,7 +1898,7 @@ def _overlay(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime)
                 _OVERLAYS.popitem(last=False)
     if owner:
         try:
-            flight.set_result(_changes(instance, original, heads, now=now))
+            flight.set_result(_settled_overlay(instance, original, heads, now=now))
         except BaseException as exc:
             with _OVERLAYS_LOCK:
                 if _OVERLAYS.get(key) is flight:
@@ -1707,6 +1906,30 @@ def _overlay(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime)
             flight.set_exception(exc)
             raise
     return flight.result()
+
+
+def _settled_overlay(
+    instance: Any, original: _Cursors, heads: _Heads, *, now: datetime
+) -> _Overlay | None:
+    change = _changes(instance, original, heads, now=now)
+    if change is None:
+        return None
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None or _read_cursors(connection) != original:
+            return None
+        connection.execute("SAVEPOINT overlay")
+        try:
+            settlement = _settle(
+                instance,
+                connection,
+                coordinate=heads.coordinate,
+                at=change.at,
+                delta=change.delta,
+            )
+        finally:
+            connection.execute("ROLLBACK TO overlay")
+            connection.execute("RELEASE overlay")
+    return _Overlay(settlement, change.delta.door_root)
 
 
 def served_claim_rows(
@@ -1722,7 +1945,8 @@ def served_claim_rows(
 
     Served only at the current accepted and door heads with the worker active
     and its state warm and valid; whatever the worker has not yet followed is
-    derived here and rolled back (reads never write this state). ``claims``
+    settled once per (stored, current) heads and replayed by each read in a
+    transaction it rolls back (reads never write this state). ``claims``
     reads only those Claims' keys -- their threshold, door and dependency rows
     and their slots' -- instead of the whole queue.
     """
@@ -1738,22 +1962,24 @@ def served_claim_rows(
     heads = _heads(instance)
     if door_head != heads.door_root or heads.coordinate != coordinate:
         return None
-    change: _Change | None = None
+    overlay: _Overlay | None = None
     if original.heads != heads.key():
-        change = _overlay(instance, original, heads, now=evaluation_time)
-        if change is None or change.delta.door_root != door_head:
+        overlay = _overlay(instance, original, heads, now=evaluation_time)
+        if overlay is None or overlay.door_root != door_head:
             return None
     with _STATE.open(instance, create=False) as connection:
         if connection is None or _read_cursors(connection) != original:
             return None
         connection.execute("SAVEPOINT served")
         try:
+            if overlay is not None:
+                _replay(connection, overlay.settlement)
             _settle(
                 instance,
                 connection,
                 coordinate=coordinate,
                 at=evaluation_time,
-                delta=None if change is None else change.delta,
+                delta=None,
                 reading=True,
             )
             return _read_served(
@@ -1871,6 +2097,19 @@ def _read_served(
     from cruxible_core.service.discovery.next import DEFAULT_EXPIRING_WITHIN_MICROSECONDS
 
     keys = None if claims is None else _selected_keys(connection, claims)
+    if claims is not None:
+        # A hold over a few Claims is decided over their slots' contenders too,
+        # and with no hold on any of them nothing is read, as the fold decides.
+        population = _with_contenders(connection, claims)
+        holds = _served_holds(
+            instance,
+            connection,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+            named=population,
+        )
+        if not holds:
+            return ServedRows(rows=(), holds=holds)
     _refuse_errors(
         instance, connection, coordinate=coordinate, evaluation_time=evaluation_time, keys=keys
     )
@@ -1886,16 +2125,29 @@ def _read_served(
             keys=keys,
         )
     items = tuple(item for _order, item in found)
-    return ServedRows(
-        rows=items,
-        holds=_served_holds(
-            instance,
-            connection,
-            coordinate=coordinate,
-            evaluation_time=evaluation_time,
-            items=items,
-        ),
+    if claims is not None:
+        return ServedRows(rows=items, holds=holds)
+    holds = _served_holds(
+        instance,
+        connection,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+        named=_named_in(items),
     )
+    start = utc_microseconds(evaluation_time)
+    assert start is not None
+    kinds = tuple(
+        (str(kind), int(live), str(first))
+        for kind, live in connection.execute(_KIND_COUNTS).fetchall()
+        for (first,) in (connection.execute(_FIRST_OF_KIND, (kind,)).fetchone(),)
+    )
+    mandates = tuple(
+        str(row[0])
+        for row in connection.execute(
+            _EXPIRING_MANDATES, (start, start + expiring_within.microseconds)
+        )
+    )
+    return ServedRows(rows=items, holds=holds, subject_kinds=kinds, expiring_mandates=mandates)
 
 
 def _recomposed(
@@ -1949,15 +2201,46 @@ def _recomposed(
     return sorted((*kept, *replaced), key=lambda pair: pair[0])
 
 
+def _named_in(items: Iterable[PlaybillNextItemV1]) -> set[str]:
+    """The Claims a hold over these rows decides by: each row's subject and its contenders."""
+
+    from cruxible_core.service.discovery.next import _hold_members, _repair_arguments
+
+    named: set[str] = set()
+    for item in items:
+        for row in _hold_members(item):
+            named.add(row.subject_identity)
+            contenders = _repair_arguments(row).get("claim_ids")
+            if isinstance(contenders, list):
+                named.update(str(contender) for contender in contenders)
+    return named
+
+
+def _with_contenders(connection: sqlite3.Connection, claims: Sequence[str]) -> set[str]:
+    """These Claims and every live Claim of their (predicate, Subject) slots: one seek each."""
+
+    found = set(claims)
+    found.update(
+        str(row[0])
+        for row in _rows(
+            connection,
+            "SELECT claim_id FROM claim_facts WHERE lifecycle='live' AND res_slot IN "
+            "(SELECT res_slot FROM claim_facts WHERE claim_id IN ({marks}))",
+            tuple(sorted(set(claims))),
+        )
+    )
+    return found
+
+
 def _served_holds(
     instance: Any,
     connection: sqlite3.Connection,
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
-    items: tuple[PlaybillNextItemV1, ...],
+    named: set[str],
 ) -> _Holds:
-    """The ``unsure`` holds over these rows: their Claims' examined statements, nothing else.
+    """The ``unsure`` holds over these Claims: their examined statements, nothing else.
 
     A hold covers a row through the row's subject and its conflict's
     contenders, so only those Claims' accepted examined attestations and door
@@ -1967,16 +2250,9 @@ def _served_holds(
     whole chain.
     """
 
-    from cruxible_core.service.discovery.next import _hold_members, _Holds, _repair_arguments
+    from cruxible_core.service.discovery.next import _Holds
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
-    named: set[str] = set()
-    for item in items:
-        for row in _hold_members(item):
-            named.add(row.subject_identity)
-            contenders = _repair_arguments(row).get("claim_ids")
-            if isinstance(contenders, list):
-                named.update(str(contender) for contender in contenders)
     live = sorted(
         str(row[0])
         for row in _rows(
@@ -2175,10 +2451,13 @@ class ClaimFactsPart:
             ConsumerHealth(
                 kind=self.name,
                 consumer_id="consumer:next",
+                # A pending sweep is scheduled work, not lag: the evidence part
+                # reports the sweep's own lag.
                 state="stalled"
                 if error is not None
                 else "running"
-                if cursors is not None and cursors.heads == heads.key()
+                if cursors is not None
+                and cursors.heads == replace(heads, sweep=cursors.sweep).key()
                 else "lagging",
                 detail={
                     "format": FORMAT,
@@ -2189,12 +2468,15 @@ class ClaimFactsPart:
                     or (cursors.landing_log, cursors.landing, cursors.reobs_signature)
                     != (heads.landing_log, heads.landing, heads.reobs_signature),
                     "pending_expiry": cursors is None or cursors.expire != heads.expire,
+                    "sweep_pending": cursors is None or cursors.sweep != heads.sweep,
                     "last_error": error,
                 },
                 repair=(
                     ConsumerRepair(
                         operation="hand_edit",
-                        required_change="resolve_the_worker_error_then_rebuild_the_next_facts",
+                        required_change=(
+                            "resolve_the_worker_error_then_run_cruxible_instance_rebuild_next"
+                        ),
                         arguments={},
                     )
                     if error is not None
@@ -2217,6 +2499,8 @@ __all__ = [
     "ServedRows",
     "catch_up",
     "claim_status_tally",
+    "Rebuilt",
+    "rebuild",
     "rebuilt_tables",
     "served_claim_rows",
     "stored_tables",

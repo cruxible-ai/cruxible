@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`cruxible instance rebuild-next` repairs the next worker.** An `ADMIN`
+  operator command (and `CruxibleClient.rebuild_next`) drops the `next`
+  worker's facts and Claim rows and derives them again from nothing, clearing
+  the worker's error; a stalled `next` consumer names it as its repair. A body
+  rewritten in place, which no log records, now reaches the Claims that read it
+  at the next daily `evidence.sweep`, which compares the file identity of every
+  body a fact consulted and retries every fact whose derivation failed. `next`
+  reads the kinds with live Subjects and the ProcedureMandates nearing expiry
+  from counts and an expiry index the worker keeps, instead of grouping every
+  Subject and scanning every mandate per read. Reads behind the worker settle
+  its next pass once per pair of positions and replay it, so concurrent reads
+  derive each change once.
 - **The next worker keeps each Claim's facts and rows from what changed.** The
   `next` worker's `facts` part keeps every Claim's verdict, resolution status,
   visibility, lineage and citations, and next's Claim rows per key (attestation

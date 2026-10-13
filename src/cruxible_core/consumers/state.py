@@ -72,6 +72,13 @@ class DisposableState:
                 with _LOCKS_GUARD:
                     _HOLDERS.pop(key, None)
 
+    def reset(self, instance: Any) -> None:
+        """Drop every table and create the schema again: an operator's repair."""
+
+        with self.open(instance) as connection:
+            assert connection is not None
+            self._rebuild(connection)
+
     def _rebuild(self, connection: sqlite3.Connection) -> None:
         # Dropping a table drops its indexes and triggers. The schema seeds
         # every summary from the empty tables it creates, so the counts are

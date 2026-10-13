@@ -2096,10 +2096,13 @@ def claim_unsure_holds(
 ) -> frozenset[str]:
     """The Claims an ``unsure`` hold parks right now, decided exactly as ``next`` decides.
 
-    The rows are ``next``'s own Claim rows (``_claim_rows``) for these Claims, and
-    a Claim is held when ``_Holds.covers`` parks one of them: a new contender, a
-    revised input, newer evidence or a further expiry the attester never saw ends
-    the hold here exactly as it returns the row to the queue.
+    The rows are ``next``'s own Claim rows for these Claims and every live
+    contender in their slots, so a conflict is decided over all its contenders
+    whichever of them the caller asked about; a Claim is held when
+    ``_Holds.covers`` parks one of them: a new contender, a revised input,
+    newer evidence or a further expiry the attester never saw ends the hold here
+    exactly as it returns the row to the queue. With no hold on any of them,
+    nothing is folded.
     """
 
     live = tuple(claim for claim in claims if claim.lifecycle.state == "live")
@@ -2120,11 +2123,23 @@ def claim_unsure_holds(
     )
     if served is not None:
         return _held_claims(served.rows, served.holds, identities) if served.holds else frozenset()
+    population = _with_slot_contenders(instance, coordinate, live)
+    if resolution_statuses is None:
+        # A conflict row stands on the slot's resolution, exactly as next decides it.
+        try:
+            resolution_statuses = claim_resolution_statuses(
+                instance,
+                claims=population,
+                at=AcceptedCoordinate.from_internal(coordinate),
+                evaluation_time=evaluation_time,
+            )
+        except CruxibleError:
+            resolution_statuses = None
     door_events = store.fold_events(at_head=head)
     holds = _Holds(
         instance,
         coordinate=coordinate,
-        claims=live,
+        claims=population,
         door_events=door_events,
         door_history=lambda: store.events(at_head=head),
         evaluation_time=evaluation_time,
@@ -2137,10 +2152,38 @@ def claim_unsure_holds(
         evaluation_time=evaluation_time,
         expiring_within=CanonicalDuration(microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS),
         door_events=door_events,
-        claims=live,
+        claims=population,
         resolution_statuses=resolution_statuses,
     )
     return _held_claims(rows, holds, identities)
+
+
+def _with_slot_contenders(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    claims: tuple[ClaimArtifactAny, ...],
+) -> tuple[ClaimArtifactAny, ...]:
+    """These live Claims and every live Claim sharing a (predicate, Subject) slot: one seek each."""
+
+    context = ClaimVerdictReadContext(instance, coordinate)
+    found: dict[str, ClaimArtifactAny] = {claim.identity.qualified: claim for claim in claims}
+    with instance.bind_accepted_projection(coordinate) as projection:
+        for claim in claims:
+            subject = claim.statement.subject
+            for (identity,) in projection.typed.connection.execute(
+                "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
+                "AND subject_selector_scheme=? AND subject_selector_value=? "
+                "AND lifecycle='live' ORDER BY identity",
+                (
+                    subject.artifact_path,
+                    claim.statement.predicate,
+                    subject.selector.scheme,
+                    subject.selector.value,
+                ),
+            ):
+                if str(identity) not in found:
+                    found[str(identity)] = context.claim(str(identity))
+    return tuple(found[identity] for identity in sorted(found))
 
 
 def _row_of(finding: PlaybillNextFindingV1) -> PlaybillNextItemV1:
@@ -5018,13 +5061,16 @@ def _mandate_items(
     evaluation_time: datetime,
     expiring_within: CanonicalDuration,
     access_profile: CoverageAccessProfile,
+    expiring: tuple[str, ...] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Live ProcedureMandates whose validity window closes within the lead time.
 
     A mandate is the standing authority a Procedure's terminals run under, and
     nothing renews it: once `expires_at` passes every run it covers refuses as
     `procedure_mandate_expired`. A suspended mandate authorizes nothing already,
-    so its lapse changes nothing and is not reported.
+    so its lapse changes nothing and is not reported. ``expiring`` names them
+    from the next worker's expiry index, at the head; without it the projection
+    is read.
     """
 
     if not access_profile.permits("instance"):
@@ -5033,11 +5079,22 @@ def _mandate_items(
     assert start is not None
     items: list[PlaybillNextItemV1] = []
     with instance.bind_accepted_projection(coordinate) as projection:
-        rows = projection.typed.connection.execute(
-            "SELECT identity,artifact_digest,procedure_identity FROM procedure_mandates "
-            "WHERE lifecycle='live' AND expires_at_us>? AND expires_at_us<=? ORDER BY identity",
-            (start, start + expiring_within.microseconds),
-        ).fetchall()
+        if expiring is None:
+            rows = projection.typed.connection.execute(
+                "SELECT identity,artifact_digest,procedure_identity FROM procedure_mandates "
+                "WHERE lifecycle='live' AND expires_at_us>? AND expires_at_us<=? ORDER BY identity",
+                (start, start + expiring_within.microseconds),
+            ).fetchall()
+        else:
+            rows = [
+                row
+                for identity in expiring
+                for row in projection.typed.connection.execute(
+                    "SELECT identity,artifact_digest,procedure_identity FROM procedure_mandates "
+                    "WHERE identity=?",
+                    (identity,),
+                )
+            ]
         for identity, digest, procedure_identity in rows:
             mandate = projection.typed.source(identity)
             if not isinstance(mandate, ProcedureMandateV1 | ProcedureMandate):
@@ -5081,13 +5138,15 @@ def _undeclared_kind_items(
     *,
     coordinate: AcceptedProjectionCoordinate,
     access_profile: CoverageAccessProfile,
+    live_kinds: tuple[tuple[str, int, str], ...] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Kinds with live Subjects that no SubjectKind has ever declared (identity D1).
 
     Such a kind's Subjects stay readable and claimable, but no new one can be
     created until a SubjectKind says how core names it. A kind whose SubjectKind
-    was retired was closed on purpose and is not reported. One grouped read of
-    the Subject rows, as ``orient`` makes.
+    was retired was closed on purpose and is not reported. ``live_kinds`` are the
+    next worker's per-kind counts, at the head; without them the Subject rows
+    are grouped once.
     """
 
     from cruxible_core.indexes.subject_identity import admits_subject_kinds
@@ -5096,10 +5155,14 @@ def _undeclared_kind_items(
         return ()
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
-        live = connection.execute(
-            "SELECT subject_kind, count(*), min(path) FROM subjects WHERE lifecycle='live' "
-            "GROUP BY subject_kind ORDER BY subject_kind"
-        ).fetchall()
+        live = (
+            connection.execute(
+                "SELECT subject_kind, count(*), min(path) FROM subjects WHERE lifecycle='live' "
+                "GROUP BY subject_kind ORDER BY subject_kind"
+            ).fetchall()
+            if live_kinds is None
+            else live_kinds
+        )
         declared = {
             str(row[0]).removeprefix("SubjectKind:")
             for row in connection.execute("SELECT identity FROM subject_kinds")
@@ -5790,6 +5853,7 @@ def _next_queue(
             evaluation_time=request.evaluation_time,
             expiring_within=request.expiring_within,
             access_profile=request.access_profile,
+            expiring=None if stored is None else stored.expiring_mandates,
         ),
         *_evidence_unavailable_items(
             instance,
@@ -5797,7 +5861,10 @@ def _next_queue(
             access_profile=request.access_profile,
         ),
         *_undeclared_kind_items(
-            instance, coordinate=coordinate, access_profile=request.access_profile
+            instance,
+            coordinate=coordinate,
+            access_profile=request.access_profile,
+            live_kinds=None if stored is None else stored.subject_kinds,
         ),
         *_prediction_items(
             instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile

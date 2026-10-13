@@ -721,7 +721,9 @@ def test_a_failed_pass_is_not_retried_until_an_input_changes(tmp_path: Path) -> 
         assert rebuild.call_count == 1
     (health,) = WORKER.health(instance, now=EVALUATION_TIME)
     assert health.state == "stalled" and health.repair is not None
-    assert health.repair.required_change == "resolve_the_worker_error_then_rebuild_the_next_facts"
+    assert health.repair.required_change == (
+        "resolve_the_worker_error_then_run_cruxible_instance_rebuild_next"
+    )
     assert _served(instance, EVALUATION_TIME) is None
     instance.body_store().store(b"new input after failure")
     WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
@@ -842,3 +844,202 @@ def test_a_historical_admission_account_capture_is_a_read_of_its_claim(tmp_path:
     # Read only by the door rows' historical admission accounts: its landing reaches them.
     assert (f"capture:{old_capture}", current.identity.qualified) in set(tables["fact_reads"])
     _assert_equivalent(instance, EVALUATION_TIME)
+
+
+def test_concurrent_behind_reads_derive_the_dirty_keys_once(tmp_path: Path) -> None:
+    """The first behind-read settles Layer 1 and 2 once per (stored, current) heads;
+    every later read of the same pair replays that settlement and derives nothing."""
+
+    instance, owner = seed_claims(tmp_path)
+    _drain(instance)
+    _attest(
+        instance,
+        owner,
+        _current_claim(instance),
+        tmp_path,
+        at=EVALUATION_TIME - timedelta(minutes=1),
+    )
+    facts._OVERLAYS.clear()
+    with _keys_derived() as derived:
+        first = _served(instance, EVALUATION_TIME)
+        second = _served(instance, EVALUATION_TIME)
+    assert first is not None and second is not None
+    assert [keys for keys in derived if keys] == [derived[0]] and derived[0]
+    assert first.rows == second.rows
+    _assert_equivalent(instance, EVALUATION_TIME)
+
+
+# -- bodies rewritten in place (R2): caught by the daily sweep -----------------------
+
+
+def _rewrite_backing(instance, *, keep_mtime: bool) -> bytes:  # type: ignore[no-untyped-def]
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
+
+    path = instance.body_store()._path(_current_claim(instance).backing.capture_digests[0])
+    original = path.read_bytes()
+    _rewrite_in_place(path, keep_mtime=keep_mtime)
+    return original
+
+
+def _sweep(instance, at: datetime) -> None:  # type: ignore[no-untyped-def]
+    from tests.support.internal_triggers import fire_internal_triggers
+
+    assert any(
+        event.action == facts.EVIDENCE_SWEEP for event in fire_internal_triggers(instance, now=at)
+    )
+    _drain(instance, at)
+
+
+@pytest.mark.parametrize("keep_mtime", (False, True), ids=("rewrite", "rewrite-keep-mtime"))
+def test_a_body_rewritten_in_place_reaches_its_claims_at_the_next_sweep(
+    tmp_path: Path, keep_mtime: bool
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    _drain(instance)
+    original = _rewrite_backing(instance, keep_mtime=keep_mtime)
+    # No log records an in-place rewrite: until the sweep the stored rows stand (R2).
+    _sweep(instance, EVALUATION_TIME)
+    served = _outcome(instance, EVALUATION_TIME)
+    with _oracle_only():
+        assert served == _outcome(instance, EVALUATION_TIME)
+    assert served[0] == "CasError"
+    # Repaired in place: no record either, and the next sweep follows it back.
+    instance.body_store()._path(_current_claim(instance).backing.capture_digests[0]).write_bytes(
+        original
+    )
+    later = EVALUATION_TIME + timedelta(days=1)
+    _sweep(instance, later)
+    assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=later)
+    _assert_equivalent(instance, later)
+
+
+def test_a_retired_dependency_capture_rewritten_in_place_is_caught_by_the_sweep(
+    world,  # noqa: F811
+) -> None:
+    from tests.core_support._retirement_support import retire_claim
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
+
+    derived = _run_and_accept(world)
+    retire_claim(world.instance, world.owner, derived.identity.name)
+    instance = world.instance
+    _drain(instance, _DERIVED_AT)
+    capture = derived.backing.capture_digests[0]
+    tables = facts.stored_tables(instance)
+    assert tables is not None
+    # Read by the retired Claim's own facts, which the dependency fold reads.
+    assert any(row[1] == capture for row in tables["capture_bodies"])
+    _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=True)
+    _sweep(instance, _DERIVED_AT)
+    served = _outcome(instance, _DERIVED_AT)
+    with _oracle_only():
+        assert served == _outcome(instance, _DERIVED_AT)
+
+
+# -- undeclared kinds and expiring mandates from maintained counts (R9) --------------
+
+
+def test_undeclared_kinds_and_expiring_mandates_come_from_the_maintained_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import cruxible_core.proposals.proposals as proposals_module
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.authoring.inputs import SubjectKindInput, lower_authoring_input
+    from cruxible_client.contracts.procedure_mandates import (
+        procedure_mandate_digest,
+        procedure_mandate_path,
+        render_procedure_mandate,
+    )
+    from cruxible_client.contracts.procedures.artifacts import render_procedure
+    from cruxible_client.contracts.subjects import render_subject, subject_path
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.core_support._identity_support import shell
+    from tests.core_support._support import initialize_local
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_procedure_mandates import _mandate, _procedure
+
+    instance, owner = initialize_local(tmp_path)
+    # A Subject accepted before Subject identity existed (an older build).
+    with monkeypatch.context() as patched:
+        patched.setattr(proposals_module, "boundary_identity_issues", lambda *_a, **_k: ())
+        base = instance.accepted_coordinate()
+        raw = instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=ProposalAdmissionRequest(
+                target_ref="refs/proposals/owner/pre-subject-kinds", proposed_base_oid=base.git_oid
+            ),
+            candidate_tree={
+                **instance.tree_at(base.git_oid),
+                subject_path("dev.legacy", "old"): render_subject(shell("old", "dev.legacy")),
+            },
+            timestamp="2026-08-24T17:00:00.000000Z",
+        )
+        assert raw.candidate is not None, raw.evaluation.diagnostics
+        service_activate_playbill_proposal(
+            instance, proposal_id=raw.admission.proposal_id, activated_by="owner"
+        )
+    procedure = _procedure()
+    lapsing = _mandate(procedure=procedure).model_copy(
+        update={"expires_at": datetime(2026, 8, 27, tzinfo=EVALUATION_TIME.tzinfo)}
+    )
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            procedure.path: render_procedure(procedure.procedure),
+            procedure_mandate_path("triage"): render_procedure_mandate(lapsing),
+        },
+        timestamp="2026-08-24T17:00:01.000000Z",
+        proposal_name="served-mandate",
+    )
+    _drain(instance)
+    found = _served(instance, EVALUATION_TIME)
+    assert found is not None
+    assert found.subject_kinds == (("dev.legacy", 1, "subjects/dev.legacy/old.json"),)
+    assert found.expiring_mandates == ("ProcedureMandate:triage",)
+    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
+    reasons = {item.reason for item in service_playbill_next(instance, request=request).items}
+    assert {"subject_kind_undeclared", "mandate_expiring"} <= reasons
+    _assert_equivalent(instance, EVALUATION_TIME)
+    one_day = CanonicalDuration(microseconds=86_400_000_000)
+    _assert_equivalent(instance, EVALUATION_TIME, expiring_within=one_day)
+
+    # Behind: the renewal and the declaration are derived on read, then followed.
+    renewed = lapsing.model_copy(
+        update={
+            "expires_at": datetime(2027, 8, 27, tzinfo=EVALUATION_TIME.tzinfo),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=procedure_mandate_digest(lapsing).tagged
+            ),
+        }
+    )
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            procedure_mandate_path("triage"): render_procedure_mandate(renewed),
+        },
+        timestamp="2026-08-24T17:00:02.000000Z",
+        proposal_name="served-mandate-renewal",
+    )
+    submitted = AuthoringIntentCoordinator.for_instance(instance).compile_and_submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=lower_authoring_input(
+            SubjectKindInput(kind="subject_kind", name="dev.legacy", minted=True)
+        ),
+        canonical_timestamp="2026-08-24T17:00:03.000000Z",
+    )
+    assert submitted.status.proposal_id is not None
+    service_activate_playbill_proposal(
+        instance, proposal_id=submitted.status.proposal_id, activated_by="owner"
+    )
+    _assert_equivalent(instance, EVALUATION_TIME)
+    _drain(instance)
+    found = _served(instance, EVALUATION_TIME)
+    assert found is not None and found.expiring_mandates == ()
+    reasons = {item.reason for item in service_playbill_next(instance, request=request).items}
+    assert not {"subject_kind_undeclared", "mandate_expiring"} & reasons
+    assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=EVALUATION_TIME)
