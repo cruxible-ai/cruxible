@@ -271,9 +271,12 @@ def claim_type_succession_example() -> ChangeSetInput:
 
 #: The `--example procedure` hard caps. A mandate's resource ceiling may narrow
 #: but never widen its Procedure's caps, so the mandate example reuses these and
-#: the two templates are accepted together.
+#: the two templates are accepted together. The wall-clock caps (and the
+#: per-run default below) are a safety factor against an obviously bad run,
+#: not compute management, so they stay generous: 10 minutes per run, 30
+#: minutes overall.
 _EXAMPLE_PROCEDURE_HARD_CAPS: Final = {
-    "max_wall_clock": {"microseconds": 4_000_000},
+    "max_wall_clock": {"microseconds": 1_800_000_000},
     "max_provider_calls": 0,
     "max_capture_bytes": 0,
     "max_items": 200,
@@ -596,7 +599,7 @@ def procedure_example() -> ProcedureInput:
             "returns": "result",
             "pin_slots": [],
             "budget": {
-                "wall_clock": {"microseconds": 2_000_000},
+                "wall_clock": {"microseconds": 600_000_000},
                 "max_provider_calls": 0,
                 "max_capture_bytes": 0,
                 "max_items": 100,
@@ -718,12 +721,12 @@ def blueprint_example() -> BlueprintInput:
             ],
             "returns": "result",
             "budget": {
-                "wall_clock": {"microseconds": 1_000_000},
+                "wall_clock": {"microseconds": 600_000_000},
                 "max_provider_calls": 1,
                 "max_capture_bytes": 0,
             },
             "hard_caps": {
-                "max_wall_clock": {"microseconds": 2_000_000},
+                "max_wall_clock": {"microseconds": 1_800_000_000},
                 "max_provider_calls": 1,
                 "max_capture_bytes": 0,
                 "max_items": 100,

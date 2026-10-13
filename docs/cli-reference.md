@@ -2362,7 +2362,12 @@ procedure-mandate`. An observe-only Line -- one whose Procedure's terminals, or
 whose `max_authority`, stop at observe -- needs no mandate. A mandate whose
 `resource_ceiling` exceeds the Procedure's hard caps is refused naming each
 widened cap with both values; `authoring example procedure-mandate` uses the
-`authoring example procedure` caps.
+`authoring example procedure` caps. Every `authoring example` template's own
+`budget.wall_clock` and `hard_caps.max_wall_clock` (`procedure`, `blueprint`,
+and the Procedures `procedure-mandate` and `line` carry forward) are 10
+minutes per run and 30 minutes overall: a wall-clock budget catches an
+obviously bad run, not compute management, so the example leaves a large
+safety factor rather than a tight one.
 
 A Line whose Procedure ends in a `propose_change_set` terminal produces a
 proposal. Its `candidate_templates` are a fixed list of templates, or
