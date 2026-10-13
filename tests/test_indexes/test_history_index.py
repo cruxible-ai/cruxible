@@ -704,3 +704,34 @@ def test_history_rebuild_reads_only_each_successors_changed_members(tmp_path, mo
     )
     index.path.unlink()
     assert rows() == published
+
+
+def test_a_file_that_moved_under_the_reader_reverifies_instead_of_rederiving(tmp_path, seeded):
+    """Another writer's commit re-checks the verified prefix, not every generation (perf E2).
+
+    Rows it left as they were are re-hashed against the chain this process
+    recorded; a row it changed still fails that check and is reconciled from
+    the ledger as before.
+    """
+
+    state = seeded._recovered
+    index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
+    with index.read(state, lambda n, _prior: [envelope(str(n))]):
+        pass
+    calls = []
+
+    def source(n, _prior=None):
+        calls.append(n)
+        return [envelope(str(n))]
+
+    with sqlite3.connect(index.path) as db:
+        db.execute("UPDATE history_progress SET sequence=sequence")
+    with index.read(state, source) as reader:
+        assert reader.artifact("1").identity == "Claim:a"
+    assert calls == []
+    with sqlite3.connect(index.path) as db:
+        db.execute("UPDATE artifact_versions SET identity='Claim:tampered'")
+    with index.read(state, source) as reader:
+        assert reader.artifact("1").identity == "Claim:a"
+    assert calls == list(range(len(state.history)))
+    index.close()

@@ -1137,6 +1137,25 @@ class AcceptedHistoryIndex:
         self._chain = (ready[0], chain)
         return ready
 
+    def _reverified_after_drift(
+        self, connection: sqlite3.Connection
+    ) -> tuple[int, str, str, str, int] | None:
+        """After the file moved under this process, the prefix it last verified, if it holds.
+
+        The rows through the last verified readiness are checked against the
+        chain this process recorded for them (one pass over the history rows,
+        no ledger read); synchronization then re-derives only the generations
+        after it from the ledger, as a successor append does. A mismatch, or no
+        verified readiness, starts from generation zero as before.
+        """
+        ready, chain = self._ready, self._chain
+        if ready is None or chain is None or chain[0] != ready[0]:
+            return None
+        if _history_chain(connection, through=chain[0]) != chain[1]:
+            self._chain = None
+            return None
+        return ready
+
     def _recorded_readiness(
         self, connection: sqlite3.Connection, recovered: RecoveredInstanceState
     ) -> tuple[tuple[int, str, str, str, int], str] | None:
@@ -1375,6 +1394,8 @@ class AcceptedHistoryIndex:
                     ready = self._ready if stamp is not None and stamp == self._stamp else None
                     if ready is None and self._chain is None and self._trust_record:
                         ready = self._verified_through(writer, recovered)
+                    elif ready is None and self._chain is not None:
+                        ready = self._reverified_after_drift(writer)
                     self._sync(writer, recovered, load_envelopes, ready)
                     published_stamp = commit_working_write(writer, self._file_stamp, before_commit)
                     if published_stamp != before_commit and hasattr(self, "_proposals"):
