@@ -922,9 +922,12 @@ live here (an equal interface digest) is bound rather than registered again, and
 the package's Provider pins that exact registration, so a second implementation
 of a contract installs onto the same ProviderInterface and a Blueprint slot typed
 by it takes either. Cruxible classifies no input: a package's bucket vocabulary,
-classifier and fixtures (which the provider-runtime 0.2.x package format still
-carries) are kept as inert registration data, nothing runs them, and an
-occurrence admits every input that passes the interface's input contract. What
+classifier, fixtures and declared selectors (which the provider-runtime 0.2.x
+package format still carries) are read by Cruxible's own package reader as
+inert registration data. Their bytes are verified against their digests, and
+nothing parses a selector, matches a bucket, requires a fixture for a selector
+or runs the classifier; an occurrence admits every input that passes the
+interface's input contract. What
 a provider cannot serve, it refuses itself with a typed refusal. A different
 definition under the same interface id is proposed as a successor, which every
 live Provider and Procedure pinning the old registration must follow. Cruxible

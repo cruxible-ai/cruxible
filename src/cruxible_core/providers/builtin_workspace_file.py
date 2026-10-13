@@ -116,8 +116,8 @@ def input_bucket_label(data: bytes) -> str:
     Core no longer classifies inputs, so nothing hands the adapter a measured
     bucket; the run context carries only a meaningless placeholder. The output
     keeps the field, derived here exactly as the retired classifier measured it,
-    so the built-in's result for every input -- and so its behaviour revision
-    and implementation digest -- is unchanged.
+    so the built-in's result for every input core previously admitted -- and so
+    its behaviour revision and implementation digest -- is unchanged.
     """
 
     return f"content_kind={content_kind_class(data)};byte_size={byte_size_class(len(data))}"
