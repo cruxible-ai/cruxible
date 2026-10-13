@@ -396,10 +396,14 @@ that in memory and never writes the worker's state. A served read answers from
 one unmoving state of the logs it depends on, checked again once the whole
 queue is read (a projection query still evaluates over live evidence, scoped
 to its own predicates): when a body lands or a head moves meanwhile it tries
-again (first settling any landing whose writer abandoned it, as opening the
-body store does), and after three attempts that each saw a move it refuses with
-`cruxible.read.inputs_moving` (HTTP 503, `retryable`) rather than fold the
-moving logs. A refusal answers as the full fold does: its first failure,
+again at the heads as they then stand (first settling any landing whose writer
+abandoned it, as opening the body store does), and after three attempts that
+each saw a move it refuses with `cruxible.read.inputs_moving` (HTTP 503,
+`retryable`) rather than fold the moving logs; it never folds at a head it did
+not ask for. A head the request names (`--at` or an attestation head) is its
+pin: once no longer current, the read folds there. `orient`
+reads at the head it selected, so a head that moves under it refuses the same
+way. A refusal answers as the full fold does: its first failure,
 following the fold's own order, including door observations interleaved
 across Claims. A read at an earlier coordinate or a pinned door head folds
 every Claim instead, as does a read while the worker is disabled, not yet run
