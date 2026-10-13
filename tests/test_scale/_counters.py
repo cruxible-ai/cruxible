@@ -15,10 +15,10 @@ whose managed root is ``root`` and fills a ``Counter`` with the work done:
 - ``sql_statements``: statements SQLite ran on connections to databases under
   ``root`` (one per execution, so ``executemany`` counts every row, and each
   trigger firing counts once);
-- ``sql_scan_rows``: for each of those executions, the rows of every table its
-  plan walks in full, as the table stands when the statement starts, summed (see
-  "SQL scans" below). A table that does not grow with the instance weighs the
-  same at both sizes; one that does weighs its size;
+- ``sql_vm_steps``: virtual machine instructions SQLite ran for them, measured by
+  a progress handler (``SQL work`` below): proportional to the rows every cursor
+  visits, range walks, trigger programs, foreign-key checks and index scans
+  included;
 - ``projection_binds``: calls of ``PlaybillInstance.bind_accepted_projection``;
 - ``cas_body_reads``: CAS bodies read and hashed
   (``ContentAddressedBodyStore._verified_bytes`` and ``.availability``);
@@ -27,48 +27,37 @@ whose managed root is ``root`` and fills a ``Counter`` with the work done:
   ``read_tree`` and every blob read go through; the per-process blob cache in
   front of it absorbs repeats.
 
+Only the measuring thread's work counts (the thread that opened the window):
+another thread's opens, spawns, calls and SQL never do.
+
 Function counters are installed when a window opens and removed when it closes:
 every module global naming an original is rebound to a counting wrapper, then
 back. The audit hook (opens and spawns) cannot be removed, so it is installed
 once and does nothing outside a window. SQLite connections outlive windows (an
-instance holds some open), so ``trace_sqlite`` installs a connect wrapper for the
-scale module's lifetime; its trace callbacks record nothing outside a window.
+instance holds some open), so ``trace_sqlite`` wraps every connection opened
+under the scale root for the module's lifetime; its trace callback records
+nothing outside a window.
 
-SQL scans. The window over-counts rather than miss, and never reads the SQL text
-to find tables. Every execution is compiled afresh from its trace callback, on
-its own connection, as ``EXPLAIN QUERY PLAN`` and as ``EXPLAIN`` of its own SQL
-(literals included: a literal can change the plan), with SQLite's authorizer set
-(``statement_scan_rows``). The compiled program lists every cursor the statement
-and every trigger program it would run opens on a table or an index of one (by
-root page); the authorizer names, by real name, every table they read or write.
-So spelling, quoting, aliases, CTE prefixes, views and triggers change nothing.
+SQL work. When a window opens, every traced connection gets a progress handler
+called every ``STEP_EVERY`` VM instructions (removed when the window closes; a
+connection opened inside the window gets one at once); it counts only on the
+measuring thread, so ``sql_vm_steps`` is the measured work itself, not an
+inference from plans. The trace callback attributes each connection's steps to
+the statement it last started there. A statement traced on the measuring thread
+on a connection that took no handler is recorded in ``unexplained``, which fails
+the window: its work would go uncounted. One instruction is one step whatever it
+does inside: a B-tree seek is one step at any table size, which is what lets a
+per-key lookup stay flat, but so is ``OP_Count`` (``SELECT count(*) FROM t``
+with no ``WHERE`` counts the table's pages inside one step), a sorter's sort
+(its input rows are counted as they are fed), ``PRAGMA integrity_check`` and a
+SQL function's own work. Those are this counter's blind spots.
 
-A table weighs its rows, counted afresh, when:
-
-- some cursor on it (or an index of it) walks from one end (``Rewind``,
-  ``Last``, ``Count``), in any program;
-- some cursor on it steps (``Next``, ``Prev``) after a seek, which walks a range
-  that can grow with the table, unless the cursor is the statement's own and the
-  plan reaches the table only by equality on a whole unique key (the rowid, the
-  primary key, every column of a UNIQUE index), named by its real name;
-- it is emptied or dropped whole (``Clear``, ``Destroy``); or
-- the authorizer names it and no cursor opens it.
-
-Point access (a seek, an insert, a delete by key) weighs nothing. A table walked
-by a proved row-preserving query (``SELECT <columns> FROM <one table> LIMIT n
-[OFFSET m]``, a single-step plan, nothing filtering, sorting, collapsing or
-combining it: ``_row_preserving``) weighs ``LIMIT + OFFSET``. A view weighs
-nothing itself (its tables are reported); the schema table weighs nothing (its
-rows are the schema, which no instance grows); a table-valued function weighs
-nothing. ``PRAGMA integrity_check`` and its kind, ``ANALYZE``, ``VACUUM`` and
-``REINDEX`` weigh every table. Python traces each trigger firing as a repeat of
-the outer statement, so each repeat is weighed again: an over-count.
-Transaction control weighs nothing.
-
-A window fails, never counting zero, when the authorizer cannot be installed,
-when it reports no write for an INSERT, REPLACE, UPDATE or DELETE, when a cursor
-or a touched name is no object of its schema, or when a statement cannot be
-planned: each is recorded in ``unexplained``.
+Attribution only. When the window closes, its top statements by VM steps
+(literals masked) are compiled once more, as ``EXPLAIN QUERY PLAN`` and as
+``EXPLAIN`` with SQLite's authorizer set, to name the tables they touch and how
+each cursor moved (``Rewind``, ``Next`` after a seek, ...), with the Python call
+paths that spent their steps (``PATH_FRAMES`` product frames each, innermost
+first) and how often each ran them. Nothing in that attribution decides a count.
 """
 
 from __future__ import annotations
@@ -79,6 +68,7 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import types
 import weakref
 from collections import Counter
@@ -97,7 +87,7 @@ COUNTERS = (
     "git_spawns",
     "other_spawns",
     "sql_statements",
-    "sql_scan_rows",
+    "sql_vm_steps",
     "projection_binds",
     "cas_body_reads",
     "git_blob_reads",
@@ -126,12 +116,22 @@ _METHOD_COUNTERS = {
 @dataclass
 class Window:
     prefixes: tuple[str, ...]
+    #: The measuring thread: only its work counts.
+    thread: int = field(default_factory=threading.get_ident)
     counts: Counter[str] = field(default_factory=Counter)
-    #: Statements whose scans could not be resolved, with why; never counted as zero.
+    #: SQL whose work this window could not count; never treated as zero.
     unexplained: list[str] = field(default_factory=list)
-    #: Where ``sql_scan_rows`` came from: (statement with literals masked, table,
-    #: how it was walked) -> rows. Diagnostics for attributing a failure, outside the rule.
-    walks: Counter[tuple[str, str, str]] = field(default_factory=Counter)
+    #: VM steps per statement (literals masked).
+    statements: Counter[str] = field(default_factory=Counter)
+    #: Per masked statement: its connection, database and first SQL.
+    sources: dict[str, tuple[Any, str, str]] = field(default_factory=dict)
+    #: Per masked statement, per Python call path that ran it: VM steps and executions.
+    paths: dict[str, Counter[tuple[str, str]]] = field(default_factory=dict)
+    #: The top statements by VM steps, with their tables and cursors (``attribute``).
+    attribution: list[dict[str, Any]] = field(default_factory=list)
+
+    def measuring(self) -> bool:
+        return threading.get_ident() == self.thread
 
 
 _WINDOW: Window | None = None
@@ -152,7 +152,7 @@ _AUDIT_INSTALLED = False
 
 def _audit(event: str, args: tuple[Any, ...]) -> None:
     window = _WINDOW
-    if window is None:
+    if window is None or not window.measuring():
         return
     if event == "open":
         target = args[0]
@@ -250,7 +250,7 @@ def _counting(original: Callable[..., Any], counter: str) -> Callable[..., Any]:
     @functools.wraps(original)
     def counted(*args: Any, **kwargs: Any) -> Any:
         window = _WINDOW
-        if window is not None:
+        if window is not None and window.measuring():
             window.counts[counter] += 1
         return original(*args, **kwargs)
 
@@ -262,7 +262,7 @@ def _counting_blobs(original: Callable[..., Any]) -> Callable[..., Any]:
     def counted(self: Any, oids: Any) -> Any:
         oids = tuple(oids)
         window = _WINDOW
-        if window is not None:
+        if window is not None and window.measuring():
             window.counts["git_blob_reads"] += len(dict.fromkeys(oids))
         return original(self, oids)
 
@@ -272,20 +272,34 @@ def _counting_blobs(original: Callable[..., Any]) -> Callable[..., Any]:
 _REBINDER: _Rebinder | None = None
 
 
-# -- SQLite: traced for the module's lifetime, planned inside a window -----------------
+# -- SQLite: traced for the module's lifetime, its work measured inside a window --------
 
 _ORIGINAL_CONNECT = sqlite3.connect
-_PLANNING = False
+#: VM instructions between progress callbacks; every callback counts this many.
+STEP_EVERY = 1
+#: Statements a window names, with their tables and cursors, when it closes.
+ATTRIBUTED = 10
+
+
+@dataclass
+class _ConnectionState:
+    database: str
+    #: The statement this connection last started (literals masked), and its call path.
+    current: str | None = None
+    path: str = ""
+    #: VM steps since that statement started, on the measuring thread.
+    steps: int = 0
+    #: Whether this window's progress handler is set on the connection.
+    counting: bool = False
 
 
 class TracedConnection(sqlite3.Connection):
-    """A connection the trace callback can plan on: it holds a weak reference to it."""
+    """A connection under the scale root: weakly referenced, with its counting state."""
 
-    scale_cache: dict[Any, Any]
+    scale_state: _ConnectionState
 
 
-class Unexplained(Exception):
-    """A statement whose full-scan work this window cannot establish."""
+_CONNECTIONS: weakref.WeakSet[TracedConnection] = weakref.WeakSet()
 
 
 def _database_path(database: object, *, uri: bool) -> str | None:
@@ -305,23 +319,75 @@ def _database_path(database: object, *, uri: bool) -> str | None:
     return os.path.normpath(os.path.abspath(name))
 
 
-def _on_statement(reference: Any, database: str, sql: str) -> None:
-    global _PLANNING
+_LITERALS = re.compile(r"[xX]'[0-9a-fA-F]*'|'(?:[^']|'')*'|\b\d+(?:\.\d+)?\b")
+
+
+def _masked(sql: str) -> str:
+    return _LITERALS.sub("?", sql.strip())[:240]
+
+
+def _on_step(state: _ConnectionState) -> int:
     window = _WINDOW
-    if window is None or _PLANNING or not _under(database, window.prefixes):
+    if window is not None and window.measuring():
+        state.steps += STEP_EVERY
+    return 0
+
+
+#: Steps a connection ran in the window before its first traced statement there: a
+#: statement started before the window, or a schema load while preparing one.
+BEFORE_ANY = "(before the connection's first statement in the window)"
+
+
+def _flush(state: _ConnectionState, window: Window) -> None:
+    if state.steps and _under(state.database, window.prefixes):
+        window.counts["sql_vm_steps"] += state.steps
+        current = state.current or BEFORE_ANY
+        window.statements[current] += state.steps
+        window.paths.setdefault(current, Counter())[("steps", state.path)] += state.steps
+    state.steps = 0
+
+
+#: Product frames named per call path, innermost first.
+PATH_FRAMES = 4
+
+
+def _call_path() -> str:
+    """The innermost product frames that ran the statement: ``file:line <- file:line ...``."""
+
+    frames = []
+    frame = sys._getframe(2)
+    while frame is not None and len(frames) < PATH_FRAMES:
+        filename = frame.f_code.co_filename
+        if "/cruxible_core/" in filename or "/cruxible_client/" in filename:
+            frames.append(f"{filename.rsplit('/src/', 1)[-1]}:{frame.f_lineno}")
+        frame = frame.f_back  # type: ignore[assignment]
+    return " <- ".join(frames) or "?"
+
+
+def _on_statement(reference: Any, state: _ConnectionState, sql: str) -> None:
+    window = _WINDOW
+    if window is None or not window.measuring() or not _under(state.database, window.prefixes):
         return
     window.counts["sql_statements"] += 1
-    connection = reference()
-    if connection is None:
-        window.unexplained.append(f"connection gone: {sql[:160]}")
-        return
-    _PLANNING = True
+    _flush(state, window)
+    masked = _masked(sql)
+    state.current, state.path = masked, _call_path()
+    window.paths.setdefault(masked, Counter())[("runs", state.path)] += 1
+    if masked not in window.sources:
+        window.sources[masked] = (reference, state.database, sql)
+    if not state.counting:
+        window.unexplained.append(f"no step counter on its connection :: {masked[:160]}")
+
+
+def _count_steps(connection: TracedConnection) -> None:
+    state = connection.scale_state
+    state.steps, state.current, state.path = 0, None, ""
     try:
-        window.counts["sql_scan_rows"] += statement_scan_rows(connection, sql)
-    except (Unexplained, sqlite3.Error) as exc:
-        window.unexplained.append(f"{type(exc).__name__}: {exc} :: {sql[:160]}")
-    finally:
-        _PLANNING = False
+        connection.set_progress_handler(functools.partial(_on_step, state), STEP_EVERY)
+    except sqlite3.Error:
+        state.counting = False  # closed, or bound to another thread: it runs nothing here
+    else:
+        state.counting = True
 
 
 @contextmanager
@@ -340,10 +406,14 @@ def trace_sqlite(root: Path) -> Iterator[None]:
             raise AssertionError("the scale guard cannot trace a custom connection factory")
         connection = _ORIGINAL_CONNECT(*args, factory=TracedConnection, **kwargs)
         assert isinstance(connection, TracedConnection)
-        connection.scale_cache = {}
+        state = _ConnectionState(database)
+        connection.scale_state = state
         connection.set_trace_callback(
-            functools.partial(_on_statement, weakref.ref(connection), database)
+            functools.partial(_on_statement, weakref.ref(connection), state)
         )
+        _CONNECTIONS.add(connection)
+        if _WINDOW is not None:
+            _count_steps(connection)
         return connection
 
     sqlite3.connect = connect  # type: ignore[assignment]
@@ -353,20 +423,13 @@ def trace_sqlite(root: Path) -> Iterator[None]:
         sqlite3.connect = _ORIGINAL_CONNECT
 
 
-_LITERALS = re.compile(r"[xX]'[0-9a-fA-F]*'|'(?:[^']|'')*'|\b\d+(?:\.\d+)?\b")
-_COMMENTS = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
-#: Statements that touch no table's rows: transaction control.
-_TRANSACTION = frozenset({"BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"})
-#: Statements that may walk every table: weighed as walking all of them.
-_EVERYTHING = frozenset({"ANALYZE", "VACUUM", "REINDEX"})
-#: Pragmas that walk every table of their schema.
-_SCANNING_PRAGMAS = frozenset(
-    {"integrity_check", "quick_check", "foreign_key_check", "cell_size_check", "optimize"}
-)
-_WRITES = frozenset({"INSERT", "REPLACE", "UPDATE", "DELETE"})
-_SCHEMA_TABLES = frozenset(
-    {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_temp_schema"}
-)
+# -- attribution: which tables and cursors the heaviest statements used ------------------
+
+
+def _quote(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
+
+
 #: Authorizer actions that name the table they touch, and where its name is.
 _TABLE_ACTIONS = {
     sqlite3.SQLITE_READ: 0,
@@ -379,44 +442,11 @@ _TABLE_ACTIONS = {
     sqlite3.SQLITE_DROP_TEMP_TABLE: 0,
     sqlite3.SQLITE_ALTER_TABLE: 1,
 }
-_WRITE_ACTIONS = frozenset({sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE})
-_LIMIT = re.compile(r"\bLIMIT\s+(\d+)(?:\s+OFFSET\s+(\d+))?\s*;?\s*$", re.IGNORECASE)
-#: Anything that can make a LIMITed query read more rows than it returns.
-_UNBOUNDED = re.compile(
-    r"\b(?:WHERE|DISTINCT|ALL|GROUP|HAVING|ORDER|WINDOW|OVER|UNION|INTERSECT|EXCEPT|JOIN|"
-    r"FILTER|WITH|VALUES)\b|[(,]",
-    re.IGNORECASE,
-)
 _FRESH = 0
 
 
-def _quote(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
-
-
-def _row_preserving(sql: str) -> bool:
-    """Whether a LIMIT provably bounds the rows a statement reads.
-
-    Only ``SELECT <column, ...> FROM <one table> LIMIT n [OFFSET m]``: plain
-    column names (no call, so no aggregate; no subquery), and no WHERE,
-    DISTINCT, GROUP BY, HAVING, ORDER BY, window or compound. Every other shape
-    is read in full, whatever its plan looks like.
-    """
-
-    text = _COMMENTS.sub(" ", _LITERALS.sub("0", sql)).strip()
-    limit = _LIMIT.search(text)
-    if limit is None or re.match(r"SELECT\b", text, re.IGNORECASE) is None:
-        return False
-    parts = re.split(r"\bFROM\b", text[len("SELECT") : limit.start()], flags=re.IGNORECASE)
-    if len(parts) != 2:
-        return False
-    columns, source = parts
-    if _UNBOUNDED.search(source) is not None:
-        return False
-    return (
-        re.search(r"\b(?:DISTINCT|ALL|OVER|FILTER|SELECT|CASE)\b|\(", columns, re.IGNORECASE)
-        is None
-    )
+class Unexplained(Exception):
+    """An attribution that could not be read; it never decides a count."""
 
 
 def _compiled(
@@ -551,186 +581,6 @@ def _program(
     return [cursor for opened in cursors.values() for cursor in opened], whole, fires
 
 
-def _unique_equality(
-    connection: TracedConnection, table: tuple[str, str], details: list[str]
-) -> bool:
-    """Whether the plan reaches ``table`` only by equality on a whole unique key.
-
-    Every plan step naming the table (by its real name) is a ``SEARCH`` whose
-    terms are all equalities covering the rowid, the primary key or every
-    column of a UNIQUE index; no plan step names a table the plan does not
-    otherwise name.
-    """
-
-    named = [
-        detail
-        for detail in details
-        if (target := _step_target(detail)) is not None
-        and target[0].lower() in (table[1].lower(), ".".join(table).lower())
-    ]
-    if not named:
-        return False
-    for detail in named:
-        found = re.match(
-            r"SEARCH \S+ USING (?P<how>INTEGER PRIMARY KEY|PRIMARY KEY|(?:COVERING )?INDEX "
-            r"(?P<index>\S+)) \((?P<terms>[^)]*)\)$",
-            detail,
-        )
-        if found is None:
-            return False
-        terms = found.group("terms").split(" AND ")
-        if not all(re.fullmatch(r"\w+=\?", term) for term in terms):
-            return False
-        if found.group("how") == "INTEGER PRIMARY KEY":
-            continue
-        schema = _quote(table[0])
-        if found.group("how") == "PRIMARY KEY":
-            keys = [
-                row
-                for row in connection.execute(f"PRAGMA {schema}.table_info({_quote(table[1])})")
-                if int(row[5]) > 0
-            ]
-        else:
-            index = found.group("index")
-            unique = {
-                str(row[1]): int(row[2])
-                for row in connection.execute(f"PRAGMA {schema}.index_list({_quote(table[1])})")
-            }
-            if unique.get(index) != 1:
-                return False
-            keys = list(connection.execute(f"PRAGMA {schema}.index_info({_quote(index)})"))
-        if len(terms) != len(keys):
-            return False
-    return True
-
-
-def _object_type(connection: TracedConnection, database: str, name: str) -> str | None:
-    row = connection.execute(
-        f"SELECT type FROM {_quote(database)}.sqlite_master WHERE name = ?", (name,)
-    ).fetchone()
-    return None if row is None else str(row[0])
-
-
-def _every_table(connection: TracedConnection) -> set[tuple[str, str]]:
-    return {
-        (str(schema), str(name))
-        for _seq, schema, _file in connection.execute("PRAGMA database_list").fetchall()
-        for (name,) in connection.execute(
-            f"SELECT name FROM {_quote(str(schema))}.sqlite_master WHERE type = 'table'"
-        ).fetchall()
-        if str(name) not in _SCHEMA_TABLES
-    }
-
-
-def _rows(connection: TracedConnection, table: tuple[str, str]) -> int:
-    """The table's rows now, counted afresh every time: no cache can go stale."""
-
-    schema, name = table
-    (rows,) = connection.execute(f"SELECT count(*) FROM {_quote(schema)}.{_quote(name)}").fetchone()
-    return int(rows)
-
-
-def _step_target(detail: str) -> tuple[str, bool, bool] | None:
-    """The name a plan step reads, whether it walks it, and whether it is virtual.
-
-    None for a step naming no table (a constant row, a subquery).
-    """
-
-    if detail.startswith("SCAN "):
-        target, walks = detail[len("SCAN ") :], True
-    elif detail.startswith("SEARCH "):
-        target, walks = detail[len("SEARCH ") :], " USING AUTOMATIC " in detail
-    else:
-        return None
-    if target == "CONSTANT ROW" or target.startswith("("):
-        return None
-    virtual = " VIRTUAL TABLE" in target
-    return target.split(" USING ", 1)[0].split(" VIRTUAL TABLE", 1)[0], walks, virtual
-
-
-def statement_scan_rows(connection: TracedConnection, sql: str) -> int:
-    """Rows of every table one statement may walk in full, on its own connection, now.
-
-    The tables come from SQLite, never from the SQL text: the program's cursors
-    (the statement's and every trigger program's) and the authorizer's reads and
-    writes. A table weighs its rows when any cursor on it (or an index of it)
-    walks from one end (``Rewind``, ``Last``, ``Count``), steps after a seek
-    (``Next``, ``Prev``) unless the plan reaches it only by equality on a whole
-    unique key, or when it is emptied or dropped whole; a table the authorizer
-    names but no cursor opens weighs its rows too. A proved row-preserving
-    ``LIMIT`` walk weighs ``LIMIT + OFFSET``.
-    """
-
-    text = sql.strip()
-    if text.startswith("--"):
-        # SQL SQLite runs itself (reloading statistics or the schema), traced as a
-        # comment; a trigger traced unexpanded (``-- TRIGGER name``) is no statement.
-        text = text[2:].strip()
-        if text.upper().startswith("TRIGGER "):
-            raise Unexplained("a trigger traced without its statement")
-    first = re.match(r"[A-Za-z]+", text)
-    keyword = first.group(0).upper() if first is not None else ""
-    if keyword in _TRANSACTION:
-        return 0
-    if keyword in _EVERYTHING:
-        return sum(_rows(connection, table) for table in sorted(_every_table(connection)))
-    if not keyword:
-        raise Unexplained("a statement whose kind cannot be read")
-    details, events, program = _compiled(connection, text)
-    if any(
-        action == sqlite3.SQLITE_PRAGMA and str(first_name).lower() in _SCANNING_PRAGMAS
-        for action, first_name, _second, _database, _source in events
-    ):
-        return sum(_rows(connection, table) for table in sorted(_every_table(connection)))
-    touched = _touched(events)
-    if keyword in _WRITES and not any(actions & _WRITE_ACTIONS for actions in touched.values()):
-        raise Unexplained("SQLite authorized no write for a write statement")
-    cursors, whole, fires = _program(connection, program)
-    opened = {cursor.table for cursor in cursors}
-    walked: dict[tuple[str, str], str] = dict.fromkeys(whole, "emptied or dropped whole")
-    for cursor in cursors:
-        if cursor.walks or (
-            cursor.iterates
-            and not (cursor.segment == 0 and _unique_equality(connection, cursor.table, details))
-        ):
-            walked.setdefault(cursor.table, cursor.described())
-    for table in set(touched) - opened:
-        kind = _object_type(connection, *table)
-        if kind == "view" or (kind is None and keyword == "CREATE"):
-            continue  # a view's tables are reported themselves; a new table is empty
-        if kind is None:
-            if any(
-                (target := _step_target(detail)) is not None
-                and target[2]
-                and target[0].lower() == table[1].lower()
-                for detail in details
-            ):
-                continue  # a table-valued function, over its own arguments
-            raise Unexplained(f"{'.'.join(table)} is no object of its schema")
-        walked.setdefault(table, "named, opened by no cursor")
-    total = 0
-    for table in sorted(walked):
-        rows = _rows(connection, table)
-        if (
-            len(details) == 1
-            and opened == {table}
-            and set(touched) <= {table}
-            and touched.get(table, set()) <= {sqlite3.SQLITE_READ}
-            and not fires
-            and not whole
-            and _row_preserving(text)
-        ):
-            limit = _LIMIT.search(text)
-            assert limit is not None
-            rows = min(rows, int(limit.group(1)) + int(limit.group(2) or 0))
-        total += rows
-        window = _WINDOW
-        if window is not None and rows:
-            masked = _LITERALS.sub("?", text)[:200]
-            window.walks[(masked, ".".join(table), walked[table])] += rows
-    return total
-
-
 def _table_of(
     action: int, first_name: str | None, second_name: str | None, database: str | None
 ) -> tuple[str, str] | None:
@@ -740,25 +590,88 @@ def _table_of(
     name = (first_name, second_name)[position]
     if action == sqlite3.SQLITE_ALTER_TABLE:
         database = first_name
-    if name is None or database is None or name in _SCHEMA_TABLES:
+    if name is None or database is None or name.startswith("sqlite_"):
         return None
     return database, name
 
 
-def _touched(
-    events: list[tuple[int, str | None, str | None, str | None, str | None]],
-) -> dict[tuple[str, str], set[int]]:
-    touched: dict[tuple[str, str], set[int]] = {}
-    for action, first_name, second_name, database, _source in events:
-        table = _table_of(action, first_name, second_name, database)
-        if table is not None:
-            touched.setdefault(table, set()).add(action)
-    return touched
+def _described(connection: TracedConnection, sql: str) -> dict[str, Any]:
+    """The tables one statement touches and how each cursor on them moves."""
+
+    text = sql.strip()
+    if text.startswith("--"):
+        text = text[2:].strip()
+    details, events, program = _compiled(connection, text)
+    cursors, whole, fires = _program(connection, program)
+    tables = {
+        table
+        for action, first_name, second_name, database, _source in events
+        if (table := _table_of(action, first_name, second_name, database)) is not None
+    } | {cursor.table for cursor in cursors}
+    return {
+        "tables": sorted(".".join(table) for table in tables),
+        "cursors": sorted(
+            {
+                f"{'.'.join(cursor.table)}: {cursor.described()}"
+                for cursor in cursors
+                if cursor.moves
+            }
+            | {f"{'.'.join(table)}: emptied or dropped whole" for table in whole}
+        ),
+        "plan": details,
+        "fires_trigger": fires,
+    }
+
+
+def _attribute(window: Window) -> list[dict[str, Any]]:
+    found = []
+    for masked, steps in window.statements.most_common(ATTRIBUTED):
+        paths = window.paths.get(masked, Counter())
+        entry: dict[str, Any] = {
+            "statement": masked,
+            "vm_steps": steps,
+            "runs": sum(count for (kind, _), count in paths.items() if kind == "runs"),
+            # Where the steps were spent: the heaviest call paths, with their steps and runs.
+            "paths": [
+                [path, count, paths[("runs", path)]]
+                for (kind, path), count in paths.most_common()
+                if kind == "steps"
+            ][:3],
+        }
+        if masked not in window.sources:
+            found.append(entry)
+            continue
+        reference, database, sql = window.sources[masked]
+        connection = reference()
+        opened = None
+        try:
+            if connection is not None:
+                connection.total_changes  # noqa: B018 - raises once closed
+            else:
+                raise sqlite3.ProgrammingError("closed")
+        except sqlite3.ProgrammingError:
+            try:
+                opened = _ORIGINAL_CONNECT(
+                    Path(database).as_uri() + "?mode=ro", uri=True, factory=TracedConnection
+                )
+                connection = opened
+            except sqlite3.Error as exc:
+                entry["unavailable"] = f"{type(exc).__name__}: {exc}"
+        try:
+            if connection is not None and "unavailable" not in entry:
+                entry.update(_described(connection, sql))
+        except (Unexplained, sqlite3.Error) as exc:
+            entry["unavailable"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            if opened is not None:
+                opened.close()
+        found.append(entry)
+    return found
 
 
 @contextmanager
 def counting(root: Path) -> Iterator[Window]:
-    """Count the work done against the instance under ``root`` until the block exits."""
+    """Count the work the calling thread does against the instance under ``root``."""
 
     global _WINDOW, _REBINDER
     assert _WINDOW is None, "measured windows do not nest"
@@ -767,11 +680,22 @@ def counting(root: Path) -> Iterator[Window]:
         _REBINDER = _Rebinder()
     window = Window(prefixes=_prefixes(root))
     _REBINDER.install()
+    for connection in list(_CONNECTIONS):
+        _count_steps(connection)
     _WINDOW = window
     try:
         yield window
     finally:
         _WINDOW = None
         _REBINDER.remove()
+        for connection in list(_CONNECTIONS):
+            state = connection.scale_state
+            _flush(state, window)
+            state.counting, state.current = False, None
+            try:
+                connection.set_progress_handler(None, 0)
+            except sqlite3.Error:
+                pass
         for name in COUNTERS:
             window.counts.setdefault(name, 0)
+        window.attribution = _attribute(window)

@@ -8,13 +8,15 @@ through the daemon's runtime facade and service layer, with background work run
 explicitly once (the workspace advertiser's refresh, each consumer part's tick)
 and never on a thread, and counts its work (``_counters.py``): Claim parses,
 canonical encodes and digests, file opens under the instance's managed root,
-git and other subprocess spawns, SQLite statements and the rows of full table
-scans, projection binds, CAS body reads and ledger blob reads. Counts, never
-time. Every case's outcome is the same run to run, and most counts are too. A
-route that builds new items (writes, dry runs, settles, the Line tick's run)
-varies by a few units between runs (in the runs observed, at most 16 file
-opens, 16 canonical encodes or digests and 3 SQL statements; parses, scan rows,
-binds, CAS and blob reads never varied):
+git and other subprocess spawns, SQLite statements and the VM instructions they
+ran (measured by a progress handler, never inferred from plans), projection
+binds, CAS body reads and ledger blob reads. Counts, never time. Every case's
+outcome is the same run to run, and most counts are too. A route that builds
+new items (writes, dry runs, settles, attestations, the Line tick's run), and a
+fold that reads them, varies by a few units between runs (in the runs observed,
+at most 16 file opens, 16 canonical encodes or digests, 3 SQL statements and 374
+VM steps, or about 2,000 for the new_capture attestation in LARGE, which fails
+the rule by far more; parses, binds, CAS and blob reads never varied):
 Claim ids and Capture digests are fresh each run, and the ledger's loose
 objects, the CAS and the Merkle trie shard by hash, so ten new items land in a
 varying number of directories. That is bounded by the change, and RATIO's
@@ -38,22 +40,28 @@ file_opens                4      a sharded directory or segment one level deeper
 git_spawns                1      none expected
 other_spawns              0      none expected
 sql_statements            16     an index catch-up step per touched partition
-sql_scan_rows             64     scans of small fixed tables (consumer progress,
-                                 registries) differ by the few routes' rows
+sql_vm_steps              1024   those 16 statements at 64 steps each, the
+                                 dearest bounded statement in the counter's
+                                 self-tests (a five-row non-unique equality,
+                                 54 steps; a unique seek is 15 at any size)
 projection_binds          1      none expected
 cas_body_reads            2      none expected
 git_blob_reads            4      a tree listing one level deeper re-read
 ========================  =====  ==============================================
 
 O(log n) work is allowed only through a named index lookup, which none of these
-counters sees (SQLite seeks count as one statement whatever the depth).
+counters sees (a SQLite seek is one statement and one VM step whatever the
+depth). A failing ``sql_vm_steps`` case names the statements behind it: the
+heaviest ones in LARGE, with their steps in SMALL, the Python line that ran
+them, their tables and how each cursor moved.
 
 A route/counter that fails today carries ``xfail(strict=True)`` naming what
 grows and where (file:line), so the package lands green and a fix turns the
 case into an XPASS failure that forces removing the mark.
 
-A route must also have done what it stands for: a window holding SQL whose scans
-the counters cannot weigh fails the route (never zero), and each consumer tick
+A route must also have done what it stands for: a window holding SQL that ran
+on a connection without a step counter fails the route (never zero), and each
+consumer tick
 checks what it found due (``Route.verify``), so a tick that silently skipped
 (an unbuilt index, nothing matched) cannot pass as cheap. The refusal index is
 built and caught up when the worlds are, so the settled-refusals part schedules
@@ -121,7 +129,7 @@ SLACK = {
     "git_spawns": 1,
     "other_spawns": 0,
     "sql_statements": 16,
-    "sql_scan_rows": 64,
+    "sql_vm_steps": 1024,
     "projection_binds": 1,
     "cas_body_reads": 2,
     "git_blob_reads": 4,
@@ -135,7 +143,7 @@ _ACCESS = CoverageAccessProfile(profile_id="scale", permitted_access_classes=("i
 class Session:
     small: World
     large: World
-    #: route -> world name -> counter -> count (and the walks behind sql_scan_rows).
+    #: route -> world name -> counter -> count (and the statements behind sql_vm_steps).
     measured: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     #: route -> why it could not be measured.
     failed: dict[str, BaseException] = field(default_factory=dict)
@@ -565,11 +573,6 @@ _COLD_REBUILD = (
     "(compiler/projection_delta.py:45-60) takes the cold projection rebuild, reading and "
     "compiling every artifact (compiler/assembler.py:403-443 via ledger/activation.py:147)"
 )
-_COLD_DIGEST = (
-    "audit#5/#16: the cold-rebuilt projection piece is verified by a logical digest over "
-    "every row of every table (indexes/sqlite.py:514 -> indexes/typed_sqlite.py:541-544, "
-    "indexes/logical_digest.py:79)"
-)
 _BODY_STORE = (
     "audit#1: storing one body moves the instance-wide evidence token "
     "(storage/cas.py:426-450), so the next queue tick refolds every Claim "
@@ -580,6 +583,40 @@ _COLD_DERIVE = (
     "building every artifact's dependency edges (indexes/evaluated_state.py:747 "
     "derive_indexed_state -> claims/closure.py:496, via proposals/proposals.py:4998); "
     "the cost model allows a cold-start rebuild (needs a ruling)"
+)
+_FOLD_SQL = (
+    "; in SQL, every Claim law record walked whole (indexes/history/history_index.py:686 "
+    "claim_law_locations with no path, via service/claims/claims.py:528) and two "
+    "generation records read per Claim (:483 via claims.py:529-530, from "
+    "service/discovery/next.py:3227)"
+)
+_HEADS_SQL = (
+    ", and every Claim's law head read in one IN list (indexes/history/history_index.py:701 "
+    "claim_law_heads via service/evidence/evidence.py:534, from "
+    "service/discovery/claim_status.py:247)"
+)
+_ACQUIRE = (
+    "the history index acquired afresh: a read-only open with BEGIN and a schema load "
+    "(indexes/acquisition.py:96-101), a schema check (indexes/history/history_index.py:129 "
+    "via :1290) and its generation resolved (:491, :1292)"
+)
+_BLOB_READS = (
+    "; in SQL, every accepted blob read verifies its generation with "
+    + _ACQUIRE
+    + " (runtime/instance.py:2090 blobs_at -> :2002 coordinate_for_oid -> :1924)"
+)
+_LAW_HEAD = (
+    "a law-location lookup per Claim (indexes/history/history_index.py:686 via "
+    "service/evidence/evidence.py:926, from service/discovery/query.py:493)"
+)
+_COLD_REBUILD_SQL = (
+    "audit#5: the cold projection rebuild writes every row of a fresh projection piece "
+    "(indexes/typed_state.py:786-836, indexes/evidence/citation_sql.py:141), digests "
+    "every row (indexes/sqlite.py:514 -> indexes/typed_sqlite.py:541-544), and per keyed "
+    "Subject looks up its key Claims with a statement SQLite plans as a walk of every live "
+    "Claim (indexes/subject_identity.py:291 live_key_claims via :209 subject_key_of, :280 "
+    "refresh_subject_keys, from indexes/typed_sqlite.py:424: SEARCH claims USING INDEX "
+    "claims_by_lifecycle, for ORDER BY identity), 37x the steps for 10x the Claims"
 )
 _DIGESTS = ("canonical_encodes", "canonical_digests")
 
@@ -601,10 +638,11 @@ GROWS: dict[str, dict[str, str]] = {
             "file_opens",
             "cas_body_reads",
         ),
-        "sql_scan_rows": (
-            "audit#11: each floor refresh scans all of accepted_member_locations "
-            "(indexes/history/history_index.py:599 latest_sequences(paths=None), from "
-            "service/floor/floor_index.py:289)"
+        "sql_vm_steps": (
+            "audit#11: each floor refresh walks all of accepted_member_locations "
+            "(indexes/history/history_index.py:599 latest_sequences(paths=None) GROUP BY "
+            "member_path, from service/floor/floor_index.py:289) and reads a record per "
+            "generation (:483)"
         ),
         "sql_statements": (
             "audit#11: each floor refresh looks up a record per generation "
@@ -613,6 +651,7 @@ GROWS: dict[str, dict[str, str]] = {
     },
     "tick.after_generation.queue": {
         **_grows(_QUEUE_FOLD, "claim_parses", *_DIGESTS, "git_blob_reads"),
+        "sql_vm_steps": _QUEUE_FOLD + _FOLD_SQL + _HEADS_SQL,
         "file_opens": (
             "K1/audit#1: each next-queue fold evaluates every Claim's verdict "
             "(service/evidence/evidence.py:1285) and stats every body it rests on "
@@ -632,7 +671,7 @@ GROWS: dict[str, dict[str, str]] = {
             "sql_statements",
             "git_blob_reads",
         ),
-        "sql_scan_rows": (
+        "sql_vm_steps": (
             "audit#2: each curation detection walks the whole history index from its start "
             "(SELECT * FROM artifact_versions WHERE occurrence_sequence<=? ORDER BY ..., "
             "indexes/history/history_index.py:893, from curation/curation_detectors.py:169 "
@@ -666,47 +705,72 @@ GROWS: dict[str, dict[str, str]] = {
         ),
         "file_opens": _STORED_QUEUE_BODIES + " via service/discovery/read_flags.py:171",
     },
-    "read.query.named": _grows(
-        _NAMED_FACTS,
-        "claim_parses",
-        *_DIGESTS,
-        "file_opens",
-        "sql_statements",
-        "git_blob_reads",
-    ),
+    "read.query.named": {
+        **_grows(
+            _NAMED_FACTS,
+            "claim_parses",
+            *_DIGESTS,
+            "file_opens",
+            "sql_statements",
+            "git_blob_reads",
+        ),
+        "sql_vm_steps": _NAMED_FACTS + _BLOB_READS + ", and " + _LAW_HEAD,
+    },
     "read.next.stored_queue": {
         "file_opens": _STORED_QUEUE_BODIES + " via service/discovery/next.py:5604"
     },
-    "read.next.workspace_sources": _grows(
-        _CITATIONS,
-        "claim_parses",
-        *_DIGESTS,
-        "file_opens",
-        "sql_statements",
-        "cas_body_reads",
-        "git_blob_reads",
-    ),
+    "read.next.workspace_sources": {
+        **_grows(
+            _CITATIONS,
+            "claim_parses",
+            *_DIGESTS,
+            "file_opens",
+            "sql_statements",
+            "cas_body_reads",
+            "git_blob_reads",
+        ),
+        "sql_vm_steps": (
+            _CITATIONS
+            + "; in SQL, per item "
+            + _ACQUIRE
+            + " (runtime/instance.py:1825 accepted_history_reader), each Claim's member "
+            "history read twice (indexes/history/history_index.py:542 via "
+            "indexes/typed_state.py:1253 and :1322) and " + _LAW_HEAD
+        ),
+    },
     "read.coverage.workspace_sources": _grows(_COVERAGE, *_DIGESTS, "file_opens", "cas_body_reads"),
-    "read.audit.first_page": _grows(
-        _AUDIT,
-        "claim_parses",
-        *_DIGESTS,
-        "file_opens",
-        "sql_statements",
-        "cas_body_reads",
-        "git_blob_reads",
-    ),
-    "read.next.no_stored_queue": _grows(_LIVE_FOLD, *_DIGESTS, "file_opens", "sql_statements"),
-    "read.orient.after_activation": _grows(
-        _ORIENT_FOLD,
-        "claim_parses",
-        *_DIGESTS,
-        "file_opens",
-        "sql_statements",
-        "git_blob_reads",
-    ),
+    "read.audit.first_page": {
+        **_grows(
+            _AUDIT,
+            "claim_parses",
+            *_DIGESTS,
+            "file_opens",
+            "sql_statements",
+            "cas_body_reads",
+            "git_blob_reads",
+        ),
+        "sql_vm_steps": (_AUDIT + "; in SQL, " + _LAW_HEAD + ", and repeatedly " + _ACQUIRE),
+    },
+    "read.next.no_stored_queue": {
+        **_grows(_LIVE_FOLD, *_DIGESTS, "file_opens", "sql_statements"),
+        "sql_vm_steps": _LIVE_FOLD + _FOLD_SQL + _HEADS_SQL,
+    },
+    "read.orient.after_activation": {
+        **_grows(
+            _ORIENT_FOLD,
+            "claim_parses",
+            *_DIGESTS,
+            "file_opens",
+            "sql_statements",
+            "git_blob_reads",
+        ),
+        "sql_vm_steps": _ORIENT_FOLD + _FOLD_SQL,
+    },
     "procedure.settle": _grows(_SETTLE, "claim_parses", *_DIGESTS, "file_opens", "git_blob_reads"),
-    "attestation.new_capture": _grows(_NEW_CAPTURE, "sql_statements", "git_blob_reads"),
+    "attestation.new_capture": {
+        **_grows(_NEW_CAPTURE, "sql_statements", "git_blob_reads"),
+        "sql_vm_steps": _NEW_CAPTURE + _BLOB_READS,
+    },
     **{
         route: {
             **_grows(
@@ -718,18 +782,21 @@ GROWS: dict[str, dict[str, str]] = {
                 "cas_body_reads",
                 "git_blob_reads",
             ),
-            "sql_scan_rows": _COLD_DIGEST,
+            "sql_vm_steps": _COLD_REBUILD_SQL,
         }
         for route in ("authoring.attestation_member", "authoring.trigger_member")
     },
-    "tick.after_body_store.queue": _grows(
-        _BODY_STORE,
-        "claim_parses",
-        *_DIGESTS,
-        "file_opens",
-        "sql_statements",
-        "git_blob_reads",
-    ),
+    "tick.after_body_store.queue": {
+        **_grows(
+            _BODY_STORE,
+            "claim_parses",
+            *_DIGESTS,
+            "file_opens",
+            "sql_statements",
+            "git_blob_reads",
+        ),
+        "sql_vm_steps": _BODY_STORE + _FOLD_SQL + _HEADS_SQL,
+    },
     "cold.write": _grows(_COLD_DERIVE, *_DIGESTS),
     "cold.dry_run": _grows(_COLD_DERIVE, *_DIGESTS),
 }
@@ -816,14 +883,15 @@ def _measure(session: Session, route: Route) -> dict[str, dict[str, Any]]:
         if window.unexplained:
             raise AssertionError(
                 f"{route.name} on {world.shape.name}: {len(window.unexplained)} SQL statements "
-                f"whose scans the guard cannot weigh: {window.unexplained[:5]}"
+                f"whose work the guard cannot count: {window.unexplained[:5]}"
             )
         if route.verify is not None:
             route.verify(world, result)
         measured[world.shape.name] = {
             **{name: window.counts[name] for name in COUNTERS},
-            # Attribution for a failing case (CRUXIBLE_SCALE_REPORT), outside the rule.
-            "walks": [[*key, rows] for key, rows in window.walks.most_common(25)],
+            # Attribution for a failing case (and CRUXIBLE_SCALE_REPORT), outside the rule.
+            "statements": dict(window.statements.most_common(40)),
+            "attribution": window.attribution,
         }
     return measured
 
@@ -856,4 +924,25 @@ def test_route_work_does_not_grow_with_the_instance(
     assert large <= small * RATIO + SLACK[counter], (
         f"{route} {counter}: SMALL {small}, LARGE {large} "
         f"(allowed {small * RATIO + SLACK[counter]:g})"
+        + (_top_statements(measured) if counter == "sql_vm_steps" else "")
     )
+
+
+def _top_statements(measured: dict[str, dict[str, Any]], shown: int = 5) -> str:
+    """The heaviest statements in LARGE, with their steps in SMALL, where they ran from,
+    their tables and how each cursor moved."""
+
+    small = measured["small"]["statements"]
+    lines = []
+    for entry in measured["large"]["attribution"][:shown]:
+        lines.append(
+            f"\n  {entry['vm_steps']} steps (SMALL {small.get(entry['statement'], 0)}) "
+            f"in {entry['runs']} runs: {entry['statement']}"
+        )
+        for path, steps, runs in entry["paths"]:
+            lines.append(f"\n    {steps} steps in {runs} runs from {path}")
+        if "unavailable" in entry:
+            lines.append(f"\n    tables and cursors unavailable: {entry['unavailable']}")
+        for cursor in entry.get("cursors", ()):
+            lines.append(f"\n    {cursor}")
+    return "".join(lines)
