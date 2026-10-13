@@ -3466,15 +3466,21 @@ revised after acceptance changes it, and a refresh then replaces the floor
 whole.
 
 The daemon keeps a rebuildable floor index on each instance and advances it by
-the ledger diff. `floor export` and every refresh send the generation and
-renderer of the floor the workspace holds to `POST /{instance}/floor/delta`,
-which answers with a delta (or the whole floor, for a missing, newer or
-foreign base). One shared apply verifies the base and head manifest digests
-and the bytes actually installed before writing anything (a hand-edited,
-missing or stray file makes it ask for the whole floor, which repairs it while
-keeping the client's own `projections/INDEX`), writes each file atomically
-through directory descriptors that never follow a link, and writes
-`manifest.json` last, so an interrupted refresh resumes cleanly.
+the ledger diff: a generation restamps and re-renders only the files its
+changed paths reach, and each file is hashed once, when it is rendered.
+`floor export` and every refresh send the generation and renderer of the floor
+the workspace holds to `POST /{instance}/floor/delta`, which answers with a
+delta (or the whole floor, for a missing, newer or foreign base). One shared
+apply verifies the base and head manifest digests and the entries the delta
+touches before writing anything (a directory, link or differently spelled
+entry where the delta writes or removes makes it ask for the whole floor),
+writes each file atomically through directory descriptors that never follow a
+link, and writes `manifest.json` last, so an interrupted refresh resumes
+cleanly. A delta does not re-read the files it leaves alone: a file edited by
+hand elsewhere in the floor stays until a whole floor is written, which
+happens when the directory holds no valid `manifest.json` (delete it to force
+one) and repairs every file while keeping the client's own `projections/INDEX`
+and `sources/INDEX`. Those two are rewritten only when their bytes change.
 
 ### Writing the directory
 

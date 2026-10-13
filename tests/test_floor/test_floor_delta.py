@@ -143,3 +143,26 @@ def test_a_delta_names_the_paths_the_floor_dropped(history: dict[str, Any], tmp_
     assert f"current/{KIND}/wi-3.ruling.txt" in delta.tombstones
     manifest = read_floor_manifest(tmp_path / f"g{long_at}")
     assert manifest is not None and manifest.generation == long_at
+
+
+def test_a_delta_from_the_last_delivered_head_patches_and_hashes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.floor import floor_delta, floor_index
+
+    instance, _owner = seed_write_surface(tmp_path)
+    _write(instance, _set(WI1, "status", "ready"), _set(WI2, "title", "Two"))
+    delivered = _delta(instance)
+    _write(instance, _set(WI1, "status", "done"), _set(WI3, "ruling", "Text.\n"))
+    advance_floor_index(instance)
+
+    def refused(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the delta re-rendered or re-hashed the floor")
+
+    monkeypatch.setattr(floor_delta, "floor_render_from", refused)
+    monkeypatch.setattr(floor_index, "content_digest", refused)
+    warm = _delta(instance, base=delivered.head.generation)
+    monkeypatch.undo()
+    assert warm.kind == "delta" and warm.base_generation == delivered.head.generation
+    instance.floor_current_memo.clear()
+    assert warm == _delta(instance, base=delivered.head.generation)

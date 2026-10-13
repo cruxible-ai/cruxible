@@ -186,3 +186,57 @@ def test_a_field_stamp_follows_its_claim_type_and_its_short_name_shadow() -> Non
     assert stamps.name("project.work_item.c", "project.work_item") == 2
     # A field of another kind keeps its full name and only its own type moves it.
     assert stamps.name("project.work_item.c", "other.kind") == 2
+
+
+def test_an_advance_renders_only_the_subjects_its_change_reaches(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    from cruxible_core.service.floor import floor_index
+
+    instance, _owner = seed_write_surface(tmp_path)
+    _write(instance, _set(WI1, "status", "ready"), _set(WI2, "status", "done"))
+    _write(instance, _set(WI3, "title", "Three"))
+    advance_floor_index(instance)
+    rendered: list[str] = []
+    render_subject = floor_index.render_subject
+
+    def counting(**kwargs: Any) -> Any:
+        rendered.append(kwargs["path"])
+        return render_subject(**kwargs)
+
+    monkeypatch.setattr(floor_index, "render_subject", counting)
+    _write(instance, _set(WI2, "title", "Two"))
+    warm = advance_floor_index(instance)
+    assert rendered == [f"subjects/{WI2}.json"]
+    # The one restamped Subject, its kind INDEX, the change and the sources
+    # line are the step's only files; the rest of the floor was not re-read.
+    (step,) = warm.steps[-1:]
+    assert step.base == warm.generation - 1 and step.generation == warm.generation
+    assert f"current/{WI2}.yaml" in step.written
+    assert f"current/{WI1}.yaml" not in step.written
+    assert f"current/{WI3}.yaml" not in step.written
+    monkeypatch.setattr(floor_index, "render_subject", render_subject)
+    assert _bytes(warm) == _bytes(_cold(instance))
+
+
+def test_each_file_is_hashed_once_when_rendered(tmp_path: Any, monkeypatch: Any) -> None:
+    from cruxible_core.service.floor import floor_index
+
+    instance, _owner = seed_write_surface(tmp_path)
+    _write(instance, _set(WI1, "status", "ready"), _set(WI2, "status", "done"))
+    head = advance_floor_index(instance)
+    head.manifest()
+    hashed: list[int] = []
+    digest = floor_index.content_digest
+
+    def counting(content: bytes) -> str:
+        hashed.append(len(content))
+        return digest(content)
+
+    monkeypatch.setattr(floor_index, "content_digest", counting)
+    _write(instance, _set(WI1, "status", "blocked"))
+    moved = advance_floor_index(instance)
+    assert len(hashed) == len(moved.steps[-1].written)
+    assert len(hashed) < len(moved.files)
+    for path, (content, _changed) in moved.files.items():
+        assert moved.digests[path] == (digest(content), len(content)), path
