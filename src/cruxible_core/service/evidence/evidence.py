@@ -77,7 +77,7 @@ from cruxible_core.indexes.history.history_index import HistoryReader, RetainedR
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.storage.cas import BodyAccessContext, note_unobservable_body
+from cruxible_core.storage.cas import BodyAccessContext
 
 
 class _StrictEvidenceServiceModel(BaseModel):
@@ -788,7 +788,6 @@ def _current_replay_available(
     )
     if key is None:
         # An external reader's answer rests on more than CAS objects.
-        note_unobservable_body()
         if bodies is not None:
             bodies[_UNKNOWN_BODIES] = None
         return available
