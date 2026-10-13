@@ -13,8 +13,11 @@ runtime directories, and any workspace or custody directory the caller names.
   silently watched (or not) through it. A root that is itself a symlink is
   recorded as a link, and its resolved target is watched as a root of its own.
 
-Only SQLite's shared-memory index (``-shm``) is skipped: it holds no data and
-any reader maps it. A ``-wal`` file is data and is compared.
+SQLite's sidecars that hold no state are skipped (maintainer ruling 2026-10-13:
+a preview changes no state; SQLite's own housekeeping files do not count): the
+shared-memory index (``-shm``), which any reader maps, and an empty write-ahead log
+(``-wal`` of zero bytes), which SQLite creates or removes on open and close of a
+WAL database even read-only. A ``-wal`` holding frames is data and is compared.
 """
 
 from __future__ import annotations
@@ -36,6 +39,8 @@ def _entry(path: Path) -> str | None:
     if path.name.endswith("-shm"):
         return None
     mode = path.lstat().st_mode
+    if path.name.endswith("-wal") and stat.S_ISREG(mode) and path.lstat().st_size == 0:
+        return None
     bits = f"{stat.S_IMODE(mode):o}"
     if stat.S_ISLNK(mode):
         return f"link:{os.readlink(path)}"
