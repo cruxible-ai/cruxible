@@ -34,35 +34,40 @@ once and does nothing outside a window. SQLite connections outlive windows (an
 instance holds some open), so ``trace_sqlite`` installs a connect wrapper for the
 scale module's lifetime; its trace callbacks record nothing outside a window.
 
-SQL scans. Each statement is planned when it starts, from its trace callback, on
-its own connection (``EXPLAIN QUERY PLAN``; the callback ignores its own
-statements). So the plan sees that connection's temporary tables, attached
+SQL scans. The window over-counts rather than miss. Every execution is planned
+when it starts, afresh, with its own SQL, literals included (a literal can change
+the plan: a partial index serves ``other=1``, not ``other=2``), from its trace
+callback on its own connection (``EXPLAIN QUERY PLAN``; the callback ignores its
+own statements). So the plan sees that connection's temporary tables, attached
 schemas and uncommitted schema, and a database renamed or deleted before the
-window closes is planned and sized while it still exists. A plan step walks a
-table in full when it is a ``SCAN`` of it (a covering index walk included), or
-builds an automatic index over it. Its target is resolved to the real table: an
-alias (``FROM claims AS c`` plans as ``SCAN c``) through the statement's own
-``FROM``/``JOIN`` references, ``schema.table`` through that schema, and CTEs,
-views and subqueries are skipped (their own scans are separate plan steps). A
-statement that changes a table with triggers also weighs every statement of
-every trigger on that table, with ``NEW.x``/``OLD.x`` and ``RAISE(...)`` read
-as NULL, on every
-trace (``trigger_scan_rows``): Python traces a trigger firing as a repeat of the
-outer statement, so the outer cost is always kept and the triggers are added on
-top, an over-count, never a miss. Foreign-key checks are plan steps too, so a
-``DELETE`` or ``UPDATE`` whose checks walk an unindexed child table weighs that
-table each execution, though SQLite runs the check only per changed row: again
-an over-count. The schema table (``sqlite_master``) is resolved and weighs
-nothing: its rows are the schema, which no instance grows. ``DELETE`` without
-``WHERE``, ``CREATE INDEX`` and ``DROP TABLE`` walk their table. A ``LIMIT``ed walk counts only its
-``LIMIT + OFFSET`` rows, and only for a proved row-preserving query: a
-single-step plan of ``SELECT <columns> FROM <one table> LIMIT n [OFFSET m]``
-(``_row_preserving``); every other shape weighs the full table. Row counts are
-taken afresh at every scanning statement, never cached, so a table dropped and
-rebuilt under the same name is weighed at its new size. Anything the window
-cannot resolve (a plan that fails, a target it cannot name, a statement kind it
-does not model) is recorded in ``unexplained``, which the guard treats as a
-failure, never as zero.
+window closes is planned and sized while it still exists. Only the schema's
+object list and trigger bodies are reused, keyed by every schema's version.
+
+A plan step walks a table in full when it is a ``SCAN`` of it (a covering index
+walk included), or builds an automatic index over it. Its target is resolved to
+the real table: an alias (``FROM claims AS c`` plans as ``SCAN c``) through the
+statement's own references, ``schema.table`` through that schema, and CTEs,
+views and subqueries are skipped (their own scans are separate plan steps).
+Foreign-key checks are plan steps too, weighed each execution though SQLite runs
+them only per changed row. ``DELETE`` without ``WHERE``, ``CREATE INDEX`` and
+``DROP TABLE`` walk their table. The schema table (``sqlite_master``) resolves
+and weighs nothing: its rows are the schema, which no instance grows.
+
+Writes (``write_scan_rows``). Python traces each trigger firing as a repeat of
+the outer statement, so every trace of a write keeps its own plan's weight and
+adds, for a write that names its target first, every statement of every trigger
+on that table (and of the triggers those reach), whether or not one fires; and
+for a write whose target or shape it does not establish (a ``WITH`` prefix, or
+any other form), every table the statement names, in full, plus every trigger
+on each. Trigger bodies read ``NEW.x``, ``OLD.x`` and ``RAISE(...)`` as NULL.
+
+A ``LIMIT``ed walk counts only its ``LIMIT + OFFSET`` rows, and only for a
+proved row-preserving query: a single-step plan of ``SELECT <columns> FROM <one
+table> LIMIT n [OFFSET m]`` (``_row_preserving``); every other shape weighs the
+full table. Row counts are taken afresh at every scanning statement, never
+cached. Anything the window cannot resolve (a plan that fails, a target it
+cannot name, a statement kind it does not model) is recorded in
+``unexplained``, which the guard treats as a failure, never as zero.
 """
 
 from __future__ import annotations
@@ -309,7 +314,7 @@ def _on_statement(reference: Any, database: str, sql: str) -> None:
     _PLANNING = True
     try:
         window.counts["sql_scan_rows"] += statement_scan_rows(connection, sql)
-        window.counts["sql_scan_rows"] += trigger_scan_rows(connection, sql)
+        window.counts["sql_scan_rows"] += write_scan_rows(connection, sql)
     except (Unexplained, sqlite3.Error) as exc:
         window.unexplained.append(f"{type(exc).__name__}: {exc} :: {sql[:160]}")
     finally:
@@ -570,7 +575,12 @@ def _row_preserving(sql: str) -> bool:
 def _scan_targets(
     connection: TracedConnection, sql: str, version: Any
 ) -> tuple[tuple[tuple[str, str], bool], ...]:
-    """Each table a statement's plan walks in full, and whether the walk is bounded."""
+    """Each table a statement's plan walks in full, and whether the walk is bounded.
+
+    Planned afresh for every execution, with its own SQL, literals included: a
+    literal can change the plan on an unchanged schema (a partial index serves
+    ``other=1`` and not ``other=2``), so no plan is ever reused.
+    """
 
     def plan() -> tuple[tuple[tuple[str, str], bool], ...]:
         rows = connection.execute("EXPLAIN QUERY PLAN " + sql).fetchall()
@@ -606,7 +616,7 @@ def _scan_targets(
                 raise Unexplained(f"plan step {detail!r} names no table, alias, view or CTE")
         return tuple(targets)
 
-    return _cached(connection, ("plan", version, _LITERALS.sub("?", sql)), plan)  # type: ignore[no-any-return]
+    return plan()
 
 
 def _rows(connection: TracedConnection, table: tuple[str, str]) -> int:
@@ -662,33 +672,71 @@ _DML_TARGET = re.compile(
 )
 
 
-def trigger_scan_rows(connection: TracedConnection, sql: str) -> int:
-    """What the triggers on the table a statement changes may walk: all their bodies, summed.
+_WRITES = frozenset({"INSERT", "REPLACE", "UPDATE", "DELETE"})
+
+
+def write_scan_rows(connection: TracedConnection, sql: str) -> int:
+    """What a write may walk beyond its own plan: its triggers, or everything it names.
 
     Python traces each fired trigger program, and each statement in it, as a
     repeat of the outer statement's expanded SQL, so a trace cannot tell an
-    execution from a trigger firing. Every trace of a statement that changes a
-    table with triggers therefore weighs the outer statement (``_on_statement``)
-    plus every statement of every trigger on that table, whether or not one
-    fires, and of the triggers those statements reach in turn: an over-count,
-    never a miss.
+    execution from a trigger firing. Every trace of a write therefore weighs,
+    on top of its own plan (``_on_statement``):
+
+    - for ``INSERT``/``REPLACE``/``UPDATE``/``DELETE`` that names its target
+      first, every statement of every trigger on that table, whether or not
+      one fires, and of the triggers those statements reach in turn;
+    - for a write whose target and shape it does not establish (a ``WITH``
+      prefix, or any other form), every table the statement names, in full,
+      plus every trigger on each of them.
+
+    An over-count, never a miss.
     """
 
-    return _trigger_scan_rows(connection, sql, frozenset())
+    return _write_scan_rows(connection, sql, frozenset())
 
 
-def _trigger_scan_rows(connection: TracedConnection, sql: str, seen: frozenset[str]) -> int:
-    target = _DML_TARGET.match(sql.strip())
-    if target is None:
+def _named_tables(sql: str, objects: dict[str, dict[str, str]]) -> set[tuple[str, str]]:
+    """Every real table a statement names anywhere, CTE-shadowed or not."""
+
+    tokens = _TOKEN.findall(_COMMENTS.sub(" ", _LITERALS.sub("0", sql)))
+    named: set[tuple[str, str]] = set()
+    for index, token in enumerate(tokens):
+        if not re.fullmatch(_IDENT, token) or (index > 0 and tokens[index - 1] == "."):
+            continue
+        schema, name = None, _bare(token)
+        if (
+            index + 2 < len(tokens)
+            and tokens[index + 1] == "."
+            and re.fullmatch(_IDENT, tokens[index + 2])
+        ):
+            schema, name = name, _bare(tokens[index + 2])
+        table = _table(objects, schema, name)
+        if table is not None and table[1] != "sqlite_master":
+            named.add(table)
+    return named
+
+
+def _write_scan_rows(connection: TracedConnection, sql: str, seen: frozenset[str]) -> int:
+    text = sql.strip()
+    first = re.match(r"[A-Za-z]+", text)
+    keyword = first.group(0).upper() if first is not None else ""
+    version = _schema_version(connection)
+    target = _DML_TARGET.match(text)
+    if target is not None:
+        tables = {_name(target.group("table"))[1]}
+        total = 0
+    elif keyword in _WRITES or keyword == "WITH":
+        named = _named_tables(text, _objects(connection, version))
+        tables = {name for _schema, name in named}
+        total = sum(_rows(connection, table) for table in sorted(named))
+    else:
         return 0
-    table = _name(target.group("table"))[1]
-    if table in seen:
-        return 0  # a recursive trigger: its body is already weighed once on this path
-    bodies = _triggers(connection, _schema_version(connection), table=table)
-    return sum(
-        statement_scan_rows(connection, body) + _trigger_scan_rows(connection, body, seen | {table})
-        for body in bodies
-    )
+    for table in sorted(tables - seen):
+        for body in _triggers(connection, version, table=table):
+            total += statement_scan_rows(connection, body)
+            total += _write_scan_rows(connection, body, seen | {table})
+    return total
 
 
 def _split_statements(text: str) -> list[str]:

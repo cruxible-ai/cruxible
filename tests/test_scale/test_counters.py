@@ -104,7 +104,9 @@ def test_ctes_views_and_subqueries_weigh_only_their_base_scans(root: Path) -> No
         connection,
         "WITH w AS MATERIALIZED (SELECT id FROM claims WHERE other = 1) SELECT * FROM w AS ww",
     )
-    assert _rows(window) == ROWS
+    # The CTE's base scan, plus (a WITH prefix hides whether it writes) every
+    # table it names, in full.
+    assert _rows(window) == 2 * ROWS
     window = _scan(root, connection, "SELECT * FROM (SELECT id FROM claims WHERE other = 1) sub")
     assert _rows(window) == ROWS
 
@@ -203,6 +205,66 @@ def test_a_guard_trigger_that_raises_is_planned_without_its_raise(root: Path) ->
     )
     window = _scan(root, connection, "INSERT INTO events VALUES (1)")
     assert (window.counts["sql_statements"], _rows(window)) == (1, 0)
+
+
+def test_a_literal_that_changes_the_plan_is_planned_afresh(root: Path) -> None:
+    # Review F-006: a partial index serves other=1 and not other=2, on one schema.
+    connection = _claims(root)
+    connection.execute("CREATE INDEX partial_match ON claims(other) WHERE other = 1")
+    served, scanned = "SELECT * FROM claims WHERE other = 1", "SELECT * FROM claims WHERE other = 2"
+    assert _rows(_scan(root, connection, served, scanned)) == ROWS
+    assert _rows(_scan(root, connection, served)) == 0
+    assert _rows(_scan(root, connection, scanned)) == ROWS
+
+
+def _guarded_events(root: Path) -> sqlite3.Connection:
+    """``events``, whose every change makes a trigger read all of ``claims``."""
+
+    connection = _claims(root)
+    connection.executescript(
+        """
+        CREATE TABLE events(n INT);
+        INSERT INTO events VALUES (1), (2), (3);
+        CREATE TRIGGER events_in AFTER INSERT ON events BEGIN SELECT sum(other) FROM claims; END;
+        CREATE TRIGGER events_up AFTER UPDATE ON events BEGIN SELECT sum(other) FROM claims; END;
+        CREATE TRIGGER events_out AFTER DELETE ON events BEGIN SELECT sum(other) FROM claims; END;
+        """
+    )
+    return connection
+
+
+def test_a_write_behind_a_cte_weighs_what_it_names_and_its_triggers(root: Path) -> None:
+    # Review F-007: the plain insert, then the same insert behind a CTE.
+    connection = _guarded_events(root)
+    window = _scan(root, connection, "INSERT INTO events VALUES (4)")
+    # Three traces (the insert, its trigger program, the program's statement),
+    # each weighing the insert's plan (nothing) plus all three triggers' bodies.
+    assert window.counts["sql_statements"] == 3
+    assert _rows(window) == 3 * 3 * ROWS
+    for statement in (
+        "WITH v AS (SELECT 5) INSERT INTO events SELECT * FROM v",
+        "WITH v AS (SELECT 1) UPDATE events SET n = n + 10 WHERE n IN (SELECT * FROM v)",
+        "WITH v AS (SELECT 2) DELETE FROM events WHERE n IN (SELECT * FROM v)",
+    ):
+        window = _scan(root, connection, statement)
+        # Each trace weighs events in full and every trigger on it.
+        assert window.counts["sql_statements"] == 3, statement
+        assert _rows(window) >= 3 * 3 * ROWS, statement
+
+
+def test_a_trigger_reached_through_another_trigger_is_weighed(root: Path) -> None:
+    connection = _claims(root)
+    connection.executescript(
+        """
+        CREATE TABLE a(n INT);
+        CREATE TABLE b(n INT);
+        CREATE TRIGGER a_in AFTER INSERT ON a BEGIN INSERT INTO b VALUES (NEW.n); END;
+        CREATE TRIGGER b_in AFTER INSERT ON b BEGIN SELECT sum(other) FROM claims; END;
+        """
+    )
+    window = _scan(root, connection, "INSERT INTO a VALUES (1)")
+    assert window.counts["sql_statements"] >= 3
+    assert _rows(window) == window.counts["sql_statements"] * ROWS
 
 
 def test_a_table_rebuilt_under_its_name_is_weighed_at_its_new_size(root: Path) -> None:
