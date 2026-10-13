@@ -109,19 +109,38 @@ def test_ctes_views_and_subqueries_weigh_only_their_base_scans(root: Path) -> No
     assert _rows(window) == ROWS
 
 
-def test_a_limited_walk_is_bounded_only_when_nothing_filters_or_sorts_it(root: Path) -> None:
+def test_a_limited_walk_is_bounded_only_for_a_plain_row_preserving_select(root: Path) -> None:
     connection = _claims(root)
-    assert _rows(_scan(root, connection, "SELECT id FROM claims ORDER BY id LIMIT 3")) == 3
+    assert _rows(_scan(root, connection, "SELECT id, value FROM claims LIMIT 3")) == 3
     # An offset is walked too.
-    assert _rows(_scan(root, connection, "SELECT id FROM claims ORDER BY id LIMIT 3 OFFSET 5")) == 8
-    # A residual predicate no row matches walks every row of the ordered index.
-    filtered = (
+    assert _rows(_scan(root, connection, "SELECT * FROM claims AS c LIMIT 3 OFFSET 5")) == 8
+    # Everything else reads the table in full, however few rows it returns.
+    for statement in (
+        # A residual predicate no row matches walks every row of the ordered index.
         "SELECT claim_id FROM claims INDEXED BY claim_id WHERE value = 'absent' "
-        "ORDER BY claim_id LIMIT 1"
-    )
-    assert _rows(_scan(root, connection, filtered)) == ROWS
-    # A sort reads everything before the limit applies.
-    assert _rows(_scan(root, connection, "SELECT id FROM claims ORDER BY value LIMIT 1")) == ROWS
+        "ORDER BY claim_id LIMIT 1",
+        # An ordered walk, even one an index serves without a sort step.
+        "SELECT id FROM claims ORDER BY id LIMIT 3",
+        "SELECT id FROM claims ORDER BY value LIMIT 1",
+        "SELECT count(*) FROM claims LIMIT 1",
+        "SELECT coalesce(value, '') FROM claims LIMIT 1",
+    ):
+        assert _rows(_scan(root, connection, statement)) == ROWS, statement
+    compound = "SELECT id FROM claims UNION ALL SELECT id FROM claims LIMIT 1"
+    assert _rows(_scan(root, connection, compound)) == 2 * ROWS
+
+
+def test_a_distinct_walk_is_read_in_full_whatever_its_limit(root: Path) -> None:
+    # Review F-005: every value equal, an index on it; DISTINCT reads every entry to
+    # return one row, in one plan step.
+    connection = sqlite3.connect(root / "distinct.sqlite3", isolation_level=None)
+    connection.executescript("CREATE TABLE claims(id INTEGER PRIMARY KEY, value TEXT);")
+    connection.executemany("INSERT INTO claims(value) VALUES ('same')", [()] * ROWS)
+    connection.execute("CREATE INDEX values_idx ON claims(value)")
+    statement = "SELECT DISTINCT value FROM claims ORDER BY value LIMIT 2"
+    plan = [row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + statement)]
+    assert plan == ["SCAN claims USING COVERING INDEX values_idx"]
+    assert _rows(_scan(root, connection, statement)) == ROWS
 
 
 def test_a_planned_foreign_key_check_weighs_the_child_table(root: Path) -> None:
@@ -140,7 +159,7 @@ def test_whole_table_statements_weigh_their_table(root: Path) -> None:
     assert _rows(_scan(root, connection, "DELETE FROM claims")) == ROWS
 
 
-def test_a_trigger_body_scan_is_weighed(root: Path) -> None:
+def test_a_trigger_body_scan_is_weighed_on_top_of_its_statement(root: Path) -> None:
     connection = _claims(root)
     connection.executescript(
         """
@@ -152,13 +171,52 @@ def test_a_trigger_body_scan_is_weighed(root: Path) -> None:
     connection.executemany("INSERT INTO tally VALUES (?)", [(index,) for index in range(40)])
     window = _scan(root, connection, "INSERT INTO claims(claim_id, other) VALUES ('CLM-x', 3)")
     # The insert, then its trigger program and the program's one statement, each
-    # traced (by Python) as a repeat of the insert; each weighs the body's scan.
+    # traced (by Python) as a repeat of the insert: each weighs the insert (no
+    # scan) plus every trigger body on claims (a walk of tally).
     assert window.counts["sql_statements"] == 3
-    assert _rows(window) == 2 * 40
+    assert _rows(window) == 3 * 40
     # The same insert on a table with no trigger is weighed once, as itself.
     connection.execute("DROP TRIGGER count_claims")
     window = _scan(root, connection, "INSERT INTO claims(claim_id, other) VALUES ('CLM-y', 3)")
     assert (window.counts["sql_statements"], _rows(window)) == (1, 0)
+
+
+def test_a_repeated_statement_on_a_table_with_triggers_keeps_its_own_scan(root: Path) -> None:
+    # Review F-003: the same UPDATE twice, matching no row, so no trigger fires;
+    # each execution walks claims, in one window and across windows.
+    connection = _claims(root)
+    connection.execute("CREATE TRIGGER touched AFTER UPDATE ON claims BEGIN SELECT 1; END")
+    statement = "UPDATE claims SET value = 'same' WHERE other = 9"
+    assert _rows(_scan(root, connection, statement, statement)) == 2 * ROWS
+    assert _rows(_scan(root, connection, statement)) == ROWS
+    assert _rows(_scan(root, connection, statement)) == ROWS
+
+
+def test_a_guard_trigger_that_raises_is_planned_without_its_raise(root: Path) -> None:
+    connection = _claims(root)
+    connection.executescript(
+        """
+        CREATE TABLE events(n INT);
+        CREATE TRIGGER events_no_update BEFORE UPDATE ON events
+        BEGIN SELECT RAISE(ABORT, 'events are append-only; (really)'); END;
+        """
+    )
+    window = _scan(root, connection, "INSERT INTO events VALUES (1)")
+    assert (window.counts["sql_statements"], _rows(window)) == (1, 0)
+
+
+def test_a_table_rebuilt_under_its_name_is_weighed_at_its_new_size(root: Path) -> None:
+    # Review F-004: read the empty table, drop it, rebuild it with every Claim by
+    # CREATE TABLE AS (which moves neither total_changes nor data_version), read it.
+    connection = _claims(root)
+    connection.execute("ATTACH DATABASE ? AS aux", (str(root / "aux.sqlite3"),))
+    for schema in ("main", "aux"):
+        connection.execute(f"CREATE TABLE {schema}.rebuilt(id INTEGER)")
+        read = f"SELECT * FROM {schema}.rebuilt"
+        assert _rows(_scan(root, connection, read)) == 0
+        connection.execute(f"DROP TABLE {schema}.rebuilt")
+        connection.execute(f"CREATE TABLE {schema}.rebuilt AS SELECT id FROM main.claims")
+        assert _rows(_scan(root, connection, read)) == ROWS, schema
 
 
 def test_a_database_renamed_before_the_window_closes_is_still_weighed(root: Path) -> None:

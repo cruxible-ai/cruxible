@@ -44,16 +44,22 @@ builds an automatic index over it. Its target is resolved to the real table: an
 alias (``FROM claims AS c`` plans as ``SCAN c``) through the statement's own
 ``FROM``/``JOIN`` references, ``schema.table`` through that schema, and CTEs,
 views and subqueries are skipped (their own scans are separate plan steps). A
-fired trigger is planned from its body, with ``NEW.x``/``OLD.x`` read as NULL
-(``trigger_scan_rows``: Python traces a trigger firing as a repeat of the outer
-statement). Foreign-key checks are plan steps too, so a ``DELETE`` or ``UPDATE``
-whose checks walk an unindexed child table weighs that table each execution,
-though SQLite runs the check only per changed row: an over-count, never a miss.
-The schema table (``sqlite_master``) is resolved and weighs nothing: its rows are
-the schema, which no instance grows. ``DELETE`` without ``WHERE``, ``CREATE INDEX``
-and ``DROP TABLE`` walk their table. A ``LIMIT``ed walk counts only its
-``LIMIT + OFFSET`` rows, and only when that bound is established: a single-step
-plan with no ``WHERE``, ``GROUP BY``, ``HAVING`` or sort. Anything the window
+statement that changes a table with triggers also weighs every statement of
+every trigger on that table, with ``NEW.x``/``OLD.x`` and ``RAISE(...)`` read
+as NULL, on every
+trace (``trigger_scan_rows``): Python traces a trigger firing as a repeat of the
+outer statement, so the outer cost is always kept and the triggers are added on
+top, an over-count, never a miss. Foreign-key checks are plan steps too, so a
+``DELETE`` or ``UPDATE`` whose checks walk an unindexed child table weighs that
+table each execution, though SQLite runs the check only per changed row: again
+an over-count. The schema table (``sqlite_master``) is resolved and weighs
+nothing: its rows are the schema, which no instance grows. ``DELETE`` without
+``WHERE``, ``CREATE INDEX`` and ``DROP TABLE`` walk their table. A ``LIMIT``ed walk counts only its
+``LIMIT + OFFSET`` rows, and only for a proved row-preserving query: a
+single-step plan of ``SELECT <columns> FROM <one table> LIMIT n [OFFSET m]``
+(``_row_preserving``); every other shape weighs the full table. Row counts are
+taken afresh at every scanning statement, never cached, so a table dropped and
+rebuilt under the same name is weighed at its new size. Anything the window
 cannot resolve (a plan that fails, a target it cannot name, a statement kind it
 does not model) is recorded in ``unexplained``, which the guard treats as a
 failure, never as zero.
@@ -302,12 +308,8 @@ def _on_statement(reference: Any, database: str, sql: str) -> None:
         return
     _PLANNING = True
     try:
-        repeated = connection.scale_cache.get("last") == sql
-        connection.scale_cache["last"] = sql
-        rows = trigger_scan_rows(connection, sql) if repeated else None
-        if rows is None:
-            rows = statement_scan_rows(connection, sql)
-        window.counts["sql_scan_rows"] += rows
+        window.counts["sql_scan_rows"] += statement_scan_rows(connection, sql)
+        window.counts["sql_scan_rows"] += trigger_scan_rows(connection, sql)
     except (Unexplained, sqlite3.Error) as exc:
         window.unexplained.append(f"{type(exc).__name__}: {exc} :: {sql[:160]}")
     finally:
@@ -360,8 +362,15 @@ _CTE = re.compile(
     re.IGNORECASE,
 )
 _LIMIT = re.compile(r"\bLIMIT\s+(\d+)(?:\s+OFFSET\s+(\d+))?\s*;?\s*$", re.IGNORECASE)
-_UNBOUNDED = re.compile(r"\b(?:WHERE|GROUP|HAVING|JOIN)\b", re.IGNORECASE)
+#: Anything that can make a LIMITed query read more rows than it returns.
+_UNBOUNDED = re.compile(
+    r"\b(?:WHERE|DISTINCT|ALL|GROUP|HAVING|ORDER|WINDOW|OVER|UNION|INTERSECT|EXCEPT|JOIN|"
+    r"FILTER|WITH|VALUES)\b|[(,]",
+    re.IGNORECASE,
+)
 _TRIGGER_ROW = re.compile(r"\b(?:NEW|OLD)\s*\.\s*" + _IDENT, re.IGNORECASE)
+#: RAISE(...) plans only inside a trigger program; it reads nothing, so it reads as NULL.
+_RAISE = re.compile(r"\bRAISE\s*\(\s*\w+\s*(?:,\s*'(?:[^']|'')*'\s*)?\)", re.IGNORECASE)
 _CREATE_INDEX = re.compile(
     rf"^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?{_IDENT}(?:\s*\.\s*{_IDENT})?"
     rf"\s+ON\s+(?P<table>{_IDENT})",
@@ -533,6 +542,31 @@ def _scope(
     return aliases, non_base
 
 
+def _row_preserving(sql: str) -> bool:
+    """Whether a LIMIT provably bounds the rows a statement reads.
+
+    Only ``SELECT <column, ...> FROM <one table> LIMIT n [OFFSET m]``: plain
+    column names (no call, so no aggregate; no subquery), and no WHERE,
+    DISTINCT, GROUP BY, HAVING, ORDER BY, window or compound. Every other shape
+    is read in full, whatever its plan looks like.
+    """
+
+    text = _COMMENTS.sub(" ", _LITERALS.sub("0", sql)).strip()
+    limit = _LIMIT.search(text)
+    if limit is None or re.match(r"SELECT\b", text, re.IGNORECASE) is None:
+        return False
+    parts = re.split(r"\bFROM\b", text[len("SELECT") : limit.start()], flags=re.IGNORECASE)
+    if len(parts) != 2:
+        return False
+    columns, source = parts
+    if _UNBOUNDED.search(source) is not None:
+        return False
+    return (
+        re.search(r"\b(?:DISTINCT|ALL|OVER|FILTER|SELECT|CASE)\b|\(", columns, re.IGNORECASE)
+        is None
+    )
+
+
 def _scan_targets(
     connection: TracedConnection, sql: str, version: Any
 ) -> tuple[tuple[tuple[str, str], bool], ...]:
@@ -543,11 +577,7 @@ def _scan_targets(
         details = [str(row[3]) for row in rows]
         objects = _objects(connection, version)
         aliases, non_base = _scope(sql, objects)
-        bounded = (
-            len(details) == 1
-            and _LIMIT.search(sql) is not None
-            and _UNBOUNDED.search(_COMMENTS.sub(" ", _LITERALS.sub("0", sql))) is None
-        )
+        bounded = len(details) == 1 and _row_preserving(sql)
         targets: list[tuple[tuple[str, str], bool]] = []
         for detail in details:
             if detail.startswith("SCAN "):
@@ -580,21 +610,15 @@ def _scan_targets(
 
 
 def _rows(connection: TracedConnection, table: tuple[str, str]) -> int:
+    """The table's rows now, counted afresh every time: no cache can go stale."""
+
     if table[1] == "sqlite_master":
         # The schema table's rows are the database's schema, which no instance
         # grows; weighing them would only dilute the growth the rule compares.
         return 0
-    (changed,) = connection.execute("PRAGMA data_version").fetchone()
-    key = ("rows", table, connection.total_changes, changed)
-
-    def count() -> int:
-        schema, name = table
-        (rows,) = connection.execute(
-            f"SELECT count(*) FROM {_quote(schema)}.{_quote(name)}"
-        ).fetchone()
-        return int(rows)
-
-    return _cached(connection, key, count)  # type: ignore[no-any-return]
+    schema, name = table
+    (rows,) = connection.execute(f"SELECT count(*) FROM {_quote(schema)}.{_quote(name)}").fetchone()
+    return int(rows)
 
 
 def _body(name: str, sql: str) -> tuple[str, ...]:
@@ -602,7 +626,7 @@ def _body(name: str, sql: str) -> tuple[str, ...]:
     if body is None:
         raise Unexplained(f"trigger {name!r} has no BEGIN ... END body")
     return tuple(
-        _TRIGGER_ROW.sub("NULL", statement).strip()
+        _RAISE.sub("NULL", _TRIGGER_ROW.sub("NULL", statement)).strip()
         for statement in _split_statements(body.group(1))
         if statement.strip()
     )
@@ -638,25 +662,33 @@ _DML_TARGET = re.compile(
 )
 
 
-def trigger_scan_rows(connection: TracedConnection, sql: str) -> int | None:
-    """The weight of a trace repeating its predecessor on a table with triggers, else None.
+def trigger_scan_rows(connection: TracedConnection, sql: str) -> int:
+    """What the triggers on the table a statement changes may walk: all their bodies, summed.
 
-    SQLite traces each fired trigger program and each statement in it, but Python
-    passes the expanded SQL of the statement being stepped: the outer one. So a
-    trace that repeats the previous one on its connection, for a statement that
-    changes a table with triggers, is a trigger firing (not another execution of
-    the outer statement), weighed as the costliest statement among that table's
-    triggers: an over-count when bodies differ, never a miss.
+    Python traces each fired trigger program, and each statement in it, as a
+    repeat of the outer statement's expanded SQL, so a trace cannot tell an
+    execution from a trigger firing. Every trace of a statement that changes a
+    table with triggers therefore weighs the outer statement (``_on_statement``)
+    plus every statement of every trigger on that table, whether or not one
+    fires, and of the triggers those statements reach in turn: an over-count,
+    never a miss.
     """
 
+    return _trigger_scan_rows(connection, sql, frozenset())
+
+
+def _trigger_scan_rows(connection: TracedConnection, sql: str, seen: frozenset[str]) -> int:
     target = _DML_TARGET.match(sql.strip())
     if target is None:
-        return None
-    version = _schema_version(connection)
-    bodies = _triggers(connection, version, table=_name(target.group("table"))[1])
-    if not bodies:
-        return None
-    return max(statement_scan_rows(connection, body) for body in bodies)
+        return 0
+    table = _name(target.group("table"))[1]
+    if table in seen:
+        return 0  # a recursive trigger: its body is already weighed once on this path
+    bodies = _triggers(connection, _schema_version(connection), table=table)
+    return sum(
+        statement_scan_rows(connection, body) + _trigger_scan_rows(connection, body, seen | {table})
+        for body in bodies
+    )
 
 
 def _split_statements(text: str) -> list[str]:
