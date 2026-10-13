@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-13:action-run",
-    "surface_digest": "sha256:2dba750ab6a4e56a2b3e71d575cfb7341a494ec59bc72061399989275d31047a"
+    "surface_digest": "sha256:721a76f3728049d7a96cb82b453f6857b43c4c0b863566239aa1765392e1b368"
   },
   "surface": {
     "cli_leaves": [
@@ -862,9 +862,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/actions/run",
         "request_model": "cruxible_client.contracts.actions.ActionRunRequest",
-        "request_schema_digest": "sha256:8909da66f95ac965bff2be1b6a153739411c8795d16820da4f09e717418b467f",
+        "request_schema_digest": "sha256:3becbf4258f97aaf8e450569b88b723bd0bb9cfb6e4bf69c1aa7b2a7878d444e",
         "response_model": "cruxible_client.contracts.actions.ActionRunResult",
-        "response_schema_digest": "sha256:c62bb682fc5cf56c5b68970c565c6fa2c0d744e59e074f2ce5a00b95c5777a56"
+        "response_schema_digest": "sha256:b86bbb46211eef76625a2db66a79902245bff8727ab86a8ce33b56d88a0dfe7c"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.audit",

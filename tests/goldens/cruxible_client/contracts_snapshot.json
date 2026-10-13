@@ -4,7 +4,8 @@
       "values": [
         "completed",
         "timed_out",
-        "not_waited"
+        "not_waited",
+        "not_supported"
       ]
     },
     "ApprovalPolicyMode": {
@@ -396,7 +397,8 @@
             "enum": [
               "completed",
               "timed_out",
-              "not_waited"
+              "not_waited",
+              "not_supported"
             ],
             "title": "Status",
             "type": "string"
@@ -415,7 +417,8 @@
             "enum": [
               "completed",
               "timed_out",
-              "not_waited"
+              "not_waited",
+              "not_supported"
             ],
             "title": "Status",
             "type": "string"
@@ -480,14 +483,14 @@
           }
         },
         "wait_timeout_seconds": {
-          "default": 30.0,
+          "default": 60.0,
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "wait_timeout_seconds",
           "required": false,
           "schema": {
-            "default": 30.0,
+            "default": 60.0,
             "exclusiveMinimum": 0,
             "maximum": 300,
             "title": "Wait Timeout Seconds",
@@ -523,7 +526,7 @@
             "type": "boolean"
           },
           "wait_timeout_seconds": {
-            "default": 30.0,
+            "default": 60.0,
             "exclusiveMinimum": 0,
             "maximum": 300,
             "title": "Wait Timeout Seconds",
@@ -611,7 +614,8 @@
                 "enum": [
                   "completed",
                   "timed_out",
-                  "not_waited"
+                  "not_waited",
+                  "not_supported"
                 ],
                 "title": "Status",
                 "type": "string"
