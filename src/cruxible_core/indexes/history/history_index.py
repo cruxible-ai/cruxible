@@ -1491,6 +1491,8 @@ class AcceptedHistoryIndex:
                 elif trust_record:
                     recorded = self._recorded_readiness(connection, recovered)
                     ready = None if recorded is None else recorded[0]
+                    if recorded is not None and before is not None:
+                        self._adopt_verified_file(recovered, before, *recorded)
             self._sync(connection, recovered, load_envelopes, ready)
             reader = HistoryReader(connection, recovered.head.sequence, self._canonical_records)
             reader.resolve(
@@ -1508,6 +1510,37 @@ class AcceptedHistoryIndex:
             yield reader
         finally:
             connection.close()
+
+    def _adopt_verified_file(
+        self,
+        recovered: RecoveredInstanceState,
+        stamp: tuple[int, ...],
+        ready: tuple[int, str, str, str, int],
+        chain: str,
+    ) -> None:
+        """Keep what a detached read just proved about the working file, in memory only.
+
+        The copy taken at ``stamp`` carried the recorded readiness, re-verified
+        row by row against its chain. When that readiness is the current head's,
+        the file itself is what a locked synchronization would leave: later reads
+        then take the clean snapshot (which re-checks schema and progress)
+        instead of copying the file and re-hashing every generation each time.
+        Nothing is written; a file that moved since, or state a locked read
+        already established, is left alone.
+        """
+        head = (
+            recovered.head.sequence,
+            recovered.head.generation_root.tagged,
+            recovered.coordinate.instance_id,
+            recovered.coordinate.compiler.rule_digest,
+            recovered.coordinate.compiler.schema_version,
+        )
+        if ready != head:
+            return
+        with self._lock:
+            if self._stamp is not None or not self._trust_record or self._file_stamp() != stamp:
+                return
+            self._stamp, self._ready, self._chain = stamp, ready, (ready[0], chain)
 
     def _copy_working_rows(
         self, memory: sqlite3.Connection, *, stamp: tuple[int, ...] | None
