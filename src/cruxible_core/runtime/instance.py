@@ -184,6 +184,7 @@ from cruxible_core.proposals.settlement import (
     prepare_generation,
     render_generation_descriptor,
 )
+from cruxible_core.runtime.phase_timing import phase
 from cruxible_core.runtime.retention import DEFAULT_RETENTION, RetentionSettings
 from cruxible_core.storage.cas import (
     CasObjectMetadata,
@@ -2753,11 +2754,14 @@ class PlaybillInstance:
         if activated.status == "accepted":
             # Outside the activation locks: eviction is unlinks, and a bind
             # that wants an evicted coordinate rebuilds it under the same lock.
-            self.evict_projection_pieces()
-            self.fold_consumption_if_due()
-            with self._state_lock:
-                head = self._recovered.head.sequence
-            self.retire_settled_candidates((head,))
+            with phase("post_accept"):
+                with self._state_lock:
+                    head = self._recovered.head.sequence
+                self._housekeeping("projection_eviction", self.evict_projection_pieces)
+                self._housekeeping("consumption_fold", self.fold_consumption_if_due)
+                self._housekeeping(
+                    "candidate_retirement", lambda: self.retire_settled_candidates((head,))
+                )
         return activated
 
 

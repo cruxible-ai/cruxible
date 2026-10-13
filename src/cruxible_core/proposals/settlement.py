@@ -89,6 +89,7 @@ from cruxible_core.proposals.proposals import (
     claim_type_expansions_from_candidate,
     evaluate_proposal_tree,
 )
+from cruxible_core.runtime.phase_timing import timed_phase
 
 
 class _StrictSettlementModel(BaseModel):
@@ -732,6 +733,7 @@ _UNPROVEN_CAPTURE_CODES = frozenset(
 )
 
 
+@timed_phase("settlement")
 def prepare_generation(
     ledger: GitLedger,
     *,

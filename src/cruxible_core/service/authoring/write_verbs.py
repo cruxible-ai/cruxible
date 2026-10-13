@@ -168,6 +168,7 @@ from cruxible_core.indexes.subject_identity import (
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.phase_timing import timed_operation, timed_phase
 from cruxible_core.service.change_preview import compact_coordinate, preview_guards
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
@@ -1901,6 +1902,7 @@ class _Planner:
             ),
         )
 
+    @timed_phase("plan")
     def build(self) -> _Plan:
         # Retirements first, so a set in the same write sees what it leaves.
         order = sorted(
@@ -1966,6 +1968,7 @@ def _with_dispositions(
     )
 
 
+@timed_phase("lower")
 def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinate) -> _Lowered:
     """Fold the plan into one change set, filling every disposition the slot law demands.
 
@@ -2469,6 +2472,7 @@ def _coordinator(
     )
 
 
+@timed_operation("write")
 def service_playbill_write(
     instance: PlaybillInstance,
     *,

@@ -367,6 +367,15 @@ Every request line in `<state-root>/daemon/logs/server.log` carries
 slow request can be attributed to its route. Route handlers run in the
 daemon's threadpool, so one slow request does not hold up the others.
 
+Each write, propose, settle and activation also logs one `write_phases` line
+with `total_ms` and the time spent in each phase: `plan_ms`, `lower_ms`,
+`evaluate_ms`, `admission_ms`, `settlement_ms`, `projection_ms`,
+`publish_ms`, `post_accept_ms` and `git_ms` (Git subprocesses), with
+`other_ms` for the rest. Phases are timed exclusively (an evaluation inside
+admission counts once, as evaluation), and a write that proposes and
+activates logs one line, as `write`. Work the daemon does after responding
+(review refs, the floor, `next`) is not in the line.
+
 `server status` answers an instance-scoped credential with its own host and
 identity (`"scope": "instance"`) instead of refusing; the daemon-wide view below
 needs the bootstrap secret. `server status` lists the daemon's exact current

@@ -39,6 +39,7 @@ from cruxible_core.derived.derived_state import (
     same_row,
 )
 from cruxible_core.governance.keys import raw_public_key_hex_from_openssh
+from cruxible_core.runtime.phase_timing import timed_phase
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
@@ -3473,6 +3474,7 @@ def _close_batch_readers() -> None:
         reader.close()
 
 
+@timed_phase("git")
 def _command(
     arguments: Sequence[str],
     *,

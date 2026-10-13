@@ -320,6 +320,7 @@ from cruxible_core.indexes.subject_identity import (
     undeclared_kind_repair,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.phase_timing import timed_phase
 
 
 @dataclass(eq=False)
@@ -5405,6 +5406,7 @@ def _encoded_members(members: tuple[tuple[str, bytes], ...]) -> list[dict[str, o
     ]
 
 
+@timed_phase("lower")
 def lower_authoring(
     instance: PlaybillInstance,
     *,

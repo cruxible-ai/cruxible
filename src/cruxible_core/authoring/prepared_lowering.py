@@ -35,6 +35,7 @@ from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.derived.derived_state import SnapshotTree
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.phase_timing import timed_phase
 
 # Bounds are retained serialized/tree bytes, not a claim about Python heap size.
 MAX_ENTRIES = 4
@@ -96,6 +97,7 @@ def _generated_bodies(payload: AuthoringPayload, lowered: LoweredAuthoring) -> t
     return tuple(sorted(digests))
 
 
+@timed_phase("lower")
 def reuse_lowering(
     instance: PlaybillInstance,
     *,
