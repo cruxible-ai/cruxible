@@ -13,10 +13,11 @@ exclusive lock without waiting, so a held piece is skipped; while eviction
 holds it, a reader that opened the piece waits, then finds its path gone and
 binds again (``ProjectionEvicted``), which rebuilds the coordinate. A reader
 that finds the manifest gone before it reads it, or while it reads it, binds
-again the same way. Eviction deletes the manifest before its piece, so no
-reader finds a manifest naming a missing piece. It runs under the directory's
-retention lock, which a rebuild on a miss also takes, so the two never
-interleave.
+again the same way, even if another reader has rebuilt it before the failed
+read is classified: the failure is classified from its own ENOENT. Eviction
+deletes the manifest before its piece, so no reader finds a manifest naming a
+missing piece. It runs under the directory's retention lock, which a rebuild
+on a miss also takes, so the two never interleave.
 
 A piece skipped because a handle in this process holds it is tried again
 once that hold is released (``evict_or_wait``, ``released_pieces``), never

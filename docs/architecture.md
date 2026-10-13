@@ -131,7 +131,8 @@ record references is deleted under it.
   another process held then waits for the daemon's next open. Binding an
   evicted coordinate (`--at`, a pinned read, a stale proposal's base)
   rebuilds it from the ledger and the body store, including when the
-  coordinate is evicted while the bind is reading it.
+  coordinate is evicted while the bind is reading it and another reader
+  rebuilds it before that read's failure is classified.
 - **Accepted proposals' candidates and approvals.** An accepted proposal's
   change-set record carries every field of its candidate and the approvals
   settlement verified, so after activation the candidate file and the

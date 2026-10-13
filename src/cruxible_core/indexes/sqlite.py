@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -616,7 +617,18 @@ def _descriptor_uri(descriptor: int) -> str | None:
 
 
 def load_projection_manifest(path: Path) -> ProjectionManifest:
-    if path.is_symlink() or not path.is_file():
+    """The manifest at ``path``, or a refusal; one that is absent is refused from its ENOENT.
+
+    A manifest absent when it is looked at or read carries that
+    ``FileNotFoundError`` as its cause, so a caller can tell an absent manifest
+    (``_manifest_vanished``) from a present malformed one.
+    """
+
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError as exc:
+        raise ProjectionIntegrityError("projection manifest must be a regular file") from exc
+    if not stat.S_ISREG(metadata.st_mode):
         raise ProjectionIntegrityError("projection manifest must be a regular file")
     try:
         raw = path.read_bytes()
@@ -659,6 +671,17 @@ def _source_repository(path: str) -> Any:
 
 class ProjectionEvicted(ProjectionIntegrityError):
     """The coordinate was evicted while it was being bound; binding again rebuilds it."""
+
+
+def _manifest_vanished(error: BaseException) -> bool:
+    """Whether a manifest refusal came from the manifest being absent (ENOENT) when read.
+
+    Decided by the failed operation itself, never by looking at the path
+    again: another reader may have rebuilt it since.
+    """
+
+    cause = error.__cause__
+    return isinstance(cause, FileNotFoundError) or getattr(cause, "errno", None) == errno.ENOENT
 
 
 _HOLD_OPEN = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -1072,15 +1095,14 @@ def bind_projection(
     # The first bind in a process fixes which authentication records it trusts
     # here, before any later read could be answered from a replaced piece.
     _trusted_stamps(manifest_path.parent)
-    if not manifest_path.exists() and not manifest_path.is_symlink():
-        raise ProjectionEvicted("projection manifest must be a regular file: it is absent")
     try:
         manifest = load_projection_manifest(manifest_path)
     except ProjectionIntegrityError as exc:
-        # Gone between the look and the read (or mid-read): eviction removed it,
-        # and binding again rebuilds the coordinate. One still present is a
-        # malformed or untrustworthy manifest, refused as it was.
-        if not manifest_path.exists() and not manifest_path.is_symlink():
+        # Absent when looked at or read (ENOENT): eviction removed it, and
+        # binding again rebuilds the coordinate, even if another reader has
+        # rebuilt it since. A present malformed or untrustworthy manifest is
+        # refused as it was.
+        if _manifest_vanished(exc):
             raise ProjectionEvicted(
                 "projection manifest must be a regular file: it was evicted while binding"
             ) from exc

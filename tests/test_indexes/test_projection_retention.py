@@ -408,3 +408,54 @@ def test_an_activation_hashes_its_new_piece_once(
     monkeypatch.setattr(sqlite, "physical_file_digest", counted)
     _write(instance, _set(WI1, "status", "ready"))
     assert len(hashed) == 1
+
+
+def test_a_manifest_read_that_found_it_evicted_rebinds_even_once_rebuilt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = seed_write_surface(tmp_path)
+    for value in ("ready", "blocked"):
+        _write(instance, _set(WI1, "status", value))
+    behind = _coordinate(instance, 1)
+    with instance.bind_accepted_projection(behind) as handle:
+        manifest = handle.manifest_path
+    read_bytes = Path.read_bytes
+    interleaved: list[bool] = []
+
+    def evicted_then_rebuilt(path: Path) -> bytes:
+        if path == manifest and not interleaved:
+            interleaved.append(True)
+            with projection_retention.retention_lock(path.parent):
+                assert projection_retention.evict_projection(path.parent, path.name)
+            try:
+                read_bytes(path)
+            except FileNotFoundError as gone:
+                # Another reader rebuilds the coordinate before this read's
+                # failure is classified: the path is back, the read still failed.
+                with instance.bind_accepted_projection(behind) as rebuilt:
+                    assert rebuilt.accepted.git_oid == behind.git_oid
+                assert path.exists()
+                raise gone
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", evicted_then_rebuilt)
+    with instance.bind_accepted_projection(behind) as projection:
+        assert interleaved == [True]
+        assert projection.accepted.git_oid == behind.git_oid
+
+
+def test_a_present_malformed_manifest_is_refused_not_rebuilt(tmp_path: Path) -> None:
+    from cruxible_core.indexes import sqlite
+
+    instance, _owner = seed_write_surface(tmp_path)
+    for value in ("ready", "blocked"):
+        _write(instance, _set(WI1, "status", value))
+    behind = _coordinate(instance, 1)
+    with instance.bind_accepted_projection(behind) as handle:
+        manifest = handle.manifest_path
+    manifest.chmod(0o600)
+    manifest.write_bytes(b"{}")
+    with pytest.raises(sqlite.ProjectionIntegrityError) as refused:
+        instance.bind_accepted_projection(behind)
+    assert not isinstance(refused.value, sqlite.ProjectionEvicted)
+    assert sqlite._hold_key(manifest) not in sqlite._HOLDS.counts
