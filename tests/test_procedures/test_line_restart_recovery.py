@@ -1012,3 +1012,125 @@ def test_a_late_dispatched_tick_records_the_ticks_instant_as_its_occurrence(tmp_
     assert state.receipt.occurrence_evaluation_time == timer.next
     # The run itself was admitted, and acted, at the daemon's later instant.
     assert state.evaluation_time == late
+
+
+# --- the automatic restart-gap check is bounded by the gap (review F-001) ----
+
+
+def _gap_check_work(tmp_path, monkeypatch, history: int):  # type: ignore[no-untyped-def]
+    """The work one automatic gap check does over one fixed gap holding one accept.
+
+    ``history`` generations were accepted and their occurrences enqueued before
+    the gap; the projection is warm, so nothing here is a cold rebuild.
+    """
+
+    from cruxible_core.exhaust.backends import LocalJournalBackend
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.service.procedures.line_dispatch import _cover_gap_with_nothing_due
+
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
+    actor = _actor(instance)
+    start = READ_TIME + timedelta(seconds=10)
+    for index in range(history):
+        at = start + timedelta(seconds=index * 2)
+        _accept_generation(instance, owner, f"old-{index}", at)
+        enqueued = service_evaluate_line(
+            instance,
+            line.identity.name,
+            LineEvaluateRequest(since=at, until=at + timedelta(seconds=1)),
+            actor=actor,
+            now=at + timedelta(seconds=1),
+        )
+        assert len(enqueued.occurrences) == 1
+    since = start + timedelta(seconds=history * 2 + 2)
+    until = since + timedelta(seconds=3)
+    _accept_generation(instance, owner, "in-the-gap", since + timedelta(seconds=1))
+    store = LineDispatchStore(instance)
+    with store.locked() as conn:  # warm the projection
+        assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == history
+
+    work = {"payloads": 0, "journal_records": 0}
+    loads, select = json.loads, LocalJournalBackend.select_records
+
+    def counting_loads(*args, **kwargs):  # type: ignore[no-untyped-def]
+        value = loads(*args, **kwargs)
+        if isinstance(value, dict) and "occurrence" in value:
+            work["payloads"] += 1
+        return value
+
+    def counting_select(self, stream, **filters):  # type: ignore[no-untyped-def]
+        records = select(self, stream, **filters)
+        work["journal_records"] += len(records)
+        return records
+
+    with monkeypatch.context() as patch:
+        patch.setattr(json, "loads", counting_loads)
+        patch.setattr(LocalJournalBackend, "select_records", counting_select)
+        _cover_gap_with_nothing_due(
+            instance,
+            store,
+            line.identity.name,
+            (format_datetime(since), format_datetime(until)),
+            actor=actor,
+            now=until,
+        )
+    # The accept in the gap is due, so the gap is not recorded as evaluated.
+    assert _evaluated_ranges(instance) == []
+    return work
+
+
+def test_the_restart_gap_check_costs_the_same_with_ten_times_the_history(tmp_path, monkeypatch):
+    small = _gap_check_work(tmp_path / "small", monkeypatch, 2)
+    large = _gap_check_work(tmp_path / "large", monkeypatch, 20)
+
+    # No retained occurrence outside the gap is read: the delivery of the one
+    # generation in the gap is two keyed reads by its exact occurrence identity.
+    assert small == large
+    assert large["payloads"] == 0
+
+
+def test_a_restart_gap_check_over_out_of_order_acceptances_stays_a_gap(tmp_path, monkeypatch):
+    """A bounded check never falls back to scanning every generation: it is
+    inconclusive, and the gap stays for an explicit evaluation."""
+
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.service.procedures.line_dispatch import _cover_gap_with_nothing_due
+    from cruxible_core.service.procedures.line_triggers import (
+        TriggerRange,
+        service_check_line_trigger,
+    )
+    from cruxible_core.triggers import journal as trigger_journal
+
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
+    start = READ_TIME + timedelta(seconds=10)
+    _accept_generation(instance, owner, "in-the-gap", start + timedelta(seconds=5))
+    since, until = start + timedelta(seconds=2), start + timedelta(seconds=8)
+    # Acceptance times out of order (canonical spelling is checked, parent order
+    # is not): the first generation reads as accepted after the head.
+    with instance.accepted_history_reader() as history:
+        first = history.generation(0).git_oid
+    recorded = instance.accepted_evaluation_time
+    monkeypatch.setattr(
+        instance,
+        "accepted_evaluation_time",
+        lambda git_oid: until + timedelta(days=1) if git_oid == first else recorded(git_oid),
+    )
+
+    with trigger_journal.bounded_generation_lookups():
+        with pytest.raises(trigger_journal.GenerationLookupUnbounded):
+            trigger_journal.generation_at(instance, start + timedelta(seconds=3))
+        checked = service_check_line_trigger(
+            instance, line.identity.name, TriggerRange(since=since, until=until, limit=1), now=until
+        )
+    assert checked.status == "incomplete"
+    _cover_gap_with_nothing_due(
+        instance,
+        LineDispatchStore(instance),
+        line.identity.name,
+        (format_datetime(since), format_datetime(until)),
+        actor=_actor(instance),
+        now=until,
+    )
+    assert _evaluated_ranges(instance) == []
+    # Outside the automatic check the lookup still scans, as before.
+    assert trigger_journal.generation_at(instance, start + timedelta(seconds=3)) >= 0

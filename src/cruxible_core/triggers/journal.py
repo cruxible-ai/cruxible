@@ -27,6 +27,7 @@ import sqlite3
 from collections import OrderedDict
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -366,6 +367,27 @@ def trigger_generation(instance: Any, trigger: Trigger) -> int:
         return int(occurrence.occurrence_sequence)
 
 
+class GenerationLookupUnbounded(ValueError):
+    """A bounded time lookup met out-of-order acceptance times and did not scan."""
+
+
+#: Set by a caller whose lookup must stay O(log generations) -- the automatic
+#: restart-gap check: out-of-order acceptance times then end the lookup
+#: inconclusive (``GenerationLookupUnbounded``) instead of scanning history.
+BOUNDED_GENERATION_LOOKUP: ContextVar[bool] = ContextVar("bounded_generation_lookup", default=False)
+
+
+@contextmanager
+def bounded_generation_lookups() -> Iterator[None]:
+    """Within this block, ``generation_at`` never falls back to a linear scan."""
+
+    token = BOUNDED_GENERATION_LOOKUP.set(True)
+    try:
+        yield
+    finally:
+        BOUNDED_GENERATION_LOOKUP.reset(token)
+
+
 def generation_at(instance: Any, instant: datetime) -> int:
     """Bisect a matching range, scanning backwards when a bracket is out of order.
 
@@ -373,13 +395,19 @@ def generation_at(instance: Any, instant: datetime) -> int:
     (cruxible_client.contracts.candidates.validate_candidate_timestamp). A
     reversed bracket therefore needs the latest-sequence linear lookup, never
     an assertion on the tick path. Daemon listeners normally supply their exact
-    starting sequence without this time lookup.
+    starting sequence without this time lookup. Inside
+    ``bounded_generation_lookups`` the linear lookup is refused instead.
     """
 
     with instance.accepted_history_reader() as history:
         lower, upper = 0, int(history.sequence)
 
         def scan_backwards() -> int:
+            if BOUNDED_GENERATION_LOOKUP.get():
+                raise GenerationLookupUnbounded(
+                    "accepted generations are out of acceptance-time order; a bounded "
+                    "lookup does not scan them"
+                )
             for sequence in range(int(history.sequence), -1, -1):
                 if (
                     instance.accepted_evaluation_time(history.generation(sequence).git_oid)

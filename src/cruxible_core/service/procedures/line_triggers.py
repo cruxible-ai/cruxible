@@ -68,36 +68,44 @@ class TriggerRange:
     limit: int = 256
 
 
-def _delivered_generations(
+def _generation_delivered(
     instance: PlaybillInstance,
     accepted: Any,
     trigger: AcceptedTrigger,
     *,
     identity: str,
-) -> frozenset[int]:
-    """Every generation an occurrence of this Trigger was already delivered on.
+    generation: int,
+    evaluation_time: datetime,
+) -> bool:
+    """Whether this Trigger's occurrence on exactly ``generation`` was already delivered.
 
-    The dispatch store keeps every occurrence the Line's listener matched or an
-    evaluation enqueued, whatever became of it; the journal keeps admissions.
+    The occurrence's identity is derived from the Line, its epoch, the Trigger
+    and the generation, so membership is two keyed reads by that identity: the
+    dispatch store's row (an occurrence the listener matched or an evaluation
+    enqueued, whatever became of it) and the journal's admission. Neither reads
+    the Trigger's other occurrences, so the cost does not grow with history.
     """
 
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 
-    delivered: set[int] = set()
-    for admission in _trigger_admissions(instance, accepted, trigger.trigger.identity):
-        cause = getattr(admission, "trigger_binding", None)
-        if cause is not None and cause.generation is not None:
-            delivered.add(int(cause.generation))
-    if dispatch_root(instance).exists():
-        with LineDispatchStore(instance).locked() as conn:
-            for (payload,) in conn.execute(
-                "SELECT payload FROM pending WHERE line_id=? AND trigger_id=?",
-                (identity, trigger.trigger.identity.qualified),
-            ).fetchall():
-                binding = json.loads(payload)["occurrence"].get("binding") or {}
-                if isinstance(binding.get("generation"), int):
-                    delivered.add(binding["generation"])
-    return frozenset(delivered)
+    occurrence, _ = _line_occurrence(
+        accepted,
+        evaluation_time=evaluation_time,
+        trigger=trigger,
+        binding=trigger_binding_for(trigger, generation=generation),
+    )
+    if _line_admissions(instance, accepted, occurrence_id=occurrence):
+        return True
+    if not dispatch_root(instance).exists():
+        return False
+    with LineDispatchStore(instance).locked() as conn:
+        return (
+            conn.execute(
+                "SELECT 1 FROM pending WHERE line_id=? AND epoch=? AND occurrence_id=?",
+                (identity, accepted.line.occurrence_epoch, occurrence),
+            ).fetchone()
+            is not None
+        )
 
 
 def _delivered_ticks(
@@ -426,8 +434,13 @@ def service_check_line_trigger(
                         )
                     head = min(head, generation_at(instance, until - timedelta(microseconds=1)))
                     generation_updates[name] = head
-                    if head > floor and head not in _delivered_generations(
-                        instance, accepted, trigger, identity=identity
+                    if head > floor and not _generation_delivered(
+                        instance,
+                        accepted,
+                        trigger,
+                        identity=identity,
+                        generation=head,
+                        evaluation_time=until,
                     ):
                         with instance.accepted_history_reader() as history:
                             accepted_at = instance.accepted_evaluation_time(

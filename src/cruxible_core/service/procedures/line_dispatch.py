@@ -383,16 +383,26 @@ def _cover_gap_with_nothing_due(
     (a page of one occurrence: whatever it finds, it stops) decides it once, at
     the restart, so ``next`` never lists a range that evaluating would find
     empty. A range with an occurrence, or a check that cannot conclude (an
-    index still catching up), stays a gap until ``line evaluate`` covers it.
+    index still catching up, or accepted generations out of acceptance-time
+    order, which a bounded lookup does not scan), stays a gap until ``line
+    evaluate`` covers it.
+
+    The check is bounded by the gap, not by history: a generation Trigger's
+    acceptance in the range is found by bisection and its delivery by the
+    occurrence's exact identity, so retained history outside the gap is
+    never read.
     """
+
+    from cruxible_core.triggers.journal import bounded_generation_lookups
 
     since, until = _instant(gap[0]), _instant(gap[1])
     if since >= until:
         return
     try:
-        result = service_check_line_trigger(
-            instance, line, TriggerRange(since=since, until=until, limit=1), now=now
-        )
+        with bounded_generation_lookups():
+            result = service_check_line_trigger(
+                instance, line, TriggerRange(since=since, until=until, limit=1), now=now
+            )
     except (CruxibleError, OSError, ValueError):
         return  # unreadable now: the gap stays for an explicit evaluation
     if result.status != "not_met" or result.checked_since is None:
