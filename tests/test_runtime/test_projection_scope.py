@@ -96,5 +96,13 @@ def test_a_write_reads_the_same_answers_with_far_fewer_binds(
     monkeypatch.setattr(instance, "projection_scope", nullcontext)
     unscoped = service_playbill_write(instance, request=request, caller=caller())
     assert scoped.status == unscoped.status == "would_accept"
-    assert scoped.model_dump(mode="json") == unscoped.model_dump(mode="json")
+
+    def same_answer(outcome):  # type: ignore[no-untyped-def]
+        # A dry run mints fresh Claim IDs each time; everything else is the answer.
+        dumped = outcome.model_dump(mode="json")
+        for change in dumped.get("changes") or ():
+            change.pop("claim", None)
+        return dumped
+
+    assert same_answer(scoped) == same_answer(unscoped)
     assert scoped_binds < len(binds), (scoped_binds, len(binds))
