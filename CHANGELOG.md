@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **The next worker keeps each Claim's facts from what changed.** A new `facts`
+  part of the `next` worker keeps every Claim's verdict, resolution status,
+  visibility, lineage and citations, and moves them only for the Claims a change
+  reaches: an accepted generation's member paths, attestation door events,
+  body-store landings, re-observations and its own `next.facts.expire`
+  deadline. `orient` counts Claims by status from it while it is current,
+  instead of deriving every status at the read. The body store now logs each
+  evidence body that lands and each erase in sequence (`landings.sqlite3` in
+  its algorithm directory), which replaces the evidence-generation token in the
+  verdict memos. A dependency lineage's 4,096-predecessor budget is now its
+  own rather than shared by every Claim.
 - **Procedures propose Claim retirements.** A `propose_change_set` or
   `settle_change_set` item may be a retirement
   (`playbill-procedure-claim-retirement-item-v1`: the Claim ID it `retires`,

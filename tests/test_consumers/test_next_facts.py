@@ -19,6 +19,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from cruxible_client.contracts.claims import claim_statement_digest
 from cruxible_core.consumers.next import facts
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -312,3 +314,41 @@ def test_invalid_cursors_and_a_new_format_rebuild_from_nothing(tmp_path: Path) -
     with _recomputed() as seen:
         _catch_up(instance, at)
     assert seen == []
+
+
+def test_the_tally_answers_only_while_the_facts_are_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.discovery import orient
+
+    instance, _owner = _freshness_world(tmp_path)
+    fresh = datetime(2026, 8, 16, 20, 0, 5, tzinfo=UTC)
+    coordinate = instance.accepted_coordinate()
+    assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=fresh) is None
+    _catch_up(instance, fresh)
+    tally = facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=fresh)
+    assert tally == _live_counts(instance, fresh)
+
+    def derived(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("orient derived statuses the tally holds")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(
+            "cruxible_core.service.discovery.claim_status.claim_resolution_statuses", derived
+        )
+        patched.setattr(
+            "cruxible_core.service.discovery.claim_status.remembered_resolution_statuses", derived
+        )
+        counts = orient._claim_counts(instance, coordinate, evaluation_time=fresh)
+    assert counts.model_dump() == tally
+
+    # Past a fact's interval, after a landing, or with the worker disabled: derive live.
+    past = datetime(2026, 8, 16, 20, 0, 10, tzinfo=UTC)
+    assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=past) is None
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
+    assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=fresh) is None
+    monkeypatch.delenv("CRUXIBLE_DISABLED_CONSUMERS")
+    instance.body_store().store(b"a landing the facts have not followed\n")
+    assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=fresh) is None
+    _catch_up(instance, fresh)
+    assert facts.claim_status_tally(instance, coordinate=coordinate, evaluation_time=fresh) == tally

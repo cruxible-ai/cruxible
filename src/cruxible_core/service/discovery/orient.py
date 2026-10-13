@@ -1040,12 +1040,17 @@ def _claim_counts(
     *,
     evaluation_time: datetime,
 ) -> OrientClaimCounts:
-    """Every accepted Claim counted by status, from the remembered resolution when it holds.
+    """Every accepted Claim counted by status: from the next facts' tally when it is current.
 
-    The ``next`` fold just derived the same statuses at this coordinate, so a
-    warm memo answers from the index alone; a miss derives them once.
+    The next worker keeps each Claim's resolution status from change records
+    and counts them as they move, so a current tally answers in a few indexed
+    reads whatever the Claim count. Otherwise (the worker behind, disabled or
+    not yet run, an instant outside its facts' intervals, a slot that did not
+    resolve) the remembered resolution answers when it holds, and a miss
+    derives the statuses once.
     """
 
+    from cruxible_core.consumers.next.facts import claim_status_tally
     from cruxible_core.service.authoring.documents import AcceptedCoordinate
     from cruxible_core.service.discovery.claim_status import (
         claim_resolution_statuses,
@@ -1053,6 +1058,9 @@ def _claim_counts(
     )
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
+    tally = claim_status_tally(instance, coordinate=coordinate, evaluation_time=evaluation_time)
+    if tally is not None:
+        return OrientClaimCounts(**tally)
     with instance.bind_accepted_projection(coordinate) as projection:
         identities = tuple(
             str(row[0])

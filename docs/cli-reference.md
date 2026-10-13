@@ -379,10 +379,16 @@ of governed daemon hosts shown, excluding unrelated local registry entries.
 open: each enabled Line and each built-in worker, as `running`, `stalled`,
 `lagging`, `stopped`, or `disabled`. The built-in `next` worker runs on every
 instance by default. It maintains the
-current Claim queue, cited evidence availability and prediction windows under
-one health entry, with independent cursors for each part. Queue rows carry
-evaluation-time bounds; a `next.expire` deadline refreshes them at the next
-boundary. Its evidence part re-hashes the Captures live Claims cite whenever a generation
+current Claim queue, each Claim's facts, cited evidence availability and
+prediction windows under one health entry, with independent cursors for each
+part. Queue rows carry evaluation-time bounds; a `next.expire` deadline
+refreshes them at the next boundary. Its facts part keeps each Claim's verdict,
+resolution status, visibility, lineage and citations from what changed: an
+accepted generation's member paths, attestation door events, body-store
+landings and re-observations reach only the Claims that read them, and its own
+`next.facts.expire` deadline reaches the facts whose evaluation-time bounds
+end. It rebuilds only on first start, a new derivation format or compiler, or
+when its cursors no longer name positions in those logs. Its evidence part re-hashes the Captures live Claims cite whenever a generation
 cites one, and sweeps them all on a daily `evidence.sweep` trigger event.
 Retention is evaluated at the generation or trigger event's recorded instant. A missing or corrupt Capture envelope, a
 corrupt body, or a missing body its contract still requires to be retained is a
@@ -1457,7 +1463,8 @@ source handles it was computed from (and, when a Procedure proposed the
 accepted revision, `reason`: that item's own rationale and the run and terminal
 that proposed it), `--detail history` its revisions, and
 `--detail proof` its full envelope and facts. `orient` counts Claims by status
-under `artifacts.claims`.
+under `artifacts.claims`, from the `next` worker's facts when they are current
+at the read's coordinate and instant, else derived at the read.
 
 Claims are written through `cruxible set`, `add`, `retire` and `write`, or authored
 through `cruxible authoring submit`/`compile`. `cruxible retire` retires a Claim with its
