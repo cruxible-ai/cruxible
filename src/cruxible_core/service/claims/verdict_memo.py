@@ -16,7 +16,9 @@ at the same coordinate, so this remembers it. It is a cache and nothing else:
   (deciding whether a capture can be replayed now) but not for journal-record
   payloads. The log sees bodies arrive and leave, not a body rewritten in
   place, so each entry also keeps the file identity of every body-store object
-  its verdicts read and is served only while all of them hold (one stat each);
+  its verdicts read and is served only while all of them hold (one stat each).
+  A positioned read keys on its recorded landing and re-observation positions
+  instead of the live heads, so it answers only for the snapshot it read.
   Accepted attestations are bound by the coordinate; pending door attestations
   are not consumed by this derivation;
 * the evaluation instant is NOT in the key, because every real surface stamps a
@@ -56,6 +58,11 @@ def verdict_input_fingerprint(instance: object) -> str | None:
     fingerprints kept with each remembered derivation cover that, and they
     record a consulted body's absence too. An unreadable log disables reuse
     entirely: two failed observations must never form a reusable key.
+
+    Inside a positioned read (``storage.read_positions.reading_at``) body
+    presence and re-observations answer as of the read's recorded landing and
+    journal positions, so those positions name the derivation instead: a fold at
+    an older position never hits, nor stores under, a later read's entry.
     """
 
     from cruxible_client.contracts.errors import CasError
@@ -68,6 +75,17 @@ def verdict_input_fingerprint(instance: object) -> str | None:
     body_store = getattr(instance, "body_store", None)
     if storage is None or body_store is None:
         return None
+    from cruxible_core.storage.read_positions import current_positions
+
+    positions = current_positions()
+    if positions is not None:
+        # A positioned read answers as of the positions it recorded, not where the
+        # logs stand now: its derivation is named by those positions, so it neither
+        # serves nor stores an answer for any other. The door is not an input here.
+        return (
+            f"positioned|landings:{positions.landing_log}:{positions.landing}"
+            f"|reobservation:{positions.reobs}"
+        )
     try:
         # Through the store's held directory: never a pathname an ancestor swap redirects.
         head = body_store().landings.head()

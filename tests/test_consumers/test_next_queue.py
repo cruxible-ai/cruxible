@@ -1198,6 +1198,69 @@ def test_a_body_landed_after_the_reads_position_is_absent_to_that_read(tmp_path:
     _assert_equivalent(instance, EVALUATION_TIME)
 
 
+def _reobservation_world(tmp_path: Path):  # type: ignore[no-untyped-def]
+    from tests.test_evidence.test_claim_reobservations import _HOUR, _START
+    from tests.test_evidence.test_claim_reobservations import _freshness_world as freshness_world
+
+    instance, _owner = freshness_world(tmp_path, stale_after=_HOUR)
+    at = _START + timedelta(hours=1.2)
+    _drain(instance, at)
+    return instance, at, NextRequest(evaluation_time=at, access_profile=_access())
+
+
+def _reobserve_mid_read(instance) -> None:  # type: ignore[no-untyped-def]
+    from tests.test_evidence.test_claim_reobservations import _START, _reobserve
+
+    _reobserve(instance, _START + timedelta(minutes=50))
+
+
+def test_a_fold_at_older_positions_does_not_store_its_verdicts_for_a_later_read(
+    tmp_path: Path,
+) -> None:
+    """F-015: a fold at a read's recorded positions names its remembered verdicts by
+    those positions. Folded again at the older positions after a re-observation
+    landed, it answers as of them, and the next read (at the later positions) is
+    not served that older answer."""
+
+    instance, _at, request = _reobservation_world(tmp_path)
+    with _oracle_only():
+        before = service_playbill_next(instance, request=request)
+    with _after_recording(lambda: _reobserve_mid_read(instance)) as recorded, _no_fold():
+        served = service_playbill_next(instance, request=request)
+    assert recorded and served.items == before.items
+    with _oracle_only(), patch.object(facts, "read_heads", return_value=recorded[0]):
+        assert service_playbill_next(instance, request=request).items == served.items
+    later = service_playbill_next(instance, request=request)
+    assert later.items != before.items
+    with _oracle_only():
+        assert (
+            service_playbill_next(instance, request=request).model_dump_json()
+            == later.model_dump_json()
+        )
+
+
+def test_a_fold_at_older_positions_is_not_served_a_later_reads_verdicts(
+    tmp_path: Path,
+) -> None:
+    """F-015: a read records its positions, a re-observation lands and a later read
+    remembers its verdicts; the first read, folding on, answers as of its own
+    positions, not from the later read's entry."""
+
+    instance, _at, request = _reobservation_world(tmp_path)
+    with _oracle_only():
+        before = service_playbill_next(instance, request=request)
+    later: list[Any] = []
+
+    def land_and_read_later() -> None:
+        _reobserve_mid_read(instance)
+        later.append(service_playbill_next(instance, request=request))
+
+    with _oracle_only(), _after_recording(land_and_read_later) as recorded:
+        actual = service_playbill_next(instance, request=request)
+    assert recorded and later and later[0].items != before.items
+    assert actual.items == before.items
+
+
 def test_a_read_during_a_landing_in_flight_answers_as_before_it(tmp_path: Path) -> None:
     """Between a landing's intent and its completion the body has not landed for a read:
     the read serves (no fold, no refusal) as of its position, where it is absent."""
