@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-12:next-incremental-a01",
-    "surface_digest": "sha256:2cc15ca7b7da945ead9faeca535f0749b2ab0c0afac023f60e63b8e2f072d092"
+    "register_entry": "2026-10-13:next-incremental-a3",
+    "surface_digest": "sha256:b7a628de5a4e188e2e165efb462d7409a8a862dcecd9a38d40d8a7059e9c91a4"
   },
   "surface": {
     "cli_leaves": [
@@ -380,6 +380,13 @@
         ],
         "command": "instance decommission",
         "delegate": "cruxible_core.cli.commands.playbill.decommission_instance"
+      },
+      {
+        "client_operations": [
+          "rebuild_next"
+        ],
+        "command": "instance rebuild-next",
+        "delegate": "cruxible_core.cli.commands.playbill.rebuild_next"
       },
       {
         "client_operations": [
@@ -782,6 +789,7 @@
       "playbill_inbox_list",
       "playbill_init",
       "playbill_instance_decommission",
+      "playbill_instance_rebuild_next",
       "playbill_kit_add",
       "playbill_kit_build",
       "playbill_kit_remove",
@@ -1345,6 +1353,18 @@
         "request_schema_digest": "sha256:bbc4c4716ca0bb32e7f5462a4335cfff6bfdeca7a0ccc0913b3c1af23761c8c1",
         "response_model": "cruxible_client.contracts.InstanceDecommissionResult",
         "response_schema_digest": "sha256:f94e9cd7d944958c56c713587a67c34942b117def19999ff1ac36200ac3193b5"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.instance_rebuild_next",
+        "facade_operations": [
+          "playbill_instance_rebuild_next"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/instance/rebuild-next",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.NextRebuildResult",
+        "response_schema_digest": "sha256:c7eecd6c97bc87673267dce82d019adc1b2c4a6c02954489aed8cc248e18c09f"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.kit_status",

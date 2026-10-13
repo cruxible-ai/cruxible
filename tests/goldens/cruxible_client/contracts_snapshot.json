@@ -31397,6 +31397,174 @@
         "subject_identity"
       ]
     },
+    "NextRebuildResult": {
+      "fields": {
+        "claims": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claims",
+          "required": true,
+          "schema": {
+            "title": "Claims",
+            "type": "integer"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "format": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "format",
+          "required": true,
+          "schema": {
+            "title": "Format",
+            "type": "integer"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "keys": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "keys",
+          "required": true,
+          "schema": {
+            "title": "Keys",
+            "type": "integer"
+          }
+        },
+        "rows": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rows",
+          "required": true,
+          "schema": {
+            "title": "Rows",
+            "type": "integer"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-rebuild-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-rebuild-result-v1",
+            "default": "playbill-next-rebuild-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Receipt for rebuilding the next worker's facts and rows from nothing.",
+        "properties": {
+          "claims": {
+            "title": "Claims",
+            "type": "integer"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "format": {
+            "title": "Format",
+            "type": "integer"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "keys": {
+            "title": "Keys",
+            "type": "integer"
+          },
+          "rows": {
+            "title": "Rows",
+            "type": "integer"
+          },
+          "tag": {
+            "const": "playbill-next-rebuild-result-v1",
+            "default": "playbill-next-rebuild-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "coordinate",
+          "format",
+          "claims",
+          "keys",
+          "rows"
+        ],
+        "title": "NextRebuildResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "claims",
+        "coordinate",
+        "format",
+        "instance_id",
+        "keys",
+        "rows"
+      ]
+    },
     "NextRepair": {
       "fields": {
         "arguments": {
