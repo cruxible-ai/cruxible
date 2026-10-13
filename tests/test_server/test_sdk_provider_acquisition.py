@@ -42,7 +42,6 @@ from cruxible_client.contracts.providers import (
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.providers.web_fetch import (
     WEB_FETCH_INTERFACE_V2_DIGEST,
-    WEB_FETCH_SELECTORS,
     web_fetch_interface_registration,
 )
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -54,7 +53,11 @@ from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 URL = "https://fixture.invalid/api/v1/measurements.json"
 
 
-def web_provider(registration, selectors=WEB_FETCH_SELECTORS):
+def web_provider(registration, selectors=None):
+    # The provider-runtime 0.2.x manifest still declares input buckets; they are
+    # inert. By default, the ones the registration's (inert) proofs name.
+    if selectors is None:
+        selectors = {proof.fixture_id: proof.selector for proof in registration.conformance_proofs}
     template = provider_v2()
     implementation = template.runtime_artifact.manifest.implementations[0].model_copy(
         update={
@@ -168,7 +171,7 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
                 interface_digest=web_fetch_interface_registration().interface_digest,
                 implementation_digest="sha256:" + "a" * 64,
                 declared_endpoints=("https://fixture.invalid",),
-                input_bucket="source_kind=api_json;access=public;page_weight=light",
+                input_bucket="legacy=none",
                 budgets=Budgets(wall_clock_seconds=30, output_bytes=1_000_000),
                 coordinates={},
                 capture_contract=None,
@@ -260,20 +263,6 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
             return getattr(operator if hasattr(operator, name) else real, name)
 
     monkeypatch.setattr(manager, "provider_runtime_operator", lambda: Lane())
-    from cruxible_client.contracts.provider_interfaces import (
-        AcceptedProviderInterfaceRegistration,
-    )
-    from cruxible_core.providers.provider_classifiers import (
-        install_compiler_owned_provider_classifier,
-    )
-
-    install_compiler_owned_provider_classifier(
-        AcceptedProviderInterfaceRegistration(
-            registration=registration,
-            path=provider_interface_path(registration.interface_id),
-            artifact_digest=provider_interface_digest(registration).tagged,
-        )
-    )
 
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http
@@ -309,11 +298,9 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     from cruxible_client.authoring.inputs import CarriedContractInput
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.provider_interfaces import (
-        AcceptedProviderInterfaceRegistration,
         provider_interface_definition_digest,
     )
-    from cruxible_core.providers.provider_classifiers import PROVIDER_BUCKET_CLASSIFIER_REGISTRY
-    from tests.core_support._p2b1_support import DemoSizeClassifier, interface_registration
+    from tests.core_support._p2b1_support import interface_registration
 
     http, instance_id, reviewer = playbill_http
     manager = get_playbill_manager()
@@ -344,14 +331,6 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     ).proposal
     assert proposal.candidate is not None, proposal.evaluation.diagnostics
     _approve_and_activate(http, instance_id, reviewer, proposal.admission.proposal_id)
-    PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(
-        AcceptedProviderInterfaceRegistration(
-            registration=registration,
-            path=provider_interface_path(registration.interface_id),
-            artifact_digest=provider_interface_digest(registration).tagged,
-        ),
-        DemoSizeClassifier(),
-    )
     invoker = AcquisitionInvoker({"size": 1})
     operator = source._Operator(invoker)
     real = manager.provider_runtime_operator()

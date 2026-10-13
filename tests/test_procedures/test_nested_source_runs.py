@@ -250,8 +250,6 @@ def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
     )
     from cruxible_core.procedures.execution import ProcedureExecutor
     from cruxible_core.procedures.nested import constrained_budget, constrained_caps
-    from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
-    from tests.core_support._p2b1_support import install_demo_classifier
     from tests.test_procedures.test_procedure_execution import (
         _Authority,
         _Contracts,
@@ -260,10 +258,13 @@ def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
     )
     from tests.test_procedures.test_source_compiler import INPUT, OUTPUT, accepted
     from tests.test_providers.test_operation_contracts import call_procedure, operation
-    from tests.test_providers.test_provider_invocation_journal import _Invoker, _prepared_v5
+    from tests.test_providers.test_provider_invocation_journal import (
+        _Invoker,
+        _prepared_acquisition_run,
+    )
 
     child = call_procedure()
-    base, fixture = _prepared_v5(child, tmp_path, operation_contract=operation())
+    base, fixture = _prepared_acquisition_run(child, tmp_path, operation_contract=operation())
     compiled = compile_source(
         ProcedureSourceProgram(
             text=textwrap.dedent("""
@@ -295,8 +296,6 @@ def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
         hard_caps=_hard_caps().model_copy(update={"max_provider_calls": 1}),
     )
     parent = accepted(compiled)
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
     invoker = _Invoker()
 
     class Clock:
@@ -356,7 +355,6 @@ def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
                 activation_authority=_Authority(child.artifact_digest),
                 contract_validator=_Contracts(),
                 provider_runtime_invoker=invoker,
-                provider_classifier_registry=registry,
                 parent_context=context,
                 clock=clock,
             ).execute(prepared, child)
@@ -414,7 +412,7 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
         render_procedure_mandate,
     )
     from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
-    from cruxible_core.procedures.execution import ProcedureRunAdmissionV8
+    from cruxible_core.procedures.execution import ProcedureRunAdmissionV9
     from cruxible_core.procedures.nested import authority_procedure
     from cruxible_core.service.procedures.nested_runs import retained_delegation
     from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
@@ -462,7 +460,8 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
             for kind, value in payloads(instance, link["receipt"]["run_id"])
             if kind == "admission_bound"
         )
-        admission = ProcedureRunAdmissionV8.model_validate(admitted)
+        admission = ProcedureRunAdmissionV9.model_validate(admitted)
+        assert admission.parent_binding is not None
         assert admission.invocation_origin == "line"
         assert admission.line_identity == line.identity
         assert admission.journal_partition_id != result.receipt.partition_id

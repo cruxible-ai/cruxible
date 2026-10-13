@@ -208,13 +208,14 @@ def _first_sentence(text: str) -> str | None:
 def interface_row(item: AcceptedProviderInterface) -> OrientInterface:
     registration = item.registration
     definition = json.loads(bytes.fromhex(registration.interface_bytes_hex))
-    vocabulary = json.loads(bytes.fromhex(registration.vocabulary_bytes_hex))
     contracts_block = definition.get("contracts") if isinstance(definition, Mapping) else None
     stub = not isinstance(contracts_block, Mapping)
     sides: Mapping[str, Any] = (
         definition if stub and isinstance(definition, Mapping) else contracts_block or {}
     )
-    description = vocabulary.get("description") if isinstance(vocabulary, Mapping) else None
+    # The interface definition describes the operation; a registration's bucket
+    # vocabulary is historical classifier data and describes nothing served.
+    description = definition.get("description") if isinstance(definition, Mapping) else None
     return OrientInterface(
         name=registration.interface_id,
         description=_first_sentence(description) if isinstance(description, str) else None,

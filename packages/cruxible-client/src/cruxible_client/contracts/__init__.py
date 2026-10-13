@@ -237,6 +237,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
+    ProcedureRunReceiptV7,
     ProcedureRunReceiptWithheld,
     ProcedureSourceObservation,
     ProcedureTerminal,
@@ -1435,6 +1436,7 @@ class ProcedureRunState(BaseModel):
         | ProcedureRunReceiptV4
         | ProcedureRunReceiptV5
         | ProcedureRunReceipt
+        | ProcedureRunReceiptV7
         | ProcedureRunReceiptWithheld
         | None
     ) = None
@@ -1967,10 +1969,7 @@ class ProviderInterfaceEntry(BaseModel):
     artifact_kind: Literal["ProviderInterface"]
     pin_role: Literal["provider-interface"]
     interface_digest: str
-    vocabulary_digest: str
-    classifier_digest: str
     effect_class: Literal["none", "external_read", "external_mutation"]
-    classifier_status: Literal["installed", "not_installed"]
     interface_basis: Literal["accepted_registration"]
     providers: list[ProviderInterfaceImplementation] = Field(default_factory=list)
     operation_contract: _ProviderOperationContractV1 | None = None

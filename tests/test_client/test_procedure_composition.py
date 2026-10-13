@@ -261,10 +261,7 @@ def test_discovery_requires_explicit_choice_when_multiple_providers_exist():
         artifact_kind="ProviderInterface",
         pin_role="provider-interface",
         interface_digest=PROVIDER.interface_digest,
-        vocabulary_digest="sha256:" + "b" * 64,
-        classifier_digest="sha256:" + "c" * 64,
         effect_class="external_read",
-        classifier_status="installed",
         interface_basis="accepted_registration",
         providers=[
             ProviderInterfaceImplementation(

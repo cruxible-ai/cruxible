@@ -157,13 +157,22 @@ def _worlds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[A
     yield from _fresh_open_worlds(tmp_path, monkeypatch, independent=False)
 
 
-def _package(root: Path, checkout: ProviderCheckout, *, name: str, increment: int = 1) -> Path:
+def _package(
+    root: Path,
+    checkout: ProviderCheckout,
+    *,
+    name: str,
+    increment: int = 1,
+    bucket_metadata: dict[str, Any] | None = None,
+) -> Path:
     """A provider package directory as a kit's source tree holds it: pyproject, uv.lock,
     and in dist/ its wheel beside the runtime wheel its lock names by path."""
 
     from tests.support.provider_installation import build_local_call
 
-    wheel, _lock = build_local_call(root, checkout.repository, name=name, increment=increment)
+    wheel, _lock = build_local_call(
+        root, checkout.repository, name=name, increment=increment, bucket_metadata=bucket_metadata
+    )
     project = wheel.parent.parent
     runtime = next(checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
     shutil.copy(runtime, project / "dist" / runtime.name)
@@ -452,6 +461,43 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         consumer.approve(submitted._candidate_status.proposal_id)
         consumer.pb.refresh()
         assert _run(consumer, "acme.increment-other", 5) == {"n": 6}
+    finally:
+        for _ in opened:
+            pass
+
+
+def test_a_kit_bundles_a_provider_whose_bucket_metadata_never_matched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
+) -> None:
+    """Review F-001: kit build, kit add and the run read the bundled package's bucket
+    data as inert; the provider runtime's validating reader and bucket model raise
+    if any of them is reached."""
+
+    from tests.support.provider_installation import (
+        INERT_BUCKET_METADATA,
+        forbid_bucket_semantics,
+    )
+
+    forbid_bucket_semantics(monkeypatch)
+    opened = _worlds(tmp_path, monkeypatch)
+    publisher, consumer = next(opened)
+    try:
+        bundled = _package(
+            tmp_path / "kit-source",
+            provider_checkout,
+            name="kit-call",
+            bucket_metadata=INERT_BUCKET_METADATA,
+        )
+        _install(publisher, bundled, control_domain="publisher")
+        _author(publisher)
+        release = _build(publisher, bundled)
+        (provider,) = release.manifest.providers
+        assert provider.interfaces == (INTERFACE,)
+
+        added = _add(consumer, release, dry_run=False)
+        assert added.status == "accepted", added
+        assert [step.action for step in added.providers] == ["install"]
+        assert _run(consumer, PROCEDURE, 2) == {"n": 3}
     finally:
         for _ in opened:
             pass

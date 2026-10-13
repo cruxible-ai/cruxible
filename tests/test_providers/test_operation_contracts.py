@@ -12,14 +12,12 @@ from cruxible_client.contracts.provider_contracts import (
     read_provider_operation_contract,
 )
 from cruxible_core.procedures.execution import ProcedureExecutor
-from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
-from tests.core_support._p2b1_support import install_demo_classifier
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
     _Invoker,
-    _prepared_v5,
+    _prepared_acquisition_run,
 )
 
 
@@ -61,9 +59,9 @@ def test_calls_enforce_interfaces_before_invocation_and_before_progress(tmp_path
     accepted = call_procedure(
         repeat=repeat, payload={"size": "bad"} if case == "invalid-input" else None
     )
-    prepared, fixture = _prepared_v5(accepted, tmp_path, operation_contract=operation())
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
+    prepared, fixture = _prepared_acquisition_run(
+        accepted, tmp_path, operation_contract=operation()
+    )
     invoker = BadOutput() if case == "invalid-output" else _Invoker()
     result = ProcedureExecutor(
         journal=fixture.journal,
@@ -73,7 +71,6 @@ def test_calls_enforce_interfaces_before_invocation_and_before_progress(tmp_path
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
-        provider_classifier_registry=registry,
     ).execute(prepared, accepted)
     if case == "valid":
         assert result.status == "succeeded"
@@ -220,24 +217,9 @@ def test_previous_compiler_cannot_project_a_graph_v6_procedure():
         )
 
 
-def test_web_interface_classification_matches_the_recorded_fixtures():
-    from cruxible_client.contracts.provider_interfaces import (
-        AcceptedProviderInterfaceRegistration,
-        provider_interface_digest,
-        provider_interface_path,
-    )
-    from cruxible_core.providers.web_fetch import (
-        WebFetchBucketClassifier,
-        web_fetch_interface_registration,
-    )
+def test_the_core_owned_web_interface_reads_its_operation_contract():
+    from cruxible_core.providers.web_fetch import web_fetch_interface_registration
 
     registration = web_fetch_interface_registration()
-    accepted = AcceptedProviderInterfaceRegistration(
-        registration=registration,
-        path=provider_interface_path("web.fetch"),
-        artifact_digest=provider_interface_digest(registration).tagged,
-    )
-    installed = ProviderBucketClassifierRegistry().install(accepted, WebFetchBucketClassifier())
-    assert len(installed.results) == 4
     contract = read_provider_operation_contract(registration.interface_bytes_hex)
     assert contract.output == "playbill-provider-result-to-external-capture-v1"

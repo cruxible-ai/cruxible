@@ -10,7 +10,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Callable, Literal, Protocol, cast, overload
+from typing import TYPE_CHECKING, Callable, Literal, Protocol, TypeVar, cast, overload
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.nested import NestedProcedureRunner, ParentInvocationContext
@@ -110,6 +110,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureNodeRefusalCode,
     ProcedureProviderBinding,
     ProcedureProviderBindingV1,
+    ProcedureProviderBindingV3,
     ProcedureReplayInputProjection,
     ProcedureRunBudgetDeclaredV1,
     ProcedureRunBudgetObserved,
@@ -118,6 +119,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureSourceCaptureAssociation,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
+    procedure_provider_bindings,
     procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.procedures.windows import LineTriggerBinding
@@ -235,11 +237,6 @@ from cruxible_core.procedures.terminal_dependencies import (
     terminal_item_key,
     terminal_item_manifest_digest,
 )
-from cruxible_core.providers.provider_classifiers import (
-    PROVIDER_BUCKET_CLASSIFIER_REGISTRY,
-    ProviderBucketClassifierRegistry,
-    ProviderClassifierInstallationRefused,
-)
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
@@ -253,6 +250,7 @@ from cruxible_core.providers.provider_outcomes import (
     provider_refusal_is_absorbable,
 )
 from cruxible_core.providers.provider_runtime_contract import (
+    PROVIDER_RUNTIME_LEGACY_INPUT_BUCKET,
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
     ProviderRuntimeWireError,
@@ -291,6 +289,7 @@ PROCEDURE_RUN_RECEIPT_V3_DOMAIN = "playbill-procedure-run-receipt-v3"
 PROCEDURE_RUN_RECEIPT_V4_DOMAIN = "playbill-procedure-run-receipt-v4"
 PROCEDURE_RUN_RECEIPT_V5_DOMAIN = "playbill-procedure-run-receipt-v5"
 PROCEDURE_RUN_RECEIPT_V6_DOMAIN = "playbill-procedure-run-receipt-v6"
+PROCEDURE_RUN_RECEIPT_V7_DOMAIN = "playbill-procedure-run-receipt-v7"
 
 
 class _StrictExecutionModel(BaseModel):
@@ -681,7 +680,7 @@ class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
             raise ValueError("Line admission must use the Procedure exhaust stream")
         expected_partition = (
             procedure_direct_partition(self.semantic_replay_key_digest)
-            if isinstance(self, ProcedureRunAdmissionV8)
+            if procedure_parent_binding(self) is not None
             else procedure_line_partition(self.line_identity)
         )
         if self.journal_partition_id != expected_partition:
@@ -803,6 +802,65 @@ class ProcedureRunAdmissionV8(ProcedureRunAdmissionV7):
         if self.procedure_identity in {pin.target for pin in self.parent_binding.ancestors}:
             raise ValueError("recursive Procedure invocation is not supported")
         return self
+
+
+class ProcedureRunAdmissionV9(ProcedureRunAdmissionV7):
+    """The current acquisition carrier: Provider binding v3, no classification.
+
+    One carrier holds every role V5, V7 and V8 split between them: a direct or
+    Line run, with or without an investigation or trigger binding, and a nested
+    child, which carries ``parent_binding``. Its bindings name each node's
+    interface and implementation and nothing about buckets, because core
+    classifies no input. V5, V7 and V8 stay readable for the runs admitted under
+    them.
+    """
+
+    tag: Literal["playbill-procedure-run-admission-v9"] = "playbill-procedure-run-admission-v9"  # type: ignore[assignment]
+    resolved_provider_bindings: tuple[ProcedureProviderBindingV3, ...]  # type: ignore[assignment]
+    parent_binding: ProcedureParentBindingV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("resolved_provider_bindings")
+    @classmethod
+    def _provider_bindings_v3(
+        cls,
+        value: tuple[ProcedureProviderBindingV3, ...],
+    ) -> tuple[ProcedureProviderBindingV3, ...]:
+        node_ids = tuple(item.node_id for item in value)
+        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("resolved Provider v3 bindings must be sorted and node-id unique")
+        return value
+
+    @model_validator(mode="after")
+    def _nonrecursive_child(self) -> ProcedureRunAdmissionV9:
+        if self.parent_binding is not None and self.procedure_identity in {
+            pin.target for pin in self.parent_binding.ancestors
+        }:
+            raise ValueError("recursive Procedure invocation is not supported")
+        return self
+
+
+#: An admission whose run is a nested child of an executing parent.
+NestedProcedureRunAdmission = ProcedureRunAdmissionV8 | ProcedureRunAdmissionV9
+
+
+def procedure_parent_binding(admission: object) -> ProcedureParentBindingV1 | None:
+    """The delegation binding of a nested child admission, or None for a root run."""
+
+    if isinstance(admission, (ProcedureRunAdmissionV8, ProcedureRunAdmissionV9)):
+        return admission.parent_binding
+    return None
+
+
+def nested_admission(admission: object) -> NestedProcedureRunAdmission | None:
+    """The admission itself when it is a nested child's, else None."""
+
+    if isinstance(admission, ProcedureRunAdmissionV8) or (
+        isinstance(admission, ProcedureRunAdmissionV9) and admission.parent_binding is not None
+    ):
+        return admission
+    return None
 
 
 class LandedCaptureRunMaterialV1(_StrictExecutionModel):
@@ -1566,14 +1624,25 @@ class PreparedProcedureRunV6(PreparedProcedureRunV2):
     admission: ProcedureRunAdmissionV6
 
 
-class PreparedProcedureRunV7(PreparedProcedureRunV5):
-    tag: Literal["playbill-prepared-procedure-run-v7"] = "playbill-prepared-procedure-run-v7"  # type: ignore[assignment]
-    admission: ProcedureRunAdmissionV7
+def _require_plan_bindings(
+    admission: ProcedureRunAdmissionV9, plan: ProcedureAcquisitionPlan
+) -> None:
+    if admission.resolved_provider_bindings != procedure_provider_bindings(
+        plan.external_occurrences
+    ):
+        raise ValueError("Provider v3 bindings are not the acquisition plan's own")
 
 
-class PreparedProcedureRunV8(PreparedProcedureRunV5):
-    tag: Literal["playbill-prepared-procedure-run-v8"] = "playbill-prepared-procedure-run-v8"  # type: ignore[assignment]
-    admission: ProcedureRunAdmissionV8
+class PreparedProcedureRunV9(PreparedProcedureRunV5):
+    """A prepared run under the current carrier; its bindings are its plan's."""
+
+    tag: Literal["playbill-prepared-procedure-run-v9"] = "playbill-prepared-procedure-run-v9"  # type: ignore[assignment]
+    admission: ProcedureRunAdmissionV9
+
+    @model_validator(mode="after")
+    def _v9_bindings(self) -> PreparedProcedureRunV9:
+        _require_plan_bindings(self.admission, self.acquisition_plan)
+        return self
 
 
 class ProcedureAdmissionBoundPayloadV6(ProcedureAdmissionBoundPayloadV2):
@@ -1597,6 +1666,30 @@ class ProcedureAdmissionBoundPayloadV8(ProcedureAdmissionBoundPayloadV5):
     admission: ProcedureRunAdmissionV8
 
 
+class ProcedureAdmissionBoundPayloadV9(ProcedureAdmissionBoundPayloadV5):
+    tag: Literal["playbill-procedure-admission-bound-payload-v9"] = (
+        "playbill-procedure-admission-bound-payload-v9"  # type: ignore[assignment]
+    )
+    admission: ProcedureRunAdmissionV9
+
+    @model_validator(mode="after")
+    def _v9_bindings(self) -> ProcedureAdmissionBoundPayloadV9:
+        _require_plan_bindings(self.admission, self.acquisition_plan)
+        return self
+
+
+#: The admission-bound payload tags whose run carries an acquisition plan
+#: (V5 and every successor of it), oldest first.
+ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS = frozenset(
+    {
+        "playbill-procedure-admission-bound-payload-v5",
+        "playbill-procedure-admission-bound-payload-v7",
+        "playbill-procedure-admission-bound-payload-v8",
+        "playbill-procedure-admission-bound-payload-v9",
+    }
+)
+
+
 def parse_admission_payload(
     payload: object,
 ) -> ProcedureAdmissionBoundPayloadV2 | ProcedureAdmissionBoundPayloadV3:
@@ -1612,6 +1705,7 @@ def parse_admission_payload(
             ProcedureAdmissionBoundPayloadV6,
             ProcedureAdmissionBoundPayloadV7,
             ProcedureAdmissionBoundPayloadV8,
+            ProcedureAdmissionBoundPayloadV9,
         )
     }
     model = models.get(payload.get("tag"))
@@ -1622,28 +1716,38 @@ def parse_admission_payload(
 
 @overload
 def bind_prepared_investigation(
-    prepared: PreparedProcedureRunV5,
+    prepared: PreparedProcedureRunV9,
     *,
     investigation: InvestigationBinding | None,
     trigger: LineTriggerBinding | None = None,
-) -> PreparedProcedureRunV7: ...
+) -> PreparedProcedureRunV9: ...
 @overload
 def bind_prepared_investigation(
     prepared: PreparedProcedureRunV2,
     *,
     investigation: InvestigationBinding | None,
     trigger: LineTriggerBinding | None = None,
-) -> PreparedProcedureRunV6 | PreparedProcedureRunV7: ...
+) -> PreparedProcedureRunV6 | PreparedProcedureRunV9: ...
 
 
 def bind_prepared_investigation(
-    prepared: PreparedProcedureRunV2 | PreparedProcedureRunV5,
+    prepared: PreparedProcedureRunV2 | PreparedProcedureRunV9,
     *,
     investigation: InvestigationBinding | None,
     trigger: LineTriggerBinding | None = None,
-) -> PreparedProcedureRunV6 | PreparedProcedureRunV7:
-    modern = isinstance(prepared, PreparedProcedureRunV5)
-    admission_type = ProcedureRunAdmissionV7 if modern else ProcedureRunAdmissionV6
+) -> PreparedProcedureRunV6 | PreparedProcedureRunV9:
+    """Bind an investigation (and a Line trigger) into a prepared run's admission.
+
+    An acquisition run's V9 admission carries both fields itself; a run with no
+    acquisition plan moves to the direct investigation carrier V6.
+    """
+
+    modern = isinstance(prepared, PreparedProcedureRunV9)
+    admission_type: type[ProcedureRunAdmissionV6] | type[ProcedureRunAdmissionV9] = (
+        ProcedureRunAdmissionV9 if modern else ProcedureRunAdmissionV6
+    )
+    if not modern and isinstance(prepared, PreparedProcedureRunV5):
+        raise ExecutionError("an acquisition run is prepared under the current V9 carrier")
     fields = {
         name: getattr(prepared.admission, name)
         for name in type(prepared.admission).model_fields
@@ -1659,7 +1763,7 @@ def bind_prepared_investigation(
     provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay})
     digest = procedure_admission_digest(provisional)
     updates: dict[str, object] = {"admission_binding_digest": digest}
-    if isinstance(provisional, ProcedureRunAdmissionV7) and provisional.invocation_origin == "line":
+    if isinstance(provisional, ProcedureRunAdmissionV9) and provisional.invocation_origin == "line":
         assert provisional.occurrence_id is not None
         updates["run_id"] = procedure_line_run_id(
             occurrence_id=provisional.occurrence_id,
@@ -1673,7 +1777,9 @@ def bind_prepared_investigation(
             journal_partition_id=procedure_direct_partition(replay),
         )
     admission = admission_type.model_validate({**provisional.model_dump(mode="python"), **updates})
-    prepared_type = PreparedProcedureRunV7 if modern else PreparedProcedureRunV6
+    prepared_type: type[PreparedProcedureRunV6] | type[PreparedProcedureRunV9] = (
+        PreparedProcedureRunV9 if modern else PreparedProcedureRunV6
+    )
     return prepared_type.model_validate(
         {**prepared.model_dump(mode="python", exclude={"tag", "admission"}), "admission": admission}
     )
@@ -1701,10 +1807,13 @@ class ProcedureRuntimePolicyAbsent(ExecutionError):
     code = "procedure_runtime_policy_absent"
 
 
+_LineAdmission = TypeVar("_LineAdmission", bound="ProcedureRunAdmissionV3")
+
+
 def bind_line_admission_runtime_policy(
-    admission: ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4 | ProcedureRunAdmissionV5,
+    admission: _LineAdmission,
     policy: ProcedureRuntimePolicy,
-) -> ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4 | ProcedureRunAdmissionV5:
+) -> _LineAdmission:
     """Derive the complete Line admission identity from its governed runtime cap."""
 
     provisional = admission.model_copy(
@@ -1729,16 +1838,7 @@ def bind_line_admission_runtime_policy(
         admission_binding_digest=admission_digest,
         occurrence_evaluation_time=provisional.occurrence_evaluation_time,
     )
-    admission_type = (
-        ProcedureRunAdmissionV7
-        if isinstance(admission, ProcedureRunAdmissionV7)
-        else ProcedureRunAdmissionV5
-        if isinstance(admission, ProcedureRunAdmissionV5)
-        else ProcedureRunAdmissionV4
-        if isinstance(admission, ProcedureRunAdmissionV4)
-        else ProcedureRunAdmissionV3
-    )
-    return admission_type.model_validate(
+    return type(admission).model_validate(
         {
             **provisional.model_dump(mode="python"),
             "run_id": run_id,
@@ -1748,6 +1848,27 @@ def bind_line_admission_runtime_policy(
 
 
 def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> str:
+    if isinstance(admission, ProcedureRunAdmissionV9):
+        # The V7 replay semantics over the same fields (its key never read the
+        # Provider bindings: the acquisition plan digest covers them), under the
+        # V9 domain, with the delegation binding of a nested child.
+        execution: ProcedureRunAdmissionV2 = ProcedureRunAdmissionV7.model_construct(
+            **{
+                name: getattr(admission, name)
+                for name in ProcedureRunAdmissionV7.model_fields
+                if name != "tag"
+            }
+        )
+        return typed_digest(
+            Sha256Value,
+            "playbill-procedure-replay-key-v9",
+            {
+                "execution": procedure_semantic_replay_key_digest(execution),
+                "parent_binding": None
+                if admission.parent_binding is None
+                else admission.parent_binding.model_dump(mode="json"),
+            },
+        ).tagged
     if isinstance(admission, ProcedureRunAdmissionV8):
         base: ProcedureRunAdmissionV2 = ProcedureRunAdmissionV7.model_construct(
             **{
@@ -2513,7 +2634,6 @@ class ProcedureExecutor:
         provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
         provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol]
         | None = None,
-        provider_classifier_registry: ProviderBucketClassifierRegistry | None = None,
         capture_contracts: Mapping[str, CaptureContract] | None = None,
         acquisition_policy: SourceAcquisitionPolicy | None = None,
         default_authorizations: tuple[str, ...] = (),
@@ -2534,9 +2654,6 @@ class ProcedureExecutor:
         self.contract_validator = contract_validator
         self.provider_runtime_invoker = provider_runtime_invoker
         self.provider_runtime_invoker_factory = provider_runtime_invoker_factory
-        self.provider_classifier_registry = (
-            provider_classifier_registry or PROVIDER_BUCKET_CLASSIFIER_REGISTRY
-        )
         self.capture_contracts = dict(capture_contracts or {})
         self.acquisition_policy = acquisition_policy
         self.default_authorizations = default_authorizations
@@ -2654,21 +2771,27 @@ class ProcedureExecutor:
                 "admission_bound",
                 (
                     (
-                        ProcedureAdmissionBoundPayloadV8
+                        ProcedureAdmissionBoundPayloadV9
+                        if isinstance(admission, ProcedureRunAdmissionV9)
+                        else ProcedureAdmissionBoundPayloadV8
                         if isinstance(admission, ProcedureRunAdmissionV8)
                         else ProcedureAdmissionBoundPayloadV7
                         if isinstance(admission, ProcedureRunAdmissionV7)
                         else ProcedureAdmissionBoundPayloadV5
-                    )(
-                        admission=cast(ProcedureRunAdmissionV8, admission),
-                        admission_material_manifest=prepared.admission_material_manifest,
-                        admission_material_manifest_digest=(
-                            prepared.admission_material_manifest_digest
-                        ),
-                        acquisition_plan=prepared.acquisition_plan,
-                        acquisition_plan_digest=prepared.acquisition_plan_digest,
-                        required_reservation_ids=prepared.required_reservation_ids,
-                    ).model_dump(mode="json")
+                    )
+                    .model_validate(
+                        {
+                            "admission": admission,
+                            "admission_material_manifest": prepared.admission_material_manifest,
+                            "admission_material_manifest_digest": (
+                                prepared.admission_material_manifest_digest
+                            ),
+                            "acquisition_plan": prepared.acquisition_plan,
+                            "acquisition_plan_digest": prepared.acquisition_plan_digest,
+                            "required_reservation_ids": prepared.required_reservation_ids,
+                        }
+                    )
+                    .model_dump(mode="json")
                     if isinstance(admission, ProcedureRunAdmissionV5)
                     and isinstance(prepared, PreparedProcedureRunV5)
                     else ProcedureAdmissionBoundPayloadV4(
@@ -2850,7 +2973,7 @@ class ProcedureExecutor:
                     "terminal_capture": state.terminal_capture,
                 }
                 if isinstance(accepted.procedure.definition, ProcedureDefinition)
-                or isinstance(admission, ProcedureRunAdmissionV8)
+                or nested_admission(admission) is not None
                 else {}
             ),
             "output": output,
@@ -3119,7 +3242,7 @@ class ProcedureExecutor:
             or procedure.identity != admission.procedure_identity
             or procedure.activation_policy != admission.activation_policy
             or (
-                not isinstance(admission, ProcedureRunAdmissionV8)
+                nested_admission(admission) is None
                 and procedure.definition.hard_caps != admission.hard_caps
             )
         ):
@@ -3127,10 +3250,11 @@ class ProcedureExecutor:
                 "pin_binding_mismatch",
                 "Procedure admission and accepted artifact differ.",
             )
-        if isinstance(admission, ProcedureRunAdmissionV8):
+        nested = nested_admission(admission)
+        if nested is not None:
             if self.parent_context is None:
                 raise ExecutionError("nested admission requires its executing parent")
-            self.parent_context.verify(admission, accepted)
+            self.parent_context.verify(nested, accepted)
             if self.effective_rung != self.parent_context.child_rung(accepted):
                 raise ExecutionError("nested invocation changed the parent effective rung")
         elif self.parent_context is not None:
@@ -3146,9 +3270,7 @@ class ProcedureExecutor:
                 "pin_binding_mismatch",
                 "Line run pins must close the accepted Procedure pins exactly.",
             )
-        if admission.invocation_origin == "actor" and not isinstance(
-            admission, ProcedureRunAdmissionV8
-        ):
+        if admission.invocation_origin == "actor" and nested is None:
             if procedure.definition.budget != admission.budget:
                 raise ExecutionError("Procedure admission and accepted artifact differ")
         else:
@@ -3324,10 +3446,15 @@ class ProcedureExecutor:
             )
 
     def _checkpoint_current(self, admission: ProcedureRunAdmissionV1, *, effect: bool) -> None:
-        if isinstance(admission, ProcedureRunAdmissionV8) and admission.lane != "replay":
+        parent_binding = procedure_parent_binding(admission)
+        if (
+            parent_binding is not None
+            and isinstance(admission, ProcedureRunAdmissionV2)
+            and admission.lane != "replay"
+        ):
             for pin, policy in zip(
-                admission.parent_binding.ancestors,
-                admission.parent_binding.activation_policies,
+                parent_binding.ancestors,
+                parent_binding.activation_policies,
                 strict=True,
             ):
                 if policy == "abort" or (policy == "epoch-check" and effect):
@@ -4294,10 +4421,7 @@ class ProcedureExecutor:
                 self.bodies.read(admission_records[0].record.payload_digest, access=access)
             )
         ).admission
-        if (
-            not isinstance(admitted, ProcedureRunAdmissionV8)
-            or admitted.parent_binding != context.binding
-        ):
+        if procedure_parent_binding(admitted) != context.binding:
             raise ExecutionError("nested receipt is not bound to this parent occurrence")
         if (
             admitted.procedure_identity != node.procedure.target
@@ -4906,23 +5030,6 @@ class ProcedureExecutor:
             manifests[item_key] = manifest
         return tuple(receipts), tuple(values), manifests, selected
 
-    @staticmethod
-    def _bucket_is_accepted(bucket: str, selectors: tuple[str, ...]) -> bool:
-        try:
-            actual = dict(part.split("=", 1) for part in bucket.split(";"))
-        except ValueError:
-            return False
-        for selector in selectors:
-            try:
-                expected = dict(part.split("=", 1) for part in selector.split(";"))
-            except ValueError:
-                continue
-            if set(actual) == set(expected) and all(
-                expected[name] == "*" or expected[name] == actual[name] for name in expected
-            ):
-                return True
-        return False
-
     def _planned_external_occurrence(
         self,
         *,
@@ -4996,36 +5103,16 @@ class ProcedureExecutor:
                 "No local Provider runtime invoker is installed.",
                 node_id=node_id,
             )
-        # The run's deadline, in this executor's clock, goes with every child
-        # spawned for this occurrence: a package classifier's probe now, the
-        # Provider itself later. Each spawner refuses or clips against it
-        # immediately before its child exists.
+        # The run's deadline, in this executor's clock, goes with the Provider
+        # child spawned for this occurrence: the spawner refuses or clips
+        # against it immediately before the child exists. Core classifies no
+        # input: every input that passes the interface's input contract reaches
+        # the Provider, whose own typed refusals decline what it cannot serve.
         deadline = ProviderSpawnDeadline(
             deadline_ns=state.run_started_monotonic_ns
             + admission.budget.wall_clock.microseconds * 1000,
             monotonic_ns=self.clock.monotonic_ns,
         )
-        try:
-            classifier = self.provider_classifier_registry.require(occurrence.classifier_digest)
-            measured_bucket = classifier.classify(payload, deadline=deadline)
-        except ProviderClassifierInstallationRefused as exc:
-            raise _RunRefusal(exc.code, str(exc), node_id=node_id) from exc
-        except ProviderLocalRuntimeRefused as exc:
-            # Nothing is journaled yet: the run itself refuses on its budget.
-            if exc.code != "budget_wall_clock":
-                raise
-            raise _RunRefusal("budget_wall_clock", str(exc), node_id=node_id) from exc
-        if not self._bucket_is_accepted(measured_bucket, occurrence.accepted_bucket_selectors):
-            raise _ProviderNodeRefusal(
-                map_provider_refusal(
-                    "unclaimed_bucket",
-                    message=(
-                        "The measured Provider input bucket is outside the admitted selectors."
-                    ),
-                    detail={},
-                ),
-                node_id=node_id,
-            )
         if not isinstance(payload, dict):
             raise _RunRefusal(
                 "provider_protocol_violation",
@@ -5149,7 +5236,6 @@ class ProcedureExecutor:
             implementation_digest=occurrence.implementation_digest,
             materialization_digest=occurrence.local_execution.materialization_digest,
             input_digest=input_digest,
-            input_bucket=measured_bucket,
         )
         self._append_event(
             admission,
@@ -5182,7 +5268,7 @@ class ProcedureExecutor:
                     "invocation_id": invocation_id,
                 },
                 input=payload,
-                input_bucket=measured_bucket,
+                input_bucket=PROVIDER_RUNTIME_LEGACY_INPUT_BUCKET,
                 capture_contract=occurrence.capture_contract_digest,
                 budgets=ProviderRuntimeBudgetsV1(
                     wall_clock_seconds=wall_clock_seconds,
@@ -5268,7 +5354,6 @@ class ProcedureExecutor:
             interface_id=verified_binding.interface_id,
             interface_digest=verified_binding.interface_digest,
             protocol_version=verified_binding.protocol_version,
-            input_bucket=measured_bucket,
             capture_contract_digest=occurrence.capture_contract_digest,
             input_digest=input_digest,
             outcome=outcome,
@@ -6970,8 +7055,10 @@ __all__ = [
     "PreparedProcedureRunV1",
     "PreparedProcedureRunV4",
     "PreparedProcedureRunV5",
+    "PreparedProcedureRunV9",
     "ProcedureAdmissionBoundPayloadV4",
     "ProcedureAdmissionBoundPayloadV5",
+    "ProcedureAdmissionBoundPayloadV9",
     "ProcedureActivationAuthorityProtocol",
     "ProcedureBoundaryRefused",
     "ProcedureClockProtocol",
@@ -6980,6 +7067,7 @@ __all__ = [
     "ProcedureRunAdmissionV1",
     "ProcedureRunAdmissionV4",
     "ProcedureRunAdmissionV5",
+    "ProcedureRunAdmissionV9",
     "ProcedureRunReceiptV1",
     "ProcedureRunRefusalV1",
     "ProcedureRunResultV1",

@@ -1389,14 +1389,10 @@ def _live_interface(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     resolved: ResolvedRef,
-    *,
-    installed_classifier_digests: frozenset[str] = frozenset(),
 ) -> AcceptedProviderInterface:
     """The live accepted inventory entry of one provider interface, or a coded refusal."""
 
-    for item in accepted_provider_interfaces(
-        instance, coordinate, installed_classifier_digests=installed_classifier_digests
-    ):
+    for item in accepted_provider_interfaces(instance, coordinate):
         if item.entry.identity == resolved.identity:
             return item
     raise ReadRefusalError(
@@ -2230,7 +2226,6 @@ def _proof(
     evaluation_time: datetime,
     access: BodyAccessContext,
     viewer: OperationalViewer | None = None,
-    installed_classifier_digests: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     at = AcceptedCoordinate.from_internal(coordinate)
     # A run id and a Capture digest are bare identities, not `Kind:name`.
@@ -2288,12 +2283,7 @@ def _proof(
             instance, name=name, request=ProcedureReadinessRequestV1(at=at)
         ).model_dump(mode="json")
     if resolved.kind == "provider_interface":
-        item = _live_interface(
-            instance,
-            coordinate,
-            resolved,
-            installed_classifier_digests=installed_classifier_digests,
-        )
+        item = _live_interface(instance, coordinate, resolved)
         return {
             "coordinate": at.model_dump(mode="json"),
             "entry": item.entry.model_dump(mode="json"),
@@ -2371,7 +2361,6 @@ def service_playbill_get(
     request: GetRequest,
     access: BodyAccessContext,
     viewer: OperationalViewer | None = None,
-    installed_classifier_digests: frozenset[str] = frozenset(),
 ) -> GetResult:
     """Resolve one reference and answer it at one ``detail`` level.
 
@@ -2551,7 +2540,6 @@ def service_playbill_get(
             evaluation_time=evaluation_time,
             access=access,
             viewer=viewer,
-            installed_classifier_digests=installed_classifier_digests,
         )
         if resolved.kind == "procedure_run":
             fields["live"] = live_view(instance, ("proof",))

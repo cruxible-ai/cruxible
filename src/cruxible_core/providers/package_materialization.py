@@ -28,6 +28,7 @@ from cruxible_client.contracts.providers import (
     ProviderLocalEnvBackendPin,
 )
 from cruxible_core.errors import ConfigError
+from cruxible_core.providers.package_metadata import read_wheel_registration
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.providers.provider_local_runtime import LocalProviderDeploymentV1
 from cruxible_core.runtime.execution_policy import enforce_customer_code_execution_supported
@@ -129,8 +130,8 @@ def resolve_provider_package(
     wheels = toolchain("wheels")
     resolution = toolchain("resolution")
     pin = wheels.wheel_pin(wheel)
-    with wheels.wheel_registration(wheel) as bundle:
-        document = PackageRegistrationDocumentV1.model_validate(bundle.export_document())
+    # Core's own reader: the runtime's validates the package's inert bucket data.
+    document = read_wheel_registration(wheel)
     local_pins = [wheels.wheel_pin(path) for path in dependency_wheels]
     local_by_name = {item.name: item for item in local_pins}
     if len(local_by_name) != len(local_pins) or pin.name in local_by_name:

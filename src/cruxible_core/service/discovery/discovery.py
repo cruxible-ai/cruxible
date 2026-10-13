@@ -77,22 +77,14 @@ class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
     artifact_kind: Literal["ProviderInterface"] = "ProviderInterface"
     pin_role: Literal["provider-interface"] = "provider-interface"
     interface_digest: str
-    vocabulary_digest: str
-    classifier_digest: str
     effect_class: ProviderEffectClass
-    classifier_status: Literal["installed", "not_installed"]
     interface_basis: Literal["accepted_registration"] = "accepted_registration"
     # Additive: the live Providers implementing this interface, so an author can
     # pin a graph-v4 Source node from the served inventory alone.
     providers: tuple[ProviderInterfaceImplementationV1, ...] = ()
     operation_contract: ProviderOperationContract | None = None
 
-    @field_validator(
-        "artifact_digest",
-        "interface_digest",
-        "vocabulary_digest",
-        "classifier_digest",
-    )
+    @field_validator("artifact_digest", "interface_digest")
     @classmethod
     def _digest(cls, value: str) -> str:
         ArtifactDigest.from_tagged(value)
@@ -107,11 +99,7 @@ class AcceptedProviderInterface:
     entry: ProviderInterfaceEntryV1
 
 
-def _provider_interfaces(
-    tree: Mapping[str, bytes],
-    *,
-    installed_classifier_digests: frozenset[str],
-) -> tuple[AcceptedProviderInterface, ...]:
+def _provider_interfaces(tree: Mapping[str, bytes]) -> tuple[AcceptedProviderInterface, ...]:
     implementations: dict[str, list[ProviderInterfaceImplementationV1]] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("providers/"):
@@ -152,14 +140,7 @@ def _provider_interfaces(
                 if "contracts" in json.loads(bytes.fromhex(registration.interface_bytes_hex))
                 else None
             ),
-            vocabulary_digest=registration.vocabulary_digest,
-            classifier_digest=registration.classifier_digest,
             effect_class=registration.effect_class,
-            classifier_status=(
-                "installed"
-                if registration.classifier_digest in installed_classifier_digests
-                else "not_installed"
-            ),
         )
         entries.append(AcceptedProviderInterface(registration=registration, entry=entry))
     return tuple(sorted(entries, key=lambda item: item.entry.identity.encode("utf-8")))
@@ -168,8 +149,6 @@ def _provider_interfaces(
 def accepted_provider_interfaces(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
-    *,
-    installed_classifier_digests: frozenset[str] = frozenset(),
 ) -> tuple[AcceptedProviderInterface, ...]:
     """Every live accepted provider interface at one coordinate, sorted by identity.
 
@@ -183,7 +162,7 @@ def accepted_provider_interfaces(
             for kind in ("provider", "provider-interface")
             for row in projection.typed.envelopes(kind=kind)
         }
-    return _provider_interfaces(tree, installed_classifier_digests=installed_classifier_digests)
+    return _provider_interfaces(tree)
 
 
 def _resolve_coordinate(

@@ -14,7 +14,6 @@ import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.procedures.execution import ProcedureExecutor
-from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.providers.provider_local_runtime import _run_child
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
@@ -22,14 +21,13 @@ from cruxible_core.runtime import playbill_manager as manager_module
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._p2b1_support import install_demo_classifier
 from tests.support.invocation_ids import unique_invocation_id
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
     _Authority,
     _Contracts,
     _CrashingInvoker,
-    _prepared_v5,
+    _prepared_acquisition_run,
 )
 from tests.test_providers.test_provider_local_driver import _fake_interpreter
 
@@ -132,9 +130,7 @@ def test_a_retained_pre_execution_refusal_folds_on_the_next_manager_recovery(
     accepted = _accepted_one_provider()
     journal_root = short_root / "journal"
     journal_root.mkdir()
-    prepared, fixture = _prepared_v5(accepted, journal_root)
-    classifiers = ProviderBucketClassifierRegistry()
-    install_demo_classifier(classifiers)
+    prepared, fixture = _prepared_acquisition_run(accepted, journal_root)
     executor = ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -143,7 +139,6 @@ def test_a_retained_pre_execution_refusal_folds_on_the_next_manager_recovery(
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=_CrashingInvoker(),
-        provider_classifier_registry=classifiers,
     )
     with pytest.raises(ExecutionError, match="provider_completion_not_durable"):
         executor.execute(prepared, accepted)

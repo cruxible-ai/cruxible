@@ -291,9 +291,14 @@ class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
     interface_artifact_digest: str
     interface_id: str
     interface_digest: str
-    vocabulary_digest: str
-    classifier_digest: str
-    accepted_bucket_selectors: tuple[str, ...]
+    # Historical: the classification an occurrence planned before core stopped
+    # classifying inputs. Omitted from every later plan, so a plan digests as
+    # it was written either way.
+    vocabulary_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    classifier_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    accepted_bucket_selectors: tuple[str, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     implementation_digest: str
     effect_class: Literal["none", "external_read", "external_mutation"]
     capture_contract_digest: str | None = None
@@ -322,13 +327,24 @@ class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
 
     @field_validator("accepted_bucket_selectors")
     @classmethod
-    def _selectors(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+    def _selectors(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if value is None:
+            return None
         if not value or value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
             raise ValueError("accepted bucket selectors must be sorted and unique")
         return value
 
     @model_validator(mode="after")
     def _correspondence(self) -> ProviderExternalOccurrencePlan:
+        historical = (
+            self.vocabulary_digest,
+            self.classifier_digest,
+            self.accepted_bucket_selectors,
+        )
+        if any(item is None for item in historical) and any(
+            item is not None for item in historical
+        ):
+            raise ValueError("a historical occurrence classification is all present or all absent")
         local = self.local_execution
         for label, expected, actual in (
             ("Provider", self.provider_artifact_digest, local.provider_artifact_digest),
@@ -454,7 +470,9 @@ class ProviderInvocationReceipt(_StrictProviderExecutionModel):
     interface_id: str
     interface_digest: str
     protocol_version: str
-    input_bucket: str
+    # The measured input bucket of a call admitted before core stopped
+    # classifying inputs; omitted on every later call, so both digest as written.
+    input_bucket: str | None = Field(default=None, exclude_if=lambda value: value is None)
     capture_contract_digest: str | None = None
     input_digest: str
     outcome: ProviderInvocationOutcome
@@ -627,7 +645,9 @@ class ProviderInvocationStarted(_StrictProviderExecutionModel):
     implementation_digest: str
     materialization_digest: str
     input_digest: str
-    input_bucket: str
+    # Historical: the measured input bucket of a call started before core
+    # stopped classifying inputs. Omitted on every later start.
+    input_bucket: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     _digests = field_validator("implementation_digest", "materialization_digest", "input_digest")(
         _digest

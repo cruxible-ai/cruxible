@@ -482,7 +482,6 @@ def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(o
 def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     """Accept the demo interface with its Provider, plus an acquisition interface with none."""
 
-    import cruxible_core.proposals.proposals as proposal_module
     from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_client.contracts.provider_interfaces import (
         ProviderBucketVocabulary,
@@ -497,23 +496,19 @@ def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
     from tests.core_support._p2b1_support import (
         accepted_interface,
         accepted_provider,
-        interface_fixture,
         interface_registration,
     )
     from tests.core_support._support import initialize_local
 
     instance, owner = initialize_local(tmp_path)
-    fixture = interface_fixture()
-    monkeypatch.setattr(
-        proposal_module,
-        "core_provider_bucket_conformance_fixtures",
-        lambda: {fixture.fixture_id: fixture},
-    )
     demo, provider = accepted_interface(), accepted_provider()
+    # The description is the interface definition's own: a registration's
+    # bucket vocabulary is inert historical data and describes nothing served.
     definition = canonical_bytes(
         {
             "interface_id": "demo.fetch",
             "version": 1,
+            "description": "Fetch one resource over HTTP. Return its bytes.",
             "effect_class": "external_read",
             "contracts": {
                 "input": {
@@ -527,14 +522,11 @@ def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
         }
     ).hex()
     base = interface_registration()
+    # A V1 registration still carries a bucket vocabulary naming its interface:
+    # inert registration bytes, never read for anything served.
     vocabulary = canonical_bytes(
         ProviderBucketVocabulary.model_validate_json(bytes.fromhex(base.vocabulary_bytes_hex))
-        .model_copy(
-            update={
-                "interface_id": "demo.fetch",
-                "description": "Fetch one resource over HTTP. Buckets size the payload.",
-            }
-        )
+        .model_copy(update={"interface_id": "demo.fetch"})
         .model_dump(mode="json")
     ).hex()
     fetch = base.model_copy(

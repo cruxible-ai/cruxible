@@ -63,9 +63,10 @@ from cruxible_core.procedures.egress import (
     verify_terminal_egress_receipt,
 )
 from cruxible_core.procedures.execution import (
+    ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS,
     ProcedureAdmissionBoundPayloadV5,
     ProcedureRunAdmissionV5,
-    ProcedureRunAdmissionV8,
+    nested_admission,
     parse_admission_payload,
 )
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
@@ -135,11 +136,7 @@ def _fold_partition(
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
         kind = stored.record.event_kind
         if kind == "admission_bound" and isinstance(payload, dict):
-            if payload.get("tag") in {
-                "playbill-procedure-admission-bound-payload-v5",
-                "playbill-procedure-admission-bound-payload-v7",
-                "playbill-procedure-admission-bound-payload-v8",
-            }:
+            if payload.get("tag") in ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS:
                 bound_payload = parse_admission_payload(payload)
                 if isinstance(bound_payload, ProcedureAdmissionBoundPayloadV5):
                     fold.admission = bound_payload.admission
@@ -412,11 +409,12 @@ def _resolve_prepared(
         coordinate=coordinate,
     )
     delegation = None
-    if isinstance(admission, ProcedureRunAdmissionV8):
+    nested = nested_admission(admission)
+    if nested is not None:
         from cruxible_core.service.procedures.nested_runs import retained_delegation
 
-        delegation = retained_delegation(instance, admission)
-        root = delegation.authority(admission)
+        delegation = retained_delegation(instance, nested)
+        root = delegation.authority(nested)
         accepted = _accepted_procedure(instance, name=root.target.name, coordinate=coordinate)
     mandates = _accepted_line_mandates(
         instance,

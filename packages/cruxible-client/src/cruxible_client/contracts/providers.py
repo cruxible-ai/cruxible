@@ -193,6 +193,8 @@ class ProviderImplementationManifestV1(_StrictProviderModel):
     interface_digest: str
     entrypoint: str
     backends: tuple[Literal["local_env", "container"], ...]
+    # The provider-runtime 0.2.x manifest's bucket claims: inert. Core admits
+    # every input the interface's contract admits and reads none of these.
     declared_input_buckets: tuple[str, ...]
     bucket_conformance: dict[str, str] = Field(default_factory=dict)
     declared_endpoints: tuple[str, ...] = ()
@@ -219,13 +221,6 @@ class ProviderImplementationManifestV1(_StrictProviderModel):
     ) -> tuple[Literal["local_env", "container"], ...]:
         if not value or len(set(value)) != len(value):
             raise ValueError("Provider implementation backends must be nonempty and unique")
-        return value
-
-    @field_validator("declared_input_buckets")
-    @classmethod
-    def _buckets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value:
-            raise ValueError("Provider implementation must declare input buckets")
         return value
 
     @field_validator("requires_extras")
@@ -875,20 +870,8 @@ def evaluate_provider_law(
                     "Provider manifest and governed interface digest disagree.",
                     path=path,
                 )
-            proof_by_selector = {
-                proof.selector: proof for proof in getattr(registration, "conformance_proofs", ())
-            }
-            for selector in implementation.declared_input_buckets:
-                proof = proof_by_selector.get(selector)
-                if (
-                    proof is None
-                    or implementation.bucket_conformance.get(selector) != proof.fixture_id
-                ):
-                    return _law_refusal(
-                        "cruxible.provider.bucket_fixture_missing",
-                        f"Provider selector {selector!r} lacks its governed conformance proof.",
-                        path=path,
-                    )
+            # A manifest's declared input buckets are inert: core classifies no
+            # input, so no selector needs a proof from the registration it binds.
             expected_side_effects = getattr(registration, "effect_class", None) == (
                 "external_mutation"
             )

@@ -474,8 +474,8 @@ class GetProviderInterfaceCard(_StrictGetModel):
     """One live provider interface: its contract fields, effect and implementations.
 
     ``detail="proof"`` answers the accepted inventory entry a Procedure node
-    pins (``entry``): artifact, interface and classifier digests, the operation
-    contract and every implementation.
+    pins (``entry``): the artifact and interface digests, the operation contract
+    and every implementation.
     """
 
     interface: str

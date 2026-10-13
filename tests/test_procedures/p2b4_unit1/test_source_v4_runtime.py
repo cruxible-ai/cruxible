@@ -75,9 +75,9 @@ from cruxible_core.procedures.egress import (
     compute_effective_rung,
 )
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV5,
+    PreparedProcedureRunV9,
     ProcedureExecutor,
-    ProcedureRunAdmissionV5,
+    ProcedureRunAdmissionV9,
     _source_capture_association_fields,
     procedure_admission_digest,
     procedure_line_run_id,
@@ -85,7 +85,6 @@ from cruxible_core.procedures.execution import (
     procedure_pin_set_digest,
     procedure_semantic_replay_key_digest,
 )
-from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
@@ -99,13 +98,12 @@ from cruxible_core.storage.material_reservations import (
     ProcedureMaterialReservationStore,
     ReservedCaptureStore,
 )
-from tests.core_support._p2b1_support import install_demo_classifier
 from tests.core_support._pc_c_support import capture_contract, digest
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
-    _prepared_v5,
+    _prepared_acquisition_run,
 )
 
 
@@ -166,10 +164,9 @@ def _source_fixture(
     rule: InputAcquisitionRule | None = None,
     include_terminal: bool = False,
     capture_budget: int | None = None,
-    accepted_bucket_selectors: tuple[str, ...] | None = None,
 ) -> tuple[
     AcceptedProcedure,
-    PreparedProcedureRunV5,
+    PreparedProcedureRunV9,
     object,
     SourceAcquisitionPolicy,
     object,
@@ -178,7 +175,7 @@ def _source_fixture(
     provider_accepted = _accepted_one_provider(
         wall_clock=RUN_WALL_CLOCK, max_wall_clock=MAX_WALL_CLOCK
     )
-    provider_prepared, fixture = _prepared_v5(provider_accepted, tmp_path)
+    provider_prepared, fixture = _prepared_acquisition_run(provider_accepted, tmp_path)
     provider_node = provider_accepted.procedure.definition.nodes[0]
     assert isinstance(provider_node, CallNode)
     contract = capture_contract()
@@ -263,11 +260,6 @@ def _source_fixture(
             "occurrence_kind": "source",
             "input_name": source_node.as_,
             "capture_contract_digest": contract_pin.artifact_digest,
-            "accepted_bucket_selectors": (
-                old_occurrence.accepted_bucket_selectors
-                if accepted_bucket_selectors is None
-                else accepted_bucket_selectors
-            ),
             "contract_input_digest": None,
             "contract_output_digest": None,
             "source_runtime_plan_digest": digest("source-runtime-plan", "unit1"),
@@ -288,7 +280,7 @@ def _source_fixture(
     old_admission = provider_prepared.admission
     fields = {
         name: getattr(old_admission, name)
-        for name in ProcedureRunAdmissionV5.model_fields
+        for name in ProcedureRunAdmissionV9.model_fields
         if name != "tag"
     }
     fields.update(
@@ -312,12 +304,12 @@ def _source_fixture(
         fields["budget"] = old_admission.budget.model_copy(
             update={"max_capture_bytes": capture_budget}
         )
-    provisional = ProcedureRunAdmissionV5.model_construct(**fields)
+    provisional = ProcedureRunAdmissionV9.model_construct(**fields)
     provisional = provisional.model_copy(
         update={"semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional)}
     )
     admission_digest = procedure_admission_digest(provisional)
-    admission = ProcedureRunAdmissionV5.model_validate(
+    admission = ProcedureRunAdmissionV9.model_validate(
         {
             **provisional.model_dump(mode="python"),
             "admission_binding_digest": admission_digest,
@@ -329,7 +321,7 @@ def _source_fixture(
             ),
         }
     )
-    prepared = PreparedProcedureRunV5.model_validate(
+    prepared = PreparedProcedureRunV9.model_validate(
         {
             **provider_prepared.model_dump(mode="python"),
             "admission": admission,
@@ -377,7 +369,7 @@ def _payloads(prepared, fixture):  # type: ignore[no-untyped-def]
     ]
 
 
-def _next_attempt(prepared: PreparedProcedureRunV5) -> PreparedProcedureRunV5:
+def _next_attempt(prepared: PreparedProcedureRunV9) -> PreparedProcedureRunV9:
     provisional = prepared.admission.model_copy(
         update={
             "attempt": prepared.admission.attempt + 1,
@@ -386,7 +378,7 @@ def _next_attempt(prepared: PreparedProcedureRunV5) -> PreparedProcedureRunV5:
         }
     )
     admission_digest = procedure_admission_digest(provisional)
-    admission = ProcedureRunAdmissionV5.model_validate(
+    admission = ProcedureRunAdmissionV9.model_validate(
         {
             **provisional.model_dump(mode="python"),
             "admission_binding_digest": admission_digest,
@@ -398,7 +390,7 @@ def _next_attempt(prepared: PreparedProcedureRunV5) -> PreparedProcedureRunV5:
             ),
         }
     )
-    return PreparedProcedureRunV5.model_validate(
+    return PreparedProcedureRunV9.model_validate(
         {**prepared.model_dump(mode="python"), "admission": admission}
     )
 
@@ -419,8 +411,6 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
 ) -> None:
     accepted, prepared, fixture, policy, contract = _source_fixture(tmp_path)
     invoker = _SourceInvoker(observed_at=prepared.admission.occurrence_evaluation_time)
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
     executor = ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -429,7 +419,6 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
-        provider_classifier_registry=registry,
         capture_contracts={capture_contract_digest(contract).tagged: contract},
         acquisition_policy=policy,
     )
@@ -521,8 +510,6 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
     tmp_path: Path,
 ) -> None:
     accepted, prepared, fixture, policy, contract = _source_fixture(tmp_path)
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
     first_invoker = _SourceInvoker(observed_at=prepared.admission.occurrence_evaluation_time)
     first = ProcedureExecutor(
         journal=fixture.journal,
@@ -532,7 +519,6 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=first_invoker,
-        provider_classifier_registry=registry,
         capture_contracts={capture_contract_digest(contract).tagged: contract},
         acquisition_policy=policy,
     ).execute(prepared, accepted)
@@ -550,7 +536,7 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
         from cruxible_core.storage.cas import ContentAddressedBodyStore
         from cruxible_core.exhaust import LocalJournalBackend
         from cruxible_core.procedures.execution import (
-            PreparedProcedureRunV5,
+            PreparedProcedureRunV9,
             ProcedureExecutor,
         )
         from cruxible_core.procedures.run_index import ProcedureRunIndex
@@ -558,7 +544,7 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
 
         root, accepted_path, prepared_path, marker_path = map(Path, sys.argv[1:])
         accepted = AcceptedProcedure.model_validate_json(accepted_path.read_text())
-        prepared = PreparedProcedureRunV5.model_validate_json(prepared_path.read_text())
+        prepared = PreparedProcedureRunV9.model_validate_json(prepared_path.read_text())
 
         def construct_invoker():
             marker_path.write_text("constructed")
@@ -628,8 +614,6 @@ def test_crash_after_capture_cas_before_produced_event_retains_both_reservations
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     accepted, prepared, fixture, policy, contract = _source_fixture(tmp_path)
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
     executor = ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -640,7 +624,6 @@ def test_crash_after_capture_cas_before_produced_event_retains_both_reservations
         provider_runtime_invoker=_SourceInvoker(
             observed_at=prepared.admission.occurrence_evaluation_time
         ),
-        provider_classifier_registry=registry,
         capture_contracts={capture_contract_digest(contract).tagged: contract},
         acquisition_policy=policy,
     )
@@ -679,8 +662,6 @@ def test_only_input_attributed_provider_refusal_uses_the_declared_source_default
         tmp_path,
         rule=default_rule,
     )
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
     result = ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -691,7 +672,6 @@ def test_only_input_attributed_provider_refusal_uses_the_declared_source_default
         provider_runtime_invoker=_RefusingSourceInvoker(
             observed_at=prepared.admission.occurrence_evaluation_time
         ),
-        provider_classifier_registry=registry,
         capture_contracts={capture_contract_digest(contract).tagged: contract},
         acquisition_policy=policy,
         default_authorizations=("source_result",),
@@ -758,48 +738,6 @@ def test_currency_refusal_precedes_source_closure_preflight(tmp_path: Path) -> N
     )
 
 
-def test_local_unclaimed_bucket_uses_the_same_declared_source_default(
-    tmp_path: Path,
-) -> None:
-    default_rule = InputAcquisitionRule(
-        input_name="source_result",
-        requirement="conservative_default",
-        permitted_replayability=("attested_only", "exact"),
-        max_age=CanonicalDuration(microseconds=60_000_000),
-        on_unavailable="declared_conservative_default",
-        on_stale="refuse",
-        on_oversized="refuse",
-        on_conflict="preserve",
-        conservative_default=False,
-    )
-    accepted, prepared, fixture, policy, contract = _source_fixture(
-        tmp_path,
-        rule=default_rule,
-        accepted_bucket_selectors=("size=large",),
-    )
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
-    invoker = _SourceInvoker(observed_at=prepared.admission.occurrence_evaluation_time)
-
-    result = ProcedureExecutor(
-        journal=fixture.journal,
-        bodies=fixture.bodies,
-        run_index=fixture.run_index,
-        fencing_token="writer",
-        activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=_Contracts(),
-        provider_runtime_invoker=invoker,
-        provider_classifier_registry=registry,
-        capture_contracts={capture_contract_digest(contract).tagged: contract},
-        acquisition_policy=policy,
-        default_authorizations=("source_result",),
-    ).execute(prepared, accepted)
-
-    assert result.status == "succeeded"
-    assert result.output is False
-    assert invoker.spawn_calls == 0
-
-
 def test_two_run_ids_under_one_semantic_key_keep_independent_source_results(
     tmp_path: Path,
 ) -> None:
@@ -810,10 +748,8 @@ def test_two_run_ids_under_one_semantic_key_keep_independent_source_results(
         first_prepared.admission.semantic_replay_key_digest
         == second_prepared.admission.semantic_replay_key_digest
     )
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
 
-    def execute(prepared: PreparedProcedureRunV5, result_size: int):  # type: ignore[no-untyped-def]
+    def execute(prepared: PreparedProcedureRunV9, result_size: int):  # type: ignore[no-untyped-def]
         return ProcedureExecutor(
             journal=fixture.journal,
             bodies=fixture.bodies,
@@ -825,7 +761,6 @@ def test_two_run_ids_under_one_semantic_key_keep_independent_source_results(
                 observed_at=prepared.admission.occurrence_evaluation_time,
                 result_size=result_size,
             ),
-            provider_classifier_registry=registry,
             capture_contracts={capture_contract_digest(contract).tagged: contract},
             acquisition_policy=policy,
         ).execute(prepared, accepted)
@@ -866,8 +801,6 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
         include_terminal=True,
         capture_budget=10 if budget_refusal else None,
     )
-    registry = ProviderBucketClassifierRegistry()
-    install_demo_classifier(registry)
     contract_digest = capture_contract_digest(contract).tagged
     rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
@@ -890,7 +823,6 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
         provider_runtime_invoker=_SourceInvoker(
             observed_at=prepared.admission.occurrence_evaluation_time
         ),
-        provider_classifier_registry=registry,
         capture_contracts={contract_digest: contract},
         acquisition_policy=policy,
         effective_rung=rung,

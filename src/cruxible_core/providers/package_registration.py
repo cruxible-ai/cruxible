@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -17,7 +17,6 @@ from cruxible_client.contracts.provider_contracts import read_provider_operation
 from cruxible_client.contracts.provider_interfaces import (
     ProviderBucketConformanceFixture,
     ProviderBucketConformanceFixtureProof,
-    ProviderBucketVocabulary,
     ProviderClassifierCode,
     ProviderInterfaceRegistration,
     ProviderInterfaceRegistrationV1,
@@ -26,6 +25,7 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_bucket_vocabulary_digest,
     provider_interface_digest,
     provider_package_classifier_digest,
+    provider_vocabulary_document,
 )
 from cruxible_client.contracts.providers import (
     Provider,
@@ -44,14 +44,22 @@ class _Strict(BaseModel):
 
 
 class PackageInterfaceExportV1(_Strict):
+    """One exported interface. Its vocabulary, classifier and fixtures are the
+    provider-runtime 0.2.x package format's bucket data: carried, never judged."""
+
     interface_id: str
     interface_digest: str
     definition: dict[str, Any]
-    vocabulary: ProviderBucketVocabulary
+    vocabulary: dict[str, Any]
     classifier_identity: str
     classifier_version: int
     classifier_code: ProviderClassifierCode
     fixtures: tuple[ProviderBucketConformanceFixture, ...]
+
+    @field_validator("vocabulary")
+    @classmethod
+    def _inert_vocabulary(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return provider_vocabulary_document(value)
 
 
 class PackageRuntimeRequirementV1(_Strict):
@@ -63,7 +71,7 @@ class PackageRuntimeRequirementV1(_Strict):
 
 
 class PackageRegistrationDocumentV1(_Strict):
-    """Data exported by the provider runtime's verified registration reader."""
+    """A provider package's registration, as ``package_metadata`` reads it from the wheel."""
 
     schema_version: Literal[1]
     manifest: ProviderRuntimeManifest
@@ -90,10 +98,11 @@ class PackageRegistrationDocumentV1(_Strict):
         """The registration installing this package proposes for each exported interface.
 
         A definition core owns (``web.fetch``) registers as core's registration of
-        it, whatever vocabulary, classifier and fixtures the package ships: the
-        contract, not the implementation, owns the ProviderInterface, so every
-        implementation of it binds the same artifact and core classifies its
-        runs. Any other definition registers as the package exports it.
+        it, whatever the package ships alongside the definition: the contract, not
+        the implementation, owns the ProviderInterface, so every implementation of
+        it binds the same artifact. Any other definition registers as the package
+        exports it. A package's vocabulary, classifier and fixtures travel as inert
+        registration data; nothing executes the classifier.
         """
 
         result: list[ProviderInterfaceRegistrationV1] = []
@@ -107,14 +116,6 @@ class PackageRegistrationDocumentV1(_Strict):
                 raise ValueError("package definition differs from core's under its digest")
             result.append(core)
         return tuple(result)
-
-    def package_registration(self, interface_id: str) -> ProviderInterfaceRegistration:
-        """The registration this package itself exports for one interface, classifier
-        and fixtures included, even for a definition core owns: what an earlier
-        install of it registered, so it can host that registration's classifier."""
-
-        exported = next(item for item in self.interfaces if item.interface_id == interface_id)
-        return self._package_registration(exported, self._checked_definition(exported))
 
     def _checked_definition(self, exported: PackageInterfaceExportV1) -> str:
         """The exported definition's canonical bytes, once it agrees with its implementation."""
@@ -134,8 +135,6 @@ class PackageRegistrationDocumentV1(_Strict):
             raise ValueError("package definition and implementation disagree")
         interface_bytes = canonical_bytes(definition).hex()
         read_provider_operation_contract(interface_bytes)
-        if set(implementation.bucket_conformance) != set(implementation.declared_input_buckets):
-            raise ValueError("each declared selector must have a fixture")
         return interface_bytes
 
     def _package_registration(
@@ -149,11 +148,15 @@ class PackageRegistrationDocumentV1(_Strict):
         fixtures = {fixture.fixture_id: fixture for fixture in exported.fixtures}
         if len(fixtures) != len(exported.fixtures):
             raise ValueError("package fixtures must have unique identities")
+        # The manifest's selector -> fixture claims, carried as proof records
+        # where the package ships the fixture a claim names; a claim naming no
+        # shipped fixture has no bytes to record and is left out. Nothing checks
+        # a selector, a bucket or a claim's coverage.
         proofs = []
         for selector, fixture_id in sorted(implementation.bucket_conformance.items()):
-            if fixture_id not in fixtures:
-                raise ValueError("conformance proof names a missing fixture")
-            fixture = fixtures[fixture_id]
+            fixture = fixtures.get(fixture_id)
+            if fixture is None:
+                continue
             proofs.append(
                 ProviderBucketConformanceFixtureProof(
                     selector=selector,
@@ -163,8 +166,7 @@ class PackageRegistrationDocumentV1(_Strict):
                 )
             )
         fixture_set_digest = provider_bucket_fixture_set_digest(tuple(proofs))
-        vocabulary = exported.vocabulary.model_dump(mode="json")
-        vocabulary["status"] = "accepted"
+        vocabulary = {**exported.vocabulary, "status": "accepted"}
         vocabulary_bytes = canonical_bytes(vocabulary).hex()
         effect_class = exported.definition["effect_class"]
         return ProviderInterfaceRegistration(

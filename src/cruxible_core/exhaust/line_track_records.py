@@ -6,7 +6,7 @@ digest remains committed in the fact value. A Provider/interface rebind is an
 accepted Line-v2 successor, never an invisible deployment act. The v1
 ``implementation_digest`` remains the Procedure artifact digest forever; it is
 not repurposed as Provider implementation identity. Provider invocation credit
-uses its separate interface × implementation × measured-bucket dimensions.
+uses its separate interface × implementation dimensions.
 Only an accepted promotion contributes, and only through the promotion law that
 already verified the exact record range.
 

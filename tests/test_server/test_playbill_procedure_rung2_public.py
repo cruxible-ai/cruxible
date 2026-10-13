@@ -409,7 +409,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     interface = interface_entry(transport, instance_id, "workspace.file")
     assert interface["identity"] == "ProviderInterface:workspace.file"
     assert interface["interface_digest"] == WORKSPACE_FILE_INTERFACE_V2_DIGEST
-    assert interface["classifier_status"] == "installed"
+    assert "classifier_status" not in interface
     (provider,) = interface["providers"]
     assert provider["provider_identity"] == "Provider:cruxible-builtin"
     assert provider["implementation_digest"] == WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST

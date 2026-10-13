@@ -12,7 +12,8 @@ db085204, the package that is no longer published): the same field validation,
 strict base64 decode, length and digest checks and text/bytes structuring, so a
 built-in run and a run of the package produce the same result envelope for the
 same input. A parity golden pins that (tests/test_providers/
-test_builtin_workspace_file.py).
+test_builtin_workspace_file.py). The one addition is a typed refusal above
+1 MiB: core admitted no larger file while it still classified inputs.
 
 The module is pure, and a guard test holds it to that: it imports no ``os``,
 ``socket`` or ``io`` and never names ``open``. It reads no file, contacts no
@@ -59,6 +60,14 @@ BYTE_SIZE_CEILINGS: tuple[tuple[str, int], ...] = (
 )
 """Inclusive upper bounds per size class, in order; above the last is ``large``."""
 
+MAX_STRUCTURED_BYTES = BYTE_SIZE_CEILINGS[-1][1]
+"""The most bytes the built-in structures (1 MiB). A larger file is refused, typed.
+
+Core admitted no larger file before it stopped classifying inputs (the built-in
+never claimed the ``large`` size class), so this refusal keeps the built-in's
+behaviour where admission used to hold it.
+"""
+
 # The package's ``cruxible_provider_runtime.canonical.SHA256_RE``, matched the same way.
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _BOM = "\ufeff"
@@ -67,9 +76,8 @@ _BOM = "\ufeff"
 def decode_declared_bytes(payload: Mapping[str, Any]) -> bytes | None:
     """Decode the run input's payload, or ``None`` when it is not a base64 string.
 
-    Shared by the classifier and the adapter so the two cannot disagree about
-    what the bytes are. Strict: the alphabet is RFC 4648 section 4 with padding,
-    and a stray character (a line break included) is not a payload.
+    Strict: the alphabet is RFC 4648 section 4 with padding, and a stray
+    character (a line break included) is not a payload.
     """
 
     if payload.get("content_encoding") != CONTENT_ENCODING:
@@ -102,18 +110,16 @@ def byte_size_class(length: int) -> str:
     return "large"
 
 
-def classify(payload: Mapping[str, Any]) -> str | None:
-    """The bucket, measured from the decoded bytes and never from a declaration.
+def input_bucket_label(data: bytes) -> str:
+    """The ``input_bucket`` string the output has always carried, from the bytes alone.
 
-    ``None`` when the payload carries nothing decodable. The declared
-    ``byte_length`` and ``bytes_digest`` are deliberately not consulted: the
-    adapter checks them, and a bucket measured from a declaration would be a
-    bucket the caller chose.
+    Core no longer classifies inputs, so nothing hands the adapter a measured
+    bucket; the run context carries only a meaningless placeholder. The output
+    keeps the field, derived here exactly as the retired classifier measured it,
+    so the built-in's result for every input core previously admitted -- and so
+    its behaviour revision and implementation digest -- is unchanged.
     """
 
-    data = decode_declared_bytes(payload)
-    if data is None:
-        return None
     return f"content_kind={content_kind_class(data)};byte_size={byte_size_class(len(data))}"
 
 
@@ -166,6 +172,18 @@ class WorkspaceFile:
                 ),
             )
 
+        if len(data) > MAX_STRUCTURED_BYTES:
+            return _refused(
+                context,
+                _refusal(
+                    "provider_declined",
+                    "the built-in structures at most 1 MiB; read a smaller file or "
+                    "install a workspace.file Provider that takes larger ones",
+                    byte_length=len(data),
+                    max_bytes=MAX_STRUCTURED_BYTES,
+                ),
+            )
+
         content = structure_bytes(data)
         metrics: dict[str, float] = {"byte_length": float(len(data))}
         if content["kind"] == "text":
@@ -176,7 +194,7 @@ class WorkspaceFile:
             run_id=context.run_id,
             status="ok",
             output={
-                "input_bucket": context.input_bucket,
+                "input_bucket": input_bucket_label(data),
                 "source": {
                     "logical_source": payload["logical_source"],
                     "commitment_digest": payload["commitment_digest"],
@@ -319,10 +337,11 @@ __all__ = [
     "CONTENT_ENCODING",
     "INPUT_FIELDS",
     "INTERFACE_ID",
+    "MAX_STRUCTURED_BYTES",
     "WorkspaceFile",
     "byte_size_class",
-    "classify",
     "content_kind_class",
     "decode_declared_bytes",
+    "input_bucket_label",
     "structure_bytes",
 ]

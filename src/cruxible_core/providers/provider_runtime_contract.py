@@ -28,6 +28,12 @@ PROVIDER_RUNTIME_PROTOCOL = "1.0"
 PROVIDER_RUNTIME_CONTRACT_COMMIT = "389e9f44de56c1adebae731228cf4628c6fbeca8"
 PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS = ("dynamic:target-from-run-input",)
 MAX_PROVIDER_SECRET_BUNDLE_BYTES = 65_536
+#: What core sends as ``RunContextV1.input_bucket``. It carries no meaning: core
+#: classifies no input. Protocol 1.x children (cruxible-provider-runtime 0.2.x)
+#: still require the field, and some adapters (cruxible-provider-web 0.2.x) parse
+#: it as ``key=value`` pairs, so it keeps that shape and names no real dimension.
+#: The field leaves the run context only with protocol 2.0.
+PROVIDER_RUNTIME_LEGACY_INPUT_BUCKET = "legacy=none"
 
 ProviderRuntimeRefusalCodeV1: TypeAlias = Literal[
     "unknown_manifest_field",
@@ -356,6 +362,7 @@ __all__ = [
     "MAX_PROVIDER_SECRET_BUNDLE_BYTES",
     "PROVIDER_RUNTIME_CONTRACT_COMMIT",
     "PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS",
+    "PROVIDER_RUNTIME_LEGACY_INPUT_BUCKET",
     "PROVIDER_RUNTIME_PROTOCOL",
     "ProviderRuntimeBudgetsV1",
     "ProviderRuntimeProtocolVersionV1",

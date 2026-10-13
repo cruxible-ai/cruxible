@@ -1,41 +1,39 @@
-"""Frozen web.fetch interface inputs and classifier, mirrored against the adapter.
+"""Core's frozen web.fetch definitions and the registrations it owns of them.
 
 Core owns the ``web.fetch`` contract: each definition revision it knows (v2, and
 v3 as ``cruxible-provider-web`` 0.2.x ships it) has one compiler-owned
-registration, with core's vocabulary, conformance fixtures and classifier. A
-package implementing one of these definitions installs onto that registration
-(``PackageRegistrationDocumentV1.interface_registrations``), so any
+registration. A package implementing one of these definitions installs onto that
+registration (``PackageRegistrationDocumentV1.interface_registrations``), so any
 implementation of the contract binds the same ProviderInterface artifact and a
 Blueprint slot typed by it takes any of them.
 
-This is compiler-owned conformance data, not an installed Provider or a grant.
-A deployment still accepts its own exact implementation and runtime closure.
+The registrations are checked-in bytes (``web-fetch-registration-v2.json`` and
+``-v3.json``), reproduced exactly by every daemon and pinned by artifact digest.
+They are V1 registrations, so they still carry the bucket vocabulary, classifier
+identity and conformance proofs core once ran; that data is inert. Core runs no
+classifier, and nothing reads the vocabulary for anything served.
+
+This is not an installed Provider or a grant. A deployment still accepts its own
+exact implementation and runtime closure.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from functools import cache
 from importlib.resources import files
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, Final
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import WEB_FETCH_V3_INTERFACE_DIGEST
 from cruxible_client.contracts.provider_interfaces import (
-    ProviderBucketConformanceFixture,
-    ProviderBucketConformanceFixtureProof,
-    ProviderBucketVocabulary,
     ProviderInterfaceRegistrationV1,
-    provider_bucket_classifier_digest,
-    provider_bucket_fixture_digest,
-    provider_bucket_fixture_set_digest,
-    provider_bucket_vocabulary_digest,
+    parse_provider_interface,
     provider_external_interface_definition_digest,
+    provider_interface_digest,
+    provider_interface_path,
 )
-
-if TYPE_CHECKING:
-    from cruxible_core.providers.provider_local_runtime import ProviderSpawnDeadline
 
 #: The v2 operation definition, as core first froze it.
 WEB_FETCH_INTERFACE_V2_DEFINITION: dict[str, Any] = {
@@ -103,236 +101,46 @@ if any(
     for digest, definition in _DEFINITIONS.items()
 ):  # pragma: no cover - import-time guard on checked-in bytes
     raise RuntimeError("a web.fetch interface definition drifted from its frozen digest")
-WEB_FETCH_VOCABULARY = ProviderBucketVocabulary.model_validate(
-    {
-        "description": "Retrieve the content of a single web resource. Buckets "
-        "separate the cases where a fetcher's competence genuinely "
-        "differs: whether the content exists in the first response, "
-        "what it costs to get at, and how much of it there is.",
-        "dimensions": [
-            {
-                "classes": [
-                    {
-                        "description": "content present in the initial HTML response",
-                        "id": "static_html",
-                    },
-                    {
-                        "description": "content assembled client-side; requires a browser engine",
-                        "id": "js_rendered",
-                    },
-                    {
-                        "description": "a structured JSON or XML endpoint rather than a page",
-                        "id": "api_json",
-                    },
-                    {
-                        "description": "a non-text payload such as a PDF, image, or archive",
-                        "id": "binary",
-                    },
-                ],
-                "description": "how the content is produced by the origin",
-                "name": "source_kind",
-            },
-            {
-                "classes": [
-                    {"description": "no credentials and no interactive gate", "id": "public"},
-                    {
-                        "description": "requires a credential delivered by secret-ref",
-                        "id": "authenticated",
-                    },
-                    {
-                        "description": "public but throttled; retrieval must pace itself",
-                        "id": "rate_limited",
-                    },
-                ],
-                "description": "what the origin requires before it will serve the resource",
-                "name": "access",
-            },
-            {
-                "classes": [
-                    {"description": "at most 256 KiB", "id": "light"},
-                    {"description": "more than 256 KiB and at most 2 MiB", "id": "medium"},
-                    {"description": "more than 2 MiB", "id": "heavy"},
-                ],
-                "description": "transferred size of the resource",
-                "name": "page_weight",
-            },
-        ],
-        "interface_id": "web.fetch",
-        "status": "accepted",
-        "version": 1,
-    }
-)
-WEB_FETCH_FIXTURES = (
-    ProviderBucketConformanceFixture(
-        fixture_id="web-fetch-api-json",
-        canonical_input={"url": "https://fixture.invalid/api/v1/measurements.json"},
-        measured_bucket_id="source_kind=api_json;access=public;page_weight=light",
+#: Interface digest -> core's frozen registration of that definition, by file and
+#: artifact digest. Append-only: an accepted registration is pinned forever.
+_REGISTRATIONS: Mapping[str, tuple[str, str]] = {
+    WEB_FETCH_INTERFACE_V2_DIGEST: (
+        "web-fetch-registration-v2.json",
+        "sha256:f1a74eaf84d95b23e18070e55ca5f35901432869bab93c5202def745fcc98970",
     ),
-    ProviderBucketConformanceFixture(
-        fixture_id="web-fetch-rendered",
-        canonical_input={"url": "https://fixture.invalid/dashboard", "render": True},
-        measured_bucket_id="source_kind=js_rendered;access=public;page_weight=light",
+    WEB_FETCH_INTERFACE_DIGEST: (
+        "web-fetch-registration-v3.json",
+        "sha256:f6302734bbe87d342144d0444e136ca71e9cd899e12a5d6ea121ba4d97d9681c",
     ),
-    ProviderBucketConformanceFixture(
-        fixture_id="web-fetch-static-light",
-        canonical_input={"url": "https://fixture.invalid/articles/tide-gauge-recalibration"},
-        measured_bucket_id="source_kind=static_html;access=public;page_weight=light",
-    ),
-    ProviderBucketConformanceFixture(
-        fixture_id="web-fetch-static-medium",
-        canonical_input={
-            "url": "https://fixture.invalid/reports/water-quality",
-            "max_bytes": 1048576,
-        },
-        measured_bucket_id="source_kind=static_html;access=public;page_weight=medium",
-    ),
-)
-WEB_FETCH_SELECTORS = {
-    "web-fetch-api-json": "source_kind=api_json;access=*;page_weight=*",
-    "web-fetch-rendered": "source_kind=js_rendered;access=public;page_weight=*",
-    "web-fetch-static-light": "source_kind=static_html;access=*;page_weight=light",
-    "web-fetch-static-medium": "source_kind=static_html;access=*;page_weight=medium",
 }
-DEFAULT_MAX_BYTES = 262144
-MAX_RESPONSE_BYTES = 33554432
-LIGHT_CEILING_BYTES = 262144
-MEDIUM_CEILING_BYTES = 2097152
-_BINARY_SUFFIXES = {
-    ".docx",
-    ".gif",
-    ".gz",
-    ".jpeg",
-    ".jpg",
-    ".mp3",
-    ".mp4",
-    ".pdf",
-    ".png",
-    ".pptx",
-    ".tar",
-    ".webp",
-    ".xlsx",
-    ".zip",
-}
-_STRUCTURED_SUFFIXES = {".xml", ".rss", ".atom", ".csv", ".json"}
 
 
-def _path_of(url: str) -> str:
-    from urllib.parse import urlsplit
+@cache
+def _frozen_registration(interface_digest: str) -> ProviderInterfaceRegistrationV1:
+    """Parse one checked-in registration once per process and prove its identity."""
 
-    return urlsplit(url).path.lower()
-
-
-def page_weight_class(byte_count: int) -> str:
-    """The weight class a byte count falls in. Used for input and for response."""
-
-    if byte_count <= LIGHT_CEILING_BYTES:
-        return "light"
-    if byte_count <= MEDIUM_CEILING_BYTES:
-        return "medium"
-    return "heavy"
-
-
-def classify_web_fetch(payload: Mapping[str, Any]) -> Mapping[str, str] | None:
-    """Derive a ``web.fetch`` bucket from the run input.
-
-    ``source_kind`` follows the caller's explicit ``render`` flag first — asking
-    for a browser is a statement about the resource — then the URL's own shape.
-    ``access`` follows what the run carries: a credential ref means an
-    authenticated fetch, a declared pace means a throttled origin.
-    ``page_weight`` is the declared ``max_bytes`` cap, because weight is not
-    knowable before retrieval; the adapter refuses if the response comes back
-    heavier than the bucket the run was admitted into, so the declaration is
-    checked rather than trusted.
-    """
-
-    url = payload.get("url")
-    if not isinstance(url, str) or not url.strip():
-        return None
-    path = _path_of(url)
-    suffix = path[path.rfind(".") :] if "." in path.rsplit("/", 1)[-1] else ""
-
-    expected_format = payload.get("expected_format", "auto")
-    if expected_format not in {"auto", "html", "json", "csv", "text", "bytes"}:
-        return None
-    if bool(payload.get("render", False)):
-        source_kind = "js_rendered"
-    elif expected_format == "bytes" or suffix in _BINARY_SUFFIXES:
-        source_kind = "binary"
-    elif expected_format in {"json", "csv"} or suffix in _STRUCTURED_SUFFIXES or "/api/" in path:
-        source_kind = "api_json"
-    else:
-        source_kind = "static_html"
-
-    if payload.get("credential_ref"):
-        access = "authenticated"
-    elif bool(payload.get("paced", False)):
-        access = "rate_limited"
-    else:
-        access = "public"
-
-    max_bytes = payload.get("max_bytes", DEFAULT_MAX_BYTES)
+    filename, artifact_digest = _REGISTRATIONS[interface_digest]
+    registration = parse_provider_interface(
+        files("cruxible_core.providers").joinpath(filename).read_bytes(),
+        path=provider_interface_path("web.fetch"),
+    )
+    definition = _DEFINITIONS[interface_digest]
     if (
-        not isinstance(max_bytes, int)
-        or isinstance(max_bytes, bool)
-        or not 0 < max_bytes <= MAX_RESPONSE_BYTES
-    ):
-        return None
-    return {
-        "source_kind": source_kind,
-        "access": access,
-        "page_weight": page_weight_class(max_bytes),
-    }
+        type(registration) is not ProviderInterfaceRegistrationV1
+        or registration.interface_digest != interface_digest
+        or registration.interface_bytes_hex != canonical_bytes(dict(definition)).hex()
+        or provider_interface_digest(registration).tagged != artifact_digest
+    ):  # pragma: no cover - guard on checked-in bytes
+        raise RuntimeError("a web.fetch registration drifted from its frozen digest")
+    return registration
 
 
 def web_fetch_interface_registration(
     interface_digest: str = WEB_FETCH_INTERFACE_DIGEST,
 ) -> ProviderInterfaceRegistrationV1:
-    """Core's registration of one web.fetch definition revision (v3 by default).
+    """Core's registration of one web.fetch definition revision (v3 by default)."""
 
-    Every revision shares the vocabulary, the four conformance proofs and so the
-    classifier digest: the proof menu is fixed, and changing it would be a
-    successor every pin must follow. An implementation claims a subset of it.
-    """
-
-    definition = _DEFINITIONS[interface_digest]
-    proofs = tuple(
-        sorted(
-            (
-                ProviderBucketConformanceFixtureProof(
-                    selector=WEB_FETCH_SELECTORS[f.fixture_id],
-                    fixture_id=f.fixture_id,
-                    fixture_digest=provider_bucket_fixture_digest(f),
-                    measured_bucket_id=f.measured_bucket_id,
-                )
-                for f in WEB_FETCH_FIXTURES
-            ),
-            key=lambda p: p.selector.encode(),
-        )
-    )
-    proof_digest = provider_bucket_fixture_set_digest(proofs)
-    content = canonical_bytes(dict(definition)).hex()
-    vocabulary = canonical_bytes(WEB_FETCH_VOCABULARY.model_dump(mode="json")).hex()
-    return ProviderInterfaceRegistrationV1(
-        identity=ArtifactIdentity(kind="ProviderInterface", name="web.fetch"),
-        interface_id="web.fetch",
-        interface_bytes_hex=content,
-        interface_digest_domain=_INTERFACE_DOMAIN,
-        interface_digest=provider_external_interface_definition_digest(
-            content, domain=_INTERFACE_DOMAIN
-        ),
-        vocabulary_bytes_hex=vocabulary,
-        vocabulary_digest=provider_bucket_vocabulary_digest(vocabulary),
-        classifier_identity="cruxible.core.web.fetch",
-        classifier_version=1,
-        classifier_digest=provider_bucket_classifier_digest(
-            classifier_identity="cruxible.core.web.fetch",
-            classifier_version=1,
-            conformance_fixture_set_digest=proof_digest,
-        ),
-        conformance_fixture_set_digest=proof_digest,
-        conformance_proofs=proofs,
-        effect_class="external_read",
-    )
+    return _frozen_registration(interface_digest)
 
 
 def core_owned_interface_registration(
@@ -343,25 +151,3 @@ def core_owned_interface_registration(
     if interface_digest not in WEB_FETCH_INTERFACE_DIGESTS:
         return None
     return web_fetch_interface_registration(interface_digest)
-
-
-class WebFetchBucketClassifier:
-    classifier_identity = "cruxible.core.web.fetch"
-    classifier_version = 1
-
-    @property
-    def classifier_digest(self) -> str:
-        return web_fetch_interface_registration().classifier_digest
-
-    def classify(
-        self, canonical_input: CanonicalValue, *, deadline: ProviderSpawnDeadline | None
-    ) -> str:
-        if not isinstance(canonical_input, dict):
-            raise ValueError("web.fetch input must be an object")
-        classified = classify_web_fetch(canonical_input)
-        if classified is None:
-            raise ValueError("web.fetch input cannot be classified")
-        return ";".join(
-            f"{dimension.name}={classified[dimension.name]}"
-            for dimension in WEB_FETCH_VOCABULARY.dimensions
-        )

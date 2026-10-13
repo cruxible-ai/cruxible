@@ -147,7 +147,6 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.ledger.ledger_mirror import LedgerMirrorStateV1
 from cruxible_core.proposals.proposals import AuthenticatedActor
-from cruxible_core.providers.provider_classifiers import PROVIDER_BUCKET_CLASSIFIER_REGISTRY
 from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
 )
@@ -813,24 +812,11 @@ def playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildRe
     )
 
 
-def _classifier_hosted(classifier_digest: str) -> bool:
-    """Whether a verified deployment on this daemon hosts a package classifier."""
-
-    return any(
-        item.classifier_digest == classifier_digest
-        for deployment in get_playbill_manager().provider_runtime_operator().config.deployments
-        if deployment.installation_verification is not None
-        for item in deployment.classifier_installations
-    )
-
-
 def playbill_kit_status(instance_id: str) -> KitStatus:
     check_permission("cruxible_kit_status", instance_id=instance_id)
     return _proposal_validation_boundary(
         "kit status",
-        lambda: service_kit_status(
-            get_playbill_manager().get(instance_id), classifier_hosted=_classifier_hosted
-        ),
+        lambda: service_kit_status(get_playbill_manager().get(instance_id)),
     )
 
 
@@ -863,7 +849,6 @@ def playbill_kit_add(instance_id: str, request: KitAddRequest) -> KitChangeResul
                 actor_id=_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
                 install_provider=install,
-                classifier_hosted=_classifier_hosted,
             ),
         )
 
@@ -2646,9 +2631,6 @@ def playbill_get(instance_id: str, *, request: GetRequest) -> GetResult:
             or (
                 request.detail == "why" and _permits("cruxible_body_read", instance_id=instance_id)
             ),
-        ),
-        installed_classifier_digests=(
-            PROVIDER_BUCKET_CLASSIFIER_REGISTRY.installed_classifier_digests
         ),
         viewer=_operational_viewer(instance_id),
     )

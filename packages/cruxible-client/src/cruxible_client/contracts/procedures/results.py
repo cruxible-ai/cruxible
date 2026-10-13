@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Literal, TypeAlias
 
@@ -768,6 +769,74 @@ class ProcedureProviderBinding(_StrictResultModel):
         return self
 
 
+class ProcedureProviderBindingV3(_StrictResultModel):
+    """What one Provider node binds at admission: the interface, by identity and
+    contract digest, and the exact Provider implementation that serves it.
+
+    No classification plan: core classifies no input, so a run binds no bucket
+    vocabulary, classifier or admitted selectors. Binding v1 and v2 stay readable
+    for the runs admitted under them.
+    """
+
+    tag: Literal["playbill-procedure-provider-binding-v3"] = (
+        "playbill-procedure-provider-binding-v3"
+    )
+    node_id: str
+    interface: ArtifactIdentity
+    interface_digest: str
+    provider_artifact_digest: str
+    implementation_digest: str
+    effect_class: Literal["none", "external_read", "external_mutation"]
+    secret_binding_identity_digests: tuple[str, ...]
+
+    _binding_digests = field_validator(
+        "interface_digest",
+        "provider_artifact_digest",
+        "implementation_digest",
+    )(_digest)
+
+    @field_validator("interface")
+    @classmethod
+    def _interface(cls, value: ArtifactIdentity) -> ArtifactIdentity:
+        if value.kind != "ProviderInterface":
+            raise ValueError("Provider binding names its interface by ProviderInterface identity")
+        return value
+
+    @field_validator("secret_binding_identity_digests")
+    @classmethod
+    def _secret_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("Provider secret binding identities must be sorted and unique")
+        for item in value:
+            _digest(item)
+        return value
+
+
+def procedure_provider_bindings(
+    occurrences: Sequence[ProviderExternalOccurrencePlan],
+) -> tuple[ProcedureProviderBindingV3, ...]:
+    """One v3 binding per planned occurrence, in the node-id order admission requires.
+
+    Occurrences are planned in occurrence-path order (``call/...`` before
+    ``source/...``), which is not node-id order once a Source node's id sorts
+    before a Call node's. Every binding field reads off its occurrence, so an
+    admission's bindings are exactly a function of its acquisition plan.
+    """
+
+    return tuple(
+        ProcedureProviderBindingV3(
+            node_id=item.node_id,
+            interface=ArtifactIdentity(kind="ProviderInterface", name=item.interface_id),
+            interface_digest=item.interface_digest,
+            provider_artifact_digest=item.provider_artifact_digest,
+            implementation_digest=item.implementation_digest,
+            effect_class=item.effect_class,
+            secret_binding_identity_digests=item.secret_plan.binding_identity_digests,
+        )
+        for item in sorted(occurrences, key=lambda item: item.node_id.encode("utf-8"))
+    )
+
+
 class ProcedureSelectionDecision(_StrictResultModel):
     tag: Literal["playbill-procedure-selection-decision-v1"] = (
         "playbill-procedure-selection-decision-v1"
@@ -1391,6 +1460,28 @@ class ProcedureRunReceipt(ProcedureRunReceiptV5):
         return value
 
 
+class ProcedureRunReceiptV7(ProcedureRunReceipt):
+    """Receipt successor embedding Provider binding v3: no classification plan.
+
+    Everything else reads as the v6 receipt it extends; v6 stays readable for
+    the runs admitted with classification plans.
+    """
+
+    tag: Literal["playbill-procedure-run-receipt-v7"] = "playbill-procedure-run-receipt-v7"  # type: ignore[assignment]
+    resolved_provider_bindings: tuple[ProcedureProviderBindingV3, ...]  # type: ignore[assignment]
+
+    @field_validator("resolved_provider_bindings")
+    @classmethod
+    def _v3_bindings(
+        cls,
+        value: tuple[ProcedureProviderBindingV3, ...],
+    ) -> tuple[ProcedureProviderBindingV3, ...]:
+        node_ids = tuple(item.node_id for item in value)
+        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("receipt Provider v3 bindings must be sorted and unique")
+        return value
+
+
 __all__ = [
     "ProcedureAdmissionMaterialManifest",
     "ProcedureSourceObservation",
@@ -1415,6 +1506,7 @@ __all__ = [
     "ProviderBucketClassificationPlan",
     "ProcedureProviderBindingV1",
     "ProcedureProviderBinding",
+    "ProcedureProviderBindingV3",
     "ProcedureReplayInputProjection",
     "ProcedureRunAttribution",
     "ProcedureRunAttributionWithheld",
@@ -1429,6 +1521,7 @@ __all__ = [
     "ProcedureRunReceiptV4",
     "ProcedureRunReceiptV5",
     "ProcedureRunReceipt",
+    "ProcedureRunReceiptV7",
     "ProcedureRunReceiptWithheld",
     "ProcedureSourceCaptureAssociation",
     "ProcedureSelectionDecision",
@@ -1440,5 +1533,6 @@ __all__ = [
     "TerminalEgressVerdict",
     "procedure_admission_material_digest",
     "procedure_acquisition_plan_digest",
+    "procedure_provider_bindings",
     "procedure_selection_decision_digest",
 ]

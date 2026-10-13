@@ -1750,6 +1750,12 @@ from one successful response.
 A successful conversion returns a result and execution evidence. It does not
 register a capture, submit a Claim, or accept knowledge.
 
+The `input_bucket` the example passes through is whatever the provider echoes.
+Cruxible classifies no input: a protocol 1.x run context carries the inert
+compatibility placeholder `legacy=none` in that field, so a provider that echoes
+it returns `legacy=none`, not a measured bucket. Provider invocation and
+Capture evidence omit a measured bucket on new runs.
+
 ### Example coverage and expected diagnostics
 
 | Element | Scenario or expected diagnostic |

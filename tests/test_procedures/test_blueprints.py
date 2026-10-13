@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-import cruxible_core.proposals.proposals as proposal_module
 from cruxible_client.contracts.authoring.inputs import (
     BlueprintInstanceInput,
     lower_authoring_input,
@@ -41,7 +40,6 @@ from cruxible_core.service.discovery.get import service_playbill_get
 from tests.core_support._p2b1_support import (
     accepted_interface,
     accepted_provider,
-    interface_fixture,
 )
 from tests.core_support._support import initialize_local
 from tests.support.procedures import procedure_artifact
@@ -99,12 +97,6 @@ def accept_blueprint_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # 
     """
 
     instance, owner = initialize_local(tmp_path)
-    fixture = interface_fixture()
-    monkeypatch.setattr(
-        proposal_module,
-        "core_provider_bucket_conformance_fixtures",
-        lambda: {fixture.fixture_id: fixture},
-    )
     interface = accepted_interface()
     provider = accepted_provider()
     blueprint = _blueprint()

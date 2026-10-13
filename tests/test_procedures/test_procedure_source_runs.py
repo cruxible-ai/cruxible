@@ -105,7 +105,7 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_PROVIDER_ID,
     WORKSPACE_FILE_INTERFACE_ID,
 )
-from cruxible_core.procedures.execution import ProcedureAdmissionBoundPayloadV5
+from cruxible_core.procedures.execution import ProcedureAdmissionBoundPayloadV9
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
@@ -1518,7 +1518,7 @@ def test_the_sdk_carries_the_named_policy_into_the_authoring_payload(tmp_path: P
 
 
 def _admission(instance: PlaybillInstance, state):  # type: ignore[no-untyped-def]
-    """The V5 admission this run bound, read back off its own journal."""
+    """The V9 admission this run bound, read back off its own journal."""
 
     import cruxible_core.service.procedures.procedure_runs as service
 
@@ -1536,7 +1536,7 @@ def _admission(instance: PlaybillInstance, state):  # type: ignore[no-untyped-de
                 bodies.read(stored.record.payload_digest, access=access)
             )
             assert isinstance(payload, dict)
-            return ProcedureAdmissionBoundPayloadV5.model_validate(payload).admission
+            return ProcedureAdmissionBoundPayloadV9.model_validate(payload).admission
     raise AssertionError("no admission_bound record for this run")
 
 

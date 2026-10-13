@@ -1,6 +1,7 @@
 """Read a provider package a kit bundles: its identity and what installing it registers.
 
-Metadata only, through the first-party toolchain's wheel and lock readers: no
+Metadata only: the registration through core's own reader (``package_metadata``,
+bucket data inert), the wheel pin and lock through the first-party toolchain. No
 provider code runs. ``kit build`` uses it to record the package in the kit
 manifest and to check that every ProviderInterface the kit carries is exactly
 what installing the bundled wheel registers.
@@ -26,6 +27,7 @@ from cruxible_core.providers.package_materialization import (
     resolve_provider_package,
     toolchain,
 )
+from cruxible_core.providers.package_metadata import read_wheel_registration
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 
 _REPAIR = RepairOperation(operation="cruxible.kit.build")
@@ -87,8 +89,8 @@ def inspect_provider_package(
         with package_preparation_errors():
             wheels = toolchain("wheels")
             pin = wheels.wheel_pin(wheel_path)
-            with wheels.wheel_registration(wheel_path) as bundle:
-                document = PackageRegistrationDocumentV1.model_validate(bundle.export_document())
+            # Core's own reader: the runtime's validates the inert bucket data.
+            document = read_wheel_registration(wheel_path)
             locked = toolchain("resolution").load_uv_lock(lock_path)
             dependency_pins = tuple(wheels.wheel_pin(path) for path in dependency_paths)
         if delivery == "index":

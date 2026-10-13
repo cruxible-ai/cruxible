@@ -1,4 +1,4 @@
-"""Governed Provider interface/vocabulary/classifier acceptance laws."""
+"""Governed Provider interface registrations: format, digests and acceptance law."""
 
 from __future__ import annotations
 
@@ -16,10 +16,7 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_interface_path,
     render_provider_interface,
 )
-from tests.core_support._p2b1_support import (
-    interface_fixture,
-    interface_registration,
-)
+from tests.core_support._p2b1_support import interface_registration
 
 
 def test_provider_interface_round_trip_and_subordinate_digest_correspondence() -> None:
@@ -67,18 +64,14 @@ def test_classifier_digest_moves_only_with_its_frozen_preimage() -> None:
     )
 
 
-def test_interface_law_reproduces_fixture_catalog_and_exact_succession() -> None:
+def test_interface_law_checks_exact_succession_and_reproduces_no_proof() -> None:
+    """A registration's conformance proofs are inert: the law names no fixture
+    catalog and re-proves nothing, whatever fixture ids the proofs cite."""
+
     registration = interface_registration()
-    fixture = interface_fixture()
     path = provider_interface_path(registration.interface_id)
-    assert (
-        evaluate_provider_interface_law(
-            registration,
-            path=path,
-            predecessor=None,
-            conformance_fixtures={fixture.fixture_id: fixture},
-        ).verdict
-        == "accepted"
+    assert evaluate_provider_interface_law(registration, path=path, predecessor=None).verdict == (
+        "accepted"
     )
 
     accepted = AcceptedProviderInterfaceRegistration(
@@ -92,19 +85,8 @@ def test_interface_law_reproduces_fixture_catalog_and_exact_succession() -> None
         }
     )
     assert (
-        evaluate_provider_interface_law(
-            successor,
-            path=path,
-            predecessor=accepted,
-            conformance_fixtures={fixture.fixture_id: fixture},
-        ).verdict
+        evaluate_provider_interface_law(successor, path=path, predecessor=accepted).verdict
         == "accepted"
     )
-
-    missing = evaluate_provider_interface_law(
-        successor,
-        path=path,
-        predecessor=accepted,
-        conformance_fixtures={},
-    )
-    assert missing.diagnostics[0].code == "cruxible.provider_interface.bucket_fixture_missing"
+    unpinned = evaluate_provider_interface_law(registration, path=path, predecessor=accepted)
+    assert unpinned.diagnostics[0].code == "cruxible.provider_interface.predecessor_mismatch"

@@ -20,41 +20,33 @@ The materialization, deployment, environment-manifest and lock digests are
 typed constants derived from the implementation digest, so a binding to the
 built-in is the same in every daemon.
 
-The bucket classifier is compiler-owned too: ``WorkspaceFileBucketClassifier``
-measures the same two dimensions the package classifier does, re-proven against
-the same six conformance fixtures (``WORKSPACE_FILE_FIXTURES``, byte-equal to the
-package's registration fixtures).
+The registration is the seeded bytes themselves
+(``genesis/<set>/provider-interfaces/workspace.file.json``, identical in every
+seed set), read and checked once per process. It is a V1 registration, so it
+still carries the bucket vocabulary, classifier identity and six conformance
+proofs core once ran; that data is inert. Core runs no classifier; the built-in
+adapter refuses what it does not structure.
 """
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from dataclasses import dataclass
+from functools import cache
 from importlib.resources import files
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
-    CanonicalValue,
     Sha256Value,
     canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
-    ProviderBucketClass,
-    ProviderBucketConformanceFixture,
-    ProviderBucketConformanceFixtureProof,
-    ProviderBucketDimension,
-    ProviderBucketVocabulary,
-    ProviderInterfaceRegistration,
     ProviderInterfaceRegistrationV1,
-    provider_bucket_classifier_digest,
-    provider_bucket_fixture_digest,
-    provider_bucket_fixture_set_digest,
-    provider_bucket_vocabulary_digest,
+    parse_provider_interface,
     provider_external_interface_definition_digest,
     provider_interface_digest,
     provider_interface_path,
@@ -72,14 +64,6 @@ from cruxible_client.contracts.providers import (
     provider_manifest_digest,
 )
 from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_V2_DIGEST
-from cruxible_core.providers.builtin_workspace_file import (
-    byte_size_class,
-    content_kind_class,
-    decode_declared_bytes,
-)
-
-if TYPE_CHECKING:
-    from cruxible_core.providers.provider_local_runtime import ProviderSpawnDeadline
 
 WORKSPACE_FILE_INTERFACE_ID = "workspace.file"
 WORKSPACE_FILE_INTERFACE_DOMAIN: Literal["cruxible.interface.stub.v1"] = (
@@ -101,8 +85,6 @@ WORKSPACE_FILE_BUILTIN_REVISION = (
 )
 #: The one local-environment pin key the built-in Provider advertises.
 WORKSPACE_FILE_BUILTIN_ENVIRONMENT_PIN_KEY = "builtin"
-WORKSPACE_FILE_CLASSIFIER_IDENTITY = "cruxible.core.workspace.file"
-WORKSPACE_FILE_CLASSIFIER_VERSION = 1
 WORKSPACE_FILE_CAPTURE_CONTRACT_FAMILY = "workspace.file.capture.v1"
 
 #: The exact V2 operation definition, byte-for-byte the package's
@@ -122,146 +104,10 @@ if (
 ):  # pragma: no cover - import-time guard on checked-in bytes
     raise RuntimeError("workspace.file interface definition drifted from its frozen digest")
 
-
-def _vocabulary() -> ProviderBucketVocabulary:
-    return ProviderBucketVocabulary(
-        interface_id=WORKSPACE_FILE_INTERFACE_ID,
-        status="accepted",
-        description=(
-            "Structure the bytes of one authorized workspace file read into a capture body. "
-            "The two dimensions separate the text path (a UTF-8 decode, a line view) from "
-            "the opaque-bytes path, and size the payload so a claim over a large file is "
-            "visibly a different bucket from a claim over a small one."
-        ),
-        dimensions=(
-            ProviderBucketDimension(
-                name="content_kind",
-                description="whether the bytes decode as text",
-                classes=(
-                    ProviderBucketClass(
-                        id="text",
-                        description="strict UTF-8 with no NUL byte; an empty file is text",
-                    ),
-                    ProviderBucketClass(
-                        id="binary",
-                        description=(
-                            "anything that is not strict UTF-8, or that carries a NUL byte"
-                        ),
-                    ),
-                ),
-            ),
-            ProviderBucketDimension(
-                name="byte_size",
-                description="length of the decoded bytes",
-                classes=(
-                    ProviderBucketClass(id="tiny", description="at most 4096 bytes (4 KiB)"),
-                    ProviderBucketClass(id="small", description="4097 to 65536 bytes (64 KiB)"),
-                    ProviderBucketClass(id="medium", description="65537 to 1048576 bytes (1 MiB)"),
-                    ProviderBucketClass(
-                        id="large",
-                        description=("more than 1048576 bytes (1 MiB); unclaimed by the built-in"),
-                    ),
-                ),
-            ),
-        ),
-    )
-
-
-def _text_lines(count: int, *, newline: str, trailing: bool, bom: bool = False) -> bytes:
-    lines = [
-        f"line {index:05d}: the quick brown fox jumps over the lazy dog" for index in range(count)
-    ]
-    text = newline.join(lines) + (newline if trailing else "")
-    return ("\ufeff" if bom else "").encode() + text.encode()
-
-
-def _pseudo_random(length: int, *, seed: str) -> bytes:
-    output = bytearray()
-    block = seed.encode()
-    while len(output) < length:
-        block = hashlib.sha256(block).digest()
-        output.extend(block)
-    return bytes(output[:length])
-
-
-_FIXTURE_BYTES: dict[str, bytes] = {
-    "workspace-file-binary-medium": _pseudo_random(70_000, seed="workspace-file-binary-medium"),
-    "workspace-file-binary-small": _pseudo_random(5_000, seed="workspace-file-binary-small"),
-    "workspace-file-binary-tiny": bytes.fromhex(
-        "89504e470d0a1a0a0000000d49484452000000100000001008060000001ff3ff61"
-    ),
-    "workspace-file-text-medium": _text_lines(1_200, newline="\n", trailing=False, bom=True),
-    "workspace-file-text-small": _text_lines(600, newline="\r\n", trailing=True),
-    "workspace-file-text-tiny": (
-        "# Reach readings\n\nUpper reach: 4.1 mg/l nitrate — see the tide-gauge report.\n"
-    ).encode(),
-}
-
-
-def _fixture(fixture_id: str, data: bytes) -> ProviderBucketConformanceFixture:
-    bucket = f"content_kind={content_kind_class(data)};byte_size={byte_size_class(len(data))}"
-    return ProviderBucketConformanceFixture(
-        fixture_id=fixture_id,
-        canonical_input={
-            "logical_source": f"fixtures/{fixture_id}",
-            "commitment_digest": f"sha256:{'c0' * 32}",
-            "content_encoding": "base64",
-            "bytes": base64.b64encode(data).decode("ascii"),
-            "byte_length": len(data),
-            "bytes_digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
-        },
-        measured_bucket_id=bucket,
-    )
-
-
-WORKSPACE_FILE_FIXTURES = tuple(
-    _fixture(fixture_id, data)
-    for fixture_id, data in sorted(_FIXTURE_BYTES.items(), key=lambda item: item[0].encode())
-)
-WORKSPACE_FILE_CONFORMANCE_PROOFS = tuple(
-    sorted(
-        (
-            ProviderBucketConformanceFixtureProof(
-                selector=fixture.measured_bucket_id,
-                fixture_id=fixture.fixture_id,
-                fixture_digest=provider_bucket_fixture_digest(fixture),
-                measured_bucket_id=fixture.measured_bucket_id,
-            )
-            for fixture in WORKSPACE_FILE_FIXTURES
-        ),
-        key=lambda proof: (proof.selector.encode(), proof.fixture_id.encode()),
-    )
-)
-WORKSPACE_FILE_FIXTURE_SET_DIGEST = provider_bucket_fixture_set_digest(
-    WORKSPACE_FILE_CONFORMANCE_PROOFS
-)
-WORKSPACE_FILE_CLASSIFIER_DIGEST = provider_bucket_classifier_digest(
-    classifier_identity=WORKSPACE_FILE_CLASSIFIER_IDENTITY,
-    classifier_version=WORKSPACE_FILE_CLASSIFIER_VERSION,
-    conformance_fixture_set_digest=WORKSPACE_FILE_FIXTURE_SET_DIGEST,
-)
-
-
-class WorkspaceFileBucketClassifier:
-    """Compiler-owned classifier; it receives bounded bytes, never a locator."""
-
-    classifier_identity = WORKSPACE_FILE_CLASSIFIER_IDENTITY
-    classifier_version = WORKSPACE_FILE_CLASSIFIER_VERSION
-    classifier_digest = WORKSPACE_FILE_CLASSIFIER_DIGEST
-
-    def classify(
-        self, canonical_input: CanonicalValue, *, deadline: ProviderSpawnDeadline | None
-    ) -> str:
-        if not isinstance(canonical_input, dict):
-            raise ValueError("workspace.file classifier input must be an object")
-        if canonical_input.get("content_encoding") != "base64":
-            raise ValueError("workspace.file classifier requires base64 bytes")
-        if not isinstance(canonical_input.get("bytes"), str):
-            raise ValueError("workspace.file classifier requires bytes")
-        data = decode_declared_bytes(canonical_input)
-        if data is None:
-            raise ValueError("workspace.file classifier requires canonical base64")
-        return f"content_kind={content_kind_class(data)};byte_size={byte_size_class(len(data))}"
+#: The seeded registration's file (one seed set holds it; every set's bytes are
+#: equal) and the sha256 of those bytes, which every genesis seed set pins.
+_SEEDED_REGISTRATION = "genesis/triggers-4-workspace-file/provider-interfaces/workspace.file.json"
+_SEEDED_REGISTRATION_SHA256 = "f3afe32fd84a09b991edaba2c02110f05b5854bccf6db16c4c7379ebf1d205fe"
 
 
 @dataclass(frozen=True)
@@ -322,41 +168,44 @@ WORKSPACE_FILE_BUILTIN_ENVIRONMENT_MANIFEST_DIGEST = (
 WORKSPACE_FILE_BUILTIN_LOCK_DIGEST = WORKSPACE_FILE_BUILTIN_IDENTITY.lock_digest
 
 
+@cache
+def _seeded_registration() -> ProviderInterfaceRegistrationV1:
+    """Read the seeded registration once per process and prove its bytes."""
+
+    content = (
+        files("cruxible_core.governance.seed_artifacts").joinpath(_SEEDED_REGISTRATION).read_bytes()
+    )
+    if hashlib.sha256(content).hexdigest() != _SEEDED_REGISTRATION_SHA256:
+        raise RuntimeError(  # pragma: no cover - guard on checked-in bytes
+            "the seeded workspace.file registration drifted from its genesis digest"
+        )
+    registration = parse_provider_interface(
+        content, path=provider_interface_path(WORKSPACE_FILE_INTERFACE_ID)
+    )
+    if (
+        type(registration) is not ProviderInterfaceRegistrationV1
+        or registration.interface_digest != WORKSPACE_FILE_INTERFACE_V2_DIGEST
+        or registration.interface_bytes_hex
+        != canonical_bytes(WORKSPACE_FILE_INTERFACE_DEFINITION).hex()
+    ):  # pragma: no cover - guard on checked-in bytes
+        raise RuntimeError("the seeded workspace.file registration names another definition")
+    return registration
+
+
 def is_builtin_workspace_file_registration(registration: object) -> bool:
     """Whether an accepted interface is the compiler-owned built-in registration."""
 
-    return (
-        isinstance(registration, ProviderInterfaceRegistrationV1)
-        and not isinstance(registration, ProviderInterfaceRegistration)
-        and registration.interface_id == WORKSPACE_FILE_INTERFACE_ID
-        and registration.classifier_digest == WORKSPACE_FILE_CLASSIFIER_DIGEST
+    if type(registration) is not ProviderInterfaceRegistrationV1:
+        return False
+    return registration.model_dump(exclude={"lifecycle"}) == _seeded_registration().model_dump(
+        exclude={"lifecycle"}
     )
 
 
-def workspace_file_interface_registration(
-    *, lifecycle: ArtifactLifecycle = ArtifactLifecycle()
-) -> ProviderInterfaceRegistrationV1:
-    """The compiler-owned registration over the exact V2 definition bytes."""
+def workspace_file_interface_registration() -> ProviderInterfaceRegistrationV1:
+    """The compiler-owned registration over the exact V2 definition: the seeded bytes."""
 
-    interface_bytes = canonical_bytes(WORKSPACE_FILE_INTERFACE_DEFINITION)
-    vocabulary_bytes = canonical_bytes(_vocabulary().model_dump(mode="json"))
-    return ProviderInterfaceRegistrationV1(
-        identity=ArtifactIdentity(kind="ProviderInterface", name=WORKSPACE_FILE_INTERFACE_ID),
-        interface_id=WORKSPACE_FILE_INTERFACE_ID,
-        interface_bytes_hex=interface_bytes.hex(),
-        interface_digest_domain=WORKSPACE_FILE_INTERFACE_DOMAIN,
-        interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-        vocabulary_bytes_hex=vocabulary_bytes.hex(),
-        vocabulary_digest=provider_bucket_vocabulary_digest(vocabulary_bytes.hex()),
-        classifier_identity=WORKSPACE_FILE_CLASSIFIER_IDENTITY,
-        classifier_version=WORKSPACE_FILE_CLASSIFIER_VERSION,
-        classifier_digest=WORKSPACE_FILE_CLASSIFIER_DIGEST,
-        conformance_fixture_set_digest=WORKSPACE_FILE_FIXTURE_SET_DIGEST,
-        conformance_proofs=WORKSPACE_FILE_CONFORMANCE_PROOFS,
-        # The definition spells a no-effect operation "pure"; governed, it is "none".
-        effect_class="none",
-        lifecycle=lifecycle,
-    )
+    return _seeded_registration()
 
 
 def workspace_file_builtin_provider(
@@ -366,16 +215,16 @@ def workspace_file_builtin_provider(
 ) -> Provider:
     """The ``cruxible-builtin`` Provider implementing ``workspace.file`` in-process."""
 
-    selectors = tuple(proof.selector for proof in WORKSPACE_FILE_CONFORMANCE_PROOFS)
+    # The seeded manifest's bucket claims, kept byte-for-byte as inert data:
+    # every selector the seeded registration once proved, none of them read.
+    proofs = _seeded_registration().conformance_proofs
     implementation = ProviderImplementationManifest(
         interface_id=WORKSPACE_FILE_INTERFACE_ID,
         interface_digest=WORKSPACE_FILE_INTERFACE_V2_DIGEST,
         entrypoint=WORKSPACE_FILE_BUILTIN_ENTRYPOINT,
         backends=("local_env",),
-        declared_input_buckets=selectors,
-        bucket_conformance={
-            proof.selector: proof.fixture_id for proof in WORKSPACE_FILE_CONFORMANCE_PROOFS
-        },
+        declared_input_buckets=tuple(proof.selector for proof in proofs),
+        bucket_conformance={proof.selector: proof.fixture_id for proof in proofs},
         declared_endpoints=(),
         capture_contract_families=(WORKSPACE_FILE_CAPTURE_CONTRACT_FAMILY,),
         deterministic=True,
@@ -430,7 +279,7 @@ def workspace_file_builtin_provider(
 
 
 def workspace_file_accepted_registration() -> AcceptedProviderInterfaceRegistration:
-    """The seeded registration as an accepted artifact (its classifier's install key)."""
+    """The seeded registration as an accepted artifact."""
 
     registration = workspace_file_interface_registration()
     return AcceptedProviderInterfaceRegistration(
@@ -452,11 +301,8 @@ __all__ = [
     "WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST",
     "WORKSPACE_FILE_BUILTIN_PROVIDER_ID",
     "WORKSPACE_FILE_BUILTIN_REVISION",
-    "WORKSPACE_FILE_CLASSIFIER_DIGEST",
-    "WORKSPACE_FILE_FIXTURES",
     "WORKSPACE_FILE_INTERFACE_DEFINITION",
     "WORKSPACE_FILE_INTERFACE_ID",
-    "WorkspaceFileBucketClassifier",
     "is_builtin_workspace_file_registration",
     "workspace_file_accepted_registration",
     "workspace_file_builtin_identity",

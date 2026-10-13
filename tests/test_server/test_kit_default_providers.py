@@ -4,7 +4,7 @@ The kit carries a Blueprint with a ``web.fetch`` slot and names a default
 implementation by package and exact version. A fresh consumer installs it by
 name from its provider index; one where another implementation of the contract
 is already installed keeps that one, and the Blueprint's slot takes it. Either
-way an occurrence admits only the buckets the bound implementation claims.
+way the bound implementation runs on every input its contract admits.
 """
 
 from __future__ import annotations
@@ -228,8 +228,13 @@ def _build_with_default(world: Any, default: Path) -> KitBundle:
 
 
 def _instantiate_and_refuse(world: Any) -> None:
-    """The slot takes the alternative; it claims no API bucket, so the run refuses
-    the endpoint before any provider code starts."""
+    """The slot takes the alternative, and the run reaches it.
+
+    Core narrows no admission by bucket any more: the alternative's manifest
+    claims only static pages, yet the API request is not refused before it runs.
+    The alternative is a double that never fetches, so the run fails in the
+    Provider itself.
+    """
 
     _accept(
         world,
@@ -246,7 +251,10 @@ def _instantiate_and_refuse(world: Any) -> None:
     run = world.pb.accepted_procedure("acme.fetch-alt").run()
     state = _client(world.http).get_procedure_run(world.instance_id, run.run_id)
     assert run.status != "succeeded"
-    assert "unclaimed_bucket" in state.model_dump_json(), state.model_dump_json(indent=2)
+    rendered = state.model_dump_json()
+    assert "unclaimed_bucket" not in rendered, state.model_dump_json(indent=2)
+    assert "provider_execution_error" in rendered, state.model_dump_json(indent=2)
+    assert "not_implemented" in rendered, state.model_dump_json(indent=2)
 
 
 def test_a_fresh_consumer_installs_the_default_provider_by_name(

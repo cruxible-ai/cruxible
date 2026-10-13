@@ -58419,6 +58419,2550 @@
         "validated_pins"
       ]
     },
+    "ProcedureRunReceiptV7": {
+      "fields": {
+        "acquisition_plan_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "acquisition_plan_digest",
+          "required": true,
+          "schema": {
+            "title": "Acquisition Plan Digest",
+            "type": "string"
+          }
+        },
+        "acquisition_policy_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "acquisition_policy_digest",
+          "required": true,
+          "schema": {
+            "title": "Acquisition Policy Digest",
+            "type": "string"
+          }
+        },
+        "admission_binding_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admission_binding_digest",
+          "required": true,
+          "schema": {
+            "title": "Admission Binding Digest",
+            "type": "string"
+          }
+        },
+        "admission_material_manifest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admission_material_manifest",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ProcedureAdmissionMaterialManifest"
+          }
+        },
+        "admission_material_manifest_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admission_material_manifest_digest",
+          "required": true,
+          "schema": {
+            "title": "Admission Material Manifest Digest",
+            "type": "string"
+          }
+        },
+        "admitted_inputs": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admitted_inputs",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Admitted Inputs",
+            "type": "array"
+          }
+        },
+        "attribution": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "attribution",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ProcedureRunAttribution"
+          }
+        },
+        "bound_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "bound_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "budget": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "budget",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ProcedureRunBudget"
+          }
+        },
+        "chain_head_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "chain_head_digest",
+          "required": true,
+          "schema": {
+            "title": "Chain Head Digest",
+            "type": "string"
+          }
+        },
+        "deployment_snapshot_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "deployment_snapshot_digest",
+          "required": true,
+          "schema": {
+            "title": "Deployment Snapshot Digest",
+            "type": "string"
+          }
+        },
+        "epsilon_member": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "epsilon_member",
+          "required": true,
+          "schema": {
+            "title": "Epsilon Member",
+            "type": "boolean"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "exhaust_access_binding_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "exhaust_access_binding_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Exhaust Access Binding Digest"
+          }
+        },
+        "first_sequence": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "first_sequence",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "First Sequence",
+            "type": "integer"
+          }
+        },
+        "head_at_admission": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "head_at_admission",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "invocation_origin": {
+          "default": "line",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "invocation_origin",
+          "required": false,
+          "schema": {
+            "const": "line",
+            "default": "line",
+            "title": "Invocation Origin",
+            "type": "string"
+          }
+        },
+        "invocation_receipt_digests": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "invocation_receipt_digests",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Invocation Receipt Digests",
+            "type": "array"
+          }
+        },
+        "journal_family": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "journal_family",
+          "required": true,
+          "schema": {
+            "title": "Journal Family",
+            "type": "string"
+          }
+        },
+        "lane": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "lane",
+          "required": true,
+          "schema": {
+            "enum": [
+              "current",
+              "replay"
+            ],
+            "title": "Lane",
+            "type": "string"
+          }
+        },
+        "last_sequence": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "last_sequence",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Last Sequence",
+            "type": "integer"
+          }
+        },
+        "line_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_identity",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        },
+        "line_spec_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_spec_digest",
+          "required": true,
+          "schema": {
+            "title": "Line Spec Digest",
+            "type": "string"
+          }
+        },
+        "mandate_coordinate_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "mandate_coordinate_digest",
+          "required": true,
+          "schema": {
+            "title": "Mandate Coordinate Digest",
+            "type": "string"
+          }
+        },
+        "node_pin_sets": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "node_pin_sets",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ProcedureRunNodePinSet"
+            },
+            "title": "Node Pin Sets",
+            "type": "array"
+          }
+        },
+        "occurrence_evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "occurrence_evaluation_time",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Occurrence Evaluation Time",
+            "type": "string"
+          }
+        },
+        "occurrence_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "occurrence_id",
+          "required": true,
+          "schema": {
+            "title": "Occurrence Id",
+            "type": "string"
+          }
+        },
+        "partition_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "partition_id",
+          "required": true,
+          "schema": {
+            "title": "Partition Id",
+            "type": "string"
+          }
+        },
+        "pin_set_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "pin_set_digest",
+          "required": true,
+          "schema": {
+            "title": "Pin Set Digest",
+            "type": "string"
+          }
+        },
+        "record_digests": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "record_digests",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Record Digests",
+            "type": "array"
+          }
+        },
+        "replay_input_vector": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "replay_input_vector",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ProcedureReplayInputProjection"
+            },
+            "title": "Replay Input Vector",
+            "type": "array"
+          }
+        },
+        "resolved_provider_bindings": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "resolved_provider_bindings",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ProcedureProviderBindingV3"
+            },
+            "title": "Resolved Provider Bindings",
+            "type": "array"
+          }
+        },
+        "run_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": true,
+          "schema": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "selection_decision": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "selection_decision",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ProcedureSelectionDecision"
+          }
+        },
+        "selection_decision_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "selection_decision_digest",
+          "required": true,
+          "schema": {
+            "title": "Selection Decision Digest",
+            "type": "string"
+          }
+        },
+        "selection_receipt_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "selection_receipt_digest",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection Receipt Digest"
+          }
+        },
+        "semantic_replay_key_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "semantic_replay_key_digest",
+          "required": true,
+          "schema": {
+            "title": "Semantic Replay Key Digest",
+            "type": "string"
+          }
+        },
+        "semantic_result_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "semantic_result_digest",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Result Digest"
+          }
+        },
+        "sensitivity_policy_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "sensitivity_policy_digest",
+          "required": true,
+          "schema": {
+            "title": "Sensitivity Policy Digest",
+            "type": "string"
+          }
+        },
+        "source_capture_associations": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source_capture_associations",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProcedureSourceCaptureAssociation"
+            },
+            "title": "Source Capture Associations",
+            "type": "array"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "succeeded",
+              "node_refused",
+              "operational_failed",
+              "internal_failed",
+              "halted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "stream_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "stream_id",
+          "required": true,
+          "schema": {
+            "title": "Stream Id",
+            "type": "string"
+          }
+        },
+        "stream_instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "stream_instance_id",
+          "required": true,
+          "schema": {
+            "title": "Stream Instance Id",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-run-receipt-v7",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-run-receipt-v7",
+            "default": "playbill-procedure-run-receipt-v7",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "taint_labels": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "taint_labels",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Taint Labels",
+            "type": "array"
+          }
+        },
+        "terminal": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "terminal",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "playbill-procedure-admission-refusal-v1": "#/$defs/ProcedureAdmissionRefusal",
+                    "playbill-procedure-budget-exhausted-v1": "#/$defs/ProcedureBudgetExhausted",
+                    "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminal",
+                    "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailure",
+                    "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusal",
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailure"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureAdmissionRefusal"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureNodeRefusal"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureOperationalFailure"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureInternalFailure"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureBudgetExhausted"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureHaltTerminal"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal"
+          }
+        },
+        "validated_pins": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "validated_pins",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/ArtifactPin"
+            },
+            "title": "Validated Pins",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "AcquisitionInputDecision": {
+            "additionalProperties": false,
+            "properties": {
+              "considered_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Considered Capture Digests",
+                "type": "array"
+              },
+              "default_value": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default Value"
+              },
+              "disposition": {
+                "enum": [
+                  "selected",
+                  "omitted",
+                  "defaulted",
+                  "refused"
+                ],
+                "title": "Disposition",
+                "type": "string"
+              },
+              "input_name": {
+                "title": "Input Name",
+                "type": "string"
+              },
+              "reason_codes": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Reason Codes",
+                "type": "array"
+              },
+              "selected_capture_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Selected Capture Digests",
+                "type": "array"
+              },
+              "selected_cursors": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Selected Cursors",
+                "type": "array"
+              }
+            },
+            "required": [
+              "input_name",
+              "disposition"
+            ],
+            "title": "AcquisitionInputDecision",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Cruxible artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactPin": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target",
+              "artifact_digest"
+            ],
+            "title": "ArtifactPin",
+            "type": "object"
+          },
+          "CanonicalDuration": {
+            "additionalProperties": false,
+            "properties": {
+              "microseconds": {
+                "minimum": 0,
+                "title": "Microseconds",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-duration-v1",
+                "default": "playbill-duration-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "microseconds"
+            ],
+            "title": "CanonicalDuration",
+            "type": "object"
+          },
+          "HandEditInstruction": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstruction",
+            "type": "object"
+          },
+          "HandEditRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstruction"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepair",
+            "type": "object"
+          },
+          "ProcedureAdmissionMaterialManifest": {
+            "additionalProperties": false,
+            "properties": {
+              "members": {
+                "items": {
+                  "$ref": "#/$defs/ProcedureAdmissionMaterialMember"
+                },
+                "title": "Members",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-procedure-admission-material-v1",
+                "default": "playbill-procedure-admission-material-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "members"
+            ],
+            "title": "ProcedureAdmissionMaterialManifest",
+            "type": "object"
+          },
+          "ProcedureAdmissionMaterialMember": {
+            "additionalProperties": false,
+            "description": "One admission-material retention decision.\n\n``retain_until`` reads VALIDITY WINDOW.",
+            "properties": {
+              "body_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body Digest"
+              },
+              "body_retention": {
+                "enum": [
+                  "never_materialize",
+                  "optional",
+                  "required_for_duration"
+                ],
+                "title": "Body Retention",
+                "type": "string"
+              },
+              "erasure_rule_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Erasure Rule Digest"
+              },
+              "input_name": {
+                "title": "Input Name",
+                "type": "string"
+              },
+              "plane": {
+                "enum": [
+                  "landed_capture",
+                  "exhaust"
+                ],
+                "title": "Plane",
+                "type": "string"
+              },
+              "retain_until": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Retain Until"
+              },
+              "retention_authority_digest": {
+                "title": "Retention Authority Digest",
+                "type": "string"
+              },
+              "semantic_digest": {
+                "title": "Semantic Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-admission-material-member-v1",
+                "default": "playbill-procedure-admission-material-member-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "input_name",
+              "plane",
+              "semantic_digest",
+              "body_digest",
+              "retention_authority_digest",
+              "body_retention"
+            ],
+            "title": "ProcedureAdmissionMaterialMember",
+            "type": "object"
+          },
+          "ProcedureAdmissionRefusal": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "admission_refusal",
+                "default": "admission_refusal",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "unsupported_node",
+                  "not_current",
+                  "artifact_binding_mismatch",
+                  "pin_binding_mismatch",
+                  "input_material_mismatch",
+                  "state_tap_refused",
+                  "replay_material_mismatch",
+                  "procedure_runtime_policy_absent",
+                  "provider_replay_receipt_required",
+                  "exhaust_binding_carrier_required",
+                  "source_acquisition_policy_required",
+                  "source_acquisition_refused",
+                  "evaluation_instant_skewed",
+                  "line_identity_mismatch",
+                  "line_not_accepted",
+                  "line_closure_incomplete",
+                  "line_mandate_required",
+                  "occurrence_id_mismatch",
+                  "occurrence_not_due",
+                  "occurrence_already_admitted",
+                  "trigger_capture_stale",
+                  "trigger_capture_unavailable",
+                  "trigger_capture_over_budget",
+                  "trigger_capture_forbidden",
+                  "trigger_capture_invalid",
+                  "trigger_capture_not_yet_observed",
+                  "trigger_event_precedes_acceptance",
+                  "line_binding_superseded",
+                  "line_trigger_mismatch"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperation"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepair"
+                  }
+                ],
+                "title": "Repair"
+              },
+              "retryable": {
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-admission-refusal-v1",
+                "default": "playbill-procedure-admission-refusal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "repair"
+            ],
+            "title": "ProcedureAdmissionRefusal",
+            "type": "object"
+          },
+          "ProcedureBudget": {
+            "additionalProperties": false,
+            "properties": {
+              "max_capture_bytes": {
+                "maximum": 9223372036854775807,
+                "minimum": 0,
+                "title": "Max Capture Bytes",
+                "type": "integer"
+              },
+              "max_items": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Items"
+              },
+              "max_provider_calls": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "Max Provider Calls",
+                "type": "integer"
+              },
+              "max_result_bytes": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Result Bytes"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-v1",
+                "default": "playbill-procedure-budget-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "wall_clock": {
+                "$ref": "#/$defs/CanonicalDuration"
+              }
+            },
+            "required": [
+              "wall_clock",
+              "max_provider_calls",
+              "max_capture_bytes"
+            ],
+            "title": "ProcedureBudget",
+            "type": "object"
+          },
+          "ProcedureBudgetBoundaryObservation": {
+            "additionalProperties": false,
+            "properties": {
+              "boundary": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Boundary"
+              },
+              "field_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field Path"
+              },
+              "high_water": {
+                "minimum": 0,
+                "title": "High Water",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-boundary-observation-v1",
+                "default": "playbill-procedure-budget-boundary-observation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "high_water"
+            ],
+            "title": "ProcedureBudgetBoundaryObservation",
+            "type": "object"
+          },
+          "ProcedureBudgetExceededDetail": {
+            "additionalProperties": false,
+            "properties": {
+              "boundary": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Boundary"
+              },
+              "dimension": {
+                "const": "max_items",
+                "default": "max_items",
+                "title": "Dimension",
+                "type": "string"
+              },
+              "field_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field Path"
+              },
+              "limit": {
+                "minimum": 1,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "observed": {
+                "minimum": 1,
+                "title": "Observed",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-exceeded-detail-v1",
+                "default": "playbill-procedure-budget-exceeded-detail-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "limit",
+              "observed"
+            ],
+            "title": "ProcedureBudgetExceededDetail",
+            "type": "object"
+          },
+          "ProcedureBudgetExhausted": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "budget_exhausted",
+                "default": "budget_exhausted",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "const": "budget_max_items_exceeded",
+                "default": "budget_max_items_exceeded",
+                "title": "Code",
+                "type": "string"
+              },
+              "details": {
+                "$ref": "#/$defs/ProcedureBudgetExceededDetail"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "message": {
+                "const": "A Procedure collection exceeded its declared item bound.",
+                "default": "A Procedure collection exceeded its declared item bound.",
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "retryable": {
+                "const": false,
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-exhausted-v1",
+                "default": "playbill-procedure-budget-exhausted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "details"
+            ],
+            "title": "ProcedureBudgetExhausted",
+            "type": "object"
+          },
+          "ProcedureBudgetRefusalDetail": {
+            "additionalProperties": false,
+            "properties": {
+              "budget_kind": {
+                "enum": [
+                  "max_items",
+                  "result_bytes",
+                  "wall_clock",
+                  "max_provider_calls",
+                  "max_capture_bytes"
+                ],
+                "title": "Budget Kind",
+                "type": "string"
+              },
+              "limit": {
+                "minimum": 0,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "observed": {
+                "minimum": 1,
+                "title": "Observed",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-refusal-detail-v1",
+                "default": "playbill-procedure-budget-refusal-detail-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "budget_kind",
+              "limit",
+              "observed"
+            ],
+            "title": "ProcedureBudgetRefusalDetail",
+            "type": "object"
+          },
+          "ProcedureHaltTerminal": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "halted",
+                "default": "halted",
+                "title": "Classification",
+                "type": "string"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "tag": {
+                "const": "playbill-procedure-halt-terminal-v1",
+                "default": "playbill-procedure-halt-terminal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id"
+            ],
+            "title": "ProcedureHaltTerminal",
+            "type": "object"
+          },
+          "ProcedureHardCaps": {
+            "additionalProperties": false,
+            "properties": {
+              "max_capture_bytes": {
+                "maximum": 9223372036854775807,
+                "minimum": 0,
+                "title": "Max Capture Bytes",
+                "type": "integer"
+              },
+              "max_items": {
+                "maximum": 2147483647,
+                "minimum": 1,
+                "title": "Max Items",
+                "type": "integer"
+              },
+              "max_provider_calls": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "Max Provider Calls",
+                "type": "integer"
+              },
+              "max_repeat_attempts": {
+                "maximum": 2147483647,
+                "minimum": 1,
+                "title": "Max Repeat Attempts",
+                "type": "integer"
+              },
+              "max_result_bytes": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Result Bytes"
+              },
+              "max_wall_clock": {
+                "$ref": "#/$defs/CanonicalDuration"
+              },
+              "tag": {
+                "const": "playbill-procedure-hard-caps-v1",
+                "default": "playbill-procedure-hard-caps-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "max_wall_clock",
+              "max_provider_calls",
+              "max_capture_bytes",
+              "max_items",
+              "max_repeat_attempts"
+            ],
+            "title": "ProcedureHardCaps",
+            "type": "object"
+          },
+          "ProcedureInternalFailure": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "internal_failure",
+                "default": "internal_failure",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "unexpected_exception",
+                  "journal_integrity_error",
+                  "run_record_invalid",
+                  "compiler_invariant_broken",
+                  "provider_refusal_taxonomy_unknown",
+                  "unknown_manifest_field",
+                  "manifest_divergence",
+                  "acceptance_divergence",
+                  "unaccepted_provider",
+                  "undeclared_interface",
+                  "ambiguous_implementation",
+                  "unknown_interface",
+                  "interface_digest_mismatch",
+                  "bucket_fixture_missing",
+                  "invalid_bucket_vocabulary",
+                  "unknown_run_context_field",
+                  "provider_protocol_violation",
+                  "lock_mismatch",
+                  "lock_bytes_mismatch",
+                  "lock_missing_hash",
+                  "lock_ambiguous_fork",
+                  "index_not_pinned",
+                  "index_redirect",
+                  "artifact_hash_mismatch",
+                  "cache_integrity",
+                  "environment_divergence",
+                  "undeclared_egress",
+                  "secret_leak",
+                  "non_finite_output",
+                  "non_finite_result",
+                  "image_provenance_mismatch",
+                  "provider_runtime_not_in_materialization",
+                  "provider_process_lease_invalid",
+                  "provider_process_lease_missing",
+                  "provider_process_lease_echo_failed",
+                  "provider_process_lease_echo_mismatch",
+                  "provider_process_group_survived_recovery"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "correlation_id": {
+                "title": "Correlation Id",
+                "type": "string"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperation"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepair"
+                  }
+                ],
+                "title": "Repair"
+              },
+              "tag": {
+                "const": "playbill-procedure-internal-failure-v1",
+                "default": "playbill-procedure-internal-failure-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "correlation_id",
+              "repair"
+            ],
+            "title": "ProcedureInternalFailure",
+            "type": "object"
+          },
+          "ProcedureJournalCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "journal_family": {
+                "title": "Journal Family",
+                "type": "string"
+              },
+              "partition_id": {
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "stream_id": {
+                "title": "Stream Id",
+                "type": "string"
+              },
+              "stream_instance_id": {
+                "title": "Stream Instance Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-journal-coordinate-v1",
+                "default": "playbill-procedure-journal-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "stream_instance_id",
+              "journal_family",
+              "stream_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "ProcedureJournalCoordinate",
+            "type": "object"
+          },
+          "ProcedureNodeRefusal": {
+            "additionalProperties": false,
+            "properties": {
+              "budget": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureBudgetRefusalDetail"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "classification": {
+                "const": "node_refusal",
+                "default": "node_refusal",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "guard_refused",
+                  "repeat_exhausted",
+                  "budget_exhausted",
+                  "runtime_reference_unresolved",
+                  "contract_input_refused",
+                  "contract_output_refused",
+                  "adapter_value_invalid",
+                  "shape_items_input_invalid",
+                  "filter_items_input_invalid",
+                  "dedupe_items_input_invalid",
+                  "join_items_left_input_invalid",
+                  "join_items_right_input_invalid",
+                  "aggregate_items_input_invalid",
+                  "result_not_canonical",
+                  "line_binding_required",
+                  "source_acquisition_unavailable",
+                  "source_material_unavailable",
+                  "terminal_not_available",
+                  "terminal_egress_unverified",
+                  "proposal_item_invalid",
+                  "proposal_item_evidence_missing",
+                  "proposal_item_evidence_ambiguous",
+                  "inbox_item_invalid",
+                  "inbox_item_evidence_ambiguous",
+                  "inbox_item_over_budget",
+                  "proposal_lowering_refused",
+                  "proposal_candidate_refused",
+                  "settle_mandate_missing",
+                  "settle_mandate_ambiguous",
+                  "settle_condition_refused",
+                  "settle_publication_refused",
+                  "proposal_target_paths_mismatch",
+                  "proposal_receipt_incomplete",
+                  "effectful_operation_payload_mismatch",
+                  "procedure_mandate_required",
+                  "procedure_mandate_superseded",
+                  "procedure_mandate_expired",
+                  "procedure_mandate_procedure_mismatch",
+                  "procedure_mandate_grant_insufficient",
+                  "procedure_mandate_authority_ceiling_insufficient",
+                  "procedure_mandate_namespace_mismatch",
+                  "procedure_mandate_not_applicable",
+                  "procedure_authority_admission_invalid",
+                  "procedure_authority_admission_mismatch",
+                  "provider_unavailable",
+                  "unclassified_input",
+                  "unclaimed_bucket",
+                  "cruxible.acquisition.unavailable",
+                  "cruxible.acquisition.stale",
+                  "cruxible.acquisition.oversized",
+                  "cruxible.acquisition.refused",
+                  "effect_grant_unrecognized",
+                  "effect_dispatch_requires_actor",
+                  "effect_dispatch_requires_authenticated_actor",
+                  "terminal_authority_capped_by_procedure_terminal_capability",
+                  "terminal_authority_capped_by_line_max_authority",
+                  "terminal_authority_capped_by_propagated_sensitivity",
+                  "terminal_authority_capped_by_mandate_grant",
+                  "provider_acquisition_plan_required",
+                  "provider_acquisition_plan_mismatch",
+                  "workspace_file_read_refused",
+                  "provider_effect_declaration_mismatch",
+                  "classifier_not_installed",
+                  "classifier_digest_mismatch",
+                  "unknown_extra",
+                  "budget_wall_clock",
+                  "budget_output_size",
+                  "budget_cost",
+                  "provider_declined",
+                  "secret_bundle_too_large",
+                  "insufficient_series_length",
+                  "non_finite_input",
+                  "degenerate_scale",
+                  "mismatched_lengths",
+                  "unknown_method",
+                  "unknown_test_name",
+                  "declared_family_mismatch",
+                  "unsupported_aggregation",
+                  "unknown_column",
+                  "malformed_model_ref",
+                  "undeclared_match_parameters",
+                  "invalid_parameter",
+                  "cross_origin_credentialed_redirect",
+                  "unsupported_redirect_scheme",
+                  "redirect_limit",
+                  "provider_protocol_violation"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detail Code"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperation"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepair"
+                  }
+                ],
+                "title": "Repair"
+              },
+              "retryable": {
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-node-refusal-v1",
+                "default": "playbill-procedure-node-refusal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "node_id",
+              "repair"
+            ],
+            "title": "ProcedureNodeRefusal",
+            "type": "object"
+          },
+          "ProcedureOperationalFailure": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "operational_failure",
+                "default": "operational_failure",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "wall_clock_exhausted",
+                  "cas_unavailable_at_replay",
+                  "replay_material_mismatch",
+                  "journal_append_failed",
+                  "journal_read_failed",
+                  "journal_conflict",
+                  "run_recovery_required",
+                  "terminal_egress_recovered",
+                  "admission_material_unavailable_by_policy",
+                  "replay_material_unavailable",
+                  "admission_material_corrupt",
+                  "unsupported_protocol",
+                  "unsupported_backend",
+                  "no_compatible_artifact",
+                  "unresolvable_source",
+                  "air_gapped_cache_miss",
+                  "network_disabled",
+                  "cache_permissions",
+                  "unresolved_secret_ref",
+                  "secret_epoch_unavailable",
+                  "secret_resolver_not_installed",
+                  "provider_execution_error",
+                  "provider_completion_not_durable"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "last_node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Node Id"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperation"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepair"
+                  }
+                ],
+                "title": "Repair"
+              },
+              "retryable": {
+                "default": true,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-operational-failure-v1",
+                "default": "playbill-procedure-operational-failure-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "repair"
+            ],
+            "title": "ProcedureOperationalFailure",
+            "type": "object"
+          },
+          "ProcedureProviderBindingV3": {
+            "additionalProperties": false,
+            "description": "What one Provider node binds at admission: the interface, by identity and\ncontract digest, and the exact Provider implementation that serves it.\n\nNo classification plan: core classifies no input, so a run binds no bucket\nvocabulary, classifier or admitted selectors. Binding v1 and v2 stay readable\nfor the runs admitted under them.",
+            "properties": {
+              "effect_class": {
+                "enum": [
+                  "none",
+                  "external_read",
+                  "external_mutation"
+                ],
+                "title": "Effect Class",
+                "type": "string"
+              },
+              "implementation_digest": {
+                "title": "Implementation Digest",
+                "type": "string"
+              },
+              "interface": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "interface_digest": {
+                "title": "Interface Digest",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider_artifact_digest": {
+                "title": "Provider Artifact Digest",
+                "type": "string"
+              },
+              "secret_binding_identity_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Secret Binding Identity Digests",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-procedure-provider-binding-v3",
+                "default": "playbill-procedure-provider-binding-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "interface",
+              "interface_digest",
+              "provider_artifact_digest",
+              "implementation_digest",
+              "effect_class",
+              "secret_binding_identity_digests"
+            ],
+            "title": "ProcedureProviderBindingV3",
+            "type": "object"
+          },
+          "ProcedureReplayInputProjection": {
+            "additionalProperties": false,
+            "properties": {
+              "input_name": {
+                "title": "Input Name",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "query_result",
+                  "claim_selection",
+                  "capture",
+                  "reduced_exhaust"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "plane": {
+                "enum": [
+                  "accepted_state",
+                  "landed_capture",
+                  "exhaust"
+                ],
+                "title": "Plane",
+                "type": "string"
+              },
+              "provenance_digest": {
+                "title": "Provenance Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-replay-input-projection-v1",
+                "default": "playbill-procedure-replay-input-projection-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value_or_body_digest": {
+                "title": "Value Or Body Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "input_name",
+              "plane",
+              "kind",
+              "value_or_body_digest",
+              "provenance_digest"
+            ],
+            "title": "ProcedureReplayInputProjection",
+            "type": "object"
+          },
+          "ProcedureRunAttribution": {
+            "additionalProperties": false,
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "actor_type": {
+                "title": "Actor Type",
+                "type": "string"
+              },
+              "operation_id": {
+                "title": "Operation Id",
+                "type": "string"
+              },
+              "org_id": {
+                "title": "Org Id",
+                "type": "string"
+              },
+              "recorded_time": {
+                "format": "date-time",
+                "title": "Recorded Time",
+                "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-attribution-v1",
+                "default": "playbill-procedure-run-attribution-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_type",
+              "actor_id",
+              "org_id",
+              "operation_id",
+              "recorded_time"
+            ],
+            "title": "ProcedureRunAttribution",
+            "type": "object"
+          },
+          "ProcedureRunBudget": {
+            "additionalProperties": false,
+            "properties": {
+              "declared": {
+                "$ref": "#/$defs/ProcedureRunBudgetDeclared"
+              },
+              "observed": {
+                "$ref": "#/$defs/ProcedureRunBudgetObserved"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-budget-v2",
+                "default": "playbill-procedure-run-budget-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "declared",
+              "observed"
+            ],
+            "title": "ProcedureRunBudget",
+            "type": "object"
+          },
+          "ProcedureRunBudgetDeclared": {
+            "additionalProperties": false,
+            "properties": {
+              "budget": {
+                "$ref": "#/$defs/ProcedureBudget"
+              },
+              "hard_caps": {
+                "$ref": "#/$defs/ProcedureHardCaps"
+              },
+              "provider_output_bytes_cap": {
+                "minimum": 1,
+                "title": "Provider Output Bytes Cap",
+                "type": "integer"
+              },
+              "result_bytes_cap": {
+                "minimum": 1,
+                "title": "Result Bytes Cap",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-budget-declared-v2",
+                "default": "playbill-procedure-run-budget-declared-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "budget",
+              "hard_caps",
+              "result_bytes_cap",
+              "provider_output_bytes_cap"
+            ],
+            "title": "ProcedureRunBudgetDeclared",
+            "type": "object"
+          },
+          "ProcedureRunBudgetObserved": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_bytes": {
+                "minimum": 0,
+                "title": "Capture Bytes",
+                "type": "integer"
+              },
+              "max_items": {
+                "$ref": "#/$defs/ProcedureBudgetBoundaryObservation"
+              },
+              "provider_calls": {
+                "minimum": 0,
+                "title": "Provider Calls",
+                "type": "integer"
+              },
+              "result_bytes": {
+                "$ref": "#/$defs/ProcedureBudgetBoundaryObservation"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-budget-observed-v1",
+                "default": "playbill-procedure-run-budget-observed-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "wall_clock_microseconds": {
+                "minimum": 0,
+                "title": "Wall Clock Microseconds",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "max_items",
+              "result_bytes",
+              "provider_calls",
+              "capture_bytes",
+              "wall_clock_microseconds"
+            ],
+            "title": "ProcedureRunBudgetObserved",
+            "type": "object"
+          },
+          "ProcedureRunNodePinSet": {
+            "additionalProperties": false,
+            "properties": {
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "pins": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Pins",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-node-pin-set-v1",
+                "default": "playbill-procedure-run-node-pin-set-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "pins"
+            ],
+            "title": "ProcedureRunNodePinSet",
+            "type": "object"
+          },
+          "ProcedureSelectionDecision": {
+            "additionalProperties": false,
+            "properties": {
+              "coherence_proof_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Coherence Proof Digest"
+              },
+              "decisions": {
+                "items": {
+                  "$ref": "#/$defs/AcquisitionInputDecision"
+                },
+                "title": "Decisions",
+                "type": "array"
+              },
+              "policy_digest": {
+                "title": "Policy Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-selection-decision-v1",
+                "default": "playbill-procedure-selection-decision-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "verdict": {
+                "enum": [
+                  "selected",
+                  "refused"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "policy_digest",
+              "verdict",
+              "decisions"
+            ],
+            "title": "ProcedureSelectionDecision",
+            "type": "object"
+          },
+          "ProcedureSourceCaptureAssociation": {
+            "additionalProperties": false,
+            "description": "Reserved B4 association between one Provider occurrence and one Capture.",
+            "properties": {
+              "capture_digest": {
+                "title": "Capture Digest",
+                "type": "string"
+              },
+              "invocation_receipt_digest": {
+                "title": "Invocation Receipt Digest",
+                "type": "string"
+              },
+              "occurrence_path": {
+                "title": "Occurrence Path",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-source-capture-association-v1",
+                "default": "playbill-procedure-source-capture-association-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "occurrence_path",
+              "invocation_receipt_digest",
+              "capture_digest"
+            ],
+            "title": "ProcedureSourceCaptureAssociation",
+            "type": "object"
+          },
+          "RepairOperation": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperation",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Receipt successor embedding Provider binding v3: no classification plan.\n\nEverything else reads as the v6 receipt it extends; v6 stays readable for\nthe runs admitted with classification plans.",
+        "properties": {
+          "acquisition_plan_digest": {
+            "title": "Acquisition Plan Digest",
+            "type": "string"
+          },
+          "acquisition_policy_digest": {
+            "title": "Acquisition Policy Digest",
+            "type": "string"
+          },
+          "admission_binding_digest": {
+            "title": "Admission Binding Digest",
+            "type": "string"
+          },
+          "admission_material_manifest": {
+            "$ref": "#/$defs/ProcedureAdmissionMaterialManifest"
+          },
+          "admission_material_manifest_digest": {
+            "title": "Admission Material Manifest Digest",
+            "type": "string"
+          },
+          "admitted_inputs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Admitted Inputs",
+            "type": "array"
+          },
+          "attribution": {
+            "$ref": "#/$defs/ProcedureRunAttribution"
+          },
+          "bound_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "budget": {
+            "$ref": "#/$defs/ProcedureRunBudget"
+          },
+          "chain_head_digest": {
+            "title": "Chain Head Digest",
+            "type": "string"
+          },
+          "deployment_snapshot_digest": {
+            "title": "Deployment Snapshot Digest",
+            "type": "string"
+          },
+          "epsilon_member": {
+            "title": "Epsilon Member",
+            "type": "boolean"
+          },
+          "evaluation_time": {
+            "format": "date-time",
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "exhaust_access_binding_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Exhaust Access Binding Digest"
+          },
+          "first_sequence": {
+            "minimum": 1,
+            "title": "First Sequence",
+            "type": "integer"
+          },
+          "head_at_admission": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "invocation_origin": {
+            "const": "line",
+            "default": "line",
+            "title": "Invocation Origin",
+            "type": "string"
+          },
+          "invocation_receipt_digests": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Invocation Receipt Digests",
+            "type": "array"
+          },
+          "journal_family": {
+            "title": "Journal Family",
+            "type": "string"
+          },
+          "lane": {
+            "enum": [
+              "current",
+              "replay"
+            ],
+            "title": "Lane",
+            "type": "string"
+          },
+          "last_sequence": {
+            "minimum": 1,
+            "title": "Last Sequence",
+            "type": "integer"
+          },
+          "line_identity": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          },
+          "line_spec_digest": {
+            "title": "Line Spec Digest",
+            "type": "string"
+          },
+          "mandate_coordinate_digest": {
+            "title": "Mandate Coordinate Digest",
+            "type": "string"
+          },
+          "node_pin_sets": {
+            "items": {
+              "$ref": "#/$defs/ProcedureRunNodePinSet"
+            },
+            "title": "Node Pin Sets",
+            "type": "array"
+          },
+          "occurrence_evaluation_time": {
+            "format": "date-time",
+            "title": "Occurrence Evaluation Time",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "partition_id": {
+            "title": "Partition Id",
+            "type": "string"
+          },
+          "pin_set_digest": {
+            "title": "Pin Set Digest",
+            "type": "string"
+          },
+          "record_digests": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Record Digests",
+            "type": "array"
+          },
+          "replay_input_vector": {
+            "items": {
+              "$ref": "#/$defs/ProcedureReplayInputProjection"
+            },
+            "title": "Replay Input Vector",
+            "type": "array"
+          },
+          "resolved_provider_bindings": {
+            "items": {
+              "$ref": "#/$defs/ProcedureProviderBindingV3"
+            },
+            "title": "Resolved Provider Bindings",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "selection_decision": {
+            "$ref": "#/$defs/ProcedureSelectionDecision"
+          },
+          "selection_decision_digest": {
+            "title": "Selection Decision Digest",
+            "type": "string"
+          },
+          "selection_receipt_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection Receipt Digest"
+          },
+          "semantic_replay_key_digest": {
+            "title": "Semantic Replay Key Digest",
+            "type": "string"
+          },
+          "semantic_result_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Result Digest"
+          },
+          "sensitivity_policy_digest": {
+            "title": "Sensitivity Policy Digest",
+            "type": "string"
+          },
+          "source_capture_associations": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProcedureSourceCaptureAssociation"
+            },
+            "title": "Source Capture Associations",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "succeeded",
+              "node_refused",
+              "operational_failed",
+              "internal_failed",
+              "halted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stream_id": {
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "stream_instance_id": {
+            "title": "Stream Instance Id",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-procedure-run-receipt-v7",
+            "default": "playbill-procedure-run-receipt-v7",
+            "title": "Tag",
+            "type": "string"
+          },
+          "taint_labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Taint Labels",
+            "type": "array"
+          },
+          "terminal": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "playbill-procedure-admission-refusal-v1": "#/$defs/ProcedureAdmissionRefusal",
+                    "playbill-procedure-budget-exhausted-v1": "#/$defs/ProcedureBudgetExhausted",
+                    "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminal",
+                    "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailure",
+                    "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusal",
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailure"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureAdmissionRefusal"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureNodeRefusal"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureOperationalFailure"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureInternalFailure"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureBudgetExhausted"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureHaltTerminal"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal"
+          },
+          "validated_pins": {
+            "items": {
+              "$ref": "#/$defs/ArtifactPin"
+            },
+            "title": "Validated Pins",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_id",
+          "admission_binding_digest",
+          "semantic_replay_key_digest",
+          "semantic_result_digest",
+          "bound_coordinate",
+          "head_at_admission",
+          "lane",
+          "evaluation_time",
+          "validated_pins",
+          "admitted_inputs",
+          "attribution",
+          "stream_instance_id",
+          "journal_family",
+          "stream_id",
+          "partition_id",
+          "first_sequence",
+          "last_sequence",
+          "record_digests",
+          "chain_head_digest",
+          "status",
+          "terminal",
+          "budget",
+          "line_identity",
+          "line_spec_digest",
+          "occurrence_id",
+          "occurrence_evaluation_time",
+          "node_pin_sets",
+          "pin_set_digest",
+          "replay_input_vector",
+          "deployment_snapshot_digest",
+          "acquisition_policy_digest",
+          "selection_receipt_digest",
+          "selection_decision",
+          "selection_decision_digest",
+          "resolved_provider_bindings",
+          "sensitivity_policy_digest",
+          "mandate_coordinate_digest",
+          "taint_labels",
+          "epsilon_member",
+          "admission_material_manifest",
+          "admission_material_manifest_digest",
+          "acquisition_plan_digest"
+        ],
+        "title": "ProcedureRunReceiptV7",
+        "type": "object"
+      },
+      "required_fields": [
+        "acquisition_plan_digest",
+        "acquisition_policy_digest",
+        "admission_binding_digest",
+        "admission_material_manifest",
+        "admission_material_manifest_digest",
+        "admitted_inputs",
+        "attribution",
+        "bound_coordinate",
+        "budget",
+        "chain_head_digest",
+        "deployment_snapshot_digest",
+        "epsilon_member",
+        "evaluation_time",
+        "first_sequence",
+        "head_at_admission",
+        "journal_family",
+        "lane",
+        "last_sequence",
+        "line_identity",
+        "line_spec_digest",
+        "mandate_coordinate_digest",
+        "node_pin_sets",
+        "occurrence_evaluation_time",
+        "occurrence_id",
+        "partition_id",
+        "pin_set_digest",
+        "record_digests",
+        "replay_input_vector",
+        "resolved_provider_bindings",
+        "run_id",
+        "selection_decision",
+        "selection_decision_digest",
+        "selection_receipt_digest",
+        "semantic_replay_key_digest",
+        "semantic_result_digest",
+        "sensitivity_policy_digest",
+        "status",
+        "stream_id",
+        "stream_instance_id",
+        "taint_labels",
+        "terminal",
+        "validated_pins"
+      ]
+    },
     "ProcedureRunReceiptWithheld": {
       "fields": {
         "tag": {
@@ -58664,6 +61208,9 @@
               },
               {
                 "$ref": "#/$defs/ProcedureRunReceipt"
+              },
+              {
+                "$ref": "#/$defs/ProcedureRunReceiptV7"
               },
               {
                 "$ref": "#/$defs/ProcedureRunReceiptWithheld"
@@ -60530,6 +63077,64 @@
             "title": "ProcedureProviderBindingV1",
             "type": "object"
           },
+          "ProcedureProviderBindingV3": {
+            "additionalProperties": false,
+            "description": "What one Provider node binds at admission: the interface, by identity and\ncontract digest, and the exact Provider implementation that serves it.\n\nNo classification plan: core classifies no input, so a run binds no bucket\nvocabulary, classifier or admitted selectors. Binding v1 and v2 stay readable\nfor the runs admitted under them.",
+            "properties": {
+              "effect_class": {
+                "enum": [
+                  "none",
+                  "external_read",
+                  "external_mutation"
+                ],
+                "title": "Effect Class",
+                "type": "string"
+              },
+              "implementation_digest": {
+                "title": "Implementation Digest",
+                "type": "string"
+              },
+              "interface": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "interface_digest": {
+                "title": "Interface Digest",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider_artifact_digest": {
+                "title": "Provider Artifact Digest",
+                "type": "string"
+              },
+              "secret_binding_identity_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Secret Binding Identity Digests",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-procedure-provider-binding-v3",
+                "default": "playbill-procedure-provider-binding-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "interface",
+              "interface_digest",
+              "provider_artifact_digest",
+              "implementation_digest",
+              "effect_class",
+              "secret_binding_identity_digests"
+            ],
+            "title": "ProcedureProviderBindingV3",
+            "type": "object"
+          },
           "ProcedureReplayInputProjection": {
             "additionalProperties": false,
             "properties": {
@@ -62144,6 +64749,347 @@
             "title": "ProcedureRunReceiptV5",
             "type": "object"
           },
+          "ProcedureRunReceiptV7": {
+            "additionalProperties": false,
+            "description": "Receipt successor embedding Provider binding v3: no classification plan.\n\nEverything else reads as the v6 receipt it extends; v6 stays readable for\nthe runs admitted with classification plans.",
+            "properties": {
+              "acquisition_plan_digest": {
+                "title": "Acquisition Plan Digest",
+                "type": "string"
+              },
+              "acquisition_policy_digest": {
+                "title": "Acquisition Policy Digest",
+                "type": "string"
+              },
+              "admission_binding_digest": {
+                "title": "Admission Binding Digest",
+                "type": "string"
+              },
+              "admission_material_manifest": {
+                "$ref": "#/$defs/ProcedureAdmissionMaterialManifest"
+              },
+              "admission_material_manifest_digest": {
+                "title": "Admission Material Manifest Digest",
+                "type": "string"
+              },
+              "admitted_inputs": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Admitted Inputs",
+                "type": "array"
+              },
+              "attribution": {
+                "$ref": "#/$defs/ProcedureRunAttribution"
+              },
+              "bound_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "budget": {
+                "$ref": "#/$defs/ProcedureRunBudget"
+              },
+              "chain_head_digest": {
+                "title": "Chain Head Digest",
+                "type": "string"
+              },
+              "deployment_snapshot_digest": {
+                "title": "Deployment Snapshot Digest",
+                "type": "string"
+              },
+              "epsilon_member": {
+                "title": "Epsilon Member",
+                "type": "boolean"
+              },
+              "evaluation_time": {
+                "format": "date-time",
+                "title": "Evaluation Time",
+                "type": "string"
+              },
+              "exhaust_access_binding_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Exhaust Access Binding Digest"
+              },
+              "first_sequence": {
+                "minimum": 1,
+                "title": "First Sequence",
+                "type": "integer"
+              },
+              "head_at_admission": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "invocation_origin": {
+                "const": "line",
+                "default": "line",
+                "title": "Invocation Origin",
+                "type": "string"
+              },
+              "invocation_receipt_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Invocation Receipt Digests",
+                "type": "array"
+              },
+              "journal_family": {
+                "title": "Journal Family",
+                "type": "string"
+              },
+              "lane": {
+                "enum": [
+                  "current",
+                  "replay"
+                ],
+                "title": "Lane",
+                "type": "string"
+              },
+              "last_sequence": {
+                "minimum": 1,
+                "title": "Last Sequence",
+                "type": "integer"
+              },
+              "line_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "line_spec_digest": {
+                "title": "Line Spec Digest",
+                "type": "string"
+              },
+              "mandate_coordinate_digest": {
+                "title": "Mandate Coordinate Digest",
+                "type": "string"
+              },
+              "node_pin_sets": {
+                "items": {
+                  "$ref": "#/$defs/ProcedureRunNodePinSet"
+                },
+                "title": "Node Pin Sets",
+                "type": "array"
+              },
+              "occurrence_evaluation_time": {
+                "format": "date-time",
+                "title": "Occurrence Evaluation Time",
+                "type": "string"
+              },
+              "occurrence_id": {
+                "title": "Occurrence Id",
+                "type": "string"
+              },
+              "partition_id": {
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "pin_set_digest": {
+                "title": "Pin Set Digest",
+                "type": "string"
+              },
+              "record_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Record Digests",
+                "type": "array"
+              },
+              "replay_input_vector": {
+                "items": {
+                  "$ref": "#/$defs/ProcedureReplayInputProjection"
+                },
+                "title": "Replay Input Vector",
+                "type": "array"
+              },
+              "resolved_provider_bindings": {
+                "items": {
+                  "$ref": "#/$defs/ProcedureProviderBindingV3"
+                },
+                "title": "Resolved Provider Bindings",
+                "type": "array"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "selection_decision": {
+                "$ref": "#/$defs/ProcedureSelectionDecision"
+              },
+              "selection_decision_digest": {
+                "title": "Selection Decision Digest",
+                "type": "string"
+              },
+              "selection_receipt_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Selection Receipt Digest"
+              },
+              "semantic_replay_key_digest": {
+                "title": "Semantic Replay Key Digest",
+                "type": "string"
+              },
+              "semantic_result_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Semantic Result Digest"
+              },
+              "sensitivity_policy_digest": {
+                "title": "Sensitivity Policy Digest",
+                "type": "string"
+              },
+              "source_capture_associations": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ProcedureSourceCaptureAssociation"
+                },
+                "title": "Source Capture Associations",
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "succeeded",
+                  "node_refused",
+                  "operational_failed",
+                  "internal_failed",
+                  "halted"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "stream_id": {
+                "title": "Stream Id",
+                "type": "string"
+              },
+              "stream_instance_id": {
+                "title": "Stream Instance Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-receipt-v7",
+                "default": "playbill-procedure-run-receipt-v7",
+                "title": "Tag",
+                "type": "string"
+              },
+              "taint_labels": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Taint Labels",
+                "type": "array"
+              },
+              "terminal": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "playbill-procedure-admission-refusal-v1": "#/$defs/ProcedureAdmissionRefusal",
+                        "playbill-procedure-budget-exhausted-v1": "#/$defs/ProcedureBudgetExhausted",
+                        "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminal",
+                        "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailure",
+                        "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusal",
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailure"
+                      },
+                      "propertyName": "tag"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/ProcedureAdmissionRefusal"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureNodeRefusal"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureOperationalFailure"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureInternalFailure"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureBudgetExhausted"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureHaltTerminal"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Terminal"
+              },
+              "validated_pins": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Validated Pins",
+                "type": "array"
+              }
+            },
+            "required": [
+              "run_id",
+              "admission_binding_digest",
+              "semantic_replay_key_digest",
+              "semantic_result_digest",
+              "bound_coordinate",
+              "head_at_admission",
+              "lane",
+              "evaluation_time",
+              "validated_pins",
+              "admitted_inputs",
+              "attribution",
+              "stream_instance_id",
+              "journal_family",
+              "stream_id",
+              "partition_id",
+              "first_sequence",
+              "last_sequence",
+              "record_digests",
+              "chain_head_digest",
+              "status",
+              "terminal",
+              "budget",
+              "line_identity",
+              "line_spec_digest",
+              "occurrence_id",
+              "occurrence_evaluation_time",
+              "node_pin_sets",
+              "pin_set_digest",
+              "replay_input_vector",
+              "deployment_snapshot_digest",
+              "acquisition_policy_digest",
+              "selection_receipt_digest",
+              "selection_decision",
+              "selection_decision_digest",
+              "resolved_provider_bindings",
+              "sensitivity_policy_digest",
+              "mandate_coordinate_digest",
+              "taint_labels",
+              "epsilon_member",
+              "admission_material_manifest",
+              "admission_material_manifest_digest",
+              "acquisition_plan_digest"
+            ],
+            "title": "ProcedureRunReceiptV7",
+            "type": "object"
+          },
           "ProcedureRunReceiptWithheld": {
             "additionalProperties": false,
             "description": "A run receipt withheld from this reader: it carries the arming credential's actor.\n\n``receipt_digest`` beside it still names the exact receipt.",
@@ -63003,6 +65949,9 @@
               },
               {
                 "$ref": "#/$defs/ProcedureRunReceipt"
+              },
+              {
+                "$ref": "#/$defs/ProcedureRunReceiptV7"
               },
               {
                 "$ref": "#/$defs/ProcedureRunReceiptWithheld"
@@ -69895,30 +72844,6 @@
             "type": "string"
           }
         },
-        "classifier_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "classifier_digest",
-          "required": true,
-          "schema": {
-            "title": "Classifier Digest",
-            "type": "string"
-          }
-        },
-        "classifier_status": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "classifier_status",
-          "required": true,
-          "schema": {
-            "enum": [
-              "installed",
-              "not_installed"
-            ],
-            "title": "Classifier Status",
-            "type": "string"
-          }
-        },
         "effect_class": {
           "has_default": false,
           "has_default_factory": false,
@@ -70016,16 +72941,6 @@
           "schema": {
             "const": "playbill-provider-interface-entry-v1",
             "title": "Tag",
-            "type": "string"
-          }
-        },
-        "vocabulary_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "vocabulary_digest",
-          "required": true,
-          "schema": {
-            "title": "Vocabulary Digest",
             "type": "string"
           }
         }
@@ -70271,18 +73186,6 @@
             "title": "Artifact Kind",
             "type": "string"
           },
-          "classifier_digest": {
-            "title": "Classifier Digest",
-            "type": "string"
-          },
-          "classifier_status": {
-            "enum": [
-              "installed",
-              "not_installed"
-            ],
-            "title": "Classifier Status",
-            "type": "string"
-          },
           "effect_class": {
             "enum": [
               "none",
@@ -70332,10 +73235,6 @@
             "const": "playbill-provider-interface-entry-v1",
             "title": "Tag",
             "type": "string"
-          },
-          "vocabulary_digest": {
-            "title": "Vocabulary Digest",
-            "type": "string"
           }
         },
         "required": [
@@ -70345,10 +73244,7 @@
           "artifact_kind",
           "pin_role",
           "interface_digest",
-          "vocabulary_digest",
-          "classifier_digest",
           "effect_class",
-          "classifier_status",
           "interface_basis"
         ],
         "title": "ProviderInterfaceEntry",
@@ -70357,15 +73253,12 @@
       "required_fields": [
         "artifact_digest",
         "artifact_kind",
-        "classifier_digest",
-        "classifier_status",
         "effect_class",
         "identity",
         "interface_basis",
         "interface_digest",
         "pin_role",
-        "tag",
-        "vocabulary_digest"
+        "tag"
       ]
     },
     "ProviderInterfaceImplementation": {

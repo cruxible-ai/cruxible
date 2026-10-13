@@ -328,13 +328,13 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     assert all(item.environment_path.exists() for item in old.values())
 
 
-def test_another_implementation_binds_the_live_registration_and_classifies_through_its_host(
+def test_another_implementation_binds_the_live_registration(
     installer_http, tmp_path, provider_checkout
 ):
     """The contract owns the ProviderInterface: a second package of the same
     definition, with other classifier bytes, installs onto the live registration
-    rather than proposing a successor that would strand the first Provider. It
-    hosts no classifier for it; runs classify through the first deployment."""
+    rather than proposing a successor that would strand the first Provider. The
+    classifier bytes are inert registration data: nothing hosts or runs them."""
 
     from tests.support.provider_installation import build_local_call
 
@@ -365,8 +365,6 @@ def test_another_implementation_binds_the_live_registration_and_classifies_throu
         "Provider:local-call",
         "Provider:other-call",
     ]
-    deployments = get_playbill_manager().provider_runtime_operator().config.deployments
-    assert sorted(len(item.classifier_installations) for item in deployments) == [0, 1]
     assert _run_call(
         client,
         http,
@@ -382,12 +380,11 @@ def test_another_implementation_binds_the_live_registration_and_classifies_throu
     ) == {"n": 4}
 
 
-def test_a_package_binding_a_live_registration_claims_only_what_it_proves(
-    installer_http, tmp_path, provider_checkout, monkeypatch
+def test_a_package_binding_a_live_registration_needs_no_bucket_proof(
+    installer_http, tmp_path, provider_checkout
 ):
-    """Binding is checked before anything is proposed: a selector under a fixture id
-    the live registration's proof does not name is a typed refusal, and so is a
-    registration whose package classifier no deployment on this daemon hosts."""
+    """A package's declared input buckets are inert: one whose selector names a
+    fixture id the live registration's proofs do not name still binds it."""
 
     from tests.support.provider_installation import build_local_call
 
@@ -404,33 +401,114 @@ def test_a_package_binding_a_live_registration_claims_only_what_it_proves(
     renamed, renamed_lock = build_local_call(
         tmp_path, repository, name="renamed-call", fixture_id="integer-renamed"
     )
-    with pytest.raises(Exception) as unproven:
-        install_provider_wheel(
-            client, instance_id, wheel=renamed, lock=renamed_lock, dependency_wheels=(runtime,)
-        )
-    assert "cruxible.provider.bucket_fixture_missing" in str(unproven.value)
-    # Refused before its deployment is registered.
-    operator = get_playbill_manager().provider_runtime_operator()
-    assert len(operator.config.deployments) == 1
-
-    monkeypatch.setattr(operator, "config", operator.config.model_copy(update={"deployments": ()}))
-    other, other_lock = build_local_call(tmp_path, repository, name="other-call", increment=2)
-    with pytest.raises(Exception) as unhosted:
-        install_provider_wheel(
-            client, instance_id, wheel=other, lock=other_lock, dependency_wheels=(runtime,)
-        )
-    assert "cruxible.provider.classifier_host_missing" in str(unhosted.value)
+    second = install_provider_wheel(
+        client, instance_id, wheel=renamed, lock=renamed_lock, dependency_wheels=(runtime,)
+    )
+    assert second.status == "ready" and second.registered, second
     entry = interface_entry(client, instance_id, "local.increment")
-    assert [item["provider_identity"] for item in entry["providers"]] == ["Provider:local-call"]
+    assert sorted(item["provider_identity"] for item in entry["providers"]) == [
+        "Provider:local-call",
+        "Provider:renamed-call",
+    ]
 
 
-def test_reinstalling_the_registrant_of_a_retained_web_fetch_registration_hosts_it(
+def test_a_package_whose_bucket_metadata_never_matched_installs_binds_and_runs(
+    installer_http, tmp_path, provider_checkout, monkeypatch
+):
+    """Review F-001: bucket data is inert on every install path.
+
+    The first package's metadata failed the pre-removal reader three ways (a
+    selector of an unknown class, no fixture for any selector, a fixture whose
+    measured bucket the vocabulary lacks); it registers the interface. The second
+    claims a fixture it never ships and binds that live registration. Both run.
+    The provider runtime's validating reader and bucket model raise if reached,
+    across install, binding, the repository catalog and the runs.
+    """
+
+    from tests.support.provider_installation import (
+        INERT_BUCKET_METADATA,
+        build_local_call,
+        forbid_bucket_semantics,
+    )
+
+    http, instance_id, reviewer = installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    repository = provider_checkout.repository
+    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
+    forbid_bucket_semantics(monkeypatch)
+
+    wheel, lock = build_local_call(
+        tmp_path, repository, name="inert-call", bucket_metadata=INERT_BUCKET_METADATA
+    )
+    first = install_provider_wheel(
+        client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
+    )
+    assert first.status == "ready" and first.registered, first
+    assert _run_call(
+        client,
+        http,
+        instance_id,
+        reviewer,
+        tmp_path,
+        "local.increment",
+        {"n": 2},
+        {"n": {"type": "int"}},
+        {"n": {"type": "int"}},
+        provider_identity="Provider:inert-call",
+        name="inert-package-call",
+    ) == {"n": 3}
+
+    other, other_lock = build_local_call(
+        tmp_path,
+        repository,
+        name="unshipped-fixture-call",
+        increment=2,
+        bucket_metadata={
+            "declared_input_buckets": ["size=*"],
+            "bucket_conformance": {"size=*": "never-shipped"},
+            "fixtures": [],
+        },
+    )
+    second = install_provider_wheel(
+        client, instance_id, wheel=other, lock=other_lock, dependency_wheels=(runtime,)
+    )
+    assert second.status == "ready" and second.registered, second
+    entry = interface_entry(client, instance_id, "local.increment")
+    assert sorted(item["provider_identity"] for item in entry["providers"]) == [
+        "Provider:inert-call",
+        "Provider:unshipped-fixture-call",
+    ]
+    assert _run_call(
+        client,
+        http,
+        instance_id,
+        reviewer,
+        tmp_path,
+        "local.increment",
+        {"n": 2},
+        {"n": {"type": "int"}},
+        {"n": {"type": "int"}},
+        provider_identity="Provider:unshipped-fixture-call",
+        name="unshipped-fixture-package-call",
+    ) == {"n": 4}
+
+    # The configured repository's catalog reads every package the same way.
+    assert {item.name for item in client.list_provider_packages(instance_id).packages} == {
+        "cruxible-provider-noop",
+        "cruxible-provider-web",
+        "cruxible-provider-workspace",
+        "cruxible-provider-docs",
+        "cruxible-provider-quant",
+    }
+
+
+def test_reinstalling_the_registrant_of_a_retained_web_fetch_registration_binds_it(
     installer_http, tmp_path, provider_checkout, monkeypatch
 ):
     """Review F-002: state from before core owned web.fetch can hold a package's own
     v3 registration. On a daemon with no deployment or prepared install left,
-    reinstalling that exact package binds the retained registration and hosts its
-    classifier again -- the repair classifier_host_missing names -- rather than
+    reinstalling that exact package binds the retained registration rather than
     comparing against core's registration it would propose on a fresh instance."""
 
     from cruxible_client.contracts.provider_interfaces import (
@@ -476,86 +554,7 @@ def test_reinstalling_the_registrant_of_a_retained_web_fetch_registration_hosts_
     )
     assert again.status == "ready" and again.registered, again
     assert parse_provider_interface(held(), path=path) == retained
-    (deployment,) = manager.provider_runtime_operator().config.deployments
-    assert [item.classifier_digest for item in deployment.classifier_installations] == [
-        retained.classifier_digest
-    ]
-
-
-def test_a_retained_preparation_that_hosted_nothing_hosts_its_classifier_on_retry(
-    installer_http, tmp_path, provider_checkout, monkeypatch
-):
-    """Review F-002 (delta): an install refused classifier_host_missing before this
-    fix had already written prepared.json with no classifier installation. Retrying
-    that exact package reuses the preparation and now hosts the classifier it owes;
-    a package carrying another classifier is still refused, retry or not."""
-
-    import json as stdlib_json
-
-    from cruxible_client.contracts.provider_interfaces import parse_provider_interface
-    from cruxible_core.providers import package_registration
-    from cruxible_core.service.procedures import provider_installation as service
-    from tests.support.provider_installation import build_web_fetch_alternative
-
-    http, instance_id, _reviewer = installer_http
-    client = CruxibleClient(base_url="http://cruxible")
-    client._client = http
-    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
-    wheel, lock = build_web_fetch_alternative(tmp_path, provider_checkout.repository)
-    path = "provider-interfaces/web.fetch.json"
-    manager = get_playbill_manager()
-    instance = manager.get(instance_id)
-
-    def install(package_wheel, package_lock):
-        return install_provider_wheel(
-            client,
-            instance_id,
-            wheel=package_wheel,
-            lock=package_lock,
-            dependency_wheels=(runtime,),
-        )
-
-    with monkeypatch.context() as earlier:
-        earlier.setattr(
-            package_registration, "core_owned_interface_registration", lambda digest: None
-        )
-        assert install(wheel, lock).status == "ready"
-    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-    retained = parse_provider_interface(tree[path], path=path)
-    cache = instance.root / "exhaust" / "provider-installations"
-    cache.rename(instance.root / "exhaust" / "earlier-installations")
-    operator = manager.provider_runtime_operator()
-    monkeypatch.setattr(operator, "config", operator.config.model_copy(update={"deployments": ()}))
-
-    # The installer before the fix prepared without hosting it, then refused.
-    with monkeypatch.context() as unfixed:
-        unfixed.setattr(service, "_hosted_registrations", lambda *args: ())
-        with pytest.raises(Exception, match="classifier_host_missing"):
-            install(wheel, lock)
-    (prepared,) = cache.glob("*/prepared.json")
-    assert stdlib_json.loads(prepared.read_bytes())["deployment"]["classifier_installations"] == []
-
-    again = install(wheel, lock)
-    assert again.status == "ready" and again.registered, again
-    (deployment,) = manager.provider_runtime_operator().config.deployments
-    assert [item.classifier_digest for item in deployment.classifier_installations] == [
-        retained.classifier_digest
-    ]
-    assert [
-        item["classifier_digest"]
-        for item in stdlib_json.loads(prepared.read_bytes())["deployment"][
-            "classifier_installations"
-        ]
-    ] == [retained.classifier_digest]
-
-    # Another package's classifier is never hosted for it: refused, and so is the retry.
-    monkeypatch.setattr(operator, "config", operator.config.model_copy(update={"deployments": ()}))
-    other, other_lock = build_web_fetch_alternative(
-        tmp_path / "other", provider_checkout.repository, name="fetch-other"
-    )
-    for _attempt in range(2):
-        with pytest.raises(Exception, match="classifier_host_missing"):
-            install(other, other_lock)
+    assert len(manager.provider_runtime_operator().config.deployments) == 1
 
 
 def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
@@ -590,8 +589,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
         for item in row.missing_requirements
     )
     # Core owns web.fetch: the package installs onto core's registration of the
-    # definition it ships, and core classifies its runs; the deployment hosts
-    # only the package's classifier for search.web.
+    # definition it ships.
     from cruxible_client.contracts.provider_interfaces import render_provider_interface
     from cruxible_core.providers.web_fetch import web_fetch_interface_registration
 
@@ -600,10 +598,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     assert tree["provider-interfaces/web.fetch.json"] == render_provider_interface(
         web_fetch_interface_registration()
     )
-    (deployment,) = get_playbill_manager().provider_runtime_operator().config.deployments
-    assert [item.classifier_identity for item in deployment.classifier_installations] == [
-        "search.web.input"
-    ]
+    assert len(get_playbill_manager().provider_runtime_operator().config.deployments) == 1
     pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
     base = capture_contract()
     contract = base.model_copy(

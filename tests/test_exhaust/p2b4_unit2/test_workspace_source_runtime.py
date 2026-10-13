@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     CaptureFormatError,
     capture_contract_digest,
@@ -20,6 +20,7 @@ from cruxible_client.contracts.procedures.models import SourceNode
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlan,
     procedure_acquisition_plan_digest,
+    procedure_provider_bindings,
 )
 from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservation,
@@ -35,9 +36,9 @@ from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspac
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.producer_receipts import journal_producer_receipt_resolver
 from cruxible_core.procedures.execution import (
-    PreparedProcedureRunV5,
+    PreparedProcedureRunV9,
     ProcedureExecutor,
-    ProcedureRunAdmissionV5,
+    ProcedureRunAdmissionV9,
     procedure_admission_digest,
     procedure_line_run_id,
     procedure_node_pin_sets,
@@ -53,17 +54,6 @@ from cruxible_core.storage.cas import BodyAccessContext
 from tests.support.case_folding import volume_folds_case
 from tests.test_procedures.p2b4_unit1.test_source_v4_runtime import _source_fixture
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
-
-
-class _WorkspaceClassifier:
-    def classify(self, canonical_input: CanonicalValue, *, deadline: object) -> str:
-        assert isinstance(canonical_input, dict)
-        return "content_kind=text;byte_size=tiny"
-
-
-class _WorkspaceRegistry:
-    def require(self, _classifier_digest: str) -> _WorkspaceClassifier:
-        return _WorkspaceClassifier()
 
 
 class _WorkspaceInvoker:
@@ -173,7 +163,6 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
             **old_occurrence.model_dump(mode="python"),
             "interface_id": "workspace.file",
             "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
-            "accepted_bucket_selectors": ("content_kind=text;byte_size=tiny",),
             "effect_class": "none",
             "local_execution": local,
             "secret_plan": ProviderSecretResolutionPlan(references=(), binding_identity_digests=()),
@@ -194,6 +183,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
             "node_pin_sets": node_pin_sets,
             "pin_set_digest": procedure_pin_set_digest(accepted.procedure.pins, node_pin_sets),
             "acquisition_plan_digest": plan_digest,
+            "resolved_provider_bindings": procedure_provider_bindings(plan.external_occurrences),
             "semantic_replay_key_digest": "sha256:" + "0" * 64,
             "admission_binding_digest": "sha256:" + "0" * 64,
             "run_id": "RUN-" + "0" * 64,
@@ -203,7 +193,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
         update={"semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional)}
     )
     admission_digest = procedure_admission_digest(provisional)
-    admission = ProcedureRunAdmissionV5.model_validate(
+    admission = ProcedureRunAdmissionV9.model_validate(
         {
             **provisional.model_dump(mode="python"),
             "admission_binding_digest": admission_digest,
@@ -215,7 +205,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
             ),
         }
     )
-    prepared = PreparedProcedureRunV5.model_validate(
+    prepared = PreparedProcedureRunV9.model_validate(
         {
             **prepared.model_dump(mode="python"),
             "admission": admission,
@@ -248,7 +238,6 @@ def _execute(tmp_path: Path, relative_path: str):  # type: ignore[no-untyped-def
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
-        provider_classifier_registry=_WorkspaceRegistry(),  # type: ignore[arg-type]
         capture_contracts={capture_contract_digest(contract).tagged: contract},
         acquisition_policy=policy,
         workspace_file_reader=reader,
@@ -408,7 +397,7 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
     (root / "docs").mkdir()
     (root / "docs" / "note.txt").write_bytes(b"hello\n")
 
-    def execute(item: PreparedProcedureRunV5) -> None:
+    def execute(item: PreparedProcedureRunV9) -> None:
         result = ProcedureExecutor(
             journal=fixture.journal,
             bodies=fixture.bodies,
@@ -417,7 +406,6 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
             activation_authority=_Authority(accepted.artifact_digest),
             contract_validator=_Contracts(),
             provider_runtime_invoker=_WorkspaceInvoker(),
-            provider_classifier_registry=_WorkspaceRegistry(),  # type: ignore[arg-type]
             capture_contracts={capture_contract_digest(contract).tagged: contract},
             acquisition_policy=policy,
             workspace_file_reader=reader,
@@ -432,7 +420,7 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
         admission_binding_digest=first.admission_binding_digest,
         occurrence_evaluation_time=first.occurrence_evaluation_time,
     )
-    second_admission = ProcedureRunAdmissionV5.model_validate(
+    second_admission = ProcedureRunAdmissionV9.model_validate(
         {
             **first.model_dump(mode="python"),
             "attempt": 2,
@@ -525,7 +513,6 @@ def test_forbidden_workspace_path_refuses_before_provider_bind_or_spawn(
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
-        provider_classifier_registry=_WorkspaceRegistry(),  # type: ignore[arg-type]
         capture_contracts={capture_contract_digest(contract).tagged: contract},
         acquisition_policy=policy,
         workspace_file_reader=reader,
@@ -559,7 +546,6 @@ def test_unavailable_workspace_reader_is_a_typed_source_refusal(tmp_path: Path) 
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=invoker,
-        provider_classifier_registry=_WorkspaceRegistry(),  # type: ignore[arg-type]
         capture_contracts={capture_contract_digest(contract).tagged: contract},
         acquisition_policy=policy,
         workspace_file_reader=None,

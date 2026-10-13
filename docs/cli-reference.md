@@ -915,28 +915,26 @@ are read by the client and transferred through CAS, so this also works against
 a remote daemon.
 
 The shared installer prepares an exact Python environment, verifies it once,
-checks package classifiers in supervised children, and proposes the package's
-provider interfaces and Provider definition through ordinary acceptance.
-The interface contract owns its registration, not the implementation: an
-exported interface whose definition is already registered live here (an equal
-interface digest) is bound rather than registered again, and the package's
-Provider pins that exact registration whatever its classifier, so a second
-implementation of a contract installs onto the same ProviderInterface and a
-Blueprint slot typed by it takes either. A bound package claims only input
-buckets that registration proves, under the fixture ids its proofs name
-(`cruxible.provider.bucket_fixture_missing` otherwise), and runs classify through
-the deployment that hosts the registration's classifier, which must be installed
-on this daemon (`cruxible.provider.classifier_host_missing`). An occurrence admits
-only the buckets its bound implementation claims; another input is refused
-`unclaimed_bucket` before the provider runs. A different definition under the
-same interface id is proposed as a successor, which every live Provider and
-Procedure pinning the old registration must follow. Cruxible owns the `web.fetch`
-contract (definitions v2 and v3, the one `cruxible-provider-web` 0.2.x ships): a
-package implementing either registers the built-in registration of it, with its
-vocabulary, its four conformance proofs (static light, static medium, API or
-JSON, rendered) and its classifier, whatever the package itself ships, so every
-implementation binds the same ProviderInterface and claims a subset of those
-buckets.
+and proposes the package's provider interfaces and Provider definition through
+ordinary acceptance. The interface contract owns its registration, not the
+implementation: an exported interface whose definition is already registered
+live here (an equal interface digest) is bound rather than registered again, and
+the package's Provider pins that exact registration, so a second implementation
+of a contract installs onto the same ProviderInterface and a Blueprint slot typed
+by it takes either. Cruxible classifies no input: a package's bucket vocabulary,
+classifier, fixtures and declared selectors (which the provider-runtime 0.2.x
+package format still carries) are read by Cruxible's own package reader as
+inert registration data. Their bytes are verified against their digests, and
+nothing parses a selector, matches a bucket, requires a fixture for a selector
+or runs the classifier; an occurrence admits every input that passes the
+interface's input contract. What
+a provider cannot serve, it refuses itself with a typed refusal. A different
+definition under the same interface id is proposed as a successor, which every
+live Provider and Procedure pinning the old registration must follow. Cruxible
+owns the `web.fetch` contract (definitions v2 and v3, the one
+`cruxible-provider-web` 0.2.x ships): a package implementing either installs onto
+Cruxible's own registration of it, whatever the package itself ships, so every
+implementation binds the same ProviderInterface.
 The registration lands at once when the approval policy requires no approval;
 otherwise it stops at proposed (`awaiting_approval`) for the ordinary review and
 activation. It returns `ready`, `awaiting_approval`, or `blocked` (a landed
@@ -1058,8 +1056,7 @@ first (the default is then `satisfied`), or add the kit on a daemon without one.
 The `add` preview says which: an index default it would install reads `would
 install (by name from the provider index at exactly VERSION ...)`. `add` skips the install (`satisfied`) when no Procedure the kit
 carries pins the default, each of its interfaces the kit carries is live here as
-the kit carries it (the built-in `web.fetch` registration, or a package's whose classifier a
-deployment on this daemon hosts), and some live Provider implements each one; the Blueprint's slot
+the kit carries it, and some live Provider implements each one; the Blueprint's slot
 then takes that Provider. Otherwise it installs the default pinned to the recorded
 wheel and lock: the index's listing must name the recorded wheel hash before the
 wheel is fetched, and the lock it embeds must match before any dependency is

@@ -59,8 +59,8 @@ has nothing better.
 Any implementation of a slot's interface fits it. An interface is registered
 once per instance, by its definition: a second package implementing the same
 definition installs onto the same registration instead of a new one, so its
-Provider fits the same slots. A provider runs only the kinds of input (buckets)
-it claims, and an input it does not claim is refused before it runs.
+Provider fits the same slots. A provider receives every input its interface's
+contract admits, and refuses, typed, what it cannot serve.
 
 ## Providers you already have
 
