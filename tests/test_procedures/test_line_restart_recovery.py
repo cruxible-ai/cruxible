@@ -1028,6 +1028,7 @@ def _gap_check_work(tmp_path, monkeypatch, history: int):  # type: ignore[no-unt
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore
     from cruxible_core.service.procedures.line_dispatch import _cover_gap_with_nothing_due
 
+    tmp_path.mkdir()
     instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
     actor = _actor(instance)
     start = READ_TIME + timedelta(seconds=10)
