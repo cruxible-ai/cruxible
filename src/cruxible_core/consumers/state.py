@@ -44,13 +44,19 @@ class DisposableState:
 
     @contextmanager
     def open(self, instance: Any, *, create: bool = True) -> Iterator[sqlite3.Connection | None]:
-        """One transaction on the state, rebuilt first if its schema is not this one."""
+        """One transaction on the state, rebuilt first if its schema is not this one.
+
+        ``create=False`` is a reader's open: it never creates the database, never
+        rebuilds a schema that is not this one (the state is absent to it, None,
+        until the worker rebuilds), and never commits: whatever it writes, as a
+        read's rolled-back overlay does, is rolled back.
+        """
 
         path = self.path(instance)
+        if not create and not path.is_file():
+            yield None
+            return
         if not path.parent.exists():
-            if not create:
-                yield None
-                return
             path.parent.mkdir(mode=0o700, parents=True)
         key = path.resolve()
         with _LOCKS_GUARD:
@@ -64,9 +70,16 @@ class DisposableState:
             connection = sqlite3.connect(path, timeout=30)
             try:
                 if _schema_rows(connection) != self.expected:
+                    if not create:
+                        connection.rollback()
+                        yield None
+                        return
                     self._rebuild(connection)
                 yield connection
-                connection.commit()
+                if create:
+                    connection.commit()
+                else:
+                    connection.rollback()
             finally:
                 connection.close()
                 with _LOCKS_GUARD:
