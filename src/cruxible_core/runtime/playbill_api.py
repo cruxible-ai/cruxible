@@ -147,7 +147,6 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.ledger.ledger_mirror import LedgerMirrorStateV1
 from cruxible_core.proposals.proposals import AuthenticatedActor
-from cruxible_core.providers.provider_classifiers import PROVIDER_BUCKET_CLASSIFIER_REGISTRY
 from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
 )
@@ -2632,9 +2631,6 @@ def playbill_get(instance_id: str, *, request: GetRequest) -> GetResult:
             or (
                 request.detail == "why" and _permits("cruxible_body_read", instance_id=instance_id)
             ),
-        ),
-        installed_classifier_digests=(
-            PROVIDER_BUCKET_CLASSIFIER_REGISTRY.installed_classifier_digests
         ),
         viewer=_operational_viewer(instance_id),
     )
