@@ -52,6 +52,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     PROCEDURE_RUN_CONFIG_PATH,
     ProcedureRunOperationalConfigV1,
 )
+from tests.support.procedures import RUN_WALL_CLOCK
 from tests.test_ledger.test_activation import _sign
 from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 
@@ -101,7 +102,7 @@ def _served_line(
             "max_capture_bytes": 0,
             "max_items": 100,
             "max_provider_calls": 0,
-            "max_wall_clock_microseconds": 1_000_000,
+            "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
         },
         epsilon={"$decimal": "0.1"},
         pins=tuple(

@@ -15,7 +15,6 @@ import cruxible_core.proposals.proposals as proposal_module
 import tests.core_support._p2b1_support as p2b1_support
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     evaluate_procedure_law,
@@ -48,7 +47,12 @@ from tests.core_support._p2b1_support import (
     pin,
 )
 from tests.core_support._support import initialize_local
-from tests.support.procedures import PERMISSIVE_CONTRACT, accepted_procedure
+from tests.support.procedures import (
+    MAX_WALL_CLOCK,
+    PERMISSIVE_CONTRACT,
+    RUN_WALL_CLOCK,
+    accepted_procedure,
+)
 
 _DEMO_INTERFACE_REGISTRATION = p2b1_support.interface_registration
 
@@ -90,13 +94,13 @@ def _definition() -> tuple[ProcedureDefinition, ArtifactPin, ArtifactPin]:
         ),
         returns="result",
         budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=2_000_000),
+            wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=2,
             max_capture_bytes=1024,
             max_items=10,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
+            max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
             max_capture_bytes=2048,
             max_items=20,
@@ -143,7 +147,7 @@ def _line() -> LineSpec:
             "max_capture_bytes": 1024,
             "max_items": 10,
             "max_provider_calls": 2,
-            "max_wall_clock_microseconds": 2_000_000,
+            "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
         },
         epsilon={"$decimal": "0"},
         pins=tuple(

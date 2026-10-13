@@ -66,7 +66,7 @@ from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.storage.cas import ContentAddressedBodyStore
 from tests.core_support._subject_kind_support import declare_created_kinds, world_history
 from tests.core_support._support import client_material, initialize_local
-from tests.support.procedures import accepted_procedure
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
 from tests.test_ledger.test_activation import _sign
 
 NOW = datetime(2026, 8, 17, 14, 0, tzinfo=timezone.utc)
@@ -193,13 +193,13 @@ def _accepted() -> AcceptedProcedure:
             _measurement("unit-health", "procedure_unit"),
         ),
         budget=ProcedureBudget(
-            wall_clock=_duration(1_000_000),
+            wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=_duration(2_000_000),
+            max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,

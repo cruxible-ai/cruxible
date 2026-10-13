@@ -26,7 +26,6 @@ from cruxible_client.contracts.acquisition_policies import (
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
     procedure_mandate_path,
@@ -120,6 +119,7 @@ from tests.core_support._p2b1_support import (
 )
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
 from tests.support.invocation_ids import unique_invocation_id
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.support.short_temporary_root import short_temporary_directory
 from tests.test_procedures.test_procedure_execution import (
     _accepted_line_for_admission,
@@ -857,13 +857,13 @@ def _provider_line_procedure(
         ),
         returns="result",
         budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=4_000_000),
+            wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=2,
             max_capture_bytes=1024,
             max_items=10,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=8_000_000),
+            max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
             max_capture_bytes=2048,
             max_items=20,

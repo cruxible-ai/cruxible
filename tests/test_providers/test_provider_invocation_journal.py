@@ -154,8 +154,14 @@ def _accepted_one_provider(
     *,
     mutation: bool = False,
     repeat: bool = False,
+    wall_clock: CanonicalDuration = CanonicalDuration(microseconds=2_000_000),
+    max_wall_clock: CanonicalDuration = CanonicalDuration(microseconds=4_000_000),
 ) -> AcceptedProcedure:
-    """One exact-pinned demo Provider call, direct or as a one-attempt repeat body."""
+    """One exact-pinned demo Provider call, direct or as a one-attempt repeat body.
+
+    The 2 s budget is what this file's injected clocks measure against; a caller
+    that runs on the real clock passes the roomy test budget instead.
+    """
 
     provider = accepted_provider()
     interface = accepted_interface()
@@ -226,13 +232,13 @@ def _accepted_one_provider(
         nodes=(graph_node,),
         returns=returns,
         budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=2_000_000),
+            wall_clock=wall_clock,
             max_provider_calls=2,
             max_capture_bytes=1024,
             max_items=10,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
+            max_wall_clock=max_wall_clock,
             max_provider_calls=4,
             max_capture_bytes=2048,
             max_items=20,

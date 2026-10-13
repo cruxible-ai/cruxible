@@ -39,7 +39,6 @@ from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import PreflightResult
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    CanonicalDuration,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -72,6 +71,7 @@ from tests.core_support._claim_type_support import (
     claim_type_input_example,
     defaulted_claim_type_input_example,
 )
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 
 
@@ -407,12 +407,12 @@ def _assess_procedure(query: str) -> ProcedureInput:
             ],
             "returns": "result",
             "budget": ProcedureBudget(
-                wall_clock=CanonicalDuration(microseconds=1_000_000),
+                wall_clock=RUN_WALL_CLOCK,
                 max_provider_calls=0,
                 max_capture_bytes=0,
             ).model_dump(mode="json"),
             "hard_caps": ProcedureHardCaps(
-                max_wall_clock=CanonicalDuration(microseconds=2_000_000),
+                max_wall_clock=MAX_WALL_CLOCK,
                 max_provider_calls=0,
                 max_capture_bytes=0,
                 max_items=200,

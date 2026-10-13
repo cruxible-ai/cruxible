@@ -16,7 +16,6 @@ from cruxible_client.contracts.acquisition_policies import (
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
@@ -114,6 +113,7 @@ from tests.core_support._knowledge_loop_support import (
 )
 from tests.core_support._support import FIXED_TIMESTAMP, initialize_local
 from tests.support.lines import line_trigger, trigger_members
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_integration.test_graph_v4_provider_closure import (
     _accepted_procedure as _accepted_provider_v4_procedure,
 )
@@ -313,13 +313,13 @@ def _slotless_procedure(name: str) -> AcceptedProcedure:
         ),
         returns="result",
         budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=1_000_000),
+            wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
+            max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,
@@ -370,7 +370,7 @@ def _scheduled_line(name: str, *, accepted: AcceptedProcedure) -> LineSpec:
             "max_capture_bytes": 0,
             "max_items": 100,
             "max_provider_calls": 0,
-            "max_wall_clock_microseconds": 1_000_000,
+            "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
         },
         epsilon={"$decimal": "0.1"},
         pins=(procedure_pin,),

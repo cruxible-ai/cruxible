@@ -19,6 +19,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_core.exhaust.line_inbox import LineInboxStore
 from cruxible_core.runtime.instance import PlaybillInstance
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_procedures.test_manual_line_runs import manual_run
 from tests.test_procedures.test_procedure_source_runs import (
     ADVISORY,
@@ -354,7 +355,6 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
         Source,
     )
     from cruxible_client.authoring.sdk import Cruxible
-    from cruxible_client.contracts.captures import CanonicalDuration
     from cruxible_client.contracts.procedures.artifacts import parse_procedure
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
@@ -393,12 +393,12 @@ def test_a_procedure_built_only_through_the_sdk_posts_to_the_inbox(tmp_path: Pat
         contract_in=CarriedContractInput(name="sdk-inbox-input", fields={}),
         contract_out=severity,
         budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=5_000_000),
+            wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=2,
             max_capture_bytes=65_536,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=10_000_000),
+            max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
             max_capture_bytes=131_072,
             max_items=200,

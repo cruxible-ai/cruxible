@@ -145,7 +145,7 @@ from cruxible_core.storage.material_reservations import (
 from tests.core_support._p2b1_support import accepted_interface, accepted_provider
 from tests.core_support._p2b1_support import pin as p2b1_pin
 from tests.core_support._support import initialize_local
-from tests.support.procedures import accepted_procedure
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
 
 NOW = datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc)
 
@@ -195,7 +195,7 @@ def _actor() -> GovernedActorContext:
 
 def _budget(*, providers: int = 0, items: int = 100) -> ProcedureBudget:
     return ProcedureBudget(
-        wall_clock=CanonicalDuration(microseconds=1_000_000),
+        wall_clock=RUN_WALL_CLOCK,
         max_provider_calls=providers,
         max_capture_bytes=0,
         max_items=items,
@@ -204,7 +204,7 @@ def _budget(*, providers: int = 0, items: int = 100) -> ProcedureBudget:
 
 def _hard_caps(*, providers: int = 0, items: int = 100) -> ProcedureHardCaps:
     return ProcedureHardCaps(
-        max_wall_clock=CanonicalDuration(microseconds=2_000_000),
+        max_wall_clock=MAX_WALL_CLOCK,
         max_provider_calls=providers,
         max_capture_bytes=0,
         max_items=items,
@@ -2900,7 +2900,8 @@ class _ExpiredBudgetClock:
 
     def monotonic_ns(self):
         self.calls += 1
-        return 0 if self.calls == 1 else 2_000_000_000
+        # Every reading after the first is one second past the run's budget.
+        return 0 if self.calls == 1 else (RUN_WALL_CLOCK.microseconds + 1_000_000) * 1_000
 
 
 def test_wall_clock_exhaustion_uses_typed_classification(tmp_path) -> None:

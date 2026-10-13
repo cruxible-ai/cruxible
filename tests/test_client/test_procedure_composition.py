@@ -20,7 +20,6 @@ from cruxible_client.authoring.procedures import (
     Transform,
 )
 from cruxible_client.authoring.sdk import Cruxible
-from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import (
     GuardPredicate,
@@ -29,11 +28,12 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     TransformAdapterSpec,
 )
+from tests.support.procedures import RUN_WALL_CLOCK
 
 EMPTY = CarriedContractInput(name="empty", fields={})
 NUMBER = CarriedContractInput(name="number", fields={"count": PropertySchema(type="int")})
 BUDGET = ProcedureBudget(
-    wall_clock=CanonicalDuration(microseconds=1_000_000),
+    wall_clock=RUN_WALL_CLOCK,
     max_provider_calls=1,
     max_capture_bytes=1024,
 )
