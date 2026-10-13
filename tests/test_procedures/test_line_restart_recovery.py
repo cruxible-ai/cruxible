@@ -1050,6 +1050,8 @@ def _gap_check_work(tmp_path, monkeypatch, history: int):  # type: ignore[no-unt
     with store.locked() as conn:  # warm the projection
         assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == history
 
+    # The setup's explicit evaluations recorded their own ranges.
+    evaluated = _evaluated_ranges(instance)
     work = {"payloads": 0, "journal_records": 0}
     loads, select = json.loads, LocalJournalBackend.select_records
 
@@ -1076,7 +1078,7 @@ def _gap_check_work(tmp_path, monkeypatch, history: int):  # type: ignore[no-unt
             now=until,
         )
     # The accept in the gap is due, so the gap is not recorded as evaluated.
-    assert _evaluated_ranges(instance) == []
+    assert _evaluated_ranges(instance) == evaluated
     return work
 
 
