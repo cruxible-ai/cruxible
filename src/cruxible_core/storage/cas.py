@@ -141,7 +141,9 @@ class ContentAddressedBodyStore:
             raise CasError("CAS algorithm directory changed while it was opened")
         self._root_fd = descriptor
         weakref.finalize(self, os.close, descriptor)
-        # Opening the store settles any landing a writer left unfinished.
+        # Opening the store mints the log over objects it does not yet name, and
+        # settles any landing a writer left unfinished.
+        self.landings.ensure()
         self.landings.reconcile()
 
     @property
@@ -333,8 +335,10 @@ class ContentAddressedBodyStore:
             if existing is not None:
                 self._verified_bytes(digest.tagged)
                 if not journal_payload:
-                    # A retry after an interrupted landing: publish its completion.
+                    # A retry after an interrupted landing: publish its completion;
+                    # a body that arrived as a journal payload: log it now.
                     self.landings.reconcile(digest.tagged)
+                    self.landings.ensure_landed(digest.tagged)
             elif journal_payload:
                 self._write_object(name, content, digest.tagged, directory)
             else:

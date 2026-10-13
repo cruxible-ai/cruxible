@@ -53,13 +53,14 @@ from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.preview_fence import is_previewing
+from cruxible_core.storage.read_positions import reobservations_through
 
 _LOCK = threading.RLock()
 _FENCE = "claim-reobservation-local-v1"
 _PARTITION = "reobservations"
 _EVENT_TAG = "cruxible-claim-reobservation-v1"
 _ACCESS = BodyAccessContext(principal_id="claim-reobservation", can_read_body=True)
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 REOBSERVATION_DIRECTORY = "claim-reobservations"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # ``reobservations`` keeps the full history (audit, historical verification).
@@ -69,6 +70,9 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # only when a record raises that key's running latest observation (the larger
 # Capture digest breaks a tie) -- keyed by recording instant, and the answer at
 # an instant is the last step recorded by it: one seek, whatever the history.
+# Each step keeps its journal sequence, so a read recorded at a journal position
+# counts only the steps through it (``read_positions``): the steps are written in
+# sequence order, so those are exactly the steps the projection held then.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
  singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL, recorded_us INTEGER NOT NULL
@@ -83,6 +87,7 @@ CREATE INDEX IF NOT EXISTS reobservations_by_sequence ON reobservations (claim_i
 CREATE TABLE IF NOT EXISTS reobservation_points (
  claim_id TEXT NOT NULL, contract_digest TEXT NOT NULL, observed_content_digest TEXT NOT NULL,
  recorded_us INTEGER NOT NULL, observed_us INTEGER NOT NULL, capture_digest TEXT NOT NULL,
+ sequence INTEGER NOT NULL,
  PRIMARY KEY(claim_id, contract_digest, observed_content_digest, recorded_us, observed_us,
   capture_digest)
 ) STRICT, WITHOUT ROWID;
@@ -90,14 +95,22 @@ CREATE TABLE IF NOT EXISTS reobservation_points (
 _LAST_POINT = (
     "SELECT capture_digest, observed_us, recorded_us FROM reobservation_points "
     "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? AND recorded_us<=? "
-    "ORDER BY recorded_us DESC, observed_us DESC, capture_digest DESC LIMIT 1"
+    "AND sequence<=? ORDER BY recorded_us DESC, observed_us DESC, capture_digest DESC LIMIT 1"
 )
 _NEXT_POINT = (
     "SELECT recorded_us FROM reobservation_points "
     "WHERE claim_id=? AND contract_digest=? AND observed_content_digest=? AND recorded_us>? "
-    "ORDER BY recorded_us LIMIT 1"
+    "AND sequence<=? ORDER BY recorded_us LIMIT 1"
 )
 _NEVER = 1 << 62
+_LAST_SEQUENCE = "SELECT MAX(sequence) FROM reobservations WHERE claim_id=? AND sequence<=?"
+
+
+def _through() -> int:
+    """The last journal sequence the read in progress counts: every one outside a read."""
+
+    through = reobservations_through()
+    return _NEVER if through is None else through
 
 
 def _micros(value: datetime) -> int:
@@ -243,14 +256,14 @@ class ClaimReobservationStore:
             ),
         ).rowcount
         if inserted:
-            last = conn.execute(_LAST_POINT, (*key, _NEVER)).fetchone()
+            last = conn.execute(_LAST_POINT, (*key, _NEVER, _NEVER)).fetchone()
             if last is None or (observed_us, payload["capture_digest"]) > (
                 int(last[1]),
                 str(last[0]),
             ):
                 conn.execute(
-                    "INSERT OR IGNORE INTO reobservation_points VALUES (?,?,?,?,?,?)",
-                    (*key, recorded_us, observed_us, payload["capture_digest"]),
+                    "INSERT OR IGNORE INTO reobservation_points VALUES (?,?,?,?,?,?,?)",
+                    (*key, recorded_us, observed_us, payload["capture_digest"], sequence),
                 )
         conn.execute("INSERT OR REPLACE INTO progress VALUES(1,?,?)", (sequence, recorded_us))
 
@@ -491,8 +504,11 @@ class ClaimReobservationStore:
         journal = self._journal(create=False)
         return 0 if journal is None else journal.read_head(self.stream, _PARTITION).sequence
 
-    def records_after(self, sequence: int) -> tuple[tuple[int, str], ...]:
-        """Each journal record after ``sequence``: its sequence and the lineage it re-observed.
+    def records_after(
+        self, sequence: int, *, through: int | None = None
+    ) -> tuple[tuple[int, str], ...]:
+        """Each journal record after ``sequence`` (through ``through``): its sequence and
+        the lineage it re-observed.
 
         Read from the journal, the authority, never the projection (which has no
         index on sequence alone): a follower pays one payload read per record past
@@ -506,6 +522,8 @@ class ClaimReobservationStore:
         for stored in journal.select_records(
             self.stream, partition_id=_PARTITION, first_sequence=sequence + 1
         ):
+            if through is not None and stored.record.sequence > through:
+                break
             payload = parse_journal_payload(
                 self.instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
             )
@@ -710,9 +728,7 @@ class ReobservationReader:
             if conn is None:
                 return 0
             self.probes += 1
-            row = conn.execute(
-                "SELECT MAX(sequence) FROM reobservations WHERE claim_id=?", (claim_id,)
-            ).fetchone()
+            row = conn.execute(_LAST_SEQUENCE, (claim_id, _through())).fetchone()
         return 0 if row is None or row[0] is None else int(row[0])
 
     def latest(
@@ -738,9 +754,8 @@ class ReobservationReader:
             if conn is None:
                 return ReobservationReading()
             self.probes += 1
-            row = conn.execute(
-                "SELECT MAX(sequence) FROM reobservations WHERE claim_id=?", (claim_id,)
-            ).fetchone()
+            through = _through()
+            row = conn.execute(_LAST_SEQUENCE, (claim_id, through)).fetchone()
             sequence = 0 if row is None or row[0] is None else int(row[0])
             if not sequence:
                 return ReobservationReading()
@@ -749,8 +764,10 @@ class ReobservationReader:
                 pair = (key.contract_digest, key.observed_content_digest)
                 if pair not in found:
                     self.probes += 2
-                    hit = conn.execute(_LAST_POINT, (claim_id, *pair, at_us)).fetchone()
-                    upcoming = conn.execute(_NEXT_POINT, (claim_id, *pair, at_us)).fetchone()
+                    hit = conn.execute(_LAST_POINT, (claim_id, *pair, at_us, through)).fetchone()
+                    upcoming = conn.execute(
+                        _NEXT_POINT, (claim_id, *pair, at_us, through)
+                    ).fetchone()
                     self.rows_read += int(hit is not None)
                     if upcoming is not None:
                         boundaries.add(_from_micros(upcoming[0]))

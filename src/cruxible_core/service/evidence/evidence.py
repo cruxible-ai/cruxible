@@ -78,6 +78,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProject
 from cruxible_core.proposals.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import PositionedBodies, body_present
 
 
 class _StrictEvidenceServiceModel(BaseModel):
@@ -773,6 +774,28 @@ def _current_replay_available(
 
     root = getattr(instance, "root", None)
     store = store if store is not None else instance.body_store()
+    if not readers and body_present(store, capture_digest_value) is not None:
+        # A positioned read: presence is the landing log's at the read's position,
+        # so the answer is a function of that position alone and nothing is
+        # remembered or re-checked here. An object absent at the position is
+        # recorded absent whatever its file is, so no identity-keyed memo of this
+        # answer outlives a landing; a present one's identity is the sweep's
+        # baseline for objects rewritten in place, not a check.
+        objects: list[str] = []
+        available = _replay_available(
+            instance,
+            capture_digest_value,
+            readers=readers,
+            store=PositionedBodies(store),
+            consulted=objects,
+        )
+        if bodies is not None:
+            bodies.update(
+                (digest, _cas_file_identity(store, digest) if body_present(store, digest) else None)
+                for digest in dict.fromkeys(objects)
+                if digest != "external"
+            )
+        return available
     key = None if readers or not isinstance(root, Path) else (str(root), capture_digest_value)
     if key is not None:
         remembered = memo_get(_AVAILABILITY_MEMO, key)

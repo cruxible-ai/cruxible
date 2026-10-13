@@ -269,6 +269,71 @@ def test_a_missing_landing_log_reads_as_empty_and_is_not_created(tmp_path):
     assert not (store._algorithm_root / PENDING_NAME).exists()
 
 
+def test_presence_is_the_last_completion_at_or_before_a_position(tmp_path):
+    """A read decides a body's presence from the log alone: its last completion at or
+    before the read's position. An intent whose completion comes later changes nothing."""
+
+    store, digest, path = _store(tmp_path)
+    identity = store.landings.head().identity
+
+    def present(sequence: int, which: str = digest) -> bool:
+        return store.landings.present(which, identity=identity, sequence=sequence)
+
+    assert store.erase(digest)
+    store.store(b"good")
+    assert [(row.sequence, row.kind) for row in store.landings.after(0)] == [
+        (1, "store"),
+        (2, "stored"),
+        (3, "erase"),
+        (4, "erased"),
+        (5, "store"),
+        (6, "stored"),
+    ]
+    assert [present(sequence) for sequence in range(7)] == [
+        False,
+        False,
+        True,
+        True,
+        False,
+        False,
+        True,
+    ]
+    # The file is never asked: removed outside the store, the log still says present.
+    path.unlink()
+    assert present(6) and not present(6, "sha256:" + "0" * 64)
+    with pytest.raises(CasError, match="replaced"):
+        store.landings.present(digest, identity="landings_other", sequence=6)
+
+
+def test_a_log_minted_over_held_objects_names_each_as_stored(tmp_path):
+    """A store that already holds objects when its log begins (a store from before the
+    log, or bodies first stored as journal payloads) records each as present first."""
+
+    root = tmp_path / "managed" / "cas"
+    root.mkdir(parents=True)
+    store = ContentAddressedBodyStore(root)
+    held = store.store(b"stored before any landing", journal_payload=True).digest
+    assert store.landings.head().identity == ""
+    reopened = ContentAddressedBodyStore(root)
+    head = reopened.landings.head()
+    assert [(row.digest, row.kind) for row in reopened.landings.after(0)] == [(held, "stored")]
+    assert reopened.landings.present(held, identity=head.identity, sequence=head.sequence)
+
+
+def test_a_journal_payload_stored_again_as_evidence_is_logged_present(tmp_path):
+    store, _digest, _path = _store(tmp_path)
+    payload = store.store(b"a record payload, later cited", journal_payload=True).digest
+    head = store.landings.head()
+    assert not store.landings.present(payload, identity=head.identity, sequence=head.sequence)
+    store.store(b"a record payload, later cited")
+    assert _kinds(store, head.sequence) == [(payload, "store"), (payload, "stored")]
+    head = store.landings.head()
+    assert store.landings.present(payload, identity=head.identity, sequence=head.sequence)
+    # Present already: storing it again logs nothing.
+    store.store(b"a record payload, later cited")
+    assert store.landings.head() == head
+
+
 def _kinds(store, after: int = 0) -> list[tuple[str, str]]:  # type: ignore[no-untyped-def]
     return [(row.digest, row.kind) for row in store.landings.after(after)]
 

@@ -4,8 +4,14 @@ Every body that lands in the store (bar journal-record payloads, reachable only
 through the record that names them) and every erase is one *operation* with
 two rows under increasing sequences: an intent (``store``/``erase``) before the
 object moves and a completion (``stored``/``erased``) once it has. A row says
-"this digest may have changed", never what it now holds: readers consult the
-store.
+"this digest may have changed"; its completions say what the object then is.
+A read decides a body's presence from the log alone (``present``): the digest's
+last completion at or before the read's recorded position, kept per process in
+an index the log extends as it grows. Files are opened only for their bytes.
+
+A log minted over a store that already holds objects (a store from before the
+log, or bodies first stored as journal payloads) records each of them as
+``stored`` first, so the log names every object the store held when it began.
 
 An operation is recoverable. Before its intent row the writer creates and
 locks a pending marker named by the digest; it publishes the completion and
@@ -30,6 +36,8 @@ from __future__ import annotations
 import fcntl
 import os
 import stat
+import threading
+from bisect import bisect_right
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -50,6 +58,34 @@ _CODES: dict[LandingKind, bytes] = {"store": b"s", "stored": b"S", "erase": b"e"
 _KINDS: dict[int, LandingKind] = {code[0]: kind for kind, code in _CODES.items()}
 _COMPLETION: dict[str, LandingKind] = {"store": "stored", "erase": "erased"}
 _FILE = os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+_HEX = frozenset("0123456789abcdef")
+
+
+def _hex(name: str, length: int) -> bool:
+    return len(name) == length and set(name) <= _HEX
+
+
+class _Presence:
+    """One log's completions per digest, read once per process and extended as it grows."""
+
+    def __init__(self) -> None:
+        self.through = 0
+        #: Each digest's completions in log order: (sequence, present after it).
+        self.events: dict[str, list[tuple[int, bool]]] = {}
+
+
+#: Per (held algorithm directory, log identity): a replaced log is another index.
+_INDEXES: dict[tuple[str, str], _Presence] = {}
+_INDEXES_LOCK = threading.Lock()
+
+
+def _reset_after_fork() -> None:
+    global _INDEXES_LOCK
+    _INDEXES_LOCK = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_after_fork)
 
 
 @dataclass(frozen=True)
@@ -121,10 +157,7 @@ class LandingLog:
             assert descriptor is not None
             size = os.fstat(descriptor).st_size
             if size < RECORD:
-                # No complete header: mint the log's identity.
-                os.ftruncate(descriptor, 0)
-                header = _HEADER + new_id("landings", length=32).encode("ascii")
-                os.write(descriptor, header.ljust(RECORD - 1, b" ") + b"\n")
+                self._mint(descriptor)
             elif size % RECORD:
                 # A torn record a writer died inside: drop it before appending.
                 os.ftruncate(descriptor, size - size % RECORD)
@@ -134,6 +167,53 @@ class LandingLog:
             if sync:
                 os.fsync(descriptor)
             return os.fstat(descriptor).st_size // RECORD - 1
+
+    def _mint(self, descriptor: int) -> None:
+        """Write a new log under the caller's exclusive lock: its identity, then a
+        ``stored`` row for every object the store already holds."""
+
+        os.ftruncate(descriptor, 0)
+        header = _HEADER + new_id("landings", length=32).encode("ascii")
+        rows = [header.ljust(RECORD - 1, b" ") + b"\n"]
+        for shard in sorted(os.listdir(self._directory)):
+            if not _hex(shard, 2):
+                continue
+            try:
+                directory = os.open(
+                    shard, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=self._directory
+                )
+            except OSError:
+                continue
+            try:
+                names = os.listdir(directory)
+            finally:
+                os.close(directory)
+            rows.extend(
+                _record("stored", "sha256:" + name) for name in sorted(names) if _hex(name, 64)
+            )
+        view = memoryview(b"".join(rows))
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:  # pragma: no cover - a short local append
+                raise CasError("the CAS landing log could not be minted")
+            view = view[written:]
+        os.fsync(descriptor)
+
+    def ensure(self) -> None:
+        """Mint the log over a store that holds objects but has none: one open when it exists.
+
+        An empty store keeps no log until its first landing.
+        """
+
+        with self._opened(write=False) as descriptor:
+            if descriptor is not None and os.fstat(descriptor).st_size >= RECORD:
+                return
+        if not any(_hex(name, 2) for name in os.listdir(self._directory)):
+            return
+        with self._opened(write=True) as descriptor:
+            assert descriptor is not None
+            if os.fstat(descriptor).st_size < RECORD:
+                self._mint(descriptor)
 
     def head(self) -> LandingHead:
         """The log's identity and newest complete sequence: one header read and a stat."""
@@ -149,12 +229,23 @@ class LandingLog:
             raise CasError("the CAS landing log has no header")
         return LandingHead(header[len(_HEADER) :].strip().decode("ascii"), size // RECORD - 1)
 
-    def after(self, sequence: int, *, through: int | None = None) -> tuple[Landing, ...]:
-        """Every complete row after ``sequence`` (through ``through``): one ranged read."""
+    def after(
+        self, sequence: int, *, through: int | None = None, identity: str | None = None
+    ) -> tuple[Landing, ...]:
+        """Every complete row after ``sequence`` (through ``through``): one ranged read.
+
+        ``identity`` is the log the caller's positions name: another log refuses.
+        """
 
         with self._opened(write=False) as descriptor:
             if descriptor is None:
+                if identity:
+                    raise CasError("the CAS landing log was replaced")
                 return ()
+            if identity is not None and (
+                os.pread(descriptor, RECORD, 0)[len(_HEADER) :].strip().decode("ascii") != identity
+            ):
+                raise CasError("the CAS landing log was replaced")
             last = os.fstat(descriptor).st_size // RECORD - 1
             if through is not None:
                 last = min(last, through)
@@ -172,6 +263,49 @@ class LandingLog:
                 Landing(sequence + 1 + index, record[2 : RECORD - 1].strip().decode("ascii"), kind)
             )
         return tuple(rows)
+
+    # -- presence -------------------------------------------------------------
+
+    def present(self, digest: str, *, identity: str, sequence: int) -> bool:
+        """Whether ``digest`` is in the store as of ``sequence`` of the log ``identity``.
+
+        Its last completion at or before that position decides: ``stored``
+        present, ``erased`` or none absent. An operation whose completion comes
+        later has not happened yet. Read from the process's index of the log,
+        extended by the rows it has not yet read: never from the object itself.
+        """
+
+        if not identity or sequence <= 0:
+            return False
+        key = (str(self._store._algorithm_root), identity)
+        with _INDEXES_LOCK:
+            index = _INDEXES.setdefault(key, _Presence())
+        with _INDEXES_LOCK:
+            if index.through < sequence:
+                for row in self.after(index.through, through=sequence, identity=identity):
+                    if not row.intent:
+                        index.events.setdefault(row.digest, []).append(
+                            (row.sequence, row.kind == "stored")
+                        )
+                    index.through = row.sequence
+            events = index.events.get(digest)
+            if not events:
+                return False
+            found = bisect_right(events, sequence, key=lambda event: event[0])
+            return found > 0 and events[found - 1][1]
+
+    def ensure_landed(self, digest: str) -> None:
+        """Log an object the store holds but the log does not name as present.
+
+        A body first stored as a journal payload lands unlogged; stored again as
+        evidence, it is logged now, so a read deciding presence from the log sees it.
+        """
+
+        head = self.head()
+        if self.present(digest, identity=head.identity, sequence=head.sequence):
+            return
+        with self.operation(digest, "store"):
+            pass
 
     # -- operations -----------------------------------------------------------
 
