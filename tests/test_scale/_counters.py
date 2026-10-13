@@ -37,36 +37,38 @@ scale module's lifetime; its trace callbacks record nothing outside a window.
 SQL scans. The window over-counts rather than miss, and never reads the SQL text
 to find tables. Every execution is compiled afresh from its trace callback, on
 its own connection, as ``EXPLAIN QUERY PLAN`` and as ``EXPLAIN`` of its own SQL
-(literals included: a literal can change the plan) with SQLite's authorizer set
-(``statement_scan_rows``). The authorizer names, by their real names, every table
-the statement and every trigger it would fire read or write (a view's tables
-included); the program's cursors (``OpenRead``/``OpenWrite`` by root page,
-trigger programs included) add the tables read without naming a column
-(``count(*)``, ``EXISTS``). So spelling, quoting, aliases, CTE prefixes and
-views change nothing. Each touched table weighs its rows, counted afresh, unless
-the plan proves its access bounded:
+(literals included: a literal can change the plan), with SQLite's authorizer set
+(``statement_scan_rows``). The compiled program lists every cursor the statement
+and every trigger program it would run opens on a table or an index of one (by
+root page); the authorizer names, by real name, every table they read or write.
+So spelling, quoting, aliases, CTE prefixes, views and triggers change nothing.
 
-- some plan step names it (by its real name, ``schema.table`` included; an
-  alias proves nothing) and every such step is an index lookup (a ``SEARCH``, not
-  through an automatic index), no plan step walks a table the plan does not
-  name, and the statement fires no trigger (the plan omits trigger programs); or
-- the whole statement is ``SELECT <columns> FROM <that table> LIMIT n
-  [OFFSET m]`` with a single-step plan and nothing filtering, sorting,
-  collapsing or combining it (``_row_preserving``): it weighs ``LIMIT + OFFSET``
-  rows.
+A table weighs its rows, counted afresh, when:
 
-So a table a statement only writes (an INSERT target) weighs its rows: the plan
-names no step for it. A view weighs nothing itself (its tables are reported);
-the schema table weighs nothing (its rows are the schema, which no instance
-grows); a table-valued function weighs nothing. ``PRAGMA integrity_check`` and
-its kind, ``ANALYZE``, ``VACUUM`` and ``REINDEX`` weigh every table. Python
-traces each trigger firing as a repeat of the outer statement, so each repeat is
-weighed again: an over-count. Transaction control weighs nothing.
+- some cursor on it (or an index of it) walks from one end (``Rewind``,
+  ``Last``, ``Count``), in any program;
+- some cursor on it steps (``Next``, ``Prev``) after a seek, which walks a range
+  that can grow with the table, unless the cursor is the statement's own and the
+  plan reaches the table only by equality on a whole unique key (the rowid, the
+  primary key, every column of a UNIQUE index), named by its real name;
+- it is emptied or dropped whole (``Clear``, ``Destroy``); or
+- the authorizer names it and no cursor opens it.
+
+Point access (a seek, an insert, a delete by key) weighs nothing. A table walked
+by a proved row-preserving query (``SELECT <columns> FROM <one table> LIMIT n
+[OFFSET m]``, a single-step plan, nothing filtering, sorting, collapsing or
+combining it: ``_row_preserving``) weighs ``LIMIT + OFFSET``. A view weighs
+nothing itself (its tables are reported); the schema table weighs nothing (its
+rows are the schema, which no instance grows); a table-valued function weighs
+nothing. ``PRAGMA integrity_check`` and its kind, ``ANALYZE``, ``VACUUM`` and
+``REINDEX`` weigh every table. Python traces each trigger firing as a repeat of
+the outer statement, so each repeat is weighed again: an over-count.
+Transaction control weighs nothing.
 
 A window fails, never counting zero, when the authorizer cannot be installed,
-when it reports no write for an INSERT, REPLACE, UPDATE or DELETE, when a
-touched name is no object of its schema, or when a statement cannot be planned:
-each is recorded in ``unexplained``.
+when it reports no write for an INSERT, REPLACE, UPDATE or DELETE, when a cursor
+or a touched name is no object of its schema, or when a statement cannot be
+planned: each is recorded in ``unexplained``.
 """
 
 from __future__ import annotations
@@ -127,10 +129,9 @@ class Window:
     counts: Counter[str] = field(default_factory=Counter)
     #: Statements whose scans could not be resolved, with why; never counted as zero.
     unexplained: list[str] = field(default_factory=list)
-    #: Diagnostics outside the rule: ``insert_target_rows`` is the part of
-    #: ``sql_scan_rows`` weighed only because a table was a plain INSERT target
-    #: (written, never read, by no trigger), which no plan step can prove bounded.
-    diagnostics: Counter[str] = field(default_factory=Counter)
+    #: Where ``sql_scan_rows`` came from: (statement with literals masked, table,
+    #: how it was walked) -> rows. Diagnostics for attributing a failure, outside the rule.
+    walks: Counter[tuple[str, str, str]] = field(default_factory=Counter)
 
 
 _WINDOW: Window | None = None
@@ -459,41 +460,148 @@ def _compiled(
     return [str(row[3]) for row in plan], events, program
 
 
-#: OP_Open** flag: P2 holds a register, not a root page.
+#: OP_Open** flag: P2 holds a register, not a root page (an object this statement creates).
 _P2_IS_REGISTER = 0x10
 _OPENS = frozenset({"OpenRead", "OpenWrite", "ReopenIdx"})
+#: Cursor operations that walk a table (or its index) from one end.
+_WALKS = frozenset({"Rewind", "Last", "Count"})
+#: Cursor operations that step to the next entry: after a seek, a range walk.
+_ITERATES = frozenset({"Next", "Prev"})
+#: Operations that empty or drop a whole table by its root page (operand holding the database).
+_WHOLE_TABLE = {"Clear": 2, "Destroy": 3}
 
 
-def _opened(connection: TracedConnection, program: list[Any]) -> tuple[set[tuple[str, str]], bool]:
-    """The tables whose rows or indexes the program opens, and whether it runs a trigger."""
+@dataclass
+class _Cursor:
+    """One table (or index of it) a compiled program opens, and how it moves."""
+
+    segment: int  # 0 for the statement's own program, then one per trigger program
+    table: tuple[str, str]
+    index: str | None
+    walks: bool = False
+    iterates: bool = False
+    moves: set[str] = field(default_factory=set)
+
+    def described(self) -> str:
+        where = f"index {self.index}" if self.index else "table"
+        program = "statement" if self.segment == 0 else f"trigger program {self.segment}"
+        return f"{where} in the {program}: {'/'.join(sorted(self.moves))}"
+
+
+def _object_at(connection: TracedConnection, schema: str, page: int) -> tuple[str, str, str] | None:
+    """``(type, name, table)`` of the schema object rooted at ``page``."""
+
+    found = connection.execute(
+        f"SELECT type, name, tbl_name FROM {_quote(schema)}.sqlite_master WHERE rootpage = ?",
+        (page,),
+    ).fetchone()
+    return None if found is None else (str(found[0]), str(found[1]), str(found[2]))
+
+
+def _program(
+    connection: TracedConnection, program: list[Any]
+) -> tuple[list[_Cursor], set[tuple[str, str]], bool]:
+    """Every cursor the program (and each trigger program in it) opens on a table or
+    index, how it moves, the tables emptied or dropped whole, and whether a trigger runs."""
 
     databases = {
         int(seq): str(name) for seq, name, _file in connection.execute("PRAGMA database_list")
     }
-    opened: set[tuple[str, str]] = set()
+
+    def located(page: int, database: int) -> tuple[tuple[str, str], str | None]:
+        schema = databases.get(int(database))
+        found = None if schema is None else _object_at(connection, schema, int(page))
+        if schema is None or found is None:
+            raise Unexplained(f"root page {page} of database {database} names no object")
+        kind, name, table = found
+        return (schema, name if kind == "table" else table), (None if kind == "table" else name)
+
+    cursors: dict[tuple[int, int], list[_Cursor]] = {}
+    whole: set[tuple[str, str]] = set()
     fires = False
+    segment = -1
     for row in program:
-        opcode, page, database, flags = row[1], row[3], row[4], row[6]
+        address, opcode, first, second, third, flags = (
+            int(row[0]),
+            row[1],
+            row[2],
+            row[3],
+            row[4],
+            int(row[6]),
+        )
+        if address == 0:
+            segment += 1
         if opcode == "Program":
             fires = True
-        if opcode not in _OPENS or int(flags) & _P2_IS_REGISTER or int(page) == 1:
-            continue
-        schema = databases.get(int(database))
-        found = (
-            None
-            if schema is None
-            else connection.execute(
-                f"SELECT type, name, tbl_name FROM {_quote(schema)}.sqlite_master "
-                "WHERE rootpage = ?",
-                (int(page),),
-            ).fetchone()
+        elif opcode in _OPENS:
+            if flags & _P2_IS_REGISTER or int(second) == 1:
+                continue  # an object this statement creates, or the schema table
+            table, index = located(second, third)
+            cursors.setdefault((segment, int(first)), []).append(_Cursor(segment, table, index))
+        elif opcode in _WHOLE_TABLE:
+            operands = {2: second, 3: third}
+            whole.add(located(first, operands[_WHOLE_TABLE[opcode]])[0])
+        elif opcode in _WALKS or opcode in _ITERATES:
+            for cursor in cursors.get((segment, int(first)), ()):
+                cursor.moves.add(opcode)
+                if opcode in _WALKS:
+                    cursor.walks = True
+                else:
+                    cursor.iterates = True
+    return [cursor for opened in cursors.values() for cursor in opened], whole, fires
+
+
+def _unique_equality(
+    connection: TracedConnection, table: tuple[str, str], details: list[str]
+) -> bool:
+    """Whether the plan reaches ``table`` only by equality on a whole unique key.
+
+    Every plan step naming the table (by its real name) is a ``SEARCH`` whose
+    terms are all equalities covering the rowid, the primary key or every
+    column of a UNIQUE index; no plan step names a table the plan does not
+    otherwise name.
+    """
+
+    named = [
+        detail
+        for detail in details
+        if (target := _step_target(detail)) is not None
+        and target[0].lower() in (table[1].lower(), ".".join(table).lower())
+    ]
+    if not named:
+        return False
+    for detail in named:
+        found = re.match(
+            r"SEARCH \S+ USING (?P<how>INTEGER PRIMARY KEY|PRIMARY KEY|(?:COVERING )?INDEX "
+            r"(?P<index>\S+)) \((?P<terms>[^)]*)\)$",
+            detail,
         )
         if found is None:
-            raise Unexplained(f"a cursor on root page {page} of database {database} names nothing")
-        kind, name, table = (str(value) for value in found)
-        assert schema is not None
-        opened.add((schema, name if kind == "table" else table))
-    return opened, fires
+            return False
+        terms = found.group("terms").split(" AND ")
+        if not all(re.fullmatch(r"\w+=\?", term) for term in terms):
+            return False
+        if found.group("how") == "INTEGER PRIMARY KEY":
+            continue
+        schema = _quote(table[0])
+        if found.group("how") == "PRIMARY KEY":
+            keys = [
+                row
+                for row in connection.execute(f"PRAGMA {schema}.table_info({_quote(table[1])})")
+                if int(row[5]) > 0
+            ]
+        else:
+            index = found.group("index")
+            unique = {
+                str(row[1]): int(row[2])
+                for row in connection.execute(f"PRAGMA {schema}.index_list({_quote(table[1])})")
+            }
+            if unique.get(index) != 1:
+                return False
+            keys = list(connection.execute(f"PRAGMA {schema}.index_info({_quote(index)})"))
+        if len(terms) != len(keys):
+            return False
+    return True
 
 
 def _object_type(connection: TracedConnection, database: str, name: str) -> str | None:
@@ -525,9 +633,7 @@ def _rows(connection: TracedConnection, table: tuple[str, str]) -> int:
 def _step_target(detail: str) -> tuple[str, bool, bool] | None:
     """The name a plan step reads, whether it walks it, and whether it is virtual.
 
-    A ``SCAN`` walks; a ``SEARCH`` is an index lookup, except one through an
-    automatic index, whose building walks the table. None for a step naming no
-    table (a constant row, a subquery).
+    None for a step naming no table (a constant row, a subquery).
     """
 
     if detail.startswith("SCAN "):
@@ -545,13 +651,14 @@ def _step_target(detail: str) -> tuple[str, bool, bool] | None:
 def statement_scan_rows(connection: TracedConnection, sql: str) -> int:
     """Rows of every table one statement may walk in full, on its own connection, now.
 
-    The tables come from SQLite, never from the SQL text: the authorizer's
-    reads and writes (the statement's and its triggers'), and the program's
-    cursors. Each weighs its rows unless the plan proves the access bounded:
-    some plan step names the table (by its real name; an alias proves nothing)
-    and every such step is an index lookup, no step walks a table the plan does
-    not name, and the statement fires no trigger; or the whole statement is a
-    proved row-preserving ``LIMIT`` walk of that table alone.
+    The tables come from SQLite, never from the SQL text: the program's cursors
+    (the statement's and every trigger program's) and the authorizer's reads and
+    writes. A table weighs its rows when any cursor on it (or an index of it)
+    walks from one end (``Rewind``, ``Last``, ``Count``), steps after a seek
+    (``Next``, ``Prev``) unless the plan reaches it only by equality on a whole
+    unique key, or when it is emptied or dropped whole; a table the authorizer
+    names but no cursor opens weighs its rows too. A proved row-preserving
+    ``LIMIT`` walk weighs ``LIMIT + OFFSET``.
     """
 
     text = sql.strip()
@@ -578,60 +685,49 @@ def statement_scan_rows(connection: TracedConnection, sql: str) -> int:
     touched = _touched(events)
     if keyword in _WRITES and not any(actions & _WRITE_ACTIONS for actions in touched.values()):
         raise Unexplained("SQLite authorized no write for a write statement")
-    opened, fires = _opened(connection, program)
-    for table in opened - set(touched):
-        touched[table] = set()  # read without naming a column (count(*), EXISTS)
-    views = {
-        (database, source)
-        for _action, _first, _second, database, source in events
-        if source is not None
-        and database is not None
-        and _object_type(connection, database, source) == "view"
-    }
-    triggered = fires or any(
-        source is not None and (database, source) not in views
-        for _action, _first, _second, database, source in events
-    )
-    steps = [step for step in map(_step_target, details) if step is not None]
-    named = {name.lower(): table for table in touched for name in (table[1], ".".join(table))}
-    unnamed_walk = any(walks for name, walks, _virtual in steps if name.lower() not in named)
-    total = 0
-    for table in sorted(touched):
-        own = [
-            (walks, virtual) for name, walks, virtual in steps if named.get(name.lower()) == table
-        ]
-        kind = _object_type(connection, *table)
-        if kind is None:
-            if own and all(virtual for _walks, virtual in own):
-                continue  # a table-valued function, over its own arguments
-            if keyword == "CREATE":
-                continue  # the object this statement creates: nothing in it yet
-            raise Unexplained(f"{'.'.join(table)} is no object of its schema")
-        if kind == "view":
-            continue  # the tables it reads are reported themselves
-        if own and not triggered and not unnamed_walk and not any(w for w, _v in own):
-            continue  # every access is an index lookup the plan names
-        rows = _rows(connection, table)
-        window = _WINDOW
-        if (
-            window is not None
-            and not own
-            and not triggered
-            and touched[table] == {sqlite3.SQLITE_INSERT}
+    cursors, whole, fires = _program(connection, program)
+    opened = {cursor.table for cursor in cursors}
+    walked: dict[tuple[str, str], str] = dict.fromkeys(whole, "emptied or dropped whole")
+    for cursor in cursors:
+        if cursor.walks or (
+            cursor.iterates
+            and not (cursor.segment == 0 and _unique_equality(connection, cursor.table, details))
         ):
-            window.diagnostics["insert_target_rows"] += rows
+            walked.setdefault(cursor.table, cursor.described())
+    for table in set(touched) - opened:
+        kind = _object_type(connection, *table)
+        if kind == "view" or (kind is None and keyword == "CREATE"):
+            continue  # a view's tables are reported themselves; a new table is empty
+        if kind is None:
+            if any(
+                (target := _step_target(detail)) is not None
+                and target[2]
+                and target[0].lower() == table[1].lower()
+                for detail in details
+            ):
+                continue  # a table-valued function, over its own arguments
+            raise Unexplained(f"{'.'.join(table)} is no object of its schema")
+        walked.setdefault(table, "named, opened by no cursor")
+    total = 0
+    for table in sorted(walked):
+        rows = _rows(connection, table)
         if (
             len(details) == 1
-            and own == [(True, False)]
-            and len(touched) == 1
-            and touched[table] <= {sqlite3.SQLITE_READ}
-            and not triggered
+            and opened == {table}
+            and set(touched) <= {table}
+            and touched.get(table, set()) <= {sqlite3.SQLITE_READ}
+            and not fires
+            and not whole
             and _row_preserving(text)
         ):
             limit = _LIMIT.search(text)
             assert limit is not None
             rows = min(rows, int(limit.group(1)) + int(limit.group(2) or 0))
         total += rows
+        window = _WINDOW
+        if window is not None and rows:
+            masked = _LITERALS.sub("?", text)[:200]
+            window.walks[(masked, ".".join(table), walked[table])] += rows
     return total
 
 

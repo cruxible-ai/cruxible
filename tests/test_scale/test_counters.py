@@ -79,17 +79,34 @@ def test_a_scan_weighs_its_table_however_the_table_is_named(root: Path) -> None:
         assert _rows(_scan(root, connection, statement)) == ROWS, statement
 
 
-def test_an_index_lookup_the_plan_names_weighs_nothing(root: Path) -> None:
+def test_a_seek_on_a_whole_unique_key_weighs_nothing(root: Path) -> None:
     connection = _claims(root)
+    connection.execute("CREATE UNIQUE INDEX claims_unique ON claims(value)")
     for statement in (
         "SELECT * FROM claims WHERE id = 3",
-        "SELECT * FROM CLAIMS WHERE claim_id = 'CLM-0003'",
         "SELECT * FROM main.claims WHERE id = 3",
+        "SELECT * FROM claims AS c WHERE c.id = 3",
         "SELECT EXISTS(SELECT 1 FROM claims WHERE id = 3)",
+        "SELECT * FROM CLAIMS WHERE value = 'value 3'",
+        "SELECT * FROM claims WHERE id IN (3, 4, 5)",
     ):
         assert _rows(_scan(root, connection, statement)) == 0, statement
-    # An alias proves nothing: the same lookup through one weighs the table.
-    assert _rows(_scan(root, connection, "SELECT * FROM claims AS c WHERE c.id = 3")) == ROWS
+
+
+def test_a_seek_then_step_over_a_range_or_a_prefix_weighs_its_table(root: Path) -> None:
+    # The ruling's range rule: a seek followed by Next/Prev walks a range that can
+    # grow with the table, unless the seek is equality on a whole unique key.
+    connection = _claims(root)
+    connection.execute("CREATE INDEX by_other ON claims(other)")
+    for statement in (
+        # A range on an index.
+        "SELECT * FROM claims WHERE other > 2",
+        "SELECT * FROM claims WHERE id > 3",
+        # Equality on a non-unique index: a prefix every equal entry shares.
+        "SELECT * FROM claims WHERE claim_id = 'CLM-0003'",
+        "SELECT * FROM claims WHERE other = 3",
+    ):
+        assert _rows(_scan(root, connection, statement)) == ROWS, statement
 
 
 def test_a_self_join_weighs_its_table(root: Path) -> None:
@@ -148,6 +165,7 @@ def test_a_limited_walk_is_bounded_only_for_a_plain_row_preserving_select(root: 
     assert _rows(_scan(root, connection, "SELECT id, value FROM claims LIMIT 3")) == 3
     # An offset is walked too.
     assert _rows(_scan(root, connection, "SELECT id FROM claims LIMIT 3 OFFSET 5")) == 8
+    assert _rows(_scan(root, connection, "SELECT * FROM claims AS c LIMIT 3")) == 3
     # Everything else reads the table in full, however few rows it returns.
     for statement in (
         # A residual predicate no row matches walks every row of the ordered index.
@@ -157,7 +175,6 @@ def test_a_limited_walk_is_bounded_only_for_a_plain_row_preserving_select(root: 
         "SELECT id FROM claims ORDER BY value LIMIT 1",
         "SELECT count(*) FROM claims LIMIT 1",
         "SELECT coalesce(value, '') FROM claims LIMIT 1",
-        "SELECT * FROM claims AS c LIMIT 3",
         "SELECT id FROM claims UNION ALL SELECT id FROM claims LIMIT 1",
     ):
         assert _rows(_scan(root, connection, statement)) == ROWS, statement
@@ -177,10 +194,11 @@ def test_a_distinct_walk_is_read_in_full_whatever_its_limit(root: Path) -> None:
 
 
 def test_a_literal_that_changes_the_plan_is_planned_afresh(root: Path) -> None:
-    # F-006: a partial index serves other=1 and not other=2, on one schema.
+    # F-006: a partial unique index serves other=1 and not other=2, on one schema.
     connection = _claims(root)
-    connection.execute("CREATE INDEX partial_match ON claims(other) WHERE other = 1")
-    served, scanned = "SELECT * FROM claims WHERE other = 1", "SELECT * FROM claims WHERE other = 2"
+    connection.execute("CREATE UNIQUE INDEX partial_match ON claims(value) WHERE other = 1")
+    served = "SELECT * FROM claims WHERE value = 'value 1' AND other = 1"
+    scanned = "SELECT * FROM claims WHERE value = 'value 2' AND other = 2"
     assert _rows(_scan(root, connection, served, scanned)) == ROWS
     assert _rows(_scan(root, connection, served)) == 0
     assert _rows(_scan(root, connection, scanned)) == ROWS
@@ -203,16 +221,19 @@ def test_a_table_rebuilt_under_its_name_is_weighed_at_its_new_size(root: Path) -
 # -- writes and the triggers they fire (F-003, F-007, F-008) ---------------------------
 
 
-def test_whole_table_statements_and_write_targets_weigh_their_table(root: Path) -> None:
+def test_whole_table_statements_weigh_their_table_and_point_writes_nothing(root: Path) -> None:
     connection = _claims(root)
     assert _rows(_scan(root, connection, "UPDATE claims SET value = 'y' WHERE other = 9")) == ROWS
-    # A table only written: the plan names no step for it, so nothing proves it bounded.
-    window = _scan(root, connection, "INSERT INTO claims(claim_id) VALUES ('CLM-new')")
-    assert _rows(window) == ROWS
-    assert _rows(_scan(root, connection, "CREATE INDEX claims_by_other ON claims(other)")) == (
-        ROWS + 1
-    )
-    assert _rows(_scan(root, connection, "DELETE FROM claims")) == ROWS + 1
+    # Inserting and updating by key touch only their rows.
+    for statement in (
+        "INSERT INTO claims(claim_id) VALUES ('CLM-new')",
+        "UPDATE claims SET value = 'z' WHERE id = 4",
+        "DELETE FROM claims WHERE id = 5",
+    ):
+        assert _rows(_scan(root, connection, statement)) == 0, statement
+    assert _rows(_scan(root, connection, "CREATE INDEX claims_by_other ON claims(other)")) == ROWS
+    # Emptied whole.
+    assert _rows(_scan(root, connection, "DELETE FROM claims")) == ROWS
 
 
 def test_a_planned_foreign_key_check_weighs_the_child_table(root: Path) -> None:
@@ -237,13 +258,13 @@ def test_a_trigger_body_is_weighed_on_top_of_its_statement(root: Path) -> None:
     connection.executemany("INSERT INTO tally VALUES (?)", [(index,) for index in range(40)])
     window = _scan(root, connection, "INSERT INTO claims(claim_id, other) VALUES ('CLM-x', 3)")
     # Three traces (the insert, its trigger program, the program's statement),
-    # each weighing claims (written) and tally (touched by the trigger); claims
-    # holds the new row from the second trace on.
+    # each weighing tally, which the trigger program walks; the insert itself
+    # touches only its row.
     assert window.counts["sql_statements"] == 3
-    assert _rows(window) == ROWS + 2 * (ROWS + 1) + 3 * 40
+    assert _rows(window) == 3 * 40
     connection.execute("DROP TRIGGER count_claims")
     window = _scan(root, connection, "INSERT INTO claims(claim_id, other) VALUES ('CLM-y', 3)")
-    assert (window.counts["sql_statements"], _rows(window)) == (1, ROWS + 1)
+    assert (window.counts["sql_statements"], _rows(window)) == (1, 0)
 
 
 def test_a_repeated_statement_on_a_table_with_triggers_keeps_its_own_scan(root: Path) -> None:
@@ -363,9 +384,9 @@ def test_work_the_window_cannot_establish_is_reported_never_zero(
         window = _scan(root, connection, "INSERT INTO claims(claim_id) VALUES ('CLM-z')")
     assert window.unexplained and "no write" in window.unexplained[0]
     with monkeypatch.context() as patch:
-        patch.setattr(_counters, "_object_type", lambda connection, database, name: None)
+        patch.setattr(_counters, "_object_at", lambda connection, schema, page: None)
         window = _scan(root, connection, "SELECT * FROM claims WHERE value = 'x'")
-    assert window.unexplained and "no object" in window.unexplained[0]
+    assert window.unexplained and "names no object" in window.unexplained[0]
 
 
 def test_the_growth_rule_rejects_a_scan_that_grows_with_the_table(root: Path) -> None:

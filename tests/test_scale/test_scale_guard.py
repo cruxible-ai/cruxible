@@ -135,8 +135,8 @@ _ACCESS = CoverageAccessProfile(profile_id="scale", permitted_access_classes=("i
 class Session:
     small: World
     large: World
-    #: route -> world name -> counter -> count.
-    measured: dict[str, dict[str, dict[str, int]]] = field(default_factory=dict)
+    #: route -> world name -> counter -> count (and the walks behind sql_scan_rows).
+    measured: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     #: route -> why it could not be measured.
     failed: dict[str, BaseException] = field(default_factory=dict)
 
@@ -623,14 +623,24 @@ GROWS: dict[str, dict[str, str]] = {
             "(service/claims/claims.py:529 via service/discovery/next.py:3227)"
         ),
     },
-    "tick.after_generation.curation": _grows(
-        _CURATION,
-        "claim_parses",
-        *_DIGESTS,
-        "file_opens",
-        "sql_statements",
-        "git_blob_reads",
-    ),
+    "tick.after_generation.curation": {
+        **_grows(
+            _CURATION,
+            "claim_parses",
+            *_DIGESTS,
+            "file_opens",
+            "sql_statements",
+            "git_blob_reads",
+        ),
+        "sql_scan_rows": (
+            "audit#2: each curation detection walks the whole history index from its start "
+            "(SELECT * FROM artifact_versions WHERE occurrence_sequence<=? ORDER BY ..., "
+            "indexes/history/history_index.py:893, from curation/curation_detectors.py:169 "
+            "_curation_history_index), and looks up every Claim's law locations by a "
+            "non-unique prefix (indexes/history/history_index.py:686 via "
+            "service/evidence/evidence.py:926, from service/discovery/query.py:493)"
+        ),
+    },
     "tick.idle.queue": {
         "file_opens": (
             "audit#13: every next-queue match stats every body the last fold read "
@@ -793,7 +803,7 @@ assert set(GROWS) <= set(ROUTES), set(GROWS) - set(ROUTES)
 assert all(set(counters) <= set(COUNTERS) for counters in GROWS.values())
 
 
-def _measure(session: Session, route: Route) -> dict[str, dict[str, int]]:
+def _measure(session: Session, route: Route) -> dict[str, dict[str, Any]]:
     measured = {}
     for world in (session.small, session.large):
         if route.prepare is not None:
@@ -812,7 +822,8 @@ def _measure(session: Session, route: Route) -> dict[str, dict[str, int]]:
             route.verify(world, result)
         measured[world.shape.name] = {
             **{name: window.counts[name] for name in COUNTERS},
-            **window.diagnostics,
+            # Attribution for a failing case (CRUXIBLE_SCALE_REPORT), outside the rule.
+            "walks": [[*key, rows] for key, rows in window.walks.most_common(25)],
         }
     return measured
 
