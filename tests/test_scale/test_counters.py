@@ -305,6 +305,40 @@ def test_sql_on_a_connection_without_a_step_counter_is_reported_never_zero(
     assert window.unexplained and "no step counter" in window.unexplained[0]
 
 
+def test_a_window_fails_unless_every_connect_entry_point_is_the_tracing_wrapper(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for module in (sqlite3, sqlite3.dbapi2):
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "connect", _counters._ORIGINAL_CONNECT)
+            with counting(root) as window:
+                pass
+        assert window.unexplained == [
+            f"{module.__name__}.connect is not the scale guard's tracing wrapper"
+        ]
+    with trace_sqlite(root), counting(root) as window:
+        pass
+    assert window.unexplained == []
+
+
+def test_a_window_outside_tracing_fails(tmp_path: Path) -> None:
+    with counting(tmp_path) as window:
+        pass
+    assert len(window.unexplained) == 2
+
+
+def test_a_connection_opened_through_dbapi2_is_counted(root: Path) -> None:
+    measured = []
+    for rows in SIZES:
+        _claims(root, rows=rows, name=f"claims-{rows}.sqlite3").close()
+        with counting(root) as window:
+            connection = sqlite3.dbapi2.connect(root / f"claims-{rows}.sqlite3")
+            connection.execute(SUM).fetchall()
+            connection.close()
+        measured.append(_steps(window))
+    assert _grows(*measured), measured
+
+
 # -- a connection's lifetime and its own callbacks cannot lose the count (F-009, F-010) --
 
 SUM = "SELECT sum(other) FROM claims"

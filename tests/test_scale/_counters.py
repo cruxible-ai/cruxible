@@ -30,6 +30,17 @@ whose managed root is ``root`` and fills a ``Counter`` with the work done:
 Only the measuring thread's work counts (the thread that opened the window):
 another thread's opens, spawns, calls and SQL never do.
 
+Threat model. The guard measures honest product code, to catch per-event work
+that grows with the instance by accident. Deliberate evasion (reaching around
+the wrappers on purpose) is out of scope. The realistic bypasses are closed
+mechanically instead: ``tests/test_guardrails/test_sqlite_measurable.py`` fails
+if product code imports or rebinds ``connect`` from ``sqlite3`` (or reaches
+``sqlite3.dbapi2``), calls ``sqlite3.Connection`` or ``sqlite3.Cursor`` methods
+through the base class, constructs a ``sqlite3.Connection`` itself, or sets a
+progress handler, trace callback or authorizer at all; and every window checks
+that ``sqlite3.connect`` and ``sqlite3.dbapi2.connect`` are still the tracing
+wrapper, failing otherwise.
+
 Function counters are installed when a window opens and removed when it closes:
 every module global naming an original is rebound to a counting wrapper, then
 back. The audit hook (opens and spawns) cannot be removed, so it is installed
@@ -47,8 +58,10 @@ the statement it last started there. The window holds every connection state it
 counts on, so the steps of a connection closed and collected inside the window
 (a short-lived reader, a nested connection in a SQL function) still reach it.
 The guard owns each traced connection's progress handler and trace callback:
-code that sets its own, or removes one, has its callback chained behind the
-guard's (and restored after the window), never in its place. A statement traced
+code that sets its own through the connection's methods, or removes one, has
+its callback chained behind the guard's (and restored after the window), never
+in its place (calls through the ``sqlite3.Connection`` base class are left to
+the guardrail below). A statement traced
 on the measuring thread on a connection that took no handler is recorded in
 ``unexplained``, which fails the window: its work would go uncounted.
 
@@ -285,6 +298,8 @@ _REBINDER: _Rebinder | None = None
 # -- SQLite: traced for the module's lifetime, its work measured inside a window --------
 
 _ORIGINAL_CONNECT = sqlite3.connect
+#: The tracing wrapper ``trace_sqlite`` installed, or None outside it.
+_TRACING_CONNECT: Callable[..., sqlite3.Connection] | None = None
 #: VM instructions between progress callbacks; every callback counts this many.
 STEP_EVERY = 1
 #: Statements a window names, with their tables and cursors, when it closes.
@@ -321,8 +336,9 @@ class TracedConnection(sqlite3.Connection):
     """A connection under the scale root: weakly referenced, with its counting state.
 
     The guard owns its progress handler and trace callback: setting either through the
-    public methods records the connection's own callback, which the guard's then calls,
-    so no code under measurement can remove or replace the counting.
+    connection's methods records the connection's own callback, which the guard's then
+    calls, so honest code cannot remove or replace the counting (the base-class setters
+    are kept out of product code by the guardrail in the module docstring).
     """
 
     scale_state: _ConnectionState
@@ -485,11 +501,28 @@ def trace_sqlite(root: Path) -> Iterator[None]:
             _count_steps(connection, _WINDOW)
         return connection
 
-    sqlite3.connect = connect  # type: ignore[assignment]
+    global _TRACING_CONNECT
+    sqlite3.connect = sqlite3.dbapi2.connect = connect  # type: ignore[assignment]
+    _TRACING_CONNECT = connect
     try:
         yield
     finally:
-        sqlite3.connect = _ORIGINAL_CONNECT
+        _TRACING_CONNECT = None
+        sqlite3.connect = sqlite3.dbapi2.connect = _ORIGINAL_CONNECT
+
+
+def _untraced_entry_points() -> list[str]:
+    """The SQLite connect entry points that are not the tracing wrapper."""
+
+    wrapper = _TRACING_CONNECT
+    return [
+        f"{name} is not the scale guard's tracing wrapper"
+        for name, current in (
+            ("sqlite3.connect", sqlite3.connect),
+            ("sqlite3.dbapi2.connect", sqlite3.dbapi2.connect),
+        )
+        if wrapper is None or current is not wrapper
+    ]
 
 
 # -- attribution: which tables and cursors the heaviest statements used ------------------
@@ -748,6 +781,8 @@ def counting(root: Path) -> Iterator[Window]:
     if _REBINDER is None:
         _REBINDER = _Rebinder()
     window = Window(prefixes=_prefixes(root))
+    # A connection opened through any other entry point would go untraced.
+    window.unexplained.extend(_untraced_entry_points())
     _REBINDER.install()
     for connection in list(_CONNECTIONS):
         _count_steps(connection, window)
