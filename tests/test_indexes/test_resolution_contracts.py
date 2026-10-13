@@ -736,3 +736,49 @@ def test_a_fixed_append_and_lookup_cost_the_same_at_two_history_sizes(
     assert small[:2] == large[:2], (small, large)
     # The validity check is one identity stat per retained payload (reported in Cost).
     assert large[2] > small[2]
+
+
+def test_payload_revalidation_never_remembers_an_unverified_file_identity(
+    tmp_path, monkeypatch
+) -> None:
+    """Review F-008: a file replaced right after its verified read is never blessed.
+
+    The fold must remember the identity taken before the verified read; a later
+    call, with no writer running, refuses the damaged object as a replay does,
+    and so does the next append.
+    """
+
+    from cruxible_client.contracts.errors import CasError
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    activation, journal, bodies, stream, partition_id, writer = _resolution_partition(tmp_path)
+    _answer(activation, writer, stream, 1, overturn=True)
+    resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    digest = next(
+        stored.record.payload_digest
+        for stored in journal.all_records(stream, partition_id)
+        if stored.record.event_kind == "resolution"
+    )
+    path = bodies._path(digest)
+    original = path.read_bytes()
+    path.unlink()
+    path.write_bytes(original)  # A valid replacement forces revalidation.
+    read = bodies.read
+
+    def replaced_after_verified_read(asked, *, access):  # type: ignore[no-untyped-def]
+        content = read(asked, access=access)
+        if asked == digest:
+            path.unlink()
+            path.write_bytes(b"{}")  # The pathname changes after the verified read.
+        return content
+
+    with monkeypatch.context() as patch:
+        patch.setattr(bodies, "read", replaced_after_verified_read)
+        resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    with pytest.raises(CasError) as replayed:
+        _replayed(activation, journal, bodies, stream, partition_id)
+    with pytest.raises(CasError) as kept:
+        resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    assert str(kept.value) == str(replayed.value)
+    with pytest.raises(CasError):
+        _answer(activation, writer, stream, 2, overturn=False)

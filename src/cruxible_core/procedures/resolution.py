@@ -1500,6 +1500,10 @@ class _ResolutionFold:
         are still there. A payload whose file changed is read and verified again,
         refusing exactly as a replay's read would (``CasError`` for a missing or
         damaged object); verified, the fold stands (the address is the content).
+        The identity remembered for it is the one taken before that verified
+        read, never a stat after it: a file replaced after the read then shows a
+        different identity and is verified again, so no unverified bytes are
+        ever blessed.
         """
         moved: dict[str, tuple[int, ...] | None] = {}
         for digest, identity in self.payloads.items():
@@ -1507,7 +1511,7 @@ class _ResolutionFold:
             if current is not None and current == identity:
                 continue
             bodies.read(digest, access=_REPLAY_ACCESS)
-            moved[digest] = bodies.file_identity(digest)
+            moved[digest] = current
         if not moved:
             return self
         payloads = self.payloads
