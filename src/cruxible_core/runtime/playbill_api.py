@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -1526,9 +1527,10 @@ def playbill_action_run(
     The fire is appended to the same trigger journal every Trigger-aimed and
     deadline fire shares, so the owning consumer's own ``due()`` -- which
     reads that journal by action name, never by whether a Trigger exists --
-    picks it up exactly as it would a scheduled fire. ``request.wait`` runs
-    that consumer's due work inline instead of leaving pickup to its own next
-    pass; see ``ActionRunOutcome`` for which actions that covers.
+    picks it up exactly as it would a scheduled fire. ``request.wait`` never
+    runs or admits that work itself: it only observes the owning part's own
+    recorded progress until it shows this fire processed; see
+    ``ActionRunOutcome`` for the statuses that can report.
     """
 
     from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
@@ -1553,11 +1555,11 @@ def playbill_action_run(
         instance, action=spec.name, principal=actor_context.actor_id, now=actor_context.timestamp
     )
     outcome = (
-        _run_action_now(
+        _wait_for_action_fire(
             manager,
             instance_id,
             spec,
-            now=actor_context.timestamp,
+            event_sequence=event.sequence,
             timeout_seconds=request.wait_timeout_seconds,
         )
         if request.wait
@@ -1568,70 +1570,77 @@ def playbill_action_run(
     )
 
 
-def _run_action_now(
+def _action_fire_covered_sequence(instance: Any, spec: InternalActionSpec) -> int | None:
+    """The trigger fire sequence through which ``spec``'s owning part has worked.
+
+    Reads the same indexed completion cursor that part's own ``due()`` or
+    ``health()`` reads -- one primary-key row lookup, never a scan -- so a
+    waiter costs the same as a health check, not the instance. ``None`` means
+    this part exposes no such cursor; every part wired in today does.
+    """
+
+    if spec.consumer == "floor":
+        from cruxible_core.consumers.floor import refresh_covered_sequence
+
+        return refresh_covered_sequence(instance)
+    if spec.consumer == "next":
+        from cruxible_core.consumers.next import curation, evidence, predictions
+
+        readers = {
+            "evidence": evidence.sweep_covered_sequence,
+            "prediction": predictions.retry_covered_sequence,
+            "curation": curation.covered_sequence,
+        }
+        reader = readers.get(spec.part)
+        if reader is not None:
+            return reader(instance)
+    return None
+
+
+_WAIT_POLL_SECONDS = 0.05
+
+
+def _wait_for_action_fire(
     manager: PlaybillInstanceManager,
     instance_id: str,
     spec: InternalActionSpec,
     *,
-    now: datetime,
+    event_sequence: int,
     timeout_seconds: float,
 ) -> contracts.ActionRunOutcome:
-    """Run the action's owning consumer inline, bounded by ``timeout_seconds``.
+    """Observe this fire's owning part until its own progress covers it.
 
-    ``next`` parts (``evidence``, ``prediction``, ``curation``) admit a safe
-    inline run: they are plain function calls with no cross-request admission
-    to coordinate. ``floor.refresh`` does not: a floor render is admitted one
-    at a time per instance (``FLOOR_ADMISSION``), and that admission is only
-    safe to await from the one sanctioned async route shape
-    (``export_floor``, ``floor_delta``, ``deliver_playbill_floor_now``), never
-    from a synchronous call on a request-marked thread. Firing it manually
-    here still records the fire for the daemon's own tick; a synchronous
-    receipt is `cruxible floor deliver-now` (``cruxible_floor_deliver_now``).
+    Starts, admits and runs no work of its own: the fire was already appended
+    to the trigger journal every scheduled fire shares, so the daemon's
+    normal consumer runner picks it up exactly as it would a scheduled fire,
+    under its own admission and worker limits. This only polls that part's
+    indexed completion cursor on a bounded wait, sleeping between checks on
+    the calling thread -- no executor, no drain, no pass cap -- and reports
+    ``completed`` once the cursor covers ``event_sequence``, ``timed_out`` at
+    ``timeout_seconds`` with the fire left queued for the next tick, or
+    ``not_supported`` for a part that exposes no completion cursor.
     """
 
-    from concurrent.futures import ThreadPoolExecutor
-    from concurrent.futures import TimeoutError as FutureTimeoutError
-
-    if spec.consumer == "floor":
-        return contracts.ActionRunOutcome(
-            status="not_waited",
-            detail={
-                "reason": (
-                    "floor.refresh delivery is admitted one render at a time per instance; "
-                    "the fire is recorded for the daemon's own tick. For a synchronous "
-                    "receipt, use `cruxible floor deliver-now`."
-                )
-            },
-        )
-    if spec.consumer != "next":
-        raise ConfigError(f"Internal action {spec.name!r} has no runnable consumer in this version")
-
-    from cruxible_core.consumers.next import NEXT_QUEUE
     from cruxible_core.server.config import get_disabled_consumers
 
-    if NEXT_QUEUE.name in get_disabled_consumers():
-        raise ConfigError("The 'next' consumer is disabled on this daemon; cannot wait for it")
-
-    def drain() -> dict[str, Any]:
-        instance = manager.get(instance_id)
-        runs = 0
-        for _pass in range(64):
-            NEXT_QUEUE.match(instance, now=now, daemon_id="action-run")
-            units = tuple(NEXT_QUEUE.due(instance, now=now))
-            if not units:
-                return {"units_run": runs}
-            for unit in units:
-                NEXT_QUEUE.run(manager, instance_id, unit, now=now)
-                runs += 1
-        return {"units_run": runs, "note": "due work remained after 64 passes"}
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(drain)
-        try:
-            detail = future.result(timeout=timeout_seconds)
-        except FutureTimeoutError:
+    if spec.consumer in get_disabled_consumers():
+        return contracts.ActionRunOutcome(
+            status="not_supported",
+            detail={"reason": f"the {spec.consumer!r} consumer is disabled on this daemon"},
+        )
+    instance = manager.get(instance_id)
+    covered = _action_fire_covered_sequence(instance, spec)
+    if covered is None:
+        return contracts.ActionRunOutcome(status="not_supported")
+    deadline = time.monotonic() + timeout_seconds
+    while covered < event_sequence:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             return contracts.ActionRunOutcome(status="timed_out")
-    return contracts.ActionRunOutcome(status="completed", detail=detail)
+        time.sleep(min(_WAIT_POLL_SECONDS, remaining))
+        covered = _action_fire_covered_sequence(instance, spec)
+        assert covered is not None
+    return contracts.ActionRunOutcome(status="completed", detail={"covered_through": covered})
 
 
 def playbill_authoring_get(

@@ -181,6 +181,16 @@ def _instant(value: str) -> datetime:
     return parsed
 
 
+def retry_covered_sequence(instance: Any) -> int:
+    """The trigger fire sequence through which ``prediction.anchor_retry`` has completed."""
+
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return 0
+        row = connection.execute("SELECT retry_completed_sequence FROM progress").fetchone()
+        return 0 if row is None else int(row[0])
+
+
 def _microseconds(value: datetime) -> int:
     from cruxible_core.indexes.typed_state import utc_microseconds
 

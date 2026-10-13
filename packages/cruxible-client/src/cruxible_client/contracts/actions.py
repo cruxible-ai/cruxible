@@ -8,10 +8,12 @@ event records that it was manual and who asked for it, and the owning
 consumer picks it up exactly as it would a scheduled fire -- no Trigger need
 exist for the action at all.
 
-``wait`` additionally runs the owning consumer's due work inline and reports
-what happened, bounded by ``wait_timeout_seconds``, instead of leaving pickup
-to the consumer's own next pass. Not every action's consumer admits a safe
-inline run yet; see ``ActionRunOutcome`` for what each one reports.
+``wait`` additionally observes the owning part's own recorded progress,
+bounded by ``wait_timeout_seconds``, until it shows this fire processed,
+instead of leaving pickup to the consumer's own next pass. It starts, admits
+and runs no work itself: the daemon's normal consumer runner is what
+executes the fire, exactly as it would a scheduled one; see
+``ActionRunOutcome`` for the statuses waiting can report.
 """
 
 from __future__ import annotations
@@ -31,20 +33,20 @@ class _StrictActionRunModel(BaseModel):
 class ActionRunRequest(_StrictActionRunModel):
     tag: Literal["playbill-action-run-request-v1"] = "playbill-action-run-request-v1"
     action: InternalActionName
-    #: Run the owning consumer's due work inline and report its outcome,
-    #: rather than leaving pickup to the consumer's own next pass.
+    #: Observe the owning part's own progress until it covers this fire,
+    #: instead of leaving pickup to the consumer's own next pass.
     wait: bool = False
-    wait_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    wait_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
 
 
-#: ``completed``: the owning consumer ran its due work inline and the detail
-#: below is what it did. ``timed_out``: the consumer was still running at
-#: ``wait_timeout_seconds``. ``not_waited``: the caller did not ask to wait,
-#: or (``floor.refresh`` only) an inline run is not available on this action
-#: yet -- its own admission discipline keeps a floor render from overlapping
-#: another, so firing it manually here only records the fire; the daemon's
-#: own tick, or ``cruxible floor deliver-now``, carries out the delivery.
-ActionRunOutcomeStatus = Literal["completed", "timed_out", "not_waited"]
+#: ``completed``: the owning part's own recorded progress now covers this
+#: fire; the detail names the sequence it covers through. ``timed_out``: it
+#: did not, by ``wait_timeout_seconds`` -- the fire stays queued and the
+#: daemon's normal consumer runner will still process it on its own tick.
+#: ``not_waited``: the caller did not ask to wait. ``not_supported``: this
+#: action's owning part exposes no completion cursor the wait path can
+#: observe (the fire is still recorded and still runs normally).
+ActionRunOutcomeStatus = Literal["completed", "timed_out", "not_waited", "not_supported"]
 
 
 class ActionRunOutcome(_StrictActionRunModel):

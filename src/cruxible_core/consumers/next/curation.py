@@ -76,6 +76,16 @@ def curation_detection(instance: Any) -> CurationDetection | None:
     )
 
 
+def covered_sequence(instance: Any) -> int:
+    """The trigger fire sequence through which ``curation.detect`` has run; 0 before it has."""
+
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return 0
+        row = connection.execute("SELECT sequence FROM progress").fetchone()
+        return 0 if row is None else int(row[0])
+
+
 def record_detection(instance: Any, *, sequence: int, detection: CurationDetection) -> None:
     """Keep what one detection run covered, as handled through trigger fire ``sequence``."""
 

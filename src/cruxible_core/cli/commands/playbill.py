@@ -3532,15 +3532,15 @@ def action_group() -> None:
 @click.option(
     "--wait",
     is_flag=True,
-    help="Run the owning consumer's due work inline and report its outcome.",
+    help="Wait for the owning part's own progress to show this fire processed.",
 )
 @click.option(
     "--wait-timeout",
     "wait_timeout_seconds",
     type=float,
-    default=30.0,
+    default=60.0,
     show_default=True,
-    help="Bound in seconds on --wait's inline run.",
+    help="Bound in seconds on --wait.",
 )
 @json_option
 @handle_errors
@@ -3550,11 +3550,12 @@ def run_action(
     """Fire one registered internal action (NAME, e.g. evidence.sweep) by hand.
 
     The fire lands in the same trigger journal a Trigger's own schedule
-    writes to, so the owning consumer picks it up exactly as a scheduled
-    fire; NAME need not have any Trigger aimed at it. Without --wait this
-    only records the fire for the daemon's own next pass; --wait additionally
-    runs the owning consumer's due work inline and reports what happened
-    (not every action admits an inline run yet -- see the result's outcome).
+    writes to, so the daemon's normal consumer runner picks it up and runs
+    it exactly as a scheduled fire; NAME need not have any Trigger aimed at
+    it. Without --wait this only records the fire for the daemon's own next
+    pass; --wait additionally waits, bounded by --wait-timeout, until the
+    owning part's own recorded progress shows this fire processed -- it
+    starts and runs no work itself (see the result's outcome).
     """
 
     request = contracts.ActionRunRequest(

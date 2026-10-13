@@ -5906,12 +5906,14 @@ run_internal_action(
 Fires one registered internal action by hand, outside any Trigger's
 schedule: `floor.refresh`, `evidence.sweep`, `prediction.anchor_retry`, or
 `curation.detect`. The fire is appended to the same trigger journal a
-Trigger's own schedule writes to, so the owning consumer picks it up exactly
-as a scheduled fire; an unregistered action name is refused. `request.wait`
-additionally runs the owning consumer's due work inline, bounded by
-`request.wait_timeout_seconds`, and reports what happened in the result's
-`outcome` (`completed`, `timed_out`, or -- `floor.refresh` only, whose
-delivery needs admission only the daemon's own HTTP path can hold -- `not_waited`).
+Trigger's own schedule writes to, so the daemon's normal consumer runner
+picks it up and runs it exactly as a scheduled fire; an unregistered action
+name is refused. `request.wait` starts and runs no work itself: it only
+waits, bounded by `request.wait_timeout_seconds`, until the owning part's
+own recorded progress shows this fire processed, and reports what it found
+in the result's `outcome` (`completed`, `timed_out` -- the fire stays
+queued and still runs normally -- or `not_supported` for a part that
+exposes no completion cursor).
 
 HTTP: `POST f'/api/v1/{instance_id}/actions/run'`.
 

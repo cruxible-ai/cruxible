@@ -117,6 +117,18 @@ def _progress(instance: Any) -> tuple[int, str, str | None, str | None] | None:
         )
 
 
+def refresh_covered_sequence(instance: Any) -> int:
+    """The trigger fire sequence through which a ``floor.refresh`` render has caught up.
+
+    One render always folds every pending fire into the current head, so a
+    render that started at or after a given fire's sequence always covers
+    it; 0 before this part has ever recorded a render.
+    """
+
+    progress = _progress(instance)
+    return 0 if progress is None else progress[0]
+
+
 def floor_outcomes(instance: Any) -> tuple[contracts.FloorConsumerOutcome, ...]:
     """The latest refresh outcome; health needs no per-generation history."""
 

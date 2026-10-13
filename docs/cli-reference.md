@@ -2594,16 +2594,15 @@ any live Trigger aimed at it at all. An unregistered NAME is refused naming
 every registered action. Tier: GOVERNED_WRITE. The result names the fired
 event's journal sequence (`event_id`) and `fired_at`.
 
-Without `--wait` this only records the fire; the daemon's own next tick (or,
-for `floor.refresh`, the daemon's own floor render) picks it up whenever it
-next runs. `--wait` (default timeout 30s, up to 300s via `--wait-timeout`)
-additionally runs the owning consumer's due work inline and reports
-`outcome.status`: `completed` (with what it did), or `timed_out`. Not every
-action admits an inline run yet: `floor.refresh`'s delivery is admitted one
-render at a time per instance, which is only safe to await from the daemon's
-own HTTP admission path, so `--wait` on it reports `outcome.status` of
-`not_waited` with the reason; use `cruxible floor deliver-now` for a
-synchronous floor receipt instead.
+Without `--wait` this only records the fire; the daemon's normal consumer
+runner picks it up and runs it exactly as a scheduled fire, whenever it next
+runs. `--wait` (default timeout 60s, up to 300s via `--wait-timeout`) starts
+and runs no work itself: it only waits until the owning part's own recorded
+progress shows this fire processed, and reports `outcome.status`:
+`completed` (the sequence it covers through), `timed_out` (the fire stays
+queued and still runs on the daemon's next tick), or `not_supported` (that
+part exposes no completion cursor the wait path can observe; the fire is
+still recorded and still runs normally).
 
 ## inbox
 
