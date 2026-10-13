@@ -4,12 +4,18 @@ Each test runs one real operation end to end -- a Line admission and run, a
 prediction settlement on retained terminal evidence, a served query's facts --
 over two sizes of the history that operation used to read, and counts its work:
 journal frames verified, CAS bodies read, accepted blobs and Claims parsed, and
-SQLite VM instructions across every connection. Counts, never wall time.
+SQLite VM instructions across every connection it opens. Counts, never wall time.
+
+Only the operation's own work is counted: the thread that runs it. Setup queues
+background work (a workspace advertisement after each acceptance reads the
+history index on its own thread and connections); on a loaded runner it overlaps
+the measurement, so it is drained first and its reads are never counted.
 """
 
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -26,8 +32,24 @@ from tests.core_support._subject_kind_support import fixture_claim_paths
 
 
 @contextmanager
-def _counted(monkeypatch: pytest.MonkeyPatch) -> Iterator[Counter[str]]:
+def _counted(
+    monkeypatch: pytest.MonkeyPatch, *, instance: PlaybillInstance | None = None
+) -> Iterator[Counter[str]]:
+    """Count the work the calling thread does inside the block.
+
+    With ``instance``, its queued workspace advertisement is drained first, so no
+    background reader changes shared state (the history index) mid-measurement.
+    """
+
+    if instance is not None:
+        instance.settled_workspace_advertisement()
     work: Counter[str] = Counter()
+    measuring = threading.get_ident()
+
+    def count(key: str, amount: int = 1) -> None:
+        if threading.get_ident() == measuring:
+            work[key] += amount
+
     frames = LocalJournalBackend._read_frames
     read = ContentAddressedBodyStore.read
     blobs = PlaybillInstance.blobs_at
@@ -36,28 +58,28 @@ def _counted(monkeypatch: pytest.MonkeyPatch) -> Iterator[Counter[str]]:
 
     def counted_partition_ids(self: Any, stream: Any) -> Any:
         found = partition_ids(self, stream)
-        work["partitions_enumerated"] += len(found)
+        count("partitions_enumerated", len(found))
         return found
 
     def counted_frames(*args: Any, **kwargs: Any) -> Iterator[Any]:
         for item in frames(*args, **kwargs):
-            work["frames"] += 1
+            count("frames")
             yield item
 
     def counted_read(self: Any, digest: str, **kwargs: Any) -> bytes:
-        work["cas_reads"] += 1
+        count("cas_reads")
         return read(self, digest, **kwargs)
 
     def counted_blobs(self: Any, oid: str, paths: Any) -> Any:
         paths = tuple(paths)
-        work["blobs"] += len(paths)
+        count("blobs", len(paths))
         return blobs(self, oid, paths)
 
     def counted_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
         connection = connect(*args, **kwargs)
 
         def tick() -> int:
-            work["vm"] += 1
+            count("vm")
             return 0
 
         connection.set_progress_handler(tick, 1)
@@ -101,7 +123,7 @@ def test_a_line_admission_does_not_grow_with_the_lines_past_runs(
         while done < size:
             run_once()
             done += 1
-        with _counted(monkeypatch) as work:
+        with _counted(monkeypatch, instance=instance) as work:
             run_once()
             done += 1
         measured.append(dict(work))
@@ -279,7 +301,7 @@ def _settle_on_a_retained_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             claim=observation, run_id=run.run_id, terminal_record_digest=terminal.record_digest
         ),
     )
-    with _counted(monkeypatch) as work:
+    with _counted(monkeypatch, instance=instance) as work:
         result = service_settle_playbill_prediction(
             instance,
             prediction_id=contract.identity.name,
@@ -399,7 +421,7 @@ def test_a_scoped_query_does_not_grow_with_retired_claims_or_other_subject_kinds
 
         with monkeypatch.context() as patch:
             patch.setattr(query, "parse_claim", counted_parse)
-            with _counted(monkeypatch) as work:
+            with _counted(monkeypatch, instance=instance) as work:
                 facts = query.build_accepted_query_facts(
                     instance,
                     coordinate=coordinate,
@@ -409,13 +431,23 @@ def test_a_scoped_query_does_not_grow_with_retired_claims_or_other_subject_kinds
         assert facts.claims
         return {**work, **parsed}
 
-    # Each size is measured warm (its coordinate's per-process reads done once).
+    def warm() -> dict[str, int]:
+        """The cheapest of three warm measurements of one coordinate.
+
+        The first call does the coordinate's per-process reads once. A bounded
+        retry on the measuring thread (an index acquisition that met a directory
+        change) only ever adds work, while growth with history would raise every
+        repetition, so the minimum is the query's own steady cost.
+        """
+
+        measure()
+        runs = [measure() for _ in range(3)]
+        return min(runs, key=lambda run: run["vm"])
+
     grow(retired=1, subjects=5, start=0)
-    measure()
-    small = measure()
+    small = warm()
     grow(retired=3, subjects=45, start=100)
-    measure()
-    large = measure()
+    large = warm()
     assert small["claims_parsed"] > 0
     assert {k: v for k, v in small.items() if k != "vm"} == {
         k: v for k, v in large.items() if k != "vm"
