@@ -839,6 +839,147 @@ def deterministic_rebase_v2(
     return RebaseResultV2(tree=rebased, conflicts=tuple(conflicts))
 
 
+@dataclass(frozen=True)
+class _ForkRebase:
+    """A stale-base rebase answered from two deltas instead of three whole trees.
+
+    ``proposed`` is a fork of the accepted ``base`` root, and
+    ``current_changed`` holds every path whose bytes differ from ``base`` to
+    ``current`` (Git's structural diff between their commits). Every path
+    outside the proposal's own changes keeps the head's bytes in either rebase,
+    and a changed path's head bytes are the base's unless the head diff names
+    it, so both rebases visit only the proposal's changes. The trees' path union
+    -- which the whole-tree rebases refuse when it is non-canonical or case-fold
+    colliding -- is checked from the head's carried path facts plus the few
+    paths the head lacks; any doubt answers ``None`` and the whole-tree rebase
+    runs, refusal and all.
+    """
+
+    base: SnapshotTree
+    current: SnapshotTree
+    proposed: Mapping[str, bytes]
+    changed: tuple[str, ...]
+    current_changed: frozenset[str]
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        base_tree: Mapping[str, bytes],
+        current_tree: Mapping[str, bytes],
+        proposed_tree: Mapping[str, bytes],
+        current_changed: frozenset[str] | None,
+    ) -> _ForkRebase | None:
+        from cruxible_core.derived.derived_state import (
+            path_facts,
+            root_and_edits,
+            row_values,
+            same_row,
+        )
+
+        found = root_and_edits(proposed_tree)
+        if (
+            current_changed is None
+            or found is None
+            or not isinstance(base_tree, SnapshotTree)
+            or not isinstance(current_tree, SnapshotTree)
+            or found[0] is not base_tree
+            or base_tree._parent is not None
+            or current_tree._parent is not None
+        ):
+            return None
+        base_rows, proposed_rows, current_rows = (
+            row_values(base_tree),
+            row_values(proposed_tree),
+            row_values(current_tree),
+        )
+        if base_rows is None or proposed_rows is None or current_rows is None:
+            return None
+        changed: list[str] = []
+        for path in found[1]:
+            old, new = base_rows.get(path), proposed_rows.get(path)
+            if old is None and new is None:
+                continue
+            if old is not None and new is not None and same_row(old, new):
+                continue
+            changed.append(path)
+        # The path union: the head's paths, plus base paths the head dropped and
+        # paths the proposal adds that the head lacks.
+        extra = {
+            path
+            for path in (*current_changed, *changed)
+            if path not in current_rows and (path in base_rows or path in proposed_rows)
+        }
+        facts = path_facts(current_tree).advanced(current_rows, dict.fromkeys(extra, b""))
+        if facts.noncanonical or facts.colliding:
+            return None
+        return cls(
+            base=base_tree,
+            current=current_tree,
+            proposed=proposed_tree,
+            changed=tuple(sorted(changed, key=lambda item: item.encode("utf-8"))),
+            current_changed=current_changed,
+        )
+
+    @property
+    def semantic_scope(self) -> tuple[str, ...]:
+        """What ``semantic_diff(base, proposed)`` scopes: changed non-record, non-card paths."""
+        return tuple(
+            path
+            for path in self.changed
+            if not path.startswith("changesets/") and not is_candidate_card_path(path)
+        )
+
+    def _values(self, path: str) -> tuple[bytes | None, bytes | None, bytes | None]:
+        old = self.base.get(path)
+        return (
+            old,
+            self.proposed.get(path),
+            self.current.get(path) if path in self.current_changed else old,
+        )
+
+    def rebase_v1(self) -> tuple[SnapshotTree, tuple[str, ...]]:
+        """``deterministic_rebase`` over these deltas."""
+        builder = self.current.fork()
+        conflicts: list[str] = []
+        for path in self.changed:
+            old, proposed, current = self._values(path)
+            if current != old and current != proposed:
+                conflicts.append(path)
+                continue
+            if proposed is None:
+                if path in builder:
+                    del builder[path]
+            else:
+                builder[path] = proposed
+        return builder.snapshot(), tuple(conflicts)
+
+    def rebase_v2(self) -> tuple[SnapshotTree, tuple[RebaseMemberConflictV2, ...]]:
+        """``deterministic_rebase_v2`` over these deltas."""
+        builder = self.current.fork()
+        conflicts: list[RebaseMemberConflictV2] = []
+        for path in self.changed:
+            old, proposed, new = self._values(path)
+            if new == proposed:
+                continue
+            if new != old:
+                conflicts.append(
+                    RebaseMemberConflictV2(
+                        path=path,
+                        old_parent_digest=_optional_file_digest(old),
+                        proposed_digest=_optional_file_digest(proposed),
+                        new_parent_digest=_optional_file_digest(new),
+                    )
+                )
+                continue
+            if proposed is None:
+                if path in builder:
+                    del builder[path]
+            else:
+                builder[path] = proposed
+        return builder.snapshot(), tuple(conflicts)
+
+
 def _canonical_model_digest(domain: str, model: BaseModel) -> str:
     payload = model.model_dump(mode="json")
     payload.pop("tag", None)
@@ -4894,8 +5035,14 @@ def evaluate_proposal_tree(
     delegated_mandate_digest: str | None = None,
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
+    base_changes: frozenset[str] | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
+
+    ``base_changes``, for a rebased evaluation, is every path whose bytes differ
+    between the proposed base and the current head; with a proposal that is a
+    fork of the accepted base, the rebase then reads only the changed paths
+    (``_ForkRebase``) and yields the same tree and conflicts.
 
     `wire_version` names the candidate shape to speak the judgement in. A new
     proposal never passes it: this build produces one version. Re-verifying an
@@ -4926,18 +5073,31 @@ def evaluate_proposal_tree(
         else SnapshotTree(proposed_tree)
     )
     if rebased:
-        _original_diff, original_scope = semantic_diff(base_tree, proposed_tree)
+        fork_rebase = _ForkRebase.of(
+            base_tree=base_tree,
+            current_tree=current_tree,
+            proposed_tree=proposed_tree,
+            current_changed=base_changes,
+        )
+        original_scope = (
+            fork_rebase.semantic_scope
+            if fork_rebase is not None
+            else semantic_diff(base_tree, proposed_tree)[1]
+        )
         if len(original_scope) > 1 or any(
             any(pattern.fullmatch(path) for pattern in _DEPENDENCY_CLOSED_PATTERNS)
             for path in original_scope
         ):
-            result = deterministic_rebase_v2(
-                old_parent_tree=base_tree,
-                new_parent_tree=current_tree,
-                proposed_tree=proposed_tree,
-            )
-            candidate_tree = SnapshotTree(result.tree)
-            if result.conflicts:
+            if fork_rebase is not None:
+                candidate_tree, member_conflicts = fork_rebase.rebase_v2()
+            else:
+                result = deterministic_rebase_v2(
+                    old_parent_tree=base_tree,
+                    new_parent_tree=current_tree,
+                    proposed_tree=proposed_tree,
+                )
+                candidate_tree, member_conflicts = SnapshotTree(result.tree), result.conflicts
+            if member_conflicts:
                 return CandidateEvaluation(
                     candidate_tree,
                     None,
@@ -4947,17 +5107,20 @@ def evaluate_proposal_tree(
                             canonical_bytes(conflict.model_dump(mode="json")).decode("utf-8"),
                             conflict.path,
                         )
-                        for conflict in result.conflicts
+                        for conflict in member_conflicts
                     ),
                     True,
                 )
         else:
-            rebased_tree, conflicts = deterministic_rebase(
-                base_tree=base_tree,
-                current_tree=current_tree,
-                proposed_tree=proposed_tree,
-            )
-            candidate_tree = SnapshotTree(rebased_tree)
+            if fork_rebase is not None:
+                candidate_tree, conflicts = fork_rebase.rebase_v1()
+            else:
+                rebased_tree, conflicts = deterministic_rebase(
+                    base_tree=base_tree,
+                    current_tree=current_tree,
+                    proposed_tree=proposed_tree,
+                )
+                candidate_tree = SnapshotTree(rebased_tree)
             if conflicts:
                 return CandidateEvaluation(
                     candidate_tree,
@@ -5250,7 +5413,7 @@ class ProposalService:
         base_tree = (
             current_tree
             if request.proposed_base_oid == current.git_oid
-            else self.transport.read_tree(request.proposed_base_oid)
+            else self._stale_base_tree(request.proposed_base_oid)
         )
         validated_tree = validate_proposal_tree(
             candidate_tree,
@@ -5288,6 +5451,11 @@ class ProposalService:
                 bodies=self.bodies,
                 timestamp=timestamp,
                 rebased=is_rebase,
+                base_changes=(
+                    self._changed_paths(request.proposed_base_oid, current.git_oid)
+                    if is_rebase
+                    else None
+                ),
                 actor_id=actor.actor_id,
                 claim_type_expansions=request.claim_type_expansions,
                 promotion_verifier=self.promotion_verifier,
@@ -5323,6 +5491,26 @@ class ProposalService:
             is_rebase=is_rebase,
             outcome=outcome,
         )
+
+    def _stale_base_tree(self, oid: str) -> Mapping[str, bytes]:
+        """A proposed base behind the head, as the accepted snapshot a lowering forked.
+
+        An accepted generation's tree comes from the accepted-tree provider (shared,
+        advanced by deltas, the very root a lowering at that base forked), so
+        receive validation and the rebase can work from the proposal's edits.
+        Anything that provider cannot serve is read whole, exactly as before.
+        """
+        try:
+            return self._accepted_tree_provider(oid)
+        except CruxibleError:
+            return self.transport.read_tree(oid)
+
+    def _changed_paths(self, base_oid: str, head_oid: str) -> frozenset[str] | None:
+        """Every path whose bytes differ between two commits, from Git's structural diff."""
+        changed_entries = getattr(self.transport, "changed_entries", None)
+        if changed_entries is None:
+            return None
+        return frozenset(change.path for change in changed_entries(base_oid, head_oid))
 
     def preview(
         self,
