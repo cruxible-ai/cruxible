@@ -6,7 +6,6 @@ credential errors shared by the daemon, CLI and MCP boundaries.
 
     CoreError
     ├── FloorAdmissionMisuse (internal floor admission programming error)
-    ├── ReadInputsMovingError (a read's inputs kept moving under it; retry)
     ├── ConfigError (invalid configuration or request shape)
     ├── DataValidationError (payload does not match its declared contract)
     │   └── RequestRefusedError (a coded refusal of caller input, with its repair)
@@ -48,22 +47,6 @@ class FloorAdmissionMisuse(CoreError):
     """An internal admission misuse, surfaced through the typed error boundaries."""
 
     error_code = "internal.floor_admission_misuse"
-
-    def __init__(self, message: str) -> None:
-        super().__init__(f"{self.error_code}: {message}")
-
-
-class ReadInputsMovingError(CoreError):
-    """The logs a read derives from kept moving while it ran: retry the read.
-
-    A read answers from one state of everything it depends on (accepted
-    state, the attestation door, body landings, re-observations). When each of
-    a bounded number of attempts finds one of them moved before it finished,
-    it refuses rather than answer from a mix no single state supports. The
-    refusal is transient: the same read succeeds once the writes settle.
-    """
-
-    error_code = "cruxible.read.inputs_moving"
 
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.error_code}: {message}")

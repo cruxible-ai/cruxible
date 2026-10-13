@@ -39,6 +39,7 @@ from cruxible_core.service.discovery.claim_status import claim_resolution_status
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.landing_log import LandingLog
+from cruxible_core.storage.read_positions import reading_at
 from cruxible_core.triggers.journal import journal_path
 from tests.core_support._claim_authoring_support import (
     ExistingStatementHandoffV1,
@@ -241,15 +242,18 @@ def _step(instance, at: datetime, change, *, expect: Counter[str] | None = None)
 
 
 def _live_counts(instance, at: datetime) -> dict[str, int]:  # type: ignore[no-untyped-def]
-    coordinate = instance.accepted_coordinate()
-    context = ClaimVerdictReadContext(instance, coordinate)
-    statuses = claim_resolution_statuses(
-        instance,
-        claims=context.claims(),
-        at=AcceptedCoordinate.from_internal(coordinate),
-        evaluation_time=at,
-        read_context=context,
-    )
+    """Claims by status folded live, at the positions a read now records."""
+
+    heads = facts.read_heads(instance)
+    context = ClaimVerdictReadContext(instance, heads.coordinate)
+    with reading_at(heads.positions):
+        statuses = claim_resolution_statuses(
+            instance,
+            claims=context.claims(),
+            at=AcceptedCoordinate.from_internal(heads.coordinate),
+            evaluation_time=at,
+            read_context=context,
+        )
     counts = Counter(statuses.values())
     return {status: counts[status] for status in facts.TALLY_STATUSES[:-1]}
 
@@ -523,8 +527,9 @@ def test_invalid_cursors_and_a_new_format_rebuild_from_nothing(tmp_path: Path) -
 
 
 def test_an_interrupted_landing_is_followed_once_it_is_settled(tmp_path: Path) -> None:
-    """A follower that read an intent whose completion failed keeps its cursor before
-    it, and the retry's settlement reaches the Claims: facts and tally stay true."""
+    """A follower that read an intent whose completion failed has changed nothing: a
+    body's presence is its last completion. The retry's completion reaches the Claims:
+    facts and tally stay true at every position."""
 
     instance, _owner = seed_claims(tmp_path)
     at = EVALUATION_TIME
@@ -547,13 +552,11 @@ def test_an_interrupted_landing_is_followed_once_it_is_settled(tmp_path: Path) -
         with pytest.raises(CasError, match="completion row"):
             store.store(b"status: ready")
     assert store.landings.unfinished()
-    # A read settles the landing its writer abandoned, as opening the store does,
-    # then serves the true state from the overlay; the worker is still behind.
+    # A read answers as of the log: no completion yet, so the body is still absent
+    # to it, as to the fold at the same position. It settles nothing.
     assert _tally(instance, at) == _live_counts(instance, at)
-    assert not store.landings.unfinished()
-    PART.match(instance, now=at, daemon_id="test")
-    assert tuple(PART.due(instance, now=at))
-    # The retry finds the object present: nothing is left unfinished.
+    assert store.landings.unfinished()
+    # The retry finds the object present and publishes its completion.
     store.store(b"status: ready")
     assert not store.landings.unfinished()
     with _counted() as work:
@@ -628,15 +631,12 @@ def _sized_state(size: int) -> sqlite3.Connection:
     required = [
         str(row[1])
         for row in connection.execute("PRAGMA table_info(claim_facts)")
-        if row[3] and row[1] not in {"claim_id", "lower_us", "upper_us", "unservable"}
+        if row[3] and row[1] not in {"claim_id", "lower_us", "upper_us"}
     ]
     connection.executemany(
-        f"INSERT INTO claim_facts(claim_id,{','.join(required)},lower_us,upper_us,unservable) "
-        f"VALUES ({','.join('?' for _ in range(len(required) + 4))})",
-        (
-            (f"Claim:{index}", *("x" for _ in required), index, index + 100, 0)
-            for index in range(size)
-        ),
+        f"INSERT INTO claim_facts(claim_id,{','.join(required)},lower_us,upper_us) "
+        f"VALUES ({','.join('?' for _ in range(len(required) + 3))})",
+        ((f"Claim:{index}", *("x" for _ in required), index, index + 100) for index in range(size)),
     )
     return connection
 
@@ -688,12 +688,12 @@ def _current_state(size: int) -> sqlite3.Connection:
     required = [
         str(row[1])
         for row in connection.execute("PRAGMA table_info(claim_facts)")
-        if row[3] and row[1] not in {"claim_id", "unservable"}
+        if row[3] and row[1] != "claim_id"
     ]
     connection.executemany(
         f"INSERT INTO claim_facts(claim_id,{','.join(required)},lower_us,upper_us,"
-        f"max_support_expiry_us,unservable) VALUES "
-        f"({','.join('?' for _ in range(len(required) + 5))})",
+        f"max_support_expiry_us) VALUES "
+        f"({','.join('?' for _ in range(len(required) + 4))})",
         (
             (
                 f"Claim:{index}",
@@ -701,7 +701,6 @@ def _current_state(size: int) -> sqlite3.Connection:
                 index % 7,
                 1000 + index,
                 1000 + index,
-                0,
             )
             for index in range(size)
         ),
@@ -730,7 +729,6 @@ def _current_state(size: int) -> sqlite3.Connection:
         (facts._KEYS_EARLIEST_END, (), ("row_keys_by_upper",)),
         (facts._EXPIRED_FACTS, (1003, 1003), ("claim_facts_by_upper", "claim_facts_by_lower")),
         (facts._EXPIRED_KEYS, (1003, 1003), ("row_keys_by_upper", "row_keys_by_lower")),
-        (facts._UNSERVABLE, (), ("claim_facts_unservable",)),
         (facts._CITATION_ERROR, (), ("claim_facts_citation_errors",)),
         (facts._BROKEN_KEYS, (), ("row_keys_with_errors",)),
         # A read of a few keys seeks each one (F-012), whatever else is broken.

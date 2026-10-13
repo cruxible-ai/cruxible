@@ -606,7 +606,6 @@ def _attention(
     caller_tools: tuple[str, ...] | None,
     provider_lane: contracts.ProviderLaneStatus | None = None,
     consumers_running: bool = False,
-    pinned: bool = True,
 ) -> tuple[OrientAttention, bool]:
     notes: list[str] = []
     terminal = instance.descriptor.decommissioned
@@ -632,7 +631,6 @@ def _attention(
             caller_principal_id=None if caller is None else caller.actor_id,
             caller_rung=caller_rung,
             match=lambda item: _upgrade_hint((item,)) is not None,
-            at_pinned=pinned,
         )
         items, total = queue.items, queue.total_items
         reused = queue.matching_item
@@ -842,9 +840,8 @@ def service_playbill_orient(
     view = section or ("kind" if kind is not None else "kinds")
     continuation, at = _continuation(instance, cursor, view=view, at=at)
     coordinate = resolve_read_coordinate(instance, at)
-    # Named by the caller or a cursor, the coordinate is a pin (R8); else orient
-    # selected it, and every read below is at it: one that finds it moved refuses.
-    pinned = at is not None
+    # Named by the caller or a cursor, or selected here: every read below is at it,
+    # whatever is accepted meanwhile (a point-in-time read).
     served = AcceptedCoordinate.from_internal(coordinate)
     moment = (evaluation_time or datetime.now(UTC)).astimezone(UTC)
     state = _read_state(instance, coordinate)
@@ -969,7 +966,6 @@ def service_playbill_orient(
         caller_tools=caller_tools,
         provider_lane=provider_lane,
         consumers_running=consumers_running,
-        pinned=pinned,
     )
     focus = max(kinds_page, key=lambda row: (row.subjects, len(row.predicates)), default=None)
     if focus is not None:
@@ -1019,7 +1015,7 @@ def service_playbill_orient(
             queries=len(state.queries),
             interfaces=len(state.interfaces),
             **counts,
-            claims=_claim_counts(instance, coordinate, evaluation_time=moment, pinned=pinned),
+            claims=_claim_counts(instance, coordinate, evaluation_time=moment),
         ),
         queries=state.queries[:ORIENT_DEFAULT_QUERIES],
         attention=attention,
@@ -1045,7 +1041,6 @@ def _claim_counts(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
-    pinned: bool = True,
 ) -> OrientClaimCounts:
     """Every accepted Claim counted by status: from the next facts' tally.
 
@@ -1057,7 +1052,24 @@ def _claim_counts(
     remembered resolution answer, and a miss derive the statuses once.
     """
 
-    from cruxible_core.consumers.next.facts import claim_status_tally
+    from cruxible_core.consumers.next.facts import claim_status_tally, read_positions
+    from cruxible_core.storage.read_positions import reading_at
+
+    tally = claim_status_tally(instance, coordinate=coordinate, evaluation_time=evaluation_time)
+    if tally is not None:
+        return OrientClaimCounts(**tally)
+    with reading_at(read_positions(instance)):
+        return _derived_claim_counts(instance, coordinate, evaluation_time=evaluation_time)
+
+
+def _derived_claim_counts(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    *,
+    evaluation_time: datetime,
+) -> OrientClaimCounts:
+    """Every accepted Claim counted by status, derived at one read's recorded positions."""
+
     from cruxible_core.service.authoring.documents import AcceptedCoordinate
     from cruxible_core.service.discovery.claim_status import (
         claim_resolution_statuses,
@@ -1065,11 +1077,6 @@ def _claim_counts(
     )
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
-    tally = claim_status_tally(
-        instance, coordinate=coordinate, evaluation_time=evaluation_time, pinned=pinned
-    )
-    if tally is not None:
-        return OrientClaimCounts(**tally)
     with instance.bind_accepted_projection(coordinate) as projection:
         identities = tuple(
             str(row[0])

@@ -56,7 +56,6 @@ from cruxible_core.errors import (
     InstanceScopeError,
     PermissionDeniedError,
     PrincipalRefusedError,
-    ReadInputsMovingError,
     RuntimeCredentialNotFoundError,
 )
 from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
@@ -169,7 +168,7 @@ def _repair_for_error(exc: CoreError) -> ServedRepair:
 
 
 def _status_for_error(exc: CoreError) -> int:
-    if isinstance(exc, BuildCapacityError | ReadInputsMovingError):
+    if isinstance(exc, BuildCapacityError):
         return 503
     if isinstance(exc, ReadRefusalError):
         # A read refusal is a request fault with its own coded status: an
@@ -251,7 +250,7 @@ def _status_for_error(exc: CoreError) -> int:
 def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     """Convert a CoreError into an HTTP status code and structured payload."""
     context: dict[str, Any] = {}
-    if isinstance(exc, BuildCapacityError | ReadInputsMovingError):
+    if isinstance(exc, BuildCapacityError):
         context["retryable"] = True
     errors: list[str] = []
     error_code = getattr(exc, "error_code", None)
@@ -321,7 +320,7 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         # with a client-side repair.
         repair=(
             None
-            if isinstance(exc, BuildCapacityError | FloorAdmissionMisuse | ReadInputsMovingError)
+            if isinstance(exc, BuildCapacityError | FloorAdmissionMisuse)
             else _repair_for_error(exc)
         ),
     )

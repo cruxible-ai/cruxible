@@ -29,10 +29,8 @@ from cruxible_client.contracts.claims import claim_statement_digest
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_core.consumers.next import facts, rows
 from cruxible_core.coverage.contracts import CoverageAccessProfile
-from cruxible_core.errors import ReadInputsMovingError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.typed_state import utc_microseconds
-from cruxible_core.server.errors import error_to_response
 from cruxible_core.service.discovery import next as next_module
 from cruxible_core.service.discovery.next import (
     DEFAULT_EXPIRING_WITHIN_MICROSECONDS,
@@ -407,7 +405,9 @@ def test_a_head_page_cursor_refuses_after_a_head_move_without_folding(tmp_path: 
             service_playbill_next(
                 instance, request=request.model_copy(update={"cursor": first.next_cursor})
             )
-    # A read that pins its door head is historical: its pages fold at those pins.
+    # A read that pins a door head the worker has passed is historical: its pages
+    # fold at those pins.
+    _drain(instance, request.evaluation_time)
     pinned = request.model_copy(update={"at_attestation_head_digest": old_door})
     with patch.object(
         next_module, "_oracle_claim_rows", wraps=next_module._oracle_claim_rows
@@ -664,37 +664,6 @@ def test_layer2_derives_exactly_the_keys_a_change_reaches(tmp_path: Path) -> Non
     with _keys_derived() as derived:
         assert _served(instance, EVALUATION_TIME) is not None
     assert derived == [set()]
-
-
-def test_an_unservable_fact_is_derived_on_every_read_and_never_persisted(tmp_path: Path) -> None:
-    instance, _owner = seed_claims(tmp_path)
-    _drain(instance)
-    identity = _current_claim(instance).identity.qualified
-    with sqlite3.connect(facts._STATE.path(instance)) as connection:
-        connection.execute("UPDATE claim_facts SET unservable=1 WHERE claim_id=?", (identity,))
-    # Orient's counts are taken after the same read-time derivation.
-    from tests.test_consumers.test_next_facts import _live_counts
-
-    assert facts.claim_status_tally(
-        instance,
-        coordinate=instance.accepted_coordinate(),
-        evaluation_time=EVALUATION_TIME,
-    ) == _live_counts(instance, EVALUATION_TIME)
-    derived: list[str] = []
-    original = facts._claim_facts
-
-    def counting(instance, context, claim, **kwargs):  # type: ignore[no-untyped-def]
-        derived.append(claim.identity.qualified)
-        return original(instance, context, claim, **kwargs)
-
-    with patch.object(facts, "_claim_facts", counting):
-        assert _served(instance, EVALUATION_TIME) is not None
-    assert derived == [identity]
-    _assert_equivalent(instance, EVALUATION_TIME)
-    with sqlite3.connect(facts._STATE.path(instance)) as connection:
-        assert connection.execute(
-            "SELECT unservable FROM claim_facts WHERE claim_id=?", (identity,)
-        ).fetchone() == (1,)
 
 
 def _outcome(instance, at: datetime):  # type: ignore[no-untyped-def]
@@ -1109,150 +1078,9 @@ def test_undeclared_kinds_and_expiring_mandates_come_from_the_maintained_index(
 # -- review fixes: one input state, maintained citations and counts, error order -----
 
 
-def test_a_catch_up_read_serves_rows_from_one_landing_state(tmp_path: Path) -> None:
-    """F-006: a body that lands while a read derives the worker's change makes the read
-    derive again against the logs as they then stand; it never serves a mix."""
-
-    from cruxible_client.contracts.claim_types import ClaimType
-    from tests.test_claims.test_claims import _claim_type
-
-    claim_type = ClaimType.model_validate(
-        {
-            **_claim_type().model_dump(mode="json"),
-            "artifact_format": "playbill-claim-type-v3",
-            "evidence_freshness": {"stale_after": {"microseconds": 1_000_000}},
-        }
-    )
-    instance, owner = seed_claims(tmp_path, claim_type_override=claim_type)
-    _drain(instance)
-    bodies = {
-        _current_claim(instance, subject_id="wi-42").identity.qualified: b"status: ready",
-        _current_claim(instance, subject_id="wi-43").identity.qualified: b"status: blocked",
-    }
-    first_id, second_id = sorted(bodies)
-    second = next(c for c in _all_claims(instance) if c.identity.qualified == second_id)
-    store = instance.body_store()
-    store.erase(store.digest_bytes(bodies[first_id]).tagged)
-    _attest(instance, owner, second, tmp_path, at=EVALUATION_TIME - timedelta(minutes=1))
-    original = facts._claim_facts
-    moved: list[bool] = []
-
-    def concurrent(instance, context, claim, **kwargs):  # type: ignore[no-untyped-def]
-        result = original(instance, context, claim, **kwargs)
-        if claim.identity.qualified == first_id and not moved:
-            # Restore the first body, then erase the second: never both absent.
-            moved.append(True)
-            store.store(bodies[first_id])
-            store.erase(store.digest_bytes(bodies[second_id]).tagged)
-        return result
-
-    facts._OVERLAYS.clear()
-    with patch.object(facts, "_claim_facts", concurrent):
-        served = _served(instance, EVALUATION_TIME)
-    assert moved and served is not None
-    stale = {item.subject_identity for item in served.rows if item.reason == "claim_stale_evidence"}
-    assert stale == {first_id}
-    _assert_equivalent(instance, EVALUATION_TIME)
-
-
-def test_a_read_with_a_landing_in_flight_refuses_retryably_and_never_folds(
-    tmp_path: Path,
-) -> None:
-    """F-006: between a landing's intent and its completion the body may move, so no
-    attempt serves; the read refuses (typed, retryable) rather than fold the moving logs."""
-
-    from cruxible_core.storage.landing_log import LandingLog
-
-    instance, _owner = seed_claims(tmp_path)
-    _drain(instance)
-    store = instance.body_store()
-    original = LandingLog._append
-    seen: list[object] = []
-
-    def in_flight(log, kind, digest, *, sync):  # type: ignore[no-untyped-def]
-        result = original(log, kind, digest, sync=sync)
-        if kind == "store" and not seen:
-            with _no_fold():
-                try:
-                    _served(instance, EVALUATION_TIME)
-                except ReadInputsMovingError as exc:
-                    seen.append(exc.error_code)
-        return result
-
-    with patch.object(LandingLog, "_append", in_flight):
-        store.store(b"landing while a read runs\n")
-    assert seen == ["cruxible.read.inputs_moving"]
-    status, body = error_to_response(ReadInputsMovingError("moving"))
-    assert (status, body.context, body.repair) == (503, {"retryable": True}, None)
-    _assert_equivalent(instance, EVALUATION_TIME)
-
-
-def test_a_read_whose_logs_keep_moving_refuses_instead_of_folding_a_mix(
-    tmp_path: Path,
-) -> None:
-    """F-006: a landing after every settled attempt exhausts the attempts; the fold that
-    used to follow read one body absent, then the other, and served neither stale row.
-    next, the summary, orient and the hold flags now refuse instead, folding nothing."""
-
-    from cruxible_client.contracts.claim_types import ClaimType
-    from cruxible_core.service.discovery.orient import service_playbill_orient
-    from tests.test_claims.test_claims import _claim_type
-
-    claim_type = ClaimType.model_validate(
-        {
-            **_claim_type().model_dump(mode="json"),
-            "artifact_format": "playbill-claim-type-v3",
-            "evidence_freshness": {"stale_after": {"microseconds": 1_000_000}},
-        }
-    )
-    instance, _owner = seed_claims(tmp_path, claim_type_override=claim_type)
-    _drain(instance)
-    store = instance.body_store()
-    store.erase(store.digest_bytes(b"status: ready").tagged)
-    settled = facts._settled_overlay
-    attempts: list[int] = []
-    landings = iter(range(1_000))
-
-    def move_after_settlement(*args, **kwargs):  # type: ignore[no-untyped-def]
-        result = settled(*args, **kwargs)
-        attempts.append(len(attempts))
-        # New bytes each time: a body already present lands nothing.
-        store.store(f"uncited racing landing {next(landings)}".encode())
-        return result
-
-    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
-    reads = (
-        lambda: service_playbill_next(instance, request=request),
-        lambda: summarize_playbill_next(instance, request=request),
-        lambda: service_playbill_orient(instance, evaluation_time=EVALUATION_TIME),
-        lambda: claim_unsure_holds(
-            instance,
-            coordinate=instance.accepted_coordinate(),
-            claims=tuple(_all_claims(instance)),
-            evaluation_time=EVALUATION_TIME,
-        ),
-    )
-    for read in reads:
-        attempts.clear()
-        facts._OVERLAYS.clear()
-        with (
-            patch.object(facts, "_settled_overlay", move_after_settlement),
-            patch(
-                "cruxible_core.service.discovery.claim_status.claim_resolution_statuses",
-                side_effect=AssertionError("population fold"),
-            ),
-            _no_fold(),
-            pytest.raises(ReadInputsMovingError),
-        ):
-            read()
-        assert len(attempts) == facts._ATTEMPTS
-    # Once the logs stand still the same read serves, exactly as the fold.
-    _assert_equivalent(instance, EVALUATION_TIME)
-
-
 def _stale_evidence_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     """Two Claims whose evidence is expired; the first's cited body erased, the worker
-    behind it: every real landing state has at least one stale-evidence row."""
+    behind it: whether each body is present decides its stale-evidence row."""
 
     from cruxible_client.contracts.claim_types import ClaimType
     from tests.test_claims.test_claims import _claim_type
@@ -1275,152 +1103,225 @@ def _stale_evidence_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     return instance, owner, bodies
 
 
-@pytest.mark.parametrize("head", ("accepted", "door"))
-def test_a_head_that_moves_while_next_is_served_restarts_it_at_the_new_heads(
-    tmp_path: Path, head: str
-) -> None:
-    """F-006: a generation accepted (or a door event appended) after the first attempt
-    settles used to send the retry to the fold at the heads first selected, where a
-    restore-then-erase race served neither stale row. An unpinned read now follows the
-    heads: it is served at the new ones, from one landing state, and never folds."""
+def _stale(items) -> set[str]:  # type: ignore[no-untyped-def]
+    return {item.subject_identity for item in items if item.reason == "claim_stale_evidence"}
 
-    from cruxible_core.service.evidence import evidence
+
+@contextmanager
+def _after_recording(write: Any) -> Iterator[list[Any]]:
+    """Run ``write`` once, right after the first read records its heads: mid-read."""
+
+    recorded: list[Any] = []
+    original = facts.read_heads
+
+    def recording(*args, **kwargs):  # type: ignore[no-untyped-def]
+        heads = original(*args, **kwargs)
+        if not recorded:
+            recorded.append(heads)
+            write()
+        return heads
+
+    with patch.object(facts, "read_heads", recording):
+        yield recorded
+
+
+@pytest.mark.parametrize("move", ("bodies", "accepted", "door"))
+def test_writes_landing_mid_read_are_not_in_its_answer(tmp_path: Path, move: str) -> None:
+    """Ruling 1: a read is a snapshot of the heads it records at its start. Bodies
+    restored and erased, a generation accepted or a door event appended once it has
+    recorded them neither change its answer nor fail it, and nothing folds."""
+
     from tests.test_consumers.test_next_incremental import World, _subject
 
     instance, owner, bodies = _stale_evidence_world(tmp_path)
     first, second = sorted(bodies)
     store = instance.body_store()
     state = World(instance=instance, owner=owner, root=tmp_path, rng=None)  # type: ignore[arg-type]
-    settled = facts._settled_overlay
-    verdict = evidence.service_evaluate_playbill_claim_verdict
-    moved_head: list[bool] = []
-    raced: list[bool] = []
+    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
+    with _oracle_only():
+        before = service_playbill_next(instance, request=request)
+    coordinate = instance.accepted_coordinate()
+    door = instance.claim_attestation_evidence_store().head()
 
-    def move_after_settlement(*args, **kwargs):  # type: ignore[no-untyped-def]
-        result = settled(*args, **kwargs)
-        if not moved_head:
-            if head == "accepted":
-                _subject(state)
-            else:
-                _attest(
-                    instance,
-                    owner,
-                    _all_claims(instance)[0],
-                    tmp_path,
-                    at=EVALUATION_TIME - timedelta(minutes=1),
-                    stance="support",
-                )
-            moved_head.append(True)
+    def write() -> None:
+        store.store(bodies[first])
+        store.erase(store.digest_bytes(bodies[second]).tagged)
+        if move == "accepted":
+            _subject(state)
+        elif move == "door":
+            _attest(
+                instance,
+                owner,
+                _all_claims(instance)[0],
+                tmp_path,
+                at=EVALUATION_TIME - timedelta(minutes=1),
+                stance="support",
+            )
+
+    facts._OVERLAYS.clear()
+    with _after_recording(write) as recorded, _no_fold():
+        served = service_playbill_next(instance, request=request)
+    assert recorded
+    assert served.coordinate == AcceptedCoordinate.from_internal(coordinate)
+    assert served.attestation_head_digest == door
+    assert served.items == before.items
+    assert _stale(served.items) == _stale(before.items) and _stale(before.items)
+    # The writes are in the next read, which records later heads.
+    assert (instance.accepted_coordinate() != coordinate) == (move == "accepted")
+    _assert_equivalent(instance, EVALUATION_TIME)
+
+
+def test_a_body_landed_after_the_reads_position_is_absent_to_that_read(tmp_path: Path) -> None:
+    """Ruling 2: presence is the landing log's at the read's landing position. A body
+    that lands after the read recorded it is absent to that read (served and folded
+    alike), whatever the file says, and present to the next read."""
+
+    instance, _owner, bodies = _stale_evidence_world(tmp_path)
+    _drain(instance)
+    first = min(bodies)
+    store = instance.body_store()
+    digest = store.digest_bytes(bodies[first]).tagged
+    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
+    with _oracle_only():
+        before = service_playbill_next(instance, request=request)
+    with _after_recording(lambda: store.store(bodies[first])) as recorded, _no_fold():
+        served = service_playbill_next(instance, request=request)
+    (heads,) = recorded
+    assert store.verify(digest)
+    assert not store.landings.present(digest, identity=heads.landing_log, sequence=heads.landing)
+    assert served.items == before.items and first not in _stale(served.items)
+    # The fold at the same recorded heads answers the same.
+    with _oracle_only(), patch.object(facts, "read_heads", return_value=heads):
+        assert service_playbill_next(instance, request=request).items == served.items
+    later = service_playbill_next(instance, request=request)
+    assert _stale(later.items) == _stale(before.items) | {first}
+    _assert_equivalent(instance, EVALUATION_TIME)
+
+
+def test_a_read_during_a_landing_in_flight_answers_as_before_it(tmp_path: Path) -> None:
+    """Between a landing's intent and its completion the body has not landed for a read:
+    the read serves (no fold, no refusal) as of its position, where it is absent."""
+
+    from cruxible_core.storage.landing_log import LandingLog
+
+    instance, _owner = seed_claims(tmp_path)
+    _drain(instance)
+    store = instance.body_store()
+    content = b"landing while a read runs\n"
+    digest = store.digest_bytes(content).tagged
+    original = LandingLog._append
+    seen: list[Any] = []
+
+    def in_flight(log, kind, landed, *, sync):  # type: ignore[no-untyped-def]
+        result = original(log, kind, landed, sync=sync)
+        if kind == "store" and not seen:
+            with _no_fold():
+                seen.append(_served(instance, EVALUATION_TIME))
         return result
 
-    def race(*args, **kwargs):  # type: ignore[no-untyped-def]
-        result = verdict(*args, **kwargs)
-        if moved_head and kwargs["claim_identity"] == first and not raced:
-            # Restore the first body, then erase the second: never both absent.
-            store.store(bodies[first])
-            store.erase(store.digest_bytes(bodies[second]).tagged)
-            raced.append(True)
+    with patch.object(LandingLog, "_append", in_flight):
+        store.store(content)
+    (served,) = seen
+    assert served is not None and served.heads is not None
+    assert not store.landings.present(
+        digest, identity=served.heads.landing_log, sequence=served.heads.landing
+    )
+    head = store.landings.head()
+    assert store.landings.present(digest, identity=head.identity, sequence=head.sequence)
+    _assert_equivalent(instance, EVALUATION_TIME)
+
+
+def test_reads_never_retry_or_refuse_while_landings_keep_arriving(tmp_path: Path) -> None:
+    """Ruling 1: a landing during every derivation used to exhaust a read's attempts.
+    next, the summary, orient and the hold flags now each derive once at the heads
+    they recorded and answer, folding nothing."""
+
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    instance, _owner, _bodies = _stale_evidence_world(tmp_path)
+    store = instance.body_store()
+    original = facts._changes
+    derived: list[int] = []
+    landings = iter(range(1_000))
+
+    def landing_meanwhile(*args, **kwargs):  # type: ignore[no-untyped-def]
+        result = original(*args, **kwargs)
+        derived.append(1)
+        # New bytes each time: a body already present lands nothing.
+        store.store(f"uncited racing landing {next(landings)}".encode())
         return result
 
     request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
-    facts._OVERLAYS.clear()
-    with (
-        patch.object(facts, "_settled_overlay", move_after_settlement),
-        patch.object(evidence, "service_evaluate_playbill_claim_verdict", race),
-        _no_fold(),
-    ):
-        served = service_playbill_next(instance, request=request)
-    assert moved_head and raced
-    assert served.coordinate == AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    assert served.attestation_head_digest == instance.claim_attestation_evidence_store().head()
-    # One landing state, the last: the restored body's Claim is stale and the erased
-    # one's is not (the fold that used to follow read both bodies absent: no row).
-    stale = {
-        item.subject_identity for item in served.items if item.reason == "claim_stale_evidence"
-    }
-    assert stale == {first}
-    with _oracle_only():
-        assert (
-            served.model_dump_json()
-            == service_playbill_next(instance, request=request).model_dump_json()
-        )
+    reads = (
+        lambda: service_playbill_next(instance, request=request),
+        lambda: summarize_playbill_next(instance, request=request),
+        lambda: service_playbill_orient(instance, evaluation_time=EVALUATION_TIME),
+        lambda: claim_unsure_holds(
+            instance,
+            coordinate=instance.accepted_coordinate(),
+            claims=tuple(_all_claims(instance)),
+            evaluation_time=EVALUATION_TIME,
+        ),
+    )
+    for read in reads:
+        derived.clear()
+        facts._OVERLAYS.clear()
+        with (
+            patch.object(facts, "_changes", landing_meanwhile),
+            patch(
+                "cruxible_core.service.discovery.claim_status.claim_resolution_statuses",
+                side_effect=AssertionError("population fold"),
+            ),
+            _no_fold(),
+        ):
+            read()
+        assert derived
+    _assert_equivalent(instance, EVALUATION_TIME)
 
 
-def test_a_pinned_read_keeps_its_heads_and_a_selected_one_refuses_when_they_move(
+def test_a_pin_the_worker_passed_folds_and_orient_reads_at_the_head_it_selected(
     tmp_path: Path,
 ) -> None:
-    """F-006, R8: a read pinned with an explicit coordinate folds there once the head
-    moves on; orient (and its summary), which selected the head itself and reads
-    everything else at it, refuses instead: neither folds at a head it did not ask for."""
+    """R8 with snapshots: a coordinate pin the worker has already followed past folds
+    there; orient reads at the coordinate it selected even when a generation is
+    accepted mid-read, served without a population fold."""
 
     from cruxible_core.service.discovery.orient import service_playbill_orient
     from tests.test_consumers.test_next_incremental import World, _subject
 
     instance, owner, _bodies = _stale_evidence_world(tmp_path)
     state = World(instance=instance, owner=owner, root=tmp_path, rng=None)  # type: ignore[arg-type]
-    settled = facts._settled_overlay
-    moved: list[bool] = []
-
-    def move_after_settlement(*args, **kwargs):  # type: ignore[no-untyped-def]
-        result = settled(*args, **kwargs)
-        if not moved:
-            _subject(state)
-            moved.append(True)
-        return result
-
     pinned = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access(), at=pinned)
-    folds: list[bool] = []
-    fold = next_module._oracle_claim_rows
-
-    def counted(*args, **kwargs):  # type: ignore[no-untyped-def]
-        folds.append(True)
-        return fold(*args, **kwargs)
-
-    facts._OVERLAYS.clear()
-    with (
-        patch.object(facts, "_settled_overlay", move_after_settlement),
-        patch.object(next_module, "_oracle_claim_rows", counted),
-    ):
-        historical = service_playbill_next(instance, request=request)
-    assert moved and folds and historical.coordinate == pinned
     with _oracle_only():
-        assert (
-            historical.model_dump_json()
-            == service_playbill_next(instance, request=request).model_dump_json()
-        )
-
+        expected = service_playbill_next(instance, request=request)
+    _subject(state)
     _drain(instance)
+    with patch.object(
+        next_module, "_oracle_claim_rows", wraps=next_module._oracle_claim_rows
+    ) as fold:
+        historical = service_playbill_next(instance, request=request)
+        assert fold.called
+    assert historical.coordinate == pinned and historical.items == expected.items
+
     instance.body_store().store(b"an uncited landing: the worker is behind")
-    moved.clear()
-    facts._OVERLAYS.clear()
+    selected = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     with (
-        patch.object(facts, "_settled_overlay", move_after_settlement),
+        _after_recording(lambda: _subject(state)) as recorded,
         patch(
             "cruxible_core.service.discovery.claim_status.claim_resolution_statuses",
             side_effect=AssertionError("population fold"),
         ),
         _no_fold(),
-        pytest.raises(ReadInputsMovingError),
     ):
-        service_playbill_orient(instance, evaluation_time=EVALUATION_TIME)
-    assert moved
-    # Pinned, orient folds at its coordinate as before.
-    orient_pinned = service_playbill_orient(
-        instance,
-        evaluation_time=EVALUATION_TIME,
-        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-    )
-    assert orient_pinned.coordinate == AcceptedCoordinate.from_internal(
-        instance.accepted_coordinate()
-    )
+        oriented = service_playbill_orient(instance, evaluation_time=EVALUATION_TIME)
+    assert recorded and oriented.coordinate == selected
+    assert AcceptedCoordinate.from_internal(instance.accepted_coordinate()) != selected
 
 
-def test_live_state_read_after_the_stored_rows_is_checked_against_their_heads(
-    tmp_path: Path,
-) -> None:
-    """F-006: a projection check evaluates its query over live evidence after the stored
-    rows were read; a landing in between leaves no one state behind the queue: it refuses."""
+def test_live_state_read_after_the_stored_rows_reads_at_their_positions(tmp_path: Path) -> None:
+    """A projection check evaluates its query after the stored rows were read; a
+    landing in between is not in the answer, which neither refuses nor folds."""
 
     from cruxible_core.service.authoring.projection_sync import ProjectionCheckContext
     from tests.test_discovery.test_next_request_reads import _rich_request
@@ -1429,23 +1330,62 @@ def test_live_state_read_after_the_stored_rows_is_checked_against_their_heads(
     instance, _owner = _instance_with_query(tmp_path)
     request = _rich_request(instance)
     _drain(instance, request.evaluation_time)
+    with _oracle_only():
+        before = service_playbill_next(instance, request=request)
     query = ProjectionCheckContext._query
 
     def landing_meanwhile(self, backing):  # type: ignore[no-untyped-def]
         instance.body_store().store(b"a landing while the projection query runs")
         return query(self, backing)
 
-    with (
-        patch.object(ProjectionCheckContext, "_query", landing_meanwhile),
-        pytest.raises(ReadInputsMovingError),
-    ):
-        service_playbill_next(instance, request=request)
+    with patch.object(ProjectionCheckContext, "_query", landing_meanwhile), _no_fold():
+        served = service_playbill_next(instance, request=request)
+    assert served.items == before.items
     warm = service_playbill_next(instance, request=request)
     with _oracle_only():
         assert (
             warm.model_dump_json()
             == service_playbill_next(instance, request=request).model_dump_json()
         )
+
+
+def test_a_summary_pinned_only_at_a_door_head_is_read_at_that_head(tmp_path: Path) -> None:
+    """F-013: a summary naming an attestation head and no coordinate reads at that head
+    (folded once the worker is past it) and at the coordinate now; a current door pin
+    serves, and a generation accepted mid-read is not in its answer."""
+
+    from tests.test_consumers.test_next_incremental import World, _subject
+
+    instance, owner = seed_claims(tmp_path)
+    _drain(instance)
+    store = instance.claim_attestation_evidence_store()
+    old_door = store.head()
+    coordinate = instance.accepted_coordinate()
+    _attest(
+        instance,
+        owner,
+        _current_claim(instance),
+        tmp_path,
+        at=EVALUATION_TIME - timedelta(minutes=1),
+    )
+    _drain(instance)
+    assert instance.accepted_coordinate() == coordinate and store.head() != old_door
+    historical = NextRequest(
+        evaluation_time=EVALUATION_TIME,
+        access_profile=_access(),
+        at_attestation_head_digest=old_door,
+    )
+    summary = summarize_playbill_next(instance, request=historical)
+    with _oracle_only():
+        assert summary == summarize_playbill_next(instance, request=historical)
+
+    current = historical.model_copy(update={"at_attestation_head_digest": store.head()})
+    with _oracle_only():
+        expected = summarize_playbill_next(instance, request=current)
+    state = World(instance=instance, owner=owner, root=tmp_path, rng=None)  # type: ignore[arg-type]
+    with _after_recording(lambda: _subject(state)) as recorded, _no_fold():
+        assert summarize_playbill_next(instance, request=current) == expected
+    assert recorded and instance.accepted_coordinate() != coordinate
 
 
 @contextmanager

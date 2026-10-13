@@ -14,10 +14,18 @@ A full rebuild runs only on a cold start, a format change (``FORMAT``, part of
 the schema text), a compiler change, or cursors that no longer validate against
 the logs they follow: a reseeded history, a replaced landing log or journal, a
 door root the chain no longer holds. Layer 2 (``rows``) derives each row
-family's keys from these facts in the same transaction. A read at the head
-serves the stored rows, catching up in memory on whatever the worker has not
-yet followed and rolling that back (reads never write this state); orient's
-Claim counts come from ``tally``.
+family's keys from these facts in the same transaction. orient's Claim counts
+come from ``tally``.
+
+A read is a point-in-time snapshot. Holding the state, it records once where
+every log stands -- the accepted coordinate, the door head, the re-observation
+journal, the expiry and sweep triggers and, last, the landing log
+(``read_heads``) -- and answers as of exactly those positions: the stored rows,
+caught up in memory on whatever the worker has not followed up to them and
+rolled back (reads never write this state). Writes that land meanwhile are
+simply not in that answer; a read never retries, waits or refuses for them.
+Capture presence is the landing log's at the read's position, never a file's
+(``storage.read_positions``); the worker derives at its heads the same way.
 
 Time enters only through the trigger log. Each fact holds on the half-open
 interval its verdict's boundaries bound; the part arms one deadline at the
@@ -32,12 +40,11 @@ import json
 import re
 import sqlite3
 import threading
-import time
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from pydantic import TypeAdapter
@@ -63,9 +70,9 @@ from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.consumers.next import rows
 from cruxible_core.consumers.protocol import ConsumerHealth, ConsumerRepair, ConsumerWork
 from cruxible_core.consumers.state import DisposableState
-from cruxible_core.errors import ReadInputsMovingError
 from cruxible_core.indexes.typed_state import utc_microseconds
 from cruxible_core.server.config import get_disabled_consumers
+from cruxible_core.storage.read_positions import ReadPositions, reading_at
 from cruxible_core.triggers.journal import (
     cancel_deadline,
     latest_sequence,
@@ -80,7 +87,7 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 5
+FORMAT = 6
 #: The one deadline next arms: the earliest instant a stored fact or row stops holding.
 NEXT_EXPIRE = "next.expire"
 #: The daily evidence sweep: each fire compares every consulted body's file identity,
@@ -101,7 +108,7 @@ CREATE TABLE cursors (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1), heads TEXT NOT NULL,
  generation INTEGER NOT NULL, generation_oid TEXT NOT NULL, compiler TEXT NOT NULL,
  door_root TEXT NOT NULL, landing_log TEXT NOT NULL, landing INTEGER NOT NULL,
- reobs_journal TEXT NOT NULL, reobs_signature TEXT NOT NULL, reobs INTEGER NOT NULL,
+ reobs_journal TEXT NOT NULL, reobs INTEGER NOT NULL,
  expire INTEGER NOT NULL, sweep INTEGER NOT NULL, evaluated_at TEXT NOT NULL
 ) STRICT;
 CREATE TABLE claim_facts (
@@ -112,14 +119,13 @@ CREATE TABLE claim_facts (
  lineage_digests TEXT, lineage_complete INTEGER, verdict_json TEXT, verdict TEXT,
  currency TEXT, status TEXT, visible INTEGER, max_support_expiry_us INTEGER,
  set_args_json TEXT, lower_us INTEGER, upper_us INTEGER, error_code TEXT,
- error_detail TEXT, citation_error TEXT, unservable INTEGER NOT NULL, account_captures TEXT,
+ error_detail TEXT, citation_error TEXT, account_captures TEXT,
  pin_targets TEXT NOT NULL
 ) STRICT;
 CREATE INDEX claim_facts_by_slot ON claim_facts(res_slot,claim_id);
 CREATE INDEX claim_facts_by_support_expiry ON claim_facts(max_support_expiry_us)
  WHERE max_support_expiry_us IS NOT NULL;
 CREATE INDEX claim_facts_with_errors ON claim_facts(lifecycle,path) WHERE error_code IS NOT NULL;
-CREATE INDEX claim_facts_unservable ON claim_facts(claim_id) WHERE unservable=1;
 CREATE TABLE claim_inputs (
  digest TEXT NOT NULL, claim_id TEXT NOT NULL, PRIMARY KEY(digest,claim_id)
 ) STRICT, WITHOUT ROWID;
@@ -240,7 +246,6 @@ _FACT_COLUMNS = (
     "error_code",
     "error_detail",
     "citation_error",
-    "unservable",
     "account_captures",
     "pin_targets",
 )
@@ -264,8 +269,11 @@ def _error_code(exc: BaseException) -> str:
 
 
 @dataclass(frozen=True)
-class _Heads:
-    """Where every log this part follows stands now: one cheap read each."""
+class ReadHeads:
+    """Where every log this part follows stood when one read or pass recorded it.
+
+    A read answers, and a pass derives, as of exactly these positions.
+    """
 
     coordinate: AcceptedProjectionCoordinate
     generation: int
@@ -275,7 +283,7 @@ class _Heads:
     landing_log: str
     landing: int
     reobs_journal: str
-    reobs_signature: str
+    reobs: int
     expire: int
     sweep: int
 
@@ -288,11 +296,19 @@ class _Heads:
                 self.door_root,
                 self.landing_log,
                 self.landing,
-                self.reobs_signature,
+                self.reobs_journal,
+                self.reobs,
                 self.expire,
                 self.sweep,
             ]
         )
+
+    @property
+    def positions(self) -> ReadPositions:
+        """The positions outside the accepted coordinate that body and re-observation
+        reads answer as of."""
+
+        return ReadPositions(self.landing_log, self.landing, self.reobs)
 
 
 @dataclass(frozen=True)
@@ -305,49 +321,78 @@ class _Cursors:
     landing_log: str
     landing: int
     reobs_journal: str
-    reobs_signature: str
     reobs: int
     expire: int
     sweep: int
 
 
-def _heads(instance: Any) -> _Heads:
-    from cruxible_core.evidence.claim_reobservations import reobservation_journal_identity
+def read_positions(instance: Any) -> ReadPositions:
+    """Record where the re-observation journal and then the landing log stand: the
+    positions a read outside the accepted coordinate and the door answers as of."""
 
-    coordinate = instance.accepted_coordinate()
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+
+    reobs = ClaimReobservationStore(instance).head_sequence()
+    landing = instance.body_store().landings.head()
+    return ReadPositions(landing.identity, landing.sequence, reobs)
+
+
+def read_heads(
+    instance: Any,
+    *,
+    coordinate: AcceptedProjectionCoordinate | None = None,
+    door_head: str | None = None,
+) -> ReadHeads:
+    """Record where each log stands: at a pinned coordinate or door head, else the current one.
+
+    The landing log is read last: whatever the accepted state, the door or the
+    re-observations recorded here cite landed before them, so it has landed by
+    the recorded landing position.
+    """
+
+    from cruxible_core.evidence.claim_reobservations import (
+        ClaimReobservationStore,
+        reobservation_journal_identity,
+    )
+
+    coordinate = instance.accepted_coordinate() if coordinate is None else coordinate
     public = AcceptedCoordinate.from_internal(coordinate)
     with instance.accepted_history_reader(at=public) as history:
         generation = history.sequence
-    landing = instance.body_store().landings.head()
+    door = instance.claim_attestation_evidence_store().head() if door_head is None else door_head
     journal = reobservation_journal_identity(
         instance.root,
         exhaust=instance.descriptor.storage.exhaust,
         instance_id=instance.descriptor.instance_id,
     )
-    return _Heads(
+    reobs = 0 if journal is None else ClaimReobservationStore(instance).head_sequence()
+    expire = latest_sequence(instance, action=NEXT_EXPIRE)
+    sweep = latest_sequence(instance, action=EVIDENCE_SWEEP)
+    landing = instance.body_store().landings.head()
+    return ReadHeads(
         coordinate=coordinate,
         generation=generation,
         generation_oid=public.git_oid,
         compiler=public.compiler_digest,
-        door_root=instance.claim_attestation_evidence_store().head(),
+        door_root=door,
         landing_log=landing.identity,
         landing=landing.sequence,
         reobs_journal="" if journal is None else journal[0],
-        reobs_signature="" if journal is None else journal[1],
-        expire=latest_sequence(instance, action=NEXT_EXPIRE),
-        sweep=latest_sequence(instance, action=EVIDENCE_SWEEP),
+        reobs=reobs,
+        expire=expire,
+        sweep=sweep,
     )
 
 
 def _read_cursors(connection: sqlite3.Connection) -> _Cursors | None:
     row = connection.execute(
         "SELECT heads,generation,generation_oid,compiler,door_root,landing_log,landing,"
-        "reobs_journal,reobs_signature,reobs,expire,sweep FROM cursors"
+        "reobs_journal,reobs,expire,sweep FROM cursors"
     ).fetchone()
     return None if row is None else _Cursors(*row)
 
 
-def _cursors_hold(instance: Any, cursors: _Cursors, heads: _Heads) -> bool:
+def _cursors_hold(instance: Any, cursors: _Cursors, heads: ReadHeads) -> bool:
     """Whether stored cursors still name positions in the logs they follow."""
 
     if cursors.compiler != heads.compiler or cursors.generation > heads.generation:
@@ -362,6 +407,8 @@ def _cursors_hold(instance: Any, cursors: _Cursors, heads: _Heads) -> bool:
     ):
         return False
     if cursors.reobs_journal and cursors.reobs_journal != heads.reobs_journal:
+        return False
+    if cursors.reobs > heads.reobs:
         return False
     return cursors.expire <= heads.expire and cursors.sweep <= heads.sweep
 
@@ -598,7 +645,6 @@ def _claim_facts(
         "error_code": errors[0][0] if errors else None,
         "error_detail": errors[0][1] if errors else None,
         "citation_error": citation_error,
-        "unservable": int(not recording.bodies_complete or recording.inconsistent),
         "account_captures": None if account_captures is None else _json(account_captures),
         "pin_targets": _json(sorted({pin.target.qualified for pin in claim.pins})),
     }
@@ -929,24 +975,15 @@ def _load_door_captures(instance: Any, claim_ids: Sequence[str]) -> dict[str, se
         return _stored_door_captures(connection, claim_ids)
 
 
-def _landing_rows(instance: Any, after: int, through: int) -> tuple[set[str], int]:
-    """The digests the landing rows past ``after`` name, and the cursor they leave.
+def _landing_rows(instance: Any, after: int, through: int) -> set[str]:
+    """The digests the landing rows past ``after`` (through ``through``) name.
 
-    An intent whose completion is not yet in the log keeps the cursor before
-    it: the next pass reads the digest again once its writer (or
-    reconciliation) publishes the completion.
+    Presence is a digest's last completion, so an intent whose completion comes
+    later changes nothing yet: its completion is a later row naming the digest,
+    which the pass that reads it follows.
     """
 
-    landed: set[str] = set()
-    open_intents: dict[str, int] = {}
-    for row in instance.body_store().landings.after(after, through=through):
-        landed.add(row.digest)
-        if row.intent:
-            open_intents.setdefault(row.digest, row.sequence)
-        else:
-            open_intents.pop(row.digest, None)
-    cursor = through if not open_intents else min(open_intents.values()) - 1
-    return landed, cursor
+    return {row.digest for row in instance.body_store().landings.after(after, through=through)}
 
 
 _SUBJECTS = "subjects/"
@@ -1044,7 +1081,6 @@ class _Touched:
 
     claims: set[str]
     reobs: int
-    landing: int
     at: datetime
     landed: set[str]
     #: Subject and ProcedureMandate member paths the generations changed.
@@ -1059,7 +1095,7 @@ def _touched(
     instance: Any,
     connection: sqlite3.Connection,
     cursors: _Cursors,
-    heads: _Heads,
+    heads: ReadHeads,
     door_rows: Sequence[tuple[Any, ...]] = (),
     *,
     now: datetime,
@@ -1106,10 +1142,9 @@ def _touched(
         )
         # A member is a verdict input of its Claim's version.
         claims.update(claim_id for claim_id, _basis, _digest in members)
-    landing = cursors.landing
     landed: set[str] = set()
     if heads.landing != cursors.landing:
-        landed, landing = _landing_rows(instance, cursors.landing, heads.landing)
+        landed = _landing_rows(instance, cursors.landing, heads.landing)
         consulting = {
             str(row[0])
             for row in _rows(
@@ -1123,11 +1158,12 @@ def _touched(
         # A door row reads Captures: a landed body reaches it through the
         # Capture that consulted the body, as it reaches the Claim's facts.
         landed |= consulting
-    reobs = cursors.reobs
-    if heads.reobs_signature != cursors.reobs_signature:
-        for sequence, claim_id in ClaimReobservationStore(instance).records_after(cursors.reobs):
+    reobs = heads.reobs
+    if heads.reobs != cursors.reobs:
+        for _sequence, claim_id in ClaimReobservationStore(instance).records_after(
+            cursors.reobs, through=heads.reobs
+        ):
             claims.add(f"Claim:{claim_id}")
-            reobs = max(reobs, sequence)
     fired_at: datetime | None = None
     if heads.expire != cursors.expire:
         after = cursors.expire
@@ -1159,7 +1195,6 @@ def _touched(
     return _Touched(
         claims=claims,
         reobs=reobs,
-        landing=landing,
         at=at,
         landed=landed,
         shells=shells,
@@ -1342,18 +1377,16 @@ def _derive(
     return delta
 
 
-def _rebuild(instance: Any, heads: _Heads, *, at: datetime) -> _Delta:
+def _rebuild(instance: Any, heads: ReadHeads, *, at: datetime) -> _Delta:
     """Every Claim's facts from nothing: a cold start, a format or compiler change, a repair."""
 
-    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
-
-    # Read before the facts: a record appended meanwhile is followed from here.
-    reobs = ClaimReobservationStore(instance).head_sequence()
 
     context = ClaimVerdictReadContext(instance, heads.coordinate)
     identities = tuple(claim.identity.qualified for claim in context.claims())
-    door_root, events = instance.claim_attestation_evidence_store().events_after(None)
+    door_root, events = instance.claim_attestation_evidence_store().events_after(
+        None, through=heads.door_root
+    )
     door_rows = [_door_row(*event) for event in events]
     delta = _derive(
         instance,
@@ -1367,7 +1400,7 @@ def _rebuild(instance: Any, heads: _Heads, *, at: datetime) -> _Delta:
     )
     delta.door = door_rows
     delta.door_root = door_root
-    delta.reobs = reobs
+    delta.reobs = heads.reobs
     delta.subjects, delta.mandates = _shells(instance, heads.coordinate, None)
     return delta
 
@@ -1499,35 +1532,28 @@ def _write_cursors(
     connection: sqlite3.Connection,
     delta: _Delta,
     *,
-    heads: _Heads,
-    landing: int,
+    heads: ReadHeads,
     at: datetime,
 ) -> None:
-    """Record where this pass reached, in the caller's one transaction.
-
-    ``landing`` is the landing cursor the pass reached: before the head while
-    an operation it read is unfinished, so the heads it records are not the
-    current ones and the part stays due until the completion lands.
-    """
+    """Record where this pass reached (``heads``), in the caller's one transaction."""
 
     connection.execute(
-        "INSERT INTO cursors VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE "
+        "INSERT INTO cursors VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE "
         "SET heads=excluded.heads,generation=excluded.generation,"
         "generation_oid=excluded.generation_oid,compiler=excluded.compiler,"
         "door_root=excluded.door_root,landing_log=excluded.landing_log,"
         "landing=excluded.landing,reobs_journal=excluded.reobs_journal,"
-        "reobs_signature=excluded.reobs_signature,reobs=excluded.reobs,expire=excluded.expire,"
+        "reobs=excluded.reobs,expire=excluded.expire,"
         "sweep=excluded.sweep,evaluated_at=excluded.evaluated_at",
         (
-            replace(heads, landing=landing).key(),
+            heads.key(),
             heads.generation,
             heads.generation_oid,
             heads.compiler,
             delta.door_root,
             heads.landing_log,
-            landing,
+            heads.landing,
             heads.reobs_journal,
-            heads.reobs_signature,
             delta.reobs,
             heads.expire,
             heads.sweep,
@@ -1561,7 +1587,6 @@ _SLOT_READS = (
     "status",
     "set_args_json",
     "error_code",
-    "unservable",
     "lower_us",
     "upper_us",
 )
@@ -1575,7 +1600,6 @@ _SOURCE_READS = (
     "verdict",
     "currency",
     "error_code",
-    "unservable",
     "lower_us",
     "upper_us",
 )
@@ -1588,7 +1612,6 @@ _DEPENDENT_READS = (
     "visible",
     "verdict",
     "currency",
-    "unservable",
     "lower_us",
     "upper_us",
 )
@@ -1759,15 +1782,12 @@ def _settle(
     at: datetime,
     delta: _Delta | None,
     rebuild: bool = False,
-    reading: bool = False,
 ) -> _Settlement:
     """Apply a Layer 1 change set, bring every fact and key to ``at``, derive the keys it moved.
 
     Runs inside the caller's one transaction: the worker commits it, a read
     rolls it back. Every derivation reads Layer 1 through ``connection``, so
-    it sees the facts exactly as this transaction leaves them. A read also
-    derives again every fact some body read could not stand for (unservable):
-    nothing records when such a body changes.
+    it sees the facts exactly as this transaction leaves them.
     """
 
     from cruxible_core.service.discovery.next import DEFAULT_EXPIRING_WITHIN_MICROSECONDS
@@ -1781,8 +1801,6 @@ def _settle(
         keys |= _dirty_keys(connection, delta, _apply_facts(connection, delta))
         settlement.facts.append(delta)
     again = _expired_facts(connection, at)
-    if reading:
-        again.update(str(row[0]) for row in connection.execute(_UNSERVABLE))
     if again:
         later = _derive(
             instance,
@@ -1821,7 +1839,6 @@ _EXPIRED_KEYS = (
     "SELECT family,key FROM row_keys WHERE upper_us IS NOT NULL AND upper_us<=? "
     "UNION SELECT family,key FROM row_keys WHERE lower_us IS NOT NULL AND lower_us>?"
 )
-_UNSERVABLE = "SELECT claim_id FROM claim_facts WHERE unservable=1"
 _BROKEN_KEYS = "SELECT family,key FROM row_keys WHERE error_code IS NOT NULL"
 _BROKEN_OF_KEYS = (
     "SELECT key FROM row_keys WHERE family=? AND key IN ({marks}) AND error_code IS NOT NULL"
@@ -1881,18 +1898,26 @@ def _load_facts(instance: Any, claim_ids: Sequence[str]) -> dict[str, dict[str, 
 
 @dataclass(frozen=True)
 class _Change:
-    """One Layer 1 change set past the stored cursors, its instant and landing cursor."""
+    """One Layer 1 change set past the stored cursors, and its instant."""
 
     delta: _Delta
     at: datetime
-    landing: int
 
 
-def _changes(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime) -> _Change | None:
-    """The Layer 1 change set past the stored cursors, or None when only a rebuild will do.
+def _changes(
+    instance: Any,
+    original: _Cursors,
+    heads: ReadHeads,
+    *,
+    now: datetime,
+    connection: sqlite3.Connection | None = None,
+) -> _Change | None:
+    """The Layer 1 change set from the stored cursors to ``heads``, or None when they
+    cannot reach it (only a rebuild, or a fold at ``heads``, will do).
 
-    Derived outside any lock: verdicts are the expensive part. Raises
-    ``_StateGone`` when the stored state moved or vanished meanwhile.
+    A read passes the ``connection`` it holds, so the stored state stands still
+    throughout. The worker derives outside any lock (verdicts are the expensive
+    part), and ``_StateGone`` says the stored state moved or vanished meanwhile.
     """
 
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
@@ -1902,18 +1927,28 @@ def _changes(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime)
         return None
     try:
         door_root, events = instance.claim_attestation_evidence_store().events_after(
-            original.door_root
+            original.door_root, through=heads.door_root
         )
     except ClaimAttestationStoreError as exc:
         if exc.error_code != "cruxible.claim_attestation.attestation_head_unknown":
             raise
         return None
     door_rows = [_door_row(*event) for event in events]
-    with _STATE.open(instance, create=False) as connection:
-        if connection is None or _read_cursors(connection) != original:
-            raise _StateGone
+    load: Callable[[Sequence[str]], dict[str, dict[str, Any]]]
+    door_stored: Callable[[Sequence[str]], dict[str, set[str]]]
+    if connection is not None:
         touched = _touched(instance, connection, original, heads, door_rows, now=now)
         stored = _stored_facts(connection, touched.claims)
+        load = partial(_stored_facts, connection)
+        door_stored = partial(_stored_door_captures, connection)
+    else:
+        with _STATE.open(instance, create=False) as opened:
+            if opened is None or _read_cursors(opened) != original:
+                raise _StateGone
+            touched = _touched(instance, opened, original, heads, door_rows, now=now)
+            stored = _stored_facts(opened, touched.claims)
+        load = partial(_load_facts, instance)
+        door_stored = partial(_load_door_captures, instance)
     delta = _derive(
         instance,
         ClaimVerdictReadContext(instance, heads.coordinate),
@@ -1921,8 +1956,8 @@ def _changes(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime)
         stored,
         at=touched.at,
         every_slot=False,
-        load=lambda claim_ids: _load_facts(instance, claim_ids),
-        door=_door_captures(door_rows, lambda claim_ids: _load_door_captures(instance, claim_ids)),
+        load=load,
+        door=_door_captures(door_rows, door_stored),
     )
     delta.door = door_rows
     delta.door_root = door_root
@@ -1932,7 +1967,7 @@ def _changes(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime)
     delta.referents = touched.referents
     if touched.shells:
         delta.subjects, delta.mandates = _shells(instance, heads.coordinate, touched.shells)
-    return _Change(delta, touched.at, touched.landing)
+    return _Change(delta, touched.at)
 
 
 def catch_up(instance: Any, *, now: datetime) -> None:
@@ -1940,19 +1975,26 @@ def catch_up(instance: Any, *, now: datetime) -> None:
 
     # Settle any landing a writer left unfinished, so its completion is a row to follow.
     instance.body_store().landings.reconcile()
-    heads = _heads(instance)
+    heads = read_heads(instance)
     with _STATE.open(instance) as connection:
         assert connection is not None
         original = _read_cursors(connection)
     if original is not None and original.heads == heads.key():
         return
+    with reading_at(heads.positions):
+        _catch_up_to(instance, heads, original, now=now)
+
+
+def _catch_up_to(
+    instance: Any, heads: ReadHeads, original: _Cursors | None, *, now: datetime
+) -> None:
     try:
         change = None if original is None else _changes(instance, original, heads, now=now)
     except _StateGone:
         return  # another pass moved the state; the next pass starts from there
     rebuild = change is None
     if change is None:
-        change = _Change(_rebuild(instance, heads, at=now), now, heads.landing)
+        change = _Change(_rebuild(instance, heads, at=now), now)
     with _STATE.open(instance) as connection:
         assert connection is not None
         if _read_cursors(connection) != original:
@@ -1965,7 +2007,7 @@ def catch_up(instance: Any, *, now: datetime) -> None:
             delta=change.delta,
             rebuild=rebuild,
         )
-        _write_cursors(connection, change.delta, heads=heads, landing=change.landing, at=change.at)
+        _write_cursors(connection, change.delta, heads=heads, at=change.at)
         # Armed before the commit: no published fact or row is left without its
         # refresh signal. An early fire is a no-op pass that arms again.
         _arm(instance, _earliest_end(connection))
@@ -2028,128 +2070,56 @@ class ServedRows:
     #: The projection-backed Claims the read asked for, by qualified identity:
     #: (resolution status, visible), or None for a Claim whose facts failed.
     backed: dict[str, tuple[str, bool] | None] | None = None
-    #: The heads the rows were read at; ``served_inputs_hold`` checks them again.
-    heads: _Heads | None = None
+    #: The heads the rows were read at: the read's recorded positions.
+    heads: ReadHeads | None = None
 
 
 #: The citation commitments a workspace read asks for: those of these citation ids, or
 #: every one naming a workspace source ("sources"), or none.
 CitationRequest = Literal["sources"] | tuple[str, ...] | None
 
-#: In-flight and recent overlays, by (instance, stored heads, current heads).
-_OVERLAYS: OrderedDict[tuple[str, str, str], Future[_Overlay | None]] = OrderedDict()
+#: Recent read settlements, by (instance, stored heads, read heads).
+_OVERLAYS: OrderedDict[tuple[str, str, str], "_Settlement"] = OrderedDict()
 _OVERLAYS_LOCK = threading.Lock()
 _OVERLAY_CAPACITY = 8
-#: How many times a read tries when the logs move under it before it refuses, and
-#: how long it pauses before each retry: a landing in flight is usually done by then.
-_ATTEMPTS = 3
-_PAUSES = (0.01, 0.05)
 
 
-class _Unstable(Exception):
-    """The inputs a derivation read moved while it ran: its result describes no one state."""
+def _overlay(
+    instance: Any,
+    connection: sqlite3.Connection,
+    original: _Cursors,
+    heads: ReadHeads,
+    *,
+    now: datetime,
+) -> bool:
+    """Settle, in the read's held transaction, what the worker has not followed up to
+    ``heads``; False when the stored cursors cannot reach them.
 
-
-@dataclass(frozen=True)
-class _Overlay:
-    """The worker's next pass, settled in memory: what a read replays instead of deriving."""
-
-    settlement: _Settlement
-    door_root: str
-
-
-def _inputs_hold(instance: Any, heads: _Heads) -> bool:
-    """Whether every log a derivation reads still stands where ``heads`` saw it.
-
-    The accepted coordinate, the door head, the landing log (with no landing
-    in flight: a body moves between an operation's intent and its completion)
-    and the re-observation journal. A derivation bracketed by two such checks
-    read one state of its inputs.
-    """
-
-    from cruxible_core.evidence.claim_reobservations import reobservation_journal_identity
-
-    landings = instance.body_store().landings
-    head = landings.head()
-    if (head.identity, head.sequence) != (heads.landing_log, heads.landing):
-        return False
-    if landings.unfinished():
-        return False
-    if instance.accepted_coordinate() != heads.coordinate:
-        return False
-    if instance.claim_attestation_evidence_store().head() != heads.door_root:
-        return False
-    journal = reobservation_journal_identity(
-        instance.root,
-        exhaust=instance.descriptor.storage.exhaust,
-        instance_id=instance.descriptor.instance_id,
-    )
-    return ("" if journal is None else journal[1]) == heads.reobs_signature
-
-
-def _overlay(instance: Any, original: _Cursors, heads: _Heads, *, now: datetime) -> _Overlay | None:
-    """The settlement past the worker's cursors, derived once per (stored, current) heads.
-
-    The first reader derives the Layer 1 change set, then settles it and the
-    Layer 2 keys it dirties in a transaction it rolls back, keeping what it
-    wrote; concurrent readers of the same pair wait on that, and every read
-    replays it in its own rolled-back transaction. A read at another instant
-    derives only what does not hold at its instant. A settlement whose inputs
-    moved while it was derived is never kept: every waiter retries.
+    The first read of a (stored, read) heads pair derives the Layer 1 change set
+    and settles it and the Layer 2 keys it dirties; every later read of the pair
+    replays that settlement and derives nothing. A read at another instant then
+    derives only what does not hold at its instant.
     """
 
     key = (str(instance.root), original.heads, heads.key())
     with _OVERLAYS_LOCK:
-        flight = _OVERLAYS.get(key)
-        owner = flight is None
-        if flight is None:
-            flight = Future()
-            _OVERLAYS[key] = flight
-            while len(_OVERLAYS) > _OVERLAY_CAPACITY:
-                _OVERLAYS.popitem(last=False)
-    if owner:
-        try:
-            flight.set_result(_settled_overlay(instance, original, heads, now=now))
-        except BaseException as exc:
-            with _OVERLAYS_LOCK:
-                if _OVERLAYS.get(key) is flight:
-                    del _OVERLAYS[key]
-            flight.set_exception(exc)
-            raise
-    return flight.result()
-
-
-def _settled_overlay(
-    instance: Any, original: _Cursors, heads: _Heads, *, now: datetime
-) -> _Overlay | None:
-    if not _inputs_hold(instance, heads):
-        raise _Unstable
-    try:
-        change = _changes(instance, original, heads, now=now)
-    except _StateGone as exc:
-        raise _Unstable from exc
+        cached = _OVERLAYS.get(key)
+        if cached is not None:
+            _OVERLAYS.move_to_end(key)
+    if cached is not None:
+        _replay(connection, cached)
+        return True
+    change = _changes(instance, original, heads, now=now, connection=connection)
     if change is None:
-        return None
-    if not _inputs_hold(instance, heads):
-        raise _Unstable
-    with _STATE.open(instance, create=False) as connection:
-        if connection is None or _read_cursors(connection) != original:
-            raise _Unstable
-        connection.execute("SAVEPOINT overlay")
-        try:
-            settlement = _settle(
-                instance,
-                connection,
-                coordinate=heads.coordinate,
-                at=change.at,
-                delta=change.delta,
-            )
-        finally:
-            connection.execute("ROLLBACK TO overlay")
-            connection.execute("RELEASE overlay")
-    if not _inputs_hold(instance, heads):
-        raise _Unstable
-    return _Overlay(settlement, change.delta.door_root)
+        return False
+    settlement = _settle(
+        instance, connection, coordinate=heads.coordinate, at=change.at, delta=change.delta
+    )
+    with _OVERLAYS_LOCK:
+        _OVERLAYS[key] = settlement
+        while len(_OVERLAYS) > _OVERLAY_CAPACITY:
+            _OVERLAYS.popitem(last=False)
+    return True
 
 
 _T = TypeVar("_T")
@@ -2160,156 +2130,56 @@ def _serving(
     *,
     coordinate: AcceptedProjectionCoordinate | None,
     door_head: str | None,
-    pinned: bool,
     evaluation_time: datetime,
     read: Callable[[sqlite3.Connection, AcceptedProjectionCoordinate], _T],
-) -> tuple[_T, _Heads] | None:
-    """Run ``read`` on the stored state brought to the heads and to ``evaluation_time``.
+) -> tuple[_T, ReadHeads] | None:
+    """Run ``read`` on the stored state brought to one recorded set of heads and to
+    ``evaluation_time``: a point-in-time read.
 
-    A head left None follows the logs: each attempt serves at whatever head
-    is current, and the caller labels its answer with the heads returned. A
-    head given is one the caller already reads at: ``pinned``, its own pin (an
-    explicit ``--at``, a door head, a page cursor), which once it is no longer
-    current folds there (R8); otherwise one it selected and cannot trade for
-    another, so its moving is the read's inputs moving.
+    Holding the state (the worker cannot move it meanwhile), the read records
+    once where every log stands -- at ``coordinate`` or ``door_head`` when the
+    caller pins one, else where it is now -- and answers as of exactly those
+    heads, which it returns with the answer. Whatever the worker has not
+    followed up to them is replayed from the overlay and every fact or key that
+    does not hold at the instant is derived again, at those heads, all in a
+    transaction rolled back after ``read`` (reads never write this state).
+    Writes that land meanwhile are not in the answer; nothing retries or refuses.
 
-    Served only with the worker active and its state warm and valid; in any
-    state that cannot serve, None: fold (cold, disabled, another format, a
-    rebuild due, a pin that is not current). Whatever the worker has not yet
-    followed is replayed from the overlay and every fact or key that does not
-    hold at the instant is derived again, all in a transaction rolled back
-    after ``read`` (reads never write this state). The read is returned, with
-    the heads it was read at, only when every log it depended on stood still
-    throughout; a move restarts it against the logs as they then stand, and
-    once an attempt has moved no exit folds: a fold would read the same
-    moving logs at heads no longer current. Out of attempts, ``_exhausted``.
+    None means fold, at the same heads: the worker disabled, its state cold or
+    of another format, or stored cursors that cannot reach the heads (a rebuild
+    due, or a pin the worker has already passed, R8).
     """
-
-    def cannot_serve(unstable: bool) -> tuple[_T, _Heads] | None:
-        return (
-            _exhausted(
-                instance,
-                coordinate=coordinate,
-                door_head=door_head,
-                evaluation_time=evaluation_time,
-                read=read,
-            )
-            if unstable
-            else None
-        )
 
     if not _PART.active(instance):
         return None
-    unstable = False
-    for attempt in range(_ATTEMPTS):
-        if attempt:
-            # A landing whose writer is gone stays unfinished until someone settles
-            # it: settle it, as opening the store does (a live writer's is skipped),
-            # then give a landing in flight a moment to complete.
-            instance.body_store().landings.reconcile()
-            time.sleep(_PAUSES[attempt - 1])
-        with _STATE.open(instance, create=False) as connection:
-            if connection is None:
-                return cannot_serve(unstable)
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return None
+        # The stored state stands still from here to the rollback.
+        connection.execute("SAVEPOINT served")
+        try:
             original = _read_cursors(connection)
-        if original is None:
-            return cannot_serve(unstable)
-        # Read after the cursors, so the heads are never behind what they name.
-        heads = _heads(instance)
-        if (coordinate is not None and heads.coordinate != coordinate) or (
-            door_head is not None and heads.door_root != door_head
-        ):
-            # A pin that is no longer current folds there (R8); a selected head
-            # that moved never comes back, so no attempt can serve it.
-            return None if pinned else cannot_serve(True)
-        if not _inputs_hold(instance, heads):
-            unstable = True
-            continue
-        overlay: _Overlay | None = None
-        if original.heads != heads.key():
-            try:
-                overlay = _overlay(instance, original, heads, now=evaluation_time)
-            except _Unstable:
-                unstable = True
-                continue
-            if overlay is None:
-                # Only a rebuild follows these logs from the stored cursors.
-                return cannot_serve(unstable)
-            if overlay.door_root != heads.door_root:
-                unstable = True
-                continue
-        with _STATE.open(instance, create=False) as connection:
-            if connection is None:
-                return cannot_serve(unstable)
-            if _read_cursors(connection) != original:
-                unstable = True
-                continue
-            connection.execute("SAVEPOINT served")
-            try:
-                if overlay is not None:
-                    _replay(connection, overlay.settlement)
+            if original is None:
+                return None
+            # Recorded after the cursors, so current heads are never behind them.
+            heads = read_heads(instance, coordinate=coordinate, door_head=door_head)
+            with reading_at(heads.positions):
+                if original.heads != heads.key() and not _overlay(
+                    instance, connection, original, heads, now=evaluation_time
+                ):
+                    return None
                 _settle(
                     instance,
                     connection,
                     coordinate=heads.coordinate,
                     at=evaluation_time,
                     delta=None,
-                    reading=True,
                 )
                 result = read(connection, heads.coordinate)
-            finally:
-                connection.execute("ROLLBACK TO served")
-                connection.execute("RELEASE served")
-        if _inputs_hold(instance, heads):
-            return result, heads
-        unstable = True
-    return cannot_serve(True)
-
-
-def _exhausted(
-    instance: Any,
-    *,
-    coordinate: AcceptedProjectionCoordinate | None,
-    door_head: str | None,
-    evaluation_time: datetime,
-    read: Callable[[sqlite3.Connection, AcceptedProjectionCoordinate], _T],
-) -> tuple[_T, _Heads]:
-    """What a read does when its inputs moved under every attempt: the one place it lives.
-
-    Today it refuses (``ReadInputsMovingError``: HTTP 503, retryable), the
-    maintainer's decision pending. Either alternative replaces this body and
-    nothing else: (b) wait a bounded time (a second or two) for the worker's
-    cursors to reach the current heads, then return ``read`` of its committed
-    state settled to ``evaluation_time`` with the heads it holds, refusing only
-    if it has not; (c) return that committed state at once, labelled with the
-    worker's heads. A caller that follows the heads (``coordinate`` and
-    ``door_head`` None) labels its answer with them; one that gave a head may
-    take a result only at that head. A queue's final check
-    (``served_inputs_hold``) then compares the live heads seen at serving, not
-    the labels.
-    """
-
-    raise refuse_moving_read(
-        f"the accepted state, the attestation door, body landings or re-observations moved "
-        f"during each of {_ATTEMPTS} attempts to read next's stored rows"
-    )
-
-
-def refuse_moving_read(detail: str) -> ReadInputsMovingError:
-    """The refusal of a read whose inputs moved under it (typed, retryable)."""
-
-    return ReadInputsMovingError(detail)
-
-
-def served_inputs_hold(instance: Any, served: ServedRows) -> bool:
-    """Whether every log ``served`` was read from still stands where the read saw it.
-
-    A request that reads more live state after its stored rows (a projection
-    query's evidence) checks again once done: true means everything it read
-    describes one state.
-    """
-
-    return served.heads is None or _inputs_hold(instance, served.heads)
+        finally:
+            connection.execute("ROLLBACK TO served")
+            connection.execute("RELEASE served")
+    return result, heads
 
 
 def served_claim_rows(
@@ -2322,14 +2192,13 @@ def served_claim_rows(
     claims: Iterable[str] | None = None,
     citations: CitationRequest = None,
     backed: Iterable[str] = (),
-    pinned: bool = True,
 ) -> ServedRows | None:
     """The Claim rows next would fold, served from Layer 2, or None to fold.
 
-    A ``coordinate`` or ``door_head`` left None follows the current heads, and
-    the rows carry the heads they were served at (``heads``); one given is
-    ``pinned`` by the caller (it folds there once no longer current) or, not
-    pinned, selected by it (its moving refuses: see ``_serving``).
+    The read records its heads once (``_serving``): a ``coordinate`` or
+    ``door_head`` given is where it reads, one left None is where that log
+    stands now; the rows carry the heads they were served at (``heads``), and
+    the caller reads the rest of its answer at them.
     ``claims`` reads only those Claims' keys -- their threshold, door and
     dependency rows and their slots' -- instead of the whole queue.
     ``citations`` also reads the maintained citation commitments a workspace
@@ -2343,7 +2212,6 @@ def served_claim_rows(
         instance,
         coordinate=coordinate,
         door_head=door_head,
-        pinned=pinned,
         evaluation_time=evaluation_time,
         read=lambda connection, at_coordinate: _read_served(
             instance,
@@ -2794,26 +2662,21 @@ def claim_status_tally(
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
-    pinned: bool = True,
 ) -> dict[str, int] | None:
     """Accepted Claims counted by status from the maintained tally, or None to derive live.
 
-    Read in the same rolled-back transaction a served next read uses: what the
-    worker has not yet followed is replayed from the overlay and every fact
-    that does not hold at ``evaluation_time`` is derived again, so a worker
-    behind or an instant past an interval costs the change, not the
-    population. ``coordinate`` is the one the caller reads at: ``pinned`` by
-    its caller (it derives live there once no longer current) or selected by
-    it (its moving refuses). None only where next folds (cold, disabled, a pin
-    not current) or a live Claim's slot did not resolve; logs that keep moving
-    refuse (``ReadInputsMovingError``), as a next read does.
+    A point-in-time read in the same rolled-back transaction a served next read
+    uses: what the worker has not followed up to the read's heads is replayed
+    from the overlay and every fact that does not hold at ``evaluation_time`` is
+    derived again, so a worker behind or an instant past an interval costs the
+    change, not the population. None only where next folds (cold, disabled, a
+    coordinate the worker has passed) or a live Claim's slot did not resolve.
     """
 
     served = _serving(
         instance,
         coordinate=coordinate,
         door_head=None,
-        pinned=pinned,
         evaluation_time=evaluation_time,
         read=lambda connection, _coordinate: dict(
             connection.execute("SELECT status,count FROM tally")
@@ -2844,12 +2707,15 @@ def stored_tables(instance: Any) -> dict[str, list[tuple[Any, ...]]] | None:
 def rebuilt_tables(instance: Any, *, at: datetime) -> dict[str, list[tuple[Any, ...]]]:
     """The tables a full rebuild at ``at`` writes, built apart from the stored state."""
 
-    heads = _heads(instance)
-    delta = _rebuild(instance, heads, at=at)
+    heads = read_heads(instance)
     connection = sqlite3.connect(":memory:")
     try:
-        connection.executescript(_SCHEMA)
-        _settle(instance, connection, coordinate=heads.coordinate, at=at, delta=delta, rebuild=True)
+        with reading_at(heads.positions):
+            delta = _rebuild(instance, heads, at=at)
+            connection.executescript(_SCHEMA)
+            _settle(
+                instance, connection, coordinate=heads.coordinate, at=at, delta=delta, rebuild=True
+            )
         return _dump(connection)
     finally:
         connection.close()
@@ -2865,7 +2731,7 @@ class ClaimFactsPart:
         return self.name not in get_disabled_consumers()
 
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
-        target = _heads(instance).key()
+        target = read_heads(instance).key()
         with _STATE.open(instance) as connection:
             assert connection is not None
             row = connection.execute("SELECT target FROM progress").fetchone()
@@ -2922,7 +2788,7 @@ class ClaimFactsPart:
         if progress is None:
             return ()
         (error,) = progress
-        heads = _heads(instance)
+        heads = read_heads(instance)
         generation = None if cursors is None else cursors.generation
         behind = heads.generation - (0 if generation is None else generation)
         return (
@@ -2943,8 +2809,8 @@ class ClaimFactsPart:
                     "generations_behind": max(0, behind),
                     "attestations_behind": cursors is None or cursors.door_root != heads.door_root,
                     "inputs_changed": cursors is None
-                    or (cursors.landing_log, cursors.landing, cursors.reobs_signature)
-                    != (heads.landing_log, heads.landing, heads.reobs_signature),
+                    or (cursors.landing_log, cursors.landing, cursors.reobs)
+                    != (heads.landing_log, heads.landing, heads.reobs),
                     "pending_expiry": cursors is None or cursors.expire != heads.expire,
                     "sweep_pending": cursors is None or cursors.sweep != heads.sweep,
                     "last_error": error,
@@ -2974,10 +2840,13 @@ __all__ = [
     "TABLES",
     "TALLY_STATUSES",
     "ClaimFactsPart",
+    "ReadHeads",
     "ServedRows",
     "catch_up",
     "claim_status_tally",
     "Rebuilt",
+    "read_heads",
+    "read_positions",
     "rebuild",
     "rebuilt_tables",
     "served_claim_rows",

@@ -156,6 +156,7 @@ from cruxible_core.service.proposals.publications import (
     registered_projection_blocks,
 )
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import read_body
 
 NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
 NEXT_RESULT_V2_DIGEST_DOMAIN = "playbill-next-result-v2"
@@ -2112,12 +2113,12 @@ def claim_unsure_holds(
     live = tuple(claim for claim in claims if claim.lifecycle.state == "live")
     if not live:
         return frozenset()
-    from cruxible_core.consumers.next.facts import served_claim_rows
+    from cruxible_core.consumers.next.facts import read_heads, served_claim_rows
+    from cruxible_core.storage.read_positions import reading_at
 
-    store = instance.claim_attestation_evidence_store()
     identities = {claim.identity.qualified for claim in live}
-    # The caller's coordinate is the one its own verdicts are read at: once no
-    # longer current, the holds fold there too. The door head follows.
+    # The caller's coordinate is the one its own verdicts are read at: the holds
+    # are read there too (folded once the worker has passed it), at the door head now.
     served = served_claim_rows(
         instance,
         coordinate=coordinate,
@@ -2128,6 +2129,32 @@ def claim_unsure_holds(
     )
     if served is not None:
         return _held_claims(served.rows, served.holds, identities) if served.holds else frozenset()
+    heads = read_heads(instance, coordinate=coordinate)
+    with reading_at(heads.positions):
+        return _folded_holds(
+            instance,
+            coordinate=coordinate,
+            live=live,
+            identities=identities,
+            door_head=heads.door_root,
+            evaluation_time=evaluation_time,
+            resolution_statuses=resolution_statuses,
+        )
+
+
+def _folded_holds(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    live: tuple[ClaimArtifactAny, ...],
+    identities: set[str],
+    door_head: str,
+    evaluation_time: datetime,
+    resolution_statuses: Mapping[str, str] | None,
+) -> frozenset[str]:
+    """``claim_unsure_holds`` folded at one read's recorded heads."""
+
+    store = instance.claim_attestation_evidence_store()
     population = _with_slot_contenders(instance, coordinate, live)
     if resolution_statuses is None:
         # A conflict row stands on the slot's resolution, exactly as next decides it.
@@ -2140,14 +2167,13 @@ def claim_unsure_holds(
             )
         except CruxibleError:
             resolution_statuses = None
-    head = store.head()
-    door_events = store.fold_events(at_head=head)
+    door_events = store.fold_events(at_head=door_head)
     holds = _Holds(
         instance,
         coordinate=coordinate,
         claims=population,
         door_events=door_events,
-        door_history=lambda: store.events(at_head=head),
+        door_history=lambda: store.events(at_head=door_head),
         evaluation_time=evaluation_time,
     )
     if not holds:
@@ -2952,8 +2978,9 @@ def claim_citation_commitments(
     for citation in claim_citation_references(claim):
         if citation.capture_digest not in effective_captures:
             continue
+        # Present as of the read's landing position, or missing to it.
         envelope = parse_capture_envelope(
-            store.read(citation.capture_digest, access=_CITATION_READER)
+            read_body(store, citation.capture_digest, access=_CITATION_READER)
         )
         source_id: str | None = None
         source_digest: str | None = None
@@ -3194,7 +3221,8 @@ class _ObservedContents:
         else:
             try:
                 envelope = parse_capture_envelope(
-                    self._instance.body_store().read(
+                    read_body(
+                        self._instance.body_store(),
                         capture_digest,
                         access=BodyAccessContext(principal_id="playbill-next", can_read_body=True),
                     )
@@ -5785,33 +5813,28 @@ def _next_queue(
     caller_rung: int | None,
     read_context: ClaimVerdictReadContext | None = None,
     caller_authoring_refusal: AuthoringRefusal | None = None,
-    at_pinned: bool = True,
 ) -> _NextQueue:
-    """The single fold for full next and its bounded attention summary.
+    """The single fold for full next and its bounded attention summary: a point-in-time read.
 
-    A request naming no coordinate or door head reads at the heads its stored
-    rows were served at: a head that moves while they are read restarts the
-    read at the new heads, never a fold at the old ones. A coordinate or door
-    head it names is its pin (R8), which folds there once no longer current;
-    with ``at_pinned`` False its coordinate was selected by the caller (orient's
-    summary), which refuses rather than fold once it moved.
+    The read records once where every log stands -- at the coordinate and door
+    head the request names (its pins, R8), else where they stand now -- and
+    answers as of exactly those heads: the stored rows served at them, or the
+    fold at them when the worker cannot serve (cold, disabled, already past a
+    pin). Every family read after the Claim rows (workspace, projection, holds)
+    reads at the same heads; body presence and re-observations count through
+    the recorded positions. Writes that land meanwhile are not in this answer.
     """
 
-    store = instance.claim_attestation_evidence_store()
-    named = None if request.at is None else _resolve_coordinate(instance, request.at)
-    from cruxible_core.consumers.next.facts import (
-        refuse_moving_read,
-        served_claim_rows,
-        served_inputs_hold,
-    )
+    from cruxible_core.consumers.next.facts import read_heads, served_claim_rows
+    from cruxible_core.storage.read_positions import reading_at
 
-    # The stored rows serve a read at the head; the fold serves the rest.
+    named = None if request.at is None else _resolve_coordinate(instance, request.at)
+    # The stored rows serve the read; the fold serves the rest at the same heads.
     stored = (
         served_claim_rows(
             instance,
             coordinate=named,
             door_head=request.at_attestation_head_digest,
-            pinned=at_pinned,
             evaluation_time=request.evaluation_time,
             expiring_within=request.expiring_within,
             citations=_citation_request(request.workspace_observation),
@@ -5820,12 +5843,40 @@ def _next_queue(
         if request.access_profile.permits("instance")
         else None
     )
-    if stored is not None:
-        assert stored.heads is not None
-        coordinate, attestation_head = stored.heads.coordinate, stored.heads.door_root
-    else:
-        coordinate = named if named is not None else _resolve_coordinate(instance, None)
-        attestation_head = request.at_attestation_head_digest or store.head()
+    heads = (
+        stored.heads
+        if stored is not None and stored.heads is not None
+        else read_heads(instance, coordinate=named, door_head=request.at_attestation_head_digest)
+    )
+    with reading_at(heads.positions):
+        return _queue_at(
+            instance,
+            request=request,
+            stored=stored,
+            coordinate=heads.coordinate,
+            attestation_head=heads.door_root,
+            caller_principal_id=caller_principal_id,
+            caller_rung=caller_rung,
+            read_context=read_context,
+            caller_authoring_refusal=caller_authoring_refusal,
+        )
+
+
+def _queue_at(
+    instance: PlaybillInstance,
+    *,
+    request: NextRequest,
+    stored: ServedRows | None,
+    coordinate: AcceptedProjectionCoordinate,
+    attestation_head: str,
+    caller_principal_id: str | None,
+    caller_rung: int | None,
+    read_context: ClaimVerdictReadContext | None,
+    caller_authoring_refusal: AuthoringRefusal | None,
+) -> _NextQueue:
+    """The queue at one read's recorded heads (``_next_queue``)."""
+
+    store = instance.claim_attestation_evidence_store()
     public_coordinate = AcceptedCoordinate.from_internal(coordinate)
     door_events = () if stored is not None else store.fold_events(at_head=attestation_head)
     # One request evaluates a Claim's verdict at exactly one coordinate and one
@@ -5995,12 +6046,6 @@ def _next_queue(
         else None
     )
     items, held = _caller_queue(found, caller, holds)
-    if stored is not None and not served_inputs_hold(instance, stored):
-        # A row family read after the stored rows (a projection query's evidence)
-        # saw a later state than they did: no one state answers this queue.
-        raise refuse_moving_read(
-            "the logs next's stored rows were read from moved while the rest of the queue was read"
-        )
     return _NextQueue(
         coordinate,
         attestation_head,
@@ -6029,7 +6074,6 @@ def summarize_playbill_next(
     caller_principal_id: str | None = None,
     caller_rung: int | None = None,
     match: Callable[[PlaybillNextItemV1], bool] | None = None,
-    at_pinned: bool | None = None,
 ) -> PlaybillNextSummary:
     """Count the queue and return its first three rows plus one optional matched row.
 
@@ -6037,15 +6081,14 @@ def summarize_playbill_next(
     Claim rows at the current heads come from the worker's stored rows, with
     whatever it has not yet followed derived on read; a disabled or cold
     worker falls back to the full fold. Other inputs are observed per request.
-    The summary reads at one coordinate: ``request.at``, or the head now. That
-    is a pin when the request named it (``at_pinned`` defaults to whether it
-    did); otherwise, or with ``at_pinned`` False (orient's own coordinate),
-    its moving during the read refuses rather than fold at a head gone by.
+    The summary reads at one coordinate, ``request.at`` or the head now, and
+    at the door head the request names or the one now: a point-in-time read
+    like next's, served from the stored rows while the worker has not passed
+    those heads and folded there otherwise.
     """
 
     if request.cursor is not None or request.since_result_digest is not None:
         raise ValueError("a next summary reads the current queue, not a page or delta")
-    pinned = request.at is not None if at_pinned is None else at_pinned
     coordinate = _resolve_coordinate(instance, request.at)
     request = request.model_copy(update={"at": AcceptedCoordinate.from_internal(coordinate)})
     queue = _next_queue(
@@ -6054,7 +6097,6 @@ def summarize_playbill_next(
         caller_principal_id=caller_principal_id,
         caller_rung=caller_rung,
         read_context=ClaimVerdictReadContext(instance, coordinate),
-        at_pinned=pinned,
     )
     matching = (
         None
