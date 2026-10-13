@@ -232,6 +232,38 @@ policy and the caller's tier allow. Definitions go through authoring
 (`authoring submit`, staged intents). ClaimTypes keep their own `claim-type`
 group, because changing vocabulary disposes dependent Claims.
 
+### Cost model
+
+A write, a background tick or a read pays for the change it handles, not for the
+size of the instance. A merge that adds work growing with all Claims, Subjects,
+Captures, generations, journal records or stored bodies on a per-write,
+per-generation, per-tick or per-request path is a defect, even when the result is
+correct.
+
+- **Derived state updates from what changed.** Queues, findings, statuses,
+  projections and block sync update from the change records that already exist:
+  an accepted generation's changed paths (its diff against the parent), journal
+  and trigger sequence cursors, attestation-store heads, and Capture digests. A
+  full rebuild runs only on cold start, after a format change, or as an explicit
+  repair.
+- **Immutable artifacts are parsed and hashed once.** Claims, Captures and other
+  content-addressed artifacts are cached per process by content id (blob oid or
+  digest). An unchanged artifact is never re-read, re-validated or re-digested on
+  a later pass.
+- **A cache must be cheaper to validate than to rebuild.** If proving an entry
+  still holds means re-checking every input it ever read, it is not a cache:
+  index entries by their inputs and invalidate the entries a change touches.
+- **Reads answer from maintained state.** `orient`, `get`, `query` and `next`
+  serve from indexes and worker findings; a full live fold on every call is only
+  the fallback for an explicit historical `--at` or a cold instance.
+- **Say it in the change.** Every new loop over a whole population (all Claims,
+  all generations, all bodies) states its trigger, its growth and why no change
+  record can drive it, in the commit message and the report. Reviewers block on
+  per-event work that grows with the instance unless that reason holds.
+- **Measure at two sizes.** Tests on a few dozen Claims cannot show this; check
+  new per-event paths on a small and a large instance and compare the work done,
+  not just the answer.
+
 ### Key design decisions
 
 - **Zero LLM dependencies.** Deterministic runtime; agents supply judgment
