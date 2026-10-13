@@ -198,15 +198,16 @@ def test_commit_gap_never_certifies_foreign_rows_or_file(tmp_path, monkeypatch, 
     index = evidence.index
     with instance.accepted_history_reader():
         pass
+    # The submission queued a background workspace advertisement, which reads
+    # accepted history too: settled now, it cannot restore readiness between the
+    # invalidation below and the attacked read (and leave nothing to attack).
+    instance.settled_workspace_advertisement()
     owner = instance._accepted_history_index
     marker_before = index._marker(evidence.root)
     field = "_connection" if publisher == "proposal" else "_writer"
     component = index if publisher == "proposal" else owner
     connection = getattr(component, field)
-    if publisher == "history":
-        # Clean reads no longer commit. Exercise the actual repair publisher's
-        # commit gap by requiring it to revalidate its source-backed rows.
-        owner.invalidate()
+    attacks: list[str] = []
 
     class CommitGap:
         def __getattr__(self, name):
@@ -214,9 +215,12 @@ def test_commit_gap_never_certifies_foreign_rows_or_file(tmp_path, monkeypatch, 
 
         def commit(self):
             connection.commit()
+            if attacks:
+                return
             if attack == "delete":
                 with sqlite3.connect(index.path) as foreign:
-                    foreign.execute("DELETE FROM proposals")
+                    deleted = foreign.execute("DELETE FROM proposals").rowcount
+                assert deleted > 0, "the foreign writer deleted no row"
             else:
                 connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 replacement = index.path.with_suffix(".replacement")
@@ -225,16 +229,26 @@ def test_commit_gap_never_certifies_foreign_rows_or_file(tmp_path, monkeypatch, 
                     copied.execute("PRAGMA journal_mode=DELETE")
                     copied.execute("DELETE FROM proposals")
                 copied.close()
+                before = index.path.stat().st_ino
                 os.replace(replacement, index.path)
+                assert index.path.stat().st_ino != before, "the file was not replaced"
+            attacks.append(attack)
 
     with monkeypatch.context() as patch:
         patch.setattr(component, field, CommitGap())
+        if publisher == "history":
+            # Clean reads no longer commit. Exercise the actual repair publisher's
+            # commit gap by requiring it to revalidate its source-backed rows.
+            owner.invalidate()
         with pytest.raises((ProjectionIntegrityError, sqlite3.DatabaseError)):
             if publisher == "proposal":
                 evidence.write_evaluation(first.evaluation)
             else:
                 with instance.accepted_history_reader():
+                    assert attacks, "the read took the clean path; no commit gap was attacked"
                     pytest.fail("the foreign writer must refuse snapshot publication")
+    # The refusal answers the attack: the commit gap was reached and mutated.
+    assert attacks == [attack]
     # No callback may certify the foreign row deletion as trusted local work.
     marker = index._marker(evidence.root)
     assert marker["clean"] is False or marker["database_stamp"] == marker_before["database_stamp"]

@@ -343,13 +343,18 @@ def retain_serving_head_stamp_locked(
 
 
 def _content_stamp(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
-    """What any change to a file's bytes or inode moves, never its access time.
+    """File identity and change timestamps, excluding read-induced access time.
 
     The readiness digest is itself a read, and a read may advance the access
     time: Linux ``relatime`` does whenever ctime is no older than atime, as it
     is right after publication links the piece in and unlinks its staged name.
     A whole ``stat_result`` comparison carries whole-second atime, so it
     refused unchanged bytes whenever that read crossed a second boundary.
+
+    mtime and ctime are change detectors, not a guarantee against an
+    adversarial writer: a filesystem's timestamp granularity can give two
+    writes the same stamp, so a same-size rewrite can leave this tuple equal.
+    The digest compared against the manifest is what binds the bytes.
     """
     return (
         metadata.st_dev,

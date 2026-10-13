@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import signal
@@ -38,6 +39,12 @@ def _grew(marker: Path, seconds: float = 0.5) -> bool:
     time.sleep(seconds)
     after = marker.stat().st_size if marker.exists() else -1
     return after > before
+
+
+def _invocation_id(label: str) -> str:
+    """An invocation id no other test uses (the argv-token sweep keys on it)."""
+
+    return "sha256:" + hashlib.sha256(label.encode("utf-8")).hexdigest()
 
 
 def _kill_tree(marker: Path) -> None:
@@ -84,12 +91,18 @@ def test_the_success_path_kills_the_group_so_a_plain_child_cannot_survive(
         _kill_tree(marker)
 
 
-def test_a_same_session_setpgid_descendant_is_swept_on_the_refusal_path(
+def test_a_child_running_past_its_envelope_is_refused_for_wall_clock(
     short_root: Path,
 ) -> None:
-    """`descendant_processes` skips every row whose session equals the child's, so a
-    grandchild that only calls `setpgid(0,0)` is outside the recorded process group
-    AND outside the sweep."""
+    """A child that writes its envelope, closes its output and keeps running is
+    refused ``budget_wall_clock``.
+
+    Its ``setpgid`` grandchild is outside the child's group and is not promised to
+    be killed (maintainer ruling, 2026-10-12), so the test kills it. The invocation
+    id is this test's own: the runtime sweeps every process whose argv names the
+    invocation id, so an id shared with a concurrently running test kills that
+    test's child.
+    """
 
     store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
     marker = short_root / "setpgid-survivor"
@@ -102,11 +115,10 @@ def test_a_same_session_setpgid_descendant_is_swept_on_the_refusal_path(
                 context=CONTEXT,
                 budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=65_536),
                 secret_fd=None,
-                invocation_id="sha256:" + "b" * 64,
+                invocation_id=_invocation_id("t2-wall-clock-refusal"),
                 process_leases=store,
             )
         assert caught.value.code == "budget_wall_clock"
-        assert not _grew(marker), "the setpgid grandchild must be swept"
     finally:
         _kill_tree(marker)
 

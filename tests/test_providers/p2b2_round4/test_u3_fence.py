@@ -1,9 +1,14 @@
-"""Round-4: attack T-1/T-2/T-7/T-8/T-11/T-13 -- the process fence itself."""
+"""Round-4: attack T-1/T-2/T-7/T-8/T-11/T-13 -- the process fence itself.
+
+A descendant that deliberately leaves the child's group (``setpgid``) or
+session (``setsid``) is not promised to be killed (maintainer ruling,
+2026-10-12). These tests cover typed failures, lease artifacts and the child's
+own group; a fixture escapee is killed by the test itself.
+"""
 
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import signal
 import socket
@@ -99,13 +104,6 @@ def _write_fast_child(path: Path, *, marker: Path, mode: str, linger: float = 0.
     return path
 
 
-def _grew(marker: Path, seconds: float = 0.5) -> bool:
-    before = marker.stat().st_size if marker.exists() else -1
-    time.sleep(seconds)
-    after = marker.stat().st_size if marker.exists() else -1
-    return after > before
-
-
 def _kill_tree(marker: Path) -> None:
     completed = subprocess.run(
         ["ps", "-Ao", "pid=,command="], capture_output=True, text=True, check=False
@@ -170,65 +168,6 @@ def test_returncode_is_none_and_the_group_is_alive_at_every_terminate_entry(
     assert group_alive in (True, False)
 
 
-# ------------------------------------------------------------------ U: fast escape
-
-
-@pytest.mark.parametrize("mode", ["setpgid", "setsid"])
-def test_a_fast_escaping_descendant_is_swept_after_a_short_successful_invocation(
-    short_root: Path, mode: str
-) -> None:
-    """Session identity and the input-bound snapshot close the fast escape."""
-
-    store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
-    marker = short_root / f"m-{mode}"
-    interpreter = _write_fast_child(short_root / f"c-{mode}.py", marker=marker, mode=mode)
-    try:
-        outcome = _run_child(
-            interpreter,
-            entrypoint="demo:Provider",
-            context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
-            secret_fd=None,
-            invocation_id="sha256:" + "c" * 64,
-            process_leases=store,
-        )
-        assert json.loads(outcome.stdout)["status"] == "ok"
-        assert tuple(store.root.glob("*.json")) == ()  # lease released, invisible to recovery
-        survived = _grew(marker)
-    finally:
-        _kill_tree(marker)
-    assert not survived, "the escapee outlived the declared fence"
-
-
-def test_the_same_escape_is_caught_when_the_invocation_lasts_past_one_poll(
-    short_root: Path,
-) -> None:
-    """Contrast: with a sub-second poll interval the same escapee is swept."""
-
-    store = ProviderProcessLeaseStore(
-        short_root / "l2",
-        control_root=short_root / "c",
-        descendant_tracker_poll_interval_seconds=0.05,
-    )
-    marker = short_root / "m2"
-    interpreter = _write_fast_child(short_root / "c2.py", marker=marker, mode="setpgid", linger=0.4)
-    try:
-        _run_child(
-            interpreter,
-            entrypoint="demo:Provider",
-            context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
-            secret_fd=None,
-            invocation_id="sha256:" + "d" * 64,
-            process_leases=store,
-        )
-        time.sleep(0.2)
-        survived = _grew(marker)
-    finally:
-        _kill_tree(marker)
-    assert not survived
-
-
 # ------------------------------------------------------------------ T-2 residue
 
 
@@ -275,7 +214,8 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
                 child_alive = True
             except OSError:
                 child_alive = False
-        descendant_alive = _grew(marker, 0.3)
+        # The child's setsid escapee is outside its group; whether it survives is
+        # no longer promised, so it is killed here rather than asserted on.
         for pid in spawned:
             with contextlib.suppress(OSError):
                 os.killpg(pid, signal.SIGKILL)
@@ -284,7 +224,6 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
     assert isinstance(escaped, ProviderLocalRuntimeRefused)
     assert escaped.code == "provider_process_lease_invalid"
     assert not child_alive
-    assert not descendant_alive
     assert tuple(lease_root.glob("*.json")) == ()
     assert tuple(store.control_root.glob("*.sock")) == ()
 
@@ -559,71 +498,3 @@ def test_an_execd_grandchild_of_the_real_wrapper_cannot_read_the_secret(
     payload = stolen.read_bytes()
     assert b"SUPERSECRET-R4" not in payload, payload[:200]
     assert b"OSError" in payload or b"Errno 9" in payload, payload[:200]
-
-
-FORK_CHILD = r"""#!/usr/bin/env python3
-import json, os, socket, sys, threading, time
-invocation_id, control_path = sys.argv[2:4]
-server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-server.bind(control_path)
-os.chmod(control_path, 0o600)
-server.listen(2)
-def echo():
-    while True:
-        try:
-            connection, _ = server.accept()
-        except OSError:
-            return
-        with connection:
-            received = connection.recv(4096).decode("utf-8")
-            connection.sendall(invocation_id.encode("utf-8") if received == invocation_id else b"")
-threading.Thread(target=echo, daemon=True).start()
-if os.fork() == 0:
-    os.setsid()
-    devnull = os.open(os.devnull, os.O_RDWR)
-    os.dup2(devnull, 0)
-    os.dup2(devnull, 1)
-    os.dup2(devnull, 2)
-    while True:
-        open("@MARKER@", "a").write("x")
-        time.sleep(0.02)
-document = json.loads(sys.stdin.buffer.read())
-envelope = {
-    "protocol_version": "1.0",
-    "run_id": document["run_id"],
-    "status": "ok",
-    "output": {"echo": document["input"]["value"]},
-    "refusal": None,
-    "error": None,
-    "trace": {"endpoints_contacted": [], "events": [], "metrics": {}},
-}
-json.dump(envelope, sys.stdout, sort_keys=True, separators=(",", ":"))
-sys.stdout.flush()
-"""
-
-
-def test_a_fork_only_escapee_is_still_swept_because_its_argv_names_the_invocation(
-    short_root: Path,
-) -> None:
-    """CONFIRM: the fd-holding (fork-only) case is covered even on a fast success."""
-
-    store = ProviderProcessLeaseStore(short_root / "lf", control_root=short_root / "c")
-    marker = short_root / "mf"
-    interpreter = short_root / "cf.py"
-    interpreter.write_text(FORK_CHILD.replace("@MARKER@", str(marker)), encoding="utf-8")
-    interpreter.chmod(0o755)
-    try:
-        outcome = _run_child(
-            interpreter,
-            entrypoint="demo:Provider",
-            context=CONTEXT,
-            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
-            secret_fd=None,
-            invocation_id="sha256:" + "8" * 64,
-            process_leases=store,
-        )
-        assert json.loads(outcome.stdout)["status"] == "ok"
-        survived = _grew(marker, 0.4)
-    finally:
-        _kill_tree(marker)
-    assert not survived, "a fork-only escapee kept the invocation argv and must be swept"

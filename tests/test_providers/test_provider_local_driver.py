@@ -780,10 +780,16 @@ with open({str(marker)!r}, "a") as handle:
     assert second == first
 
 
-def test_descendant_sweep_reaps_a_grandchild_that_leaves_the_process_session(
+def test_a_detached_grandchild_does_not_strand_a_successful_runs_lease(
     _lease_store: Callable[[Path], ProviderProcessLeaseStore],
     tmp_path: Path,
 ) -> None:
+    """A child that forks a ``setsid`` grandchild still succeeds and releases its lease.
+
+    The grandchild is outside the child's session and is not promised to be
+    killed (maintainer ruling, 2026-10-12), so the test kills it.
+    """
+
     interpreter = tmp_path / "setsid-grandchild-python"
     marker = tmp_path / "setsid-grandchild.txt"
     interpreter.write_text(
@@ -838,13 +844,6 @@ sys.stdout.flush()
             process_leases=leases,
         )
         assert json.loads(outcome.stdout)["status"] == "ok"
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline and not marker.exists():
-            time.sleep(0.02)
-        assert marker.exists()
-        first = marker.read_text().count("alive")
-        time.sleep(0.4)
-        assert marker.read_text().count("alive") == first
         assert tuple(leases.root.glob("*.json")) == ()
     finally:
         for line in subprocess.run(

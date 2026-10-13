@@ -85,7 +85,7 @@ envelope = {
 json.dump(envelope, sys.stdout, sort_keys=True, separators=(",", ":"))
 sys.stdout.flush()
 
-if MODE in {"escape", "setpgid"}:
+if MODE == "setpgid":
     os.close(1)
     os.close(2)
     time.sleep(30)
