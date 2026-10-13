@@ -748,7 +748,15 @@ GROWS: dict[str, dict[str, str]] = {
         ),
         "sql_vm_steps": _ORIENT_FOLD + _FOLD_SQL,
     },
-    "procedure.settle": _grows(_SETTLE, "claim_parses", *_DIGESTS, "file_opens", "git_blob_reads"),
+    "procedure.settle": {
+        **_grows(_SETTLE, "claim_parses", *_DIGESTS, "file_opens", "git_blob_reads"),
+        **_grows(
+            "settle's SQL work grows on the merged tree after perf B (statements 3,011 -> 4,523 at "
+            "10x); attribution owed by dev.roadmap_item/settle-cost-after-batch-a",
+            "sql_statements",
+            "sql_vm_steps",
+        ),
+    },
     "tick.after_body_store.queue": {
         **_grows(
             _BODY_STORE,
