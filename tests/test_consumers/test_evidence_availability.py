@@ -326,3 +326,19 @@ def test_sweep_resumes_a_fired_event_at_its_logged_time(
     assert NOW in seen and NOW + SWEEP_INTERVAL in seen
     assert NOW + timedelta(days=100) not in seen
     assert capture and not tuple(WORKER.due(instance, now=NOW))
+
+
+def test_a_positioned_read_reads_a_vanished_envelope_as_unavailable(tmp_path: Path) -> None:
+    from cruxible_core.consumers.next.facts import read_positions
+    from cruxible_core.service.evidence import evidence as verdict_evidence
+    from cruxible_core.storage.read_positions import reading_at
+
+    instance, capture = _world(tmp_path)
+    # Deleted out of band: the landing log still has it present at the read's
+    # position, and a derivation that needs its bytes reads it as unavailable,
+    # never as a refusal of the whole read.
+    instance.body_store()._path(capture).unlink()
+    with reading_at(read_positions(instance)):
+        assert verdict_evidence._current_replay_available(instance, capture, readers={}) is False
+        # The fold answers the same for the absent body.
+        assert verdict_evidence._replay_available(instance, capture, readers={}) is False
