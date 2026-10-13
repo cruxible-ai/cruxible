@@ -184,8 +184,10 @@ class ProposalIndex:
         on_commit: Callable[[tuple[int, ...] | None, tuple[int, ...]], None],
         connections: list[sqlite3.Connection],
         shutdown_proof: dict[str, Any],
+        history_commits: list[tuple[tuple[int, ...] | None, tuple[int, ...]]] | None = None,
     ) -> None:
         self.path, self._lock = path, lock
+        self._history_commits = history_commits if history_commits is not None else []
         self._file_stamp, self._on_commit = file_stamp, on_commit
         self._connections, self._shutdown_proof = connections, shutdown_proof
         self._connection: sqlite3.Connection | None = None
@@ -312,12 +314,52 @@ class ProposalIndex:
         finally:
             temporary.unlink(missing_ok=True)
 
+    def bind_source_root(self, root: Path) -> None:
+        """Name the evidence root this index serves before its first read.
+
+        A history-only commit can then carry the source checkpoint forward even
+        when it precedes every proposal read of this process (see
+        ``database_committed``). Never waits: a read must not block on the
+        shared lock (a writer may hold it), so a busy lock leaves the replay to
+        the next store this index serves.
+        """
+        if self._root is not None and not self._history_commits:
+            return
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
+            if self._root is None:
+                # Naming the root writes nothing, so a preview may do it too.
+                self._root = root
+            if history_reads_detached():
+                # A preview writes no source checkpoint: the replay waits for a writer.
+                return
+            # Replay, in order, the history-only commits made before the root
+            # was known; a gap (another writer) stops the carry.
+            commits = tuple(self._history_commits)
+            self._history_commits.clear()
+            for before, after in commits:
+                self.database_committed(before, after)
+        finally:
+            self._lock.release()
+
     def database_committed(self, before: tuple[int, ...] | None, after: tuple[int, ...]) -> None:
-        """Publish C's captured stamp while it retains reacquired SQLite ownership."""
+        """Publish C's captured stamp while it retains reacquired SQLite ownership.
+
+        Before this process has synchronized the proposal rows (``_stamp`` is
+        unknown) the checkpoint's own recorded database stamp stands in for it:
+        the file it describes is exactly the file this history-only transaction
+        started from, so the checkpoint still describes it afterwards.
+        """
+        if self._root is None and self._stamp is None:
+            # Not yet told its evidence root: keep the commit for bind_source_root.
+            if len(self._history_commits) < 256:
+                self._history_commits.append((before, after))
+            return
         if (
             self._root is not None
             and before is not None
-            and self._stamp == before
+            and self._stamp in (before, None)
             and after[:2] == before[:2]
         ):
             marker = self._marker(self._root)
@@ -538,6 +580,32 @@ class ProposalIndex:
         self._stamp = after
         self._remember(evidence.root, marker)
 
+    def _seed_clean_stamp(self, root: Path, marker: dict[str, Any], stamp: tuple[int, ...]) -> None:
+        """Adopt a clean checkpoint a snapshot just proved, as a locked sync would.
+
+        Until this process has synchronized once, ``_stamp`` is unknown, so a
+        history-only commit to the shared file (``database_committed``) cannot
+        carry the checkpoint forward and the next proposal read rebuilds every
+        record. A clean snapshot proves the same facts the clean branch of
+        ``_sync`` does; under the shared lock, and only while the file is still
+        at that stamp, it seeds them. A clean read never waits for that lock: if
+        a writer holds it, nothing is seeded.
+        """
+        if self._stamp is not None or not self._lock.acquire(blocking=False):
+            return
+        try:
+            if (
+                self._stamp is not None
+                or self._file_stamp() != stamp
+                or self._marker(root) != marker
+            ):
+                return
+            self._root = root
+            self._stamp = stamp
+            self._remember(root, marker)
+        finally:
+            self._lock.release()
+
     def _remember(self, root: Path, marker: dict[str, Any]) -> None:
         self._shutdown_proof.clear()
         self._shutdown_proof.update(root=str(root), marker=json.loads(canonical_json(marker)))
@@ -590,6 +658,7 @@ class ProposalIndex:
             ):
                 connection.close()
                 return None
+            self._seed_clean_stamp(evidence.root, marker, stamp)
             connection.row_factory = sqlite3.Row
             return connection
         except BaseException:

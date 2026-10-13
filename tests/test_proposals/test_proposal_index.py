@@ -732,3 +732,127 @@ def test_a_pre_acceptance_index_is_reconstructed_on_the_current_schema(tmp_path)
             "SELECT accepted_sequence FROM proposals WHERE proposal_id=?", (proposal_id,)
         ).fetchone() == (1,)
     owner_index.close()
+
+
+def test_a_restarted_reader_carries_its_clean_checkpoint_across_history_commits(tmp_path):
+    """A clean snapshot after a restart seeds the checkpoint (perf E3).
+
+    History-only commits to the shared file then carry it forward, so the next
+    proposal read is a clean snapshot again instead of re-reading every
+    admission, evaluation and withdrawal record.
+    """
+
+    from cruxible_core.indexes.history.history_index import (
+        AcceptedHistoryIndex,
+        commit_working_write,
+    )
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    instance._accepted_history_index.close()
+    owner = AcceptedHistoryIndex(index_path)
+    reopened = ProposalEvidenceStore(
+        evidence.root, index=owner.proposals, transport=instance._ledger
+    )
+    assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    for _ in range(2):
+        # A history-only transaction, as an accepted generation's sync commits one.
+        with owner._lock:
+            writer = owner._write_connection()
+            writer.execute("BEGIN IMMEDIATE")
+            before = owner._file_stamp()
+            # A real page change the proposal rows do not see.
+            writer.execute("CREATE TABLE IF NOT EXISTS scratch_history_commit (n INTEGER)")
+            writer.execute("DROP TABLE scratch_history_commit")
+            after = commit_working_write(writer, owner._file_stamp, before)
+            assert after != before
+            owner.proposals.database_committed(before, after)
+            writer.rollback()
+        assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    assert owner.proposals.reconstructions == 0
+    owner.close()
+
+
+def test_a_preview_names_the_root_so_a_later_history_commit_keeps_the_checkpoint(tmp_path):
+    """A preview's evidence store binds the root without writing; the next commit carries.
+
+    A restarted process whose first proposal access was a dry run (detached
+    reads), followed by a write whose history sync moves the shared file before
+    any proposal read, keeps its clean checkpoint (perf E3).
+    """
+
+    from cruxible_core.indexes.history.history_index import (
+        AcceptedHistoryIndex,
+        commit_working_write,
+        detached_history_reads,
+    )
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    instance._accepted_history_index.close()
+    owner = AcceptedHistoryIndex(index_path)
+    marker = (evidence.root / ".proposal-source.json").read_bytes()
+    with detached_history_reads():
+        ProposalEvidenceStore(evidence.root, index=owner.proposals, transport=instance._ledger)
+    assert (evidence.root / ".proposal-source.json").read_bytes() == marker
+    with owner._lock:
+        writer = owner._write_connection()
+        writer.execute("BEGIN IMMEDIATE")
+        before = owner._file_stamp()
+        writer.execute("CREATE TABLE IF NOT EXISTS scratch_history_commit (n INTEGER)")
+        writer.execute("DROP TABLE scratch_history_commit")
+        after = commit_working_write(writer, owner._file_stamp, before)
+        assert after != before
+        owner.proposals.database_committed(before, after)
+        writer.rollback()
+    reopened = ProposalEvidenceStore(
+        evidence.root, index=owner.proposals, transport=instance._ledger
+    )
+    assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    assert owner.proposals.reconstructions == 0
+    owner.close()
+
+
+def test_history_commits_before_the_first_proposal_read_keep_the_checkpoint(tmp_path):
+    """A restart's history sync, before any proposal read, leaves the checkpoint clean (E3).
+
+    The history-only commits a process makes before its proposal component
+    exists are replayed onto the source checkpoint once the evidence root is
+    known, so the first proposal read is still a clean snapshot.
+    """
+
+    from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
+
+    instance, _ = initialize_local(tmp_path)
+    first = _submit(instance, "one")
+    instance.settled_workspace_advertisement()
+    evidence = instance.proposal_evidence()
+    index_path = evidence.index.path
+    instance._accepted_history_index.close()
+    # Without a recorded readiness the restart re-derives (and here rewrites)
+    # every generation: a history-only transaction that moves the file.
+    index_path.with_name(index_path.name + ".verified.json").unlink()
+    owner = AcceptedHistoryIndex(index_path)
+    before = owner._file_stamp()
+    with owner.read(instance._recovered, lambda _n, _prior: []):
+        pass
+    assert owner._file_stamp() != before and owner._unannounced_commits
+    from cruxible_core.indexes.history.history_index import detached_history_reads
+
+    marker = (evidence.root / ".proposal-source.json").read_bytes()
+    with detached_history_reads():
+        # A preview writes no source checkpoint: the replay waits for a writer.
+        ProposalEvidenceStore(evidence.root, index=owner.proposals, transport=instance._ledger)
+    assert (evidence.root / ".proposal-source.json").read_bytes() == marker
+    reopened = ProposalEvidenceStore(
+        evidence.root, index=owner.proposals, transport=instance._ledger
+    )
+    assert reopened.read_admission(first.admission.proposal_id) == first.admission
+    assert owner.proposals.reconstructions == 0
+    owner.close()

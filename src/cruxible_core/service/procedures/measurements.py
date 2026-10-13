@@ -119,15 +119,16 @@ from cruxible_core.procedures.readings import (
 )
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
-    ProcedureResolutionBook,
     ProcedureResolutionV1,
     ProcedureResolutionV2,
+    ResolutionBookView,
     ResolutionContractActivationV1,
     _expectation_holds,
     append_procedure_resolution,
     build_procedure_resolution,
     derive_resolution_activations,
     procedure_resolution_digest,
+    resolution_book_at_head,
     resolution_contract_partition_id,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -425,8 +426,9 @@ def _eligibility(
 @dataclass(frozen=True)
 class _ContractState:
     activation: ResolutionContractActivationV1
-    records: tuple[StoredProcedureJournalRecordV1, ...]
-    book: ProcedureResolutionBook
+    #: Whether the partition through ``head`` holds a resolution_activation record.
+    has_activation_record: bool
+    book: ResolutionBookView
     latest: ProcedureResolutionV1 | ProcedureResolutionV2 | None
     latest_record: StoredProcedureJournalRecordV1 | None
     head: JournalPartitionHeadV1
@@ -438,28 +440,16 @@ def _contract_state(
     stream: JournalStreamIdentityV1,
     activation: ResolutionContractActivationV1,
 ) -> _ContractState:
-    partition_id = resolution_contract_partition_id(activation)
-    # Head first, records trimmed to it: a write keyed on this head is a
-    # compare-and-set against exactly the state this decision was made on.
-    head = journal.read_head(stream, partition_id)
-    records = journal.all_records(stream, partition_id)[: head.sequence]
-    book = ProcedureResolutionBook((activation,))
-    book.replay(records, bodies=instance.body_store())
+    # Head first, the book folded exactly through it: a write keyed on this
+    # head is a compare-and-set against exactly the state this decision was
+    # made on. The book extends from the last head this process folded.
+    book, head = resolution_book_at_head(journal, stream, activation, bodies=instance.body_store())
+    assert head is not None  # a local journal always has its index
     latest = book.latest_non_overturned(activation.contract_id)
-    latest_record = None
-    if latest is not None:
-        for stored in records:
-            if stored.record.event_kind != "resolution":
-                continue
-            payload = parse_journal_payload(
-                instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
-            )
-            if isinstance(payload, dict) and payload.get("resolution_id") == latest.resolution_id:
-                latest_record = stored
-                break
+    latest_record = None if latest is None else book.resolution_record(latest.resolution_id)
     return _ContractState(
         activation=activation,
-        records=records,
+        has_activation_record=book.has_event_kind("resolution_activation"),
         book=book,
         latest=latest,
         latest_record=latest_record,
@@ -1382,7 +1372,7 @@ def service_measure_playbill_procedure(
                 )
                 resolution = build_procedure_resolution(
                     activation,
-                    sequence=len(state.book.resolutions.get(activation.contract_id, ())) + 1,
+                    sequence=state.book.resolution_count(activation.contract_id) + 1,
                     verdict=evidence.verdict,
                     value=evidence.value,
                     evidence_refs=evidence.evidence_refs,
@@ -1400,10 +1390,7 @@ def service_measure_playbill_procedure(
                 # answer instead of retaining a second sequence 1.
                 expected_head = state.head
                 try:
-                    if not any(
-                        stored.record.event_kind == "resolution_activation"
-                        for stored in state.records
-                    ):
+                    if not state.has_activation_record:
                         stored_activation = fenced.writer.append(
                             stream=stream,
                             partition_id=partition_id,
@@ -1528,7 +1515,7 @@ def _credit_reading(
     accepted: AcceptedProcedure,
     activation: ResolutionContractActivationV1,
     resolution: ProcedureResolutionV1,
-    book: ProcedureResolutionBook,
+    book: ResolutionBookView,
     grain: ProcedureRunGrainRecordV1,
     actor_context: GovernedActorContext,
     recorded_at: datetime,

@@ -146,8 +146,13 @@ def _fact_row(
     attestation_envelopes: tuple[ClaimAttestation, ...],
     store: Any = None,
     reobserved: bool = False,
+    bodies: dict[str, Any] | None = None,
 ) -> ClaimFactRowV1:
-    """Assemble one Claim's verdict inputs exactly as the verdict service does."""
+    """Assemble one Claim's verdict inputs exactly as the verdict service does.
+
+    ``bodies`` receives the identity of every body-store object an availability
+    answer consulted (see ``_current_replay_available``).
+    """
 
     accepted = AcceptedClaim(
         path=path,
@@ -179,6 +184,7 @@ def _fact_row(
                     item.capture_digest,
                     readers=readers,
                     store=store,
+                    bodies=bodies,
                 )
             }
         )
@@ -293,8 +299,10 @@ class _AcceptedQueryFactsRead:
         source_tree: Mapping[str, bytes] | None = None,
         predicates: tuple[str, ...] | None = None,
         subject_kinds: tuple[str, ...] | None = None,
+        consulted_bodies: dict[str, Any] | None = None,
     ) -> None:
         self._instance = instance
+        self._consulted_bodies = consulted_bodies
         # A served query names every predicate and entry Subject kind it can
         # read; with both, only the Subjects it can reach are read and parsed.
         self._scoped_subject_kinds = subject_kinds if predicates is not None else None
@@ -533,6 +541,7 @@ class _AcceptedQueryFactsRead:
                         )
                     ),
                     reobserved=reader is not None and bool(reader.sequence(claim.identity.name)),
+                    bodies=self._consulted_bodies,
                 )
                 self._rows[path] = row
             rows.append(row)
@@ -606,6 +615,7 @@ def build_accepted_query_facts(
     include_retired: bool = False,
     predicates: tuple[str, ...] | None = None,
     subject_kinds: tuple[str, ...] | None = None,
+    consulted_bodies: dict[str, Any] | None = None,
 ) -> ClaimQueryFactsV1:
     """Project accepted ledger state into the facts one evaluation may read.
 
@@ -615,6 +625,8 @@ def build_accepted_query_facts(
     dependents to live rows. A served QueryDefinition supplies its complete
     referenced-predicate inventory so unrelated Claim and attestation bodies
     never enter the snapshot. General discovery callers leave it unrestricted.
+    ``consulted_bodies`` receives the body-store objects the rows' availability
+    answers consulted, with the file identity each had.
     """
 
     return _AcceptedQueryFactsRead(
@@ -623,6 +635,7 @@ def build_accepted_query_facts(
         external_readers=external_readers,
         predicates=predicates,
         subject_kinds=subject_kinds,
+        consulted_bodies=consulted_bodies,
     ).build(include_retired=include_retired)
 
 

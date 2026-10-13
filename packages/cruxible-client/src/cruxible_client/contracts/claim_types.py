@@ -43,6 +43,7 @@ from cruxible_client.contracts.canonical_forms import (
     validate_canonical_form,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole, ClaimTypeStructure
+from cruxible_client.contracts.content_memo import ParseMemo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
@@ -510,7 +511,22 @@ def render_claim_type(claim_type: ClaimType) -> bytes:
     return pretty_canonical_bytes(payload)
 
 
+_CLAIM_TYPE_PARSES: ParseMemo[ClaimType] = ParseMemo(capacity=1024, max_bytes=16 * 1024 * 1024)
+
+
 def parse_claim_type(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> ClaimType:
+    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
+    return _CLAIM_TYPE_PARSES.parse(
+        content, path, codec, lambda: _parse_claim_type(content, path=path, codec=codec)
+    )
+
+
+def _parse_claim_type(
     content: bytes,
     *,
     path: str,

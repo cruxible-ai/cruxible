@@ -280,6 +280,7 @@ from cruxible_core.providers.provider_local_runtime import (
 )
 from cruxible_core.providers.provider_outcomes import map_provider_refusal
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.request_scope import projection_request
 from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
 from cruxible_core.service.procedures.procedures import (
     PlaybillProcedureStateTapReader,
@@ -3516,6 +3517,7 @@ class _LineTerminalEgressSink:
         return self.proposal.deliver_terminal_egress(request=request, admission=admission)
 
 
+@projection_request
 def service_run_playbill_line(
     instance: PlaybillInstance,
     *,

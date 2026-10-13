@@ -692,6 +692,25 @@ class HistoryReader:
             )
         )
 
+    def claim_law_locations_of(self, paths: Sequence[str]) -> tuple[AcceptedMemberLocation, ...]:
+        """Every Claim law-record location of ``paths`` to this cutoff, oldest first, in bulk."""
+
+        wanted = tuple(dict.fromkeys(paths))
+        found: list[AcceptedMemberLocation] = []
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            found.extend(
+                AcceptedMemberLocation(*row)
+                for row in self._connection.execute(
+                    "SELECT * FROM accepted_member_locations WHERE artifact_kind='claim' "
+                    "AND has_law_evidence=1 AND sequence<=? AND member_path IN ("
+                    + ",".join("?" for _ in chunk)
+                    + ")",
+                    (self.sequence, *chunk),
+                )
+            )
+        return tuple(sorted(found, key=lambda item: (item.sequence, item.member_ordinal)))
+
     def claim_law_heads(self, paths: tuple[str, ...]) -> dict[str, tuple[int, int] | None]:
         """The latest law-record location of each Claim path at this cutoff, in one read."""
 
@@ -904,6 +923,7 @@ EnvelopeLoader = Callable[[int, PriorMemberSequences], Sequence[ArtifactEnvelope
 
 
 _HISTORY_CHAIN_SEED = "sha256:" + "0" * 64
+_UNANNOUNCED_COMMIT_LIMIT = 256
 
 
 def _generation_rows_digest(connection: sqlite3.Connection, previous: str, sequence: int) -> str:
@@ -1080,6 +1100,10 @@ class AcceptedHistoryIndex:
         self._writer: sqlite3.Connection | None = None
         self._writer_identity: tuple[int, ...] | None = None
         self._close_writer: Callable[[], None] | None = None
+        # History-only commits made before the proposal component existed, in
+        # order: it carries its source checkpoint across them once it learns its
+        # evidence root (ProposalIndex.bind_source_root).
+        self._unannounced_commits: list[tuple[tuple[int, ...] | None, tuple[int, ...]]] = []
         self.generations_checked = 0
         self.generations_written = 0
         self.artifact_rows_written = 0
@@ -1100,6 +1124,7 @@ class AcceptedHistoryIndex:
                     on_commit=self.proposal_committed,
                     connections=self._connections,
                     shutdown_proof=self._proposal_close_state,
+                    history_commits=self._unannounced_commits,
                 )
             return self._proposals
 
@@ -1135,6 +1160,25 @@ class AcceptedHistoryIndex:
             return None
         ready, chain = found
         self._chain = (ready[0], chain)
+        return ready
+
+    def _reverified_after_drift(
+        self, connection: sqlite3.Connection
+    ) -> tuple[int, str, str, str, int] | None:
+        """After the file moved under this process, the prefix it last verified, if it holds.
+
+        The rows through the last verified readiness are checked against the
+        chain this process recorded for them (one pass over the history rows,
+        no ledger read); synchronization then re-derives only the generations
+        after it from the ledger, as a successor append does. A mismatch, or no
+        verified readiness, starts from generation zero as before.
+        """
+        ready, chain = self._ready, self._chain
+        if ready is None or chain is None or chain[0] != ready[0]:
+            return None
+        if _history_chain(connection, through=chain[0]) != chain[1]:
+            self._chain = None
+            return None
         return ready
 
     def _recorded_readiness(
@@ -1375,10 +1419,19 @@ class AcceptedHistoryIndex:
                     ready = self._ready if stamp is not None and stamp == self._stamp else None
                     if ready is None and self._chain is None and self._trust_record:
                         ready = self._verified_through(writer, recovered)
+                    elif ready is None and self._chain is not None:
+                        ready = self._reverified_after_drift(writer)
                     self._sync(writer, recovered, load_envelopes, ready)
                     published_stamp = commit_working_write(writer, self._file_stamp, before_commit)
                     if published_stamp != before_commit and hasattr(self, "_proposals"):
                         self._proposals.database_committed(before_commit, published_stamp)
+                    elif published_stamp != before_commit:
+                        if len(self._unannounced_commits) < _UNANNOUNCED_COMMIT_LIMIT:
+                            self._unannounced_commits.append((before_commit, published_stamp))
+                        else:
+                            # Too long a run to replay: the checkpoint simply goes stale.
+                            self._unannounced_commits.clear()
+                            self._unannounced_commits.append((None, published_stamp))
                 except BaseException:
                     writer.rollback()
                     raise
@@ -1470,6 +1523,8 @@ class AcceptedHistoryIndex:
                 elif trust_record:
                     recorded = self._recorded_readiness(connection, recovered)
                     ready = None if recorded is None else recorded[0]
+                    if recorded is not None and before is not None:
+                        self._adopt_verified_file(recovered, before, *recorded)
             self._sync(connection, recovered, load_envelopes, ready)
             reader = HistoryReader(connection, recovered.head.sequence, self._canonical_records)
             reader.resolve(
@@ -1487,6 +1542,37 @@ class AcceptedHistoryIndex:
             yield reader
         finally:
             connection.close()
+
+    def _adopt_verified_file(
+        self,
+        recovered: RecoveredInstanceState,
+        stamp: tuple[int, ...],
+        ready: tuple[int, str, str, str, int],
+        chain: str,
+    ) -> None:
+        """Keep what a detached read just proved about the working file, in memory only.
+
+        The copy taken at ``stamp`` carried the recorded readiness, re-verified
+        row by row against its chain. When that readiness is the current head's,
+        the file itself is what a locked synchronization would leave: later reads
+        then take the clean snapshot (which re-checks schema and progress)
+        instead of copying the file and re-hashing every generation each time.
+        Nothing is written; a file that moved since, or state a locked read
+        already established, is left alone.
+        """
+        head = (
+            recovered.head.sequence,
+            recovered.head.generation_root.tagged,
+            recovered.coordinate.instance_id,
+            recovered.coordinate.compiler.rule_digest,
+            recovered.coordinate.compiler.schema_version,
+        )
+        if ready != head:
+            return
+        with self._lock:
+            if self._stamp is not None or not self._trust_record or self._file_stamp() != stamp:
+                return
+            self._stamp, self._ready, self._chain = stamp, ready, (ready[0], chain)
 
     def _copy_working_rows(
         self, memory: sqlite3.Connection, *, stamp: tuple[int, ...] | None

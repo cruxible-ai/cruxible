@@ -441,6 +441,54 @@ def test_a_true_condition_settles_the_claim_into_accepted_state(tmp_path: Path) 
     assert record.mandate_digest == egress.procedure_mandate_digest
 
 
+def test_a_settle_submits_its_lowered_fork_with_the_full_tree_verdicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The settle terminal hands admission the lowered fork, not a whole-tree copy (perf B2).
+
+    Receive validation then judges the fork from its edits and evaluation
+    advances the accepted base over the changed paths. The verdicts are the
+    whole-tree ones: the full receive pass accepts a plain copy of the same tree,
+    and evaluating that copy yields the same candidate and diagnostics.
+    """
+
+    from cruxible_core.derived.derived_state import SnapshotTree
+    from cruxible_core.proposals import proposals as service
+
+    instance, root, line = settle_world(tmp_path)
+    real_fork, real_validate = service._receives_as_fork, service.validate_proposal_tree
+    real_evaluate = service.evaluate_proposal_tree
+    received: list[bool] = []
+    evaluated: list[str | None] = []
+
+    def receives_as_fork(tree, *, limits, base_tree):  # type: ignore[no-untyped-def]
+        verdict = real_fork(tree, limits=limits, base_tree=base_tree)
+        if isinstance(tree, SnapshotTree):
+            received.append(verdict)
+            if verdict:
+                # The whole-tree pass over plain copies accepts the same tree.
+                real_validate(dict(tree), limits=limits, base_tree=dict(base_tree))
+        return verdict
+
+    def evaluate(**kwargs):  # type: ignore[no-untyped-def]
+        outcome = real_evaluate(**kwargs)
+        copied = real_evaluate(**{**kwargs, "proposed_tree": dict(kwargs["proposed_tree"])})
+        assert copied.diagnostics == outcome.diagnostics
+        assert (copied.candidate is None) == (outcome.candidate is None)
+        digest = None if outcome.candidate is None else outcome.candidate.candidate_digest
+        assert digest == (None if copied.candidate is None else copied.candidate.candidate_digest)
+        evaluated.append(digest)
+        return outcome
+
+    monkeypatch.setattr(service, "_receives_as_fork", receives_as_fork)
+    monkeypatch.setattr(service, "evaluate_proposal_tree", evaluate)
+    state = run_settle(instance, root, line)
+    egress = _egress(state)
+    assert (egress.verdict, egress.settle_outcome) == ("delivered", "settled")
+    assert received == [True]
+    assert len(evaluated) == 1 and evaluated[0] is not None
+
+
 def test_a_false_condition_falls_back_to_an_ordinary_proposal(tmp_path: Path) -> None:
     instance, root, line = settle_world(tmp_path, only_subject="someone-else")
     base = instance.accepted_coordinate()
@@ -965,9 +1013,9 @@ def test_a_settle_reads_condition_facts_for_its_predicates_only(
     built = PlaybillInstance._accepted_query_facts
     asked: list[object] = []
 
-    def scoped(source, coordinate, *, predicates=None):  # type: ignore[no-untyped-def]
+    def scoped(source, coordinate, *, predicates=None, subject_kinds=None):  # type: ignore[no-untyped-def]
         asked.append(predicates)
-        return built(source, coordinate, predicates=predicates)
+        return built(source, coordinate, predicates=predicates, subject_kinds=subject_kinds)
 
     def no_materialized_tree(self, oid):  # type: ignore[no-untyped-def]
         raise AssertionError("settle delivery materialized a whole accepted tree")
@@ -981,6 +1029,59 @@ def test_a_settle_reads_condition_facts_for_its_predicates_only(
     # predicates the condition query reads.
     expected = _condition(only_subject=None).referenced_predicates
     assert asked and all(predicates == expected for predicates in asked), asked
+
+
+def test_a_settle_builds_its_condition_facts_once_over_the_condition_kinds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delivery, admission and activation share one facts build per request (perf B7).
+
+    Each condition read asks for the condition query's entry Subject kinds, not
+    every Subject, and every target's condition result equals the one an
+    unscoped, freshly built facts projection gives.
+    """
+
+    from cruxible_core.query import engine
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.discovery import query as query_service
+
+    instance, root, line = settle_world(tmp_path)
+    kinds = _condition(only_subject=None).entry.subject_kinds
+    built, build = PlaybillInstance._accepted_query_facts, query_service.build_accepted_query_facts
+    asked: list[object] = []
+    builds: list[object] = []
+    compared: list[object] = []
+
+    def scoped(source, coordinate, *, predicates=None, subject_kinds=None):  # type: ignore[no-untyped-def]
+        asked.append(subject_kinds)
+        return built(source, coordinate, predicates=predicates, subject_kinds=subject_kinds)
+
+    def counted(source, *, coordinate, **kwargs):  # type: ignore[no-untyped-def]
+        if kwargs.get("subject_kinds") == kinds:
+            builds.append(coordinate.git_oid)
+        return build(source, coordinate=coordinate, **kwargs)
+
+    real_evaluate = engine.evaluate_claim_query
+
+    def evaluate(definition, *, facts, coordinate, **kwargs):  # type: ignore[no-untyped-def]
+        result = real_evaluate(definition, facts=facts, coordinate=coordinate, **kwargs)
+        query = getattr(definition, "query", None)
+        if getattr(getattr(query, "identity", None), "name", None) == "security.settle-condition":
+            whole = build(instance, coordinate=coordinate)
+            expected = real_evaluate(definition, facts=whole, coordinate=coordinate, **kwargs)
+            assert result == expected
+            compared.append(result.verdict)
+        return result
+
+    monkeypatch.setattr(PlaybillInstance, "_accepted_query_facts", staticmethod(scoped))
+    monkeypatch.setattr(query_service, "build_accepted_query_facts", counted)
+    monkeypatch.setattr(engine, "evaluate_claim_query", evaluate)
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    assert _egress(state).settle_outcome == "settled"
+    assert len(asked) >= 2 and all(item == kinds for item in asked), asked
+    assert len(builds) == 1, builds
+    assert compared and set(compared) == {"completed"}
 
 
 def test_every_settle_mandate_lookup_reads_its_one_path_never_the_tree(

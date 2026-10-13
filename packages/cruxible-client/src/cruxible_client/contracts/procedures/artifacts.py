@@ -31,6 +31,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.content_memo import ParseMemo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -361,7 +362,24 @@ def render_procedure(procedure: ProcedureArtifact) -> bytes:
     return pretty_canonical_bytes(procedure.model_dump(mode="json", by_alias=True))
 
 
+_PROCEDURE_PARSES: ParseMemo[ProcedureArtifact] = ParseMemo(
+    capacity=256, max_bytes=16 * 1024 * 1024
+)
+
+
 def parse_procedure(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> ProcedureArtifact:
+    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
+    return _PROCEDURE_PARSES.parse(
+        content, path, codec, lambda: _parse_procedure(content, path=path, codec=codec)
+    )
+
+
+def _parse_procedure(
     content: bytes,
     *,
     path: str,

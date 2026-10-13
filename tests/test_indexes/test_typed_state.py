@@ -392,3 +392,84 @@ def test_predicate_scoped_claim_reads_seek_and_do_not_grow_with_other_key_claims
         small,
         large,
     )
+
+
+def _slot_reads() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    from cruxible_core.indexes.subject_identity import LIVE_KEY_CLAIMS_SQL
+    from cruxible_core.indexes.typed_state import (
+        LIVE_SLOT_CLAIM_DIGESTS_SQL,
+        LIVE_SLOT_CLAIMS_SQL,
+        LIVE_SUBJECT_PREDICATE_CLAIMS_SQL,
+    )
+
+    slot = ("subjects/other.kind/s-1.json", "other.kind.slug")
+    return (
+        (LIVE_SLOT_CLAIMS_SQL, (*slot, None)),
+        (LIVE_SLOT_CLAIM_DIGESTS_SQL, (*slot, None)),
+        (LIVE_SUBJECT_PREDICATE_CLAIMS_SQL, slot),
+        (LIVE_KEY_CLAIMS_SQL, slot),
+    )
+
+
+def _slot_world(connection: sqlite3.Connection, other_claims: int) -> None:
+    connection.executescript(schema_sql())
+    rows = [_claim_row(number, "other.kind.slug") for number in range(other_claims)]
+    # A second, retired Claim in the probed slot: the lifecycle filter still applies.
+    retired = list(_claim_row(other_claims, "other.kind.slug"))
+    retired[5], retired[9] = "retired", "subjects/other.kind/s-1.json"
+    connection.executemany(
+        "INSERT INTO claims (identity,path,format_tag,artifact_digest,revision,lifecycle,"
+        "statement_digest,claim_type_identity,claim_type_digest,subject_path,"
+        "subject_selector_scheme,subject_selector_value,predicate,role,object_kind,"
+        "literal_type,literal_text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [*rows, tuple(retired)],
+    )
+
+
+def test_live_slot_claim_reads_seek_the_subject_predicate_index():
+    """A slot's live Claims are one seek, never a walk of the live Claims of a predicate.
+
+    Without the no-op ``+lifecycle`` the unanalyzed planner picks
+    ``claims_by_lifecycle`` or ``claims_by_predicate`` and visits every live
+    Claim (of the predicate); the answer is unchanged either way.
+    """
+
+    with sqlite3.connect(":memory:") as connection:
+        connection.executescript(schema_sql())
+        for statement, params in _slot_reads():
+            plan = [
+                str(row[3]) for row in connection.execute("EXPLAIN QUERY PLAN " + statement, params)
+            ]
+            assert plan[0].startswith("SEARCH claims USING INDEX claims_by_subject_predicate"), plan
+            assert "(subject_path=? AND predicate=?" in plan[0], plan
+
+    def work(other_claims: int) -> list[int]:
+        with sqlite3.connect(":memory:") as connection:
+            _slot_world(connection, other_claims)
+            counts = []
+            for statement, params in _slot_reads():
+                steps = [0]
+
+                def tick(steps: list[int] = steps) -> int:
+                    steps[0] += 1
+                    return 0
+
+                connection.set_progress_handler(tick, 1)
+                found = connection.execute(statement, params).fetchall()
+                connection.set_progress_handler(None, 1)
+                # The unplussed statement (the old planner choice) answers identically.
+                assert (
+                    found
+                    == connection.execute(
+                        statement.replace("+lifecycle", "lifecycle"), params
+                    ).fetchall()
+                )
+                assert [row[0] for row in found] == ["Claim:CLM-" + f"{1:032d}"]
+                counts.append(steps[0])
+            return counts
+
+    small, large = work(10), work(2000)
+    assert all(after - before <= 16 for before, after in zip(small, large, strict=True)), (
+        small,
+        large,
+    )

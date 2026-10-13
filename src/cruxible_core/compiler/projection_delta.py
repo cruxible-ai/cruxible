@@ -40,10 +40,21 @@ from cruxible_core.proposals.settlement import (
 if TYPE_CHECKING:
     from cruxible_core.compiler.assembler import ProjectionAssembler
 
-# These compilers emit rows owned by their artifact identity. Promotion outputs
-# can emit Procedure-owned rows and still use full current reconstruction.
+# These compilers emit rows owned by their artifact identity, derived from the
+# artifact and its own change-set history alone. Rows another owner reads are
+# keyed back to their source: an ExhaustPromotion's track-record rows live in
+# promotion_subjects under the promotion, an attestation's citations under its
+# envelope, and a SubjectKind change re-derives subject_keys for its kind
+# (replace_rows). A compiler upgrade changes the compiler, which the gate below
+# always rebuilds cold.
 _LOCAL_KINDS = frozenset(
     {
+        "attestation",
+        "blueprint",
+        "exhaust-promotion",
+        "resolution-contract",
+        "subject-kind",
+        "trigger",
         "document",
         "capture-contract",
         "claim",

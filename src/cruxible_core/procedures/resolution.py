@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import pickle
 import re
-from collections import defaultdict
+import threading
+from collections import OrderedDict, defaultdict
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import (
     BaseModel,
@@ -28,6 +33,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.claims import claim_path, claim_statement_address
 from cruxible_client.contracts.errors import ExecutionError
+from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.measurements import (
     ClaimAttestationProcedureMeasurement,
@@ -1206,6 +1212,63 @@ def build_resolution_disposition(
     )
 
 
+_RESOLUTION_EVENTS = frozenset({"resolution", "resolution_disposition"})
+_REPLAY_ACCESS = BodyAccessContext(principal_id="procedure-resolution-replay", can_read_body=True)
+
+_Activation = (
+    ResolutionContractActivationV1 | ResolutionContractActivationV2 | ResolutionContractActivationV3
+)
+
+
+def _parse_resolution(payload: object) -> ProcedureResolutionV1 | ProcedureResolutionV2:
+    if not isinstance(payload, dict):
+        raise ValueError("resolution payload must be an object")
+    if payload.get("tag") == "playbill-procedure-resolution-v1":
+        return ProcedureResolutionV1.model_validate(payload)
+    if payload.get("tag") == "playbill-resolution-v3":
+        return ProcedureResolutionV3.model_validate(payload)
+    if payload.get("tag") == "playbill-procedure-resolution-v2":
+        return ProcedureResolutionV2.model_validate(payload)
+    raise ValueError("resolution payload has an unknown version tag")
+
+
+def _check_resolution(
+    stored: StoredProcedureJournalRecordV1,
+    resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
+    activation: _Activation | None,
+) -> None:
+    """One resolution record against its exact accepted activation and law."""
+    if activation is None:
+        raise ExecutionError("resolution names no accepted derived activation")
+    if (
+        resolution.subject != activation.subject
+        or resolution.measurement_name != activation.measurement_name
+        or stored.record.accepted_coordinate
+        != resolution_event_accepted_coordinate(activation, resolution)
+        or stored.record.procedure_artifact_digest != activation.procedure_artifact_digest
+        or stored.record.partition_id != resolution_contract_partition_id(activation)
+    ):
+        raise ExecutionError("resolution differs from its exact accepted activation")
+    law = evaluate_procedure_resolution(activation, resolution)
+    if law.verdict == "refused":
+        raise ExecutionError(law.message or "resolution failed its accepted declaration")
+
+
+def _check_disposition(
+    stored: StoredProcedureJournalRecordV1,
+    target: ProcedureResolutionV1 | ProcedureResolutionV2,
+    activation: _Activation,
+) -> None:
+    """One disposition record against its target resolution's contract partition."""
+    if (
+        stored.record.partition_id != resolution_contract_partition_id(activation)
+        or stored.record.accepted_coordinate
+        != resolution_event_accepted_coordinate(activation, target)
+        or stored.record.procedure_artifact_digest != activation.procedure_artifact_digest
+    ):
+        raise ExecutionError("resolution disposition differs from its contract partition")
+
+
 class ProcedureResolutionBook:
     """Replay-only latest-non-overturned lookup over verified journal records."""
 
@@ -1234,48 +1297,18 @@ class ProcedureResolutionBook:
     ) -> None:
         self.resolutions.clear()
         self.dispositions.clear()
-        access = BodyAccessContext(principal_id="procedure-resolution-replay", can_read_body=True)
         for stored in records:
-            if stored.record.event_kind not in {"resolution", "resolution_disposition"}:
+            if stored.record.event_kind not in _RESOLUTION_EVENTS:
                 continue
             payload = parse_journal_payload(
-                bodies.read(stored.record.payload_digest, access=access)
+                bodies.read(stored.record.payload_digest, access=_REPLAY_ACCESS)
             )
             try:
                 if stored.record.event_kind == "resolution":
-                    if not isinstance(payload, dict):
-                        raise ValueError("resolution payload must be an object")
-                    if payload.get("tag") == "playbill-procedure-resolution-v1":
-                        resolution: ProcedureResolutionV1 | ProcedureResolutionV2 = (
-                            ProcedureResolutionV1.model_validate(payload)
-                        )
-                    elif payload.get("tag") == "playbill-resolution-v3":
-                        resolution = ProcedureResolutionV3.model_validate(payload)
-                    elif payload.get("tag") == "playbill-procedure-resolution-v2":
-                        resolution = ProcedureResolutionV2.model_validate(payload)
-                    else:
-                        raise ValueError("resolution payload has an unknown version tag")
-                    activation = self.activations.get(resolution.contract_id)
-                    if activation is None:
-                        raise ExecutionError("resolution names no accepted derived activation")
-                    if (
-                        resolution.subject != activation.subject
-                        or resolution.measurement_name != activation.measurement_name
-                        or stored.record.accepted_coordinate
-                        != resolution_event_accepted_coordinate(activation, resolution)
-                        or stored.record.procedure_artifact_digest
-                        != activation.procedure_artifact_digest
-                        or stored.record.partition_id
-                        != resolution_contract_partition_id(activation)
-                    ):
-                        raise ExecutionError(
-                            "resolution differs from its exact accepted activation"
-                        )
-                    law = evaluate_procedure_resolution(activation, resolution)
-                    if law.verdict == "refused":
-                        raise ExecutionError(
-                            law.message or "resolution failed its accepted declaration"
-                        )
+                    resolution = _parse_resolution(payload)
+                    _check_resolution(
+                        stored, resolution, self.activations.get(resolution.contract_id)
+                    )
                     prior = self.resolutions[resolution.contract_id]
                     if resolution.sequence != len(prior) + 1:
                         raise ExecutionError("resolution sequence is discontinuous")
@@ -1292,20 +1325,11 @@ class ProcedureResolutionBook:
                     disposition_target = self.resolution_by_id(disposition.resolution_id)
                     if disposition_target is None:
                         raise ExecutionError("disposition names an absent resolution")
-                    disposition_activation = self.activations[disposition_target.contract_id]
-                    if (
-                        stored.record.partition_id
-                        != resolution_contract_partition_id(disposition_activation)
-                        or stored.record.accepted_coordinate
-                        != resolution_event_accepted_coordinate(
-                            disposition_activation, disposition_target
-                        )
-                        or stored.record.procedure_artifact_digest
-                        != disposition_activation.procedure_artifact_digest
-                    ):
-                        raise ExecutionError(
-                            "resolution disposition differs from its contract partition"
-                        )
+                    _check_disposition(
+                        stored,
+                        disposition_target,
+                        self.activations[disposition_target.contract_id],
+                    )
                     contract_resolutions = self.resolutions[disposition_target.contract_id]
                     if contract_resolutions[-1].resolution_id != disposition.resolution_id:
                         raise ExecutionError(
@@ -1337,6 +1361,303 @@ class ProcedureResolutionBook:
         return None
 
 
+class ResolutionLookup(Protocol):
+    """What a reading law asks of a resolution history."""
+
+    def latest_non_overturned(
+        self, contract_id: str
+    ) -> ProcedureResolutionV1 | ProcedureResolutionV2 | None: ...
+
+
+@dataclass(frozen=True)
+class _ResolutionFold:
+    """An immutable fold of one partition's resolution events, through one journal head.
+
+    It answers what ``ProcedureResolutionBook.replay`` of the same records answers,
+    from maintained state: per contract the resolution count and latest
+    resolution, per resolution its disposition count and last verdict, keyed
+    lookups by resolution ID. Values are kept pickled and every read hands out
+    a fresh copy, so no caller can change what a later one sees. Every map is
+    persistent: extending by new records shares the rest. ``payloads`` holds the
+    CAS file identity of every payload the fold was derived from.
+
+    Why the latest non-overturned resolution is the contract's last one or
+    none: a later resolution is admitted only once its predecessor's last
+    disposition is an overturn, and a disposition may only name the contract's
+    last resolution, so every earlier resolution stays overturned.
+    """
+
+    head_sequence: int
+    head_digest: str | None
+    counts: PersistentMap[int]
+    last: PersistentMap[str]
+    resolutions: PersistentMap[tuple[str, bytes]]
+    dispositions: PersistentMap[tuple[int, str]]
+    records: PersistentMap[bytes]
+    event_kinds: frozenset[str]
+    payloads: PersistentMap[tuple[int, ...] | None]
+
+    @classmethod
+    def empty(cls) -> _ResolutionFold:
+        return cls(
+            0,
+            None,
+            PersistentMap(),
+            PersistentMap(),
+            PersistentMap(),
+            PersistentMap(),
+            PersistentMap(),
+            frozenset(),
+            PersistentMap(),
+        )
+
+    def extend(
+        self,
+        records: tuple[StoredProcedureJournalRecordV1, ...],
+        *,
+        activations: Mapping[str, _Activation],
+        bodies: ContentAddressedBodyStore,
+        head: JournalPartitionHeadV1 | None,
+    ) -> _ResolutionFold:
+        """This fold with ``records`` (the ones after its head, in order) folded on."""
+        counts, last, resolutions = self.counts, self.last, self.resolutions
+        dispositions, kept, kinds, payloads = (
+            self.dispositions,
+            self.records,
+            self.event_kinds,
+            self.payloads,
+        )
+        for stored in records:
+            kind = stored.record.event_kind
+            if kind not in kinds:
+                kinds = kinds | {kind}
+            if kind not in _RESOLUTION_EVENTS:
+                continue
+            digest = stored.record.payload_digest
+            # The identity is taken before the read: a file changed after it was
+            # verified then shows a different identity at the next validation.
+            identity = bodies.file_identity(digest)
+            payload = parse_journal_payload(bodies.read(digest, access=_REPLAY_ACCESS))
+            payloads = payloads.set(digest, identity)
+            try:
+                if kind == "resolution":
+                    resolution = _parse_resolution(payload)
+                    contract_id = resolution.contract_id
+                    _check_resolution(stored, resolution, activations.get(contract_id))
+                    count = counts.get(contract_id, 0)
+                    if resolution.sequence != count + 1:
+                        raise ExecutionError("resolution sequence is discontinuous")
+                    if count:
+                        state = dispositions.get(last[contract_id])
+                        if state is None or state[1] != "overturned":
+                            raise ExecutionError(
+                                "resolution contract is closed until its latest answer "
+                                "is overturned"
+                            )
+                    counts = counts.set(contract_id, count + 1)
+                    last = last.set(contract_id, resolution.resolution_id)
+                    if resolution.resolution_id not in resolutions:
+                        resolutions = resolutions.set(
+                            resolution.resolution_id, (contract_id, _frozen(resolution))
+                        )
+                    if resolution.resolution_id not in kept:
+                        kept = kept.set(resolution.resolution_id, _frozen(stored))
+                else:
+                    disposition = ProcedureResolutionDispositionV1.model_validate(payload)
+                    entry = resolutions.get(disposition.resolution_id)
+                    if entry is None:
+                        raise ExecutionError("disposition names an absent resolution")
+                    target = pickle.loads(entry[1])
+                    _check_disposition(stored, target, activations[target.contract_id])
+                    if last.get(target.contract_id) != disposition.resolution_id:
+                        raise ExecutionError(
+                            "an answered overturn cannot be revised on an older resolution"
+                        )
+                    count = dispositions.get(disposition.resolution_id, (0, ""))[0]
+                    if disposition.sequence != count + 1:
+                        raise ExecutionError("resolution disposition sequence is discontinuous")
+                    dispositions = dispositions.set(
+                        disposition.resolution_id, (count + 1, disposition.verdict)
+                    )
+            except ValueError as exc:
+                raise ExecutionError("resolution exhaust payload is invalid") from exc
+        return _ResolutionFold(
+            head_sequence=0 if head is None else head.sequence,
+            head_digest=None if head is None else head.record_digest,
+            counts=counts,
+            last=last,
+            resolutions=resolutions,
+            dispositions=dispositions,
+            records=kept,
+            event_kinds=kinds,
+            payloads=payloads,
+        )
+
+    def payloads_hold(self, bodies: ContentAddressedBodyStore) -> _ResolutionFold:
+        """This fold, once every payload it rests on is still what was read.
+
+        One identity check per payload: unchanged, the bytes it was derived from
+        are still there. A payload whose file changed is read and verified again,
+        refusing exactly as a replay's read would (``CasError`` for a missing or
+        damaged object); verified, the fold stands (the address is the content).
+        The identity remembered for it is the one taken before that verified
+        read, never a stat after it: a file replaced after the read then shows a
+        different identity and is verified again, so no unverified bytes are
+        ever blessed.
+        """
+        moved: dict[str, tuple[int, ...] | None] = {}
+        for digest, identity in self.payloads.items():
+            current = bodies.file_identity(digest)
+            if current is not None and current == identity:
+                continue
+            bodies.read(digest, access=_REPLAY_ACCESS)
+            moved[digest] = current
+        if not moved:
+            return self
+        payloads = self.payloads
+        for digest, identity in moved.items():
+            payloads = payloads.set(digest, identity)
+        return replace(self, payloads=payloads)
+
+
+def _frozen(value: object) -> bytes:
+    return pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+class ResolutionBookView:
+    """Read-only answers of one partition's resolution fold; every value is a detached copy."""
+
+    def __init__(self, fold: _ResolutionFold) -> None:
+        self._fold = fold
+
+    def resolution_count(self, contract_id: str) -> int:
+        return self._fold.counts.get(contract_id, 0)
+
+    def latest_resolution(
+        self, contract_id: str
+    ) -> ProcedureResolutionV1 | ProcedureResolutionV2 | None:
+        resolution_id = self._fold.last.get(contract_id)
+        return None if resolution_id is None else self.resolution_by_id(resolution_id)
+
+    def disposition_count(self, resolution_id: str) -> int:
+        return self._fold.dispositions.get(resolution_id, (0, ""))[0]
+
+    def last_disposition_verdict(self, resolution_id: str) -> str | None:
+        state = self._fold.dispositions.get(resolution_id)
+        return None if state is None else state[1]
+
+    def resolution_by_id(
+        self, resolution_id: str
+    ) -> ProcedureResolutionV1 | ProcedureResolutionV2 | None:
+        entry = self._fold.resolutions.get(resolution_id)
+        return None if entry is None else pickle.loads(entry[1])
+
+    def latest_non_overturned(
+        self, contract_id: str
+    ) -> ProcedureResolutionV1 | ProcedureResolutionV2 | None:
+        resolution_id = self._fold.last.get(contract_id)
+        if resolution_id is None or self.last_disposition_verdict(resolution_id) == "overturned":
+            return None
+        return self.resolution_by_id(resolution_id)
+
+    def resolution_record(self, resolution_id: str) -> StoredProcedureJournalRecordV1 | None:
+        frozen = self._fold.records.get(resolution_id)
+        return None if frozen is None else pickle.loads(frozen)
+
+    def has_event_kind(self, kind: str) -> bool:
+        return kind in self._fold.event_kinds
+
+
+_BOOK_CAPACITY = 256
+_BOOKS: OrderedDict[tuple[object, ...], _ResolutionFold] = OrderedDict()
+_BOOKS_LOCK = threading.Lock()
+
+
+def resolution_book_at_head(
+    journal: object,
+    stream: JournalStreamIdentityV1,
+    activation: _Activation,
+    *,
+    bodies: ContentAddressedBodyStore,
+) -> tuple[ResolutionBookView, JournalPartitionHeadV1 | None]:
+    """One contract partition's resolution answers through its current head.
+
+    This process keeps the fold it last made for a partition (keyed by journal,
+    CAS, stream, partition and the activation's content digest) with the head it
+    reached. A later call first checks that every payload the fold rests on is
+    still the file that was read (``payloads_hold``), then extends it with only
+    the records after that head, read through the journal index (each new frame
+    verified against its indexed predecessor). A head that does not extend the
+    kept one, or a journal without an index, folds the whole partition. The
+    returned view shares the immutable fold; values it hands out are copies.
+    """
+
+    partition_id = resolution_contract_partition_id(activation)
+    activations = {activation.contract_id: activation}
+    read_head = getattr(journal, "read_head", None)
+    select = getattr(journal, "select_records", None)
+    all_records = getattr(journal, "all_records")
+    if read_head is None or select is None or not hasattr(bodies, "file_identity"):
+        whole = _ResolutionFold.empty().extend(
+            tuple(all_records(stream, partition_id)),
+            activations=activations,
+            bodies=bodies,
+            head=None,
+        )
+        return ResolutionBookView(whole), None
+    head: JournalPartitionHeadV1 = read_head(stream, partition_id)
+    key = (
+        str(getattr(journal, "root", id(journal))),
+        str(getattr(bodies, "root", id(bodies))),
+        stream.instance_id,
+        stream.journal_family,
+        stream.stream_id,
+        partition_id,
+        # The activation every record is checked against, by content.
+        hashlib.sha256(canonical_bytes(activation.model_dump(mode="json"))).hexdigest(),
+    )
+    with _BOOKS_LOCK:
+        held = _BOOKS.get(key)
+        if held is not None:
+            _BOOKS.move_to_end(key)
+    fold: _ResolutionFold | None = None
+    if held is not None and 0 < held.head_sequence <= head.sequence:
+        if held.head_sequence == head.sequence:
+            if held.head_digest == head.record_digest:
+                fold = held.payloads_hold(bodies)
+        else:
+            added = tuple(
+                select(
+                    stream,
+                    partition_id=partition_id,
+                    first_sequence=held.head_sequence + 1,
+                    last_sequence=head.sequence,
+                )
+            )
+            if (
+                len(added) == head.sequence - held.head_sequence
+                and added[0].record.previous_record_digest == held.head_digest
+                and added[-1].record_digest == head.record_digest
+            ):
+                fold = held.payloads_hold(bodies).extend(
+                    added, activations=activations, bodies=bodies, head=head
+                )
+    if fold is None:
+        fold = _ResolutionFold.empty().extend(
+            tuple(all_records(stream, partition_id)[: head.sequence]),
+            activations=activations,
+            bodies=bodies,
+            head=head,
+        )
+    if head.sequence > 0:
+        with _BOOKS_LOCK:
+            _BOOKS[key] = fold
+            _BOOKS.move_to_end(key)
+            while len(_BOOKS) > _BOOK_CAPACITY:
+                _BOOKS.popitem(last=False)
+    return ResolutionBookView(fold), head
+
+
 def append_procedure_resolution(
     writer: ProcedureExhaustWriter,
     *,
@@ -1359,15 +1680,14 @@ def append_procedure_resolution(
     law = evaluate_procedure_resolution(activation, resolution)
     if law.verdict == "refused":
         raise ExecutionError(law.message or "resolution law refused")
-    existing = writer.journal.all_records(stream, partition_id)
-    book = ProcedureResolutionBook((activation,))
-    book.replay(existing, bodies=writer.bodies)
-    prior = book.resolutions.get(activation.contract_id, ())
-    if resolution.sequence != len(prior) + 1:
+    book, _head = resolution_book_at_head(writer.journal, stream, activation, bodies=writer.bodies)
+    count = book.resolution_count(activation.contract_id)
+    if resolution.sequence != count + 1:
         raise ExecutionError("resolution sequence is discontinuous")
-    if prior:
-        dispositions = book.dispositions.get(prior[-1].resolution_id, ())
-        if not dispositions or dispositions[-1].verdict != "overturned":
+    if count:
+        latest = book.latest_resolution(activation.contract_id)
+        assert latest is not None  # counted above
+        if book.last_disposition_verdict(latest.resolution_id) != "overturned":
             raise ExecutionError(
                 "resolution contract is closed until its latest answer is overturned"
             )
@@ -1398,17 +1718,14 @@ def append_resolution_disposition(
     partition_id = resolution_contract_partition_id(activation)
     if disposition.resolution_id != resolution.resolution_id:
         raise ExecutionError("resolution disposition names another resolution")
-    existing = writer.journal.all_records(stream, partition_id)
-    book = ProcedureResolutionBook((activation,))
-    book.replay(existing, bodies=writer.bodies)
+    book, _head = resolution_book_at_head(writer.journal, stream, activation, bodies=writer.bodies)
     stored_resolution = book.resolution_by_id(resolution.resolution_id)
     if stored_resolution != resolution:
         raise ExecutionError("resolution disposition target is absent from exhaust")
-    contract_resolutions = book.resolutions[resolution.contract_id]
-    if contract_resolutions[-1].resolution_id != resolution.resolution_id:
+    latest = book.latest_resolution(resolution.contract_id)
+    if latest is None or latest.resolution_id != resolution.resolution_id:
         raise ExecutionError("an answered overturn cannot be revised on an older resolution")
-    prior = book.dispositions.get(resolution.resolution_id, ())
-    if disposition.sequence != len(prior) + 1:
+    if disposition.sequence != book.disposition_count(resolution.resolution_id) + 1:
         raise ExecutionError("resolution disposition sequence is discontinuous")
     return writer.append(
         stream=stream,
@@ -1424,6 +1741,9 @@ def append_resolution_disposition(
 
 
 __all__ = [
+    "ResolutionBookView",
+    "ResolutionLookup",
+    "resolution_book_at_head",
     "ProcedureProofReferenceV1",
     "ProcedureResolutionBook",
     "ProcedureResolutionDispositionV1",

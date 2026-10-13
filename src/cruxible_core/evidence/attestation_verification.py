@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Literal, Mapping, NoReturn, Protocol
+from typing import Callable, Iterator, Literal, Mapping, NoReturn, Protocol
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
@@ -15,6 +15,7 @@ from cruxible_client.contracts.captures import (
     ProducerReceiptResolverProtocol,
     capture_contract_digest,
     capture_contract_is_self_asserted,
+    capture_contract_path,
     parse_capture_contract,
     parse_capture_envelope,
     verify_capture,
@@ -49,6 +50,7 @@ from cruxible_client.contracts.providers import parse_provider, provider_digest,
 from cruxible_client.contracts.source_references import LedgerSourceReference
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_core.derived.derived_state import paths_with_prefix
 from cruxible_core.indexes.projection import AcceptedCoordinate
 
 
@@ -62,9 +64,10 @@ def _capture_contracts(
     tree: Mapping[str, bytes],
 ) -> dict[str, AcceptedCaptureContract]:
     result: dict[str, AcceptedCaptureContract] = {}
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("capture-contracts/"):
-            continue
+    # Filter the paths before ordering or reading any: only CaptureContracts are read.
+    for path in sorted(
+        paths_with_prefix(tree, "capture-contracts/"), key=lambda item: item.encode("utf-8")
+    ):
         contract = parse_capture_contract(tree[path], path=path)
         digest = capture_contract_digest(contract).tagged
         result[digest] = AcceptedCaptureContract(
@@ -155,22 +158,138 @@ def _examined_capture_semantics(claim: ClaimArtifactAny, capture_digest: str) ->
         _refuse("examined_capture_not_evidence", "copy-only backing is not attestable evidence")
 
 
+class _ReferentProducers(Mapping[str, str]):
+    """The referent's Provider and Procedure digests, each read at its identity's own path.
+
+    An accepted artifact with a qualified identity can only be at that identity's
+    path (its parse checks the correspondence), so looking one up reads that one
+    file and answers what the whole-prefix tables did. Enumerating (which no
+    verification does) falls back to those tables.
+    """
+
+    def __init__(self, tree: Mapping[str, bytes]) -> None:
+        self._tree = tree
+        self._found: dict[str, str | None] = {}
+
+    def _lookup(self, qualified: object) -> str | None:
+        if not isinstance(qualified, str):
+            return None
+        if qualified in self._found:
+            return self._found[qualified]
+        kind, separator, name = qualified.partition(":")
+        digest: str | None = None
+        try:
+            if separator and kind == "Provider":
+                path = provider_path(name)
+                content = self._tree.get(path)
+                if content is not None:
+                    provider = parse_provider(content, path=path)
+                    if provider.identity.qualified == qualified:
+                        digest = provider_digest(provider).tagged
+            elif separator and kind == "Procedure":
+                path = procedure_path(name)
+                content = self._tree.get(path)
+                if content is not None:
+                    procedure = parse_procedure(content, path=path)
+                    if procedure.identity.qualified == qualified:
+                        digest = procedure_artifact_digest(procedure).tagged
+        except (CruxibleError, ValueError):
+            # A name that is not path-addressable names no accepted artifact.
+            digest = None
+        self._found[qualified] = digest
+        return digest
+
+    def __getitem__(self, qualified: str) -> str:
+        digest = self._lookup(qualified)
+        if digest is None:
+            raise KeyError(qualified)
+        return digest
+
+    def __contains__(self, qualified: object) -> bool:
+        return self._lookup(qualified) is not None
+
+    def _whole(self) -> dict[str, str]:
+        return _provider_digests(self._tree) | _procedure_digests(self._tree)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._whole())
+
+    def __len__(self) -> int:
+        return len(self._whole())
+
+
+def _contract_live_at(tree: Mapping[str, bytes], identity: ArtifactIdentity) -> bool:
+    """Whether the CaptureContract of ``identity`` is live in ``tree``, read at its own path."""
+    try:
+        path = capture_contract_path(identity.name)
+    except (CruxibleError, ValueError):
+        return False
+    content = tree.get(path)
+    if content is None:
+        return False
+    contract = parse_capture_contract(content, path=path)
+    return contract.identity == identity and contract.lifecycle.state == "live"
+
+
+@dataclass(frozen=True)
+class CaptureContractVersions:
+    """Exact CaptureContract versions accepted at or before one referent, by digest.
+
+    ``authoritative`` says ``resolve`` answers from an accepted-history index
+    that holds every artifact version accepted at or before the referent: a
+    None from it means no CaptureContract with that digest was ever accepted
+    there, so none can be present and nothing is enumerated. A lookup that is
+    not authoritative (a plain callable, or a resolver without an index) proves
+    nothing by a None, and the referent's CaptureContracts are read whole.
+    """
+
+    resolve: Callable[[str], AcceptedCaptureContract | None]
+    authoritative: bool
+
+    def __call__(self, digest: str) -> AcceptedCaptureContract | None:
+        return self.resolve(digest)
+
+
+def _current_contract(
+    tree: Mapping[str, bytes],
+    digest: str,
+    historical: Callable[[str], AcceptedCaptureContract | None] | None,
+) -> AcceptedCaptureContract | None:
+    """The CaptureContract with exactly ``digest`` present in ``tree``, or None.
+
+    The accepted-history index locates the version (and so its one path: the
+    digest covers the identity); the referent's own bytes at that path decide
+    whether it is the version present there. An authoritative index that finds
+    no such version answers absence outright. Only without an authoritative
+    answer are the referent's CaptureContracts read whole, as before.
+    """
+    version = None if historical is None else historical(digest)
+    if version is None:
+        if isinstance(historical, CaptureContractVersions) and historical.authoritative:
+            return None
+        return _capture_contracts(tree).get(digest)
+    content = tree.get(version.path)
+    if content is None:
+        return None
+    contract = parse_capture_contract(content, path=version.path)
+    if capture_contract_digest(contract).tagged != digest:
+        return None
+    return AcceptedCaptureContract(path=version.path, contract=contract, artifact_digest=digest)
+
+
 def _provider_digests(tree: Mapping[str, bytes]) -> dict[str, str]:
     result: dict[str, str] = {}
-    for path, content in tree.items():
-        if not path.startswith("providers/"):
-            continue
-        provider = parse_provider(content, path=path)
+    # By path first: ``items()`` would read every blob of the tree to keep a few.
+    for path in paths_with_prefix(tree, "providers/"):
+        provider = parse_provider(tree[path], path=path)
         result[provider.identity.qualified] = provider_digest(provider).tagged
     return result
 
 
 def _procedure_digests(tree: Mapping[str, bytes]) -> dict[str, str]:
     result: dict[str, str] = {}
-    for path, content in tree.items():
-        if not path.startswith("procedures/"):
-            continue
-        procedure = parse_procedure(content, path=path)
+    for path in paths_with_prefix(tree, "procedures/"):
+        procedure = parse_procedure(tree[path], path=path)
         result[procedure.identity.qualified] = procedure_artifact_digest(procedure).tagged
     return result
 
@@ -187,10 +306,7 @@ def _live_at_append(
         provider = parse_provider(content, path=provider_path(identity.name))
         return provider.lifecycle.state == "live"
     if identity.kind == "CaptureContract":
-        return any(
-            accepted.contract.identity == identity and accepted.contract.lifecycle.state == "live"
-            for accepted in _capture_contracts(append_tree).values()
-        )
+        return _contract_live_at(append_tree, identity)
     if identity.kind == "Procedure":
         content = append_tree.get(procedure_path(identity.name))
         if content is None:
@@ -213,15 +329,9 @@ def _new_capture_accounts(
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
     require_production_proof: bool = True,
 ) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifact, ...]]:
-    contracts = _capture_contracts(referent_tree)
-    live_identities = {
-        accepted.contract.identity.qualified
-        for accepted in contracts.values()
-        if accepted.contract.lifecycle.state == "live"
-    }
-    providers = _provider_digests(referent_tree)
-    procedures = _procedure_digests(referent_tree)
-    producers = providers | procedures
+    # The cited Captures' contracts and producers are resolved by their exact
+    # digest or identity, never by reading every contract or producer.
+    producers = _ReferentProducers(referent_tree)
     admitted: list[str] = []
     claim_type_content = referent_tree.get(claim_type_path(claim.statement.predicate))
     if claim_type_content is None:
@@ -254,12 +364,16 @@ def _new_capture_accounts(
             envelope = parse_capture_envelope(raw)
         except (CruxibleError, ValueError) as exc:
             raise ClaimAttestationRefusal("capture_invalid", "Capture envelope is invalid") from exc
-        accepted = contracts.get(envelope.capture_contract_digest)
+        accepted = _current_contract(
+            referent_tree, envelope.capture_contract_digest, historical_capture_contract
+        )
         if accepted is None and historical_capture_contract is not None:
             # A Capture made under a version since succeeded is still exact
             # evidence of that version, provided its contract is live at referent.
             accepted = historical_capture_contract(envelope.capture_contract_digest)
-            if accepted is not None and accepted.contract.identity.qualified not in live_identities:
+            if accepted is not None and not _contract_live_at(
+                referent_tree, accepted.contract.identity
+            ):
                 _refuse(
                     "capture_contract_not_live_at_referent",
                     "CaptureContract is not live at referent",
@@ -296,7 +410,7 @@ def _new_capture_accounts(
             "self-asserted" if capture_contract_is_self_asserted(contract) else "daemon-fetched"
         )
         if envelope.producer.kind == "Provider":
-            if envelope.producer.qualified not in providers:
+            if envelope.producer.qualified not in producers:
                 _refuse("capture_provider_unresolved", "Capture Provider is not accepted")
         elif envelope.producer.kind == "Principal":
             try:
@@ -312,7 +426,7 @@ def _new_capture_accounts(
                     "daemon-fetched Capture provenance requires an accepted Provider",
                 )
         elif envelope.producer.kind == "Procedure":
-            if envelope.producer.qualified not in procedures:
+            if envelope.producer.qualified not in producers:
                 _refuse("capture_provider_unresolved", "Capture Procedure is not accepted")
         else:
             _refuse(

@@ -90,8 +90,8 @@ def service_append_claim_attestation(
             else None
         ),
         producer_receipt_resolver=instance.capture_verification_context(),
-        historical_capture_contract=lambda digest: instance.accepted_capture_contract_version(
-            AcceptedCoordinate.from_internal(referent), digest
+        historical_capture_contract=instance.accepted_capture_contract_versions(
+            AcceptedCoordinate.from_internal(referent)
         ),
     )
     current = _accepted_claim(append_tree, statement.claim_identity.name)

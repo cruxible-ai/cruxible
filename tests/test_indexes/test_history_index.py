@@ -704,3 +704,76 @@ def test_history_rebuild_reads_only_each_successors_changed_members(tmp_path, mo
     )
     index.path.unlink()
     assert rows() == published
+
+
+def test_detached_reads_after_a_restart_verify_the_file_once(tmp_path, seeded, monkeypatch):
+    """A preview after a restart re-hashes the history rows once, not on every read (perf B5).
+
+    The first detached read verifies the recorded readiness over a private copy;
+    the working file at that stamp is then known to be at the head, so later
+    reads take its clean snapshot and answer what the copies answered.
+    """
+
+    from cruxible_core.indexes.history import history_index as module
+
+    state = seeded._recovered
+    index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
+    with index.read(state, lambda n, _prior: [envelope(str(n))]):
+        pass
+    index.close()
+    chains, copies = [], []
+    real_chain, real_copy = module._history_chain, AcceptedHistoryIndex._copy_working_rows
+
+    def chain(connection, *, through):
+        chains.append(through)
+        return real_chain(connection, through=through)
+
+    def copy(self, memory, *, stamp):
+        copies.append(stamp)
+        return real_copy(self, memory, stamp=stamp)
+
+    monkeypatch.setattr(module, "_history_chain", chain)
+    monkeypatch.setattr(AcceptedHistoryIndex, "_copy_working_rows", copy)
+    reopened = AcceptedHistoryIndex(index.path)
+    answers = []
+    with module.detached_history_reads():
+        for _ in range(3):
+            with reopened.read(state, lambda n, _prior: pytest.fail("no re-derivation")) as reader:
+                answers.append(
+                    (reader.sequence, reader.occurrences("Claim:a"), reader.artifact("1"))
+                )
+    assert len(set(map(repr, answers))) == 1
+    assert chains == [state.head.sequence] and len(copies) == 1
+    assert reopened.generations_checked == 0
+    reopened.close()
+
+
+def test_a_file_that_moved_under_the_reader_reverifies_instead_of_rederiving(tmp_path, seeded):
+    """Another writer's commit re-checks the verified prefix, not every generation (perf E2).
+
+    Rows it left as they were are re-hashed against the chain this process
+    recorded; a row it changed still fails that check and is reconciled from
+    the ledger as before.
+    """
+
+    state = seeded._recovered
+    index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
+    with index.read(state, lambda n, _prior: [envelope(str(n))]):
+        pass
+    calls = []
+
+    def source(n, _prior=None):
+        calls.append(n)
+        return [envelope(str(n))]
+
+    with sqlite3.connect(index.path) as db:
+        db.execute("UPDATE history_progress SET sequence=sequence")
+    with index.read(state, source) as reader:
+        assert reader.artifact("1").identity == "Claim:a"
+    assert calls == []
+    with sqlite3.connect(index.path) as db:
+        db.execute("UPDATE artifact_versions SET identity='Claim:tampered'")
+    with index.read(state, source) as reader:
+        assert reader.artifact("1").identity == "Claim:a"
+    assert calls == list(range(len(state.history)))
+    index.close()

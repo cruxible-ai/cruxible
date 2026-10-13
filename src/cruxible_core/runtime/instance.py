@@ -13,7 +13,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
-from contextvars import Context
+from contextvars import Context, ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -127,7 +127,7 @@ from cruxible_core.indexes.projection import (
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.indexes.proposals.proposal_note_reader import proposal_note_snapshot
 from cruxible_core.indexes.serving import bind_current_projection
-from cruxible_core.indexes.sqlite import ProjectionHandle, bind_projection
+from cruxible_core.indexes.sqlite import ProjectionHandle, ProjectionPool, bind_projection
 from cruxible_core.indexes.typed_sqlite import parse_static_owners
 from cruxible_core.ledger.activation import ActivationPublisher, ActivationResult
 from cruxible_core.ledger.bootstrap import (
@@ -181,6 +181,7 @@ from cruxible_core.storage.cas import (
 from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
 
 if TYPE_CHECKING:
+    from cruxible_core.evidence.attestation_verification import CaptureContractVersions
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationEvidenceStore
     from cruxible_core.proposals.refusal_index import RefusalIndex
     from cruxible_core.query.backends import ClaimQueryFactsV1
@@ -265,6 +266,10 @@ def _validate_client_principals(
 
 
 _VALIDATED_PATH_CAPACITY = 64
+#: The request-scoped projection pool of this thread (see ``projection_scope``).
+_PROJECTION_POOL: ContextVar[ProjectionPool | None] = ContextVar(
+    "cruxible_projection_pool", default=None
+)
 _PathBinding = tuple[str, tuple[tuple[tuple[int, int, int], ...], ...]]
 _VALIDATED_PATHS: OrderedDict[
     tuple[str, tuple[tuple[str, Any], ...]],
@@ -389,17 +394,90 @@ class PlaybillInstance:
         coordinate: AcceptedProjectionCoordinate,
         *,
         predicates: tuple[str, ...] | None = None,
+        subject_kinds: tuple[str, ...] | None = None,
     ) -> "ClaimQueryFactsV1":
-        """Build the one accepted-Claim facts projection for live and replay paths."""
+        """Build the one accepted-Claim facts projection for live and replay paths.
+
+        Inside a request (``projection_scope``) a live instance hands the same
+        facts to every evaluation at one coordinate that reads the same
+        predicates and Subject kinds -- a settle's delivery check, admission and
+        activation -- while nothing they were assembled from has moved.
+        """
 
         from cruxible_core.service.discovery.query import build_accepted_query_facts
         from cruxible_core.service.evidence.evidence import ClaimReadSourceProtocol
 
+        pool = _PROJECTION_POOL.get()
+        if pool is not None and predicates is not None and isinstance(source, PlaybillInstance):
+            return source._request_query_facts(
+                pool, coordinate, predicates=predicates, subject_kinds=subject_kinds
+            )
         return build_accepted_query_facts(
             cast(ClaimReadSourceProtocol, source),
             coordinate=coordinate,
             predicates=predicates,
+            subject_kinds=subject_kinds,
         )
+
+    def _request_query_facts(
+        self,
+        pool: ProjectionPool,
+        coordinate: AcceptedProjectionCoordinate,
+        *,
+        predicates: tuple[str, ...],
+        subject_kinds: tuple[str, ...] | None,
+    ) -> "ClaimQueryFactsV1":
+        """Facts remembered for this request while their mutable inputs hold.
+
+        At one accepted coordinate a fact row varies only with the body store
+        and the re-observation journal: the verdict input fingerprint covers
+        every evidence body landing or erase and every re-observation, and the
+        file identity of each body-store object the build consulted covers a
+        rewrite. Both are checked before reuse, so a reused build answers
+        exactly as a fresh one would.
+        """
+
+        from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
+        from cruxible_core.service.discovery.query import build_accepted_query_facts
+        from cruxible_core.service.evidence.evidence import (
+            UNKNOWN_BODIES,
+            body_fingerprints_hold,
+        )
+
+        memo = pool.values()
+        fingerprint = verdict_input_fingerprint(self)
+        if memo is None or fingerprint is None:
+            return build_accepted_query_facts(
+                self, coordinate=coordinate, predicates=predicates, subject_kinds=subject_kinds
+            )
+        key = (
+            "accepted-query-facts",
+            id(self),
+            coordinate.git_oid,
+            coordinate.semantic_root,
+            coordinate.generation_root,
+            coordinate.compiler.rule_digest,
+            predicates,
+            subject_kinds,
+        )
+        held = memo.get(key)
+        if held is not None:
+            kept, seen, bodies = held
+            if seen == fingerprint and body_fingerprints_hold(self, bodies):
+                return cast("ClaimQueryFactsV1", kept)
+        consulted: dict[str, Any] = {}
+        facts = build_accepted_query_facts(
+            self,
+            coordinate=coordinate,
+            predicates=predicates,
+            subject_kinds=subject_kinds,
+            consulted_bodies=consulted,
+        )
+        if UNKNOWN_BODIES not in consulted and verdict_input_fingerprint(self) == fingerprint:
+            memo[key] = (facts, fingerprint, tuple(consulted.items()))
+        else:
+            memo.pop(key, None)
+        return facts
 
     @classmethod
     def initialize(
@@ -1400,6 +1478,23 @@ class PlaybillInstance:
             path=path, contract=contract, artifact_digest=contract_digest
         )
 
+    def accepted_capture_contract_versions(
+        self, coordinate: AcceptedCoordinate
+    ) -> "CaptureContractVersions":
+        """``accepted_capture_contract_version`` at one referent, with its authority.
+
+        Authoritative when this instance's history index holds every accepted
+        artifact version, genesis included: its compiler is one that indexes
+        genesis (``_history_reader_for_epoch``).
+        """
+
+        from cruxible_core.evidence.attestation_verification import CaptureContractVersions
+
+        return CaptureContractVersions(
+            resolve=lambda digest: self.accepted_capture_contract_version(coordinate, digest),
+            authoritative=self._recovered.coordinate.compiler in PC_HR_ARTIFACT_CODEC_COMPILERS,
+        )
+
     def capture_verification_context(self) -> LocalProducerReceiptResolver:
         """The Capture verification context of the current request.
 
@@ -1461,8 +1556,10 @@ class PlaybillInstance:
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
             producer_receipt_resolver=self.capture_verification_context(),
-            query_facts_provider=lambda coordinate, *, predicates=None: self._accepted_query_facts(
-                self, coordinate, predicates=predicates
+            query_facts_provider=lambda coordinate, *, predicates=None, subject_kinds=None: (
+                self._accepted_query_facts(
+                    self, coordinate, predicates=predicates, subject_kinds=subject_kinds
+                )
             ),
             workspace_advertiser=self.advertise_workspace,
             receive_limits=self._receive_limits,
@@ -2184,8 +2281,62 @@ class PlaybillInstance:
         self,
         coordinate: AcceptedProjectionCoordinate,
     ) -> ProjectionHandle:
-        """Bind a current serving or retained historical immutable projection."""
+        """Bind a current serving or retained historical immutable projection.
 
+        Inside ``projection_scope`` a handle of the same coordinate that its
+        last holder closed cleanly is handed out again instead of rebinding.
+        """
+
+        pool = _PROJECTION_POOL.get()
+        if pool is None:
+            return self._bind_accepted_projection(coordinate)
+        key = (
+            id(self),
+            coordinate.git_oid,
+            coordinate.semantic_root,
+            coordinate.generation_root,
+            coordinate.compiler.rule_digest,
+        )
+        reused = pool.take(key)
+        if reused is not None:
+            try:
+                # Still one accepted generation: refused exactly as a fresh bind is.
+                self.resolve_accepted_coordinate(
+                    git_oid=coordinate.git_oid,
+                    semantic_root=coordinate.semantic_root,
+                    generation_root=coordinate.generation_root,
+                    compiler_digest=coordinate.compiler.rule_digest,
+                )
+            except BaseException:
+                reused.close()
+                raise
+            return reused
+        return pool.adopt(key, self._bind_accepted_projection(coordinate), owner=self)
+
+    @contextmanager
+    def projection_scope(self) -> Iterator[None]:
+        """One request on this thread: reuse bound projections instead of rebinding per lookup.
+
+        A write or a Line run reads the same accepted coordinate hundreds of
+        times; each fresh bind re-reads the manifests, re-opens and re-checks the
+        piece. Nested scopes join the outermost one; handles close at its exit.
+        """
+
+        if _PROJECTION_POOL.get() is not None:
+            yield
+            return
+        pool = ProjectionPool()
+        token = _PROJECTION_POOL.set(pool)
+        try:
+            yield
+        finally:
+            _PROJECTION_POOL.reset(token)
+            pool.close()
+
+    def _bind_accepted_projection(
+        self,
+        coordinate: AcceptedProjectionCoordinate,
+    ) -> ProjectionHandle:
         verified = self.resolve_accepted_coordinate(
             git_oid=coordinate.git_oid,
             semantic_root=coordinate.semantic_root,
@@ -2341,8 +2492,10 @@ class PlaybillInstance:
             mandate_digest=mandate_digest,
             promotion_verifier=self._promotion_verifier,
             producer_receipt_resolver=self.capture_verification_context(),
-            query_facts_provider=lambda coordinate, *, predicates=None: self._accepted_query_facts(
-                self, coordinate, predicates=predicates
+            query_facts_provider=lambda coordinate, *, predicates=None, subject_kinds=None: (
+                self._accepted_query_facts(
+                    self, coordinate, predicates=predicates, subject_kinds=subject_kinds
+                )
             ),
             tree_state_provider=derive_indexed_state,
             accepted_tree_provider=self.immutable_tree_at,

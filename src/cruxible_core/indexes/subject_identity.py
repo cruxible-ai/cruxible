@@ -165,9 +165,15 @@ def _value_clause(value: SubjectKeyValue) -> tuple[str, tuple[object, ...]]:
     return "literal_type='string' AND literal_text=?", (value,)
 
 
+# ``+lifecycle`` keeps the planner on ``claims_by_subject_predicate`` (see
+# ``typed_state.LIVE_SLOT_CLAIMS_SQL``); the filter itself is unchanged.
 _KEY_CLAIM = (
-    "lifecycle='live' AND object_kind='literal' AND qualifier IS NULL "
+    "+lifecycle='live' AND object_kind='literal' AND qualifier IS NULL "
     "AND subject_selector_scheme='artifact-v1'"
+)
+LIVE_KEY_CLAIMS_SQL = (
+    "SELECT identity, literal_type, literal_text, literal_integer_text, literal_boolean "
+    f"FROM claims WHERE subject_path=? AND predicate=? AND {_KEY_CLAIM} ORDER BY identity"
 )
 
 
@@ -288,11 +294,7 @@ def live_key_claims(
 ) -> tuple[tuple[str, SubjectKeyValue | None], ...]:
     """Each live key Claim of one Subject and predicate: ``(Claim identity, value)``."""
 
-    rows = connection.execute(
-        "SELECT identity, literal_type, literal_text, literal_integer_text, literal_boolean "
-        f"FROM claims WHERE subject_path=? AND predicate=? AND {_KEY_CLAIM} ORDER BY identity",
-        (subject_path, predicate),
-    ).fetchall()
+    rows = connection.execute(LIVE_KEY_CLAIMS_SQL, (subject_path, predicate)).fetchall()
     found: list[tuple[str, SubjectKeyValue | None]] = []
     for identity, literal_type, text, integer, boolean in rows:
         value: SubjectKeyValue | None

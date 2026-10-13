@@ -693,6 +693,9 @@ class ProjectionHandle:
         self.accepted = accepted
         self._closed = False
         self._verification_identity: tuple[object, ...] | None = None
+        # Set while the handle belongs to a request's ProjectionPool: closing it
+        # then returns it to the pool instead of closing the connection.
+        self._release: Callable[[ProjectionHandle], bool] | None = None
         from cruxible_core.indexes.typed_state import TypedStateReader
 
         self.typed = TypedStateReader(
@@ -939,6 +942,9 @@ class ProjectionHandle:
         return self.claims(tuple(row["identity"] for row in identities))
 
     def close(self) -> None:
+        release = self._release
+        if release is not None and not self._closed and release(self):
+            return
         if not self._closed:
             try:
                 self._connection.close()
@@ -955,6 +961,110 @@ class ProjectionHandle:
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
+
+
+class ProjectionPool:
+    """Bound projections one request reuses on one thread, instead of rebinding per lookup.
+
+    Every handle the pool adopts is tracked as checked out or idle. A handle is
+    exclusive while checked out, exactly like a fresh bind. Closing it returns it
+    once: a second close of the same checkout is a no-op, so one handle can never
+    be idle twice or handed to two holders. It goes back to the idle list only
+    when its connection is as the bind left it -- no TEMP objects (a candidate
+    overlay's rows), nothing attached, no open transaction, the bind's row
+    factory -- and is otherwise really closed. At scope exit every tracked handle,
+    idle or still checked out, is closed and released from the pool. The
+    accepted projection a handle reads is immutable, so a reused handle answers
+    what a fresh one would.
+    """
+
+    def __init__(self) -> None:
+        self._idle: dict[object, list[ProjectionHandle]] = {}
+        # id(handle) -> (handle, key, checked_out) for every live adopted handle.
+        self._tracked: dict[int, tuple[ProjectionHandle, object, bool]] = {}
+        self._owners: list[object] = []
+        self._open = True
+        self._thread = threading.get_ident()
+        self._lock = threading.Lock()
+        self._values: dict[object, Any] = {}
+
+    def _on_thread(self) -> bool:
+        return self._open and threading.get_ident() == self._thread
+
+    def values(self) -> dict[object, Any] | None:
+        """This request's derived values, on its own thread only (else None).
+
+        Holders key them by exactly the inputs they were derived from and
+        re-check whatever can move within a request before reusing one.
+        """
+        return self._values if self._on_thread() else None
+
+    def take(self, key: object) -> ProjectionHandle | None:
+        """An idle handle of ``key``, now checked out to the caller, or None."""
+        if not self._on_thread():
+            return None
+        with self._lock:
+            idle = self._idle.get(key)
+            if not idle:
+                return None
+            handle = idle.pop()
+            self._tracked[id(handle)] = (handle, key, True)
+            return handle
+
+    def adopt(self, key: object, handle: ProjectionHandle, *, owner: object) -> ProjectionHandle:
+        """Track a freshly bound ``handle`` as checked out; closing returns it here."""
+        if self._on_thread():
+            with self._lock:
+                self._owners.append(owner)  # keeps ``key``'s owner identity alive
+                self._tracked[id(handle)] = (handle, key, True)
+            handle._release = self._give_back
+        return handle
+
+    def _give_back(self, handle: ProjectionHandle) -> bool:
+        """Whether ``handle``'s close was absorbed: returned once, or already idle."""
+        with self._lock:
+            entry = self._tracked.get(id(handle))
+            if entry is None or entry[0] is not handle:
+                return False
+            if not entry[2]:
+                return True  # already idle: a second close of one checkout
+            if not self._on_thread():
+                del self._tracked[id(handle)]
+                handle._release = None
+                return False
+        try:
+            connection = handle._connection
+            clean = (
+                not connection.in_transaction
+                and connection.row_factory is sqlite3.Row
+                and connection.execute("SELECT count(*) FROM temp.sqlite_master").fetchone()[0] == 0
+                and {row[1] for row in connection.execute("PRAGMA database_list")}
+                <= {"main", "temp"}
+            )
+        except sqlite3.Error:
+            clean = False
+        with self._lock:
+            if not clean or not self._open:
+                self._tracked.pop(id(handle), None)
+                handle._release = None
+                return False
+            key = entry[1]
+            self._tracked[id(handle)] = (handle, key, False)
+            self._idle.setdefault(key, []).append(handle)
+            return True
+
+    def close(self) -> None:
+        """End the request: close every tracked handle, idle or still checked out."""
+        with self._lock:
+            self._open = False
+            tracked = [entry[0] for entry in self._tracked.values()]
+            self._tracked.clear()
+            self._idle.clear()
+            self._owners.clear()
+            self._values.clear()
+        for handle in tracked:
+            handle._release = None
+            handle.close()
 
 
 def bind_projection(
@@ -1231,6 +1341,7 @@ def detect_projection_orphans(publication_directory: Path) -> tuple[ProjectionOr
 
 __all__ = [
     "ProjectionHandle",
+    "ProjectionPool",
     "bind_projection",
     "canonical_logical_export",
     "detect_projection_orphans",

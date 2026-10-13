@@ -34,8 +34,8 @@ from cruxible_core.procedures.execution import accepted_procedure_pin_set_digest
 from cruxible_core.procedures.graph_digests import cached_node_digests
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
-    ProcedureResolutionBook,
     ResolutionContractActivationV1,
+    ResolutionLookup,
     procedure_arm_content_digest,
 )
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
@@ -408,7 +408,7 @@ def evaluate_procedure_reading(
     accepted: AcceptedProcedure,
     accepted_coordinate: AcceptedCoordinate,
     activations: tuple[ResolutionContractActivationV1, ...] = (),
-    resolution_book: ProcedureResolutionBook | None = None,
+    resolution_book: ResolutionLookup | None = None,
 ) -> ProcedureReadingLawResultV1:
     """Refuse any exact-grain or contract-grade mismatch; never downgrade."""
 
@@ -528,7 +528,7 @@ def append_procedure_reading(
     stream: JournalStreamIdentityV1,
     bodies: ContentAddressedBodyStore,
     activations: tuple[ResolutionContractActivationV1, ...] = (),
-    resolution_book: ProcedureResolutionBook | None = None,
+    resolution_book: ResolutionLookup | None = None,
     replay_index: Mapping[
         ReadingReplayKey, tuple[StoredProcedureJournalRecordV1, ProcedureReadingV1]
     ]

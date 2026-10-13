@@ -33,6 +33,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.content_memo import ParseMemo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import SubjectFormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -149,7 +150,22 @@ def render_subject(shell: SubjectShell) -> bytes:
     return pretty_canonical_bytes(shell.model_dump(mode="json"))
 
 
+_SUBJECT_PARSES: ParseMemo[SubjectShell] = ParseMemo(capacity=4096, max_bytes=16 * 1024 * 1024)
+
+
 def parse_subject(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> SubjectShell:
+    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
+    return _SUBJECT_PARSES.parse(
+        content, path, codec, lambda: _parse_subject(content, path=path, codec=codec)
+    )
+
+
+def _parse_subject(
     content: bytes,
     *,
     path: str,

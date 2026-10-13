@@ -53,6 +53,7 @@ from cruxible_core.proposals.proposals import (
 )
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.request_scope import projection_request
 from cruxible_core.service.change_preview import admit_change_set, change_scope
 from cruxible_core.service.proposals.proposal_names import canonical_playbill_proposal_name
 from cruxible_core.storage.cas import BodyAccessContext, CasObjectMetadata
@@ -488,6 +489,7 @@ def _reconcile_proposal_notes(
                         instance.write_proposal_note(kind, oid, expected)
 
 
+@projection_request
 def service_activate_playbill_proposal(
     instance: PlaybillInstance,
     *,

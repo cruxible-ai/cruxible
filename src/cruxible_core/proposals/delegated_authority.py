@@ -57,8 +57,10 @@ def _issue(code: str, message: str) -> tuple[str, str]:
     return f"cruxible.settle.{code}", message
 
 
-#: Accepted Claim facts for exactly the predicates one condition query reads.
-QueryFactsForPredicates = Callable[[tuple[str, ...]], ClaimQueryFactsV1]
+#: Accepted Claim facts for exactly what one condition query reads: its
+#: referenced predicates, and the Subjects of its entry kinds (plus those its
+#: Claims name), as a served query reads them.
+QueryFactsForPredicates = Callable[[tuple[str, ...], tuple[str, ...]], ClaimQueryFactsV1]
 
 
 def _mandate_paths_by_digest(tree: Mapping[str, bytes], digest: str) -> tuple[str, ...] | None:
@@ -457,7 +459,11 @@ def condition_issues(
                 "The pinned condition query is not accepted at the parent.",
             ),
         )
-    query_facts = None if facts is None else facts(definition.referenced_predicates)
+    query_facts = (
+        None
+        if facts is None
+        else facts(definition.referenced_predicates, definition.entry.subject_kinds)
+    )
     if query_facts is None or query_facts.coordinate != current:
         return (
             _issue(

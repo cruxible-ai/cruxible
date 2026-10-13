@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 from types import SimpleNamespace
 
@@ -392,6 +393,75 @@ def test_overlay_keeps_authenticated_connection_when_piece_path_is_replaced(tmp_
             candidate = base.overlay({})
             assert candidate.incoming(path) == expected
             assert base.incoming(path) == expected
+    finally:
+        base.close()
+    assert counts["opened"] == counts["closed"]
+
+
+def test_pin_sources_seek_each_owner_table_and_match_the_join(tmp_path):
+    """``pin_sources`` pushes the pinning identities into each artifact_lookup branch.
+
+    The former JOIN materialized the whole UNION view (a scan of every owner
+    table, then an automatic index) per lookup; the IN-subquery seeks each
+    owner's primary key, on the accepted rows and on a candidate's selected rows,
+    and answers exactly what the JOIN answered.
+    """
+
+    from cruxible_core.indexes.evaluated_state import EvaluationRows, pin_sources_sql
+
+    def join(rows, identity, consumed):
+        kind = "" if consumed else "AND p.edge_kind='required_pin'"
+        return frozenset(
+            row[0]
+            for row in rows.connection.execute(
+                f"SELECT DISTINCT a.path FROM {rows.table('pins')} p JOIN "
+                f"{rows.table('artifact_lookup')} a ON a.identity=p.source_identity "
+                f"WHERE p.target_identity=? {kind}",
+                (identity,),
+            )
+        )
+
+    tree, counts, _ = _fixture(tmp_path, _tree())
+    base = EvaluationRows(tree._accepted_reader())
+    anchor = _subject("anchor")
+    try:
+        candidate = base.overlay(
+            {
+                _path("unrelated"): render_subject(
+                    _subject("unrelated", revision=2, pins=(_pin_to(anchor),))
+                ),
+                _path("dependent"): None,
+            }
+        )
+        targets = {
+            str(row[0])
+            for row in base.connection.execute("SELECT target_identity FROM main.pins")
+            if row[0] is not None
+        }
+        assert targets
+        for rows in (base, candidate):
+            for consumed in (False, True):
+                plan = " | ".join(
+                    str(row[3])
+                    for row in rows.connection.execute(
+                        "EXPLAIN QUERY PLAN " + pin_sources_sql(rows.prefix, consumed=consumed),
+                        ("x",),
+                    )
+                )
+                assert "AUTOMATIC" not in plan, plan
+                assert not re.search(r"SCAN (main\.|temp\.)?(claims|subjects)\b", plan), plan
+                assert re.search(
+                    r"SEARCH (main\.)?subjects USING INDEX sqlite_autoindex_subjects_1 "
+                    r"\(identity=\?\)",
+                    plan,
+                ), plan
+                for identity in targets:
+                    assert rows.pin_sources(identity, consumed=consumed) == join(
+                        rows, identity, consumed
+                    )
+        anchor_identity = f"Subject:{anchor.identity.name}"
+        assert base.pin_sources(anchor_identity) == {_path("dependent")}
+        assert candidate.pin_sources(anchor_identity) == {_path("unrelated")}
     finally:
         base.close()
     assert counts["opened"] == counts["closed"]

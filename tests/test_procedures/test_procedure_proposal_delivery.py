@@ -605,6 +605,13 @@ def test_a_duplicate_delivery_of_one_operation_returns_the_same_receipt(
     assert egress.proposal_id == first.proposal_id  # type: ignore[attr-defined]
 
 
+def _drifted(tree, path: str, content: bytes):  # type: ignore[no-untyped-def]
+    """The prepared candidate (a sealed fork of the base) with one member's bytes replaced."""
+    staged = tree.fork()
+    staged[path] = content
+    return staged.snapshot()
+
+
 def test_the_same_operation_key_with_other_member_bytes_refuses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -624,7 +631,9 @@ def test_the_same_operation_key_with_other_member_bytes_refuses(
             path, content = entry.changed_members[0]
             drifted = content.replace(b"high", b"low!")
             assert drifted != content
-            entry.candidate_tree[path] = drifted
+            object.__setattr__(
+                entry, "candidate_tree", _drifted(entry.candidate_tree, path, drifted)
+            )
             object.__setattr__(entry, "changed_members", ((path, drifted),))
         return prepared
 
@@ -1115,7 +1124,7 @@ def test_an_interrupted_publication_with_other_bytes_still_refuses(
         path, content = entry.changed_members[0]
         drifted = content.replace(b"high", b"low!")
         assert drifted != content
-        entry.candidate_tree[path] = drifted
+        object.__setattr__(entry, "candidate_tree", _drifted(entry.candidate_tree, path, drifted))
         object.__setattr__(entry, "changed_members", ((path, drifted),))
         return prepared
 

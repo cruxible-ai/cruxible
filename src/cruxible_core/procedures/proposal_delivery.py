@@ -207,7 +207,9 @@ class PreparedProposal:
     """Everything delivery needs, resolved once from the admitted operation."""
 
     prepared: PreparedTerminalEgressV1
-    candidate_tree: dict[str, bytes]
+    #: The lowered tree itself: a sealed fork of the accepted base, so receive
+    #: validation and evaluation advance the base over the changed paths only.
+    candidate_tree: Mapping[str, bytes]
     changed_members: tuple[tuple[str, bytes], ...]
     item_paths: dict[str, str]
     rationale: str
@@ -1666,7 +1668,7 @@ class ProposalTerminalEgressSink:
         # full-tree read whose only purpose would be to diff them out again.
         self._prepared[(request.admission_binding_digest, request.node_id)] = PreparedProposal(
             prepared=prepared,
-            candidate_tree=dict(lowered.proposed_tree),
+            candidate_tree=lowered.proposed_tree,
             changed_members=lowered.changed_members,
             item_paths=item_paths,
             rationale=rationale,
@@ -2011,8 +2013,8 @@ class ProposalTerminalEgressSink:
                     candidate_tree=prepared.candidate_tree,
                     current=head,
                     timestamp=canonical_candidate_timestamp(request.evaluation_time),
-                    facts=lambda predicates: self.instance._accepted_query_facts(
-                        self.instance, head, predicates=predicates
+                    facts=lambda predicates, subject_kinds: self.instance._accepted_query_facts(
+                        self.instance, head, predicates=predicates, subject_kinds=subject_kinds
                     ),
                     mandate_name=mandate.identity.name,
                 )

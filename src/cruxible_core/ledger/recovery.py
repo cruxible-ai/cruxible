@@ -239,6 +239,7 @@ class AcceptedQueryFactsBuilder(Protocol):
         coordinate: AcceptedProjectionCoordinate,
         *,
         predicates: tuple[str, ...] | None = None,
+        subject_kinds: tuple[str, ...] | None = None,
     ) -> ClaimQueryFactsV1: ...
 
 
@@ -906,8 +907,13 @@ def _clean_unaccepted_generations(
                 query_facts_provider=(
                     None
                     if query_facts_builder is None
-                    else lambda coordinate, *, predicates=None: query_facts_builder(
-                        query_source, coordinate, predicates=predicates
+                    else lambda coordinate, *, predicates=None, subject_kinds=None: (
+                        query_facts_builder(
+                            query_source,
+                            coordinate,
+                            predicates=predicates,
+                            subject_kinds=subject_kinds,
+                        )
                     )
                 ),
             )
@@ -1164,8 +1170,8 @@ def recover_instance(
             query_facts_provider=(
                 None
                 if query_facts_builder is None
-                else lambda coordinate, *, predicates=None: query_facts_builder(
-                    query_source, coordinate, predicates=predicates
+                else lambda coordinate, *, predicates=None, subject_kinds=None: query_facts_builder(
+                    query_source, coordinate, predicates=predicates, subject_kinds=subject_kinds
                 )
             ),
         )
@@ -1190,6 +1196,7 @@ def recover_instance(
             parent_generation_root=history[-2].generation_root.tagged,
             tree=window.tree,
             members=window.state.members,
+            merkle=window.state.merkle,
         )
     # Release the head tree before projection assembly, the peak-memory phase.
     del window

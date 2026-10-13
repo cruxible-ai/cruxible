@@ -353,6 +353,22 @@ SINGLETONS = {
 }
 COMMON_COLUMNS = "identity,kind,format_tag,path,artifact_digest,predecessor_digest,revision"
 
+# Live Claims of one slot (Subject path, predicate, qualifier). ``+lifecycle`` is
+# SQLite's no-op unary plus: it keeps the planner off ``claims_by_lifecycle`` and
+# ``claims_by_predicate`` (a walk of every live Claim, or every live Claim of the
+# predicate) and on ``claims_by_subject_predicate``, one seek per slot.
+LIVE_SLOT_CLAIMS_SQL = (
+    "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
+    "AND qualifier IS ? AND +lifecycle='live'"
+)
+LIVE_SLOT_CLAIM_DIGESTS_SQL = (
+    "SELECT identity, artifact_digest FROM claims WHERE subject_path=? "
+    "AND predicate=? AND qualifier IS ? AND +lifecycle='live' ORDER BY identity"
+)
+LIVE_SUBJECT_PREDICATE_CLAIMS_SQL = (
+    "SELECT identity FROM claims WHERE subject_path=? AND predicate=? AND +lifecycle='live'"
+)
+
 
 def owner_for_identity(identity: str) -> OwnerCodec | None:
     """Use the canonical identity codec, never a file or string-prefix heuristic."""

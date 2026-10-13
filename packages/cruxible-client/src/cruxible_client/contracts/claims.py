@@ -78,6 +78,7 @@ from cruxible_client.contracts.claim_verdicts import (
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
 )
+from cruxible_client.contracts.content_memo import ParseMemo
 from cruxible_client.contracts.declared_blocks import (
     ProjectionWindow,
     projection_window_intersecting,
@@ -695,7 +696,22 @@ def render_claim(claim: ClaimArtifactAny) -> bytes:
     return pretty_canonical_bytes(claim.model_dump(mode="json"))
 
 
+_CLAIM_PARSES: ParseMemo[ClaimArtifactAny] = ParseMemo(capacity=4096, max_bytes=32 * 1024 * 1024)
+
+
 def parse_claim(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> ClaimArtifactAny:
+    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
+    return _CLAIM_PARSES.parse(
+        content, path, codec, lambda: _parse_claim(content, path=path, codec=codec)
+    )
+
+
+def _parse_claim(
     content: bytes,
     *,
     path: str,

@@ -716,6 +716,7 @@ def _cas_file_identity(store: Any, digest: str) -> tuple[int, int, int, int, int
 
 _UNKNOWN_BODIES = "\0unknown"
 """A ``bodies`` key saying no identity can stand for an availability answer."""
+UNKNOWN_BODIES = _UNKNOWN_BODIES
 
 
 def body_fingerprints_hold(
