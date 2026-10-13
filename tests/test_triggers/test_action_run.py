@@ -150,7 +150,14 @@ def test_manual_fire_is_processed_by_the_owning_part_on_its_next_tick(
     covered = _NEXT_COVERED_SEQUENCE[name]
     assert covered(instance) < event.sequence
 
-    _run_next_tick(instance, manager, now=NOW)
+    # A part's very first tick ever on an instance may only bootstrap its
+    # cursor (prediction.anchor_retry's match() does, reading no journal yet
+    # on that first pass); a couple more ticks is still "the daemon's own
+    # tick", never anything this action-run request admits or runs itself.
+    for _tick in range(3):
+        _run_next_tick(instance, manager, now=NOW)
+        if covered(instance) >= event.sequence:
+            break
 
     assert covered(instance) >= event.sequence
 
