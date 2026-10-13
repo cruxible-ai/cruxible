@@ -25,7 +25,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from cruxible_client import contracts
 from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
@@ -105,6 +105,9 @@ from cruxible_core.service.read_refusals import (
     nearest,
     resolve_read_coordinate,
 )
+
+if TYPE_CHECKING:
+    from cruxible_core.consumers.next.facts import ReadHeads
 
 _LIST = "orient"
 _NEXT_PROFILE = CoverageAccessProfile(
@@ -604,6 +607,7 @@ def _attention(
     caller_rung: int | None,
     surface: OrientSurface,
     caller_tools: tuple[str, ...] | None,
+    heads: ReadHeads,
     provider_lane: contracts.ProviderLaneStatus | None = None,
     consumers_running: bool = False,
 ) -> tuple[OrientAttention, bool]:
@@ -631,6 +635,7 @@ def _attention(
             caller_principal_id=None if caller is None else caller.actor_id,
             caller_rung=caller_rung,
             match=lambda item: _upgrade_hint((item,)) is not None,
+            heads=heads,
         )
         items, total = queue.items, queue.total_items
         reused = queue.matching_item
@@ -955,6 +960,11 @@ def service_playbill_orient(
             next=tuple(render_orient_call(call, surface) for call in calls),
         )
 
+    from cruxible_core.consumers.next.facts import read_heads
+
+    # One set of heads for the whole read: the attention summary and the Claim
+    # tally answer as of the same door, landing and re-observation positions.
+    heads = read_heads(instance, coordinate=coordinate)
     attention, upgrade = _attention(
         instance,
         coordinate=coordinate,
@@ -964,6 +974,7 @@ def service_playbill_orient(
         caller_rung=caller_rung,
         surface=surface,
         caller_tools=caller_tools,
+        heads=heads,
         provider_lane=provider_lane,
         consumers_running=consumers_running,
     )
@@ -1015,7 +1026,7 @@ def service_playbill_orient(
             queries=len(state.queries),
             interfaces=len(state.interfaces),
             **counts,
-            claims=_claim_counts(instance, coordinate, evaluation_time=moment),
+            claims=_claim_counts(instance, coordinate, evaluation_time=moment, heads=heads),
         ),
         queries=state.queries[:ORIENT_DEFAULT_QUERIES],
         attention=attention,
@@ -1041,6 +1052,7 @@ def _claim_counts(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
+    heads: ReadHeads,
 ) -> OrientClaimCounts:
     """Every accepted Claim counted by status: from the next facts' tally.
 
@@ -1049,16 +1061,19 @@ def _claim_counts(
     facts' intervals costs the change, read through the same rolled-back
     overlay next's rows use. Only where next folds (the worker disabled or not
     yet run, a historical coordinate) or a slot did not resolve does the
-    remembered resolution answer, and a miss derive the statuses once.
+    remembered resolution answer, and a miss derive the statuses once. Both
+    read at ``heads``, the ones orient's attention read at.
     """
 
-    from cruxible_core.consumers.next.facts import claim_status_tally, read_positions
+    from cruxible_core.consumers.next.facts import claim_status_tally
     from cruxible_core.storage.read_positions import reading_at
 
-    tally = claim_status_tally(instance, coordinate=coordinate, evaluation_time=evaluation_time)
+    tally = claim_status_tally(
+        instance, coordinate=coordinate, evaluation_time=evaluation_time, heads=heads
+    )
     if tally is not None:
         return OrientClaimCounts(**tally)
-    with reading_at(read_positions(instance)):
+    with reading_at(heads.positions):
         return _derived_claim_counts(instance, coordinate, evaluation_time=evaluation_time)
 
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -1259,6 +1259,42 @@ def test_a_fold_at_older_positions_is_not_served_a_later_reads_verdicts(
         actual = service_playbill_next(instance, request=request)
     assert recorded and later and later[0].items != before.items
     assert actual.items == before.items
+
+
+@pytest.mark.parametrize("tally", ("served", "derived"))
+def test_orient_attention_and_claim_tally_read_at_one_set_of_heads(
+    tmp_path: Path, tally: str
+) -> None:
+    """F-016: orient records its heads once and reads both its attention summary and
+    its Claim tally (served, or derived where the tally cannot serve) at them. A
+    re-observation landing between the two changes neither; the next orient sees it."""
+
+    from cruxible_core.service.discovery import orient
+
+    instance, at, _request = _reobservation_world(tmp_path)
+    expected = orient.service_playbill_orient(instance, evaluation_time=at)
+    original = orient._attention
+    moved: list[bool] = []
+
+    def land_after_attention(*args, **kwargs):  # type: ignore[no-untyped-def]
+        result = original(*args, **kwargs)
+        if not moved:
+            moved.append(True)
+            _reobserve_mid_read(instance)
+        return result
+
+    derive = (
+        patch.object(facts, "claim_status_tally", return_value=None)
+        if tally == "derived"
+        else nullcontext()
+    )
+    with patch.object(orient, "_attention", land_after_attention), derive:
+        actual = orient.service_playbill_orient(instance, evaluation_time=at)
+    assert moved
+    assert actual.attention == expected.attention
+    assert actual.artifacts.claims == expected.artifacts.claims
+    later = orient.service_playbill_orient(instance, evaluation_time=at)
+    assert later.artifacts.claims != expected.artifacts.claims
 
 
 def test_a_read_during_a_landing_in_flight_answers_as_before_it(tmp_path: Path) -> None:

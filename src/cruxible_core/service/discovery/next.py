@@ -13,7 +13,7 @@ from threading import RLock
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 if TYPE_CHECKING:
-    from cruxible_core.consumers.next.facts import CitationRequest, ServedRows
+    from cruxible_core.consumers.next.facts import CitationRequest, ReadHeads, ServedRows
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -5813,6 +5813,7 @@ def _next_queue(
     caller_rung: int | None,
     read_context: ClaimVerdictReadContext | None = None,
     caller_authoring_refusal: AuthoringRefusal | None = None,
+    heads: ReadHeads | None = None,
 ) -> _NextQueue:
     """The single fold for full next and its bounded attention summary: a point-in-time read.
 
@@ -5823,6 +5824,8 @@ def _next_queue(
     pin). Every family read after the Claim rows (workspace, projection, holds)
     reads at the same heads; body presence and re-observations count through
     the recorded positions. Writes that land meanwhile are not in this answer.
+    ``heads`` an encompassing read (orient) already recorded are read at instead
+    of recording them here.
     """
 
     from cruxible_core.consumers.next.facts import read_heads, served_claim_rows
@@ -5839,15 +5842,15 @@ def _next_queue(
             expiring_within=request.expiring_within,
             citations=_citation_request(request.workspace_observation),
             backed=_backed_claims(request.workspace_observation),
+            heads=heads,
         )
         if request.access_profile.permits("instance")
         else None
     )
-    heads = (
-        stored.heads
-        if stored is not None and stored.heads is not None
-        else read_heads(instance, coordinate=named, door_head=request.at_attestation_head_digest)
-    )
+    if stored is not None and stored.heads is not None:
+        heads = stored.heads
+    elif heads is None:
+        heads = read_heads(instance, coordinate=named, door_head=request.at_attestation_head_digest)
     with reading_at(heads.positions):
         return _queue_at(
             instance,
@@ -6074,6 +6077,7 @@ def summarize_playbill_next(
     caller_principal_id: str | None = None,
     caller_rung: int | None = None,
     match: Callable[[PlaybillNextItemV1], bool] | None = None,
+    heads: ReadHeads | None = None,
 ) -> PlaybillNextSummary:
     """Count the queue and return its first three rows plus one optional matched row.
 
@@ -6084,7 +6088,9 @@ def summarize_playbill_next(
     The summary reads at one coordinate, ``request.at`` or the head now, and
     at the door head the request names or the one now: a point-in-time read
     like next's, served from the stored rows while the worker has not passed
-    those heads and folded there otherwise.
+    those heads and folded there otherwise. ``heads`` an encompassing read
+    already recorded are read at instead (orient's attention and its Claim
+    tally answer at one set).
     """
 
     if request.cursor is not None or request.since_result_digest is not None:
@@ -6097,6 +6103,7 @@ def summarize_playbill_next(
         caller_principal_id=caller_principal_id,
         caller_rung=caller_rung,
         read_context=ClaimVerdictReadContext(instance, coordinate),
+        heads=heads,
     )
     matching = (
         None

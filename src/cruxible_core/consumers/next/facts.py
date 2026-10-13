@@ -2132,6 +2132,7 @@ def _serving(
     door_head: str | None,
     evaluation_time: datetime,
     read: Callable[[sqlite3.Connection, AcceptedProjectionCoordinate], _T],
+    heads: ReadHeads | None = None,
 ) -> tuple[_T, ReadHeads] | None:
     """Run ``read`` on the stored state brought to one recorded set of heads and to
     ``evaluation_time``: a point-in-time read.
@@ -2144,6 +2145,8 @@ def _serving(
     does not hold at the instant is derived again, at those heads, all in a
     transaction rolled back after ``read`` (reads never write this state).
     Writes that land meanwhile are not in the answer; nothing retries or refuses.
+    ``heads`` already recorded by an encompassing read are read at instead, so
+    every part of that read answers as of one set of heads.
 
     None means fold, at the same heads: the worker disabled, its state cold or
     of another format, or stored cursors that cannot reach the heads (a rebuild
@@ -2161,8 +2164,10 @@ def _serving(
             original = _read_cursors(connection)
             if original is None:
                 return None
-            # Recorded after the cursors, so current heads are never behind them.
-            heads = read_heads(instance, coordinate=coordinate, door_head=door_head)
+            # Recorded after the cursors, so current heads are never behind them;
+            # heads recorded earlier may be, and then the cursors cannot reach them.
+            if heads is None:
+                heads = read_heads(instance, coordinate=coordinate, door_head=door_head)
             with reading_at(heads.positions):
                 if original.heads != heads.key() and not _overlay(
                     instance, connection, original, heads, now=evaluation_time
@@ -2192,6 +2197,7 @@ def served_claim_rows(
     claims: Iterable[str] | None = None,
     citations: CitationRequest = None,
     backed: Iterable[str] = (),
+    heads: ReadHeads | None = None,
 ) -> ServedRows | None:
     """The Claim rows next would fold, served from Layer 2, or None to fold.
 
@@ -2204,6 +2210,7 @@ def served_claim_rows(
     ``citations`` also reads the maintained citation commitments a workspace
     observation asks about, and ``backed`` the resolution status and
     visibility of the Claims its projection markers are backed by.
+    ``heads`` an encompassing read already recorded are read at instead.
     """
 
     selected = None if claims is None else tuple(claims)
@@ -2212,6 +2219,7 @@ def served_claim_rows(
         instance,
         coordinate=coordinate,
         door_head=door_head,
+        heads=heads,
         evaluation_time=evaluation_time,
         read=lambda connection, at_coordinate: _read_served(
             instance,
@@ -2662,6 +2670,7 @@ def claim_status_tally(
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
+    heads: ReadHeads | None = None,
 ) -> dict[str, int] | None:
     """Accepted Claims counted by status from the maintained tally, or None to derive live.
 
@@ -2671,12 +2680,14 @@ def claim_status_tally(
     derived again, so a worker behind or an instant past an interval costs the
     change, not the population. None only where next folds (cold, disabled, a
     coordinate the worker has passed) or a live Claim's slot did not resolve.
+    ``heads`` an encompassing read already recorded are read at instead.
     """
 
     served = _serving(
         instance,
         coordinate=coordinate,
         door_head=None,
+        heads=heads,
         evaluation_time=evaluation_time,
         read=lambda connection, _coordinate: dict(
             connection.execute("SELECT status,count FROM tally")
