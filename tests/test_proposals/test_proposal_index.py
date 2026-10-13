@@ -15,7 +15,21 @@ from cruxible_core.service.authoring.documents import service_inspect_playbill_p
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from tests.core_support._proposal_note_oracle import build_proposal_note_oracle
 from tests.core_support._support import initialize_local
-from tests.test_proposals.test_grouped_proposal_notes import _submit
+from tests.test_proposals.test_grouped_proposal_notes import _submit as _submit_once
+
+
+def _submit(instance, name, **kwargs):
+    """Submit, then drain the workspace advertisement the submission queued.
+
+    The advertisement reads and repairs this index on its own thread. Left
+    running, it held the index's write lock while a test's foreign writer (or a
+    patched commit callback) ran, which then failed "database is locked" on a
+    loaded runner (CI run 38364444240).
+    """
+
+    submitted = _submit_once(instance, name, **kwargs)
+    instance.settled_workspace_advertisement()
+    return submitted
 
 
 def _oracle(instance):
