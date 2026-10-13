@@ -18,6 +18,7 @@ can change under its identity, and keying by its serialization costs what the
 digest does. All memos are bounded and least-recently-used, and safe to share
 across threads: every access is one short critical section.
 """
+
 from __future__ import annotations
 
 import pickle
