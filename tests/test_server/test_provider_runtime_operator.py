@@ -76,10 +76,6 @@ from cruxible_client.contracts.providers import (
     render_provider,
 )
 from cruxible_core.exhaust.records import parse_journal_payload
-from cruxible_core.governance.seed_artifacts.workspace_file import (
-    WORKSPACE_FILE_INTERFACE_ID,
-    workspace_file_interface_registration,
-)
 from cruxible_core.ledger.bootstrap import seeded_procedure_runtime_policy
 from cruxible_core.procedures.execution import (
     PreparedProcedureRunV9,
@@ -571,36 +567,38 @@ def test_overlong_state_root_degrades_provider_at_operator_construction(
     assert operator.unavailable_reason is None
 
 
-def test_classifier_installation_failure_degrades_only_provider_lane(
-    monkeypatch: pytest.MonkeyPatch,
-    request: pytest.FixtureRequest,
-) -> None:
-    repository_root = Path(__file__).resolve().parents[2]
-    state_root = Path(tempfile.mkdtemp(dir=repository_root, prefix=".b2-classifier-"))
-    request.addfinalizer(lambda: shutil.rmtree(state_root, ignore_errors=True))
-    operator = ProviderRuntimeOperator(state_root)
-    registration = workspace_file_interface_registration()
-    tree = {
-        provider_interface_path(WORKSPACE_FILE_INTERFACE_ID): render_provider_interface(
-            registration
-        )
+def test_a_deployment_config_written_with_classifier_installations_still_reads() -> None:
+    """Deployments once recorded the bucket classifiers they hosted; core runs none
+    now, so the legacy field is dropped on read and never written again."""
+
+    from cruxible_core.runtime.provider_runtime import ProviderDeploymentConfigV1
+
+    current = {
+        "deployment_digest": _digest("legacy-deployment"),
+        "distribution_path": "materializations/demo/provider.whl",
+        "lock_path": "materializations/demo/uv.lock",
+        "environment_path": "materializations/demo",
+        "environment_manifest_path": "materializations/demo/environment.json",
+        "environment_pin_key": "linux-cp311",
+        "interpreter_path": "materializations/demo/python",
+        "provider_runtime_version": "0.2.0",
     }
-    monkeypatch.setattr(
-        "cruxible_core.runtime.provider_runtime.install_compiler_owned_provider_classifier",
-        lambda _accepted: (_ for _ in ()).throw(RuntimeError("broken classifier")),
-    )
-
-    invoker = operator.invoker_for(
-        _indexed_instance(tree),  # type: ignore[arg-type]
-        accepted_oid="a" * 40,
-    )
-
-    state, code, detail = operator.lane_status()
-    assert (state, code) == ("unavailable", "provider_runtime_recovery_failed")
-    assert detail is not None and "broken classifier" in detail
-    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
-        invoker.bind_provider(occurrence=object())
-    assert caught.value.details == {"reason": {"code": code, "detail": detail}}
+    legacy = {
+        **current,
+        "classifier_installations": [
+            {
+                "tag": "playbill-provider-bucket-classifier-installation-v1",
+                "classifier_identity": "demo.size",
+                "classifier_version": 1,
+                "classifier_digest": _digest("classifier"),
+                "conformance_fixture_set_digest": _digest("fixtures"),
+                "results": [],
+            }
+        ],
+    }
+    read = ProviderDeploymentConfigV1.model_validate(legacy)
+    assert read == ProviderDeploymentConfigV1.model_validate(current)
+    assert "classifier_installations" not in read.model_dump(mode="json")
 
 
 def test_unmatched_recovered_start_degrades_provider_and_continues_instances(

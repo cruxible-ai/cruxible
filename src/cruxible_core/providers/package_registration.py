@@ -90,10 +90,11 @@ class PackageRegistrationDocumentV1(_Strict):
         """The registration installing this package proposes for each exported interface.
 
         A definition core owns (``web.fetch``) registers as core's registration of
-        it, whatever vocabulary, classifier and fixtures the package ships: the
-        contract, not the implementation, owns the ProviderInterface, so every
-        implementation of it binds the same artifact and core classifies its
-        runs. Any other definition registers as the package exports it.
+        it, whatever the package ships alongside the definition: the contract, not
+        the implementation, owns the ProviderInterface, so every implementation of
+        it binds the same artifact. Any other definition registers as the package
+        exports it. A package's vocabulary, classifier and fixtures travel as inert
+        registration data; nothing executes the classifier.
         """
 
         result: list[ProviderInterfaceRegistrationV1] = []
@@ -107,14 +108,6 @@ class PackageRegistrationDocumentV1(_Strict):
                 raise ValueError("package definition differs from core's under its digest")
             result.append(core)
         return tuple(result)
-
-    def package_registration(self, interface_id: str) -> ProviderInterfaceRegistration:
-        """The registration this package itself exports for one interface, classifier
-        and fixtures included, even for a definition core owns: what an earlier
-        install of it registered, so it can host that registration's classifier."""
-
-        exported = next(item for item in self.interfaces if item.interface_id == interface_id)
-        return self._package_registration(exported, self._checked_definition(exported))
 
     def _checked_definition(self, exported: PackageInterfaceExportV1) -> str:
         """The exported definition's canonical bytes, once it agrees with its implementation."""
@@ -134,8 +127,6 @@ class PackageRegistrationDocumentV1(_Strict):
             raise ValueError("package definition and implementation disagree")
         interface_bytes = canonical_bytes(definition).hex()
         read_provider_operation_contract(interface_bytes)
-        if set(implementation.bucket_conformance) != set(implementation.declared_input_buckets):
-            raise ValueError("each declared selector must have a fixture")
         return interface_bytes
 
     def _package_registration(

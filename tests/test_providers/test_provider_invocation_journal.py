@@ -1463,7 +1463,7 @@ def test_an_installation_probe_outside_a_run_keeps_its_own_window(tmp_path: Path
     from types import SimpleNamespace
     from unittest.mock import patch
 
-    import cruxible_core.providers.package_classifier as package
+    import cruxible_core.providers.package_probe as package
     import cruxible_core.providers.provider_local_runtime as runtime
     from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
     from tests.support.short_temporary_root import short_temporary_directory
@@ -1490,7 +1490,6 @@ def test_an_installation_probe_outside_a_run_keeps_its_own_window(tmp_path: Path
                 kind="resource",
                 digest="sha256:" + "b" * 64,
                 value={"entrypoint": "demo.resource:probe"},
-                deadline=None,
             )
     finally:
         leases.close()

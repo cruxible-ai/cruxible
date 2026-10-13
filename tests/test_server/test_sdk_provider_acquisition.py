@@ -260,20 +260,6 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
             return getattr(operator if hasattr(operator, name) else real, name)
 
     monkeypatch.setattr(manager, "provider_runtime_operator", lambda: Lane())
-    from cruxible_client.contracts.provider_interfaces import (
-        AcceptedProviderInterfaceRegistration,
-    )
-    from cruxible_core.providers.provider_classifiers import (
-        install_compiler_owned_provider_classifier,
-    )
-
-    install_compiler_owned_provider_classifier(
-        AcceptedProviderInterfaceRegistration(
-            registration=registration,
-            path=provider_interface_path(registration.interface_id),
-            artifact_digest=provider_interface_digest(registration).tagged,
-        )
-    )
 
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http

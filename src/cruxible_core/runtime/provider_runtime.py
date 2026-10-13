@@ -12,14 +12,19 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_client.contracts import ProviderLaneUnavailableCode
 from cruxible_client.contracts.provider_execution import VerifiedProviderBinding
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
-    ProviderBucketClassifierInstallation,
-    ProviderInterfaceRegistration,
     parse_provider_interface,
     provider_interface_digest,
 )
@@ -31,11 +36,6 @@ from cruxible_client.contracts.providers import (
 from cruxible_core.providers.builtin_runtime import (
     BuiltinDispatchingInvoker,
     builtin_provider_binding,
-)
-from cruxible_core.providers.package_classifier import PackageBucketClassifier
-from cruxible_core.providers.provider_classifiers import (
-    PROVIDER_BUCKET_CLASSIFIER_REGISTRY,
-    install_compiler_owned_provider_classifier,
 )
 from cruxible_core.providers.provider_local_runtime import (
     EnvironmentProviderSecretResolver,
@@ -110,7 +110,19 @@ class ProviderDeploymentConfigV1(_StrictOperationalModel):
     interpreter_path: str
     provider_runtime_version: str
     installation_verification: ProviderInstallationVerification | None = None
-    classifier_installations: tuple[ProviderBucketClassifierInstallation, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_classifier_installations(cls, value: Any) -> Any:
+        """Read a config written while deployments hosted bucket classifiers.
+
+        Those installation proofs mean nothing now: core runs no classifier.
+        The field is dropped on read and never written again.
+        """
+
+        if isinstance(value, dict) and "classifier_installations" in value:
+            return {key: item for key, item in value.items() if key != "classifier_installations"}
+        return value
 
     @field_validator(
         "distribution_path",
@@ -707,47 +719,11 @@ class ProviderRuntimeOperator:
                 if registration.lifecycle.state != "live":
                     continue
                 digest = provider_interface_digest(registration).tagged
-                accepted_interface = AcceptedProviderInterfaceRegistration(
+                interfaces[digest] = AcceptedProviderInterfaceRegistration(
                     path=path,
                     registration=registration,
                     artifact_digest=digest,
                 )
-                try:
-                    if not isinstance(registration, ProviderInterfaceRegistration):
-                        install_compiler_owned_provider_classifier(accepted_interface)
-                except Exception as exc:
-                    detail = f"Provider classifier installation failed: {type(exc).__name__}: {exc}"
-                    self.mark_unavailable("provider_runtime_recovery_failed", detail)
-                    _state, code, lane_detail = self.lane_status()
-                    return BuiltinDispatchingInvoker(
-                        _UnavailableProviderRuntimeInvoker(
-                            code=code or "provider_runtime_recovery_failed",
-                            detail=lane_detail or detail,
-                        )
-                    )
-                interfaces[digest] = accepted_interface
-        for accepted_interface in interfaces.values():
-            registration = accepted_interface.registration
-            if not isinstance(registration, ProviderInterfaceRegistration):
-                continue
-            for configured in self.config.deployments:
-                installation = next(
-                    (
-                        item
-                        for item in configured.classifier_installations
-                        if item.classifier_digest == registration.classifier_digest
-                    ),
-                    None,
-                )
-                if installation is None or configured.installation_verification is None:
-                    continue
-                deployment = self.deployments[configured.deployment_digest]
-                PROVIDER_BUCKET_CLASSIFIER_REGISTRY.restore(
-                    accepted_interface,
-                    PackageBucketClassifier(registration, deployment, self.process_leases),
-                    installation,
-                )
-                break
         invoker = ProviderLocalRuntimeInvoker(
             deployments_by_digest=self.deployments,
             accepted_providers_by_digest=providers,

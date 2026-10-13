@@ -16,7 +16,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any, Literal, Protocol
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -70,7 +70,6 @@ from cruxible_client.contracts.provider_installation import (
     ProviderWheelObject,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    ProviderInterfaceRegistration,
     parse_provider_interface,
     provider_interface_digest,
     provider_interface_path,
@@ -1207,25 +1206,18 @@ def _provider_here(
     return ("installed" if same else "differs"), digest, runtime.distribution.version
 
 
-#: Whether a deployment on this daemon hosts the package classifier with this
-#: digest (the API layer reads the operator's deployments).
-ClassifierHosted = Callable[[str], bool]
-
-
 def _default_implementers(
     tree: Mapping[str, bytes],
     provider: KitProvider,
     contents: Mapping[str, bytes],
-    classifier_hosted: ClassifierHosted | None,
 ) -> tuple[str, ...]:
     """The live Providers here that stand in for an index default, or none.
 
     A default provider stands for the contracts the kit carries, so it is
     skipped only when no carried Procedure pins it (that pin moves to the build
     installed here), each of its interfaces the kit carries is live here as the
-    kit carries it (a core-owned registration, or a package's whose classifier a
-    deployment on this daemon hosts), and some live Provider implements each one
-    on that registration. Interfaces the package also implements that the kit
+    kit carries it, and some live Provider implements each one on that
+    registration. Interfaces the package also implements that the kit
     does not carry decide nothing.
     """
 
@@ -1261,10 +1253,6 @@ def _default_implementers(
             json.loads(contents[path])
         ) != _without_lifecycle(json.loads(held_bytes)):
             return ()
-        if isinstance(registration, ProviderInterfaceRegistration) and (
-            classifier_hosted is None or not classifier_hosted(registration.classifier_digest)
-        ):
-            return ()
         artifact_digest = provider_interface_digest(registration).tagged
         implementers = {
             held.identity.name
@@ -1290,7 +1278,6 @@ def _provider_steps(
     inspected: Mapping[str, InspectedProviderPackage] | None = None,
     *,
     contents: Mapping[str, bytes],
-    classifier_hosted: ClassifierHosted | None = None,
 ) -> tuple[list[KitProviderStep], list[KitProvider]]:
     """One step per provider package, and the ones still to install.
 
@@ -1313,9 +1300,7 @@ def _provider_steps(
             "version": provider.version,
         }
         implementers = (
-            ()
-            if state == "installed"
-            else _default_implementers(tree, provider, contents, classifier_hosted)
+            () if state == "installed" else _default_implementers(tree, provider, contents)
         )
         if state == "installed":
             steps.append(KitProviderStep(**named, action="unchanged"))
@@ -1511,15 +1496,13 @@ def service_add_kit(
     actor_id: str,
     timestamp: str,
     install_provider: ProviderInstaller | None = None,
-    classifier_hosted: ClassifierHosted | None = None,
 ) -> KitChangeResult:
     """Propose the diff that brings this instance to one kit release.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
     A kit naming provider packages installs the missing ones first, through
     ``install_provider``; the definitions follow once they land. An index
-    default another live Provider stands in for is not installed
-    (``classifier_hosted`` tells whether a package classifier has a host here).
+    default another live Provider stands in for is not installed.
     """
 
     with change_scope(
@@ -1537,7 +1520,6 @@ def service_add_kit(
             actor_id=actor_id,
             timestamp=timestamp,
             install_provider=install_provider,
-            classifier_hosted=classifier_hosted,
         )
 
 
@@ -1549,7 +1531,6 @@ def _add_kit(
     actor_id: str,
     timestamp: str,
     install_provider: ProviderInstaller | None = None,
-    classifier_hosted: ClassifierHosted | None = None,
 ) -> KitChangeResult:
     assert mode.head is not None
     bundle = request.bundle
@@ -1580,9 +1561,7 @@ def _add_kit(
                 "interfaces); rebuild the kit with kit build",
                 repair=RepairOperation(operation="cruxible.kit.build"),
             )
-    steps, missing = _provider_steps(
-        tree, manifest, inspected, contents=contents, classifier_hosted=classifier_hosted
-    )
+    steps, missing = _provider_steps(tree, manifest, inspected, contents=contents)
     described: dict[str, object] = {
         "transition": transition,
         "installed_version": installed_version,
@@ -1885,9 +1864,7 @@ def _remove_kit(
     )
 
 
-def service_kit_status(
-    instance: PlaybillInstance, *, classifier_hosted: ClassifierHosted | None = None
-) -> KitStatus:
+def service_kit_status(instance: PlaybillInstance) -> KitStatus:
     """Installed kits with the paths edited since install (by content, lineage apart)."""
 
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
@@ -1909,9 +1886,7 @@ def service_kit_status(
         }
         for provider in receipt.providers:
             state, _digest, version = _provider_here(tree, provider)
-            if state != "installed" and _default_implementers(
-                tree, provider, held, classifier_hosted
-            ):
+            if state != "installed" and _default_implementers(tree, provider, held):
                 shown: Literal["installed", "differs", "satisfied", "missing"] = "satisfied"
             else:
                 shown = "missing" if state == "retired" else state

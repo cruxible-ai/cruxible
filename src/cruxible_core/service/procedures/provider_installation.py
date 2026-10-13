@@ -31,7 +31,6 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
-    ProviderInterfaceRegistration,
     ProviderInterfaceRegistrationV1,
     parse_provider_interface,
     provider_interface_digest,
@@ -52,7 +51,6 @@ from cruxible_client.contracts.providers import (
 from cruxible_client.contracts.repairs import (
     HandEditInstruction,
     HandEditRepair,
-    RepairOperation,
 )
 from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER
 from cruxible_core.derived.derived_state import fork_tree
@@ -61,7 +59,6 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
     is_builtin_workspace_file_registration,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.providers.package_classifier import PackageBucketClassifier, run_package_probe
 from cruxible_core.providers.package_index import (
     DEFAULT_PROVIDER_INDEX_URLS,
     IndexRelease,
@@ -75,8 +72,8 @@ from cruxible_core.providers.package_materialization import (
     prepare_provider_package,
     toolchain,
 )
+from cruxible_core.providers.package_probe import run_package_probe
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
-from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.providers.provider_local_runtime import (
     verification_format_upgrade,
     verify_provider_installation,
@@ -368,8 +365,8 @@ def _interface_bindings(
 
     The contract owns the ProviderInterface, not the implementation: a live
     registration of the same definition (an equal interface digest, in any
-    format and with any classifier) is the one a package binds, so a second
-    implementation installs onto it and its Provider pins that exact artifact.
+    format) is the one a package binds, so a second implementation installs
+    onto it and its Provider pins that exact artifact.
     Otherwise the package proposes its registration (core's, for a definition
     core owns), as a successor where another definition is live under the id.
     """
@@ -453,42 +450,6 @@ def _refuse_unproven_provider(
             )
         ),
     )
-
-
-def _refuse_unhosted_classifiers(
-    instance: PlaybillInstance,
-    operator: ProviderRuntimeOperator,
-    document: PackageRegistrationDocumentV1,
-    configured: ProviderDeploymentConfigV1,
-) -> None:
-    """Every package registration the Provider would pin is classified by a deployment here.
-
-    Runs classify through the first verified deployment holding the
-    registration's classifier installation. A package bound onto another
-    package's registration hosts none of its own for it, so the deployment that
-    registered it must be installed on this daemon.
-    """
-
-    hosted = {item.classifier_digest for item in configured.classifier_installations}
-    hosted.update(
-        item.classifier_digest
-        for deployment in operator.config.deployments
-        if deployment.installation_verification is not None
-        for item in deployment.classifier_installations
-    )
-    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-    for registration, _live in _interface_bindings(tree, document):
-        if (
-            isinstance(registration, ProviderInterfaceRegistration)
-            and registration.classifier_digest not in hosted
-        ):
-            raise RequestRefusedError(
-                "cruxible.provider.classifier_host_missing",
-                f"{registration.interface_id} is registered here with a package classifier "
-                f"({registration.classifier_digest[:19]}) that no deployment on this daemon "
-                "hosts; install the package that registered it on this daemon first",
-                repair=RepairOperation(operation="cruxible.provider.install"),
-            )
 
 
 def _definition_changes(
@@ -788,32 +749,6 @@ def _preview_installation(
     )
 
 
-def _hosted_registrations(
-    instance: PlaybillInstance, document: PackageRegistrationDocumentV1
-) -> tuple[ProviderInterfaceRegistration, ...]:
-    """The package registrations this package's deployment re-proves and hosts.
-
-    Core classifies a registration it owns. A live package registration is
-    classified by the deployment that hosts it: this package hosts it exactly when
-    it carries that classifier -- its own new registration, or one it registered
-    earlier (even for a definition core now owns, which it would no longer
-    propose). A registration carrying another package's classifier is not hosted.
-    """
-
-    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-    hosted = []
-    for registration, _live in _interface_bindings(tree, document):
-        if not isinstance(registration, ProviderInterfaceRegistration):
-            continue
-        try:
-            own = document.package_registration(registration.interface_id)
-        except ValueError:
-            continue
-        if own.classifier_digest == registration.classifier_digest:
-            hosted.append(registration)
-    return tuple(hosted)
-
-
 def _install_locked(
     instance: PlaybillInstance,
     operator: ProviderRuntimeOperator,
@@ -873,33 +808,6 @@ def _install_locked(
                 configured = configured.model_copy(update={"installation_verification": verified})
                 deployment = operator._deployment(configured)
                 rewrite_prepared = True
-        # A preparation retained from an install that hosted less (one refused
-        # classifier_host_missing before this package re-proved a registration
-        # it registered earlier) hosts the rest now, in the same order.
-        held = {item.classifier_digest: item for item in configured.classifier_installations}
-        owed = _hosted_registrations(instance, document)
-        if any(item.classifier_digest not in held for item in owed):
-            if operator.process_leases is None:
-                raise ConfigError("provider process runtime is unavailable")
-            registry = ProviderBucketClassifierRegistry()
-            for registration in owed:
-                if registration.classifier_digest not in held:
-                    held[registration.classifier_digest] = registry.install(
-                        _accepted(registration),
-                        PackageBucketClassifier(registration, deployment, operator.process_leases),
-                    )
-            configured = configured.model_copy(
-                update={
-                    "classifier_installations": tuple(held[item.classifier_digest] for item in owed)
-                    + tuple(
-                        item
-                        for digest, item in held.items()
-                        if digest not in {owned.classifier_digest for owned in owed}
-                    )
-                }
-            )
-            deployment = operator._deployment(configured)
-            rewrite_prepared = True
     else:
         custody = directory / "wheels"
         custody.mkdir(exist_ok=True, mode=0o700)
@@ -931,15 +839,6 @@ def _install_locked(
         deployment = replace(deployment, installation_verification=verification)
         if operator.process_leases is None:
             raise ConfigError("provider process runtime is unavailable")
-        registry = ProviderBucketClassifierRegistry()
-        installations = []
-        for registration in _hosted_registrations(instance, document):
-            installations.append(
-                registry.install(
-                    _accepted(registration),
-                    PackageBucketClassifier(registration, deployment, operator.process_leases),
-                )
-            )
         configured = ProviderDeploymentConfigV1.model_validate(
             dict(
                 deployment_digest=deployment.deployment_digest,
@@ -956,7 +855,6 @@ def _install_locked(
                 environment_pin_key=deployment.environment_pin_key,
                 provider_runtime_version=deployment.provider_runtime_version,
                 installation_verification=verification,
-                classifier_installations=tuple(installations),
             )
         )
         _write(
@@ -970,12 +868,10 @@ def _install_locked(
             ),
         )
     # Before the deployment is registered: an interface built into this
-    # instance is never re-registered from a package, a package classifier a
-    # registration names has a host on this daemon, and the Provider claims only
-    # what the registrations it binds prove.
+    # instance is never re-registered from a package, and the Provider law holds
+    # against the registrations it binds.
     base = instance.accepted_coordinate()
     _refuse_built_in_interfaces(instance, document, base.git_oid)
-    _refuse_unhosted_classifiers(instance, operator, document, configured)
     candidate_tree, changed = _definition_changes(instance, document, provider, base.git_oid)
     operator.register_deployment(configured)
     if rewrite_prepared:
@@ -1063,8 +959,6 @@ def _install_locked(
                     kind="resource",
                     digest=implementation.interface_digest,
                     value={"entrypoint": requirement.probe_entrypoint},
-                    # Installation readiness runs outside any Procedure run.
-                    deadline=None,
                 )
                 available = output.get("available") is True
             if not available:
