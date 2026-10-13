@@ -29,6 +29,7 @@ from cruxible_core.service.proposals.review import (
     ProjectionAdvisory,
     ReviewedMember,
     _projection_advisory,
+    render_playbill_approval_summary,
     render_playbill_proposal_review,
     render_playbill_proposal_review_pointer,
     service_prepare_playbill_approval,
@@ -111,6 +112,11 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
     rendered = render_playbill_proposal_review(review)
     assert f"Candidate: {review.candidate_digest}" in rendered
     assert f"Settlement base OID: {review.base_oid}" in rendered
+    # `proposal approve` shows the summary by default and the full rendering on --full.
+    summary = render_playbill_approval_summary(review)
+    assert f"Candidate: {review.candidate_digest}" in summary
+    assert f"Changes ({len(review.members)}):" in summary
+    assert "Semantic delta" not in summary
     assert f"Proposal admission tier: {review.candidate.required_tier}" in rendered
     assert "Approve requires: graph_write" in rendered
     assert "Activate requires: graph_write" in rendered
@@ -132,6 +138,8 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
     )
     assert "git fetch origin '+refs/notes/*:refs/notes/*'" in pointer
     assert "--json" in pointer
+    # One line per member says what the change set does; the diff stays in Git.
+    assert f"Changes ({len(review.members)}):" in pointer
     # Nothing of the second rendering survives in it.
     assert "Semantic delta" not in pointer
     assert "+# Cruxible" not in pointer
@@ -421,3 +429,67 @@ def test_review_names_rejected_projection_evidence(
     assert review.projection_evidence is not None
     assert review.projection_evidence.status == "rejected"
     assert review.projection_evidence.reason == reason
+
+
+def test_change_lines_print_claims_as_the_write_verbs_do() -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.service.proposals.review import proposal_change_lines
+
+    def claim(value: object, *, state: str = "live", kind: str = "literal") -> dict[str, object]:
+        claim_object: dict[str, object] = {"kind": kind}
+        if kind == "subject":
+            claim_object["subject"] = {"artifact_path": f"subjects/{value}.json"}
+        else:
+            claim_object["value"] = value
+        return {
+            "identity": {"kind": "Claim", "name": "CLM-1"},
+            "lifecycle": {"state": state},
+            "statement": {
+                "subject": {"artifact_path": "subjects/app.service/payments.json"},
+                "predicate": "app.service.owner",
+                "object": claim_object,
+            },
+        }
+
+    def member(
+        base: dict[str, object] | None, candidate: dict[str, object] | None, **extra: object
+    ) -> SimpleNamespace:
+        values: dict[str, object] = {
+            "artifact_kind": "claim",
+            "path": "claims/x.json",
+            "disposition": "replace",
+            "closure_role": "authored",
+            "base_semantic_artifact": base,
+            "candidate_semantic_artifact": candidate,
+        }
+        values.update(extra)
+        return SimpleNamespace(**values)
+
+    review = SimpleNamespace(
+        rationale="Reassigned.",
+        members=(
+            member(None, claim("ada")),
+            member(claim("ada"), claim("grace")),
+            member(claim("grace"), claim("grace", state="retired")),
+            member(None, claim("app.library/libfoo", kind="subject")),
+            member(
+                None,
+                None,
+                artifact_kind="subject",
+                path="subjects/app.service/x.json",
+                disposition="add",
+                closure_role="generated_successor",
+            ),
+        ),
+    )
+    assert proposal_change_lines(review) == [  # type: ignore[arg-type]
+        "Why:",
+        "  Reassigned.",
+        "Changes (5):",
+        "  set app.service/payments owner: ada  [CLM-1]",
+        "  set app.service/payments owner: ada -> grace  [CLM-1]",
+        "  retire app.service/payments owner: grace  [CLM-1]",
+        "  set app.service/payments owner: app.library/libfoo  [CLM-1]",
+        "  add subject subjects/app.service/x.json  (generated successor)",
+    ]

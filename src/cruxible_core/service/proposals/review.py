@@ -712,6 +712,95 @@ def _item_reason_lines(review: ProposalReview) -> list[str]:
     return lines
 
 
+_CHANGE_LINES_SHOWN = 20
+
+
+def _address_ref(address: object) -> str | None:
+    """``kind/id`` for a Subject artifact address, as the write verbs print it."""
+
+    if not isinstance(address, Mapping):
+        return None
+    path = address.get("artifact_path")
+    if not isinstance(path, str) or not path.startswith("subjects/"):
+        return None
+    return path.removeprefix("subjects/").removesuffix(".json")
+
+
+def _claim_object_text(statement: Mapping[str, object]) -> str:
+    claim_object = statement.get("object")
+    if not isinstance(claim_object, Mapping):
+        return "?"
+    if claim_object.get("kind") == "subject":
+        return _address_ref(claim_object.get("subject")) or "?"
+    if claim_object.get("kind") == "literal":
+        value = claim_object.get("value")
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return f"<{claim_object.get('kind')}>"
+
+
+def _claim_change_line(member: ReviewedMember) -> str | None:
+    """One Claim member as the write verbs print a change: ``set subject field: a -> b``."""
+
+    candidate = member.candidate_semantic_artifact
+    base = member.base_semantic_artifact
+    current = candidate if candidate is not None else base
+    if current is None:
+        return None
+    statement = current.get("statement")
+    if not isinstance(statement, Mapping):
+        return None
+    subject = _address_ref(statement.get("subject"))
+    predicate = statement.get("predicate")
+    if subject is None or not isinstance(predicate, str):
+        return None
+    kind = subject.rpartition("/")[0]
+    field = predicate.removeprefix(f"{kind}.") if predicate.startswith(f"{kind}.") else predicate
+    identity = current.get("identity")
+    claim = identity.get("name") if isinstance(identity, Mapping) else None
+    lifecycle = candidate.get("lifecycle") if candidate is not None else None
+    retired = candidate is None or (
+        isinstance(lifecycle, Mapping) and lifecycle.get("state") != "live"
+    )
+    base_statement = base.get("statement") if base is not None else None
+    if retired:
+        line = f"retire {subject} {field}: {_claim_object_text(statement)}"
+    elif isinstance(base_statement, Mapping):
+        line = (
+            f"set {subject} {field}: {_claim_object_text(base_statement)} -> "
+            f"{_claim_object_text(statement)}"
+        )
+    else:
+        line = f"set {subject} {field}: {_claim_object_text(statement)}"
+    return line + (f"  [{claim}]" if isinstance(claim, str) else "")
+
+
+def proposal_change_lines(review: ProposalReview) -> list[str]:
+    """What the change set does, one line per member, Claims as the write verbs print them.
+
+    A summary to orient the reviewer, never the review itself: the exact candidate
+    is the ledger commit (``git diff``) and ``--json``.
+    """
+
+    rows: list[str] = []
+    for member in review.members:
+        line = _claim_change_line(member) if member.artifact_kind == "claim" else None
+        if line is None:
+            line = f"{member.disposition} {member.artifact_kind} {member.path}"
+        if member.closure_role != "authored":
+            line += f"  ({member.closure_role.replace('_', ' ')})"
+        rows.append(line)
+    shown = [f"  {row}" for row in rows[:_CHANGE_LINES_SHOWN]]
+    if len(rows) > _CHANGE_LINES_SHOWN:
+        shown.append(
+            f"  ... and {len(rows) - _CHANGE_LINES_SHOWN} more (--json lists every member)"
+        )
+    lines: list[str] = []
+    if review.rationale is not None:
+        lines.extend(("Why:", *(f"  {line}" for line in review.rationale.splitlines())))
+    lines.extend((f"Changes ({len(rows)}):", *shown))
+    return lines
+
+
 def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     """Point a reviewer at the ledger instead of re-rendering the ledger.
 
@@ -721,9 +810,10 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     kind, and a reviewer who reads it is reasoning about the renderer's opinion
     of the candidate rather than the bytes settlement will accept.
 
-    What is left here is a pointer and the two note refs, because those are the
-    coordinates a reviewer cannot guess. `--json` remains the structured read
-    for anything that needs fields rather than a diff.
+    What is left here is the author's reason, one line per member saying what it
+    does (so a reviewer knows what to look for), a pointer and the two note refs,
+    because those are the coordinates a reviewer cannot guess. `--json` remains the
+    structured read for anything that needs fields rather than a diff.
     """
 
     key = review.proposal_id.removeprefix("sha256:")
@@ -733,6 +823,8 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
                 f"Proposal: {review.proposal_id}",
                 f"Candidate: {review.candidate_digest}",
                 f"Settlement base OID: {review.base_oid}",
+                "",
+                *proposal_change_lines(review),
                 *_item_reason_lines(review),
                 *_prior_refusal_lines(review),
                 "",
@@ -755,6 +847,38 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     )
 
 
+def render_playbill_approval_summary(review: ProposalReview) -> str:
+    """What `proposal approve` shows before signing: who must approve, why, and what changes.
+
+    The signature covers the exact candidate digest printed here; `--full`
+    renders every member's artifact and semantic delta instead.
+    """
+
+    lines = [
+        f"Proposal: {review.proposal_id}",
+        f"Candidate: {review.candidate_digest}",
+        "Required approvals: " + _required_approvals_text(review),
+        "",
+        *proposal_change_lines(review),
+        *_item_reason_lines(review),
+        *_prior_refusal_lines(review),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _required_approvals_text(review: ProposalReview) -> str:
+    return ", ".join(
+        f"{item.minimum_distinct_signers} {item.role}"
+        for item in review.candidate.approval_requirements
+    ) or (
+        f"{review.provenance.get('actor_id', 'the proposing actor')}'s "
+        "own signature (lifecycle actor binding)"
+        if all(member.artifact_kind == "principal-lifecycle" for member in review.complete_members)
+        and review.complete_members
+        else "none"
+    )
+
+
 def render_playbill_proposal_review(review: ProposalReview) -> str:
     """Render the exact candidate a signer is about to attest to.
 
@@ -772,23 +896,7 @@ def render_playbill_proposal_review(review: ProposalReview) -> str:
         f"Proposal admission tier: {review.candidate.required_tier}",
         "Approve requires: graph_write",
         "Activate requires: graph_write",
-        "Required approvals: "
-        + (
-            ", ".join(
-                f"{item.minimum_distinct_signers} {item.role}"
-                for item in review.candidate.approval_requirements
-            )
-            or (
-                f"{review.provenance.get('actor_id', 'the proposing actor')}'s "
-                "own signature (lifecycle actor binding)"
-                if all(
-                    member.artifact_kind == "principal-lifecycle"
-                    for member in review.complete_members
-                )
-                and review.complete_members
-                else "none"
-            )
-        ),
+        "Required approvals: " + _required_approvals_text(review),
     ]
     if review.rationale is not None:
         lines.extend(("", "Rationale:", *(f"  {line}" for line in review.rationale.splitlines())))
@@ -856,8 +964,10 @@ __all__ = [
     "ProjectionAdvisory",
     "PlaybillReviewedDocument",
     "ReviewedMember",
+    "render_playbill_approval_summary",
     "render_playbill_proposal_review",
     "render_playbill_proposal_review_pointer",
+    "proposal_change_lines",
     "service_prepare_playbill_approval",
     "service_review_playbill_proposal",
 ]

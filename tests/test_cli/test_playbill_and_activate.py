@@ -173,3 +173,44 @@ def test_and_activate_brief_prints_the_accepted_coordinate_and_receipt(
     assert "outcome: accepted" in result.output
     assert f"coordinate: {COORDINATE.git_oid}" in result.output
     assert "receipt: playbill-activation-receipt-v1" in result.output
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("accepted", ["accepted (111111111111) by owner", "next: cruxible next"]),
+        ("lost_cas", ["not accepted (lost_cas)", f"next: cruxible proposal readmit {PROPOSAL_ID}"]),
+    ],
+)
+def test_proposal_activate_prints_the_outcome_and_next_step_as_text(
+    monkeypatch: pytest.MonkeyPatch, status: str, expected: list[str]
+) -> None:
+    """`proposal activate` reads like a write: the outcome and the next step, not raw JSON."""
+
+    receipt = contracts.ActivationReceipt(
+        proposal_id=PROPOSAL_ID,
+        activated_by="owner",
+        status=status,  # type: ignore[arg-type]
+        accepted_coordinate=COORDINATE if status == "accepted" else None,
+        workspace_advertisement={"status": "not_attached", "workspace_path": None},
+    )
+
+    class _ActivateClient:
+        def resolve_proposal_selector(self, instance_id: str, selector: str) -> object:
+            from types import SimpleNamespace
+
+            return SimpleNamespace(proposal_id=PROPOSAL_ID)
+
+        def activate_proposal(self, instance_id: str, proposal_id: str) -> object:
+            return receipt
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: _ActivateClient())
+    base = [*COMMON[:-1], "proposal", "activate", PROPOSAL_ID]
+    result = CliRunner().invoke(cli, base)
+    assert result.exit_code == 0, result.output
+    for line in expected:
+        assert line in result.output
+    assert "playbill-activation-receipt-v1" not in result.output
+
+    as_json = CliRunner().invoke(cli, [*base, "--json"])
+    assert json.loads(as_json.stdout)["status"] == status
