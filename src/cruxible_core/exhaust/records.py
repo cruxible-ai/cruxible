@@ -28,6 +28,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.errors import (
     JournalError,
     JournalIntegrityError,
@@ -264,10 +265,23 @@ class JournalStreamIdentityV1(_StrictJournalModel):
         ).tagged
 
 
+_GENESIS_DIGESTS: ValueMemo[str] = ValueMemo(capacity=4096)
+
+
 def journal_genesis_digest(stream: JournalStreamIdentityV1, partition_id: str) -> str:
-    """Return the domain-separated predecessor for sequence one."""
+    """Return the domain-separated predecessor for sequence one.
+
+    A pure function of the (frozen) stream identity and the partition id, so it
+    is remembered by their values; an invalid id refuses before anything is kept.
+    """
 
     _identifier(partition_id, label="journal partition_id", pattern=_PARTITION_RE)
+    return _GENESIS_DIGESTS.derive(
+        (stream, partition_id), lambda: _journal_genesis_digest(stream, partition_id)
+    )
+
+
+def _journal_genesis_digest(stream: JournalStreamIdentityV1, partition_id: str) -> str:
     return typed_digest(
         ArtifactDigest,
         "playbill-journal-partition-genesis-v1",

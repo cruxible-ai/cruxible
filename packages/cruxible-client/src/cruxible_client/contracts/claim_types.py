@@ -43,6 +43,7 @@ from cruxible_client.contracts.canonical_forms import (
     validate_canonical_form,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole, ClaimTypeStructure
+from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
@@ -510,7 +511,22 @@ def render_claim_type(claim_type: ClaimType) -> bytes:
     return pretty_canonical_bytes(payload)
 
 
+_CLAIM_TYPE_PARSES: ParseMemo[ClaimType] = ParseMemo(capacity=4096, max_bytes=32 * 1024 * 1024)
+
+
 def parse_claim_type(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> ClaimType:
+    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
+    return _CLAIM_TYPE_PARSES.parse(
+        content, path, codec, lambda: _parse_claim_type(content, path=path, codec=codec)
+    )
+
+
+def _parse_claim_type(
     content: bytes,
     *,
     path: str,
@@ -609,7 +625,15 @@ CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = 
 }
 
 
+_CLAIM_TYPE_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=4096)
+
+
 def claim_type_digest(claim_type: ClaimType) -> ArtifactDigest:
+    """Digest once per exact frozen value; see ``content_memo``."""
+    return _CLAIM_TYPE_DIGESTS.derive(claim_type, lambda: _claim_type_digest(claim_type))
+
+
+def _claim_type_digest(claim_type: ClaimType) -> ArtifactDigest:
     return CLAIM_TYPE_DIGEST_FUNCTIONS[claim_type.artifact_format](claim_type)
 
 

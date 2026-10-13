@@ -31,6 +31,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.content_memo import ObjectMemo, ParseMemo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -361,7 +362,24 @@ def render_procedure(procedure: ProcedureArtifact) -> bytes:
     return pretty_canonical_bytes(procedure.model_dump(mode="json", by_alias=True))
 
 
+_PROCEDURE_PARSES: ParseMemo[ProcedureArtifact] = ParseMemo(
+    capacity=1024, max_bytes=32 * 1024 * 1024
+)
+
+
 def parse_procedure(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> ProcedureArtifact:
+    """Parse once per exact (path, codec, bytes); see ``content_memo``."""
+    return _PROCEDURE_PARSES.parse(
+        content, path, codec, lambda: _parse_procedure(content, path=path, codec=codec)
+    )
+
+
+def _parse_procedure(
     content: bytes,
     *,
     path: str,
@@ -378,7 +396,15 @@ def parse_procedure(
     return procedure
 
 
+_PROCEDURE_DIGESTS: ObjectMemo[ArtifactDigest] = ObjectMemo(capacity=1024)
+
+
 def procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:
+    """Digest once per exact frozen value; see ``content_memo``."""
+    return _PROCEDURE_DIGESTS.derive(procedure, lambda: _procedure_artifact_digest(procedure))
+
+
+def _procedure_artifact_digest(procedure: ProcedureArtifact) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
