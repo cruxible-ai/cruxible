@@ -68,6 +68,7 @@ from cruxible_core.providers.provider_runtime_contract import (
 )
 from tests.core_support._p2b1_support import accepted_interface, provider_v2
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
+from tests.support.invocation_ids import unique_invocation_id
 from tests.support.short_temporary_root import short_temporary_directory
 
 
@@ -457,7 +458,7 @@ def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_
         context,
         secret_plan=plan,
         secret_resolvers=registry,
-        invocation_id=_digest("invocation"),
+        invocation_id=unique_invocation_id(),
         process_leases=leases,
     )
 
@@ -516,7 +517,7 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(
             context,
             secret_plan=_secret_plan(),
             secret_resolvers=registry,
-            invocation_id=_digest("leak-invocation"),
+            invocation_id=unique_invocation_id(),
             process_leases=_lease_store(tmp_path / "leak-leases"),
         )
     assert caught.value.code == "secret_leak"
@@ -534,7 +535,7 @@ def test_secret_channel_read_descriptor_has_exactly_one_parent_owner(
             context=b'{"run_id":"RUN-secret-owner","input":{"value":"ok"}}',
             budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
             secret_fd=secret_fd,
-            invocation_id=_digest("secret-owner"),
+            invocation_id=unique_invocation_id(),
             process_leases=leases,
         )
         assert json.loads(outcome.stdout)["status"] == "ok"
@@ -576,7 +577,7 @@ def test_successful_invocation_kills_only_inside_the_unreaped_zombie_window(
         context=b'{"run_id":"RUN-success","input":{"value":"ok"}}',
         budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
         secret_fd=None,
-        invocation_id=_digest("successful-child"),
+        invocation_id=unique_invocation_id(),
         process_leases=_lease_store(tmp_path / "success-leases"),
     )
     assert json.loads(outcome.stdout)["status"] == "ok"
@@ -589,7 +590,7 @@ def test_process_recovery_kills_an_echo_verified_invocation_group(
 ) -> None:
     interpreter = _fake_interpreter(tmp_path / "fake-python")
     leases = _lease_store(tmp_path / "process-leases")
-    invocation_id = _digest("orphaned-invocation")
+    invocation_id = unique_invocation_id()
     record_path, control_path = leases.paths(invocation_id)
     wrapper = tmp_path / "provider_child_fence.py"
     wrapper.write_text("# marker", encoding="utf-8")
@@ -760,7 +761,7 @@ with open({str(marker)!r}, "a") as handle:
     )
     interpreter.chmod(0o755)
     leases = _lease_store(tmp_path / "escape-leases")
-    invocation_id = _digest("escape")
+    invocation_id = unique_invocation_id()
 
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
         _run_child(
@@ -840,7 +841,7 @@ sys.stdout.flush()
             context=b'{"run_id":"RUN-setsid","input":{"value":"ok"}}',
             budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=3, output_bytes=65_536),
             secret_fd=None,
-            invocation_id=_digest("setsid-grandchild"),
+            invocation_id=unique_invocation_id(),
             process_leases=leases,
         )
         assert json.loads(outcome.stdout)["status"] == "ok"
@@ -881,7 +882,7 @@ def test_fence_survivor_never_masks_the_original_typed_refusal(
             context=b'{"run_id":"RUN-original","input":{"value":"ok"}}',
             budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=1),
             secret_fd=None,
-            invocation_id=_digest("original-refusal"),
+            invocation_id=unique_invocation_id(),
             process_leases=leases,
         )
     assert caught.value.code == "budget_output_size"
@@ -889,7 +890,7 @@ def test_fence_survivor_never_masks_the_original_typed_refusal(
         "code": "provider_process_group_survived_recovery",
         "message": ("provider_process_group_survived_recovery: synthetic survivor after cleanup"),
     }
-    record_path, _control_path = leases.paths(_digest("original-refusal"))
+    record_path, _control_path = leases.paths(unique_invocation_id())
     assert record_path.exists()
 
 
@@ -1022,7 +1023,7 @@ def test_control_namespace_is_private_and_stale_socket_is_retryable(
     _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path
 ) -> None:
     leases = _lease_store(tmp_path / "private-leases")
-    invocation_id = _digest("stale-socket")
+    invocation_id = unique_invocation_id()
     _record_path, control_path = leases.paths(invocation_id)
     stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     stale.bind(str(control_path))
@@ -1311,7 +1312,7 @@ time.sleep(5)
             context=b"{}",
             budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=5, output_bytes=4096),
             secret_fd=None,
-            invocation_id=_digest("cap"),
+            invocation_id=unique_invocation_id(),
             process_leases=leases,
         )
     assert caught.value.code == "budget_output_size"

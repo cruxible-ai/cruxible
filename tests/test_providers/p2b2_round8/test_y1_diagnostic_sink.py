@@ -12,6 +12,7 @@ from cruxible_core.providers.provider_local_runtime import _run_child
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+from tests.support.invocation_ids import unique_invocation_id
 from tests.test_providers.test_provider_local_driver import _fake_interpreter
 
 
@@ -36,7 +37,7 @@ def test_a_raising_terminate_sink_cannot_replace_success_or_strand_the_lease(
 
     monkeypatch.setattr(runtime_module._DescendantTracker, "snapshot", snapshot_failure)
     store._diagnostic_sink = raising_sink
-    invocation_id = "sha256:" + "8" * 64
+    invocation_id = unique_invocation_id()
 
     outcome = _run_child(
         _fake_interpreter(short_root / "provider.py"),

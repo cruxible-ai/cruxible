@@ -32,6 +32,7 @@ from cruxible_core.providers.provider_process_leases import (
     _socket_peer_pid,
 )
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from tests.support.invocation_ids import unique_invocation_id
 
 CONTEXT = b'{"run_id":"RUN-r4","input":{"value":"r4"}}'
 
@@ -153,7 +154,7 @@ def test_returncode_is_none_and_the_group_is_alive_at_every_terminate_entry(
             context=CONTEXT,
             budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
             secret_fd=None,
-            invocation_id="sha256:" + "b" * 64,
+            invocation_id=unique_invocation_id(),
             process_leases=store,
         )
     finally:
@@ -198,7 +199,7 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
             context=CONTEXT,
             budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
             secret_fd=None,
-            invocation_id="sha256:" + "e" * 64,
+            invocation_id=unique_invocation_id(),
             process_leases=store,
         )
     except BaseException as exc:  # noqa: BLE001
@@ -255,7 +256,7 @@ def test_tracker_start_failure_kills_and_reaps_the_spawned_child(
                 context=CONTEXT,
                 budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
                 secret_fd=None,
-                invocation_id="sha256:" + "4" * 64,
+                invocation_id=unique_invocation_id(),
                 process_leases=store,
             )
         assert caught.value.code == "provider_process_lease_invalid"
@@ -375,7 +376,7 @@ def test_an_independent_echo_server_cannot_authorise_a_kill(short_root: Path) ->
     """CONFIRM T-8 end to end: an echo from a non-lease pid never signals."""
 
     store = ProviderProcessLeaseStore(short_root / "l4", control_root=short_root / "c")
-    invocation_id = "sha256:" + "f" * 64
+    invocation_id = unique_invocation_id()
     record_path, control_path = store.paths(invocation_id)
     victim = subprocess.Popen(
         [sys.executable, "-c", "import time\nwhile True: time.sleep(0.05)"],
@@ -476,7 +477,7 @@ def test_an_execd_grandchild_of_the_real_wrapper_cannot_read_the_secret(
             [
                 sys.executable,
                 str(wrapper),
-                "sha256:" + "9" * 64,
+                unique_invocation_id(),
                 str(control),
                 "demo:Provider",
                 str(fd),
