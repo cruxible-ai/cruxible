@@ -387,7 +387,9 @@ def _resolve_prepared(
         )
     try:
         request = TerminalEgressRequestV2.model_validate(prepared_payload.get("request"))
-        journaled_preparation = PreparedTerminalEgressV1.model_validate(journaled)
+        journaled_preparation = (
+            None if journaled is None else PreparedTerminalEgressV1.model_validate(journaled)
+        )
     except ValidationError as exc:
         raise ProcedureRunRecoveryRequired(
             f"{ProcedureRunRecoveryRequired.code}: run {admission.run_id} journaled an "
