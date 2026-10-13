@@ -181,6 +181,7 @@ from cruxible_core.storage.cas import (
 from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
 
 if TYPE_CHECKING:
+    from cruxible_core.evidence.attestation_verification import CaptureContractVersions
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationEvidenceStore
     from cruxible_core.proposals.refusal_index import RefusalIndex
     from cruxible_core.query.backends import ClaimQueryFactsV1
@@ -1475,6 +1476,23 @@ class PlaybillInstance:
             return None
         return AcceptedCaptureContract(
             path=path, contract=contract, artifact_digest=contract_digest
+        )
+
+    def accepted_capture_contract_versions(
+        self, coordinate: AcceptedCoordinate
+    ) -> "CaptureContractVersions":
+        """``accepted_capture_contract_version`` at one referent, with its authority.
+
+        Authoritative when this instance's history index holds every accepted
+        artifact version, genesis included: its compiler is one that indexes
+        genesis (``_history_reader_for_epoch``).
+        """
+
+        from cruxible_core.evidence.attestation_verification import CaptureContractVersions
+
+        return CaptureContractVersions(
+            resolve=lambda digest: self.accepted_capture_contract_version(coordinate, digest),
+            authoritative=self._recovered.coordinate.compiler in PC_HR_ARTIFACT_CODEC_COMPILERS,
         )
 
     def capture_verification_context(self) -> LocalProducerReceiptResolver:

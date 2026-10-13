@@ -261,3 +261,93 @@ def test_new_capture_admission_reads_only_the_cited_contract_and_producers(
         assert admit(tree) == expected
         reads.append(tree.read)
     assert reads[0] == reads[1], reads
+
+
+def _with_unrelated_contracts(source, size: int):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.captures import (
+        capture_contract_path,
+        parse_capture_contract,
+        render_capture_contract,
+    )
+
+    path = next(p for p in source if p.startswith("capture-contracts/"))
+    contract = parse_capture_contract(source[path], path=path)
+    rows = dict(source)
+    for number in range(size):
+        name = f"zz-unrelated-{number:03d}"
+        copied = contract.model_copy(
+            update={"identity": contract.identity.model_copy(update={"name": name})}
+        )
+        rows[capture_contract_path(name)] = render_capture_contract(copied)
+    return rows
+
+
+def test_an_authoritative_index_miss_never_reads_the_contract_population(tmp_path) -> None:
+    """Review F-009: an indexed absence answers absence without enumerating contracts.
+
+    Only a lookup without index authority (a plain callable, no provider) still
+    reads the referent's contracts whole; both refuse alike at admission.
+    """
+
+    from collections.abc import Iterator, Mapping
+
+    from cruxible_core.evidence import attestation_verification as verification
+    from cruxible_core.evidence.attestation_verification import CaptureContractVersions
+
+    instance, _claim_id, _owner = _accepted_claim_world(tmp_path)
+    source = instance.tree_at(instance.accepted_coordinate().git_oid)
+    referent = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    served = instance.accepted_capture_contract_versions(referent)
+    assert served.authoritative
+
+    class Counted(Mapping[str, bytes]):
+        def __init__(self, rows: dict[str, bytes]) -> None:
+            self.rows, self.reads = rows, 0
+
+        def __getitem__(self, path: str) -> bytes:
+            self.reads += 1
+            return self.rows[path]
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(self.rows)
+
+        def __len__(self) -> int:
+            return len(self.rows)
+
+    absent = "sha256:" + "f" * 64
+    work = []
+    for size in (3, 30):
+        tree = Counted(_with_unrelated_contracts(source, size))
+        for locator in (CaptureContractVersions(lambda _d: None, authoritative=True), served):
+            assert verification._current_contract(tree, absent, locator) is None
+        work.append(tree.reads)
+        fallback = Counted(_with_unrelated_contracts(source, size))
+        assert verification._current_contract(fallback, absent, lambda _d: None) is None
+        assert fallback.reads >= size
+    assert work == [0, 0], work
+
+
+def test_a_located_contract_is_current_only_with_its_exact_bytes_at_the_referent(
+    tmp_path,
+) -> None:
+    """The index locates a version; the referent's own bytes decide whether it is present."""
+
+    from cruxible_client.contracts.captures import (
+        capture_contract_digest,
+        render_capture_contract,
+    )
+    from cruxible_core.evidence import attestation_verification as verification
+
+    instance, _claim_id, _owner = _accepted_claim_world(tmp_path)
+    source = instance.tree_at(instance.accepted_coordinate().git_oid)
+    accepted = next(iter(verification._capture_contracts(source).values()))
+    digest = accepted.artifact_digest
+    assert verification._current_contract(source, digest, lambda _d: accepted) == accepted
+    assert verification._current_contract({}, digest, lambda _d: accepted) is None
+    assert verification._current_contract(source, "sha256:" + "f" * 64, lambda _d: accepted) is None
+    other = "e" if accepted.contract.replay_policy_digest != "sha256:" + "e" * 64 else "d"
+    changed = accepted.contract.model_copy(update={"replay_policy_digest": "sha256:" + other * 64})
+    rows = dict(source)
+    rows[accepted.path] = render_capture_contract(changed)
+    assert capture_contract_digest(changed).tagged != digest
+    assert verification._current_contract(rows, digest, lambda _d: accepted) is None

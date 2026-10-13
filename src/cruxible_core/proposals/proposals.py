@@ -9,7 +9,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cache
-from typing import Annotated, Any, Callable, Final, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Final, Literal, Protocol, cast
 
 from pydantic import (
     BaseModel,
@@ -364,6 +364,9 @@ from cruxible_core.query.engine import (
     query_execution_receipt,
 )
 from cruxible_core.storage.preview_fence import refuse_write_while_previewing
+
+if TYPE_CHECKING:
+    from cruxible_core.evidence.attestation_verification import CaptureContractVersions
 
 _DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.json$")
 _APPROVAL_POLICY_PATH_RE = re.compile(r"^governance/approval-policy\.json$")
@@ -3003,7 +3006,9 @@ def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
         # Evidence under a since-succeeded contract version verifies against that
         # version, accepted at or before the signed referent.
         historical_capture_contract=historical_capture_contract_resolver(
-            context.historical_artifact_provider, s.referent_coordinate
+            context.historical_artifact_provider,
+            s.referent_coordinate,
+            indexed_compiler=context.current.compiler in PC_HR_ARTIFACT_CODEC_COMPILERS,
         ),
         # New evidence needs daemon proof a run produced it, at admission and
         # again at settlement; only recovery of accepted state re-derives it.
@@ -3186,14 +3191,21 @@ def _subject_versions(
 
 
 def historical_capture_contract_resolver(
-    provider: HistoricalArtifactProvider | None, at: AcceptedCoordinate
-) -> Callable[[str], AcceptedCaptureContract | None]:
+    provider: HistoricalArtifactProvider | None,
+    at: AcceptedCoordinate,
+    *,
+    indexed_compiler: bool = False,
+) -> "CaptureContractVersions":
     """Resolve exact CaptureContract versions accepted within the prefix ending at ``at``.
 
     Bounded by one accepted coordinate, so replaying a generation reads exactly
     what its first evaluation read. Without a provider nothing historical
-    resolves and only live contracts verify.
+    resolves and only live contracts verify. The answer is authoritative (a
+    None means no such version was accepted) only with a provider over an
+    instance whose compiler indexes every accepted generation, genesis
+    included (``indexed_compiler``).
     """
+    from cruxible_core.evidence.attestation_verification import CaptureContractVersions
 
     cache: dict[str, AcceptedCaptureContract | None] = {}
 
@@ -3212,7 +3224,9 @@ def historical_capture_contract_resolver(
         cache[digest] = accepted
         return accepted
 
-    return resolve
+    return CaptureContractVersions(
+        resolve=resolve, authoritative=provider is not None and indexed_compiler
+    )
 
 
 def _claim_member(context: _MemberContext) -> _MemberVerdict:

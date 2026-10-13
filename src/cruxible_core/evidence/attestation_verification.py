@@ -231,6 +231,25 @@ def _contract_live_at(tree: Mapping[str, bytes], identity: ArtifactIdentity) -> 
     return contract.identity == identity and contract.lifecycle.state == "live"
 
 
+@dataclass(frozen=True)
+class CaptureContractVersions:
+    """Exact CaptureContract versions accepted at or before one referent, by digest.
+
+    ``authoritative`` says ``resolve`` answers from an accepted-history index
+    that holds every artifact version accepted at or before the referent: a
+    None from it means no CaptureContract with that digest was ever accepted
+    there, so none can be present and nothing is enumerated. A lookup that is
+    not authoritative (a plain callable, or a resolver without an index) proves
+    nothing by a None, and the referent's CaptureContracts are read whole.
+    """
+
+    resolve: Callable[[str], AcceptedCaptureContract | None]
+    authoritative: bool
+
+    def __call__(self, digest: str) -> AcceptedCaptureContract | None:
+        return self.resolve(digest)
+
+
 def _current_contract(
     tree: Mapping[str, bytes],
     digest: str,
@@ -240,11 +259,14 @@ def _current_contract(
 
     The accepted-history index locates the version (and so its one path: the
     digest covers the identity); the referent's own bytes at that path decide
-    whether it is the version present there. Without an index answer the
-    referent's CaptureContracts are read whole, as before.
+    whether it is the version present there. An authoritative index that finds
+    no such version answers absence outright. Only without an authoritative
+    answer are the referent's CaptureContracts read whole, as before.
     """
     version = None if historical is None else historical(digest)
     if version is None:
+        if isinstance(historical, CaptureContractVersions) and historical.authoritative:
+            return None
         return _capture_contracts(tree).get(digest)
     content = tree.get(version.path)
     if content is None:
