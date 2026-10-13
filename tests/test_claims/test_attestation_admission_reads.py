@@ -168,3 +168,96 @@ def test_referent_producer_and_contract_tables_read_only_their_own_paths(
         for path, content in source.items()
         if path.startswith("procedures/")
     }
+    # The identity-path lookups answer what the whole tables answer (review F-007).
+    lookup = verification._ReferentProducers(source)
+    for qualified, digest in (providers | procedures).items():
+        assert qualified in lookup and lookup[qualified] == digest
+    assert "Provider:absent-provider" not in lookup and lookup.get("Procedure:absent") is None
+    for accepted in contracts.values():
+        assert verification._contract_live_at(source, accepted.contract.identity) == (
+            accepted.contract.lifecycle.state == "live"
+        )
+
+
+def test_new_capture_admission_reads_only_the_cited_contract_and_producers(
+    tmp_path: Path,
+) -> None:
+    """Review F-007: a fixed cited Capture reads the same files however many others exist.
+
+    Unrelated CaptureContracts, Providers and Procedures are planted as bytes no
+    parser accepts: any read of them would refuse. The admission answer equals
+    the one over the clean referent, and the reads do not grow.
+    """
+
+    from collections.abc import Iterator, Mapping
+
+    from cruxible_client.contracts.claims import claim_path
+    from cruxible_core.evidence.attestation_verification import (
+        verify_attestation_admission,
+        verify_attestation_referent,
+    )
+    from cruxible_core.service.claims.claims import _claim_law_evidence
+    from tests.test_claims.test_claim_attestation_service import _coordinator_new_capture
+
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    capture = _coordinator_new_capture(instance, claim_id)
+    request = _request(
+        instance,
+        owner,
+        claim_id,
+        tmp_path,
+        basis="new_capture",
+        captures=(capture.capture_digest,),
+    )
+    referent = instance.accepted_coordinate()
+    clean = instance.tree_at(referent.git_oid)
+    principals = instance.accepted_principal_registry(referent)
+    claim = verify_attestation_referent(
+        request.attestation,
+        instance_id=instance.descriptor.instance_id,
+        referent_tree=clean,
+        referent_principals=principals,
+        at=RECORDED_AT,
+    )
+
+    class Counted(Mapping[str, bytes]):
+        def __init__(self, rows: dict[str, bytes]) -> None:
+            self.rows, self.read = rows, 0
+
+        def __getitem__(self, path: str) -> bytes:
+            self.read += 1
+            return self.rows[path]
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(self.rows)
+
+        def __len__(self) -> int:
+            return len(self.rows)
+
+    def admit(tree: Mapping[str, bytes]):  # type: ignore[no-untyped-def]
+        return verify_attestation_admission(
+            request.attestation,
+            claim=claim,
+            referent_tree=tree,
+            referent_principals=principals,
+            current_tree=tree,
+            current_principals=principals,
+            bodies=instance.body_store(),
+            law=_claim_law_evidence(instance, path=claim_path(claim_id), at=referent),
+            producer_receipt_resolver=instance.capture_verification_context(),
+            historical_capture_contract=lambda digest: instance.accepted_capture_contract_version(
+                AcceptedCoordinate.from_internal(referent), digest
+            ),
+        )
+
+    expected = admit(clean)
+    reads = []
+    for unrelated in (3, 30):
+        rows = dict(clean)
+        for number in range(unrelated):
+            for prefix in ("capture-contracts", "providers", "procedures"):
+                rows[f"{prefix}/zz-unrelated-{number:03d}.json"] = b"not an artifact"
+        tree = Counted(rows)
+        assert admit(tree) == expected
+        reads.append(tree.read)
+    assert reads[0] == reads[1], reads
