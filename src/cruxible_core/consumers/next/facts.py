@@ -32,7 +32,7 @@ import sqlite3
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +48,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     SubjectClaimObject,
     claim_artifact_digest,
+    claim_citation_references,
     claim_path,
 )
 from cruxible_client.contracts.errors import CruxibleError
@@ -100,7 +101,7 @@ CREATE TABLE claim_facts (
  lineage_digests TEXT, lineage_complete INTEGER, verdict_json TEXT, verdict TEXT,
  currency TEXT, status TEXT, visible INTEGER, max_support_expiry_us INTEGER,
  set_args_json TEXT, lower_us INTEGER, upper_us INTEGER, error_code TEXT,
- error_detail TEXT, citation_error TEXT, unservable INTEGER NOT NULL
+ error_detail TEXT, citation_error TEXT, unservable INTEGER NOT NULL, account_captures TEXT
 ) STRICT;
 CREATE INDEX claim_facts_by_slot ON claim_facts(res_slot,claim_id);
 CREATE INDEX claim_facts_by_conflict_slot ON claim_facts(conflict_slot,claim_id);
@@ -116,10 +117,10 @@ CREATE TABLE fact_reads (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX fact_reads_by_claim ON fact_reads(claim_id,read_key);
 CREATE TABLE capture_bodies (
- body_digest TEXT NOT NULL, capture_digest TEXT NOT NULL, identity TEXT,
- PRIMARY KEY(body_digest,capture_digest)
+ body_digest TEXT NOT NULL, capture_digest TEXT NOT NULL, claim_id TEXT NOT NULL, identity TEXT,
+ PRIMARY KEY(body_digest,capture_digest,claim_id)
 ) STRICT, WITHOUT ROWID;
-CREATE INDEX capture_bodies_by_capture ON capture_bodies(capture_digest,body_digest);
+CREATE INDEX capture_bodies_by_claim ON capture_bodies(claim_id);
 CREATE TABLE door_events (
  event_digest TEXT PRIMARY KEY, chain_pos INTEGER NOT NULL UNIQUE,
  claim_identity TEXT NOT NULL, partition TEXT NOT NULL, partition_seq INTEGER NOT NULL,
@@ -187,6 +188,7 @@ _FACT_COLUMNS = (
     "error_detail",
     "citation_error",
     "unservable",
+    "account_captures",
 )
 _CLAIM_PATH = re.compile(r"claims/[0-9a-f]{2}/(CLM-[0-9a-f]{32})\.json")
 _VERDICTS: TypeAdapter[ClaimVerdictResultAny] = TypeAdapter(ClaimVerdictResultAny)
@@ -384,11 +386,15 @@ def _claim_facts(
     at: datetime,
     stored: Mapping[str, Any] | None,
     claim_types: dict[str, Any],
+    door_captures: Iterable[str] = (),
 ) -> _Facts:
     """Derive one Claim's facts at ``at``, recording every read they made.
 
     ``stored`` is the Claim's previous row: an unchanged artifact keeps its
-    lineage, which reads only immutable history.
+    lineage, which reads only immutable history. ``door_captures`` are the
+    Captures this Claim's new-capture door events cite: with its accepted
+    new-capture attestations and its lineage's admission accounts, they are
+    read for the door's rows, so their bodies are this Claim's reads too.
     """
 
     from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
@@ -426,6 +432,10 @@ def _claim_facts(
     }
     if object_path is not None:
         reads.add(f"path:{object_path}")
+    door_reads, account_captures = _door_reads(
+        instance, context, claim, door_captures=door_captures, stored=stored, digest=digest
+    )
+    reads.update(f"capture:{capture}" for capture in door_reads)
     errors: list[tuple[str, str]] = []
     boundaries: set[datetime] = set()
     verdict: ClaimVerdictResultAny | None = None
@@ -530,15 +540,70 @@ def _claim_facts(
         "error_detail": errors[0][1] if errors else None,
         "citation_error": citation_error,
         "unservable": int(not recording.bodies_complete or recording.inconsistent),
+        "account_captures": None if account_captures is None else _json(account_captures),
     }
+    capture_bodies = dict(recording.capture_bodies)
+    store = context.body_store()
+    for capture in door_reads:
+        consulted = capture_bodies.get(capture, {})
+        if consulted is not None and capture not in consulted:
+            # The door reads the Capture envelope itself.
+            capture_bodies[capture] = {**consulted, capture: store.file_identity(capture)}
     return _Facts(
         claim=claim,
         row=row,
         reads=frozenset(reads),
-        capture_bodies=dict(recording.capture_bodies),
+        capture_bodies=capture_bodies,
         citations=citations,
         verdict=verdict,
     )
+
+
+def _door_reads(
+    instance: Any,
+    context: ClaimVerdictReadContext,
+    claim: ClaimArtifactAny,
+    *,
+    door_captures: Iterable[str],
+    stored: Mapping[str, Any] | None,
+    digest: str,
+) -> tuple[tuple[str, ...], list[str] | None]:
+    """The Captures the door reads for this Claim, and its lineage's account Captures.
+
+    A Claim with new-capture observations (door events or accepted
+    attestations) has its observed contents read and its lineage's admission
+    accounts read from their citation envelopes. Accounts rest on immutable
+    history, so an unchanged artifact keeps the ones it found.
+    """
+
+    from cruxible_core.service.discovery.next import _attestation_claim_lineage
+
+    cited = set(door_captures)
+    with instance.bind_accepted_projection(context.coordinate) as projection:
+        for envelope in projection.typed.claim_attestations(
+            basis="new_capture", claim_identities=(claim.identity.qualified,)
+        ):
+            cited.update(envelope.statement.cited_capture_digests)
+    if not cited:
+        return (), None
+    if (
+        stored is not None
+        and stored["artifact_digest"] == digest
+        and stored["account_captures"] is not None
+    ):
+        accounts = [str(item) for item in json.loads(stored["account_captures"])]
+    else:
+        lineage, _incomplete = _attestation_claim_lineage(
+            instance, coordinate=context.coordinate, claim_identity=claim.identity.name
+        )
+        accounts = sorted(
+            {
+                citation.capture_digest
+                for artifact in lineage
+                for citation in claim_citation_references(artifact.claim)
+            }
+        )
+    return tuple(sorted(cited | set(accounts))), accounts
 
 
 def _slot_inputs(row: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -733,10 +798,78 @@ def _attested_claims(instance: Any, paths: Iterable[str], oids: Iterable[str]) -
     return claims
 
 
+def _door_captures(
+    pending: Sequence[tuple[Any, ...]],
+    stored: Callable[[Sequence[str]], dict[str, set[str]]],
+) -> Callable[[Sequence[str]], dict[str, tuple[str, ...]]]:
+    """Each Claim's door-cited Captures: its stored new-capture events and these new ones."""
+
+    fresh: dict[str, set[str]] = {}
+    for row in pending:
+        if row[6] == "new_capture":
+            fresh.setdefault(str(row[2]), set()).update(json.loads(row[13]))
+
+    def captures(claim_ids: Sequence[str]) -> dict[str, tuple[str, ...]]:
+        found = stored(claim_ids)
+        return {
+            claim_id: tuple(sorted(found.get(claim_id, set()) | fresh.get(claim_id, set())))
+            for claim_id in claim_ids
+        }
+
+    return captures
+
+
+def _stored_door_captures(
+    connection: sqlite3.Connection, claim_ids: Sequence[str]
+) -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+    for claim_id, cited in _rows(
+        connection,
+        "SELECT claim_identity,cited_captures FROM door_events WHERE basis='new_capture' "
+        "AND claim_identity IN ({marks})",
+        tuple(sorted(set(claim_ids))),
+    ):
+        found.setdefault(str(claim_id), set()).update(json.loads(cited))
+    return found
+
+
+def _load_door_captures(instance: Any, claim_ids: Sequence[str]) -> dict[str, set[str]]:
+    with _STATE.open(instance) as connection:
+        assert connection is not None
+        return _stored_door_captures(connection, claim_ids)
+
+
+def _landing_rows(instance: Any, after: int, through: int) -> tuple[set[str], int]:
+    """The digests the landing rows past ``after`` name, and the cursor they leave.
+
+    An intent whose completion is not yet in the log keeps the cursor before
+    it: the next pass reads the digest again once its writer (or
+    reconciliation) publishes the completion.
+    """
+
+    landed: set[str] = set()
+    open_intents: dict[str, int] = {}
+    for row in instance.body_store().landings.after(after, through=through):
+        landed.add(row.digest)
+        if row.intent:
+            open_intents.setdefault(row.digest, row.sequence)
+        else:
+            open_intents.pop(row.digest, None)
+    cursor = through if not open_intents else min(open_intents.values()) - 1
+    return landed, cursor
+
+
 def _touched(
-    instance: Any, connection: sqlite3.Connection, cursors: _Cursors, heads: _Heads
-) -> tuple[set[str], int, datetime | None]:
-    """The Claims the records past each cursor touch, the re-observation position, and expiry.
+    instance: Any,
+    connection: sqlite3.Connection,
+    cursors: _Cursors,
+    heads: _Heads,
+    door_rows: Sequence[tuple[Any, ...]] = (),
+) -> tuple[set[str], int, int, datetime | None]:
+    """The Claims the records past each cursor touch, the re-observation and landing
+    positions, and expiry.
+
+    A door event touches its statement's Claim.
 
     Every term is a range read sized by what changed, mapped to Claims through
     ``fact_reads`` (and ``capture_bodies`` for a body some Capture consulted).
@@ -765,11 +898,9 @@ def _touched(
         claims |= _attested_claims(
             instance, attested, (heads.generation_oid, cursors.generation_oid)
         )
+    landing = cursors.landing
     if heads.landing != cursors.landing:
-        landed = {
-            row.digest
-            for row in instance.body_store().landings.after(cursors.landing, through=heads.landing)
-        }
+        landed, landing = _landing_rows(instance, cursors.landing, heads.landing)
         consulting = {
             str(row[0])
             for row in _rows(
@@ -802,7 +933,7 @@ def _touched(
             claims.update(
                 str(row[0])
                 for row in connection.execute(
-                    "SELECT claim_id FROM claim_facts WHERE upper_us<=?",
+                    "SELECT claim_id FROM claim_facts WHERE upper_us IS NOT NULL AND upper_us<=?",
                     (utc_microseconds(expired_through),),
                 )
             )
@@ -814,7 +945,8 @@ def _touched(
             tuple(sorted(keys)),
         )
     )
-    return claims, reobs, expired_through
+    claims.update(str(row[2]) for row in door_rows)
+    return claims, reobs, landing, expired_through
 
 
 def _slot_members(
@@ -854,6 +986,7 @@ def _resolve_slots(
     at: datetime,
     claim_types: dict[str, Any],
     load: Callable[[Sequence[str]], dict[str, dict[str, Any]]],
+    door: Callable[[Sequence[str]], dict[str, tuple[str, ...]]],
 ) -> None:
     """Resolve each slot from its members' facts, recomputing any that no longer hold."""
 
@@ -880,7 +1013,13 @@ def _resolve_slots(
             row = stored.get(identity)
             if facts is None and (row is None or not _holds_at(row, at_us)):
                 facts = _claim_facts(
-                    instance, context, claim, at=at, stored=row, claim_types=claim_types
+                    instance,
+                    context,
+                    claim,
+                    at=at,
+                    stored=row,
+                    claim_types=claim_types,
+                    door_captures=door((identity,)).get(identity, ()),
                 )
                 delta.facts[identity] = facts
                 delta.interval_slots.add(res_slot)
@@ -914,11 +1053,13 @@ def _derive(
     at: datetime,
     every_slot: bool,
     load: Callable[[Sequence[str]], dict[str, dict[str, Any]]],
+    door: Callable[[Sequence[str]], dict[str, tuple[str, ...]]],
 ) -> _Delta:
     """Recompute these Claims' facts and resolve every slot whose inputs moved.
 
     ``stored`` holds the previous rows read so far; ``load`` reads more of them
-    when a slot needs a member nothing touched.
+    when a slot needs a member nothing touched; ``door`` gives each Claim's
+    door-cited Captures.
     """
 
     from cruxible_client.contracts.errors import ClaimNotFoundError
@@ -932,6 +1073,7 @@ def _derive(
         except ClaimNotFoundError:
             delta.removed.add(identity)
     _prefetch(context, present)
+    cited = door(tuple(claim.identity.qualified for claim in present))
     for claim in present:
         identity = claim.identity.qualified
         delta.facts[identity] = _claim_facts(
@@ -941,6 +1083,7 @@ def _derive(
             at=at,
             stored=stored.get(identity),
             claim_types=claim_types,
+            door_captures=cited.get(identity, ()),
         )
     slots: set[str] = set()
     for identity in sorted(delta.removed | set(delta.facts)):
@@ -963,7 +1106,15 @@ def _derive(
         if after is not None and after.row["lifecycle"] == "live" and moved:
             slots.add(str(after.row["res_slot"]))
     _resolve_slots(
-        instance, context, slots, delta, stored, at=at, claim_types=claim_types, load=load
+        instance,
+        context,
+        slots,
+        delta,
+        stored,
+        at=at,
+        claim_types=claim_types,
+        load=load,
+        door=door,
     )
     delta.interval_slots |= set(delta.slots)
     return delta
@@ -980,9 +1131,19 @@ def _rebuild(instance: Any, heads: _Heads, *, at: datetime) -> _Delta:
 
     context = ClaimVerdictReadContext(instance, heads.coordinate)
     identities = tuple(claim.identity.qualified for claim in context.claims())
-    delta = _derive(instance, context, identities, {}, at=at, every_slot=True, load=lambda _ids: {})
     door_root, events = instance.claim_attestation_evidence_store().events_after(None)
-    delta.door = [_door_row(*event) for event in events]
+    door_rows = [_door_row(*event) for event in events]
+    delta = _derive(
+        instance,
+        context,
+        identities,
+        {},
+        at=at,
+        every_slot=True,
+        load=lambda _ids: {},
+        door=_door_captures(door_rows, lambda _ids: {}),
+    )
+    delta.door = door_rows
     delta.door_root = door_root
     delta.reobs = reobs
     return delta
@@ -996,20 +1157,17 @@ def _write(
     delta: _Delta,
     *,
     heads: _Heads,
+    landing: int,
     at: datetime,
 ) -> None:
-    """Apply one change set and its cursors in the caller's one transaction."""
+    """Apply one change set and its cursors in the caller's one transaction.
+
+    ``landing`` is the landing cursor the pass reached: before the head while
+    an operation it read is unfinished, so the heads it records are not the
+    current ones and the part stays due until the completion lands.
+    """
 
     replaced = sorted(delta.removed | set(delta.facts))
-    previous = {
-        str(row[0]).removeprefix("capture:")
-        for row in _rows(
-            connection,
-            "SELECT read_key FROM fact_reads WHERE claim_id IN ({marks}) "
-            "AND read_key LIKE 'capture:%'",
-            replaced,
-        )
-    }
     stored_statuses = {
         str(row[0]): row[1]
         for row in _rows(
@@ -1018,11 +1176,10 @@ def _write(
             replaced,
         )
     }
-    for table in ("claim_facts", "fact_reads", "citation_commitments"):
+    for table in ("claim_facts", "fact_reads", "citation_commitments", "capture_bodies"):
         connection.executemany(
             f"DELETE FROM {table} WHERE claim_id=?", ((identity,) for identity in replaced)
         )
-    consulted: dict[str, dict[str, Any] | None] = {}
     for identity, facts in sorted(delta.facts.items()):
         row = dict(facts.row)
         if row["lifecycle"] == "live":
@@ -1042,33 +1199,20 @@ def _write(
         connection.executemany(
             "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?,?)", facts.citations
         )
-        consulted.update(facts.capture_bodies)
+        connection.executemany(
+            "INSERT INTO capture_bodies VALUES (?,?,?,?)",
+            (
+                (body, capture, identity, None if found is None else _json(list(found)))
+                for capture, bodies in sorted(facts.capture_bodies.items())
+                if bodies is not None
+                for body, found in sorted(bodies.items())
+            ),
+        )
     for identity, status in delta.statuses.items():
         if identity not in delta.facts:
             connection.execute(
                 "UPDATE claim_facts SET status=? WHERE claim_id=?", (status, identity)
             )
-    connection.executemany(
-        "DELETE FROM capture_bodies WHERE capture_digest=?", ((digest,) for digest in consulted)
-    )
-    connection.executemany(
-        "INSERT INTO capture_bodies VALUES (?,?,?)",
-        (
-            (body, capture, None if identity is None else _json(list(identity)))
-            for capture, bodies in sorted(consulted.items())
-            if bodies is not None
-            for body, identity in sorted(bodies.items())
-        ),
-    )
-    # A Capture no remaining Claim consulted keeps no bodies.
-    for capture in sorted(previous - set(consulted)):
-        if (
-            connection.execute(
-                "SELECT 1 FROM fact_reads WHERE read_key=? LIMIT 1", (f"capture:{capture}",)
-            ).fetchone()
-            is None
-        ):
-            connection.execute("DELETE FROM capture_bodies WHERE capture_digest=?", (capture,))
     for res_slot in sorted(delta.emptied_slots):
         connection.execute("DELETE FROM slot_status WHERE res_slot=?", (res_slot,))
     for res_slot, result in sorted(delta.slots.items()):
@@ -1106,13 +1250,13 @@ def _write(
         "reobs_signature=excluded.reobs_signature,reobs=excluded.reobs,expire=excluded.expire,"
         "evaluated_at=excluded.evaluated_at",
         (
-            heads.key(),
+            replace(heads, landing=landing).key(),
             heads.generation,
             heads.generation_oid,
             heads.compiler,
             delta.door_root,
             heads.landing_log,
-            heads.landing,
+            landing,
             heads.reobs_journal,
             heads.reobs_signature,
             delta.reobs,
@@ -1129,8 +1273,19 @@ def _clear(connection: sqlite3.Connection) -> None:
 
 
 def _earliest_end(connection: sqlite3.Connection) -> int | None:
-    (upper,) = connection.execute("SELECT min(upper_us) FROM claim_facts").fetchone()
-    return None if upper is None else int(upper)
+    """The earliest instant a stored fact stops holding: one seek on the upper-bound index."""
+
+    row = connection.execute(_EARLIEST_END).fetchone()
+    return None if row is None else int(row[0])
+
+
+#: Interval endpoints, each one seek on its partial index (pinned by plan tests).
+_EARLIEST_END = (
+    "SELECT upper_us FROM claim_facts WHERE upper_us IS NOT NULL ORDER BY upper_us LIMIT 1"
+)
+_LATEST_START = (
+    "SELECT lower_us FROM claim_facts WHERE lower_us IS NOT NULL ORDER BY lower_us DESC LIMIT 1"
+)
 
 
 def _arm(instance: Any, upper_us: int | None) -> None:
@@ -1155,11 +1310,14 @@ def catch_up(instance: Any, *, now: datetime) -> None:
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
+    # Settle any landing a writer left unfinished, so its completion is a row to follow.
+    instance.body_store().landings.reconcile()
     heads = _heads(instance)
     with _STATE.open(instance) as connection:
         assert connection is not None
         original = _read_cursors(connection)
     delta: _Delta | None = None
+    landing = heads.landing
     if original is not None and _cursors_hold(instance, original, heads):
         if original.heads == heads.key():
             return
@@ -1171,9 +1329,12 @@ def catch_up(instance: Any, *, now: datetime) -> None:
             if exc.error_code != "cruxible.claim_attestation.attestation_head_unknown":
                 raise
         else:
+            door_rows = [_door_row(*event) for event in events]
             with _STATE.open(instance) as connection:
                 assert connection is not None
-                claims, reobs, fired_at = _touched(instance, connection, original, heads)
+                claims, reobs, landing, fired_at = _touched(
+                    instance, connection, original, heads, door_rows
+                )
                 stored = _stored_facts(connection, claims)
             # Time reaches the facts through the trigger log: a pass that follows a
             # fire evaluates at its instant, as the queue's fold does, never the
@@ -1187,13 +1348,17 @@ def catch_up(instance: Any, *, now: datetime) -> None:
                 at=at,
                 every_slot=False,
                 load=lambda claim_ids: _load_facts(instance, claim_ids),
+                door=_door_captures(
+                    door_rows, lambda claim_ids: _load_door_captures(instance, claim_ids)
+                ),
             )
-            delta.door = [_door_row(*event) for event in events]
+            delta.door = door_rows
             delta.door_root = door_root
             delta.reobs = reobs
     rebuild = delta is None
     if delta is None:
         at = now
+        landing = heads.landing
         delta = _rebuild(instance, heads, at=at)
     # Arm before publishing: a crash after the write cannot leave facts without
     # their refresh signal. An early fire is a no-op catch-up that re-arms.
@@ -1214,7 +1379,7 @@ def catch_up(instance: Any, *, now: datetime) -> None:
             return  # another catch-up moved the facts; the next pass starts from there
         if rebuild:
             _clear(connection)
-        _write(connection, delta, heads=heads, at=at)
+        _write(connection, delta, heads=heads, landing=landing, at=at)
         end = _earliest_end(connection)
     _arm(instance, end)
 
@@ -1263,10 +1428,9 @@ def claim_status_tally(
             "" if journal is None else journal[1],
         ):
             return None
-        lower, upper = connection.execute(
-            "SELECT max(lower_us),min(upper_us) FROM claim_facts"
-        ).fetchone()
-        if (lower is not None and at_us < lower) or (upper is not None and at_us >= upper):
+        lower = connection.execute(_LATEST_START).fetchone()
+        upper = connection.execute(_EARLIEST_END).fetchone()
+        if (lower is not None and at_us < lower[0]) or (upper is not None and at_us >= upper[0]):
             return None
         counts = dict(connection.execute("SELECT status,count FROM tally").fetchall())
     if counts.get("error"):
@@ -1302,7 +1466,7 @@ def rebuilt_layer1_tables(instance: Any, *, at: datetime) -> dict[str, list[tupl
     connection = sqlite3.connect(":memory:")
     try:
         connection.executescript(_SCHEMA)
-        _write(connection, delta, heads=heads, at=at)
+        _write(connection, delta, heads=heads, landing=heads.landing, at=at)
         return _dump(connection)
     finally:
         connection.close()

@@ -1120,8 +1120,13 @@ class TypedStateReader:
         current_claims_only: bool = False,
         claim_predicates: tuple[str, ...] | None = None,
         claim_versions: tuple[tuple[str, str], ...] | None = None,
+        claim_identities: tuple[str, ...] | None = None,
     ) -> tuple[ClaimAttestation, ...]:
-        """Accepted attestations; ``claim_versions`` selects exact (identity, digest) pairs."""
+        """Accepted attestations; ``claim_versions`` selects exact (identity, digest) pairs.
+
+        ``claim_identities`` selects every version of these Claims, through the
+        Claim-version index.
+        """
         from cruxible_client.contracts.accepted_attestations import (
             attestation_artifact_digest,
             parse_accepted_attestation,
@@ -1141,6 +1146,11 @@ class TypedStateReader:
                 + ")"
             )
             parameters.extend(value for pair in claim_versions for value in pair)
+        if claim_identities is not None:
+            if not claim_identities:
+                return ()
+            predicates.append("claim_identity IN (" + ",".join("?" for _ in claim_identities) + ")")
+            parameters.extend(claim_identities)
         if claim_identity is not None:
             if claim_artifact_digest is None:
                 raise ValueError("attestation selection requires an exact Claim version")
