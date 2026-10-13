@@ -104,6 +104,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("TerminalEgressChildReceiptV3", "reobserved_at"): "ASSERTION TIME",
     ("TriggerEventReference", "sequence"): "SETTLEMENT ORDER",
     ("ReobservationReading", "sequence"): "SETTLEMENT ORDER",
+    ("LandingHead", "sequence"): "SETTLEMENT ORDER",
+    ("Landing", "sequence"): "SETTLEMENT ORDER",
     ("ReobservationReading", "boundaries"): "VALIDITY WINDOW",
     ("GetRunOutcome", "sequence"): "SETTLEMENT ORDER",
     ("ResolutionContractActivationV3", "activated_at"): "EVALUATION INSTANT",

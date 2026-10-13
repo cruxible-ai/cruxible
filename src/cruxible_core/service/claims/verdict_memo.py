@@ -69,7 +69,7 @@ def verdict_input_fingerprint(instance: object) -> str | None:
     if storage is None:
         return None
     try:
-        head = LandingLog(root / getattr(storage, "cas", "cas")).head()
+        head = LandingLog(root / getattr(storage, "cas", "cas") / "sha256").head()
     except (CasError, OSError):
         return None
     token = f"{head.identity}:{head.sequence}"

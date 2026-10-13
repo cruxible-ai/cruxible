@@ -12,6 +12,8 @@ availability part of the verdict-input fingerprint.
 A row says "this digest may have changed", never what it now holds: readers
 consult the store. The log is append-only and carries a random identity minted
 with it, so a cursor kept against one log is never read against a replacement.
+It lives in the store's algorithm directory, which the store reaches through
+the descriptor it validated, so moving an ancestor away never redirects it.
 Writes go to a write-ahead log without a sync per commit, as the token file this
 replaces was written: a power loss can drop the newest rows, never reorder them,
 and the evidence sweep re-checks every consulted body's identity.
@@ -21,7 +23,6 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from pathlib import Path
 from typing import Literal
 
 from cruxible_client.contracts.errors import CasError
+from cruxible_client.contracts.primitives import new_id
 
 LandingKind = Literal["store", "stored", "erase", "erased"]
 LOG_NAME = "landings.sqlite3"
@@ -60,10 +62,10 @@ class Landing:
 
 
 class LandingLog:
-    """The landing log beside one body store's root."""
+    """The landing log in one body store's algorithm directory."""
 
-    def __init__(self, root: Path) -> None:
-        self.path = root / LOG_NAME
+    def __init__(self, directory: Path) -> None:
+        self.path = directory / LOG_NAME
 
     @contextmanager
     def _writer(self) -> Iterator[sqlite3.Connection]:
@@ -75,7 +77,9 @@ class LandingLog:
                 connection.execute("PRAGMA journal_mode=WAL")
                 connection.execute("PRAGMA synchronous=NORMAL")
                 connection.executescript(_SCHEMA)
-                connection.execute("INSERT OR IGNORE INTO log VALUES (1,?)", (uuid.uuid4().hex,))
+                connection.execute(
+                    "INSERT OR IGNORE INTO log VALUES (1,?)", (new_id("landings", length=32),)
+                )
                 yield connection
                 connection.commit()
             finally:

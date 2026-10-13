@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import heapq
 import os
@@ -237,11 +238,25 @@ class ContentAddressedBodyStore:
 
         return CaptureEnvelopeIndex(self)
 
+    def _held_directory(self) -> Path:
+        """Where the held algorithm directory is now, read from its descriptor.
+
+        A directory moved away (an ancestor replaced by a symlink, say) is still
+        the one the store validated, so what the store writes beside its
+        objects follows it there instead of following the old path.
+        """
+
+        get_path = getattr(fcntl, "F_GETPATH", None)
+        if get_path is not None:
+            raw = fcntl.fcntl(self._root_fd, get_path, bytes(1024))
+            return Path(os.fsdecode(raw.split(b"\0", 1)[0]))
+        return Path(os.readlink(f"/proc/self/fd/{self._root_fd}"))
+
     @property
     def landings(self) -> LandingLog:
         """The sequenced log of every evidence body that lands and every erase."""
 
-        return LandingLog(self.root)
+        return LandingLog(self._held_directory())
 
     @staticmethod
     def digest_bytes(content: bytes) -> CasDigest:
