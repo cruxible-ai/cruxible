@@ -14,6 +14,7 @@ from typing import Any
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
@@ -27,6 +28,13 @@ from cruxible_client.contracts.procedures.graph import compute_procedure_definit
 from cruxible_client.contracts.procedures.models import ProcedureDefinition, iter_pin_bindings
 
 PERMISSIVE_CONTRACT = ContractSchema(fields={}, allow_extra=True)
+
+#: Wall clock for a test Procedure whose subject is not time, and its hard cap.
+#: Run budgets of 1-10 s ran out on loaded CI runners (GitHub Actions runs
+#: 38296876564 and 38327886843): a run is measured from admission through every
+#: node on a shared host. A test about exhaustion injects a clock instead.
+RUN_WALL_CLOCK = CanonicalDuration(microseconds=60_000_000)
+MAX_WALL_CLOCK = CanonicalDuration(microseconds=120_000_000)
 
 
 def owned_contract(name: str, schema: ContractSchema | None = None) -> ProcedureOwnedContract:

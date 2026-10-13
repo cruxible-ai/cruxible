@@ -12,7 +12,6 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
-from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
@@ -96,7 +95,7 @@ from tests.core_support._published_world import (
 )
 from tests.core_support._subject_kind_support import _is_key, without_keys
 from tests.core_support._support import initialize_local
-from tests.support.procedures import accepted_procedure
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 from tests.test_claims.test_claims import _claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -125,13 +124,13 @@ def _accepted_procedure() -> AcceptedProcedure:
         ),
         returns="result",
         budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=1_000_000),
+            wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=10,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
+            max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=20,

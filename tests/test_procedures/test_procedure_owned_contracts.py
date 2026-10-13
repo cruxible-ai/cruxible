@@ -12,7 +12,6 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
-from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
@@ -68,6 +67,7 @@ from tests.core_support._knowledge_loop_support import (
     work_item_query,
 )
 from tests.core_support._support import client_material
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_ledger.test_activation import _sign
 
 READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
@@ -245,13 +245,13 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
         ),
         returns="result",
         budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=2_000_000),
+            wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
+            max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,

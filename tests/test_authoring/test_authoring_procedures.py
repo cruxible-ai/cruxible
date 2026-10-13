@@ -63,6 +63,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_procedure,
 )
 from tests.core_support._support import initialize_local
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
 
@@ -107,12 +108,12 @@ def _triage_definition(*, query: dict[str, object] | None = None) -> dict[str, o
         "nodes": nodes,
         "returns": "result",
         "budget": {
-            "wall_clock": {"microseconds": 1_000_000},
+            "wall_clock": {"microseconds": RUN_WALL_CLOCK.microseconds},
             "max_provider_calls": 0,
             "max_capture_bytes": 0,
         },
         "hard_caps": {
-            "max_wall_clock": {"microseconds": 2_000_000},
+            "max_wall_clock": {"microseconds": MAX_WALL_CLOCK.microseconds},
             "max_provider_calls": 0,
             "max_capture_bytes": 0,
             "max_items": 200,
@@ -215,13 +216,13 @@ def _carried_definition() -> dict[str, object]:
         ],
         "returns": "result",
         "budget": {
-            "wall_clock": {"microseconds": 1_000_000},
+            "wall_clock": {"microseconds": RUN_WALL_CLOCK.microseconds},
             "max_provider_calls": 0,
             "max_capture_bytes": 0,
             "max_items": 10,
         },
         "hard_caps": {
-            "max_wall_clock": {"microseconds": 2_000_000},
+            "max_wall_clock": {"microseconds": MAX_WALL_CLOCK.microseconds},
             "max_provider_calls": 0,
             "max_capture_bytes": 0,
             "max_items": 20,
@@ -330,12 +331,12 @@ def _runnable_change_set_payload(
         ],
         "returns": "result",
         "budget": {
-            "wall_clock": {"microseconds": 1_000_000},
+            "wall_clock": {"microseconds": RUN_WALL_CLOCK.microseconds},
             "max_provider_calls": 0,
             "max_capture_bytes": 0,
         },
         "hard_caps": {
-            "max_wall_clock": {"microseconds": 2_000_000},
+            "max_wall_clock": {"microseconds": MAX_WALL_CLOCK.microseconds},
             "max_provider_calls": 0,
             "max_capture_bytes": 0,
             "max_items": 100,
@@ -1303,12 +1304,12 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
             ],
             "returns": "result",
             "budget": {
-                "wall_clock": {"microseconds": 1_000_000},
+                "wall_clock": {"microseconds": RUN_WALL_CLOCK.microseconds},
                 "max_provider_calls": 0,
                 "max_capture_bytes": 0,
             },
             "hard_caps": {
-                "max_wall_clock": {"microseconds": 2_000_000},
+                "max_wall_clock": {"microseconds": MAX_WALL_CLOCK.microseconds},
                 "max_provider_calls": 0,
                 "max_capture_bytes": 0,
                 "max_items": 1,

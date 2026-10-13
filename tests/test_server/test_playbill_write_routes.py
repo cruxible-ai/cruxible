@@ -262,11 +262,17 @@ def test_a_cold_write_preview_opens_its_instance_behind_the_guards(
     manager = get_playbill_manager()
 
     def settle() -> None:
+        # Drain the background work of every instance about to be dropped (its
+        # queued workspace advertisement, and a quiet daemon's deferred head
+        # summary), so nothing but the preview can write inside its window.
+        manager.consumer_runner.close()
+        for _held_id, held in manager.open_instances():
+            held.settled_workspace_advertisement()
+        manager.flush_replay_checkpoints()
         # One ordinary cold open first: it writes the replay checkpoint a quiet
         # daemon would already hold, so the preview's own open repairs nothing.
         manager.clear()
         client.get(f"{base}/head")
-        manager.consumer_runner.close()
         manager.get(instance_id).settled_workspace_advertisement()
         manager.flush_replay_checkpoints()
 

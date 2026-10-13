@@ -101,6 +101,7 @@ from cruxible_core.storage.material_reservations import (
 )
 from tests.core_support._p2b1_support import install_demo_classifier
 from tests.core_support._pc_c_support import capture_contract, digest
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
@@ -173,7 +174,10 @@ def _source_fixture(
     SourceAcquisitionPolicy,
     object,
 ]:
-    provider_accepted = _accepted_one_provider()
+    # Runs on the real clock: a budget a loaded CI runner cannot run out.
+    provider_accepted = _accepted_one_provider(
+        wall_clock=RUN_WALL_CLOCK, max_wall_clock=MAX_WALL_CLOCK
+    )
     provider_prepared, fixture = _prepared_v5(provider_accepted, tmp_path)
     provider_node = provider_accepted.procedure.definition.nodes[0]
     assert isinstance(provider_node, CallNode)

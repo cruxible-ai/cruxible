@@ -14,7 +14,7 @@ from cruxible_client.contracts.provider_contracts import (
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
 from tests.core_support._p2b1_support import install_demo_classifier
-from tests.support.procedures import accepted_procedure
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
 from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
@@ -33,7 +33,10 @@ def operation():
 
 
 def call_procedure(*, repeat=False, payload=None):
-    accepted = _accepted_one_provider(repeat=repeat)
+    # Runs on the real clock: a budget a loaded CI runner cannot run out.
+    accepted = _accepted_one_provider(
+        repeat=repeat, wall_clock=RUN_WALL_CLOCK, max_wall_clock=MAX_WALL_CLOCK
+    )
     if payload is None:
         return accepted
     raw = accepted.procedure.definition.model_dump(mode="json", by_alias=True)

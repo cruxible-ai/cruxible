@@ -13,7 +13,6 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure, render_procedure
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpec,
@@ -61,6 +60,7 @@ from cruxible_core.service.procedures.procedures import (
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.support.procedures import accepted_procedure as carried_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree, _actor
 
@@ -94,13 +94,13 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
         ),
         returns="rows",
         budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=5_000_000),
+            wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=10_000_000),
+            max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,
@@ -122,7 +122,7 @@ def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
             "max_capture_bytes": 0,
             "max_items": 100,
             "max_provider_calls": 0,
-            "max_wall_clock_microseconds": 5_000_000,
+            "max_wall_clock_microseconds": RUN_WALL_CLOCK.microseconds,
         },
         epsilon={"$decimal": "0.1"},
         pins=(procedure_pin,),

@@ -29,6 +29,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 from cruxible_core.service.procedures.source_preview import service_preview_procedure_source
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._support import initialize_local
+from tests.support.procedures import RUN_WALL_CLOCK
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_procedure_execution import _budget, _hard_caps
 
@@ -337,7 +338,8 @@ def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
             )
             prepared = context.bind(child_base)
             if planning_delay:
-                clock.ticks += 2_000_000_000
+                # Planning the child spends one second more than the whole run's budget.
+                clock.ticks += (RUN_WALL_CLOCK.microseconds + 1_000_000) * 1_000
             fixture.journal.activate_writer(
                 prepared.admission.journal_stream,
                 prepared.admission.journal_partition_id,

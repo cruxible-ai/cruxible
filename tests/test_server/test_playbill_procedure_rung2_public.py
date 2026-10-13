@@ -67,6 +67,7 @@ from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._pc_c_support import capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_procedures.test_procedure_source_runs import _contracts
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 from tests.test_server.test_provider_installation import interface_entry
@@ -288,13 +289,13 @@ def _procedure_definition(
         ),
         returns="result",
         budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=5_000_000),
+            wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=2,
             max_capture_bytes=65_536,
             max_items=None,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=10_000_000),
+            max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=4,
             max_capture_bytes=131_072,
             max_items=200,

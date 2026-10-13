@@ -129,6 +129,7 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_claims.test_claim_attestation_service import _request as _attestation_request
 from tests.test_procedures.test_procedure_owned_contracts import _activate_procedure, _contract
 
@@ -304,13 +305,13 @@ def _procedure(
         returns="result",
         measurements=tuple(sorted(declarations, key=lambda item: item.name.encode())),
         budget=ProcedureBudget(
-            wall_clock=CanonicalDuration(microseconds=2_000_000),
+            wall_clock=RUN_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
         hard_caps=ProcedureHardCaps(
-            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
+            max_wall_clock=MAX_WALL_CLOCK,
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,
