@@ -124,6 +124,12 @@ from cruxible_core.indexes.projection import (
     AcceptedProjectionCoordinate,
     projection_manifest_name,
 )
+from cruxible_core.indexes.projection_retention import (
+    evict_projections,
+    hold_projection,
+    release_projection,
+    retention_lock,
+)
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.indexes.proposals.proposal_note_reader import proposal_note_snapshot
 from cruxible_core.indexes.serving import bind_current_projection
@@ -172,6 +178,7 @@ from cruxible_core.proposals.settlement import (
     prepare_generation,
     render_generation_descriptor,
 )
+from cruxible_core.runtime.retention import DEFAULT_RETENTION, RetentionSettings
 from cruxible_core.storage.cas import (
     CasObjectMetadata,
     ContentAddressedBodyStore,
@@ -326,6 +333,9 @@ class PlaybillInstance:
         #: records through it. Tests replace it here.
         self.recording_clock: Callable[[], datetime] = utc_now
         self.derived = DerivedState()
+        #: What rebuildable and raw operational state is kept (projection
+        #: generations, raw-receipt days). Tests replace it here.
+        self.retention: RetentionSettings = DEFAULT_RETENTION
         # Compiled semantic facts per owner version; see TypedStateReader.facts_for.
         self._owner_facts = self.derived.memo(
             "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
@@ -656,6 +666,8 @@ class PlaybillInstance:
             recovered,
             promotion_verifier,
         )
+        if not is_previewing():
+            instance.evict_projection_pieces()
         if (
             descriptor.mirror_url is not None
             and descriptor.decommissioned is None
@@ -2193,31 +2205,95 @@ class PlaybillInstance:
             compiler_digest=coordinate.compiler.rule_digest,
         )
         paths = self._validated_paths(self.root, self.descriptor.storage)
+        directory = paths["projections"]
         if verified == self.accepted_coordinate():
-            return self._projection_sources(
-                bind_current_projection(paths["projections"], expected=verified)
-            )
+            current = bind_current_projection(directory, expected=verified)
+            return self._projection_sources(self._held(current))
         # Naming the manifest needs only this coordinate. The replay-proven
         # coordinates of every generation are built only for a rebuild, so a
         # bind at a base behind the head costs the same at any history length.
         assembler = ProjectionAssembler(
             self._ledger,
             accepted=verified,
-            publication_directory=paths["projections"],
+            publication_directory=directory,
             bodies=ContentAddressedBodyStore(paths["cas"]),
         )
         request = assembler.request(
-            output_staging_directory=paths["projections"]
-            / f".stage-historical-bind-{secrets.token_hex(12)}"
+            output_staging_directory=directory / f".stage-historical-bind-{secrets.token_hex(12)}"
         )
-        manifest_path = paths["projections"] / projection_manifest_name(request)
-        if not manifest_path.exists():
-            # Only replay-proven coordinates reach this point. Rebuild a missing
-            # historical projection under its own compiler, without changing
-            # serving or rewriting the accepted record/receipt.
-            assembler.accepted_coordinates_by_sequence = self._accepted_coordinates_by_sequence()
-            assembler.assemble(request)
-        return self._projection_sources(bind_projection(manifest_path, expected=verified))
+        manifest_path = directory / projection_manifest_name(request)
+        # Held before the manifest is looked for, so this process never evicts
+        # it between the look and the bind.
+        hold_projection(directory, manifest_path.name)
+        try:
+            if not manifest_path.exists():
+                # Only replay-proven coordinates reach this point. Rebuild a
+                # missing historical projection (never built, or evicted past
+                # retention) under its own compiler, without changing serving
+                # or rewriting the accepted record/receipt.
+                with retention_lock(directory):
+                    if not manifest_path.exists():
+                        assembler.accepted_coordinates_by_sequence = (
+                            self._accepted_coordinates_by_sequence()
+                        )
+                        assembler.assemble(request)
+            handle = bind_projection(manifest_path, expected=verified)
+        except BaseException:
+            release_projection(directory, manifest_path.name)
+            raise
+        handle.on_close = lambda: release_projection(directory, manifest_path.name)
+        return self._projection_sources(handle)
+
+    @staticmethod
+    def _held(handle: ProjectionHandle) -> ProjectionHandle:
+        """Keep a bound projection from eviction until its handle closes."""
+
+        directory, name = handle.manifest_path.parent, handle.manifest_path.name
+        hold_projection(directory, name)
+        handle.on_close = lambda: release_projection(directory, name)
+        return handle
+
+    def evict_projection_pieces(self) -> tuple[str, ...]:
+        """Evict accepted projection pieces past retention; returns the evicted git oids.
+
+        Kept: the serving head, the last ``retention.generations`` accepted
+        generations, the bases of open proposals, and every coordinate a
+        handle in this process holds. An evicted coordinate is rebuilt when
+        it is next bound. Runs after each activation and at open.
+        """
+
+        with self._state_lock:
+            recovered = self._recovered
+        keep = {item.oid for item in recovered.history[-self.retention.generations :]}
+        keep.add(recovered.coordinate.git_oid)
+        keep.update(self._open_proposal_bases())
+        directory = self._validated_paths(self.root, self.descriptor.storage)["projections"]
+        with self.accepted_history_reader() as history:
+            # Only accepted generations outside the window: a build of a
+            # generation not on main is in flight or recovery's to retire.
+            return evict_projections(
+                directory,
+                evictable=lambda oid: (
+                    oid not in keep and history.generation_for_oid(oid) is not None
+                ),
+            )
+
+    def _open_proposal_bases(self) -> set[str]:
+        """The evaluated bases of admitted candidates no generation has settled or withdrawn."""
+
+        evidence = self.proposal_evidence()
+        if evidence.index is None:
+            return set()
+        with evidence.index.read(evidence) as connection:
+            return {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT evaluated_base_oid FROM proposals "
+                    "WHERE evaluation_status='candidate' AND withdrawal_path IS NULL "
+                    "AND admission_path IS NOT NULL AND accepted_sequence IS NULL "
+                    "AND evaluated_base_oid IS NOT NULL"
+                )
+            }
 
     @contextmanager
     def holding_accepted_head(self) -> Iterator[str]:
@@ -2450,13 +2526,18 @@ class PlaybillInstance:
 
             try:
                 projection = publisher.prebuild(bundle, base=base)
-                return publisher.activate(bundle, projection, base=base, on_completed=install)
+                activated = publisher.activate(bundle, projection, base=base, on_completed=install)
             except Exception:
                 # Main may have moved before a post-CAS publication failure.
                 # Repair from authority, never install a partially published
                 # outcome. Preserve the caller's failure even if repair succeeds.
                 self.refresh()
                 raise
+        if activated.status == "accepted":
+            # Outside the activation locks: eviction is unlinks, and a bind
+            # that wants an evicted coordinate rebuilds it under the same lock.
+            self.evict_projection_pieces()
+        return activated
 
 
 __all__ = ["DESCRIPTOR_FILE", "PlaybillInstance"]

@@ -342,44 +342,29 @@ def retain_serving_head_stamp_locked(
     )
 
 
-def _content_stamp(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
-    """File identity and change timestamps, excluding read-induced access time.
+def piece_content_identity(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    """A piece's inode and bytes as a stat names them: device, inode, size, mtime.
 
-    The readiness digest is itself a read, and a read may advance the access
-    time: Linux ``relatime`` does whenever ctime is no older than atime, as it
-    is right after publication links the piece in and unlinks its staged name.
-    A whole ``stat_result`` comparison carries whole-second atime, so it
-    refused unchanged bytes whenever that read crossed a second boundary.
-
-    mtime and ctime are change detectors, not a guarantee against an
-    adversarial writer: a filesystem's timestamp granularity can give two
-    writes the same stamp, so a same-size rewrite can leave this tuple equal.
-    The digest compared against the manifest is what binds the bytes.
+    Linking a staged piece into place and unlinking its staged name move only
+    its ctime, so this survives publication and still moves with any write.
     """
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
-    )
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
 
 
 def record_source_built_piece(
-    path: Path, *, accepted: Any, manifest: ProjectionManifest
+    path: Path, *, accepted: Any, manifest: ProjectionManifest, hashed: os.stat_result
 ) -> dict[str, object]:
     """Mark only the assembler's completed exact source-derived output ready.
 
-    Returns the stamp recorded for it, which the assembler carries on its result
-    to serving publication.
+    ``hashed`` is the piece's stat when the assembler took the manifest's
+    physical digest from its staged name: the published inode must be that
+    one, unwritten since, so the bytes are not read a second time. Returns the
+    stamp recorded for it, which the assembler carries on its result to
+    serving publication.
     """
-    before = path.stat()
-    digest = physical_file_digest(path).tagged
     after = path.stat()
-    if (
-        _content_stamp(before) != _content_stamp(after)
-        or digest != manifest.pieces[0].physical_digest
-    ):
+    digest = manifest.pieces[0].physical_digest
+    if piece_content_identity(hashed) != piece_content_identity(after):
         raise ProjectionIntegrityError(
             "source-built projection changed before readiness publication"
         )
@@ -693,6 +678,8 @@ class ProjectionHandle:
         self.accepted = accepted
         self._closed = False
         self._verification_identity: tuple[object, ...] | None = None
+        # Called once when the handle closes: releases a retention hold.
+        self.on_close: Callable[[], None] | None = None
         from cruxible_core.indexes.typed_state import TypedStateReader
 
         self.typed = TypedStateReader(
@@ -947,6 +934,9 @@ class ProjectionHandle:
                     os.close(self._source_descriptor)
                     self._source_descriptor = None
                 self._closed = True
+                release, self.on_close = self.on_close, None
+                if release is not None:
+                    release()
 
     def __enter__(self) -> "ProjectionHandle":
         if self._closed:

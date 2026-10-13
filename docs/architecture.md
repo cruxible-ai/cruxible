@@ -115,6 +115,19 @@ copy of the other.
 Indexes, search engines or graph databases that accelerate reads are
 projections of accepted state and can be rebuilt from it.
 
+## Retention
+
+One setting (`RetentionSettings`: 64 generations, 14 days) bounds what is kept
+of rebuildable and raw operational state; nothing a signed or authoritative
+record references is deleted under it.
+
+- **Projection pieces.** Each accepted generation's projection is a full SQLite
+  piece. The serving head, the last 64 accepted generations, the bases of open
+  proposals and any coordinate a read in the daemon holds are kept; every
+  other piece is evicted after each activation and when the instance opens,
+  its manifest before its piece. Binding an evicted coordinate (`--at`, a
+  pinned read, an old base) rebuilds it from the ledger and the body store.
+
 ## Repository ownership
 
 The daemon implementation lives directly under `src/cruxible_core/`, grouped by
