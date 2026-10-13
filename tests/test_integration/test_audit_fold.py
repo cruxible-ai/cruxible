@@ -931,9 +931,11 @@ def _walked_history_index(
 ) -> _AuditHistoryIndex:
     """The audit history index as it was first computed: every generation, every Claim at each."""
 
-    from cruxible_client.contracts.claim_attestations import attestation_identity
-    from cruxible_client.contracts.claims import (
+    from cruxible_client.contracts.accepted_attestations import (
         AcceptedClaimAttestationEvidence,
+        attestation_identity,
+    )
+    from cruxible_client.contracts.claims import (
         claim_artifact_digest,
         parse_claim,
         parse_claim_law_evidence,
