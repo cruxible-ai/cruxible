@@ -416,10 +416,9 @@ def _refuse_unproven_provider(
 ) -> None:
     """The Provider law, before anything is proposed, against the registrations it binds.
 
-    A package bound onto a registration it did not build claims only buckets that
-    registration proves, each with the fixture the proof names: a selector
-    outside the proof menu (or under another fixture id) is refused here, typed,
-    rather than as a blocked proposal.
+    A package bound onto a registration it did not build must implement that
+    registration's exact definition and effect class: a disagreement is refused
+    here, typed, rather than as a blocked proposal.
     """
 
     path = provider_path(provider.identity.name)
@@ -443,9 +442,9 @@ def _refuse_unproven_provider(
             hand_edit=HandEditInstruction(
                 target=f"the {provider.identity.name} package manifest",
                 required_change=(
-                    "Declare only input-bucket selectors the live ProviderInterface "
-                    "registration proves, each naming the fixture id its proof names "
-                    "(cruxible get ProviderInterface:ID --detail proof lists them)."
+                    "Implement the exact interface definition and effect class the live "
+                    "ProviderInterface registration carries "
+                    "(cruxible get ProviderInterface:ID --detail proof shows them)."
                 ),
             )
         ),

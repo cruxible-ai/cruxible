@@ -875,20 +875,8 @@ def evaluate_provider_law(
                     "Provider manifest and governed interface digest disagree.",
                     path=path,
                 )
-            proof_by_selector = {
-                proof.selector: proof for proof in getattr(registration, "conformance_proofs", ())
-            }
-            for selector in implementation.declared_input_buckets:
-                proof = proof_by_selector.get(selector)
-                if (
-                    proof is None
-                    or implementation.bucket_conformance.get(selector) != proof.fixture_id
-                ):
-                    return _law_refusal(
-                        "cruxible.provider.bucket_fixture_missing",
-                        f"Provider selector {selector!r} lacks its governed conformance proof.",
-                        path=path,
-                    )
+            # A manifest's declared input buckets are inert: core classifies no
+            # input, so no selector needs a proof from the registration it binds.
             expected_side_effects = getattr(registration, "effect_class", None) == (
                 "external_mutation"
             )

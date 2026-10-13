@@ -11,7 +11,6 @@ import json
 
 import pytest
 
-import cruxible_core.proposals.proposals as proposal_module
 import tests.core_support._p2b1_support as p2b1_support
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -44,7 +43,6 @@ from tests.core_support._p2b1_support import (
     accepted_interface,
     accepted_provider,
     digest,
-    interface_fixture,
     pin,
 )
 from tests.core_support._support import initialize_local
@@ -241,12 +239,6 @@ def test_real_proposal_path_closes_interface_provider_procedure_and_line(
     provider = accepted_provider()
     procedure = _accepted_procedure()
     line = _line()
-    fixture = interface_fixture()
-    monkeypatch.setattr(
-        proposal_module,
-        "core_provider_bucket_conformance_fixtures",
-        lambda: {fixture.fixture_id: fixture},
-    )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[interface.path] = render_provider_interface(interface.registration)
     tree[provider.path] = render_provider(provider.provider)

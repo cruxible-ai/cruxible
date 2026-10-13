@@ -355,9 +355,6 @@ from cruxible_core.proposals.prepared_evaluation import (
 )
 from cruxible_core.proposals.proposal_message import proposal_commit_message
 from cruxible_core.proposals.proposal_notes import proposal_admission_id
-from cruxible_core.providers.provider_classifiers import (
-    core_provider_bucket_conformance_fixtures,
-)
 from cruxible_core.query.backends import ClaimQueryFactsV1
 from cruxible_core.query.engine import (
     evaluate_claim_query,
@@ -2520,7 +2517,6 @@ def _provider_interface_member(context: _MemberContext) -> _MemberVerdict:
         registration,
         path=context.path,
         predecessor=predecessor,
-        conformance_fixtures=core_provider_bucket_conformance_fixtures(),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))

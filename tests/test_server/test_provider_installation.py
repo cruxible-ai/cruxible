@@ -380,11 +380,11 @@ def test_another_implementation_binds_the_live_registration(
     ) == {"n": 4}
 
 
-def test_a_package_binding_a_live_registration_claims_only_what_it_proves(
-    installer_http, tmp_path, provider_checkout, monkeypatch
+def test_a_package_binding_a_live_registration_needs_no_bucket_proof(
+    installer_http, tmp_path, provider_checkout
 ):
-    """Binding is checked before anything is proposed: a selector under a fixture id
-    the live registration's proof does not name is a typed refusal."""
+    """A package's declared input buckets are inert: one whose selector names a
+    fixture id the live registration's proofs do not name still binds it."""
 
     from tests.support.provider_installation import build_local_call
 
@@ -401,16 +401,15 @@ def test_a_package_binding_a_live_registration_claims_only_what_it_proves(
     renamed, renamed_lock = build_local_call(
         tmp_path, repository, name="renamed-call", fixture_id="integer-renamed"
     )
-    with pytest.raises(Exception) as unproven:
-        install_provider_wheel(
-            client, instance_id, wheel=renamed, lock=renamed_lock, dependency_wheels=(runtime,)
-        )
-    assert "cruxible.provider.bucket_fixture_missing" in str(unproven.value)
-    # Refused before its deployment is registered.
-    operator = get_playbill_manager().provider_runtime_operator()
-    assert len(operator.config.deployments) == 1
+    second = install_provider_wheel(
+        client, instance_id, wheel=renamed, lock=renamed_lock, dependency_wheels=(runtime,)
+    )
+    assert second.status == "ready" and second.registered, second
     entry = interface_entry(client, instance_id, "local.increment")
-    assert [item["provider_identity"] for item in entry["providers"]] == ["Provider:local-call"]
+    assert sorted(item["provider_identity"] for item in entry["providers"]) == [
+        "Provider:local-call",
+        "Provider:renamed-call",
+    ]
 
 
 def test_reinstalling_the_registrant_of_a_retained_web_fetch_registration_binds_it(

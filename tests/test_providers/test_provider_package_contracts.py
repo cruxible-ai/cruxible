@@ -108,14 +108,15 @@ def test_local_registration_keeps_the_full_manifest_without_inventing_container_
         ProviderV2.model_validate(provider.model_dump(mode="json"))
 
 
-def test_package_classifier_authority_retains_fixture_bytes_and_executable_identity() -> None:
+def test_a_package_registration_keeps_its_inert_classifier_data_byte_exact() -> None:
+    """Nothing runs a V2 registration's classifier, but its bytes still verify."""
+
     registration = package_interface()
     assert (
         evaluate_provider_interface_law(
             registration,
             path=provider_interface_path(registration.interface_id),
             predecessor=None,
-            conformance_fixtures={},
         ).verdict
         == "accepted"
     )

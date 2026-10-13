@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
-    CanonicalValue,
     canonical_bytes,
     typed_digest,
 )
@@ -43,7 +41,6 @@ from cruxible_client.contracts.providers import (
     provider_manifest_digest,
     provider_path,
 )
-from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
 
 
 def digest(label: str) -> str:
@@ -59,6 +56,9 @@ def pin(role: str, kind: str, name: str, *, value: str | None = None) -> Artifac
 
 
 def interface_fixture() -> ProviderBucketConformanceFixture:
+    """The demo registration's one conformance fixture: inert registration data a
+    V2 (package) registration must carry, never executed."""
+
     return ProviderBucketConformanceFixture(
         fixture_id="demo.small",
         canonical_input={"size": 3},
@@ -120,34 +120,6 @@ def accepted_interface() -> AcceptedProviderInterfaceRegistration:
         registration=registration,
         artifact_digest=provider_interface_digest(registration).tagged,
     )
-
-
-@dataclass(frozen=True)
-class DemoSizeClassifier:
-    """Test-only executable classifier for the demo Provider fixtures."""
-
-    classifier_identity: str = "core.demo.size"
-    classifier_version: int = 1
-
-    @property
-    def classifier_digest(self) -> str:
-        return interface_registration().classifier_digest
-
-    def classify(self, canonical_input: CanonicalValue, *, deadline: object) -> str:
-        if not isinstance(canonical_input, dict):
-            raise ValueError("test input must be an object")
-        size = canonical_input.get("size")
-        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
-            raise ValueError("test size must be a nonnegative integer")
-        return "size=small" if size <= 3 else "size=large"
-
-
-def install_demo_classifier(
-    registry: ProviderBucketClassifierRegistry,
-) -> DemoSizeClassifier:
-    classifier = DemoSizeClassifier()
-    registry.install(accepted_interface(), classifier)
-    return classifier
 
 
 def provider_v2() -> ProviderV2:

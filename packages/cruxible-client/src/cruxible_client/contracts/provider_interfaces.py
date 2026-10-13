@@ -1,11 +1,16 @@
-"""Governed Provider interface, bucket vocabulary, and classifier authority."""
+"""Governed Provider interface registrations.
+
+V1 and V2 registrations carry a bucket vocabulary, classifier identity (V2: its
+package code and fixtures) and conformance proofs. Core no longer classifies any
+input, so that data is inert: it still parses and digests exactly as written,
+and no law or runtime path executes or re-proves it.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import re
-from collections.abc import Mapping
 from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
@@ -580,8 +585,10 @@ def evaluate_provider_interface_law(
     *,
     path: str,
     predecessor: AcceptedProviderInterfaceRegistration | None,
-    conformance_fixtures: Mapping[str, ProviderBucketConformanceFixture],
 ) -> ProviderInterfaceLawResult:
+    """Identity, path and succession. No bucket or proof reproduction: a
+    registration's classifier data is inert, so nothing here re-proves it."""
+
     if path != provider_interface_path(registration.interface_id):
         return _refusal(
             "cruxible.provider_interface.path_mismatch",
@@ -608,25 +615,6 @@ def evaluate_provider_interface_law(
                 "Provider interface successor does not pin its exact predecessor.",
                 path=path,
             )
-    if isinstance(registration, ProviderInterfaceRegistration):
-        conformance_fixtures = {item.fixture_id: item for item in registration.conformance_fixtures}
-    for proof in registration.conformance_proofs:
-        fixture = conformance_fixtures.get(proof.fixture_id)
-        if fixture is None:
-            return _refusal(
-                "cruxible.provider_interface.bucket_fixture_missing",
-                f"Compiler conformance fixture {proof.fixture_id!r} is unavailable.",
-                path=path,
-            )
-        if (
-            provider_bucket_fixture_digest(fixture) != proof.fixture_digest
-            or fixture.measured_bucket_id != proof.measured_bucket_id
-        ):
-            return _refusal(
-                "cruxible.provider_interface.classifier_digest_mismatch",
-                f"Conformance proof {proof.fixture_id!r} diverges from compiler bytes.",
-                path=path,
-            )
     return ProviderInterfaceLawResult(
         verdict="accepted",
         artifact_digest=provider_interface_digest(registration).tagged,
@@ -634,46 +622,9 @@ def evaluate_provider_interface_law(
     )
 
 
-class ProviderBucketClassifierInstallationResult(_StrictInterfaceModel):
-    fixture_id: str
-    fixture_digest: str
-    measured_bucket_id: str
-
-    _fixture_digest = field_validator("fixture_digest")(_digest)
-
-
-class ProviderBucketClassifierInstallation(_StrictInterfaceModel):
-    tag: Literal["playbill-provider-bucket-classifier-installation-v1"] = (
-        "playbill-provider-bucket-classifier-installation-v1"
-    )
-    classifier_identity: str
-    classifier_version: int
-    classifier_digest: str
-    conformance_fixture_set_digest: str
-    results: tuple[ProviderBucketClassifierInstallationResult, ...]
-
-    _digests = field_validator(
-        "classifier_digest",
-        "conformance_fixture_set_digest",
-    )(_digest)
-
-    @field_validator("results")
-    @classmethod
-    def _results(
-        cls,
-        value: tuple[ProviderBucketClassifierInstallationResult, ...],
-    ) -> tuple[ProviderBucketClassifierInstallationResult, ...]:
-        ids = tuple(item.fixture_id for item in value)
-        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Classifier installation results must be sorted and unique")
-        return value
-
-
 __all__ = [
     "AcceptedProviderInterfaceRegistration",
     "ProviderBucketClass",
-    "ProviderBucketClassifierInstallationResult",
-    "ProviderBucketClassifierInstallation",
     "ProviderBucketConformanceFixtureProof",
     "ProviderBucketConformanceFixture",
     "ProviderBucketDimension",

@@ -166,6 +166,35 @@ class Increment:
 #: static light selector of core's four, under the fixture id core's proof names.
 STATIC_LIGHT = ("source_kind=static_html;access=*;page_weight=light", "web-fetch-static-light")
 
+#: The four conformance fixtures core's web.fetch registration's proofs name. The
+#: provider runtime 0.2.x package format still requires a package to export
+#: fixtures and a classifier beside its definition; core treats them as inert data.
+WEB_FETCH_PACKAGE_FIXTURES: tuple[dict[str, object], ...] = (
+    {
+        "fixture_id": "web-fetch-api-json",
+        "canonical_input": {"url": "https://fixture.invalid/api/v1/measurements.json"},
+        "measured_bucket_id": "source_kind=api_json;access=public;page_weight=light",
+    },
+    {
+        "fixture_id": "web-fetch-rendered",
+        "canonical_input": {"url": "https://fixture.invalid/dashboard", "render": True},
+        "measured_bucket_id": "source_kind=js_rendered;access=public;page_weight=light",
+    },
+    {
+        "fixture_id": "web-fetch-static-light",
+        "canonical_input": {"url": "https://fixture.invalid/articles/tide-gauge-recalibration"},
+        "measured_bucket_id": "source_kind=static_html;access=public;page_weight=light",
+    },
+    {
+        "fixture_id": "web-fetch-static-medium",
+        "canonical_input": {
+            "url": "https://fixture.invalid/reports/water-quality",
+            "max_bytes": 1048576,
+        },
+        "measured_bucket_id": "source_kind=static_html;access=public;page_weight=medium",
+    },
+)
+
 
 def build_web_fetch_alternative(
     directory: Path,
@@ -177,17 +206,16 @@ def build_web_fetch_alternative(
     """Another implementation of core's web.fetch v3 contract, as a third party ships it.
 
     It exports the exact v3 definition, core's vocabulary and the fixtures its
-    claims name, with a classifier of its own (installation binds core's
-    registration, so core classifies), and embeds its lock so it also installs by
-    name from an index. ``claims`` maps each declared selector to its fixture id.
+    claims name, with a classifier of its own (the package format requires one;
+    nothing runs it), and embeds its lock so it also installs by name from an
+    index. ``claims`` maps each declared selector to its fixture id.
     """
 
     from cruxible_provider_runtime.canonical import domain_digest
 
     from cruxible_core.providers.web_fetch import (
-        WEB_FETCH_FIXTURES,
         WEB_FETCH_INTERFACE_DEFINITION,
-        WEB_FETCH_VOCABULARY,
+        web_fetch_interface_registration,
     )
 
     # The lock is the workspace package's, renamed: the same version and runtime.
@@ -241,17 +269,14 @@ class Fetch:
     definition = dict(WEB_FETCH_INTERFACE_DEFINITION)
     digest = domain_digest("cruxible.interface.stub.v1", definition)
     resource("contract.json", definition)
-    vocabulary = WEB_FETCH_VOCABULARY.model_dump(mode="json")
+    # Core's vocabulary, read off its registration's inert bytes.
+    vocabulary = web_fetch_interface_registration().vocabulary.model_dump(mode="json")
     vocabulary["status"] = "draft"
     resource("vocabulary.json", vocabulary)
     claimed = {fixture_id for _selector, fixture_id in claims}
     resource(
         "fixtures.json",
-        [
-            fixture.model_dump(mode="json", exclude={"tag"})
-            for fixture in WEB_FETCH_FIXTURES
-            if fixture.fixture_id in claimed
-        ],
+        [fixture for fixture in WEB_FETCH_PACKAGE_FIXTURES if fixture["fixture_id"] in claimed],
     )
     resource(
         "manifest.json",

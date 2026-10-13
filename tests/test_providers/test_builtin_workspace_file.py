@@ -27,6 +27,7 @@ import pytest
 
 import cruxible_core.providers.builtin_workspace_file as adapter_module
 from cruxible_client.contracts.provider_interfaces import (
+    ProviderBucketConformanceFixture,
     evaluate_provider_interface_law,
     provider_bucket_fixture_digest,
     provider_external_interface_definition_digest,
@@ -44,7 +45,6 @@ from cruxible_core.governance.seed_artifacts.workspace_file import (
     WORKSPACE_FILE_BUILTIN_IMPLEMENTATION_DIGEST,
     WORKSPACE_FILE_BUILTIN_MATERIALIZATION_DIGEST,
     WORKSPACE_FILE_BUILTIN_REVISION,
-    WORKSPACE_FILE_FIXTURES,
     workspace_file_accepted_registration,
     workspace_file_builtin_identity,
     workspace_file_builtin_provider,
@@ -57,10 +57,6 @@ from cruxible_core.providers.builtin_workspace_file import (
     decode_declared_bytes,
     input_bucket_label,
 )
-from cruxible_core.providers.provider_classifiers import (
-    PROVIDER_BUCKET_CLASSIFIER_REGISTRY,
-    core_provider_bucket_conformance_fixtures,
-)
 from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
@@ -70,6 +66,60 @@ from tests.support.provider_checkout import provider_checkout_path
 GOLDEN = json.loads((Path(__file__).parents[1] / "fixtures/workspace_file_parity.json").read_text())
 # sha256 of the package's contracts/workspace.file.json, as its registration.json pins it.
 PACKAGE_DEFINITION_FILE_DIGEST = "fe0762d929330c30a3c307d645cfd08ef0f87038a1bc826945ce2fd8f317c9eb"
+
+
+def _text_lines(count: int, *, newline: str, trailing: bool, bom: bool = False) -> bytes:
+    lines = [
+        f"line {index:05d}: the quick brown fox jumps over the lazy dog" for index in range(count)
+    ]
+    text = newline.join(lines) + (newline if trailing else "")
+    return ("\ufeff" if bom else "").encode() + text.encode()
+
+
+def _pseudo_random(length: int, *, seed: str) -> bytes:
+    output = bytearray()
+    block = seed.encode()
+    while len(output) < length:
+        block = hashlib.sha256(block).digest()
+        output.extend(block)
+    return bytes(output[:length])
+
+
+#: The package's six registration fixtures (byte-equal to its own), whose
+#: digests the seeded registration's (inert) conformance proofs still name.
+_FIXTURE_BYTES: dict[str, bytes] = {
+    "workspace-file-binary-medium": _pseudo_random(70_000, seed="workspace-file-binary-medium"),
+    "workspace-file-binary-small": _pseudo_random(5_000, seed="workspace-file-binary-small"),
+    "workspace-file-binary-tiny": bytes.fromhex(
+        "89504e470d0a1a0a0000000d49484452000000100000001008060000001ff3ff61"
+    ),
+    "workspace-file-text-medium": _text_lines(1_200, newline="\n", trailing=False, bom=True),
+    "workspace-file-text-small": _text_lines(600, newline="\r\n", trailing=True),
+    "workspace-file-text-tiny": (
+        "# Reach readings\n\nUpper reach: 4.1 mg/l nitrate — see the tide-gauge report.\n"
+    ).encode(),
+}
+
+
+def _fixture(fixture_id: str, data: bytes) -> ProviderBucketConformanceFixture:
+    return ProviderBucketConformanceFixture(
+        fixture_id=fixture_id,
+        canonical_input={
+            "logical_source": f"fixtures/{fixture_id}",
+            "commitment_digest": f"sha256:{'c0' * 32}",
+            "content_encoding": "base64",
+            "bytes": base64.b64encode(data).decode("ascii"),
+            "byte_length": len(data),
+            "bytes_digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
+        },
+        measured_bucket_id=input_bucket_label(data),
+    )
+
+
+WORKSPACE_FILE_FIXTURES = tuple(
+    _fixture(fixture_id, data)
+    for fixture_id, data in sorted(_FIXTURE_BYTES.items(), key=lambda item: item[0].encode())
+)
 
 
 def _context(payload: object, bucket: str) -> ProviderRuntimeRunContextV1:
@@ -193,13 +243,14 @@ def test_the_registration_keeps_the_package_definition_and_fixtures_exactly() ->
         == WORKSPACE_FILE_INTERFACE_V2_DIGEST
     )
     assert registration.effect_class == "none"
-    catalog = core_provider_bucket_conformance_fixtures()
+    # The seeded proofs are inert, but they still name exactly these fixtures, so
+    # the parity golden above runs over the package's own registration inputs.
+    fixtures = {fixture.fixture_id: fixture for fixture in WORKSPACE_FILE_FIXTURES}
+    assert {proof.fixture_id for proof in registration.conformance_proofs} == set(fixtures)
     for proof in registration.conformance_proofs:
-        assert provider_bucket_fixture_digest(catalog[proof.fixture_id]) == proof.fixture_digest
-    assert (
-        registration.classifier_digest
-        in PROVIDER_BUCKET_CLASSIFIER_REGISTRY.installed_classifier_digests
-    )
+        fixture = fixtures[proof.fixture_id]
+        assert provider_bucket_fixture_digest(fixture) == proof.fixture_digest
+        assert fixture.measured_bucket_id == proof.measured_bucket_id
 
 
 def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> None:
@@ -215,7 +266,6 @@ def test_the_seeded_artifacts_are_the_builders_bytes_and_pass_their_laws() -> No
         accepted.registration,
         path=accepted.path,
         predecessor=None,
-        conformance_fixtures=core_provider_bucket_conformance_fixtures(),
     )
     assert law.verdict == "accepted"
     provider_law = evaluate_provider_law(
