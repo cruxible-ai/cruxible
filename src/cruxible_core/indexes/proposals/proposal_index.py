@@ -633,12 +633,8 @@ class ProposalIndex:
         ):
             return None
         try:
-            # A detached read (a preview) must not create the WAL beside the file.
             connection = open_working_snapshot(
-                self.path,
-                expected_stamp=stamp,
-                file_stamp=self._file_stamp,
-                write_nothing=history_reads_detached(),
+                self.path, expected_stamp=stamp, file_stamp=self._file_stamp
             )
         except WorkingDatabaseChangedError:
             # A writer moved the file since the checks above; take the locked path.

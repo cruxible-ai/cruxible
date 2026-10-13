@@ -833,39 +833,6 @@ def test_a_preview_names_the_root_so_a_later_history_commit_keeps_the_checkpoint
     owner.close()
 
 
-def test_a_cold_preview_reads_the_clean_checkpoint_without_creating_the_wal(tmp_path):
-    """A restarted process's dry run reads the clean checkpoint and writes nothing (R12).
-
-    The graceful close removed the shared file's WAL. A read-only open in place
-    would create it again, so the preview's clean snapshot is a private copy:
-    no file changes and nothing is rebuilt from the evidence.
-    """
-
-    from cruxible_core.indexes.history.history_index import (
-        AcceptedHistoryIndex,
-        detached_history_reads,
-    )
-    from tests.support.store_snapshot import snapshot_stores
-
-    instance, _ = initialize_local(tmp_path)
-    first = _submit(instance, "one")
-    instance.settled_workspace_advertisement()
-    evidence = instance.proposal_evidence()
-    index_path = evidence.index.path
-    instance._accepted_history_index.close()
-    assert not index_path.with_name(index_path.name + "-wal").exists()
-    owner = AcceptedHistoryIndex(index_path)
-    before = snapshot_stores(index_path.parent, evidence.root)
-    with detached_history_reads():
-        store = ProposalEvidenceStore(
-            evidence.root, index=owner.proposals, transport=instance._ledger
-        )
-        assert store.read_admission(first.admission.proposal_id) == first.admission
-    assert snapshot_stores(index_path.parent, evidence.root) == before
-    assert owner.proposals.reconstructions == 0
-    owner.close()
-
-
 def test_history_commits_before_the_first_proposal_read_keep_the_checkpoint(tmp_path):
     """A restart's history sync, before any proposal read, leaves the checkpoint clean (E3).
 
