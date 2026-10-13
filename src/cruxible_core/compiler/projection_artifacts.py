@@ -1443,7 +1443,7 @@ def parse_projection_tree(
                             subject_identity=identity,
                             fact_key="vocabulary",
                             value={
-                                "vocabulary": registration.vocabulary.model_dump(mode="json"),
+                                "vocabulary": registration.vocabulary_document,
                                 "vocabulary_digest": {"$digest": registration.vocabulary_digest},
                             },
                         ),

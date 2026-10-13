@@ -126,10 +126,12 @@ def test_a_package_registration_keeps_its_inert_classifier_data_byte_exact() -> 
         artifact_digest=provider_interface_digest(registration).tagged,
     )
     assert accepted.model_dump(mode="json")["registration"]["classifier_code"]
+    # A fixture is inert: changed bytes are not judged against its proof, and
+    # the registration's artifact digest commits them.
     data = registration.model_dump(mode="json")
     data["conformance_fixtures"][0]["canonical_input"]["size"] = 4
-    with pytest.raises(ValidationError, match="fixture bytes"):
-        ProviderInterfaceRegistration.model_validate(data)
+    changed = ProviderInterfaceRegistration.model_validate(data)
+    assert provider_interface_digest(changed) != provider_interface_digest(registration)
     data = registration.model_dump(mode="json")
     data["classifier_code"]["source_digest"] = "sha256:" + "b" * 64
     with pytest.raises(ValidationError, match="classifier digest"):

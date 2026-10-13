@@ -193,6 +193,8 @@ class ProviderImplementationManifestV1(_StrictProviderModel):
     interface_digest: str
     entrypoint: str
     backends: tuple[Literal["local_env", "container"], ...]
+    # The provider-runtime 0.2.x manifest's bucket claims: inert. Core admits
+    # every input the interface's contract admits and reads none of these.
     declared_input_buckets: tuple[str, ...]
     bucket_conformance: dict[str, str] = Field(default_factory=dict)
     declared_endpoints: tuple[str, ...] = ()
@@ -219,13 +221,6 @@ class ProviderImplementationManifestV1(_StrictProviderModel):
     ) -> tuple[Literal["local_env", "container"], ...]:
         if not value or len(set(value)) != len(value):
             raise ValueError("Provider implementation backends must be nonempty and unique")
-        return value
-
-    @field_validator("declared_input_buckets")
-    @classmethod
-    def _buckets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value:
-            raise ValueError("Provider implementation must declare input buckets")
         return value
 
     @field_validator("requires_extras")

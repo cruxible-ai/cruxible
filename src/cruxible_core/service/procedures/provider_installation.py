@@ -72,6 +72,7 @@ from cruxible_core.providers.package_materialization import (
     prepare_provider_package,
     toolchain,
 )
+from cruxible_core.providers.package_metadata import read_package_registration
 from cruxible_core.providers.package_probe import run_package_probe
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
 from cruxible_core.providers.provider_local_runtime import (
@@ -149,14 +150,14 @@ def _repository_packages(operator: ProviderRuntimeOperator) -> tuple[ProviderPac
         if len(descriptors) != 1:
             raise ConfigError("provider package must have exactly one registration descriptor")
         with package_preparation_errors():
-            bundle = toolchain("registration").load_registration(descriptors[0].parent)
-        if bundle.manifest.distribution.name != name:
+            document = read_package_registration(descriptors[0].parent)
+        if document.manifest.distribution.name != name:
             raise ConfigError("provider catalog name differs from package manifest")
         packages.append(
             ProviderPackageSummary(
                 name=name,
-                version=bundle.manifest.distribution.version,
-                interfaces=tuple(sorted(bundle.definitions)),
+                version=document.manifest.distribution.version,
+                interfaces=tuple(sorted(item.interface_id for item in document.interfaces)),
             )
         )
     return tuple(sorted(packages, key=lambda item: item.name))

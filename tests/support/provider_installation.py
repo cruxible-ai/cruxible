@@ -5,6 +5,45 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
+
+#: Bucket metadata the pre-removal installer refused three ways: the declared
+#: selector names a class the vocabulary lacks, no selector names a fixture, and
+#: the one fixture's measured bucket is not a bucket of the vocabulary. Core
+#: carries it as inert data; installing, binding and running ignore it.
+INERT_BUCKET_METADATA: dict[str, Any] = {
+    "declared_input_buckets": ["size=two"],
+    "bucket_conformance": {},
+    "fixtures": [
+        {"fixture_id": "integer", "canonical_input": {"n": 2}, "measured_bucket_id": "size=huge"}
+    ],
+}
+
+
+def forbid_bucket_semantics(monkeypatch: Any) -> None:
+    """Make the provider runtime's validating reader and bucket model raise.
+
+    Core reads package metadata itself, with bucket data inert; if any path it
+    runs reached one of these, the test would fail here.
+    """
+
+    from cruxible_provider_runtime import buckets, registration, registry, wheels
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a bucket-semantic provider-runtime routine was reached")
+
+    for module, name in (
+        (wheels, "wheel_registration"),
+        (registration, "load_registration"),
+        (registration, "registration_from_distribution"),
+        (registration, "parse_bucket_id"),
+        (registration, "load_bucket_vocabulary"),
+        (buckets, "parse_bucket_id"),
+        (registry, "load_bucket_vocabulary"),
+    ):
+        monkeypatch.setattr(module, name, forbidden)
+    monkeypatch.setattr(buckets.BucketSelector, "parse", classmethod(forbidden))
+    monkeypatch.setattr(buckets.BucketSelector, "matches", forbidden)
 
 
 def build_local_call(
@@ -15,7 +54,10 @@ def build_local_call(
     name: str = "local-call",
     backends: tuple[str, ...] = ("local_env",),
     fixture_id: str = "integer",
+    bucket_metadata: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
+    """A ``local.increment`` package. ``bucket_metadata`` replaces its declared
+    selectors, selector -> fixture claims and fixtures as given, unchecked."""
     from cruxible_provider_runtime.canonical import domain_digest
 
     project = directory / f"{name}-{increment}"
@@ -84,7 +126,9 @@ class Increment:
     )
     resource(
         "fixtures.json",
-        [{"fixture_id": fixture_id, "canonical_input": {"n": 2}, "measured_bucket_id": "size=one"}],
+        [{"fixture_id": fixture_id, "canonical_input": {"n": 2}, "measured_bucket_id": "size=one"}]
+        if bucket_metadata is None
+        else bucket_metadata["fixtures"],
     )
     resource(
         "manifest.json",
@@ -101,8 +145,12 @@ class Increment:
                     "entrypoint": "local_call.operation:Increment",
                     "backends": list(backends),
                     "requires_extras": [],
-                    "declared_input_buckets": ["size=one"],
-                    "bucket_conformance": {"size=one": fixture_id},
+                    "declared_input_buckets": ["size=one"]
+                    if bucket_metadata is None
+                    else bucket_metadata["declared_input_buckets"],
+                    "bucket_conformance": {"size=one": fixture_id}
+                    if bucket_metadata is None
+                    else bucket_metadata["bucket_conformance"],
                     "declared_endpoints": [],
                     "capture_contract_families": [],
                     "deterministic": True,
@@ -270,7 +318,7 @@ class Fetch:
     digest = domain_digest("cruxible.interface.stub.v1", definition)
     resource("contract.json", definition)
     # Core's vocabulary, read off its registration's inert bytes.
-    vocabulary = web_fetch_interface_registration().vocabulary.model_dump(mode="json")
+    vocabulary = dict(web_fetch_interface_registration().vocabulary_document)
     vocabulary["status"] = "draft"
     resource("vocabulary.json", vocabulary)
     claimed = {fixture_id for _selector, fixture_id in claims}

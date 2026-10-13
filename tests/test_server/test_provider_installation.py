@@ -412,6 +412,97 @@ def test_a_package_binding_a_live_registration_needs_no_bucket_proof(
     ]
 
 
+def test_a_package_whose_bucket_metadata_never_matched_installs_binds_and_runs(
+    installer_http, tmp_path, provider_checkout, monkeypatch
+):
+    """Review F-001: bucket data is inert on every install path.
+
+    The first package's metadata failed the pre-removal reader three ways (a
+    selector of an unknown class, no fixture for any selector, a fixture whose
+    measured bucket the vocabulary lacks); it registers the interface. The second
+    claims a fixture it never ships and binds that live registration. Both run.
+    The provider runtime's validating reader and bucket model raise if reached,
+    across install, binding, the repository catalog and the runs.
+    """
+
+    from tests.support.provider_installation import (
+        INERT_BUCKET_METADATA,
+        build_local_call,
+        forbid_bucket_semantics,
+    )
+
+    http, instance_id, reviewer = installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    repository = provider_checkout.repository
+    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
+    forbid_bucket_semantics(monkeypatch)
+
+    wheel, lock = build_local_call(
+        tmp_path, repository, name="inert-call", bucket_metadata=INERT_BUCKET_METADATA
+    )
+    first = install_provider_wheel(
+        client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
+    )
+    assert first.status == "ready" and first.registered, first
+    assert _run_call(
+        client,
+        http,
+        instance_id,
+        reviewer,
+        tmp_path,
+        "local.increment",
+        {"n": 2},
+        {"n": {"type": "int"}},
+        {"n": {"type": "int"}},
+        provider_identity="Provider:inert-call",
+        name="inert-package-call",
+    ) == {"n": 3}
+
+    other, other_lock = build_local_call(
+        tmp_path,
+        repository,
+        name="unshipped-fixture-call",
+        increment=2,
+        bucket_metadata={
+            "declared_input_buckets": ["size=*"],
+            "bucket_conformance": {"size=*": "never-shipped"},
+            "fixtures": [],
+        },
+    )
+    second = install_provider_wheel(
+        client, instance_id, wheel=other, lock=other_lock, dependency_wheels=(runtime,)
+    )
+    assert second.status == "ready" and second.registered, second
+    entry = interface_entry(client, instance_id, "local.increment")
+    assert sorted(item["provider_identity"] for item in entry["providers"]) == [
+        "Provider:inert-call",
+        "Provider:unshipped-fixture-call",
+    ]
+    assert _run_call(
+        client,
+        http,
+        instance_id,
+        reviewer,
+        tmp_path,
+        "local.increment",
+        {"n": 2},
+        {"n": {"type": "int"}},
+        {"n": {"type": "int"}},
+        provider_identity="Provider:unshipped-fixture-call",
+        name="unshipped-fixture-package-call",
+    ) == {"n": 4}
+
+    # The configured repository's catalog reads every package the same way.
+    assert {item.name for item in client.list_provider_packages(instance_id).packages} == {
+        "cruxible-provider-noop",
+        "cruxible-provider-web",
+        "cruxible-provider-workspace",
+        "cruxible-provider-docs",
+        "cruxible-provider-quant",
+    }
+
+
 def test_reinstalling_the_registrant_of_a_retained_web_fetch_registration_binds_it(
     installer_http, tmp_path, provider_checkout, monkeypatch
 ):

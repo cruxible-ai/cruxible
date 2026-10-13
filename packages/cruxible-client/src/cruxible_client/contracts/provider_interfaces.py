@@ -2,8 +2,12 @@
 
 V1 and V2 registrations carry a bucket vocabulary, classifier identity (V2: its
 package code and fixtures) and conformance proofs. Core no longer classifies any
-input, so that data is inert: it still parses and digests exactly as written,
-and no law or runtime path executes or re-proves it.
+input, so that data is inert. A registration is read as bytes whose digests
+reproduce -- the interface, vocabulary, fixture-set and classifier digests over
+the exact bytes it carries -- and nothing reads the data for meaning: no
+selector is parsed or matched, no measured bucket is checked against a
+vocabulary, and no proof or fixture is required for, or checked against, any
+other.
 """
 
 from __future__ import annotations
@@ -128,48 +132,23 @@ class ProviderBucketVocabulary(_StrictInterfaceModel):
             raise ValueError("Provider bucket dimensions must be nonempty and unique")
         return value
 
-    def parse_selector(
-        self,
-        selector: str,
-        *,
-        allow_star: bool = True,
-    ) -> tuple[tuple[str, str], ...]:
-        assignment = _parse_pairs(selector)
-        result: list[tuple[str, str]] = []
-        for dimension in self.dimensions:
-            if dimension.name not in assignment:
-                raise ValueError(f"bucket expression misses dimension {dimension.name!r}")
-            member = assignment.pop(dimension.name)
-            class_ids = {item.id for item in dimension.classes}
-            if member not in class_ids and not (allow_star and member == "*"):
-                raise ValueError(
-                    f"bucket expression names unregistered class {member!r} for "
-                    f"dimension {dimension.name!r}"
-                )
-            result.append((dimension.name, member))
-        if assignment:
-            raise ValueError(f"bucket expression names extra dimensions: {sorted(assignment)}")
-        return tuple(result)
 
-    def validate_bucket(self, bucket_id: str) -> tuple[tuple[str, str], ...]:
-        return self.parse_selector(bucket_id, allow_star=False)
+def provider_vocabulary_document(value: object) -> dict[str, object]:
+    """One registration's bucket vocabulary as plain data, without judging it.
 
-    def selector_matches(self, selector: str, bucket_id: str) -> bool:
-        expected = self.parse_selector(selector)
-        actual = dict(self.validate_bucket(bucket_id))
-        return all(member == "*" or actual[name] == member for name, member in expected)
+    A vocabulary every past install accepted reads through the model and comes
+    back exactly as its model dump, so accepted bytes and projected facts keep
+    their exact shape. Any other mapping is taken as written, with the model's
+    defaults filled: nothing about a vocabulary decides whether a registration
+    is read, installed or accepted.
+    """
 
-
-def _parse_pairs(value: str) -> dict[str, str]:
-    if not value:
-        raise ValueError("bucket expression must be nonempty")
-    result: dict[str, str] = {}
-    for part in value.split(";"):
-        name, separator, member = part.partition("=")
-        if not separator or not name or not member or name in result:
-            raise ValueError("bucket expression is malformed or repeats a dimension")
-        result[name] = member
-    return result
+    if not isinstance(value, dict):
+        raise ValueError("a bucket vocabulary must be a JSON object")
+    try:
+        return ProviderBucketVocabulary.model_validate(value).model_dump(mode="json")
+    except ValueError:
+        return {"version": 1, "status": "draft", "description": "", **value}
 
 
 class ProviderBucketConformanceFixture(_StrictInterfaceModel):
@@ -354,12 +333,12 @@ class ProviderInterfaceRegistrationV1(_StrictInterfaceModel):
         cls,
         value: tuple[ProviderBucketConformanceFixtureProof, ...],
     ) -> tuple[ProviderBucketConformanceFixtureProof, ...]:
-        if not value or value != tuple(sorted(value, key=_proof_key)):
-            raise ValueError("Provider conformance proofs must be nonempty and sorted")
-        selectors = tuple(item.selector for item in value)
-        fixture_ids = tuple(item.fixture_id for item in value)
-        if len(selectors) != len(set(selectors)) or len(fixture_ids) != len(set(fixture_ids)):
-            raise ValueError("Provider conformance proofs must be selector/fixture unique")
+        # Canonical order only, so the fixture-set digest is one function of the
+        # proofs. Proofs are inert: none is required, and none is checked
+        # against the vocabulary or another proof.
+        keys = tuple(_proof_key(item) for item in value)
+        if keys != tuple(sorted(set(keys))):
+            raise ValueError("Provider conformance proofs must be sorted and unique")
         return value
 
     @field_validator("pins")
@@ -387,14 +366,6 @@ class ProviderInterfaceRegistrationV1(_StrictInterfaceModel):
             raise ValueError("Provider interface digest does not reproduce exact bytes")
         if self.vocabulary_digest != provider_bucket_vocabulary_digest(self.vocabulary_bytes_hex):
             raise ValueError("Provider vocabulary digest does not reproduce exact bytes")
-        vocabulary = self.vocabulary
-        if vocabulary.interface_id != self.interface_id or vocabulary.status != "accepted":
-            raise ValueError("Provider accepted vocabulary names another interface or status")
-        for proof in self.conformance_proofs:
-            vocabulary.parse_selector(proof.selector)
-            vocabulary.validate_bucket(proof.measured_bucket_id)
-            if not vocabulary.selector_matches(proof.selector, proof.measured_bucket_id):
-                raise ValueError("Provider conformance result does not match its selector")
         if self.conformance_fixture_set_digest != provider_bucket_fixture_set_digest(
             self.conformance_proofs
         ):
@@ -412,10 +383,10 @@ class ProviderInterfaceRegistrationV1(_StrictInterfaceModel):
         )
 
     @property
-    def vocabulary(self) -> ProviderBucketVocabulary:
-        return ProviderBucketVocabulary.model_validate(
-            json.loads(bytes.fromhex(self.vocabulary_bytes_hex))
-        )
+    def vocabulary_document(self) -> dict[str, object]:
+        """The registration's (inert) bucket vocabulary as plain data."""
+
+        return provider_vocabulary_document(json.loads(bytes.fromhex(self.vocabulary_bytes_hex)))
 
 
 class ProviderClassifierCode(_StrictInterfaceModel):
@@ -473,19 +444,14 @@ class ProviderInterfaceRegistration(ProviderInterfaceRegistrationV1):
         )
 
     @model_validator(mode="after")
-    def _fixture_bytes(self) -> "ProviderInterfaceRegistration":
+    def _fixture_order(self) -> "ProviderInterfaceRegistration":
+        # Canonical order only. The fixtures and proofs are inert: no fixture
+        # is required for a proof or a proof for a fixture, and neither is
+        # checked against the other. The registration's artifact digest still
+        # commits every byte of both.
         ids = tuple(item.fixture_id for item in self.conformance_fixtures)
         if ids != tuple(sorted(set(ids), key=str.encode)):
             raise ValueError("package fixtures must be sorted and unique")
-        fixtures = {item.fixture_id: item for item in self.conformance_fixtures}
-        if set(fixtures) != {proof.fixture_id for proof in self.conformance_proofs}:
-            raise ValueError("package fixture coverage differs from conformance proofs")
-        for proof in self.conformance_proofs:
-            fixture = fixtures[proof.fixture_id]
-            if provider_bucket_fixture_digest(fixture) != proof.fixture_digest or (
-                fixture.measured_bucket_id != proof.measured_bucket_id
-            ):
-                raise ValueError("package fixture bytes differ from conformance proof")
         return self
 
 
@@ -637,6 +603,7 @@ __all__ = [
     "ProviderInterfaceRegistrationAny",
     "ProviderClassifierCode",
     "provider_package_classifier_digest",
+    "provider_vocabulary_document",
     "evaluate_provider_interface_law",
     "parse_provider_interface",
     "provider_bucket_classifier_digest",
