@@ -69,6 +69,7 @@ dependencies = [
 dev = [
     "pytest>=9.0.3",  # CVE-2025-71176 (tmpdir handling)
     "pytest-xdist>=3.5",
+    "pytest-timeout>=2.3",  # CI fails a hung test with its stack instead of hanging the job
     "ruff==0.15.0",
     "mypy>=1.10",
 ]
