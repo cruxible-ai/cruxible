@@ -3319,19 +3319,31 @@ class _DoorFold:
         return self._law_index
 
     def read_captures(self, claim_id: str) -> tuple[str, ...]:
-        """The Captures this Claim's acceptance-time accounts were read from (none until read).
+        """The Captures this Claim's acceptance-time accounts are read from (none until read).
 
+        Every citation of its lineage, as Layer 1 counts the door's reads: a
+        citation envelope that could not be read left its accounts incomplete,
+        and it is a read all the same, so its repair reaches the door's rows.
         ``claim_id`` is the Claim's name or its qualified identity.
         """
 
-        found = self._accounts.get(claim_id.removeprefix("Claim:"))
-        if found is None:
+        name = claim_id.removeprefix("Claim:")
+        found = self._accounts.get(name)
+        lineage = self._lineages.get(name)
+        if found is None and lineage is None:
             return ()
-        return tuple(
-            sorted(
-                {account.capture_digest for accounts in found[0].values() for account in accounts}
-            )
+        captures = (
+            set()
+            if found is None
+            else {account.capture_digest for accounts in found[0].values() for account in accounts}
         )
+        if lineage is not None:
+            captures.update(
+                citation.capture_digest
+                for artifact in lineage[0]
+                for citation in claim_citation_references(artifact.claim)
+            )
+        return tuple(sorted(captures))
 
     def rows(
         self,

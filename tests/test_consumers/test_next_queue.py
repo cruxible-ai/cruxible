@@ -928,6 +928,52 @@ def test_a_body_rewritten_in_place_reaches_its_claims_at_the_next_sweep(
     _assert_equivalent(instance, later)
 
 
+def test_a_door_row_follows_the_repair_of_an_account_capture_it_could_not_read(
+    tmp_path: Path,
+) -> None:
+    """A door row whose Claim's citation envelope was corrupt in place read its accounts
+    as incomplete. That envelope is a read of the door key all the same, so the sweep
+    after its in-place repair reaches the door: behind and caught up, it reads proven."""
+
+    from tests.support.internal_triggers import fire_internal_triggers
+    from tests.test_consumers.test_next_incremental import World, _door_capture
+
+    instance, owner = seed_claims(tmp_path)
+    _drain(instance)
+    claim = _current_claim(instance)
+    state = World(instance=instance, owner=owner, root=tmp_path, rng=None)  # type: ignore[arg-type]
+    _attest(
+        instance,
+        owner,
+        claim,
+        tmp_path,
+        at=EVALUATION_TIME - timedelta(minutes=1),
+        basis="new_capture",
+        stance="unsure",
+        captures=(_door_capture(state, claim.identity.name),),
+    )
+    _drain(instance)
+    original = _rewrite_backing(instance, keep_mtime=False)
+    _sweep(instance, EVALUATION_TIME)
+    instance.body_store()._path(claim.backing.capture_digests[0]).write_bytes(original)
+    later = EVALUATION_TIME + timedelta(days=1)
+    assert any(
+        event.action == facts.EVIDENCE_SWEEP
+        for event in fire_internal_triggers(instance, now=later)
+    )
+    _assert_equivalent(instance, later)
+    _drain(instance, later)
+    assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=later)
+    statuses = {
+        item.detail.get("lineage_status")
+        for item in service_playbill_next(
+            instance, request=NextRequest(evaluation_time=later, access_profile=_access())
+        ).items
+        if item.reason == "claim_new_evidence_unreviewed"
+    }
+    assert statuses == {"proven"}
+
+
 def test_a_retired_dependency_capture_rewritten_in_place_is_caught_by_the_sweep(
     world,  # noqa: F811
 ) -> None:
