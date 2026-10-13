@@ -636,7 +636,7 @@ def test_new_capture_refuses_contract_not_live_at_referent(tmp_path: Path) -> No
     assert error.value.error_code.endswith("capture_contract_not_live_at_referent")
 
 
-def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
+def test_next_reads_one_exact_evidence_head(
     tmp_path: Path,
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
@@ -668,13 +668,6 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
         permitted_access_classes=("instance", "public"),
     )
 
-    legacy = unfolded_next(
-        instance,
-        request=NextRequest(
-            evaluation_time=RECORDED_AT,
-            access_profile=access,
-        ),
-    )
     result = unfolded_next(
         instance,
         request=NextRequest(
@@ -694,7 +687,14 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
             at_attestation_head_digest=appended.current_head,
         ),
     )
-    assert not any(item.reason == "claim_new_evidence_supporting" for item in legacy.items)
+    # Without a pinned head the queue reads the current one: the same answer here.
+    assert (
+        unfolded_next(
+            instance,
+            request=NextRequest(evaluation_time=RECORDED_AT, access_profile=access),
+        )
+        == result
+    )
     rows = tuple(item for item in result.items if item.reason == "claim_new_evidence_supporting")
     assert len(rows) == 1
     assert set(rows[0].detail) == {

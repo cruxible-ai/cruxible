@@ -821,7 +821,7 @@ def test_a_retired_dependency_capture_rewritten_during_a_fold_is_not_published(
 
     with patch.object(next_module, "build_stored_claim_queue", rewritten):
         _drain(instance, _DERIVED_AT)
-    assert calls == 2
+    assert calls == 1
     assert _stored(instance, _DERIVED_AT) is None
     served = _derived_outcome(instance)
     with patch.object(consumer, "stored_claim_queue", return_value=None):

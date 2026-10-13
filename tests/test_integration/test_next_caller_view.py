@@ -225,6 +225,7 @@ def _sdk_next(
                 items=[],
                 total_items=0,
                 result_digest="sha256:" + "5" * 64,
+                attestation_head_digest="sha256:" + "9" * 64,
             )
 
     playbill = sdk_module.Cruxible.__new__(sdk_module.Cruxible)
