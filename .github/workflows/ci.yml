@@ -16,6 +16,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # Finish every Python version even when one fails, so one CI run reports them all.
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
 
