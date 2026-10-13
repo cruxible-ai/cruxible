@@ -461,9 +461,9 @@ class PlaybillInstance:
         )
         held = memo.get(key)
         if held is not None:
-            facts, seen, bodies = held
+            kept, seen, bodies = held
             if seen == fingerprint and body_fingerprints_hold(self, bodies):
-                return facts
+                return cast("ClaimQueryFactsV1", kept)
         consulted: dict[str, Any] = {}
         facts = build_accepted_query_facts(
             self,

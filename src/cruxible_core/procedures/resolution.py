@@ -1400,9 +1400,9 @@ def resolution_book_at_head(
     select = getattr(journal, "select_records", None)
     all_records = getattr(journal, "all_records")
     if read_head is None or select is None:
-        book = ProcedureResolutionBook((activation,))
-        book.replay(all_records(stream, partition_id), bodies=bodies)
-        return book, None
+        whole = ProcedureResolutionBook((activation,))
+        whole.replay(all_records(stream, partition_id), bodies=bodies)
+        return whole, None
     head: JournalPartitionHeadV1 = read_head(stream, partition_id)
     key: tuple[object, ...] | None = (
         str(getattr(journal, "root", id(journal))),
