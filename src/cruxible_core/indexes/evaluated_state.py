@@ -86,6 +86,15 @@ class EvaluationProofs:
     edges: Any
 
 
+def pin_sources_sql(prefix: str, *, consumed: bool) -> str:
+    """The paths of the artifacts pinning one target identity (required pins unless ``consumed``)."""
+    kind = "" if consumed else " AND edge_kind='required_pin'"
+    return (
+        f"SELECT path FROM {prefix}artifact_lookup WHERE identity IN "
+        f"(SELECT source_identity FROM {prefix}pins WHERE target_identity=?{kind})"
+    )
+
+
 class EvaluationRows:
     """One accepted or candidate selection, valid only inside its owning request."""
 
@@ -196,12 +205,13 @@ class EvaluationRows:
         )
 
     def pin_sources(self, identity: str, *, consumed: bool = False) -> frozenset[str]:
-        kind = "" if consumed else "AND p.edge_kind='required_pin'"
+        # An IN-subquery, not a JOIN: SQLite pushes the identity list into every
+        # branch of the artifact_lookup UNION view (one primary-key seek each),
+        # where a JOIN materializes the whole view first.
         return frozenset(
             row[0]
             for row in self.connection.execute(
-                f"SELECT DISTINCT a.path FROM {self.table('pins')} p JOIN {self.table('artifact_lookup')} a ON a.identity=p.source_identity WHERE p.target_identity=? {kind}",
-                (identity,),
+                pin_sources_sql(self.prefix, consumed=consumed), (identity,)
             )
         )
 

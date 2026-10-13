@@ -80,6 +80,7 @@ from cruxible_core.authoring.lowering import (
 from cruxible_core.authoring.prepared_lowering import reuse_lowering
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_identity import RecordedCreation, SubjectAssignmentAuthority
+from cruxible_core.indexes.typed_state import LIVE_SLOT_CLAIMS_SQL
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -242,8 +243,7 @@ def _slot_diagnostics(
         connection = projection.typed.connection
         for expectation in expectations:
             rows = connection.execute(
-                "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
-                "AND qualifier IS ? AND lifecycle='live'",
+                LIVE_SLOT_CLAIMS_SQL,
                 (expectation.subject_path, expectation.predicate, expectation.qualifier),
             ).fetchall()
             live = tuple(

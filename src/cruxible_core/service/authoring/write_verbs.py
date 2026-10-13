@@ -166,6 +166,7 @@ from cruxible_core.indexes.subject_identity import (
     tree_key_reader,
     undeclared_kind_repair,
 )
+from cruxible_core.indexes.typed_state import LIVE_SLOT_CLAIM_DIGESTS_SQL, LIVE_SLOT_CLAIMS_SQL
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import compact_coordinate, preview_guards
@@ -513,9 +514,7 @@ class _Planner:
 
         with self.instance.bind_accepted_projection(self.head) as projection:
             rows = projection.typed.connection.execute(
-                "SELECT identity, artifact_digest FROM claims WHERE subject_path=? "
-                "AND predicate=? AND qualifier IS ? AND lifecycle='live' ORDER BY identity",
-                (subject_path_value, predicate, qualifier),
+                LIVE_SLOT_CLAIM_DIGESTS_SQL, (subject_path_value, predicate, qualifier)
             ).fetchall()
         wanted = {str(row[0]): str(row[1]) for row in rows}
         if not wanted:
@@ -552,9 +551,7 @@ class _Planner:
 
         with self.instance.bind_accepted_projection(self.head) as projection:
             rows = projection.typed.connection.execute(
-                "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
-                "AND qualifier IS ? AND lifecycle='live'",
-                (subject_path_value, predicate, qualifier),
+                LIVE_SLOT_CLAIMS_SQL, (subject_path_value, predicate, qualifier)
             ).fetchall()
         return _SlotPin(
             subject_path=subject_path_value,

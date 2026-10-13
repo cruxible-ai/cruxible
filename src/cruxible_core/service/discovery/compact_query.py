@@ -100,6 +100,7 @@ from cruxible_client.contracts.read_values import summary_value, whole_value_rea
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import resolve_subject_ref
+from cruxible_core.indexes.typed_state import LIVE_SUBJECT_PREDICATE_CLAIMS_SQL
 from cruxible_core.query.backends import ClaimQueryFactsV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
@@ -2183,9 +2184,7 @@ def _flags_for_paths(
             contenders.update(
                 str(row[0])
                 for row in connection.execute(
-                    "SELECT identity FROM claims WHERE lifecycle='live' "
-                    "AND subject_path=? AND predicate=?",
-                    (subject_path, predicate),
+                    LIVE_SUBJECT_PREDICATE_CLAIMS_SQL, (subject_path, predicate)
                 )
             )
     flags = claim_flags(
