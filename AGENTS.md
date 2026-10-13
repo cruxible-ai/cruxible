@@ -262,7 +262,9 @@ correct.
   per-event work that grows with the instance unless that reason holds.
 - **Measure at two sizes.** Tests on a few dozen Claims cannot show this; check
   new per-event paths on a small and a large instance and compare the work done,
-  not just the answer.
+  not just the answer. CI's scale guard, `tests/test_scale`, counts this work
+  for each write, tick and read route at two instance sizes; a route that grows
+  today carries a strict xfail naming where, and a fix removes that xfail.
 
 ### Key design decisions
 
@@ -310,4 +312,6 @@ Tests mirror domain ownership under `tests/test_<domain>/` (`test_claims`,
 `tests/test_architecture` and `tests/test_guardrails` pin boundaries, public
 snapshots, contract catalogs, the reference docs and the public vocabulary.
 Golden journal-corpus tests under `tests/goldens/` are intentionally expensive
-and should only run when a change touches what they pin.
+and should only run when a change touches what they pin. `tests/test_scale`
+is the scale guard: one module that builds a small and a ten-times larger world
+once per worker and fails when a route's counted work grows with the instance.
