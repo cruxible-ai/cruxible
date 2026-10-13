@@ -473,30 +473,7 @@ class ContentAddressedBodyStore:
                 existing = None
             if existing is not None:
                 self._verified_bytes(digest.tagged)
-            else:
-                descriptor: int | None = None
-                try:
-                    descriptor = os.open(
-                        name,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                        0o600,
-                        dir_fd=directory,
-                    )
-                    view = memoryview(content)
-                    while view:
-                        written = os.write(descriptor, view)
-                        if written <= 0:  # pragma: no cover - defensive OS contract
-                            raise CasError("CAS write made no progress")
-                        view = view[written:]
-                    os.fchmod(descriptor, 0o600)
-                    os.fsync(descriptor)
-                except FileExistsError:
-                    self._verified_bytes(digest.tagged)
-                except OSError as exc:
-                    raise CasError("CAS body could not be stored durably") from exc
-                finally:
-                    if descriptor is not None:
-                        os.close(descriptor)
+            elif self._publish(directory, name, content, digest.tagged):
                 os.fsync(directory)
                 if not journal_payload:
                     self._bump_evidence_generation()
@@ -508,6 +485,58 @@ class ContentAddressedBodyStore:
             byte_length=len(content),
             redacted=False,
         )
+
+    def _publish(self, directory: int, name: str, content: bytes, digest: str) -> bool:
+        """Make ``content`` addressable under ``name`` only once it is complete.
+
+        The bytes are written and fsynced under a private temporary name in the
+        shard, read back and checked against the address, and only then linked
+        to the object name. A reader, or a concurrent writer of the same body,
+        therefore never meets a partially written object: before the link the
+        name does not exist, after it the bytes are whole. ``link`` never
+        replaces an object, so a writer that loses the race verifies the
+        winner's object and reports that it published nothing.
+        """
+
+        temporary = f".{name}.{uuid4().hex}.tmp"
+        descriptor: int | None = None
+        try:
+            try:
+                descriptor = os.open(
+                    temporary,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=directory,
+                )
+                view = memoryview(content)
+                while view:
+                    written = os.write(descriptor, view)
+                    if written <= 0:  # pragma: no cover - defensive OS contract
+                        raise CasError("CAS write made no progress")
+                    view = view[written:]
+                os.fchmod(descriptor, 0o600)
+                os.fsync(descriptor)
+            except OSError as exc:
+                raise CasError("CAS body could not be stored durably") from exc
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+            landed = _read_descriptor(temporary, dir_fd=directory)
+            if landed is None or self.digest_bytes(landed[1]).tagged != digest:
+                raise CasError("CAS body did not land as written")
+            try:
+                os.link(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+            except FileExistsError:
+                self._verified_bytes(digest)
+                return False
+            except OSError as exc:
+                raise CasError("CAS body could not be stored durably") from exc
+            return True
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except OSError:
+                pass
 
     def _memo_key(self, digest: str) -> tuple[str, str]:
         return (str(self._path(digest)), digest)
