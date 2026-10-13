@@ -23,6 +23,7 @@ from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._p2b1_support import install_demo_classifier
+from tests.support.invocation_ids import unique_invocation_id
 from tests.test_providers.test_provider_invocation_journal import (
     _accepted_one_provider,
     _Authority,
@@ -73,7 +74,7 @@ def test_an_unreadable_process_table_refuses_every_invocation_with_repair(
     monkeypatch.setattr(runtime_module, "snapshot_provider_descendants", _unreadable_process_table)
 
     for digit in ("1", "2"):
-        invocation_id = "sha256:" + digit * 64
+        invocation_id = unique_invocation_id(digit)
         with pytest.raises(ProviderLocalRuntimeRefused) as refusal:
             _invoke(operator, interpreter, invocation_id)
         assert refusal.value.code == "provider_process_lease_invalid"
@@ -109,7 +110,7 @@ def test_one_successful_process_table_read_keeps_a_transient_failure_diagnostic_
         return real_snapshot(*args, **kwargs)
 
     monkeypatch.setattr(runtime_module, "snapshot_provider_descendants", fail_once)
-    invocation_id = "sha256:" + "3" * 64
+    invocation_id = unique_invocation_id()
 
     outcome = _invoke(operator, interpreter, invocation_id)
 

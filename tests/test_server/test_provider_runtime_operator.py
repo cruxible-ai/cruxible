@@ -119,6 +119,7 @@ from tests.core_support._p2b1_support import (
     provider_v2,
 )
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
+from tests.support.invocation_ids import unique_invocation_id
 from tests.support.short_temporary_root import short_temporary_directory
 from tests.test_procedures.test_procedure_execution import (
     _accepted_line_for_admission,
@@ -436,7 +437,7 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     outcome = invoker.invoke_provider(
         occurrence=occurrence,  # type: ignore[arg-type]
         context=context,
-        invocation_id=_digest("daemon-invocation"),
+        invocation_id=unique_invocation_id(),
         bound=invoker.bind_provider(occurrence=occurrence),  # type: ignore[arg-type]
         deadline=ProviderSpawnDeadline(
             deadline_ns=time.monotonic_ns() + 60_000_000_000, monotonic_ns=time.monotonic_ns

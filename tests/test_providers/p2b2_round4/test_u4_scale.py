@@ -17,6 +17,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.providers.provider_process_leases import (
     ProviderProcessLeaseStore,
 )
+from tests.support.invocation_ids import unique_invocation_id
 
 
 def _record(store: ProviderProcessLeaseStore, invocation_id: str, **fields: object) -> Path:
@@ -175,7 +176,7 @@ def test_t13_a_prior_attempt_survivor_is_still_observed(short_root: Path) -> Non
 
     from cruxible_core.providers.provider_local_runtime import _DescendantTracker
 
-    invocation_id = "sha256:" + "7" * 64
+    invocation_id = unique_invocation_id()
     survivor = subprocess.Popen(
         [
             sys.executable,

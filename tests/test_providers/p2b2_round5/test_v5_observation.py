@@ -12,6 +12,7 @@ from cruxible_core.providers.provider_local_runtime import _run_child
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+from tests.support.invocation_ids import unique_invocation_id
 from tests.test_providers.test_provider_local_driver import _fake_interpreter
 
 
@@ -38,7 +39,7 @@ def test_transient_process_table_failure_is_diagnostic_only(
         real_observe(tracker)
 
     monkeypatch.setattr(runtime_module._DescendantTracker, "observe", fail_after_setup)
-    invocation_id = "sha256:" + "5" * 64
+    invocation_id = unique_invocation_id()
 
     outcome = _run_child(
         interpreter,

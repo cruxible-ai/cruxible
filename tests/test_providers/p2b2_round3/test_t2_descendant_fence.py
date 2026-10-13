@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import os
 import signal
@@ -29,6 +28,7 @@ from cruxible_core.providers.provider_process_leases import (
     descendant_is_live,
 )
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from tests.support.invocation_ids import unique_invocation_id
 from tests.test_providers.p2b2_round3._child import write_child
 
 CONTEXT = b'{"run_id":"RUN-r3","input":{"value":"r3"}}'
@@ -39,12 +39,6 @@ def _grew(marker: Path, seconds: float = 0.5) -> bool:
     time.sleep(seconds)
     after = marker.stat().st_size if marker.exists() else -1
     return after > before
-
-
-def _invocation_id(label: str) -> str:
-    """An invocation id no other test uses (the argv-token sweep keys on it)."""
-
-    return "sha256:" + hashlib.sha256(label.encode("utf-8")).hexdigest()
 
 
 def _kill_tree(marker: Path) -> None:
@@ -81,7 +75,7 @@ def test_the_success_path_kills_the_group_so_a_plain_child_cannot_survive(
             context=CONTEXT,
             budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
             secret_fd=None,
-            invocation_id="sha256:" + "a" * 64,
+            invocation_id=unique_invocation_id(),
             process_leases=store,
         )
         assert json.loads(outcome.stdout)["status"] == "ok"
@@ -115,7 +109,7 @@ def test_a_child_running_past_its_envelope_is_refused_for_wall_clock(
                 context=CONTEXT,
                 budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=65_536),
                 secret_fd=None,
-                invocation_id=_invocation_id("t2-wall-clock-refusal"),
+                invocation_id=unique_invocation_id(),
                 process_leases=store,
             )
         assert caught.value.code == "budget_wall_clock"
@@ -166,7 +160,7 @@ def test_a_descendant_cannot_read_the_secret_bundle_after_the_parent_close(
                 context=context,
                 budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
                 secret_fd=fd,
-                invocation_id="sha256:" + "c" * 64,
+                invocation_id=unique_invocation_id(),
                 process_leases=store,
             )
             assert json.loads(outcome.stdout)["status"] == "ok"
@@ -225,7 +219,7 @@ def test_a_descendant_present_before_the_tracker_is_still_observed(short_root: P
     every later sweep."""
 
     marker = short_root / "baselined"
-    token = "sha256:" + "d" * 64
+    token = unique_invocation_id()
     body = (
         "import sys,time\n"
         "path=sys.argv[1]\n"
@@ -311,7 +305,7 @@ def test_the_success_path_still_has_a_safe_window_to_kill_the_group(
             context=CONTEXT,
             budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=8, output_bytes=65_536),
             secret_fd=None,
-            invocation_id="sha256:" + "f" * 64,
+            invocation_id=unique_invocation_id(),
             process_leases=store,
         )
     finally:

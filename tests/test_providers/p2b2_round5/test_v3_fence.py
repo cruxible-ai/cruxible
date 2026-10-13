@@ -28,6 +28,7 @@ from cruxible_core.providers.provider_process_leases import (
     kill_descendants,
 )
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
+from tests.support.invocation_ids import unique_invocation_id
 
 CONTEXT = b'{"run_id":"RUN-r5","input":{"value":"r5"}}'
 
@@ -176,7 +177,7 @@ def test_a_publish_write_failure_is_typed_and_leaves_no_child_or_artifact(
         linger=6.0,
     )
     store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
-    invocation = "sha256:" + "9" * 64
+    invocation = unique_invocation_id()
     record_path, control_path = store.paths(invocation)
     errno_value = 28 if error == "ENOSPC" else 30
     import cruxible_core.providers.provider_process_leases as lease_module
@@ -250,7 +251,7 @@ def test_a_tracker_start_failure_kills_and_reaps_the_child(
     )
     try:
         with pytest.raises(ProviderLocalRuntimeRefused) as excinfo:
-            _invoke(store, interpreter, "sha256:" + "8" * 64)
+            _invoke(store, interpreter, unique_invocation_id())
         assert excinfo.value.code == "provider_process_lease_invalid"
         assert len(spawned) == 1
         assert spawned[0].poll() is not None

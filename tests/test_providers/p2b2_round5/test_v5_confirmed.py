@@ -29,6 +29,7 @@ from cruxible_core.providers.provider_process_leases import (
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+from tests.support.invocation_ids import unique_invocation_id
 
 SOURCE_ROOT = Path(runtime_module.__file__).resolve().parents[1]
 CONTEXT = b'{"run_id":"RUN-r5c","input":{"value":"r5c"}}'
@@ -125,7 +126,7 @@ def test_c4_no_secret_reaches_argv_or_the_child_environment(short_root: Path) ->
                 context=CONTEXT,
                 budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=10, output_bytes=65_536),
                 secret_fd=fd,
-                invocation_id="sha256:" + "a" * 64,
+                invocation_id=unique_invocation_id(),
                 process_leases=store,
             )
     finally:
@@ -177,7 +178,7 @@ def test_ui1_the_child_scratch_lives_under_the_state_root_and_is_private(
             context=CONTEXT,
             budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=10, output_bytes=65_536),
             secret_fd=None,
-            invocation_id="sha256:" + "b" * 64,
+            invocation_id=unique_invocation_id(),
             process_leases=store,
         )
     finally:
@@ -196,7 +197,7 @@ def test_c6_and_m5_an_independent_echo_server_cannot_authorise_a_kill(
     short_root: Path,
 ) -> None:
     store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
-    invocation = "sha256:" + "c" * 64
+    invocation = unique_invocation_id()
     record_path, control_path = store.paths(invocation)
     victim = subprocess.Popen(
         [os.sys.executable, "-c", "import time; time.sleep(5)"],  # type: ignore[attr-defined]
@@ -413,7 +414,7 @@ def test_c15_the_aggregate_output_cap_is_real(short_root: Path) -> None:
             context=CONTEXT,
             budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=30, output_bytes=4096),
             secret_fd=None,
-            invocation_id="sha256:" + "1" * 64,
+            invocation_id=unique_invocation_id(),
             process_leases=store,
         )
     assert excinfo.value.code == "budget_output_size"
@@ -434,7 +435,7 @@ def test_k1_the_r1_escape_shape_is_still_dead(short_root: Path) -> None:
                 context=CONTEXT,
                 budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=65_536),
                 secret_fd=None,
-                invocation_id="sha256:" + "2" * 64,
+                invocation_id=unique_invocation_id(),
                 process_leases=store,
             )
         assert excinfo.value.code == "budget_wall_clock"
@@ -727,7 +728,7 @@ def test_m1_the_wnowait_kill_window_is_real_on_every_path(
         context=CONTEXT,
         budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=10, output_bytes=65_536),
         secret_fd=None,
-        invocation_id="sha256:" + "4" * 64,
+        invocation_id=unique_invocation_id(),
         process_leases=store,
     )
     # M-1: the leader is unreaped at every terminate entry (WNOWAIT), so the

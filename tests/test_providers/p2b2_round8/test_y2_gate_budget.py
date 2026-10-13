@@ -13,6 +13,7 @@ from cruxible_core.providers.provider_local_runtime import _run_child
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.providers.provider_runtime_contract import ProviderRuntimeBudgetsV1
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+from tests.support.invocation_ids import unique_invocation_id
 from tests.test_providers.test_provider_local_driver import _fake_interpreter
 
 
@@ -25,7 +26,7 @@ def test_a_table_stall_past_the_wall_clock_is_a_typed_fence_refusal(
     assert store is not None
     store.acquisition_timeout_seconds = 5.0
     store.descendant_tracker_poll_interval_seconds = 0.01
-    invocation_id = "sha256:" + "9" * 64
+    invocation_id = unique_invocation_id()
     recovers_at = time.monotonic() + 2.0
     real_snapshot = runtime_module.snapshot_provider_descendants
 

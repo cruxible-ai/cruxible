@@ -20,6 +20,7 @@ from cruxible_core.providers.provider_process_leases import (
     _socket_peer_pid,
 )
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+from tests.support.invocation_ids import unique_invocation_id
 
 ECHO_SERVER = r"""
 import os, socket, sys, threading, time
@@ -82,7 +83,7 @@ def test_a_live_echoing_child_is_authorised_by_its_peer_pid_alone(short_root: Pa
     """boot_id/start token are absent, so ONLY the peer pid can authorise the kill."""
 
     store = ProviderProcessLeaseStore(short_root / "l", control_root=short_root / "c")
-    invocation = "sha256:" + "a" * 64
+    invocation = unique_invocation_id()
     _record_path, control_path = store.paths(invocation)
     script = short_root / "echo.py"
     script.write_text(ECHO_SERVER, encoding="utf-8")
