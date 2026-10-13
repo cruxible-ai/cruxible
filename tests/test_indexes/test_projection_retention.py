@@ -135,13 +135,11 @@ def test_an_activation_during_a_pass_never_loses_the_new_head(
     import threading
     import time
 
-    from cruxible_core.runtime import instance as instance_module
-
     instance, _owner = seed_write_surface(tmp_path)
     for value in ("ready", "blocked", "done"):
         _write(instance, _set(WI1, "status", value))
     before = instance.accepted_coordinate()
-    evict = instance_module.evict_projection
+    evict = projection_retention.evict_projection
     writers: list[threading.Thread] = []
 
     def interleaved(directory: Path, name: str) -> bool | None:
@@ -156,7 +154,7 @@ def test_an_activation_during_a_pass_never_loses_the_new_head(
             assert instance.accepted_coordinate() != before
         return evict(directory, name)
 
-    monkeypatch.setattr(instance_module, "evict_projection", interleaved)
+    monkeypatch.setattr(projection_retention, "evict_projection", interleaved)
     instance.retention = RetentionSettings(generations=1)
     instance.evict_projection_pieces()
     writers[0].join(60)
@@ -212,20 +210,158 @@ def test_each_pass_handles_only_the_generations_that_crossed_the_cutoff(
     for value in ("ready", "blocked", "done", "ready"):
         _write(instance, _set(WI1, "status", value))
     tried: list[str] = []
-    evict = instance_module.evict_projection
+    evict = instance_module.evict_or_wait
 
-    def counted(directory: Path, name: str) -> bool | None:
+    def counted(directory: Path, name: str, sequence: int) -> Any:
         tried.append(name)
-        return evict(directory, name)
+        return evict(directory, name, sequence)
 
-    monkeypatch.setattr(instance_module, "evict_projection", counted)
+    monkeypatch.setattr(instance_module, "evict_or_wait", counted)
     for value in ("blocked", "done", "ready"):
         tried.clear()
-        left_beyond = len(instance._beyond_window)
         _write(instance, _set(WI1, "status", value))
-        # One generation leaves the window per acceptance, whatever the
-        # history, plus any piece a read held at an earlier pass.
-        assert 1 <= len(tried) <= 1 + left_beyond
+        # One generation leaves the window per acceptance, whatever the history.
+        assert len(tried) == 1
+    tried.clear()
+    # No acceptance and no release since: nothing to try.
+    assert instance.evict_projection_pieces() == ()
+    assert tried == []
+
+
+def test_a_held_population_is_tried_again_only_as_its_holds_are_released(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.indexes import sqlite
+    from cruxible_core.runtime import instance as instance_module
+
+    instance, _owner = seed_write_surface(tmp_path)
+    _write(instance, _set(WI1, "status", "ready"))
+    instance.retention = RetentionSettings(generations=1)
+    instance.evict_projection_pieces()
+    directory = _projections(instance)
+    tried: list[str] = []
+
+    def counted(directory: Path, name: str, sequence: int) -> Any:
+        tried.append(name)
+        return "absent"
+
+    monkeypatch.setattr(instance_module, "evict_or_wait", counted)
+    probes: dict[int, list[int]] = {}
+    for size in (64, 512):
+        held = [directory / f"projection-held-{size}-{index}.json" for index in range(size)]
+        # Each piece is held here and was skipped as held at an earlier pass.
+        for manifest in held:
+            sqlite._HOLDS.taken(sqlite._hold_key(manifest))
+            with sqlite.held_here(manifest, 0) as here:
+                assert here
+        counts: list[int] = []
+        for _pass in range(3):
+            tried.clear()
+            instance.evict_projection_pieces()
+            counts.append(len(tried))
+        # Released holds are what make a piece worth trying again: exactly those.
+        for manifest in held[:5]:
+            sqlite._HOLDS.dropped(sqlite._hold_key(manifest))
+        tried.clear()
+        instance.evict_projection_pieces()
+        counts.append(len(tried))
+        assert sorted(tried) == sorted(manifest.name for manifest in held[:5])
+        for manifest in held[5:]:
+            sqlite._HOLDS.dropped(sqlite._hold_key(manifest))
+        sqlite.released_pieces(directory)
+        probes[size] = counts
+    assert probes[64] == probes[512] == [0, 0, 0, 5]
+
+
+def test_a_piece_another_process_holds_waits_for_the_next_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+    import os
+
+    from cruxible_core.runtime import retention
+
+    instance, _owner = seed_write_surface(tmp_path)
+    _write(instance, _set(WI1, "status", "ready"))
+    behind = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(behind) as handle:
+        manifest_path = handle.manifest_path
+        piece = manifest_path.parent / handle.manifest.pieces[0].name
+    # A shared flock no handle in this process counts: another process's hold.
+    descriptor = os.open(piece, os.O_RDONLY)
+    fcntl.flock(descriptor, fcntl.LOCK_SH)
+    try:
+        instance.retention = RetentionSettings(generations=1)
+        _write(instance, _set(WI1, "status", "blocked"))
+        assert behind.git_oid in _manifest_oids(instance)
+        tried: list[str] = []
+        evict = projection_retention.evict_projection
+
+        def counted(directory: Path, name: str) -> bool | None:
+            tried.append(name)
+            return evict(directory, name)
+
+        monkeypatch.setattr(projection_retention, "evict_projection", counted)
+        # Not retried pass after pass while it stays held.
+        assert instance.evict_projection_pieces() == ()
+        assert tried == []
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+    monkeypatch.setattr(retention, "DEFAULT_RETENTION", RetentionSettings(generations=1))
+    monkeypatch.setattr(
+        "cruxible_core.runtime.instance.DEFAULT_RETENTION", RetentionSettings(generations=1)
+    )
+    # The next open reads the directory once and evicts it.
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert behind.git_oid not in _manifest_oids(reopened)
+
+
+@pytest.mark.parametrize("boundary", ["before_load", "during_read"])
+def test_a_manifest_evicted_before_its_hold_rebinds_by_rebuilding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    from cruxible_core.indexes import sqlite
+
+    instance, _owner = seed_write_surface(tmp_path)
+    for value in ("ready", "blocked"):
+        _write(instance, _set(WI1, "status", value))
+    behind = _coordinate(instance, 1)
+    directory = _projections(instance)
+    with instance.bind_accepted_projection(behind) as handle:
+        name = handle.manifest_path.name
+    evicted: list[bool] = []
+
+    def evict_once() -> None:
+        if not evicted:
+            evicted.append(False)
+            with projection_retention.retention_lock(directory):
+                evicted[0] = bool(projection_retention.evict_projection(directory, name))
+
+    if boundary == "before_load":
+        # After the bind's presence check, before it reads the manifest.
+        load = sqlite.load_projection_manifest
+
+        def evicting_load(path: Path) -> Any:
+            if path.name == name:
+                evict_once()
+            return load(path)
+
+        monkeypatch.setattr(sqlite, "load_projection_manifest", evicting_load)
+    else:
+        # After the loader's regular-file check, as it reads the bytes.
+        read_bytes = Path.read_bytes
+
+        def evicting_read(path: Path) -> bytes:
+            if path.name == name and not evicted:
+                evict_once()
+            return read_bytes(path)
+
+        monkeypatch.setattr(Path, "read_bytes", evicting_read)
+    with instance.bind_accepted_projection(behind) as projection:
+        assert evicted == [True]
+        assert projection.accepted.git_oid == behind.git_oid
+    assert behind.git_oid in _manifest_oids(instance)
 
 
 def test_eviction_deletes_the_manifest_before_its_piece(

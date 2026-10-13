@@ -11,10 +11,17 @@ A reader holds a coordinate by holding a shared ``flock`` on its piece for the
 life of its handle (``lock_piece_shared``), in any process. Eviction takes the
 exclusive lock without waiting, so a held piece is skipped; while eviction
 holds it, a reader that opened the piece waits, then finds its path gone and
-binds again (``ProjectionEvicted``), which rebuilds the coordinate. Eviction
-deletes the manifest before its piece, so no reader finds a manifest naming a
-missing piece. It runs under the directory's retention lock, which a rebuild
-on a miss also takes, so the two never interleave.
+binds again (``ProjectionEvicted``), which rebuilds the coordinate. A reader
+that finds the manifest gone before it reads it, or while it reads it, binds
+again the same way. Eviction deletes the manifest before its piece, so no
+reader finds a manifest naming a missing piece. It runs under the directory's
+retention lock, which a rebuild on a miss also takes, so the two never
+interleave.
+
+A piece skipped because a handle in this process holds it is tried again
+once that hold is released (``evict_or_wait``, ``released_pieces``), never
+on a schedule; one another process holds is left for the next open's pass,
+which reads the directory once.
 """
 
 from __future__ import annotations
@@ -24,12 +31,15 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal
 
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.indexes.sqlite import (
     ProjectionEvicted,
+    held_here,
     load_projection_manifest,
     lock_piece_shared,
+    released_pieces,
 )
 
 RETENTION_LOCK = ".projection-retention.lock"
@@ -102,10 +112,39 @@ def evict_projection(directory: Path, manifest_name: str) -> bool | None:
             os.close(descriptor)
 
 
+EvictionOutcome = Literal["evicted", "absent", "waiting", "held_elsewhere"]
+
+
+def evict_or_wait(directory: Path, manifest_name: str, sequence: int) -> EvictionOutcome:
+    """Evict one manifest and its piece, or say what it waits for.
+
+    ``waiting``: a handle in this process holds it; its release puts it in
+    ``released_pieces``. ``held_elsewhere``: another process holds it.
+    ``absent``: no valid manifest of that name. The caller holds
+    ``retention_lock``.
+    """
+
+    outcome = evict_projection(directory, manifest_name)
+    if outcome is False:
+        with held_here(directory / manifest_name, sequence) as here:
+            if here:
+                return "waiting"
+            # No hold here can come or go now: one released just before the
+            # registry was read is evicted, and one still held is elsewhere.
+            outcome = evict_projection(directory, manifest_name)
+        if outcome is False:
+            return "held_elsewhere"
+    return "evicted" if outcome else "absent"
+
+
 __all__ = [
     "RETENTION_LOCK",
+    "EvictionOutcome",
     "ProjectionEvicted",
+    "evict_or_wait",
     "evict_projection",
+    "held_here",
     "lock_piece_shared",
+    "released_pieces",
     "retention_lock",
 ]

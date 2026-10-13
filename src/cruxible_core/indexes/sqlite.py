@@ -664,6 +664,73 @@ class ProjectionEvicted(ProjectionIntegrityError):
 _HOLD_OPEN = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
 
 
+class _PieceHolds:
+    """This process's holds by manifest path, and the pieces eviction is waiting on.
+
+    A handle counts its hold here before it takes the ``flock`` and uncounts
+    it after releasing it, so a count of zero means no handle in this process
+    holds the piece. Eviction that finds a piece held here records it as
+    waiting; the last release moves it to its directory's released set,
+    which the next eviction pass takes whole. A release is the only thing
+    that makes a held piece worth trying again, so no pass retries the rest.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.counts: dict[Path, int] = {}
+        self.waiting: dict[Path, int] = {}
+        self.released: dict[Path, dict[str, int]] = {}
+
+    def taken(self, manifest: Path) -> None:
+        with self.lock:
+            self.counts[manifest] = self.counts.get(manifest, 0) + 1
+
+    def dropped(self, manifest: Path) -> None:
+        with self.lock:
+            left = self.counts.get(manifest, 0) - 1
+            if left > 0:
+                self.counts[manifest] = left
+                return
+            self.counts.pop(manifest, None)
+            sequence = self.waiting.pop(manifest, None)
+            if sequence is not None:
+                self.released.setdefault(manifest.parent, {})[manifest.name] = sequence
+
+
+_HOLDS = _PieceHolds()
+
+
+def _hold_key(manifest: Path) -> Path:
+    return Path(os.path.abspath(manifest))
+
+
+@contextmanager
+def held_here(manifest: Path, sequence: int) -> Iterator[bool]:
+    """Whether a handle in this process holds ``manifest``'s piece, with the registry locked.
+
+    Yields True after recording the piece as waiting (``sequence`` is its
+    generation): its last release here makes it eligible again
+    (``released_pieces``). Yields False when no handle here holds it; while
+    the block runs no handle here can take or drop a hold, so a ``flock``
+    still held then is another process's.
+    """
+
+    key = _hold_key(manifest)
+    with _HOLDS.lock:
+        if _HOLDS.counts.get(key, 0) > 0:
+            _HOLDS.waiting[key] = sequence
+            yield True
+        else:
+            yield False
+
+
+def released_pieces(directory: Path) -> dict[str, int]:
+    """Take the manifests (name -> sequence) released since the last call, for ``directory``."""
+
+    with _HOLDS.lock:
+        return _HOLDS.released.pop(_hold_key(directory), {})
+
+
 def lock_piece_shared(piece: Path, manifest: Path) -> int:
     """Open ``piece`` and hold it from eviction; the descriptor is the hold.
 
@@ -709,8 +776,10 @@ class ProjectionHandle:
         hold_descriptor: int | None = None,
     ) -> None:
         self._source_descriptor = source_descriptor
-        # The shared lock that keeps this piece from eviction while the handle lives.
+        # The shared lock that keeps this piece from eviction while the handle
+        # lives, and its entry in this process's hold registry.
         self._hold_descriptor = hold_descriptor
+        self._hold_key: Path | None = None
         self.manifest_path = manifest_path
         self.manifest = manifest
         self.piece_paths = piece_paths
@@ -974,6 +1043,9 @@ class ProjectionHandle:
                 if self._hold_descriptor is not None:
                     os.close(self._hold_descriptor)
                     self._hold_descriptor = None
+                if self._hold_key is not None:
+                    _HOLDS.dropped(self._hold_key)
+                    self._hold_key = None
                 self._closed = True
 
     def __enter__(self) -> "ProjectionHandle":
@@ -1002,22 +1074,41 @@ def bind_projection(
     _trusted_stamps(manifest_path.parent)
     if not manifest_path.exists() and not manifest_path.is_symlink():
         raise ProjectionEvicted("projection manifest must be a regular file: it is absent")
-    manifest = load_projection_manifest(manifest_path)
+    try:
+        manifest = load_projection_manifest(manifest_path)
+    except ProjectionIntegrityError as exc:
+        # Gone between the look and the read (or mid-read): eviction removed it,
+        # and binding again rebuilds the coordinate. One still present is a
+        # malformed or untrustworthy manifest, refused as it was.
+        if not manifest_path.exists() and not manifest_path.is_symlink():
+            raise ProjectionEvicted(
+                "projection manifest must be a regular file: it was evicted while binding"
+            ) from exc
+        raise
     if not manifest.pieces:
         raise ProjectionIntegrityError("PB-B supports one-piece serving only")
     piece_name = manifest.pieces[0].name
+    key = _hold_key(manifest_path)
+    # Counted before the flock and uncounted after it is released, so the
+    # registry never shows zero while this process holds the piece.
+    _HOLDS.taken(key)
     try:
-        hold = lock_piece_shared(manifest_path.parent / piece_name, manifest_path)
-    except ProjectionEvicted:
-        raise
-    except OSError as exc:
-        raise ProjectionIntegrityError(f"projection piece is missing: {piece_name}") from exc
-    try:
-        handle = _bind_held_projection(manifest_path, manifest, expected=expected)
+        try:
+            hold = lock_piece_shared(manifest_path.parent / piece_name, manifest_path)
+        except ProjectionEvicted:
+            raise
+        except OSError as exc:
+            raise ProjectionIntegrityError(f"projection piece is missing: {piece_name}") from exc
+        try:
+            handle = _bind_held_projection(manifest_path, manifest, expected=expected)
+        except BaseException:
+            os.close(hold)
+            raise
     except BaseException:
-        os.close(hold)
+        _HOLDS.dropped(key)
         raise
     handle._hold_descriptor = hold
+    handle._hold_key = key
     return handle
 
 
@@ -1294,10 +1385,12 @@ __all__ = [
     "bind_projection",
     "canonical_logical_export",
     "detect_projection_orphans",
+    "held_here",
     "initialize_projection_database",
     "load_projection_manifest",
     "lock_piece_shared",
     "physical_file_digest",
     "projection_logical_digest",
+    "released_pieces",
     "reset_projection_verification_memo",
 ]

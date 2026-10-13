@@ -126,7 +126,12 @@ from cruxible_core.indexes.projection import (
     AssemblerRequest,
     projection_manifest_name,
 )
-from cruxible_core.indexes.projection_retention import evict_projection, retention_lock
+from cruxible_core.indexes.projection_retention import (
+    evict_or_wait,
+    held_here,
+    released_pieces,
+    retention_lock,
+)
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.indexes.proposals.proposal_note_reader import proposal_note_snapshot
 from cruxible_core.indexes.serving import bind_current_projection
@@ -404,11 +409,10 @@ class PlaybillInstance:
         # The accepted day consumption receipts were last folded on.
         self._consumption_folded_on: date | None = None
         # Projection eviction: the cutoff sequence already applied (None until
-        # the first pass in this process), and the manifests at or before it
-        # still on disk (held then, or rebuilt on a miss since), by sequence.
+        # the first pass in this process). A piece at or before it that a
+        # handle here held is tried again when the hold is released.
         self._eviction_lock = threading.Lock()
         self._evicted_through: int | None = None
-        self._beyond_window: dict[str, int] = {}
         # Retired accepted candidates rebuilt from their records, by digest.
         self._settled_candidates: dict[str, SettledCandidate] = {}
         self._quiet_checkpoints: QuietCheckpointWriter | None = None
@@ -2448,20 +2452,20 @@ class PlaybillInstance:
                     rebuilt = True
                 handle = bind_projection(manifest_path, expected=verified)
             if rebuilt:
-                self._built_beyond_window(verified, manifest_path.name)
+                self._rebuilt_on_miss(verified, manifest_path)
             return self._projection_sources(handle)
         raise ProjectionEvicted("projection was evicted on every bind attempt")
 
-    def _built_beyond_window(
-        self, coordinate: AcceptedProjectionCoordinate, manifest_name: str
+    def _rebuilt_on_miss(
+        self, coordinate: AcceptedProjectionCoordinate, manifest_path: Path
     ) -> None:
-        """Remember a coordinate rebuilt on a miss, so the next pass can evict it again."""
+        """A piece rebuilt on a miss is held by its new handle: evict it once that is released."""
 
         with self.accepted_history_reader() as history:
             location = history.generation_for_oid(coordinate.git_oid)
         if location is not None:
-            with self._eviction_lock:
-                self._beyond_window[manifest_name] = location.sequence
+            with held_here(manifest_path, location.sequence):
+                pass
 
     def _manifest_name_for(self, generation: RecoveredGeneration, directory: Path) -> str:
         return projection_manifest_name(
@@ -2489,10 +2493,14 @@ class PlaybillInstance:
         every piece a reader holds in any process. An evicted coordinate is
         rebuilt when it is next bound.
 
-        Each pass after the first handles only the generations that crossed
-        the cutoff since the last pass, plus the pieces left beyond it (held
-        then, or rebuilt on a miss since). The first pass in a process (at
-        open) reads the directory once. Runs after each activation and at open.
+        Each pass after the first tries only what changed since the last: the
+        generations that crossed the cutoff, and the pieces at or before it
+        whose hold in this process was released since (skipped while held,
+        or rebuilt on a miss and so held by the rebuilding handle). A piece
+        still held is never tried again until its release; one another
+        process held at its turn is left for the next open. The first pass in
+        a process (at open) reads the directory once. Runs after each
+        activation and at open.
         """
 
         with self._state_lock:
@@ -2501,7 +2509,6 @@ class PlaybillInstance:
         directory = self._validated_paths(self.root, self.descriptor.storage)["projections"]
         evicted: list[str] = []
         with self._eviction_lock, retention_lock(directory):
-            beyond = self._beyond_window
             if self._evicted_through is None:
                 candidates = self._listed_beyond(directory, recovered, cutoff)
             else:
@@ -2511,19 +2518,15 @@ class PlaybillInstance:
                     )
                     for sequence in range(max(self._evicted_through + 1, 0), cutoff + 1)
                 }
-            for name, sequence in list(beyond.items()):
+            for name, sequence in released_pieces(directory).items():
                 candidates.setdefault(name, sequence)
             for name, sequence in candidates.items():
                 if sequence > cutoff:
-                    beyond.pop(name, None)
-                    continue
-                outcome = evict_projection(directory, name)
-                if outcome is False:
-                    beyond[name] = sequence
-                else:
-                    beyond.pop(name, None)
-                    if outcome:
-                        evicted.append(name)
+                    continue  # inside the window: the cutoff reaches it later
+                # "waiting": its release here makes it a candidate again;
+                # "held_elsewhere": the next open's directory pass retries it.
+                if evict_or_wait(directory, name, sequence) == "evicted":
+                    evicted.append(name)
             if self._evicted_through is None or cutoff > self._evicted_through:
                 self._evicted_through = cutoff
         return tuple(evicted)

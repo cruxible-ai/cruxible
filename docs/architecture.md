@@ -126,9 +126,12 @@ record references is deleted under it.
   open proposal is evaluated at the head, so its base is among them), and so
   is any piece a reader holds open in any process. Each activation evicts the
   generation that left the window, and the daemon's open evicts the backlog,
-  each manifest before its piece. Binding an evicted coordinate (`--at`, a
-  pinned read, a stale proposal's base) rebuilds it from the ledger and the
-  body store.
+  each manifest before its piece. A piece skipped because a reader in the
+  daemon held it is evicted by the pass after that reader closes it; one
+  another process held then waits for the daemon's next open. Binding an
+  evicted coordinate (`--at`, a pinned read, a stale proposal's base)
+  rebuilds it from the ledger and the body store, including when the
+  coordinate is evicted while the bind is reading it.
 - **Accepted proposals' candidates and approvals.** An accepted proposal's
   change-set record carries every field of its candidate and the approvals
   settlement verified, so after activation the candidate file and the
