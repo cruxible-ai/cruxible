@@ -47,9 +47,9 @@ def _drain(instance, *, now: datetime) -> None:  # type: ignore[no-untyped-def]
             try:
                 NEXT_QUEUE.run(manager, "instance", work, now=now)
             except Exception:
-                # Like the runner, one failed queue fold cannot stop evidence checks.
+                # Like the runner, one failed facts pass cannot stop evidence checks.
                 # This fixture deliberately removes/corrupts CAS material.
-                if not work.key.startswith("queue:"):
+                if not work.key.startswith("facts:"):
                     raise
     raise AssertionError("the folded worker never ran out of due work")
 

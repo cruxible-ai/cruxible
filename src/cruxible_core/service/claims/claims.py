@@ -542,6 +542,35 @@ def _claim_law_evidence_by_artifact_index(
     return found
 
 
+def claim_law_evidence_by_artifact_for_path(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedProjectionCoordinate,
+    path: str,
+) -> dict[tuple[str, str], ClaimLawEvidenceAny]:
+    """One Claim path's law accounts by artifact: ``_claim_law_evidence_by_artifact_index``
+    for a single lineage, read through the path index instead of every law record."""
+
+    found: dict[tuple[str, str], ClaimLawEvidenceAny] = {}
+    records = instance.retained_record_reader()
+    with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(at)) as history:
+        for location in history.claim_law_locations(path=path):
+            history.read_member(location, records)
+            law = records.law_evidence(history.generation(location.sequence), location.member_path)
+            if law is None:
+                continue
+            if len(law) != 1:
+                raise ProjectionIntegrityError(
+                    "accepted Claim law evidence is missing or ambiguous"
+                )
+            (evidence,) = law
+            raw = evidence.result.get("claim_evidence")
+            if raw is not None:
+                parsed = parse_claim_law_evidence(raw)
+                found.setdefault((evidence.path, parsed.artifact_digest), parsed)
+    return found
+
+
 def _accepted_generation_time(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,

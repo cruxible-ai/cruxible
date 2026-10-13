@@ -1,11 +1,11 @@
-"""Layer 1 of incremental next: facts follow change records and always equal a fresh rebuild.
+"""Incremental next: facts and rows follow change records and always equal a fresh rebuild.
 
 Each test applies changes one at a time -- a body landing, a generation (a
 Claim created in an occupied slot, a revision, a retirement), a door
 attestation (examined and new-capture), a re-observation, an erase and a
 restore, an expiry fire, an interrupted landing -- lets the worker catch up,
 and asserts every Layer 1 table equals a rebuild from nothing at the same
-instant. The work is counted exactly: each Claim the records past the
+instant (Layer 2's rows included). The work is counted exactly: each Claim the records past the
 cursors reach is derived once and no other is, and a (predicate, Subject)
 slot is resolved again exactly when one of its members' resolution inputs
 moved. The expectation comes from the change records and the stored read
@@ -31,7 +31,7 @@ import pytest
 from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
 from cruxible_client.contracts.claims import claim_statement_digest
 from cruxible_client.contracts.errors import CasError
-from cruxible_core.consumers.next import facts
+from cruxible_core.consumers.next import facts, rows
 from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.typed_state import utc_microseconds
@@ -63,6 +63,7 @@ _READ = BodyAccessContext(principal_id="facts-test", can_read_body=True)
 _STATUS = facts._FACT_COLUMNS.index("status")
 _VERDICT = facts._FACT_COLUMNS.index("verdict")
 _UPPER = facts._FACT_COLUMNS.index("upper_us")
+_LOWER = facts._FACT_COLUMNS.index("lower_us")
 _SLOT_INPUTS = tuple(
     facts._FACT_COLUMNS.index(column)
     for column in (
@@ -84,10 +85,10 @@ def _catch_up(instance, at: datetime) -> None:  # type: ignore[no-untyped-def]
 
 
 def _assert_rebuilt(instance, at: datetime) -> dict[str, list[tuple[Any, ...]]]:  # type: ignore[no-untyped-def]
-    stored = facts.layer1_tables(instance)
+    stored = facts.stored_tables(instance)
     assert stored is not None
-    rebuilt = facts.rebuilt_layer1_tables(instance, at=at)
-    for table in facts.LAYER1_TABLES:
+    rebuilt = facts.rebuilt_tables(instance, at=at)
+    for table in facts.TABLES:
         assert stored[table] == rebuilt[table], table
     return stored
 
@@ -113,7 +114,7 @@ def _counted() -> Iterator[_Work]:
         return derive(instance, context, claim, **kwargs)
 
     def counting_slots(instance, context, members, *args, **kwargs):  # type: ignore[no-untyped-def]
-        work.slots[facts._slot_key(members[0], qualifier=False)] += 1
+        work.slots[rows.slot_key(members[0], qualifier=False)] += 1
         return resolve(instance, context, members, *args, **kwargs)
 
     with (
@@ -134,7 +135,7 @@ class _Snapshot:
 
 
 def _snapshot(instance) -> _Snapshot:  # type: ignore[no-untyped-def]
-    tables = facts.layer1_tables(instance)
+    tables = facts.stored_tables(instance)
     assert tables is not None
     with instance.accepted_history_reader() as history:
         sequence = history.sequence
@@ -148,8 +149,11 @@ def _snapshot(instance) -> _Snapshot:  # type: ignore[no-untyped-def]
     )
 
 
-def _expected_claims(instance, before: _Snapshot) -> Counter[str]:  # type: ignore[no-untyped-def]
-    """The Claims the records since ``before`` reach, each once: from records and reads."""
+def _expected_claims(instance, before: _Snapshot, at: datetime) -> Counter[str]:  # type: ignore[no-untyped-def]
+    """The Claims the records since ``before`` reach, each once: from records and reads.
+
+    A pass also derives again every stored fact that does not hold at its instant.
+    """
 
     reads: dict[str, set[str]] = defaultdict(set)
     for key, claim_id in before.tables["fact_reads"]:
@@ -187,6 +191,14 @@ def _expected_claims(instance, before: _Snapshot) -> Counter[str]:  # type: igno
         for _sequence, claim_id in ClaimReobservationStore(instance).records_after(before.reobs)
     )
     claims.update(claim_id for key in keys for claim_id in reads.get(key, ()))
+    at_us = utc_microseconds(at)
+    assert at_us is not None
+    claims.update(
+        str(row[0])
+        for row in before.tables["claim_facts"]
+        if (row[_UPPER] is not None and row[_UPPER] <= at_us)
+        or (row[_LOWER] is not None and row[_LOWER] > at_us)
+    )
     return Counter(claims)
 
 
@@ -219,7 +231,7 @@ def _step(instance, at: datetime, change, *, expect: Counter[str] | None = None)
     change()
     with _counted() as work:
         _catch_up(instance, at)
-    expected = _expected_claims(instance, before) if expect is None else expect
+    expected = _expected_claims(instance, before, at) if expect is None else expect
     assert work.claims == expected
     after = _assert_rebuilt(instance, at)
     assert work.slots == _expected_slots(before.tables, after)
@@ -306,7 +318,7 @@ def test_layer1_follows_generations_door_and_bodies_and_equals_a_rebuild(tmp_pat
     work, tables = _step(instance, at, lambda: _contend(instance, owner, first))
     contender = next(identity for identity in _statuses(tables) if identity not in every)
     assert work.claims[contender] == 1 and other not in work.claims
-    assert work.slots == Counter({facts._slot_key(first, qualifier=False): 1})
+    assert work.slots == Counter({rows.slot_key(first, qualifier=False): 1})
     statuses = _statuses(tables)
     assert statuses[first.identity.qualified] == statuses[contender] == "conflicted"
     assert _tally(instance, at) == _live_counts(instance, at)
@@ -349,7 +361,7 @@ def test_an_erase_and_a_restore_reach_exactly_the_claims_that_consulted_the_body
     first = _subject_claim(instance, "wi-42")
     store = instance.body_store()
     source = store.digest_bytes(b"status: ready").tagged
-    stored = facts.layer1_tables(instance)
+    stored = facts.stored_tables(instance)
     assert stored is not None
     assert any(row[0] == source for row in stored["capture_bodies"])
 
@@ -415,14 +427,20 @@ def test_expiry_fires_and_reobservations_recompute_only_their_claim(tmp_path: Pa
     row = next(row for row in stored["claim_facts"] if row[0] == claim)
     assert row[_VERDICT] == "supported" and row[_UPPER] is not None
 
-    # The part armed its deadline at the earliest fact end; a fire is the only
-    # way time reaches the facts, and it reaches exactly the facts that ended.
+    # The part armed its one deadline at the earliest end of any fact or row; a
+    # fire is the only way time reaches them, and it reaches exactly what ended.
     with sqlite3.connect(journal_path(instance)) as connection:
+        assert [row[0] for row in connection.execute("SELECT name FROM deadlines")] == [
+            facts.NEXT_EXPIRE
+        ]
         (due,) = connection.execute(
-            "SELECT due_at FROM deadlines WHERE name=?", (facts.FACTS_EXPIRE,)
+            "SELECT due_at FROM deadlines WHERE name=?", (facts.NEXT_EXPIRE,)
         ).fetchone()
     expiry = datetime(2026, 8, 16, 20, 0, 10, tzinfo=UTC)
-    earliest = min(row[_UPPER] for row in stored["claim_facts"] if row[_UPPER] is not None)
+    earliest = min(
+        [row[_UPPER] for row in stored["claim_facts"] if row[_UPPER] is not None]
+        + [row[3] for row in stored["row_keys"] if row[3] is not None]
+    )
     assert datetime.fromisoformat(due.replace("Z", "+00:00")) == datetime(
         1970, 1, 1, tzinfo=UTC
     ) + timedelta(microseconds=earliest)
@@ -656,6 +674,68 @@ def test_the_interval_probes_seek_their_index_whatever_the_claim_count(
         )
         assert index in plan
     # The same work at a hundred Claims and at ten thousand.
+    assert _steps(small, sql, parameters) == _steps(large, sql, parameters)
+
+
+def _current_state(size: int) -> sqlite3.Connection:
+    """Facts and keys as a live state holds them: almost all current, four about to end."""
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(facts._SCHEMA)
+    required = [
+        str(row[1])
+        for row in connection.execute("PRAGMA table_info(claim_facts)")
+        if row[3] and row[1] not in {"claim_id", "unservable"}
+    ]
+    connection.executemany(
+        f"INSERT INTO claim_facts(claim_id,{','.join(required)},lower_us,upper_us,"
+        f"max_support_expiry_us,unservable) VALUES "
+        f"({','.join('?' for _ in range(len(required) + 5))})",
+        (
+            (
+                f"Claim:{index}",
+                *("live" if column == "lifecycle" else "x" for column in required),
+                index % 7,
+                1000 + index,
+                1000 + index,
+                0,
+            )
+            for index in range(size)
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO row_keys VALUES (?,?,?,?,NULL,NULL)",
+        (("slot", f"key-{index}", index % 7, 1000 + index) for index in range(size)),
+    )
+    return connection
+
+
+@pytest.mark.parametrize(
+    ("sql", "parameters", "indexes"),
+    (
+        (facts._KEYS_EARLIEST_END, (), ("row_keys_by_upper",)),
+        (facts._EXPIRED_FACTS, (1003, 1003), ("claim_facts_by_upper", "claim_facts_by_lower")),
+        (facts._EXPIRED_KEYS, (1003, 1003), ("row_keys_by_upper", "row_keys_by_lower")),
+        (facts._UNSERVABLE, (), ("claim_facts_unservable",)),
+        (facts._ANY_UNSERVABLE, (), ("claim_facts_unservable",)),
+        (facts._BROKEN_KEYS, (), ("row_keys_with_errors",)),
+        (facts._BROKEN_RETIRED, (), ("claim_facts_with_errors",)),
+        (facts._EXPIRING_SLOTS, (998, 1003), ("claim_facts_by_support_expiry",)),
+    ),
+)
+def test_every_pass_and_read_probe_is_bounded_by_its_answer(
+    sql: str, parameters: tuple[Any, ...], indexes: tuple[str, ...]
+) -> None:
+    small, large = _current_state(100), _current_state(10_000)
+    for connection in (small, large):
+        plan = " ".join(
+            str(row[3]) for row in connection.execute("EXPLAIN QUERY PLAN " + sql, parameters)
+        )
+        assert all(index in plan for index in indexes), plan
+        # A partial index holding only the answer may be walked whole; a table never is.
+        assert not re.search(r"SCAN (claim_facts|row_keys)(?! USING)", plan), plan
+    # The same answer and the same work at a hundred Claims and at ten thousand.
+    assert small.execute(sql, parameters).fetchall() == large.execute(sql, parameters).fetchall()
     assert _steps(small, sql, parameters) == _steps(large, sql, parameters)
 
 

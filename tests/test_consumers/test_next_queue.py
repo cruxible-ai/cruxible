@@ -1,23 +1,40 @@
-"""The next projection is an interval-bounded substitute for the live Claim fold."""
+"""next's Claim rows served from the stored state equal the full fold, caught up or behind.
+
+The stored rows (``consumers.next.facts``: Layer 1 facts, Layer 2 rows per
+family key) serve every read at the current accepted and door heads. A read
+that finds the worker behind -- in records or in time -- derives what the
+worker has not followed in a transaction it rolls back, so the answer is the
+fold's byte for byte and the stored state never moves on a read (R3). The
+fold itself (``_oracle_claim_rows``) still serves a historical coordinate, a
+pinned door head, a disabled or cold worker, and is what every test here
+compares against.
+"""
 
 from __future__ import annotations
 
 import sqlite3
+import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claims import claim_statement_digest
-from cruxible_core.consumers.next import queue as consumer
+from cruxible_client.contracts.errors import CruxibleError
+from cruxible_core.consumers.next import facts, rows
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.indexes.typed_state import utc_microseconds
+from cruxible_core.service.discovery import next as next_module
 from cruxible_core.service.discovery.next import (
     DEFAULT_EXPIRING_WITHIN_MICROSECONDS,
+    NextCursorMismatch,
     NextRequest,
     claim_unsure_holds,
     service_playbill_next,
@@ -28,9 +45,11 @@ from tests.core_support._claim_authoring_support import (
     service_propose_playbill_claim,
 )
 from tests.core_support._knowledge_loop_support import activate, authoring, seed_claims
-from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
-from tests.test_authoring.test_derivation_admission import world  # noqa: F401
+from tests.test_authoring.test_derivation_admission import (
+    _run_and_accept,
+    world,  # noqa: F401
+)
 from tests.test_evidence.test_attestation_consequence_next import threshold_world
 from tests.test_integration.test_next_closed_loop import (
     EVALUATION_TIME,
@@ -42,14 +61,10 @@ from tests.test_integration.test_next_closed_loop import (
     _revise_claim,
 )
 from tests.test_integration.test_next_holds import _all_claims, _attest, _capture
-from tests.test_query.test_dependency_impact import (
-    _derived,
-    _facts,
-    _source_v1,
-    _source_v2,
-)
 
-WORKER = consumer._PART
+WORKER = facts._PART
+_DERIVED_AT = datetime.fromisoformat("2026-10-02T00:00:00+00:00")
+_DEFAULT_LEAD = CanonicalDuration(microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS)
 
 
 def _drain(instance, at: datetime = EVALUATION_TIME) -> None:  # type: ignore[no-untyped-def]
@@ -59,57 +74,146 @@ def _drain(instance, at: datetime = EVALUATION_TIME) -> None:  # type: ignore[no
         WORKER.run(manager, "instance", work, now=at)
 
 
-def _stored(instance, at: datetime):  # type: ignore[no-untyped-def]
-    return consumer.stored_claim_queue(
+def _served(  # type: ignore[no-untyped-def]
+    instance, at: datetime, *, expiring_within: CanonicalDuration = _DEFAULT_LEAD
+):
+    return facts.served_claim_rows(
         instance,
         coordinate=instance.accepted_coordinate(),
         door_head=instance.claim_attestation_evidence_store().head(),
         evaluation_time=at,
+        expiring_within=expiring_within,
     )
 
 
-def _assert_equivalent(instance, at: datetime, *, expect_stored: bool) -> None:  # type: ignore[no-untyped-def]
+@contextmanager
+def _oracle_only() -> Iterator[None]:
+    """Every read folds: the stored rows are never asked."""
+
+    with patch.object(facts, "served_claim_rows", return_value=None):
+        yield
+
+
+@contextmanager
+def _no_fold() -> Iterator[None]:
+    with patch.object(next_module, "_oracle_claim_rows", side_effect=AssertionError("folded")):
+        yield
+
+
+def _assert_equivalent(instance, at: datetime, *, served: bool = True, **request: Any) -> None:  # type: ignore[no-untyped-def]
+    """Every read surface answers byte for byte as the fold does, and writes nothing."""
+
     claims = _all_claims(instance)
-    assert (_stored(instance, at) is not None) == expect_stored
+    before = facts.stored_tables(instance)
+    assert (_served(instance, at, **request) is not None) == served
+    # A first read settles other parts' read-side bookkeeping (settled-refusal
+    # counts); compare the reads after it.
+    service_playbill_next(
+        instance, request=NextRequest(evaluation_time=at, access_profile=_access(), **request)
+    )
     for surface, rung in ((None, None), ("sdk", 0), ("mcp", 1)):
-        request = NextRequest(evaluation_time=at, access_profile=_access(), caller_surface=surface)
-        served = service_playbill_next(instance, request=request, caller_rung=rung)
-        # Force only the queue lookup to miss; health and every other input remain identical.
-        with patch.object(consumer, "stored_claim_queue", return_value=None):
-            live = service_playbill_next(instance, request=request, caller_rung=rung)
-        assert served.model_dump_json() == live.model_dump_json()
-        assert served.items == live.items and served.result_digest == live.result_digest
-    request = NextRequest(evaluation_time=at, access_profile=_access())
-    served_summary = summarize_playbill_next(instance, request=request)
+        ask = NextRequest(
+            evaluation_time=at, access_profile=_access(), caller_surface=surface, **request
+        )
+        incremental = service_playbill_next(instance, request=ask, caller_rung=rung)
+        with _oracle_only():
+            oracle = service_playbill_next(instance, request=ask, caller_rung=rung)
+        assert incremental.model_dump_json() == oracle.model_dump_json()
+        assert incremental.result_digest == oracle.result_digest
+    ask = NextRequest(evaluation_time=at, access_profile=_access(), **request)
+    summary = summarize_playbill_next(instance, request=ask)
     held = claim_unsure_holds(
         instance, coordinate=instance.accepted_coordinate(), claims=claims, evaluation_time=at
     )
-    with patch.object(consumer, "stored_claim_queue", return_value=None):
-        assert served_summary == summarize_playbill_next(instance, request=request)
+    with _oracle_only():
+        assert summary == summarize_playbill_next(instance, request=ask)
         assert held == claim_unsure_holds(
             instance, coordinate=instance.accepted_coordinate(), claims=claims, evaluation_time=at
         )
+    # Reads never write the worker's state (R3).
+    assert facts.stored_tables(instance) == before
+
+
+def _instant(microseconds: int) -> datetime:
+    return datetime(1970, 1, 1, tzinfo=EVALUATION_TIME.tzinfo) + timedelta(
+        microseconds=microseconds
+    )
+
+
+def _edges(instance, at: datetime) -> list[datetime]:  # type: ignore[no-untyped-def]
+    """The instants around the nearest bounds of every stored fact and key."""
+
+    tables = facts.stored_tables(instance)
+    assert tables is not None
+    at_us = utc_microseconds(at)
+    assert at_us is not None
+    lower_index = facts._FACT_COLUMNS.index("lower_us")
+    upper_index = facts._FACT_COLUMNS.index("upper_us")
+    bounds = [(row[lower_index], row[upper_index]) for row in tables["claim_facts"]]
+    bounds += [(row[2], row[3]) for row in tables["row_keys"]]
+    lowers = [lower for lower, _upper in bounds if lower is not None and lower <= at_us]
+    uppers = [upper for _lower, upper in bounds if upper is not None and upper > at_us]
+    instants = [at, at + timedelta(microseconds=1)]
+    if lowers:
+        lower = _instant(max(lowers))
+        instants += [lower - timedelta(microseconds=1), lower]
+    if uppers:
+        upper = _instant(min(uppers))
+        instants += [
+            upper - timedelta(microseconds=1),
+            upper,
+            upper + timedelta(microseconds=1),
+        ]
+    return sorted(set(instants))
 
 
 def _check_edges(instance, at: datetime) -> None:  # type: ignore[no-untyped-def]
     _drain(instance, at)
-    stored = _stored(instance, at)
-    assert stored is not None
-    inside = {at, at + timedelta(microseconds=1)}
-    if stored.valid_from is not None:
-        inside.add(stored.valid_from)
-        _assert_equivalent(
-            instance, stored.valid_from - timedelta(microseconds=1), expect_stored=False
+    for instant in _edges(instance, at):
+        _assert_equivalent(instance, instant)
+
+
+def _contend(instance, owner) -> None:  # type: ignore[no-untyped-def]
+    first = _current_claim(instance)
+    activate(
+        instance,
+        owner,
+        service_propose_playbill_claim(
+            instance,
+            authoring=authoring("wi-42", "blocked", with_claim_type=False).model_copy(
+                update={
+                    "existing_statement_handoffs": (
+                        ExistingStatementHandoffV1(
+                            statement_digest=claim_statement_digest(first.statement).tagged,
+                            disposition="contradict",
+                        ),
+                    ),
+                }
+            ),
+            actor_id="owner",
+            proposal_name="queue-conflict",
+            timestamp="2026-08-24T17:00:03.000000Z",
+        ),
+    )
+
+
+def _every_backing_input(source_identity, dependents, *, lineage_complete):  # type: ignore[no-untyped-def]
+    """Hand every backing-input dependent an entry, stale or not, so both paths' show."""
+
+    return [
+        (
+            dependent.identity,
+            {
+                "source_claim_identity": source_identity,
+                "used_artifact_digest": dependent.used_artifact_digest,
+                "current_artifact_digest": dependent.current_artifact_digest,
+                "impact_reasons": list(dependent.impact_reasons),
+                "lineage_complete": lineage_complete,
+            },
         )
-    if stored.valid_until is not None:
-        inside.add(stored.valid_until - timedelta(microseconds=1))
-        _assert_equivalent(instance, stored.valid_until, expect_stored=False)
-        _assert_equivalent(
-            instance, stored.valid_until + timedelta(microseconds=1), expect_stored=False
-        )
-    for time in inside:
-        if stored.valid_until is None or time < stored.valid_until:
-            _assert_equivalent(instance, time, expect_stored=True)
+        for dependent in dependents
+        if dependent.kind == "Claim" and dependent.dependency_kind == "backing_input"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -123,123 +227,84 @@ def _check_edges(instance, at: datetime) -> None:  # type: ignore[no-untyped-def
         "door-unsure",
         "threshold",
         "conflict",
-        "dependency",
+        "derivation",
     ),
 )
-def test_queue_equivalence_across_histories_and_interval_edges(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, history: str
+def test_served_rows_equal_the_fold_across_histories_caught_up_behind_and_at_edges(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    history: str,
 ) -> None:
     at = EVALUATION_TIME
+    change = None
     if history == "supported":
         instance, _owner = seed_claims(tmp_path)
     elif history == "uncovered":
         instance, owner, *_rest = _foreign_world(tmp_path, bind=False)
-        _attest(instance, owner, _current_claim(instance), tmp_path, at=at)
+
+        def change() -> None:
+            _attest(instance, owner, _current_claim(instance), tmp_path, at=at)
+
     elif history == "freshness":
         instance, _owner = _freshness_world(tmp_path)
-        # Includes entering the seven-day horizon, the observation and evidence expiry.
+        _drain(instance, datetime.fromisoformat("2026-08-09T20:00:00+00:00"))
+        # Entering the seven-day horizon, the observation and the evidence expiry.
         for time in (
             datetime.fromisoformat("2026-08-09T20:00:10+00:00"),
             datetime.fromisoformat("2026-08-16T20:00:00+00:00"),
             datetime.fromisoformat("2026-08-16T20:00:10+00:00"),
         ):
-            # Rebuild this disposable projection to test each interval.
-            consumer._STATE.path(instance).unlink(missing_ok=True)
+            # Behind in time only: the read derives what ended since the worker's pass.
+            _assert_equivalent(instance, time)
             _check_edges(instance, time)
-        assert any(row.reason == "claim_stale_evidence" for row in _stored(instance, time).rows)
+        found = _served(instance, time)
+        assert found is not None
+        assert any(row.reason == "claim_stale_evidence" for row in found.rows)
         return
     elif history == "conflict":
         instance, owner = seed_claims(tmp_path)
-        first = _current_claim(instance)
-        activate(
-            instance,
-            owner,
-            service_propose_playbill_claim(
-                instance,
-                authoring=authoring("wi-42", "blocked", with_claim_type=False).model_copy(
-                    update={
-                        "existing_statement_handoffs": (
-                            ExistingStatementHandoffV1(
-                                statement_digest=claim_statement_digest(first.statement).tagged,
-                                disposition="contradict",
-                            ),
-                        ),
-                    }
-                ),
-                actor_id="owner",
-                proposal_name="queue-conflict",
-                timestamp="2026-08-24T17:00:03.000000Z",
-            ),
-        )
-        for claim in _all_claims(instance):
-            _attest(
-                instance,
-                owner,
-                claim,
-                tmp_path,
-                at=at - timedelta(minutes=1),
-                valid_until=at + timedelta(minutes=3),
-            )
-    elif history == "dependency":
-        instance, _owner = initialize_local(tmp_path)
-        source = _source_v2()
-        # Dependency visibility changes at this source's effective end.
-        claim = source.accepted.claim.model_copy(
-            update={
-                "statement": source.accepted.claim.statement.model_copy(
-                    update={"effective_until": at + timedelta(minutes=2)}
+
+        def change() -> None:
+            _contend(instance, owner)
+            for claim in _all_claims(instance):
+                _attest(
+                    instance,
+                    owner,
+                    claim,
+                    tmp_path,
+                    at=at - timedelta(minutes=1),
+                    valid_until=at + timedelta(minutes=3),
                 )
-            }
-        )
-        source = source.model_copy(
-            update={"accepted": source.accepted.model_copy(update={"claim": claim})}
-        )
-        dependent = _derived()
-        facts = _facts((source, dependent)).model_copy(
-            update={"coordinate": instance.accepted_coordinate()}
-        )
-        monkeypatch.setattr(
-            "cruxible_core.service.discovery.next._AcceptedQueryFactsRead.build",
-            lambda *_a, **_k: facts,
-        )
-        monkeypatch.setattr(
-            "cruxible_core.service.discovery.next._bounded_claim_lineages",
-            lambda *_a, **_k: (
-                {
-                    source.accepted.path: (
-                        _source_v1().accepted.artifact_digest,
-                        source.accepted.artifact_digest,
-                    ),
-                    dependent.accepted.path: (dependent.accepted.artifact_digest,),
-                },
-                frozenset(),
-            ),
-        )
-        from cruxible_core.service.discovery import next as next_module
 
-        original = next_module._claim_dependency_items
-
-        def dependencies(*args, **kwargs):  # type: ignore[no-untyped-def]
-            kwargs["claims"] = tuple(row.accepted.claim for row in facts.claims)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(next_module, "_claim_dependency_items", dependencies)
+    elif history == "derivation":
+        # Every backing-input dependent gets an entry, so the dependency rows
+        # compare the source keys' dependents with the impact walker's.
+        monkeypatch.setattr(next_module, "stale_input_entries", _every_backing_input)
+        derivation = request.getfixturevalue("world")
+        derived = _run_and_accept(derivation)
+        instance = derivation.instance
+        at = _DERIVED_AT
+        assert derived.backing.input_claim_digests
     elif history.startswith("door-"):
         instance, owner, _actor, _first, claim_id, *_rest = shared_capture_world(tmp_path)
         claim = next(c for c in _all_claims(instance) if c.identity.name == claim_id)
         capture = _capture(instance, claim_id, b"new observation")
         _attest(instance, owner, claim, tmp_path, at=at - timedelta(minutes=2))
-        _attest(
-            instance,
-            owner,
-            claim,
-            tmp_path,
-            at=at + timedelta(minutes=1),
-            basis="new_capture",
-            stance=history.removeprefix("door-"),
-            valid_until=at + timedelta(minutes=3),
-            captures=(capture,),
-        )
+
+        def change() -> None:
+            _attest(
+                instance,
+                owner,
+                claim,
+                tmp_path,
+                at=at + timedelta(minutes=1),
+                basis="new_capture",
+                stance=history.removeprefix("door-"),
+                valid_until=at + timedelta(minutes=3),
+                captures=(capture,),
+            )
+
     else:
         instance, _owner, _claim = threshold_world(
             tmp_path,
@@ -258,15 +323,25 @@ def test_queue_equivalence_across_histories_and_interval_edges(
                 for index, att in enumerate(attestations)
             ),
         )
+    # Cold: the fold serves; no stored rows exist yet.
+    _assert_equivalent(instance, at, served=False)
+    _drain(instance, at)
+    if change is not None:
+        change()
+        # Behind in records: the read derives the change and rolls it back.
+        _assert_equivalent(instance, at)
+    # A landing nothing reads leaves the worker behind with no Claim to derive.
+    instance.body_store().store(b"a body no Claim consults\n")
+    _assert_equivalent(instance, at)
     _check_edges(instance, at)
     expected = {
         "uncovered": "claim_uncovered",
         "conflict": "claim_conflicted",
-        "dependency": "claim_dependency_stale",
+        "derivation": "claim_dependency_stale",
     }.get(history)
     if history.startswith("door-") or history == "threshold":
-        consumer._STATE.path(instance).unlink()
         later = at + timedelta(minutes=2)
+        _assert_equivalent(instance, later)
         _check_edges(instance, later)
         expected = {
             "door-contradict": "claim_contradicting_evidence_available",
@@ -276,16 +351,19 @@ def test_queue_equivalence_across_histories_and_interval_edges(
         }[history]
         at = later
     if expected is not None:
-        assert any(row.reason == expected for row in _stored(instance, at).rows)
+        found = _served(instance, at)
+        assert found is not None
+        assert any(row.reason == expected for row in found.rows)
 
 
-def test_serving_skips_claim_folds_and_keeps_paging_and_delta(tmp_path: Path) -> None:
-    instance, _owner, *_rest = _foreign_world(tmp_path, bind=False)
-    _drain(instance)
-    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access(), limit=1)
-    with patch(
-        "cruxible_core.service.discovery.next._claim_rows", side_effect=AssertionError("live")
-    ):
+def test_serving_skips_the_fold_and_keeps_paging_and_delta(tmp_path: Path) -> None:
+    from tests.test_discovery.test_next_request_reads import _rich_request
+    from tests.test_query.test_query_execution_service import _instance_with_query
+
+    instance, _owner = _instance_with_query(tmp_path)
+    request = _rich_request(instance).model_copy(update={"limit": 1})
+    _drain(instance, request.evaluation_time)
+    with _no_fold():
         first = service_playbill_next(instance, request=request)
         summary = summarize_playbill_next(instance, request=request)
         assert summary.total_items == first.total_items
@@ -294,29 +372,66 @@ def test_serving_skips_claim_folds_and_keeps_paging_and_delta(tmp_path: Path) ->
             request=request.model_copy(update={"since_result_digest": first.result_digest}),
         )
         assert delta.items == ()
-        if first.next_cursor is not None:
-            second = service_playbill_next(
+        assert first.next_cursor is not None
+        second = service_playbill_next(
+            instance, request=request.model_copy(update={"cursor": first.next_cursor})
+        )
+        assert second.result_digest == first.result_digest
+    with _oracle_only():
+        assert service_playbill_next(instance, request=request) == first
+
+
+def test_a_head_page_cursor_refuses_after_a_head_move_without_folding(tmp_path: Path) -> None:
+    """R8: paging a head read across a head move refuses at once; a pinned read folds."""
+
+    from tests.test_discovery.test_next_request_reads import _rich_request
+    from tests.test_query.test_query_execution_service import _instance_with_query
+
+    instance, owner = _instance_with_query(tmp_path)
+    request = _rich_request(instance).model_copy(update={"limit": 1})
+    _drain(instance, request.evaluation_time)
+    first = service_playbill_next(instance, request=request)
+    assert first.next_cursor is not None
+    old_door = instance.claim_attestation_evidence_store().head()
+    _attest(
+        instance,
+        owner,
+        _all_claims(instance)[0],
+        tmp_path,
+        at=request.evaluation_time - timedelta(minutes=1),
+    )
+    with patch.object(next_module, "_next_queue", side_effect=AssertionError("folded")):
+        with pytest.raises(NextCursorMismatch, match="moved since the cursor's first page"):
+            service_playbill_next(
                 instance, request=request.model_copy(update={"cursor": first.next_cursor})
             )
-            assert second.result_digest == first.result_digest
-    assert _stored(instance, EVALUATION_TIME) is not None
+    # A read that pins its door head is historical: its pages fold at those pins.
+    pinned = request.model_copy(update={"at_attestation_head_digest": old_door})
+    with patch.object(
+        next_module, "_oracle_claim_rows", wraps=next_module._oracle_claim_rows
+    ) as fold:
+        historical = service_playbill_next(instance, request=pinned)
+        assert historical.next_cursor is not None
+        page = service_playbill_next(
+            instance, request=pinned.model_copy(update={"cursor": historical.next_cursor})
+        )
+        assert fold.call_count == 2
+    assert page.result_digest == historical.result_digest
 
 
-def test_resume_does_not_recompute_for_time_or_restart_and_schema_mismatch_rebuilds(
-    tmp_path: Path,
-) -> None:
+def test_restart_does_no_work_and_a_schema_mismatch_folds_until_rebuilt(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
     _drain(instance)
     WORKER.match(instance, now=EVALUATION_TIME + timedelta(days=99), daemon_id="restart")
     assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
-    with sqlite3.connect(consumer._STATE.path(instance)) as connection:
+    with sqlite3.connect(facts._STATE.path(instance)) as connection:
         connection.execute("CREATE TABLE alien(value TEXT)")
-    assert _stored(instance, EVALUATION_TIME) is None
+    assert _served(instance, EVALUATION_TIME) is None
     _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
+    assert _served(instance, EVALUATION_TIME) is not None
 
 
-def test_door_movement_recomputes_and_health_reports_lag(tmp_path: Path) -> None:
+def test_door_movement_is_served_behind_and_a_pinned_door_head_folds(tmp_path: Path) -> None:
     from cruxible_core.consumers.runner import consumer_statuses
     from tests.test_consumers.test_prediction_settlement import drain
 
@@ -324,201 +439,318 @@ def test_door_movement_recomputes_and_health_reports_lag(tmp_path: Path) -> None
     _drain(instance)
     old_door = instance.claim_attestation_evidence_store().head()
     _attest(instance, owner, _current_claim(instance), tmp_path, at=EVALUATION_TIME)
-    assert _stored(instance, EVALUATION_TIME) is None
-    assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "lagging"
+    (health,) = WORKER.health(instance, now=EVALUATION_TIME)
+    assert health.state == "lagging" and health.detail["attestations_behind"]
+    _assert_equivalent(instance, EVALUATION_TIME)
     _drain(instance)
     assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
-    assert _stored(instance, EVALUATION_TIME).held_claims
+    found = _served(instance, EVALUATION_TIME)
+    assert found is not None and found.holds
     drain(instance, now=EVALUATION_TIME)
     statuses = consumer_statuses(SimpleNamespace(open_instances=lambda: (("inst", instance),)))
     assert any(row.kind == "next" and row.state == "running" for row in statuses)
-    _assert_equivalent(instance, EVALUATION_TIME, expect_stored=True)
+    _assert_equivalent(instance, EVALUATION_TIME)
     request = NextRequest(
         evaluation_time=EVALUATION_TIME,
         access_profile=_access(),
         at_attestation_head_digest=old_door,
     )
-    from cruxible_core.service.discovery import next as next_module
-
-    with patch.object(next_module, "_claim_rows", wraps=next_module._claim_rows) as live:
+    with patch.object(
+        next_module, "_oracle_claim_rows", wraps=next_module._oracle_claim_rows
+    ) as fold:
         service_playbill_next(instance, request=request)
-        assert live.called
+        assert fold.called
 
 
-def test_accepted_movement_recomputes_and_serving_guards_fall_back(tmp_path: Path) -> None:
+def test_accepted_movement_is_served_behind_and_each_fallback_folds(tmp_path: Path) -> None:
     instance, owner = _freshness_world(tmp_path)
     before = instance.accepted_coordinate()
     _drain(instance)
     _revise_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
-    assert _stored(instance, EVALUATION_TIME) is None
     assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "lagging"
+    _assert_equivalent(instance, EVALUATION_TIME)
     _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
     request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
     for update in (
         {"at": AcceptedCoordinate.from_internal(before)},
-        {
-            "expiring_within": CanonicalDuration(
-                microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS + 1
-            )
-        },
         {
             "access_profile": CoverageAccessProfile(
                 profile_id="public", permitted_access_classes=("public",)
             )
         },
     ):
-        with patch(
-            "cruxible_core.service.discovery.next._claim_rows",
-            wraps=__import__(
-                "cruxible_core.service.discovery.next", fromlist=["_claim_rows"]
-            )._claim_rows,
-        ) as live:
+        with patch.object(
+            next_module, "_oracle_claim_rows", wraps=next_module._oracle_claim_rows
+        ) as fold:
             service_playbill_next(instance, request=request.model_copy(update=update))
-            assert live.called
+            # A historical coordinate folds; a profile without instance access
+            # asks the fold, which then says nothing about Claims.
+            assert fold.called
 
 
-def test_library_reads_create_no_worker_state_and_disabled_worker_is_not_served(
+@pytest.mark.parametrize("days", (1, 6, 8, 30))
+def test_a_custom_expiring_lead_is_served_without_evaluating_a_verdict(
+    tmp_path: Path, days: int
+) -> None:
+    instance, _owner = _freshness_world(tmp_path)
+    at = datetime.fromisoformat("2026-08-09T20:00:10+00:00")
+    _drain(instance, at)
+    lead = CanonicalDuration(microseconds=int(timedelta(days=days).total_seconds() * 1_000_000))
+    with (
+        _no_fold(),
+        patch.object(facts, "_claim_facts", side_effect=AssertionError("derived")),
+    ):
+        assert _served(instance, at, expiring_within=lead) is not None
+    _assert_equivalent(instance, at, expiring_within=lead)
+
+
+def test_library_reads_create_no_worker_state_and_a_disabled_worker_folds(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
-    assert _stored(instance, EVALUATION_TIME) is None
+    assert _served(instance, EVALUATION_TIME) is None
     service_playbill_next(
         instance,
         request=NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access()),
     )
-    assert not consumer._STATE.path(instance).exists()
+    assert not facts._STATE.path(instance).parent.exists()
     _drain(instance)
     monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
     assert not WORKER.active(instance)
-    assert _stored(instance, EVALUATION_TIME) is None
+    assert _served(instance, EVALUATION_TIME) is None
 
 
-def test_cas_movement_recomputes_without_an_accepted_or_door_change(tmp_path: Path) -> None:
-    instance, _owner = _freshness_world(tmp_path)
+def test_cas_and_reobservation_movement_are_served_behind(tmp_path: Path) -> None:
+    instance, owner = _freshness_world(tmp_path)
     _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
     coordinate = instance.accepted_coordinate()
     door = instance.claim_attestation_evidence_store().head()
     instance.body_store().store(b"new material")
-    assert _stored(instance, EVALUATION_TIME) is None
     (health,) = WORKER.health(instance, now=EVALUATION_TIME)
     assert health.state == "lagging" and health.detail["inputs_changed"]
     assert instance.accepted_coordinate() == coordinate
     assert instance.claim_attestation_evidence_store().head() == door
+    _assert_equivalent(instance, EVALUATION_TIME)
     _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
     assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
-    with patch(
-        "cruxible_core.service.discovery.next._claim_rows", side_effect=AssertionError("live")
-    ):
+    # A re-observation moves freshness without moving accepted state or bodies.
+    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:09.000000Z")
+    assert instance.accepted_coordinate() == coordinate
+    _assert_equivalent(instance, EVALUATION_TIME)
+    _drain(instance)
+    with _no_fold():
         service_playbill_next(
             instance,
-            request=NextRequest(
-                evaluation_time=EVALUATION_TIME,
-                access_profile=_access(),
-            ),
+            request=NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access()),
         )
 
 
-@pytest.mark.parametrize("changed", ("accepted", "door", "cas"))
-def test_a_failed_target_is_not_retried_until_an_input_changes(
-    tmp_path: Path, changed: str
-) -> None:
-    instance, owner = _freshness_world(tmp_path) if changed == "accepted" else seed_claims(tmp_path)
+def test_concurrent_reads_behind_the_worker_derive_the_change_once(tmp_path: Path) -> None:
+    instance, owner = _freshness_world(tmp_path)
+    _drain(instance)
+    _revise_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
+    original = facts._changes
+    later = EVALUATION_TIME + timedelta(seconds=1)
+    calls: list[int] = []
+    second: list[Any] = []
+    readers: list[threading.Thread] = []
+
+    def changes(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        if len(calls) == 1:
+            # Another reader of the same (stored, current) heads arrives mid-flight.
+            reader = threading.Thread(target=lambda: second.append(_served(instance, later)))
+            reader.start()
+            readers.append(reader)
+        return original(*args, **kwargs)
+
+    facts._OVERLAYS.clear()
+    with patch.object(facts, "_changes", changes):
+        first = _served(instance, EVALUATION_TIME)
+        for reader in readers:
+            reader.join(60)
+    assert calls == [1]
+    assert first is not None and second and second[0] is not None
+    _assert_equivalent(instance, later)
+
+
+def test_holds_for_a_few_claims_read_only_their_keys(tmp_path: Path) -> None:
+    instance, owner = seed_claims(tmp_path)
+    _contend(instance, owner)
+    first = _current_claim(instance)
+    _attest(instance, owner, first, tmp_path, at=EVALUATION_TIME - timedelta(minutes=1))
+    _drain(instance)
+    asked: list[Any] = []
+    original = rows.stored_rows
+
+    def stored(connection, keys=None):  # type: ignore[no-untyped-def]
+        asked.append(None if keys is None else set(keys))
+        return original(connection, keys)
+
+    with patch.object(rows, "stored_rows", stored), _no_fold():
+        claim_unsure_holds(
+            instance,
+            coordinate=instance.accepted_coordinate(),
+            claims=(first,),
+            evaluation_time=EVALUATION_TIME,
+        )
+    identity = first.identity.qualified
+    assert asked == [
+        {
+            (rows.THRESHOLD, identity),
+            (rows.DOOR, identity),
+            (rows.DEPENDENCY, identity),
+            (rows.SLOT, rows.slot_key(first, qualifier=True)),
+        }
+    ]
+    _assert_equivalent(instance, EVALUATION_TIME)
+
+
+@contextmanager
+def _keys_derived() -> Iterator[list[set[tuple[str, str]]]]:
+    derived: list[set[tuple[str, str]]] = []
+    original = rows.derive
+
+    def counting(context, keys, delta):  # type: ignore[no-untyped-def]
+        keys = set(keys)
+        derived.append(keys)
+        return original(context, keys, delta)
+
+    with patch.object(rows, "derive", counting):
+        yield derived
+
+
+def test_layer2_derives_exactly_the_keys_a_change_reaches(tmp_path: Path) -> None:
+    instance, owner = seed_claims(tmp_path)
+    _drain(instance)
+    first = _current_claim(instance)
+    identity = first.identity.qualified
+    # A body nothing reads reaches no key.
+    instance.body_store().store(b"a body no Claim consults\n")
+    with _keys_derived() as derived:
+        _drain(instance)
+    assert derived == [set()]
+    # A door event reaches its Claim's own keys and its slot, nothing else.
+    _attest(instance, owner, first, tmp_path, at=EVALUATION_TIME - timedelta(minutes=1))
+    with _keys_derived() as derived:
+        _drain(instance)
+    assert derived == [
+        {
+            (rows.THRESHOLD, identity),
+            (rows.DOOR, identity),
+            (rows.SOURCE, identity),
+            (rows.SLOT, rows.slot_key(first, qualifier=True)),
+        }
+    ]
+    assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=EVALUATION_TIME)
+    # A read at the head derives nothing either.
+    with _keys_derived() as derived:
+        assert _served(instance, EVALUATION_TIME) is not None
+    assert derived == [set()]
+
+
+def test_an_unservable_fact_is_derived_on_every_read_and_never_persisted(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    _drain(instance)
+    identity = _current_claim(instance).identity.qualified
+    with sqlite3.connect(facts._STATE.path(instance)) as connection:
+        connection.execute("UPDATE claim_facts SET unservable=1 WHERE claim_id=?", (identity,))
+    # Not current for orient's counts either.
+    assert (
+        facts.claim_status_tally(
+            instance,
+            coordinate=instance.accepted_coordinate(),
+            evaluation_time=EVALUATION_TIME,
+        )
+        is None
+    )
+    derived: list[str] = []
+    original = facts._claim_facts
+
+    def counting(instance, context, claim, **kwargs):  # type: ignore[no-untyped-def]
+        derived.append(claim.identity.qualified)
+        return original(instance, context, claim, **kwargs)
+
+    with patch.object(facts, "_claim_facts", counting):
+        assert _served(instance, EVALUATION_TIME) is not None
+    assert derived == [identity]
+    _assert_equivalent(instance, EVALUATION_TIME)
+    with sqlite3.connect(facts._STATE.path(instance)) as connection:
+        assert connection.execute(
+            "SELECT unservable FROM claim_facts WHERE claim_id=?", (identity,)
+        ).fetchone() == (1,)
+
+
+def _outcome(instance, at: datetime):  # type: ignore[no-untyped-def]
+    request = NextRequest(evaluation_time=at, access_profile=_access())
+    try:
+        return service_playbill_next(instance, request=request).model_dump_json()
+    except CruxibleError as exc:  # the refusal's class and code are the outcome (R4)
+        return (type(exc).__name__, getattr(exc, "code", None) or getattr(exc, "error_code", None))
+
+
+def test_a_broken_key_refuses_as_the_fold_refuses(tmp_path: Path) -> None:
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
+
+    instance, _owner = seed_claims(tmp_path)
+    claim = _current_claim(instance)
+    _rewrite_in_place(
+        instance.body_store()._path(claim.backing.capture_digests[0]), keep_mtime=False
+    )
+    # The worker records each broken Claim and key; it does not stall.
+    _drain(instance)
+    assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
+    served = _outcome(instance, EVALUATION_TIME)
+    with _oracle_only():
+        oracle = _outcome(instance, EVALUATION_TIME)
+    assert isinstance(oracle, tuple) and oracle[0] == "CasError"
+    assert served == oracle
+
+
+def test_a_failed_pass_is_not_retried_until_an_input_changes(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
     WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
     manager = SimpleNamespace(get=lambda _id: instance)
     (work,) = WORKER.due(instance, now=EVALUATION_TIME)
-    with patch(
-        "cruxible_core.service.discovery.next.build_stored_claim_queue",
-        side_effect=OSError("unreadable"),
-    ) as fold:
+    with patch.object(facts, "_rebuild", side_effect=OSError("unreadable")) as rebuild:
         with pytest.raises(OSError, match="unreadable"):
             WORKER.run(manager, "instance", work, now=EVALUATION_TIME)
         for days in (0, 1, 99):
             _drain(instance, EVALUATION_TIME + timedelta(days=days))
-        WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
-        assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
-        assert fold.call_count == 1
+        assert rebuild.call_count == 1
     (health,) = WORKER.health(instance, now=EVALUATION_TIME)
     assert health.state == "stalled" and health.repair is not None
-    assert (
-        health.repair.required_change
-        == "resolve_the_worker_error_then_rebuild_the_next_queue_state"
-    )
-    from cruxible_core.service.discovery.next import _consumer_stalled_items
-
-    (row,) = _consumer_stalled_items((health,))
-    assert "checked_at" not in row.detail and "last_error_at" not in row.detail
-    with sqlite3.connect(consumer._STATE.path(instance)) as connection:
-        connection.execute("UPDATE progress SET checked_at=?,last_error_at=?", ("later", "later"))
-    assert _consumer_stalled_items(WORKER.health(instance, now=EVALUATION_TIME)) == (row,)
-    assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
-    if changed == "accepted":
-        _revise_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
-    elif changed == "door":
-        _attest(instance, owner, _current_claim(instance), tmp_path, at=EVALUATION_TIME)
-    else:
-        instance.body_store().store(b"new input after failure")
+    assert health.repair.required_change == "resolve_the_worker_error_then_rebuild_the_next_facts"
+    assert _served(instance, EVALUATION_TIME) is None
+    instance.body_store().store(b"new input after failure")
     WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
     assert tuple(WORKER.due(instance, now=EVALUATION_TIME))
     _drain(instance)
     assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
-    assert _stored(instance, EVALUATION_TIME) is not None
+    assert _served(instance, EVALUATION_TIME) is not None
 
 
-def test_a_new_target_is_not_lost_when_an_old_flight_finishes(tmp_path: Path) -> None:
-    instance, owner, *_rest = _foreign_world(tmp_path, bind=False)
+def test_a_change_during_a_pass_leaves_the_worker_due(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    _drain(instance)
+    instance.body_store().store(b"first new input")
     WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
-    (old_work,) = WORKER.due(instance, now=EVALUATION_TIME)
-    _attest(instance, owner, _current_claim(instance), tmp_path, at=EVALUATION_TIME)
+    (work,) = WORKER.due(instance, now=EVALUATION_TIME)
+    original = facts._settle
+
+    def moved(*args, **kwargs):  # type: ignore[no-untyped-def]
+        original(*args, **kwargs)
+        instance.body_store().store(b"material landed during the pass")
+
+    with patch.object(facts, "_settle", moved):
+        WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
+    assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "lagging"
     WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
-    WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", old_work, now=EVALUATION_TIME)
-    assert _stored(instance, EVALUATION_TIME) is None
     assert tuple(WORKER.due(instance, now=EVALUATION_TIME))
+    _assert_equivalent(instance, EVALUATION_TIME)
     _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
-
-
-def test_request_observations_merge_with_stored_rows_exactly(tmp_path: Path) -> None:
-    from tests.test_discovery.test_next_request_reads import _rich_request
-    from tests.test_query.test_query_execution_service import _instance_with_query
-
-    instance, _owner = _instance_with_query(tmp_path)
-    request = _rich_request(instance)
-    _drain(instance, request.evaluation_time)
-    assert _stored(instance, request.evaluation_time) is not None
-    served = service_playbill_next(instance, request=request)
-    with patch.object(consumer, "stored_claim_queue", return_value=None):
-        live = service_playbill_next(instance, request=request)
-    assert served.model_dump_json() == live.model_dump_json()
-
-
-def test_a_recorded_reobservation_withdraws_the_stored_queue(tmp_path: Path) -> None:
-    """A re-observation moves freshness without moving accepted state or bodies."""
-
-    instance, owner = _freshness_world(tmp_path)
-    _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
-    before = instance.accepted_coordinate()
-    _refresh_claim(instance, owner, timestamp="2026-08-16T20:00:09.000000Z")
-    assert instance.accepted_coordinate() == before
-    assert _stored(instance, EVALUATION_TIME) is None
-    _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
-
-
-def test_a_queue_behind_head_is_never_used_by_a_read(tmp_path: Path) -> None:
-    from cruxible_core.service.discovery import next as next_module
-
-    instance, owner = _freshness_world(tmp_path)
-    _drain(instance)
-    _revise_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
-    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
-    with patch.object(next_module, "_claim_rows", wraps=next_module._claim_rows) as live:
-        service_playbill_next(instance, request=request)
-        assert live.called
+    assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
 
 
 def test_unchanged_targets_match_without_a_write_transaction(
@@ -528,7 +760,7 @@ def test_unchanged_targets_match_without_a_write_transaction(
     instance, _owner = seed_claims(tmp_path)
     WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
     statements: list[str] = []
-    original = consumer._STATE.open
+    original = facts._STATE.open
 
     @contextmanager
     def traced(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -537,298 +769,49 @@ def test_unchanged_targets_match_without_a_write_transaction(
             connection.set_trace_callback(statements.append)
             yield connection
 
-    monkeypatch.setattr(consumer._STATE, "open", traced)
+    monkeypatch.setattr(facts._STATE, "open", traced)
     for tick in range(3):
         WORKER.match(instance, now=EVALUATION_TIME + timedelta(seconds=tick), daemon_id="restart")
     assert statements
     assert all(statement.lstrip().split()[0] == "SELECT" for statement in statements)
 
 
-def test_a_cas_change_during_a_fold_is_not_published_under_the_previous_target(
-    tmp_path: Path,
-) -> None:
-    from cruxible_core.service.discovery import next as next_module
+def test_request_observations_merge_with_stored_rows_exactly(tmp_path: Path) -> None:
+    from tests.test_discovery.test_next_request_reads import _rich_request
+    from tests.test_query.test_query_execution_service import _instance_with_query
 
-    instance, _owner = seed_claims(tmp_path)
-    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
-    (work,) = WORKER.due(instance, now=EVALUATION_TIME)
-    original = next_module.build_stored_claim_queue
-
-    def moved(*args, **kwargs):  # type: ignore[no-untyped-def]
-        snapshot = original(*args, **kwargs)
-        instance.body_store().store(b"material landed during fold")
-        return snapshot
-
-    with patch.object(next_module, "build_stored_claim_queue", moved):
-        WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
-    assert _stored(instance, EVALUATION_TIME) is None
-    _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
+    instance, _owner = _instance_with_query(tmp_path)
+    request = _rich_request(instance)
+    _drain(instance, request.evaluation_time)
+    assert _served(instance, request.evaluation_time) is not None
+    served = service_playbill_next(instance, request=request)
+    with _oracle_only():
+        oracle = service_playbill_next(instance, request=request)
+    assert served.model_dump_json() == oracle.model_dump_json()
 
 
-def test_an_old_failure_does_not_suppress_a_newer_matched_target(tmp_path: Path) -> None:
-    instance, _owner = seed_claims(tmp_path)
-    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
-    (old_work,) = WORKER.due(instance, now=EVALUATION_TIME)
-    instance.body_store().store(b"new target before old failure")
-    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
-    # An old coordinate failure can arrive after matching advanced the CAS target.
-    with patch.object(instance, "resolve_accepted_coordinate", side_effect=OSError("old failure")):
-        with pytest.raises(OSError, match="old failure"):
-            WORKER.run(
-                SimpleNamespace(get=lambda _id: instance),
-                "instance",
-                old_work,
-                now=EVALUATION_TIME,
-            )
-    assert tuple(WORKER.due(instance, now=EVALUATION_TIME))
-    _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
-
-
-def test_orient_profile_reuses_inside_the_interval_and_falls_back_at_valid_until(
-    tmp_path: Path,
-) -> None:
-    from cruxible_core.service.discovery import next as next_module
+def test_orient_profile_is_served_inside_and_across_an_interval_edge(tmp_path: Path) -> None:
     from cruxible_core.service.discovery.orient import _NEXT_PROFILE
 
     instance, _owner = _freshness_world(tmp_path)
     at = datetime.fromisoformat("2026-08-16T20:00:00+00:00")
     assert set(_NEXT_PROFILE.permitted_access_classes) == {"instance", "public"}
     _drain(instance, at)
-    snapshot = _stored(instance, at)
-    assert snapshot is not None and snapshot.valid_until is not None
     request = NextRequest(evaluation_time=at, access_profile=_NEXT_PROFILE)
-    with patch.object(next_module, "_claim_rows", side_effect=AssertionError("live")):
+    with _no_fold():
         service_playbill_next(instance, request=request)
         summarize_playbill_next(instance, request=request)
-    edge = request.model_copy(update={"evaluation_time": snapshot.valid_until})
-    assert _stored(instance, snapshot.valid_until) is None
-    with patch.object(next_module, "_claim_rows", wraps=next_module._claim_rows) as live:
-        served = service_playbill_next(instance, request=edge)
-        summarize_playbill_next(instance, request=edge)
-        assert live.call_count == 2
-    with patch.object(consumer, "stored_claim_queue", return_value=None):
-        assert served == service_playbill_next(instance, request=edge)
+    edge = next(instant for instant in _edges(instance, at) if instant > at)
+    later = request.model_copy(update={"evaluation_time": edge})
+    with _no_fold():
+        served = service_playbill_next(instance, request=later)
+        summary = summarize_playbill_next(instance, request=later)
+    with _oracle_only():
+        assert served == service_playbill_next(instance, request=later)
+        assert summary == summarize_playbill_next(instance, request=later)
 
 
-def _next_outcome(instance):  # type: ignore[no-untyped-def]
-    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
-    try:
-        return service_playbill_next(instance, request=request).model_dump_json()
-    except Exception as exc:  # noqa: BLE001 - the refusal itself is the outcome compared
-        return (type(exc).__name__, str(exc))
-
-
-def _rewrite_backing(instance, *, keep_mtime: bool) -> None:  # type: ignore[no-untyped-def]
-    from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
-    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
-    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
-
-    context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
-    capture = context.claims()[0].backing.capture_digests[0]
-    fingerprint = verdict_input_fingerprint(instance)
-    _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=keep_mtime)
-    # The evidence generation does not see an in-place rewrite; body identities must.
-    assert verdict_input_fingerprint(instance) == fingerprint
-
-
-def _assert_stalled_without_retry(instance) -> None:  # type: ignore[no-untyped-def]
-    (health,) = WORKER.health(instance, now=EVALUATION_TIME)
-    assert health.state == "stalled" and "CasError" in health.detail["last_error"]
-    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
-    assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
-
-
-@pytest.mark.parametrize("keep_mtime", (False, True), ids=("rewrite", "rewrite-keep-mtime"))
-def test_a_body_rewritten_in_place_is_never_served_from_the_stored_queue(
-    tmp_path: Path, keep_mtime: bool
-) -> None:
-    instance, _owner = seed_claims(tmp_path)
-    _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
-
-    _rewrite_backing(instance, keep_mtime=keep_mtime)
-
-    # Served and live agree: both refuse the corrupt backing.
-    assert _stored(instance, EVALUATION_TIME) is None
-    served = _next_outcome(instance)
-    with patch.object(consumer, "stored_claim_queue", return_value=None):
-        assert served == _next_outcome(instance)
-    assert served[0] == "CasError"
-
-    # Matching withdraws the queue and asks for one rebuild; a rebuild that fails
-    # on the same inputs is not retried until an input changes.
-    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
-    (work,) = WORKER.due(instance, now=EVALUATION_TIME)
-    with pytest.raises(Exception, match="CAS object bytes"):
-        WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
-    _assert_stalled_without_retry(instance)
-    assert _stored(instance, EVALUATION_TIME) is None
-
-
-def test_a_body_rewritten_during_a_fold_is_not_published(tmp_path: Path) -> None:
-    from cruxible_core.service.discovery import next as next_module
-
-    instance, _owner = seed_claims(tmp_path)
-    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
-    (work,) = WORKER.due(instance, now=EVALUATION_TIME)
-    original = next_module.build_stored_claim_queue
-    calls = 0
-
-    def rewritten(*args, **kwargs):  # type: ignore[no-untyped-def]
-        nonlocal calls
-        snapshot = original(*args, **kwargs)
-        calls += 1
-        if calls == 1:
-            # The body changes after the fold, before the publish.
-            _rewrite_backing(instance, keep_mtime=True)
-        return snapshot
-
-    with patch.object(next_module, "build_stored_claim_queue", rewritten):
-        WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
-    assert _stored(instance, EVALUATION_TIME) is None
-    served = _next_outcome(instance)
-    with patch.object(consumer, "stored_claim_queue", return_value=None):
-        assert served == _next_outcome(instance)
-    assert served[0] == "CasError"
-    (work,) = WORKER.due(instance, now=EVALUATION_TIME)
-    with pytest.raises(Exception, match="CAS object bytes"):
-        WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
-    _assert_stalled_without_retry(instance)
-
-
-def test_a_fold_without_body_identities_is_published_but_never_served(tmp_path: Path) -> None:
-    from cruxible_core.service.discovery import next as next_module
-
-    instance, _owner = seed_claims(tmp_path)
-    original = next_module.build_stored_claim_queue
-
-    def unobserved(*args, **kwargs):  # type: ignore[no-untyped-def]
-        from cruxible_core.storage.cas import note_unobservable_body
-
-        snapshot = original(*args, **kwargs)
-        # As an external reader's answer does: nothing CAS-held stands for it.
-        note_unobservable_body()
-        return snapshot
-
-    with patch.object(next_module, "build_stored_claim_queue", unobserved):
-        _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is None
-    # The target is folded once, not again on every pass; reads compute live.
-    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
-    assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
-    assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
-
-
-def _recorded_bodies(instance) -> dict[str, object]:  # type: ignore[no-untyped-def]
-    import json
-
-    with consumer._STATE.open(instance) as connection:
-        assert connection is not None
-        (bodies,) = connection.execute("SELECT bodies FROM progress").fetchone()
-    return dict(json.loads(bodies))
-
-
-def test_repairing_a_body_in_place_releases_the_stalled_target_once(tmp_path: Path) -> None:
-    from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
-    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
-    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
-
-    instance, _owner = seed_claims(tmp_path)
-    context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
-    path = instance.body_store()._path(context.claims()[0].backing.capture_digests[0])
-    original = path.read_bytes()
-    _drain(instance)
-    fingerprint = verdict_input_fingerprint(instance)
-    _rewrite_in_place(path, keep_mtime=True)
-    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
-    (work,) = WORKER.due(instance, now=EVALUATION_TIME)
-    with pytest.raises(Exception, match="CAS object bytes"):
-        WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
-    _assert_stalled_without_retry(instance)
-
-    # Restored in place: no target field moves, but the failed fold's body did.
-    path.write_bytes(original)
-    assert verdict_input_fingerprint(instance) == fingerprint
-    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
-    assert tuple(WORKER.due(instance, now=EVALUATION_TIME))
-    _drain(instance)
-    assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
-    assert _stored(instance, EVALUATION_TIME) is not None
-    _assert_equivalent(instance, EVALUATION_TIME, expect_stored=True)
-
-
-def _retired_dependency(derivation):  # type: ignore[no-untyped-def]
-    from tests.core_support._retirement_support import retire_claim
-    from tests.test_authoring.test_derivation_admission import _run_and_accept
-
-    derived = _run_and_accept(derivation)
-    assert derived.backing.input_claim_digests
-    retire_claim(derivation.instance, derivation.owner, derived.identity.name)
-    return derived.backing.capture_digests[0]
-
-
-_DERIVED_AT = datetime.fromisoformat("2026-10-02T00:00:00+00:00")
-
-
-def _derived_outcome(instance):  # type: ignore[no-untyped-def]
-    request = NextRequest(evaluation_time=_DERIVED_AT, access_profile=_access())
-    try:
-        return service_playbill_next(instance, request=request).model_dump_json()
-    except Exception as exc:  # noqa: BLE001 - the refusal itself is the outcome compared
-        return (type(exc).__name__, str(exc))
-
-
-def test_a_retired_dependency_capture_rewritten_after_publish_is_not_served(
-    world,  # noqa: F811
-) -> None:
-    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
-
-    capture = _retired_dependency(world)
-    instance = world.instance
-    _drain(instance, _DERIVED_AT)
-    assert _stored(instance, _DERIVED_AT) is not None
-    # Read by the dependency facts of a retired Claim, not by live resolution.
-    assert capture in _recorded_bodies(instance)
-
-    _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=True)
-    assert _stored(instance, _DERIVED_AT) is None
-    served = _derived_outcome(instance)
-    with patch.object(consumer, "stored_claim_queue", return_value=None):
-        assert served == _derived_outcome(instance)
-    assert served[0] == "CasError"
-
-
-def test_a_retired_dependency_capture_rewritten_during_a_fold_is_not_published(
-    world,  # noqa: F811
-) -> None:
-    from cruxible_core.service.discovery import next as next_module
-    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
-
-    capture = _retired_dependency(world)
-    instance = world.instance
-    original = next_module.build_stored_claim_queue
-    calls = 0
-
-    def rewritten(*args, **kwargs):  # type: ignore[no-untyped-def]
-        nonlocal calls
-        snapshot = original(*args, **kwargs)
-        calls += 1
-        if calls == 1:
-            _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=True)
-        return snapshot
-
-    with patch.object(next_module, "build_stored_claim_queue", rewritten):
-        _drain(instance, _DERIVED_AT)
-    assert calls == 1
-    assert _stored(instance, _DERIVED_AT) is None
-    served = _derived_outcome(instance)
-    with patch.object(consumer, "stored_claim_queue", return_value=None):
-        assert served == _derived_outcome(instance)
-
-
-def test_a_historical_admission_account_capture_is_in_the_observed_set(tmp_path: Path) -> None:
+def test_a_historical_admission_account_capture_is_a_read_of_its_claim(tmp_path: Path) -> None:
     from cruxible_core.service.discovery.claim_status import reset_claim_resolution_memo
     from tests.core_support._support import client_material
     from tests.test_claims.test_claim_type_v7_revisions import _V7World, v7_type
@@ -854,6 +837,8 @@ def test_a_historical_admission_account_capture_is_in_the_observed_set(tmp_path:
     )
     reset_claim_resolution_memo()
     _drain(instance)
-    assert _stored(instance, EVALUATION_TIME) is not None
-    # Read only by the door rows' historical admission accounts.
-    assert old_capture in _recorded_bodies(instance)
+    tables = facts.stored_tables(instance)
+    assert tables is not None
+    # Read only by the door rows' historical admission accounts: its landing reaches them.
+    assert (f"capture:{old_capture}", current.identity.qualified) in set(tables["fact_reads"])
+    _assert_equivalent(instance, EVALUATION_TIME)

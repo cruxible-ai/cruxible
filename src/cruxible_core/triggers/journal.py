@@ -259,7 +259,7 @@ def schedule_deadline(instance: Any, name: str, at: datetime) -> None:
 
 
 def cancel_deadline(instance: Any, name: str) -> None:
-    """Withdraw a replaced queue's bound when its replacement has no deadline."""
+    """Withdraw a worker's bound when the state it now holds has none."""
 
     _deadline_name(name)
     with _open(instance) as connection:

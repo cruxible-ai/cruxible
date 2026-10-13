@@ -13,7 +13,7 @@ import pytest
 from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.consumers import floor
 from cruxible_core.consumers import next as folded
-from cruxible_core.consumers.next import NEXT_QUEUE, evidence, facts, predictions, queue
+from cruxible_core.consumers.next import NEXT_QUEUE, evidence, facts, predictions
 from cruxible_core.consumers.protocol import ConsumerWork
 from cruxible_core.consumers.runner import (
     ConsumerRunner,
@@ -47,7 +47,6 @@ def test_one_kind_one_health_and_independent_part_cursors(tmp_path: Path) -> Non
     (health,) = consumer_health(instance, now=EVALUATION_TIME)
     assert (health.kind, health.consumer_id, health.state) == ("next", "consumer:next", "running")
     assert set(health.detail) == {
-        "queue",
         "facts",
         "evidence",
         "prediction",
@@ -106,7 +105,7 @@ def test_a_part_that_cannot_match_does_not_block_the_other_parts(tmp_path: Path)
     with patch.object(predictions, "_journals", side_effect=OSError("journal unreadable")):
         NEXT_QUEUE.match(instance, now=EVALUATION_TIME, daemon_id="daemon")
         work = tuple(NEXT_QUEUE.due(instance, now=EVALUATION_TIME))
-        assert any(unit.key.startswith("queue:") for unit in work)
+        assert any(unit.key.startswith("facts:") for unit in work)
         assert all(not unit.key.startswith("prediction:") for unit in work)
         for unit in work:
             NEXT_QUEUE.run(
@@ -117,7 +116,7 @@ def test_a_part_that_cannot_match_does_not_block_the_other_parts(tmp_path: Path)
             health.state == "stalled"
             and "journal unreadable" in health.detail["prediction"]["errors"]["match"]
         )
-        assert health.detail["queue"]["state"] == "running"
+        assert health.detail["facts"]["state"] == "running"
     drain(instance, now=EVALUATION_TIME)
     assert NEXT_QUEUE.health(instance, now=EVALUATION_TIME)[0].state == "running"
 
@@ -140,13 +139,13 @@ def test_one_slow_part_does_not_block_other_keys_and_each_key_is_single_flight(
 
         def run(self, _manager, _id, _work, *, now):  # type: ignore[no-untyped-def]
             calls.append(self.name)
-            if self.name == "queue":
+            if self.name == "facts":
                 entered.set()
                 assert release.wait(5)
             else:
                 progressed.set()
 
-    monkeypatch.setattr(folded, "_PARTS", {name: Part(name) for name in ("queue", "evidence")})
+    monkeypatch.setattr(folded, "_PARTS", {name: Part(name) for name in ("facts", "evidence")})
     runner = ConsumerRunner(SimpleNamespace(get=lambda _id: instance), kinds=(NEXT_QUEUE,))
     with ThreadPoolExecutor(max_workers=NEXT_QUEUE.workers) as pool:
         runner._executors = {"next": pool}
@@ -157,12 +156,12 @@ def test_one_slow_part_does_not_block_other_keys_and_each_key_is_single_flight(
             runner._schedule("inst", NEXT_QUEUE, units[0])
             runner._schedule("inst", NEXT_QUEUE, units[1])
             assert progressed.wait(5)
-            assert calls.count("queue") == 1
+            assert calls.count("facts") == 1
         finally:
             release.set()
 
 
-@pytest.mark.parametrize("part", ("queue", "evidence", "prediction"))
+@pytest.mark.parametrize("part", ("facts", "evidence", "prediction"))
 def test_lag_in_any_part_lags_the_one_health_entry(tmp_path: Path, part: str) -> None:
     instance, _owner = seed_claims(tmp_path)
     config = (
@@ -182,7 +181,7 @@ def test_lag_in_any_part_lags_the_one_health_entry(tmp_path: Path, part: str) ->
     )
     drain(instance, now=EVALUATION_TIME)
     assert NEXT_QUEUE.health(instance, now=EVALUATION_TIME)[0].state == "running"
-    if part == "queue":
+    if part == "facts":
         instance.body_store().store(b"new CAS input")
     else:
         for seconds in (100, 200):
@@ -207,12 +206,12 @@ def test_unknown_disable_setting_refuses_loop_startup(monkeypatch: pytest.Monkey
     assert runner.thread is None and runner._executors == {}
 
 
-@pytest.mark.parametrize("part", ("queue", "facts", "evidence", "prediction"))
+@pytest.mark.parametrize("part", ("facts", "evidence", "prediction"))
 def test_lost_part_state_lags_until_that_part_rebuilds(tmp_path: Path, part: str) -> None:
     instance, _owner = seed_claims(tmp_path)
     drain(instance, now=EVALUATION_TIME)
     assert NEXT_QUEUE.health(instance, now=EVALUATION_TIME)[0].state == "running"
-    modules = {"queue": queue, "facts": facts, "evidence": evidence, "prediction": predictions}
+    modules = {"facts": facts, "evidence": evidence, "prediction": predictions}
     modules[part]._STATE.path(instance).unlink()
     (health,) = NEXT_QUEUE.health(instance, now=EVALUATION_TIME)
     assert health.state == "lagging"
@@ -248,3 +247,4 @@ def test_every_registered_internal_action_names_the_part_that_performs_it(tmp_pa
             with patch.object(floor, "refresh_floor") as refresh:
                 kind.run(manager, "instance", work, now=EVALUATION_TIME)
                 refresh.assert_called_once_with(instance, "instance", follow_fire=True)
+

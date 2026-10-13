@@ -378,17 +378,24 @@ of governed daemon hosts shown, excluding unrelated local registry entries.
 `server status` also lists the daemon's consumers on every instance it holds
 open: each enabled Line and each built-in worker, as `running`, `stalled`,
 `lagging`, `stopped`, or `disabled`. The built-in `next` worker runs on every
-instance by default. It maintains the
-current Claim queue, each Claim's facts, cited evidence availability and
+instance by default. It maintains each
+Claim's facts and next's Claim rows, cited evidence availability and
 prediction windows under one health entry, with independent cursors for each
-part. Queue rows carry evaluation-time bounds; a `next.expire` deadline
-refreshes them at the next boundary. Its facts part keeps each Claim's verdict,
-resolution status, visibility, lineage and citations from what changed: an
-accepted generation's member paths, attestation door events, body-store
-landings and re-observations reach only the Claims that read them, and its own
-`next.facts.expire` deadline reaches the facts whose evaluation-time bounds
-end. It rebuilds only on first start, a new derivation format or compiler, or
-when its cursors no longer name positions in those logs. Its evidence part re-hashes the Captures live Claims cite whenever a generation
+part. Its facts part keeps each Claim's verdict, resolution status,
+visibility, lineage and citations, and next's Claim rows per key (a Claim's
+attestation threshold, a (predicate, qualifier, Subject) slot, a Claim's
+new-capture door, a dependent's stale inputs), from what changed: an accepted
+generation's member paths, attestation door events, body-store landings and
+re-observations reach only the Claims and keys that read them. Each fact and
+key holds on its own evaluation-time interval; one `next.expire` deadline,
+armed at the earliest end, refreshes exactly what ended. A `next` read at the
+current accepted and door heads serves these rows; when the worker has not yet
+followed a change or a bound, the read derives just that in memory and leaves
+the worker's state untouched. A read at an earlier coordinate or a pinned door
+head folds every Claim instead, and a page cursor from a read at the heads is
+refused once either head moves. The worker rebuilds only on first start, a new
+derivation format or compiler, or when its cursors no longer name positions in
+those logs. Its evidence part re-hashes the Captures live Claims cite whenever a generation
 cites one, and sweeps them all on a daily `evidence.sweep` trigger event.
 Retention is evaluated at the generation or trigger event's recorded instant. A missing or corrupt Capture envelope, a
 corrupt body, or a missing body its contract still requires to be retained is a

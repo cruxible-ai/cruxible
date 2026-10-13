@@ -2,13 +2,19 @@
 
 ## Unreleased
 
-- **The next worker keeps each Claim's facts from what changed.** A new `facts`
-  part of the `next` worker keeps every Claim's verdict, resolution status,
-  visibility, lineage and citations, and moves them only for the Claims a change
-  reaches: an accepted generation's member paths, attestation door events,
-  body-store landings, re-observations and its own `next.facts.expire`
-  deadline. `orient` counts Claims by status from it while it is current,
-  instead of deriving every status at the read. The body store now logs each
+- **The next worker keeps each Claim's facts and rows from what changed.** The
+  `next` worker's `facts` part keeps every Claim's verdict, resolution status,
+  visibility, lineage and citations, and next's Claim rows per key (attestation
+  threshold, slot, new-capture door, stale dependency), and moves them only for
+  the Claims and keys a change reaches: an accepted generation's member paths,
+  attestation door events, body-store landings, re-observations and one
+  `next.expire` deadline armed at the earliest end of any fact or row. `next`
+  at the current heads serves the stored rows, deriving in memory whatever the
+  worker has not yet followed (a read never writes the worker's state), and
+  `orient` counts Claims by status from it while it is current. A read at an
+  earlier coordinate or a pinned door head folds every Claim as before; a page
+  cursor from a read at the heads is refused once either head moves. The
+  whole-queue `queue` part and its per-read body observation are gone. The body store now logs each
   evidence body that lands and each erase in sequence (`landings.log` in its
   algorithm directory, written and read through the store's held directory), an
   intent before the object moves and a completion after; an operation a writer

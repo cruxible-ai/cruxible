@@ -497,6 +497,29 @@ def _dependent_order(item: DependentImpactV1) -> tuple[bytes, bytes, bytes, byte
     )
 
 
+def budgeted_dependents(
+    ordered: Sequence[DependentImpactV1], budget: DependencyImpactBudgetV1
+) -> tuple[tuple[DependentImpactV1, ...], set[str], set[str]]:
+    """The ordered dependents an impact read keeps under its count and byte budgets.
+
+    Returns the kept dependents, the kinds the budgets cut, and why they were cut.
+    """
+
+    truncated: set[str] = set()
+    reasons: set[str] = set()
+    kept = tuple(ordered[: budget.max_dependents])
+    if len(kept) != len(ordered):
+        truncated.update(item.kind for item in ordered[len(kept) :])
+        reasons.add("dependent_budget_exceeded")
+    while kept and len(canonical_bytes([item.model_dump(mode="json") for item in kept])) > (
+        budget.max_bytes
+    ):
+        truncated.add(kept[-1].kind)
+        kept = kept[:-1]
+        reasons.add("byte_budget_exceeded")
+    return kept, truncated, reasons
+
+
 def build_dependency_impact(
     request: DependencyImpactRequestV1,
     *,
@@ -548,19 +571,7 @@ def build_dependency_impact(
         )
     ordered = tuple(sorted(found, key=_dependent_order))
     candidate_count = len(ordered)
-
-    truncated: set[str] = set()
-    reasons: set[str] = set()
-    kept = ordered[: request.budget.max_dependents]
-    if len(kept) != candidate_count:
-        truncated.update(item.kind for item in ordered[len(kept) :])
-        reasons.add("dependent_budget_exceeded")
-    while kept and len(canonical_bytes([item.model_dump(mode="json") for item in kept])) > (
-        request.budget.max_bytes
-    ):
-        truncated.add(kept[-1].kind)
-        kept = kept[:-1]
-        reasons.add("byte_budget_exceeded")
+    kept, truncated, reasons = budgeted_dependents(ordered, request.budget)
 
     coverage = CoverageDescriptor(
         requested_facets=byte_sorted(DEPENDENT_KINDS),
@@ -606,5 +617,6 @@ __all__ = [
     "DependencyImpactSourceV1",
     "DependencyImpactV1",
     "DependentImpactV1",
+    "budgeted_dependents",
     "build_dependency_impact",
 ]

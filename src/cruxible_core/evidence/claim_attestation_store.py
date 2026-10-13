@@ -5,7 +5,7 @@ from __future__ import annotations
 import fcntl
 import os
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1167,6 +1167,21 @@ class ClaimAttestationEvidenceStore:
                 for root in chain.roots[position + 1 :]
                 if root.event_digest is not None
             )
+
+    def event_pairs(
+        self, event_digests: Iterable[str]
+    ) -> tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...]:
+        """These published events with their payloads, authenticated as every read is.
+
+        A follower that kept event digests (``events_after``) reads back only the
+        events it needs, never the chain around them.
+        """
+
+        with self._locked():
+            if not self.root.exists():
+                return ()
+            self._load_manifest()
+            return tuple(self._event_pair(digest) for digest in event_digests)
 
     def fold_events(
         self, *, at_head: str | None = None
