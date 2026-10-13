@@ -633,6 +633,26 @@ class HistoryReader:
                 found[str(path)].append(int(sequence))
         return {path: tuple(values) for path, values in found.items()}
 
+    def member_sequences_between(
+        self, paths: Iterable[str], low: int, high: int
+    ) -> dict[str, tuple[int, ...]]:
+        """Each sequence in ``(low, high]`` that touched each path, ascending (by path index)."""
+
+        cutoff = min(high, self.sequence)
+        wanted = tuple(dict.fromkeys(paths))
+        found: dict[str, list[int]] = {path: [] for path in wanted}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for path, sequence in self._connection.execute(
+                "SELECT DISTINCT member_path, sequence FROM accepted_member_locations "
+                "WHERE sequence>? AND sequence<=? AND member_path IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY member_path, sequence",
+                (low, cutoff, *chunk),
+            ):
+                found[str(path)].append(int(sequence))
+        return {path: tuple(values) for path, values in found.items()}
+
     def member_paths_by_sequence(self, sequences: Iterable[int]) -> dict[int, tuple[str, ...]]:
         """The member paths each of ``sequences`` touched, in member order."""
 

@@ -240,3 +240,38 @@ def test_each_file_is_hashed_once_when_rendered(tmp_path: Any, monkeypatch: Any)
     assert len(hashed) < len(moved.files)
     for path, (content, _changed) in moved.files.items():
         assert moved.digests[path] == (digest(content), len(content)), path
+
+
+def test_a_warm_advance_shares_the_floor_instead_of_copying_it(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    from cruxible_core.derived import persistent
+    from cruxible_core.service.floor import floor_index
+
+    instance, _owner = seed_write_surface(tmp_path)
+    _write(instance, *(_set(f"{KIND}/bulk-{index}", "title", f"T{index}") for index in range(40)))
+    first = advance_floor_index(instance)
+    built: list[int] = []
+    init = persistent.PMap.__init__
+
+    def recording(self: Any, items: Any = None) -> None:
+        if items is not None and not hasattr(items, "__len__"):
+            items = list(items)
+        built.append(0 if items is None else len(items))
+        init(self, items)
+
+    def refused(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("a warm advance rebuilt a whole input")
+
+    monkeypatch.setattr(persistent.PMap, "__init__", recording)
+    for name in ("build_floor_inputs", "_all_live_sequences"):
+        monkeypatch.setattr(floor_index, name, refused)
+    monkeypatch.setattr(floor_index, "build_sources_ledger", refused)
+    _write(instance, _set(f"{KIND}/bulk-3", "status", "ready"))
+    warm = advance_floor_index(instance)
+    monkeypatch.undo()
+    # Nothing population-sized was built: every map is the previous one with
+    # the change applied, sharing all other entries.
+    assert max(built, default=0) <= 2
+    assert warm.files[f"current/{KIND}/bulk-7.yaml"] is first.files[f"current/{KIND}/bulk-7.yaml"]
+    assert _bytes(warm) == _bytes(_cold(instance))

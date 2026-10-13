@@ -24,9 +24,11 @@ dropping its source.
 
 from __future__ import annotations
 
+import bisect
 import threading
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 from weakref import WeakKeyDictionary
 
 from cruxible_client.contracts.captures import (
@@ -43,6 +45,7 @@ from cruxible_client.contracts.source_references import (
     ExternalSourceReference,
     LedgerSourceReference,
 )
+from cruxible_core.derived.persistent import PMap
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.floor.floor_current import stamp_text
 from cruxible_core.storage.cas import BodyAccessContext
@@ -162,9 +165,9 @@ class SourceLine:
     """One line's inputs: the Claims citing the source, and its Document."""
 
     # Citing Claim name -> its latest generation.
-    claims: Mapping[str, int]
+    claims: PMap[str, int]
     # (contract label, locator) -> how many (Claim, Capture) pairs give it.
-    pairs: Mapping[tuple[str, str], int]
+    pairs: PMap[tuple[str, str], int]
     document: str | None = None
     document_latest: int = 0
 
@@ -172,7 +175,7 @@ class SourceLine:
         """The line: the Document of the source's name, else every distinct locator, sorted.
 
         Sets, never the first one seen, so the line is the same whatever order
-        the Claims arrive in.
+        the Claims arrive in. Its cost is this line's own membership.
         """
 
         contracts = sorted({label for label, _locator in self.pairs}, key=str.encode)
@@ -191,20 +194,29 @@ class SourceLine:
         )
 
 
+_EMPTY_CLAIMS: PMap[str, int] = PMap()
+_EMPTY_PAIRS: PMap[tuple[str, str], int] = PMap()
+
+
 @dataclass(frozen=True)
 class SourcesLedgerState:
-    """``sources/LEDGER`` as maintained state: what each live Claim and Document adds."""
+    """``sources/LEDGER`` as maintained state: what each live Claim and Document adds.
+
+    Every map is persistent, so a new version shares all untouched entries.
+    """
 
     # Claim path -> its contribution, for the live Claims that cite a source.
-    contributions: Mapping[str, SourceContribution]
+    contributions: PMap[str, SourceContribution]
     # Document path -> (its source name, its latest generation).
-    documents: Mapping[str, tuple[str, int]]
-    lines: Mapping[str, SourceLine]
-    rows: Mapping[str, str]
+    documents: PMap[str, tuple[str, int]]
+    lines: PMap[str, SourceLine]
+    rows: PMap[str, str]
     # The source names, byte-sorted.
     order: tuple[str, ...]
 
     def render(self, changed_at: int) -> bytes:
+        """The whole file: its bytes are the format's output, one row per source."""
+
         header = (
             f"# sources LEDGER  {len(self.order)} sources  columns: source, contracts, "
             f"ledger locator, citing claims, changed gen  {stamp_text(changed_at)}"
@@ -212,6 +224,9 @@ class SourcesLedgerState:
         return "".join(
             f"{line}\n" for line in (header, *(self.rows[source] for source in self.order))
         ).encode("utf-8")
+
+
+EMPTY_SOURCES_LEDGER = SourcesLedgerState(PMap(), PMap(), PMap(), PMap(), ())
 
 
 def _contribution(
@@ -232,17 +247,17 @@ def build_sources_ledger(
     claims: Mapping[str, ClaimArtifactAny],
     latest: Mapping[str, int],
     contracts: Mapping[str, CaptureContract],
-    documents: Iterable[str],
+    documents: Collection[str],
 ) -> SourcesLedgerState:
     """The state from every Claim (by path) and every accepted Document path."""
 
     return update_sources_ledger(
         instance,
-        SourcesLedgerState({}, {}, {}, {}, ()),
+        EMPTY_SOURCES_LEDGER,
         claims=claims,
         latest=latest,
         contracts=contracts,
-        documents=frozenset(documents),
+        documents=documents,
         changed_claims=claims,
         changed_documents=documents,
     )
@@ -262,20 +277,21 @@ def update_sources_ledger(
     """``state`` with the named Claim and Document paths re-read; only their lines move.
 
     The contracts must be the ones ``state`` was built under: a contract
-    change relabels every line, so the caller builds again instead.
+    change relabels every line, so the caller builds again instead. Work is
+    the changed paths and the lines they reach; nothing else is copied.
     """
 
-    contributions = dict(state.contributions)
-    entries = dict(state.documents)
-    staged: dict[str, tuple[dict[str, int], dict[tuple[str, str], int]]] = {}
+    contributions = state.contributions.evolver()
+    entries = state.documents.evolver()
+    staged: dict[str, tuple[Any, Any]] = {}
     documented: dict[str, tuple[str | None, int]] = {}
 
-    def line(source: str) -> tuple[dict[str, int], dict[tuple[str, str], int]]:
+    def line(source: str) -> tuple[Any, Any]:
         if source not in staged:
             held = state.lines.get(source)
             staged[source] = (
-                {} if held is None else dict(held.claims),
-                {} if held is None else dict(held.pairs),
+                (_EMPTY_CLAIMS if held is None else held.claims).evolver(),
+                (_EMPTY_PAIRS if held is None else held.pairs).evolver(),
             )
         return staged[source]
 
@@ -290,10 +306,12 @@ def update_sources_ledger(
             name, _latest, pairs = old
             for source, label, locator in pairs:
                 citing, counted = line(source)
-                citing.pop(name, None)
-                counted[(label, locator)] -= 1
-                if not counted[(label, locator)]:
-                    del counted[(label, locator)]
+                citing.discard(name)
+                left = counted[(label, locator)] - 1
+                if left:
+                    counted[(label, locator)] = left
+                else:
+                    counted.discard((label, locator))
         if new is not None:
             name, at, pairs = new
             for source, label, locator in pairs:
@@ -309,18 +327,18 @@ def update_sources_ledger(
             source = document_ref(path).removeprefix("Document:")
             entries[path] = (source, latest.get(path, 0))
             documented[source] = (document_ref(path), latest.get(path, 0))
-    lines = dict(state.lines)
-    rows = dict(state.rows)
-    reorder = False
+    lines = state.lines.evolver()
+    rows = state.rows.evolver()
+    added: list[str] = []
+    removed: set[str] = set()
     for source in {*staged, *documented}:
         held = lines.get(source)
-        line_claims: Mapping[str, int]
-        line_pairs: Mapping[tuple[str, str], int]
         if source in staged:
-            line_claims, line_pairs = staged[source]
+            line_claims = staged[source][0].persistent()
+            line_pairs = staged[source][1].persistent()
         else:
-            line_claims = {} if held is None else held.claims
-            line_pairs = {} if held is None else held.pairs
+            line_claims = _EMPTY_CLAIMS if held is None else held.claims
+            line_pairs = _EMPTY_PAIRS if held is None else held.pairs
         document, document_latest = (
             documented[source]
             if source in documented
@@ -329,20 +347,40 @@ def update_sources_ledger(
             else (held.document, held.document_latest)
         )
         if not line_claims and document is None:
-            if lines.pop(source, None) is not None:
-                rows.pop(source)
-                reorder = True
+            if held is not None:
+                lines.discard(source)
+                rows.discard(source)
+                removed.add(source)
             continue
-        reorder = reorder or held is None
-        lines[source] = SourceLine(line_claims, line_pairs, document, document_latest)
-        rows[source] = lines[source].row(source)
-    order = tuple(sorted(rows, key=str.encode)) if reorder else state.order
-    return SourcesLedgerState(contributions, entries, lines, rows, order)
+        if held is None:
+            added.append(source)
+        current = SourceLine(line_claims, line_pairs, document, document_latest)
+        lines[source] = current
+        rows[source] = current.row(source)
+    order = state.order
+    if added or removed:
+        # Inserting into the sorted names is a copy of them, the same size as
+        # the whole-file output a new or dropped source re-renders anyway.
+        keys = [name.encode() for name in order if name not in removed]
+        names = [name for name in order if name not in removed]
+        for source in added:
+            at = bisect.bisect(keys, source.encode())
+            keys.insert(at, source.encode())
+            names.insert(at, source)
+        order = tuple(names)
+    return SourcesLedgerState(
+        contributions.persistent(),
+        entries.persistent(),
+        lines.persistent(),
+        rows.persistent(),
+        order,
+    )
 
 
 __all__ = [
     "SOURCES_LEDGER_PATH",
     "CaptureSource",
+    "EMPTY_SOURCES_LEDGER",
     "SourceContribution",
     "SourceLine",
     "SourcesLedgerState",
