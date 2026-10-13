@@ -641,8 +641,9 @@ GROWS: dict[str, dict[str, str]] = {
         "sql_vm_steps": (
             "audit#11: each floor refresh walks all of accepted_member_locations "
             "(indexes/history/history_index.py:599 latest_sequences(paths=None) GROUP BY "
-            "member_path, from service/floor/floor_index.py:289) and reads a record per "
-            "generation (:483)"
+            "member_path, from service/floor/floor_index.py:289), reads a record per "
+            "generation (:483) and every member of every generation with a rationale (:643 "
+            "member_paths_by_sequence via service/floor/floor_content.py:296)"
         ),
         "sql_statements": (
             "audit#11: each floor refresh looks up a record per generation "
