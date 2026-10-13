@@ -42,7 +42,6 @@ from cruxible_client.contracts.providers import (
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.providers.web_fetch import (
     WEB_FETCH_INTERFACE_V2_DIGEST,
-    WEB_FETCH_SELECTORS,
     web_fetch_interface_registration,
 )
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -54,7 +53,11 @@ from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 URL = "https://fixture.invalid/api/v1/measurements.json"
 
 
-def web_provider(registration, selectors=WEB_FETCH_SELECTORS):
+def web_provider(registration, selectors=None):
+    # The provider-runtime 0.2.x manifest still declares input buckets; they are
+    # inert. By default, the ones the registration's (inert) proofs name.
+    if selectors is None:
+        selectors = {proof.fixture_id: proof.selector for proof in registration.conformance_proofs}
     template = provider_v2()
     implementation = template.runtime_artifact.manifest.implementations[0].model_copy(
         update={
