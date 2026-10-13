@@ -1018,6 +1018,23 @@ class SourceCheckResult(BaseModel):
     alignments: list[dict[str, Any]]
 
 
+class NextRebuildResult(BaseModel):
+    """Receipt for rebuilding the next worker's facts and rows from nothing."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-next-rebuild-result-v1"] = "playbill-next-rebuild-result-v1"
+    instance_id: str
+    #: The accepted coordinate the rebuilt state follows.
+    coordinate: AcceptedCoordinate
+    #: The derivation format the state was rebuilt in.
+    format: int
+    #: Claims with facts, row keys and stored rows after the rebuild.
+    claims: int
+    keys: int
+    rows: int
+
+
 class InstanceDecommissionResult(BaseModel):
     """Receipt for the terminal lifecycle state of one governed instance."""
 

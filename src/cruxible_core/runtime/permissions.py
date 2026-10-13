@@ -169,6 +169,7 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_workspace_floor_delivery": PermissionMode.ADMIN,
     "cruxible_floor_deliver_now": PermissionMode.READ_ONLY,
     "cruxible_instance_decommission": PermissionMode.ADMIN,
+    "cruxible_instance_rebuild_next": PermissionMode.ADMIN,
     "cruxible_claim_attestation_recover": PermissionMode.ADMIN,
     "cruxible_host_workspace_registration": PermissionMode.READ_ONLY,
     "cruxible_host_show": PermissionMode.READ_ONLY,

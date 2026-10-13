@@ -178,6 +178,14 @@ def instance_decommission(
 
 
 @router.post(
+    "/{instance_id}/instance/rebuild-next",
+    response_model=contracts.NextRebuildResult,
+)
+def instance_rebuild_next(instance_id: str) -> contracts.NextRebuildResult:
+    return playbill_api.playbill_instance_rebuild_next(resolve_server_instance_id(instance_id))
+
+
+@router.post(
     "/{instance_id}/ledger/mirror",
     response_model=contracts.LedgerMirror,
 )

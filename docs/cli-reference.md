@@ -788,6 +788,7 @@ the digest) and for staging provider files; a catalogued file goes through
 
 ~~~text
 cruxible instance decommission --reason TEXT [--dry-run|--commit] [--at OID] [--json]
+cruxible instance rebuild-next [--json]
 ~~~
 
 Decommissioning is the terminal lifecycle state of one governed instance. It
@@ -802,6 +803,13 @@ where it is, and archiving or erasing the directory afterwards is the operator's
 own step — no verb performs it, and the state cannot be reversed. So the command
 previews first and changes nothing; the confirmation is that preview's
 coordinate: `--commit --at OID` (see [Previews](#previews)).
+
+`instance rebuild-next` drops the `next` worker's facts and Claim rows and
+derives them again from nothing, as on a first start, and clears the worker's
+error. It is the repair a stalled `next` consumer names when the worker cannot
+follow its logs forward. It changes no accepted state and no evidence, needs
+`ADMIN`, and reports the coordinate, derivation format and how many Claims, row
+keys and rows it rebuilt; `next` folds every Claim until it finishes.
 
 ## ledger
 

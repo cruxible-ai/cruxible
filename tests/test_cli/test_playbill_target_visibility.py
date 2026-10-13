@@ -36,6 +36,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("workspace", "detach"): "manual",
     ("init",): "active",
     ("instance", "decommission"): "active",
+    ("instance", "rebuild-next"): "active",
     ("body", "store"): "active",
     ("provider", "install"): "active",
     ("kit", "add"): "active",

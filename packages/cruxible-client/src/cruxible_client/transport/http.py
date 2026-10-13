@@ -565,6 +565,14 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.InstanceDecommissionResult)
 
+    def rebuild_next(self, instance_id: str) -> contracts.NextRebuildResult:
+        """Drop the next worker's facts and rows and derive them again from nothing.
+
+        An operator's repair: it changes no accepted state and no evidence."""
+
+        response = self._client.post(f"/api/v1/{instance_id}/instance/rebuild-next")
+        return self._parse_model(response, contracts.NextRebuildResult)
+
     def set_ledger_mirror(
         self, instance_id: str, *, url: str, dry_run: bool | None = None, at: str | None = None
     ) -> contracts.LedgerMirror:
