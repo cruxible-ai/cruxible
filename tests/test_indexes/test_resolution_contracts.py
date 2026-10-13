@@ -510,3 +510,91 @@ def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) 
     assert activation_coordinate["git_oid"] == accepting_coordinate.git_oid
     assert activation_coordinate["semantic_root"] == accepting_coordinate.semantic_root
     assert activation_coordinate["generation_root"] == accepting_coordinate.generation_root
+
+
+def test_a_resolution_book_extends_from_its_last_head_and_equals_a_full_fold(
+    tmp_path, monkeypatch
+) -> None:
+    """Each append folds only the records after the last folded head (perf B9)."""
+
+    from cruxible_core.procedures import resolution as resolution_module
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    accepted = _accepted()
+    activation = derive_resolution_activations(
+        accepted, accepted_coordinate=_coordinate(), activated_at=NOW
+    )[2]
+    evidence = (ProcedureProofReferenceV1(kind="query_receipt", digest=_digest("q")),)
+    journal_root = tmp_path / "journal"
+    journal_root.mkdir()
+    cas_root = tmp_path / "cas"
+    cas_root.mkdir()
+    journal = LocalJournalBackend(journal_root)
+    bodies = ContentAddressedBodyStore(cas_root)
+    stream = JournalStreamIdentityV1(
+        instance_id="instance-b9",
+        journal_family=PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+        stream_id="procedures",
+    )
+    partition_id = resolution_contract_partition_id(activation)
+    journal.activate_writer(
+        stream,
+        partition_id,
+        fencing_token="writer",
+        expected_head=journal.read_head(stream, partition_id),
+    )
+    writer = ProcedureExhaustWriter(journal=journal, bodies=bodies, fencing_token="writer")
+    folded: list[int] = []
+    extend = resolution_module.ProcedureResolutionBook.extend
+
+    def counted(self, records, *, bodies):  # type: ignore[no-untyped-def]
+        folded.append(len(records))
+        return extend(self, records, bodies=bodies)
+
+    monkeypatch.setattr(resolution_module.ProcedureResolutionBook, "extend", counted)
+
+    def full() -> resolution_module.ProcedureResolutionBook:
+        book = resolution_module.ProcedureResolutionBook((activation,))
+        extend(book, journal.all_records(stream, partition_id), bodies=bodies)
+        return book
+
+    previous = None
+    for sequence in range(1, 5):
+        resolution = build_procedure_resolution(
+            activation,
+            sequence=sequence,
+            verdict="satisfied",
+            value={"count": sequence},
+            evidence_refs=evidence,
+            observed_at=NOW + timedelta(seconds=10 * sequence),
+            recorded_at=NOW + timedelta(seconds=10 * sequence),
+            actor_context=_actor(),
+        )
+        append_procedure_resolution(
+            writer, activation=activation, resolution=resolution, stream=stream
+        )
+        append_resolution_disposition(
+            writer,
+            activation=activation,
+            resolution=resolution,
+            disposition=build_resolution_disposition(
+                resolution,
+                sequence=1,
+                verdict="overturned",
+                reviewer_actor_context=_actor("reviewer"),
+                recorded_at=NOW + timedelta(seconds=10 * sequence + 1),
+                note=f"Overturned {sequence}.",
+            ),
+            stream=stream,
+        )
+        book, head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+        expected = full()
+        assert head == journal.read_head(stream, partition_id)
+        assert dict(book.resolutions) == dict(expected.resolutions)
+        assert dict(book.dispositions) == dict(expected.dispositions)
+        assert book.resolution_records == expected.resolution_records
+        assert book.event_kinds == expected.event_kinds
+        previous = book
+    assert previous is not None
+    # After the first fold, each append and read folds only what it has not seen.
+    assert max(folded[1:]) <= 2, folded

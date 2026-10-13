@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
-from collections import defaultdict
+import threading
+from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Literal
@@ -1225,6 +1227,10 @@ class ProcedureResolutionBook:
             defaultdict(list)
         )
         self.dispositions: dict[str, list[ProcedureResolutionDispositionV1]] = defaultdict(list)
+        #: Every event kind the folded records carried.
+        self.event_kinds: set[str] = set()
+        #: The first stored record of each resolution, by resolution ID.
+        self.resolution_records: dict[str, StoredProcedureJournalRecordV1] = {}
 
     def replay(
         self,
@@ -1234,8 +1240,32 @@ class ProcedureResolutionBook:
     ) -> None:
         self.resolutions.clear()
         self.dispositions.clear()
+        self.event_kinds.clear()
+        self.resolution_records.clear()
+        self.extend(records, bodies=bodies)
+
+    def copy(self) -> ProcedureResolutionBook:
+        """An independent book holding the same fold (the records are frozen)."""
+        copied = ProcedureResolutionBook(tuple(self.activations.values()))
+        for contract_id, resolutions in self.resolutions.items():
+            copied.resolutions[contract_id] = list(resolutions)
+        for resolution_id, dispositions in self.dispositions.items():
+            copied.dispositions[resolution_id] = list(dispositions)
+        copied.event_kinds = set(self.event_kinds)
+        copied.resolution_records = dict(self.resolution_records)
+        return copied
+
+    def extend(
+        self,
+        records: tuple[StoredProcedureJournalRecordV1, ...],
+        *,
+        bodies: ContentAddressedBodyStore,
+    ) -> None:
+        """Fold more records, in order, onto this book: ``replay`` of the whole is
+        ``replay`` of a prefix then ``extend`` of the rest."""
         access = BodyAccessContext(principal_id="procedure-resolution-replay", can_read_body=True)
         for stored in records:
+            self.event_kinds.add(stored.record.event_kind)
             if stored.record.event_kind not in {"resolution", "resolution_disposition"}:
                 continue
             payload = parse_journal_payload(
@@ -1287,6 +1317,7 @@ class ProcedureResolutionBook:
                                 "is overturned"
                             )
                     prior.append(resolution)
+                    self.resolution_records.setdefault(resolution.resolution_id, stored)
                 else:
                     disposition = ProcedureResolutionDispositionV1.model_validate(payload)
                     disposition_target = self.resolution_by_id(disposition.resolution_id)
@@ -1337,6 +1368,91 @@ class ProcedureResolutionBook:
         return None
 
 
+_BOOK_CAPACITY = 256
+_BOOKS: OrderedDict[tuple[object, ...], tuple[JournalPartitionHeadV1, ProcedureResolutionBook]] = (
+    OrderedDict()
+)
+_BOOKS_LOCK = threading.Lock()
+
+
+def resolution_book_at_head(
+    journal: object,
+    stream: JournalStreamIdentityV1,
+    activation: ResolutionContractActivationV1
+    | ResolutionContractActivationV2
+    | ResolutionContractActivationV3,
+    *,
+    bodies: ContentAddressedBodyStore,
+) -> tuple[ProcedureResolutionBook, JournalPartitionHeadV1 | None]:
+    """One contract partition's resolution book through its current head (None without an index).
+
+    Folding the whole partition on every append re-read and re-parsed every
+    record's payload. This process keeps the book it last folded with the head
+    it reached and extends it with only the records after that head, read
+    through the journal index (each new frame verified against its indexed
+    predecessor; an in-place change to the log re-verifies the partition). A
+    head that does not extend the kept one -- or a journal without an index --
+    folds the whole partition as before. The caller gets its own copy.
+    """
+
+    partition_id = resolution_contract_partition_id(activation)
+    read_head = getattr(journal, "read_head", None)
+    select = getattr(journal, "select_records", None)
+    all_records = getattr(journal, "all_records")
+    if read_head is None or select is None:
+        book = ProcedureResolutionBook((activation,))
+        book.replay(all_records(stream, partition_id), bodies=bodies)
+        return book, None
+    head: JournalPartitionHeadV1 = read_head(stream, partition_id)
+    key: tuple[object, ...] | None = (
+        str(getattr(journal, "root", id(journal))),
+        str(getattr(bodies, "root", id(bodies))),
+        stream,
+        partition_id,
+        # The activation the fold validates every record against, by content.
+        hashlib.sha256(canonical_bytes(activation.model_dump(mode="json"))).hexdigest(),
+    )
+    try:
+        hash(key)
+    except TypeError:
+        key = None
+    held = None
+    if key is not None:
+        with _BOOKS_LOCK:
+            held = _BOOKS.get(key)
+            if held is not None:
+                _BOOKS.move_to_end(key)
+    book: ProcedureResolutionBook | None = None
+    if held is not None and held[0] == head:
+        return held[1].copy(), head
+    if held is not None and 0 < held[0].sequence < head.sequence:
+        added = tuple(
+            select(
+                stream,
+                partition_id=partition_id,
+                first_sequence=held[0].sequence + 1,
+                last_sequence=head.sequence,
+            )
+        )
+        if (
+            len(added) == head.sequence - held[0].sequence
+            and added[0].record.previous_record_digest == held[0].record_digest
+            and added[-1].record_digest == head.record_digest
+        ):
+            book = held[1].copy()
+            book.extend(added, bodies=bodies)
+    if book is None:
+        book = ProcedureResolutionBook((activation,))
+        book.replay(all_records(stream, partition_id)[: head.sequence], bodies=bodies)
+    if key is not None and head.sequence > 0:
+        with _BOOKS_LOCK:
+            _BOOKS[key] = (head, book.copy())
+            _BOOKS.move_to_end(key)
+            while len(_BOOKS) > _BOOK_CAPACITY:
+                _BOOKS.popitem(last=False)
+    return book, head
+
+
 def append_procedure_resolution(
     writer: ProcedureExhaustWriter,
     *,
@@ -1359,9 +1475,7 @@ def append_procedure_resolution(
     law = evaluate_procedure_resolution(activation, resolution)
     if law.verdict == "refused":
         raise ExecutionError(law.message or "resolution law refused")
-    existing = writer.journal.all_records(stream, partition_id)
-    book = ProcedureResolutionBook((activation,))
-    book.replay(existing, bodies=writer.bodies)
+    book, _head = resolution_book_at_head(writer.journal, stream, activation, bodies=writer.bodies)
     prior = book.resolutions.get(activation.contract_id, ())
     if resolution.sequence != len(prior) + 1:
         raise ExecutionError("resolution sequence is discontinuous")
@@ -1398,9 +1512,7 @@ def append_resolution_disposition(
     partition_id = resolution_contract_partition_id(activation)
     if disposition.resolution_id != resolution.resolution_id:
         raise ExecutionError("resolution disposition names another resolution")
-    existing = writer.journal.all_records(stream, partition_id)
-    book = ProcedureResolutionBook((activation,))
-    book.replay(existing, bodies=writer.bodies)
+    book, _head = resolution_book_at_head(writer.journal, stream, activation, bodies=writer.bodies)
     stored_resolution = book.resolution_by_id(resolution.resolution_id)
     if stored_resolution != resolution:
         raise ExecutionError("resolution disposition target is absent from exhaust")
@@ -1424,6 +1536,7 @@ def append_resolution_disposition(
 
 
 __all__ = [
+    "resolution_book_at_head",
     "ProcedureProofReferenceV1",
     "ProcedureResolutionBook",
     "ProcedureResolutionDispositionV1",

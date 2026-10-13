@@ -59,7 +59,6 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.procedures.egress import TerminalEgressReceiptV4
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
-    ProcedureResolutionBook,
     ProcedureResolutionV2,
     ResolutionClaimEndpointV1,
     ResolutionContractActivationV3,
@@ -68,6 +67,7 @@ from cruxible_core.procedures.resolution import (
     build_procedure_resolution_v2,
     build_settled_outcome_relation,
     evaluate_prediction_correctness_condition,
+    resolution_book_at_head,
     resolution_contract_partition_id,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -243,14 +243,6 @@ def _terminal_record(
     )
 
 
-def _partition_records(
-    journal: LocalJournalBackend,
-    stream: JournalStreamIdentityV1,
-    activation: ResolutionContractActivationV3,
-) -> tuple[StoredProcedureJournalRecordV1, ...]:
-    return journal.all_records(stream, resolution_contract_partition_id(activation))
-
-
 def _append_settlement(
     instance: PlaybillInstance,
     *,
@@ -269,9 +261,7 @@ def _append_settlement(
         bodies=instance.body_store(),
     )
     partition = resolution_contract_partition_id(activation)
-    existing = _partition_records(journal, stream, activation)
-    book = ProcedureResolutionBook((activation,))
-    book.replay(existing, bodies=instance.body_store())
+    book, _head = resolution_book_at_head(journal, stream, activation, bodies=instance.body_store())
     latest = book.latest_non_overturned(activation.contract_id)
     if latest is not None:
         if isinstance(latest, ProcedureResolutionV2) and all(
@@ -313,8 +303,8 @@ def _append_settlement(
         fencing_token=_WRITER_TOKEN,
     )
     try:
-        activation_records = tuple(
-            stored for stored in existing if stored.record.event_kind == "resolution_activation"
+        activation_records = journal.select_records(
+            stream, partition_id=partition, event_kind="resolution_activation"
         )
         if not activation_records:
             writer.append(
