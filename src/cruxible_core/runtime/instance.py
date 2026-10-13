@@ -2683,6 +2683,24 @@ class PlaybillInstance:
                 self._evicted_through = cutoff
         return tuple(evicted)
 
+    def _evict_after_request(self) -> None:
+        """Evict past retention once this thread's request releases its projection holds.
+
+        A request's pooled handles hold their pieces while it can still read
+        them (its base, and the base's parent an advanced tree reads). Evicting
+        inside the request would find those generations held here, wait on
+        them, and try them again after the scope's release: two tries per
+        acceptance. Deferred to scope exit, one pass sees them released and
+        tries each generation that crossed the cutoff once.
+        """
+
+        def run() -> None:
+            self._housekeeping("projection_eviction", self.evict_projection_pieces)
+
+        pool = _PROJECTION_POOL.get()
+        if pool is None or not pool.after_close(("projection-eviction", id(self)), run):
+            run()
+
     def _listed_beyond(
         self, directory: Path, recovered: RecoveredInstanceState, cutoff: int
     ) -> dict[str, int]:
@@ -2986,7 +3004,7 @@ class PlaybillInstance:
             with phase("post_accept"):
                 with self._state_lock:
                     head = self._recovered.head.sequence
-                self._housekeeping("projection_eviction", self.evict_projection_pieces)
+                self._evict_after_request()
                 self._housekeeping("consumption_fold", self.fold_consumption_if_due)
                 self._housekeeping(
                     "candidate_retirement", lambda: self.retire_settled_candidates((head,))

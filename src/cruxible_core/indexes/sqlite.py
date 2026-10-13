@@ -1098,7 +1098,8 @@ class ProjectionPool:
     factory -- and is otherwise really closed. At scope exit every tracked handle,
     idle or still checked out, is closed and released from the pool. The
     accepted projection a handle reads is immutable, so a reused handle answers
-    what a fresh one would.
+    what a fresh one would. Work that must see the request's holds released
+    (projection eviction) is deferred to scope exit with ``after_close``.
     """
 
     def __init__(self) -> None:
@@ -1110,6 +1111,8 @@ class ProjectionPool:
         self._thread = threading.get_ident()
         self._lock = threading.Lock()
         self._values: dict[object, Any] = {}
+        # key -> work run once, after every handle is closed (see ``after_close``).
+        self._after_close: dict[object, Callable[[], object]] = {}
 
     def _on_thread(self) -> bool:
         return self._open and threading.get_ident() == self._thread
@@ -1121,6 +1124,19 @@ class ProjectionPool:
         re-check whatever can move within a request before reusing one.
         """
         return self._values if self._on_thread() else None
+
+    def after_close(self, key: object, run: Callable[[], object]) -> bool:
+        """Run ``run`` once at scope exit, after the pool's handles release their holds.
+
+        Work registered again under the same ``key`` runs once. False when the
+        pool is not this thread's open pool: the caller runs the work itself.
+        ``run`` must not raise; it runs inside the scope's ``finally``.
+        """
+        if not self._on_thread():
+            return False
+        with self._lock:
+            self._after_close.setdefault(key, run)
+        return True
 
     def take(self, key: object) -> ProjectionHandle | None:
         """An idle handle of ``key``, now checked out to the caller, or None."""
@@ -1185,9 +1201,15 @@ class ProjectionPool:
             self._idle.clear()
             self._owners.clear()
             self._values.clear()
-        for handle in tracked:
-            handle._release = None
-            handle.close()
+            deferred = list(self._after_close.values())
+            self._after_close.clear()
+        try:
+            for handle in tracked:
+                handle._release = None
+                handle.close()
+        finally:
+            for run in deferred:
+                run()
 
 
 def bind_projection(
