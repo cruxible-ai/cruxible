@@ -207,19 +207,61 @@ def test_scan_streams_a_bounded_prefix_including_a_dry_runs_held_bodies(
     assert dry.peek(extra, 4) == b"held"
 
 
-def test_only_evidence_bodies_and_erasure_advance_the_evidence_generation(tmp_path):
+def test_only_evidence_bodies_and_erasure_are_logged_as_landings(tmp_path):
     """Journal-record payloads (run records, dispatch coverage, settlements) never
-    move the verdict input fingerprint; an evidence body's arrival and any erase do."""
+    move the verdict input fingerprint; an evidence body's arrival and any erase do,
+    each logged before its object moves and again after."""
 
     store, digest, _path = _store(tmp_path)
-    generation = store.evidence_generation()
-    assert generation not in (None, "")
+    head = store.landings.head()
+    assert head.identity and head.sequence == 2
+    assert [(row.digest, row.kind) for row in store.landings.after(0)] == [
+        (digest, "store"),
+        (digest, "stored"),
+    ]
     store.store(b"run record payload", journal_payload=True)
-    assert store.evidence_generation() == generation
+    assert store.landings.head() == head
     store.store(b"good")  # already present: nothing arrived
-    assert store.evidence_generation() == generation
-    store.store(b"a new capture body")
-    after_arrival = store.evidence_generation()
-    assert after_arrival != generation
+    assert store.landings.head() == head
+    arrived = store.store(b"a new capture body").digest
+    assert [(row.digest, row.kind) for row in store.landings.after(head.sequence)] == [
+        (arrived, "store"),
+        (arrived, "stored"),
+    ]
+    after_arrival = store.landings.head()
     assert store.erase(digest)
-    assert store.evidence_generation() != after_arrival
+    assert [(row.digest, row.kind) for row in store.landings.after(after_arrival.sequence)] == [
+        (digest, "erase"),
+        (digest, "erased"),
+    ]
+    assert store.landings.head().identity == head.identity
+    # A cursor reads exactly the range it asks for.
+    assert [row.sequence for row in store.landings.after(1, through=3)] == [2, 3]
+
+
+def test_a_landing_logged_before_its_object_is_logged_again_once_it_is_final(tmp_path, monkeypatch):
+    """A reader that consumes the first row while the write is in flight sees the
+    digest again after the object lands, so nothing it derived then stays."""
+
+    store, _digest, _path = _store(tmp_path)
+    content = b"in flight"
+    seen: list[tuple[str, bool]] = []
+    original = store.landings.__class__.note
+
+    def note(self, digest, kind):  # type: ignore[no-untyped-def]
+        sequence = original(self, digest, kind)
+        seen.append((kind, store.verify(digest)))
+        return sequence
+
+    monkeypatch.setattr(store.landings.__class__, "note", note)
+    store.store(content)
+    assert seen == [("store", False), ("stored", True)]
+
+
+def test_a_missing_landing_log_reads_as_empty_and_is_not_created(tmp_path):
+    root = tmp_path / "managed" / "cas"
+    root.mkdir(parents=True)
+    store = ContentAddressedBodyStore(root)
+    assert (store.landings.head().identity, store.landings.head().sequence) == ("", 0)
+    assert store.landings.after(0) == ()
+    assert not store.landings.path.exists()

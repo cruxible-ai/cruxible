@@ -16,7 +16,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
 
 from cruxible_client.contracts.canonical import CasDigest
 from cruxible_client.contracts.cas_contracts import (
@@ -27,6 +26,7 @@ from cruxible_client.contracts.cas_contracts import (
 )
 from cruxible_client.contracts.errors import CasError
 from cruxible_core.storage.capture_envelope_index import ENVELOPE_HEAD, CaptureEnvelopeIndex
+from cruxible_core.storage.landing_log import LandingLog
 
 # Objects already hashed against their address, with the file identity observed
 # when they were: (device, inode, size, mtime, ctime). Bytes are reused without
@@ -237,6 +237,12 @@ class ContentAddressedBodyStore:
 
         return CaptureEnvelopeIndex(self)
 
+    @property
+    def landings(self) -> LandingLog:
+        """The sequenced log of every evidence body that lands and every erase."""
+
+        return LandingLog(self.root)
+
     @staticmethod
     def digest_bytes(content: bytes) -> CasDigest:
         return digest_bytes(content)
@@ -397,65 +403,13 @@ class ContentAddressedBodyStore:
         status = self._object_status(digest)
         return None if status is None else _file_identity(status)
 
-    #: Replaced (a fresh token) after every evidence body lands and every erase:
-    #: the one signal a remembered verdict needs, without journal payloads.
-    EVIDENCE_GENERATION = "evidence-generation"
-
-    def evidence_generation(self) -> str | None:
-        """The current evidence-body generation token; None when unreadable.
-
-        ``""`` means no evidence body has landed since the token was introduced.
-        Read through the held algorithm directory, like every object.
-        """
-
-        try:
-            descriptor = os.open(
-                self.EVIDENCE_GENERATION, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=self._root_fd
-            )
-        except FileNotFoundError:
-            return ""
-        except OSError:
-            return None
-        try:
-            return os.read(descriptor, 64).decode("ascii")
-        except (OSError, ValueError):
-            return None
-        finally:
-            os.close(descriptor)
-
-    def _bump_evidence_generation(self) -> None:
-        temporary = f".{self.EVIDENCE_GENERATION}.{uuid4().hex}"
-        try:
-            descriptor = os.open(
-                temporary,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                0o600,
-                dir_fd=self._root_fd,
-            )
-            try:
-                os.write(descriptor, uuid4().hex.encode("ascii"))
-            finally:
-                os.close(descriptor)
-            os.replace(
-                temporary,
-                self.EVIDENCE_GENERATION,
-                src_dir_fd=self._root_fd,
-                dst_dir_fd=self._root_fd,
-            )
-        except OSError as exc:
-            try:
-                os.unlink(temporary, dir_fd=self._root_fd)
-            except OSError:
-                pass
-            raise CasError("CAS evidence generation could not be advanced") from exc
-
     def store(self, content: bytes, *, journal_payload: bool = False) -> CasObjectMetadata:
         """Durably store inert bytes, idempotently, under their exact digest.
 
-        A new body advances the evidence generation unless it is a journal
-        record's payload: such a body is reachable only through the record
-        that names it, appended after it lands, so its arrival alone changes
-        no verdict input.
+        A new body is logged as a landing (``landings``), before the object is
+        written and again after, unless it is a journal record's payload: such a
+        body is reachable only through the record that names it, appended after
+        it lands, so its arrival alone changes no verdict input.
         """
 
         digest = self.digest_bytes(content)
@@ -474,6 +428,8 @@ class ContentAddressedBodyStore:
             if existing is not None:
                 self._verified_bytes(digest.tagged)
             else:
+                if not journal_payload:
+                    self.landings.note(digest.tagged, "store")
                 descriptor: int | None = None
                 try:
                     descriptor = os.open(
@@ -499,7 +455,7 @@ class ContentAddressedBodyStore:
                         os.close(descriptor)
                 os.fsync(directory)
                 if not journal_payload:
-                    self._bump_evidence_generation()
+                    self.landings.note(digest.tagged, "stored")
         finally:
             os.close(directory)
         return CasObjectMetadata(
@@ -651,6 +607,7 @@ class ContentAddressedBodyStore:
         directory = self._shard(shard)
         if directory is None:
             return False
+        self.landings.note(digest, "erase")
         try:
             os.unlink(name, dir_fd=directory)
             os.fsync(directory)
@@ -658,7 +615,7 @@ class ContentAddressedBodyStore:
             raise CasError("CAS body could not be erased") from exc
         finally:
             os.close(directory)
-        self._bump_evidence_generation()
+        self.landings.note(digest, "erased")
         return True
 
 

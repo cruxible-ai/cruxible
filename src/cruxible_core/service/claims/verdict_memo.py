@@ -11,13 +11,12 @@ at the same coordinate, so this remembers it. It is a cache and nothing else:
 
 * it is per-process and cold after a restart, so no answer depends on it;
 * it is keyed on everything the derivation reads -- the instance root, the
-  accepted coordinate, the exact Claim set, and the body store's evidence
-  generation, which moves when an evidence body arrives or any body leaves
+  accepted coordinate, the exact Claim set, and the head of the body store's
+  landing log, which moves when an evidence body arrives or any body leaves
   (deciding whether a capture can be replayed now) but not for journal-record
-  payloads. The generation sees bodies arrive and leave, not a body rewritten
-  in place, so each entry also keeps the file identity of every body-store
-  object its verdicts read and is served only while all of them hold (one stat
-  each);
+  payloads. The log sees bodies arrive and leave, not a body rewritten in
+  place, so each entry also keeps the file identity of every body-store object
+  its verdicts read and is served only while all of them hold (one stat each);
   Accepted attestations are bound by the coordinate; pending door attestations
   are not consumed by this derivation;
 * the evaluation instant is NOT in the key, because every real surface stamps a
@@ -47,19 +46,20 @@ MEMO_CAPACITY = 4
 def verdict_input_fingerprint(instance: object) -> str | None:
     """Fingerprint every input a Claim verdict reads besides the accepted tree.
 
-    The body store replaces its evidence-generation token after every evidence
-    body lands and every erase (``ContentAddressedBodyStore.store``): one small
-    read, and it does not move for journal-record payloads (run records, Line
-    dispatch coverage, settlements), which are reachable only through the
-    record that names them, appended after the body lands. This is a
-    writer-owned availability signal, not a proof against in-place tampering
-    with body bytes; the body fingerprints kept with each remembered derivation
-    cover that, and they record a consulted body's absence too. An unreadable
-    token disables reuse entirely: two failed observations must never form a
-    reusable key.
+    The body store logs every evidence body that lands and every erase, after
+    the object as well as before (``ContentAddressedBodyStore.landings``): the
+    log's identity and newest sequence are one indexed read, and they do not
+    move for journal-record payloads (run records, Line dispatch coverage,
+    settlements), which are reachable only through the record that names them,
+    appended after the body lands. This is a writer-owned availability signal,
+    not a proof against in-place tampering with body bytes; the body
+    fingerprints kept with each remembered derivation cover that, and they
+    record a consulted body's absence too. An unreadable log disables reuse
+    entirely: two failed observations must never form a reusable key.
     """
 
-    from cruxible_core.storage.cas import ContentAddressedBodyStore
+    from cruxible_client.contracts.errors import CasError
+    from cruxible_core.storage.landing_log import LandingLog
 
     root = getattr(instance, "root", None)
     descriptor = getattr(instance, "descriptor", None)
@@ -68,18 +68,11 @@ def verdict_input_fingerprint(instance: object) -> str | None:
     storage = getattr(descriptor, "storage", None)
     if storage is None:
         return None
-    marker = (
-        root
-        / getattr(storage, "cas", "cas")
-        / "sha256"
-        / ContentAddressedBodyStore.EVIDENCE_GENERATION
-    )
     try:
-        token = marker.read_text("ascii")
-    except FileNotFoundError:
-        token = ""
-    except (OSError, ValueError):
+        head = LandingLog(root / getattr(storage, "cas", "cas")).head()
+    except (CasError, OSError):
         return None
+    token = f"{head.identity}:{head.sequence}"
     # A recorded re-observation moves a cited content's freshness without an
     # evidence body landing: the re-observation journal's own log is an input
     # too, read from the authority so an interrupted append is never missed.
@@ -94,8 +87,8 @@ def verdict_input_fingerprint(instance: object) -> str | None:
     except (OSError, ValueError):
         return None
     if journal is None:
-        return "evidence-generation:" + token
-    return "evidence-generation:" + token + "|reobservation:" + journal
+        return "landings:" + token
+    return "landings:" + token + "|reobservation:" + journal
 
 
 def memo_key(

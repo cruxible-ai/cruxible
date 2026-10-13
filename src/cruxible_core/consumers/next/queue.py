@@ -1,15 +1,15 @@
 """Keep next's expensive Claim rows current as their accepted inputs change.
 
 This findings projection is disposable. Matching follows the accepted and door
-heads plus the body store's evidence generation, and one bounded worker folds
+heads plus the body store's landing log, and one bounded worker folds
 each new target before moving the serving cursor. Time bounds come from the
 fold, never from polling a clock: a deadline fire requests the next fold, and
 reads compute live until that fold catches up. A failed target remains stalled until an input
 changes or the operator rebuilds this disposable state, avoiding endless folds
 of the same broken inputs.
 
-The evidence generation sees evidence bodies arrive and any body go (journal
-record payloads never move it), not a body rewritten in place. Each fold
+The landing log sees evidence bodies arrive and any body go (journal record
+payloads never move it), not a body rewritten in place. Each fold
 therefore runs inside one CAS body observation, which records the file identity
 of every object any row family reads or checks, and a published queue is served
 only while one stat of each still matches. A changed identity is a miss (the
