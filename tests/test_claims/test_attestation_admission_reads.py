@@ -104,3 +104,67 @@ def test_historical_attestation_batch_reuses_exact_principal_and_indexed_referen
     assert verified
     assert len(lookups) * 2 == len(verified)
     assert set(lookups) == {(AcceptedCoordinate.from_internal(original), "owner")}
+
+
+def test_referent_producer_and_contract_tables_read_only_their_own_paths(
+    tmp_path: Path,
+) -> None:
+    """The referent's CaptureContracts, Providers and Procedures are read by prefix (perf B6).
+
+    The answers are the whole-tree ones; only the matching paths' bytes are read.
+    """
+
+    from collections.abc import Iterator, Mapping
+
+    from cruxible_client.contracts.captures import capture_contract_digest, parse_capture_contract
+    from cruxible_client.contracts.procedures.artifacts import (
+        parse_procedure,
+        procedure_artifact_digest,
+    )
+    from cruxible_client.contracts.providers import parse_provider, provider_digest
+    from cruxible_core.evidence import attestation_verification as verification
+
+    instance, _claim_id, _owner = _accepted_claim_world(tmp_path)
+    source = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert any(path.startswith("capture-contracts/") for path in source)
+
+    class Counted(Mapping[str, bytes]):
+        def __init__(self) -> None:
+            self.read: list[str] = []
+
+        def __getitem__(self, path: str) -> bytes:
+            self.read.append(path)
+            return source[path]
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(source)
+
+        def __len__(self) -> int:
+            return len(source)
+
+    prefixes = ("capture-contracts/", "providers/", "procedures/")
+    tree = Counted()
+    contracts = verification._capture_contracts(tree)
+    providers = verification._provider_digests(tree)
+    procedures = verification._procedure_digests(tree)
+    assert tree.read and all(path.startswith(prefixes) for path in tree.read)
+    assert len(tree.read) == sum(1 for path in source if path.startswith(prefixes))
+    assert {key: value.path for key, value in contracts.items()} == {
+        capture_contract_digest(parse_capture_contract(content, path=path)).tagged: path
+        for path, content in source.items()
+        if path.startswith("capture-contracts/")
+    }
+    assert providers == {
+        (parsed := parse_provider(content, path=path)).identity.qualified: provider_digest(
+            parsed
+        ).tagged
+        for path, content in source.items()
+        if path.startswith("providers/")
+    }
+    assert procedures == {
+        (parsed := parse_procedure(content, path=path)).identity.qualified: (
+            procedure_artifact_digest(parsed).tagged
+        )
+        for path, content in source.items()
+        if path.startswith("procedures/")
+    }

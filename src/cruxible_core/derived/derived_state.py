@@ -118,6 +118,17 @@ def row_values(tree: Mapping[str, bytes] | None) -> Mapping[str, bytes | BlobRef
     return None
 
 
+def paths_with_prefix(tree: Mapping[str, bytes], prefix: str) -> Iterator[str]:
+    """``tree``'s paths starting with ``prefix``, in the tree's own iteration order.
+
+    A snapshot's rows are an ordered map, so the prefix is one contiguous range
+    cut in O(log n); any other mapping is filtered path by path.
+    """
+    if isinstance(tree, (SnapshotTree, CandidateTree)):
+        return iter(tree._rows.split_prefix(prefix)[1])
+    return (path for path in tree if path.startswith(prefix))
+
+
 def row_size(value: bytes | BlobRef) -> int:
     return _size(value)
 

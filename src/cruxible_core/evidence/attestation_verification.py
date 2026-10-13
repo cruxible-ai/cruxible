@@ -49,6 +49,7 @@ from cruxible_client.contracts.providers import parse_provider, provider_digest,
 from cruxible_client.contracts.source_references import LedgerSourceReference
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_core.derived.derived_state import paths_with_prefix
 from cruxible_core.indexes.projection import AcceptedCoordinate
 
 
@@ -62,9 +63,10 @@ def _capture_contracts(
     tree: Mapping[str, bytes],
 ) -> dict[str, AcceptedCaptureContract]:
     result: dict[str, AcceptedCaptureContract] = {}
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("capture-contracts/"):
-            continue
+    # Filter the paths before ordering or reading any: only CaptureContracts are read.
+    for path in sorted(
+        paths_with_prefix(tree, "capture-contracts/"), key=lambda item: item.encode("utf-8")
+    ):
         contract = parse_capture_contract(tree[path], path=path)
         digest = capture_contract_digest(contract).tagged
         result[digest] = AcceptedCaptureContract(
@@ -157,20 +159,17 @@ def _examined_capture_semantics(claim: ClaimArtifactAny, capture_digest: str) ->
 
 def _provider_digests(tree: Mapping[str, bytes]) -> dict[str, str]:
     result: dict[str, str] = {}
-    for path, content in tree.items():
-        if not path.startswith("providers/"):
-            continue
-        provider = parse_provider(content, path=path)
+    # By path first: ``items()`` would read every blob of the tree to keep a few.
+    for path in paths_with_prefix(tree, "providers/"):
+        provider = parse_provider(tree[path], path=path)
         result[provider.identity.qualified] = provider_digest(provider).tagged
     return result
 
 
 def _procedure_digests(tree: Mapping[str, bytes]) -> dict[str, str]:
     result: dict[str, str] = {}
-    for path, content in tree.items():
-        if not path.startswith("procedures/"):
-            continue
-        procedure = parse_procedure(content, path=path)
+    for path in paths_with_prefix(tree, "procedures/"):
+        procedure = parse_procedure(tree[path], path=path)
         result[procedure.identity.qualified] = procedure_artifact_digest(procedure).tagged
     return result
 
