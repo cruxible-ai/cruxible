@@ -486,6 +486,37 @@ class PlaybillInstanceManager:
                 )
         return closed
 
+    def compact_ledgers_at_start(self) -> tuple[str, ...]:
+        """Compact and prune each served instance's ledger before the daemon serves.
+
+        Pruning unreachable objects is safe only while no writer can be
+        creating objects a ref does not reach yet; before the daemon serves,
+        none can (the state-root lock makes this daemon the instances' only
+        owner). Ledgers with few loose objects are left alone. Logs and
+        continues per instance; it never keeps the daemon from starting.
+        """
+
+        compacted: list[str] = []
+        try:
+            records = get_registry().list_instances()
+        except Exception as exc:
+            _log.warning("ledger_start_compaction_enumeration_failed", reason=str(exc))
+            return ()
+        for record in records:
+            if record.backend != GOVERNED_DAEMON_BACKEND:
+                continue
+            try:
+                instance = self.get(record.instance_id)
+                if instance.compact_ledger_at_start():
+                    compacted.append(record.instance_id)
+            except Exception as exc:
+                _log.warning(
+                    "ledger_start_compaction_failed",
+                    instance_id=record.instance_id,
+                    reason=f"{type(exc).__name__}: {exc}",
+                )
+        return tuple(compacted)
+
     def recover_proposal_egress(self) -> dict[str, dict[str, str]]:
         """Resolve prepared-but-unresolved proposal terminals before serving requests.
 

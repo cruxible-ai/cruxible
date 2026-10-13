@@ -127,6 +127,11 @@ record references is deleted under it.
   other piece is evicted after each activation and when the instance opens,
   its manifest before its piece. Binding an evicted coordinate (`--at`, a
   pinned read, an old base) rebuilds it from the ledger and the body store.
+- **The ledger.** Every ref, note and archived proposal is kept. Objects are
+  written loose; every 64 accepted generations the daemon packs them
+  (`repack -a -d`), packs refs and writes the commit-graph, off the
+  acceptance path, and at start, before serving, it also prunes unreachable
+  loose objects, the one step that is safe only while no writer is in flight.
 
 ## Repository ownership
 

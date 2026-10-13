@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import structlog
 from pydantic import ValidationError
 
 from cruxible_client.contracts.approval_policy import (
@@ -307,6 +308,16 @@ def _path_binding(root: Path, entries: tuple[tuple[str, Any], ...]) -> _PathBind
     return os.path.realpath(root), tuple(components)
 
 
+# Live ledger compaction (repack, pack-refs, commit-graph) runs once per this
+# many accepted generations, on the advisory thread after a write; the daemon
+# also compacts and prunes each instance at start, before serving.
+LEDGER_COMPACTION_STRIDE = 64
+# At start, a ledger with fewer loose objects than this is left as it is.
+LEDGER_START_COMPACTION_LOOSE_OBJECTS = 256
+
+_log = structlog.get_logger("cruxible.ledger_upkeep")
+
+
 class PlaybillInstance:
     """A verified opt-in Cruxible substrate rooted outside agent workspaces."""
 
@@ -370,6 +381,9 @@ class PlaybillInstance:
         self._receive_limits = ProposalReceiveLimits()
         self._mirror_condition = threading.Condition()
         self._mirror_thread: threading.Thread | None = None
+        # The compaction stride (head sequence // stride) last compacted at;
+        # None until the first advisory pass after open records it.
+        self._compacted_stride: int | None = None
         self._quiet_checkpoints: QuietCheckpointWriter | None = None
         # Read services keyed by accepted coordinate park their derived
         # history indexes here so activation drops them with one clear().
@@ -1582,6 +1596,7 @@ class PlaybillInstance:
 
         try:
             self._reconcile_proposal_review_refs()
+            self._compact_ledger_on_stride()
             if self._workspace_advertiser is None:
                 return NOT_ATTACHED_ADVERTISEMENT
             return self._workspace_advertiser()
@@ -1591,6 +1606,54 @@ class PlaybillInstance:
                 workspace_path=None,
                 failure_code="unexpected_failure",
             )
+
+    def _compact_ledger_on_stride(self) -> None:
+        """Compact the ledger once each time the head crosses a stride, off the acceptance path."""
+
+        with self._state_lock:
+            stride = self._recovered.head.sequence // LEDGER_COMPACTION_STRIDE
+        if self._compacted_stride is None:
+            self._compacted_stride = stride
+            return
+        if stride <= self._compacted_stride or is_previewing():
+            return
+        self._compacted_stride = stride
+        try:
+            self.compact_ledger()
+        except Exception as exc:
+            # Compaction is housekeeping: the next stride retries.
+            _log.warning(
+                "ledger_compaction_failed",
+                instance_id=self.descriptor.instance_id,
+                reason=f"{type(exc).__name__}: {exc}",
+            )
+
+    def compact_ledger(self, *, prune: bool = False) -> bool:
+        """Pack objects and refs and write the commit-graph; prune only when asked.
+
+        Packing and the commit-graph are safe beside live writers; refs are
+        packed while the review projection and activation locks exclude every
+        ref writer. ``prune`` deletes unreachable loose objects and is for the
+        daemon's start, before it serves: it also waits for no generation in
+        flight, and is skipped (returning False) if one is.
+        """
+
+        refuse_write_while_previewing("ledger compaction")
+        self._ledger.compact_objects()
+        pruned = False
+        with self.review_projection_lock(), self._ledger.activation_lock():
+            self._ledger.pack_refs()
+            if prune:
+                pruned = self._ledger.prune_unreachable()
+        return pruned
+
+    def compact_ledger_at_start(self) -> bool:
+        """The daemon's start pass: compact and prune a ledger that has piled up loose objects."""
+
+        if self._ledger.loose_object_count() < LEDGER_START_COMPACTION_LOOSE_OBJECTS:
+            return False
+        self.compact_ledger(prune=True)
+        return True
 
     @contextmanager
     def review_projection_lock(self) -> Iterator[None]:
@@ -1659,10 +1722,22 @@ class PlaybillInstance:
         # slots remain intact for the delivery recovery path.
         retired_targets = {}
         assert evidence.index is not None
-        for target, oid in self._ledger.proposal_refs().items():
-            rows = evidence.index.rows(
-                evidence, "target_ref=? AND candidate_commit_oid=?", (target, oid)
-            )
+        slots = self._ledger.proposal_refs()
+        # One snapshot of the index answers every slot.
+        slot_rows: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        if slots:
+            with evidence.index.read(evidence) as connection:
+                for target, oid in slots.items():
+                    slot_rows[(target, oid)] = [
+                        dict(row)
+                        for row in connection.execute(
+                            "SELECT * FROM proposals WHERE target_ref=? AND candidate_commit_oid=? "
+                            "ORDER BY proposal_id",
+                            (target, oid),
+                        )
+                    ]
+        for target, oid in slots.items():
+            rows = slot_rows[(target, oid)]
             if not rows or any(row["proposal_id"] in active_ids for row in rows):
                 continue
             complete = [
