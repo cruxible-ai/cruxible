@@ -390,16 +390,25 @@ re-observations reach only the Claims and keys that read them. Each fact and
 key holds on its own evaluation-time interval; one `next.expire` deadline,
 armed at the earliest end, refreshes exactly what ended. A `next` read at the
 current accepted and door heads serves these rows, its workspace citation
-rows and `orient`'s Claim counts; when the worker has not yet followed a change
-or a bound, the read derives just that in memory, from one unmoving state of
-the logs (it derives again if a body lands meanwhile), and never writes the
-worker's state. A read at an earlier coordinate or a pinned door head folds
+rows, its projection checks' Claim statuses and `orient`'s Claim counts; when
+the worker has not yet followed a change or a bound, the read derives just
+that in memory and never writes the worker's state. A served read answers from
+one unmoving state of the logs it depends on, checked again once the whole
+queue is read (a projection query still evaluates over live evidence, scoped
+to its own predicates): when a body lands or a head moves meanwhile it tries
+again (first settling any landing whose writer abandoned it, as opening the
+body store does), and after three attempts that each saw a move it refuses with
+`cruxible.read.inputs_moving` (HTTP 503, `retryable`) rather than fold the
+moving logs. A refusal answers as the full fold does: its first failure,
+following the fold's own order, including door observations interleaved
+across Claims. A read at an earlier coordinate or a pinned door head folds
 every Claim instead, as does a read while the worker is disabled, not yet run
 or its state from another format. A page cursor whose first page was read at
 the live accepted and door heads is refused once either head moves; this
-holds as well when those exact current heads were supplied explicitly. A body rewritten in place, which no log
-records, reaches the Claims that read it at the next daily `evidence.sweep`,
-which compares the file identity of every body a fact consulted. The worker
+holds as well when those exact current heads were supplied explicitly. A body
+rewritten in place, which no log records, reaches the Claims that read it at
+the next daily `evidence.sweep`, which compares the file identity of every body
+a fact consulted. The worker
 rebuilds only on first start, a new derivation format or compiler, when its
 cursors no longer name positions in those logs, or on
 `cruxible instance rebuild-next`. Its evidence part re-hashes the Captures live Claims cite whenever a generation
