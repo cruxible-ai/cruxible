@@ -5651,6 +5651,14 @@ class _CallerView:
         if repair.operation == "cruxible.line.evaluate":
             # The tool's own tier is a dry-run read; enqueueing the range writes.
             return _GOVERNED_WRITE_RUNG
+        if repair.operation == "cruxible.block.sync" and self.surface not in ("mcp", "sdk"):
+            # The tool's own tier is a pure check. The CLI's rendering of
+            # this repair runs `block sync --all` with no `--check`, which
+            # converges stale rendered blocks and records their pages'
+            # observations (a GOVERNED_WRITE write) by default; MCP and the
+            # SDK facade never converge or record on their own, so they stay
+            # at the tool's own read tier.
+            return _GOVERNED_WRITE_RUNG
         if repair.operation != "cruxible.line.dispatch":
             return static
         # A Line dispatch's tier is the Line's own: an observe-only Line

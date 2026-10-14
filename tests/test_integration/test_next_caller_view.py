@@ -161,6 +161,48 @@ def test_a_read_only_caller_keeps_the_row_and_its_nested_findings_withheld() -> 
     assert finding.repair_requires.tool == "cruxible_authoring_bind"
 
 
+def _block_sync_row() -> PlaybillNextItemV1:
+    return _item(
+        severity="repair",
+        reason="projection_backing_stale",
+        subject_identity="corpus.runbook#summary",
+        detail={},
+        repair=PlaybillNextRepairV1(
+            operation="cruxible.block.sync",
+            target="corpus.runbook#summary",
+            required_change="sync_the_block",
+            arguments={"all": True},
+        ),
+    )
+
+
+def test_block_sync_repair_needs_governed_write_on_cli_but_stays_read_only_elsewhere() -> None:
+    """Review clia F-003: the CLI default converges and records; MCP/SDK stay read-only."""
+
+    row = _block_sync_row()
+
+    (kept,) = _view(surface="cli", caller_rung=0).render([row])  # READ_ONLY
+    assert kept.repair is None
+    assert kept.repair_requires is not None
+    assert kept.repair_requires.tool == "cruxible_block_sync"
+    assert kept.repair_requires.tier == "governed_write"
+    assert kept.repair_requires.because == ("tier",)
+
+    (kept,) = _view(surface="cli", caller_rung=1).render([row])  # GOVERNED_WRITE
+    assert kept == row
+    assert kept.repair is not None and kept.repair.command == "cruxible block sync --all"
+
+    mcp_row = _block_sync_row()
+    (kept,) = _view(surface="mcp", caller_rung=0).render([mcp_row])  # READ_ONLY
+    assert kept.repair is not None and kept.repair_requires is None
+    assert kept.repair.command == "cruxible_block_sync(all_sources=true)"
+
+    sdk_row = _block_sync_row()
+    (kept,) = _view(surface="sdk", caller_rung=0).render([sdk_row])  # READ_ONLY
+    assert kept.repair is not None and kept.repair_requires is None
+    assert kept.repair.command == "cx.block.sync(all=True)"
+
+
 def test_every_repair_operation_names_its_door_in_one_table() -> None:
     from typing import get_args
 
