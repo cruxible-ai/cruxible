@@ -91,7 +91,7 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 6
+FORMAT = 7
 #: The one deadline next arms: the earliest instant a stored fact or row stops holding.
 NEXT_EXPIRE = "next.expire"
 #: The daily evidence sweep: each fire compares every consulted body's file identity,
@@ -177,6 +177,11 @@ CREATE INDEX citation_commitments_by_source ON citation_commitments(source_id,cl
  WHERE source_id IS NOT NULL;
 CREATE INDEX citation_commitments_by_id ON citation_commitments(citation_id);
 CREATE INDEX claim_facts_citation_errors ON claim_facts(claim_id) WHERE citation_error IS NOT NULL;
+CREATE TABLE citation_unavailable (
+ claim_id TEXT NOT NULL, citation_id TEXT NOT NULL, capture_digest TEXT NOT NULL,
+ PRIMARY KEY(claim_id,citation_id)
+) STRICT;
+CREATE INDEX citation_unavailable_by_id ON citation_unavailable(citation_id);
 CREATE TABLE subject_shells (path TEXT PRIMARY KEY, kind TEXT NOT NULL) STRICT, WITHOUT ROWID;
 CREATE INDEX subject_shells_by_kind ON subject_shells(kind,path);
 CREATE TABLE subject_kind_counts (kind TEXT PRIMARY KEY, live INTEGER NOT NULL) STRICT;
@@ -213,6 +218,7 @@ LAYER1_TABLES = (
     "capture_bodies",
     "door_events",
     "citation_commitments",
+    "citation_unavailable",
     "claim_inputs",
     "claim_lineage",
     "claim_pins",
@@ -429,6 +435,9 @@ class _Facts:
     reads: frozenset[str]
     capture_bodies: dict[str, dict[str, Any] | None]
     citations: tuple[tuple[Any, ...], ...]
+    #: Citations this Claim effectively cites whose Capture envelope could not
+    #: be read: (citation_id, capture_digest). Named in a row, never raised.
+    unavailable_citations: tuple[tuple[str, str], ...]
     verdict: ClaimVerdictResultAny | None
 
     @property
@@ -600,18 +609,20 @@ def _claim_facts(
         errors.append((_error_code(exc), str(exc)))
         raised.append(exc)
     citations: tuple[tuple[Any, ...], ...] = ()
+    unavailable_citations: tuple[tuple[str, str], ...] = ()
     citation_error: str | None = None
     if claim.lifecycle.state == "live" and visible:
         try:
-            citations = tuple(
-                _citation_row(identity, commitment)
-                for commitment in claim_citation_commitments(
-                    instance,
-                    claim=claim,
-                    coordinate=coordinate,
-                    store=context.body_store(),
-                    claim_types=claim_types,
-                )
+            commitments, unavailable = claim_citation_commitments(
+                instance,
+                claim=claim,
+                coordinate=coordinate,
+                store=context.body_store(),
+                claim_types=claim_types,
+            )
+            citations = tuple(_citation_row(identity, commitment) for commitment in commitments)
+            unavailable_citations = tuple(
+                (item.citation_id, item.capture_digest) for item in unavailable
             )
         except Exception as exc:  # noqa: BLE001 - mirrors the inventory's own refusal
             citation_error = _error_code(exc)
@@ -665,6 +676,7 @@ def _claim_facts(
         reads=frozenset(reads),
         capture_bodies=capture_bodies,
         citations=citations,
+        unavailable_citations=unavailable_citations,
         verdict=verdict,
     )
 
@@ -1480,6 +1492,7 @@ def _apply_facts(connection: sqlite3.Connection, delta: _Delta) -> set[str]:
         "claim_facts",
         "fact_reads",
         "citation_commitments",
+        "citation_unavailable",
         "capture_bodies",
         "claim_inputs",
         "claim_lineage",
@@ -1509,6 +1522,13 @@ def _apply_facts(connection: sqlite3.Connection, delta: _Delta) -> set[str]:
         )
         connection.executemany(
             "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?,?)", facts.citations
+        )
+        connection.executemany(
+            "INSERT INTO citation_unavailable VALUES (?,?,?)",
+            (
+                (identity, citation_id, capture_digest)
+                for citation_id, capture_digest in facts.unavailable_citations
+            ),
         )
         connection.executemany(
             "INSERT INTO capture_bodies VALUES (?,?,?,?)",
@@ -2129,7 +2149,11 @@ class ServedRows:
     #: The citation commitments the read asked for, by id: of these citation ids,
     #: or every one that names a workspace source (live visible Claims only).
     citations: dict[str, Any] | None = None
-    #: Whether some live visible Claim's citations could not be read (the fold refuses).
+    #: Of the same citations, the ones whose cited Capture envelope could not be
+    #: read: (citation_id, capture_digest, claim_id). Named in a row, never raised.
+    citations_unavailable: tuple[tuple[str, str, str], ...] | None = None
+    #: Whether some live visible Claim's citations failed for another reason
+    #: entirely (the fold refuses, as this read does too).
     citation_error: bool = False
     #: The projection-backed Claims the read asked for, by qualified identity:
     #: (resolution status, visible), or None for a Claim whose facts failed.
@@ -2485,13 +2509,14 @@ def _read_served(
             _EXPIRING_MANDATES, (start, start + expiring_within.microseconds)
         )
     )
-    commitments, citation_error = _served_citations(connection, citations)
+    commitments, citation_error, citations_unavailable = _served_citations(connection, citations)
     return ServedRows(
         rows=items,
         holds=holds,
         subject_kinds=kinds,
         expiring_mandates=mandates,
         citations=commitments,
+        citations_unavailable=citations_unavailable,
         citation_error=citation_error,
         backed=_served_backings(connection, backed) if backed else None,
     )
@@ -2526,7 +2551,7 @@ def _served_backings(
 
 def _served_citations(
     connection: sqlite3.Connection, citations: CitationRequest
-) -> tuple[dict[str, Any] | None, bool]:
+) -> tuple[dict[str, Any] | None, bool, tuple[tuple[str, str, str], ...]]:
     """The maintained commitments of these citation ids, or of every one naming a source.
 
     Layer 1 keeps them for exactly the Claims the fold's inventory reads (live,
@@ -2534,14 +2559,17 @@ def _served_citations(
     them from here, never from every Claim's envelopes. A source observation
     reads only the commitments naming a source, through the source index: each
     one is a row or a check against the observation, and a commitment naming
-    none can be neither. A Claim whose citations could not be read refuses the
-    inventory, as the fold does.
+    none can be neither (an unavailable citation's source is unknown, so every
+    one of these is read for a source observation, unfiltered). A citation
+    whose cited Capture envelope could not be read is named in the third
+    tuple, never raised; a Claim whose citations failed for another reason
+    entirely still refuses the inventory, as the fold does.
     """
 
     from cruxible_core.service.discovery.next import _CitationCommitment
 
     if citations is None:
-        return None, False
+        return None, False, ()
     error = connection.execute(_CITATION_ERROR).fetchone() is not None
     columns = (
         "claim_id,citation_id,commitment_digest,byte_length,source_id,source_digest,"
@@ -2580,7 +2608,25 @@ def _served_citations(
                 else tuple((str(key), value) for key, value in json.loads(arguments))
             ),
         )
-    return commitments, error
+    unavailable_found = (
+        connection.execute(
+            "SELECT citation_id,capture_digest,claim_id FROM citation_unavailable"
+        ).fetchall()
+        if citations == "sources"
+        else _rows(
+            connection,
+            "SELECT citation_id,capture_digest,claim_id FROM citation_unavailable "
+            "WHERE citation_id IN ({marks})",
+            tuple(sorted(set(citations))),
+        )
+    )
+    unavailable = tuple(
+        sorted(
+            (str(citation_id), str(capture_digest), str(claim_id))
+            for citation_id, capture_digest, claim_id in unavailable_found
+        )
+    )
+    return commitments, error, unavailable
 
 
 def _recomposed(

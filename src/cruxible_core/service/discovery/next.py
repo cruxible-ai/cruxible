@@ -2828,6 +2828,31 @@ class _CitationCommitment:
     set_arguments: tuple[tuple[str, object], ...] | None = None
 
 
+@dataclass(frozen=True)
+class _UnavailableCitation:
+    """A live Claim's citation whose cited Capture envelope the store cannot
+    produce right now (missing, corrupt, or refused).
+
+    A direct byte read of the Capture still refuses; the citation inventory a
+    workspace observation walks instead names it unavailable and answers the
+    rest of the inventory normally, the same principle a damaged body's
+    ``evidence_unavailable`` row already follows.
+    """
+
+    citation_id: str
+    capture_digest: str
+    claim_identity: str
+
+
+@dataclass(frozen=True)
+class CitationInventory:
+    """Citation commitments a workspace observation reads, by citation id, and
+    the ones whose cited Capture envelope could not be read."""
+
+    by_id: Mapping[str, _CitationCommitment]
+    unavailable: tuple[_UnavailableCitation, ...] = ()
+
+
 def _whole_source_selection(envelope: object) -> bool:
     source = getattr(envelope, "source", None)
     if not isinstance(source, ExternalSourceReference):
@@ -2878,7 +2903,7 @@ def _citation_commitments(
     evaluation_time: datetime,
     claims: tuple[ClaimArtifactAny, ...] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
-) -> dict[str, _CitationCommitment]:
+) -> CitationInventory:
     population = (
         (
             _claim_from_view(view)
@@ -2915,23 +2940,26 @@ def _citation_commitments(
         )
         is not None
     }
+    unavailable: list[_UnavailableCitation] = []
     try:
         for claim in population:
             if claim.lifecycle.state != "live" or claim.identity.qualified not in visible_claims:
                 continue
-            for commitment in claim_citation_commitments(
+            commitments, claim_unavailable = claim_citation_commitments(
                 instance,
                 claim=claim,
                 coordinate=internal_coordinate,
                 store=store,
                 claim_types=citation_claim_types,
-            ):
+            )
+            for commitment in commitments:
                 result[commitment.citation_id] = commitment
+            unavailable.extend(claim_unavailable)
     except Exception as exc:
         raise NextAcceptedStateInvalid(
             f"{NextAcceptedStateInvalid.code}: citation inventory is invalid"
         ) from exc
-    return result
+    return CitationInventory(by_id=result, unavailable=tuple(unavailable))
 
 
 _CITATION_READER = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
@@ -2944,12 +2972,18 @@ def claim_citation_commitments(
     coordinate: AcceptedProjectionCoordinate,
     store: Any,
     claim_types: dict[str, ClaimType | None],
-) -> tuple[_CitationCommitment, ...]:
+) -> tuple[tuple[_CitationCommitment, ...], tuple[_UnavailableCitation, ...]]:
     """One live Claim's citation commitments: what each effective citation committed to.
 
     Reads the Claim's law record, its predecessor version when it has one, and
     the Capture envelope of each effective citation. ``claim_types`` is a
     per-caller ClaimType memo for the restating ``set`` arguments.
+
+    A citation whose cited Capture envelope cannot be read -- missing,
+    corrupt, or refused -- is named in the second tuple instead of raising:
+    the rest of the Claim's citations are still read and returned in the
+    first. Nothing extra is read to tell those apart; the read that already
+    has to happen is the one that fails.
     """
 
     evidence = _claim_law_evidence(
@@ -2975,13 +3009,24 @@ def claim_citation_commitments(
         ):
             effective_captures.difference_update(predecessor.backing.capture_digests)
     commitments: list[_CitationCommitment] = []
+    unavailable: list[_UnavailableCitation] = []
     for citation in claim_citation_references(claim):
         if citation.capture_digest not in effective_captures:
             continue
         # Present as of the read's landing position, or missing to it.
-        envelope = parse_capture_envelope(
-            read_body(store, citation.capture_digest, access=_CITATION_READER)
-        )
+        try:
+            envelope = parse_capture_envelope(
+                read_body(store, citation.capture_digest, access=_CITATION_READER)
+            )
+        except CruxibleError:
+            unavailable.append(
+                _UnavailableCitation(
+                    citation_id=citation.citation_id,
+                    capture_digest=citation.capture_digest,
+                    claim_identity=claim.identity.qualified,
+                )
+            )
+            continue
         source_id: str | None = None
         source_digest: str | None = None
         if (
@@ -3029,7 +3074,7 @@ def claim_citation_commitments(
                 ),
             )
         )
-    return tuple(commitments)
+    return tuple(commitments), tuple(unavailable)
 
 
 def _historical_claim(
@@ -3915,6 +3960,35 @@ def _citation_drift_item(
     )
 
 
+def _citation_unavailable_item(item: _UnavailableCitation) -> PlaybillNextItemV1:
+    """One citation whose cited Capture envelope cannot be read right now.
+
+    Reuses ``evidence_unavailable``'s reason and row shape: the subject is the
+    Capture, named by this one citing Claim, the same repair the evidence
+    sweep's own finding carries. The sweep discovers a damaged body on its own
+    schedule; this one is discovered where a workspace observation's citation
+    inventory walk already has to read the envelope, and is not a duplicate --
+    a single cited Capture appears here once per citing Claim.
+    """
+
+    subject = f"Capture:{item.capture_digest}"
+    return _item(
+        severity="repair",
+        reason="evidence_unavailable",
+        subject_identity=subject,
+        related_identities=(item.claim_identity,),
+        detail={
+            "capture_digest": item.capture_digest,
+            "citation_id": item.citation_id,
+        },
+        repair=PlaybillNextRepairV1(
+            operation="hand_edit",
+            target=subject,
+            required_change="restore_the_capture_from_backup_or_recapture_and_recite_its_claims",
+        ),
+    )
+
+
 def _workspace_items(
     instance: PlaybillInstance,
     *,
@@ -3932,13 +4006,21 @@ def _workspace_items(
     if observation is None:
         return (), ()
 
-    def commitments() -> Mapping[str, _CitationCommitment]:
+    def commitments() -> CitationInventory:
         if served is not None and served.citations is not None:
             if served.citation_error:
                 raise NextAcceptedStateInvalid(
                     f"{NextAcceptedStateInvalid.code}: citation inventory is invalid"
                 )
-            return served.citations
+            return CitationInventory(
+                by_id=served.citations,
+                unavailable=tuple(
+                    _UnavailableCitation(
+                        citation_id=citation_id, capture_digest=capture_digest, claim_identity=claim
+                    )
+                    for citation_id, capture_digest, claim in served.citations_unavailable or ()
+                ),
+            )
         return _citation_commitments(
             instance,
             coordinate=coordinate,
@@ -3977,9 +4059,22 @@ def _workspace_items(
             )
     if observation.drift_observations is not None and access_profile.permits("instance"):
         domains.append("workspace_sources")
-        drifted = commitments()
+        requested_ids = {drift.citation_id for drift in observation.drift_observations}
+        inventory = commitments()
+        unavailable_ids = {
+            item.citation_id for item in inventory.unavailable if item.citation_id in requested_ids
+        }
+        items.extend(
+            _citation_unavailable_item(item)
+            for item in inventory.unavailable
+            if item.citation_id in requested_ids
+        )
         for drift in observation.drift_observations:
-            expected = drifted.get(drift.citation_id)
+            if drift.citation_id in unavailable_ids:
+                # Its cited Capture is unreadable, named above; it is not a
+                # mismatched or unknown citation and the rest still checks.
+                continue
+            expected = inventory.by_id.get(drift.citation_id)
             if expected is None or expected.commitment_digest != drift.expected_commitment_digest:
                 raise NextWorkspaceObservationInvalid(
                     f"{NextWorkspaceObservationInvalid.code}: "
@@ -3999,6 +4094,7 @@ def _workspace_items(
         domains.append("workspace_sources")
         observed = {source.source_id: source for source in observation.source_observations}
         inventory = commitments()
+        items.extend(_citation_unavailable_item(item) for item in inventory.unavailable)
         defective_scan_notes = {
             source.source_id: notes
             for source in observation.source_observations
@@ -4006,8 +4102,8 @@ def _workspace_items(
             if notes is not None
         }
         defective_commitments: dict[str, list[_CitationCommitment]] = defaultdict(list)
-        for citation_id in sorted(inventory, key=lambda item: item.encode("ascii")):
-            commitment = inventory[citation_id]
+        for citation_id in sorted(inventory.by_id, key=lambda item: item.encode("ascii")):
+            commitment = inventory.by_id[citation_id]
             if commitment.source_id is None or commitment.source_digest is None:
                 continue
             item = _source_citation_item(

@@ -212,6 +212,102 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
         service_playbill_next(instance, request=substituted)
 
 
+@pytest.mark.parametrize("damage", ("deleted", "corrupt"))
+def test_citation_with_an_unreadable_envelope_rows_unavailable_and_answers_the_rest(
+    tmp_path: Path, damage: str
+) -> None:
+    """A workspace observation's citation inventory never fails whole on one cited
+    Capture's unreadable envelope (missing or corrupt): it names that citation's
+    evidence unavailable, reusing the sweep's row, and answers the rest of the call. A
+    direct byte read of the same envelope still refuses (maintainer ruling 2026-10-13,
+    extending dev.decision/corrupt-body-unavailable-1013)."""
+
+    from cruxible_client.contracts.errors import CruxibleError
+    from cruxible_core.storage.read_positions import read_body
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
+
+    instance, _owner = seed_claims(tmp_path)
+    listed = service_list_playbill_claims(instance)
+    claim = _claim_from_view(listed.claims[0])
+    citation = claim_citation_references(claim)[0]
+    store = instance.body_store()
+    access = BodyAccessContext(principal_id="next-test", can_read_body=True)
+    envelope = parse_capture_envelope(store.read(citation.capture_digest, access=access))
+    path = store._path(citation.capture_digest)
+    if damage == "deleted":
+        path.unlink()
+    else:
+        _rewrite_in_place(path, keep_mtime=True)
+
+    request = NextRequest(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+        access_profile=_access(),
+        workspace_observation=NextWorkspaceObservation(
+            drift_observations=(
+                NextDriftObservation(
+                    citation_id=citation.citation_id,
+                    expected_commitment_digest=envelope.commitment.digest,
+                    observed_commitment_digest=envelope.commitment.digest,
+                ),
+            ),
+        ),
+    )
+
+    # Never raises: the rest of the call answers normally.
+    result = service_playbill_next(instance, request=request)
+
+    unavailable = [item for item in result.items if item.reason == "evidence_unavailable"]
+    assert len(unavailable) == 1
+    row = unavailable[0]
+    assert row.subject_identity == f"Capture:{citation.capture_digest}"
+    assert row.related_identities == (claim.identity.qualified,)
+    assert row.detail["citation_id"] == citation.citation_id  # type: ignore[index]
+    assert row.detail["capture_digest"] == citation.capture_digest  # type: ignore[index]
+    assert "citation_drifted" not in {item.reason for item in result.items}
+    assert "workspace_sources" in result.observed_domains
+
+    # A direct byte read of the same envelope still refuses.
+    with pytest.raises(CruxibleError):
+        read_body(store, citation.capture_digest, access=access)
+
+
+def test_healthy_citations_never_carry_an_unavailable_row(tmp_path: Path) -> None:
+    """The ordinary drift check (its own test above) never emits
+    ``evidence_unavailable``: it is only named when the cited envelope cannot be read."""
+
+    instance, _owner = seed_claims(tmp_path)
+    listed = service_list_playbill_claims(instance)
+    claim = _claim_from_view(listed.claims[0])
+    citation = claim_citation_references(claim)[0]
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            citation.capture_digest,
+            access=BodyAccessContext(principal_id="next-test", can_read_body=True),
+        )
+    )
+
+    result = service_playbill_next(
+        instance,
+        request=NextRequest(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=EVALUATION_TIME,
+            access_profile=_access(),
+            workspace_observation=NextWorkspaceObservation(
+                drift_observations=(
+                    NextDriftObservation(
+                        citation_id=citation.citation_id,
+                        expected_commitment_digest=envelope.commitment.digest,
+                        observed_commitment_digest=envelope.commitment.digest,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    assert not [item for item in result.items if item.reason == "evidence_unavailable"]
+
+
 def _accept_claim_successor(instance, owner, *, value: str, sequence: int):  # type: ignore[no-untyped-def]
     current = next(
         claim
@@ -313,13 +409,13 @@ def test_resolvable_citation_predecessor_still_subtracts_dead_spans(tmp_path: Pa
     predecessor = _accept_claim_successor(instance, owner, value="blocked", sequence=3)
     old_citation = claim_citation_references(predecessor)[0]
 
-    commitments = _citation_commitments(
+    inventory = _citation_commitments(
         instance,
         coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
     )
 
-    assert old_citation.citation_id not in commitments
+    assert old_citation.citation_id not in inventory.by_id
 
 
 def test_backing_only_successor_keeps_edited_predecessor_span_in_drift_queue(
@@ -483,12 +579,12 @@ def test_malformed_capture_snapshot_never_hides_another_citations_repair(
     monkeypatch.setattr(
         "cruxible_core.service.discovery.next.parse_capture_envelope", synthetic_capture
     )
-    commitments = _citation_commitments(
+    inventory = _citation_commitments(
         instance,
         coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
     )
-    healthy = next(item for item in commitments.values() if item.source_id == "corpus.healthy")
+    healthy = next(item for item in inventory.by_id.values() if item.source_id == "corpus.healthy")
     calls = 0
 
     result = service_playbill_next(
