@@ -29355,6 +29355,11 @@
                 "title": "Eligible At",
                 "type": "string"
               },
+              "newly_enqueued": {
+                "default": false,
+                "title": "Newly Enqueued",
+                "type": "boolean"
+              },
               "occurrence_id": {
                 "title": "Occurrence Id",
                 "type": "string"
@@ -29428,7 +29433,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "What one evaluation found; ``pending`` marks what it enqueued (never on a dry run).",
+        "description": "What one evaluation found; ``pending`` is current state, ``newly_enqueued`` is this call's.",
         "properties": {
           "checked_since": {
             "anyOf": [
@@ -29862,6 +29867,19 @@
             "type": "string"
           }
         },
+        "newly_enqueued": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "newly_enqueued",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Newly Enqueued",
+            "type": "boolean"
+          }
+        },
         "occurrence_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -30086,6 +30104,11 @@
             "format": "date-time",
             "title": "Eligible At",
             "type": "string"
+          },
+          "newly_enqueued": {
+            "default": false,
+            "title": "Newly Enqueued",
+            "type": "boolean"
           },
           "occurrence_id": {
             "title": "Occurrence Id",
