@@ -181,10 +181,14 @@ def _instant(value: str) -> datetime:
     return parsed
 
 
-def retry_covered_sequence(instance: Any) -> int:
-    """The trigger fire sequence through which ``prediction.anchor_retry`` has completed."""
+def retry_covered_sequence(instance: Any, *, timeout: float | None = None) -> int:
+    """The trigger fire sequence through which ``prediction.anchor_retry`` has completed.
 
-    with _STATE.open(instance, create=False) as connection:
+    ``timeout``, when given, bounds the read to that many seconds and raises
+    ``StateBusyError`` rather than waiting on a worker's own transaction.
+    """
+
+    with _STATE.open(instance, create=False, timeout=timeout) as connection:
         if connection is None:
             return 0
         row = connection.execute("SELECT retry_completed_sequence FROM progress").fetchone()

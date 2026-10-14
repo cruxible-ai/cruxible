@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -1570,30 +1570,30 @@ def playbill_action_run(
     )
 
 
-def _action_fire_covered_sequence(instance: Any, spec: InternalActionSpec) -> int | None:
-    """The trigger fire sequence through which ``spec``'s owning part has worked.
+def _action_fire_reader(spec: InternalActionSpec) -> Callable[..., int] | None:
+    """``spec``'s owning part's own completion-cursor reader, or ``None`` if it has none.
 
-    Reads the same indexed completion cursor that part's own ``due()`` or
-    ``health()`` reads -- one primary-key row lookup, never a scan -- so a
-    waiter costs the same as a health check, not the instance. ``None`` means
-    this part exposes no such cursor; every part wired in today does.
+    Every reader takes ``instance`` and an optional ``timeout`` keyword (seconds)
+    that bounds its read -- the same indexed completion cursor that part's own
+    ``due()`` or ``health()`` reads, one primary-key row lookup, never a scan --
+    so a waiter costs the same as a health check, not the instance. This is a
+    structural lookup only, with no I/O: ``None`` means this part exposes no
+    such cursor; every part wired in today does.
     """
 
     if spec.consumer == "floor":
         from cruxible_core.consumers.floor import refresh_covered_sequence
 
-        return refresh_covered_sequence(instance)
+        return refresh_covered_sequence
     if spec.consumer == "next":
         from cruxible_core.consumers.next import curation, evidence, predictions
 
-        readers = {
+        readers: dict[str, Callable[..., int]] = {
             "evidence": evidence.sweep_covered_sequence,
             "prediction": predictions.retry_covered_sequence,
             "curation": curation.covered_sequence,
         }
-        reader = readers.get(spec.part)
-        if reader is not None:
-            return reader(instance)
+        return readers.get(spec.part)
     return None
 
 
@@ -1619,8 +1619,17 @@ def _wait_for_action_fire(
     ``completed`` once the cursor covers ``event_sequence``, ``timed_out`` at
     ``timeout_seconds`` with the fire left queued for the next tick, or
     ``not_supported`` for a part that exposes no completion cursor.
+
+    The deadline is set before the first cursor read, and every read --
+    including the first -- is given only its remaining share of the budget:
+    a worker transaction holding that part's state lock (prediction
+    requeuing, a state rebuild) makes the read raise ``StateBusyError``
+    rather than block past the deadline, which this treats as "not yet
+    covered" and retries until the budget itself runs out. A wait never
+    runs past ``wait_timeout_seconds``, regardless of contention.
     """
 
+    from cruxible_core.consumers.state import StateBusyError
     from cruxible_core.server.config import get_disabled_consumers
 
     if spec.consumer in get_disabled_consumers():
@@ -1628,19 +1637,27 @@ def _wait_for_action_fire(
             status="not_supported",
             detail={"reason": f"the {spec.consumer!r} consumer is disabled on this daemon"},
         )
-    instance = manager.get(instance_id)
-    covered = _action_fire_covered_sequence(instance, spec)
-    if covered is None:
+    reader = _action_fire_reader(spec)
+    if reader is None:
         return contracts.ActionRunOutcome(status="not_supported")
+    instance = manager.get(instance_id)
     deadline = time.monotonic() + timeout_seconds
-    while covered < event_sequence:
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return contracts.ActionRunOutcome(status="timed_out")
+        try:
+            covered = reader(instance, timeout=remaining)
+        except StateBusyError:
+            covered = None
+        if covered is not None and covered >= event_sequence:
+            return contracts.ActionRunOutcome(
+                status="completed", detail={"covered_through": covered}
+            )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return contracts.ActionRunOutcome(status="timed_out")
         time.sleep(min(_WAIT_POLL_SECONDS, remaining))
-        covered = _action_fire_covered_sequence(instance, spec)
-        assert covered is not None
-    return contracts.ActionRunOutcome(status="completed", detail={"covered_through": covered})
 
 
 def playbill_authoring_get(

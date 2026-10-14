@@ -23,6 +23,14 @@ _HOLDERS: dict[Path, int] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
+class StateBusyError(RuntimeError):
+    """A bounded read's remaining budget elapsed before the state lock was free.
+
+    Raised only when ``open`` is given a ``timeout``; an unbounded open never
+    raises this and instead waits for the worker transaction to finish.
+    """
+
+
 def _schema_rows(connection: sqlite3.Connection) -> list[tuple[Any, ...]]:
     return connection.execute(
         "SELECT type,name,tbl_name,sql FROM sqlite_master "
@@ -43,13 +51,22 @@ class DisposableState:
         return exhaust / self.directory / "state.sqlite3"
 
     @contextmanager
-    def open(self, instance: Any, *, create: bool = True) -> Iterator[sqlite3.Connection | None]:
+    def open(
+        self, instance: Any, *, create: bool = True, timeout: float | None = None
+    ) -> Iterator[sqlite3.Connection | None]:
         """One transaction on the state, rebuilt first if its schema is not this one.
 
         ``create=False`` is a reader's open: it never creates the database, never
         rebuilds a schema that is not this one (the state is absent to it, None,
         until the worker rebuilds), and never commits: whatever it writes, as a
         read's rolled-back overlay does, is rolled back.
+
+        ``timeout``, when given, bounds both the wait for this path's own lock
+        and SQLite's independent busy wait to that many seconds (never less
+        than zero): a caller on its own wait budget raises ``StateBusyError``
+        rather than blocking past it, with nothing opened or held. ``None``
+        (the default) waits for the worker transaction to finish, as every
+        write and every unbounded read already did.
         """
 
         path = self.path(instance)
@@ -64,10 +81,16 @@ class DisposableState:
             if _HOLDERS.get(key) == threading.get_ident():
                 # Fail at once rather than deadlock on this thread's own lock.
                 raise RuntimeError(f"the {self.directory} state is already open on this thread")
-        with lock:
+        budget = None if timeout is None else max(0.0, timeout)
+        acquired = lock.acquire() if budget is None else lock.acquire(timeout=budget)
+        if not acquired:
+            raise StateBusyError(
+                f"the {self.directory} state lock was still held past the given timeout"
+            )
+        try:
             with _LOCKS_GUARD:
                 _HOLDERS[key] = threading.get_ident()
-            connection = sqlite3.connect(path, timeout=30)
+            connection = sqlite3.connect(path, timeout=30 if budget is None else budget)
             try:
                 if _schema_rows(connection) != self.expected:
                     if not create:
@@ -84,6 +107,8 @@ class DisposableState:
                 connection.close()
                 with _LOCKS_GUARD:
                     _HOLDERS.pop(key, None)
+        finally:
+            lock.release()
 
     def reset(self, instance: Any) -> None:
         """Drop every table and create the schema again: an operator's repair."""

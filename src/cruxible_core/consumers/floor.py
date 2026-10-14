@@ -107,8 +107,10 @@ def _post_apply_joins(workspace: Path) -> None:
     write_projection_index(workspace)
 
 
-def _progress(instance: Any) -> tuple[int, str, str | None, str | None] | None:
-    with _STATE.open(instance, create=False) as connection:
+def _progress(
+    instance: Any, *, timeout: float | None = None
+) -> tuple[int, str, str | None, str | None] | None:
+    with _STATE.open(instance, create=False, timeout=timeout) as connection:
         if connection is None:
             return None
         return cast(
@@ -117,15 +119,18 @@ def _progress(instance: Any) -> tuple[int, str, str | None, str | None] | None:
         )
 
 
-def refresh_covered_sequence(instance: Any) -> int:
+def refresh_covered_sequence(instance: Any, *, timeout: float | None = None) -> int:
     """The trigger fire sequence through which a ``floor.refresh`` render has caught up.
 
     One render always folds every pending fire into the current head, so a
     render that started at or after a given fire's sequence always covers
     it; 0 before this part has ever recorded a render.
+
+    ``timeout``, when given, bounds the read to that many seconds and raises
+    ``StateBusyError`` rather than waiting on a worker's own transaction.
     """
 
-    progress = _progress(instance)
+    progress = _progress(instance, timeout=timeout)
     return 0 if progress is None else progress[0]
 
 

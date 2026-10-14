@@ -233,6 +233,51 @@ def test_run_action_wait_times_out_without_blocking_past_the_timeout(
     assert evidence.sweep_covered_sequence(instance) < result.event_id
 
 
+def test_run_action_wait_times_out_despite_a_held_state_lock(
+    monkeypatch,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    """A worker transaction holding the cursor store cannot extend the wait past its budget."""
+
+    from tests.test_query.test_query_execution_service import _instance_with_query
+
+    instance, _owner = _instance_with_query(tmp_path)
+    manager = _manager(instance)
+    monkeypatch.setattr(playbill_api, "get_playbill_manager", lambda: manager)
+    name = "evidence.sweep"
+    fire_manual(instance, action=name, principal="owner", now=NOW)
+
+    entered = threading.Event()
+    released = threading.Event()
+
+    def _hold_the_state_lock() -> None:
+        with evidence._STATE.open(instance) as connection:
+            assert connection is not None
+            entered.set()
+            released.wait(timeout=5.0)
+
+    holder = threading.Thread(target=_hold_the_state_lock)
+    holder.start()
+    try:
+        assert entered.wait(timeout=5.0)
+        with request_permission_scope(PermissionMode.GOVERNED_WRITE):
+            started = time.monotonic()
+            result = playbill_api.playbill_action_run(
+                "inst_test",
+                request=contracts.ActionRunRequest(
+                    action=name, wait=True, wait_timeout_seconds=0.2
+                ),
+            )
+            elapsed = time.monotonic() - started
+    finally:
+        released.set()
+        holder.join(timeout=5.0)
+
+    assert result.outcome.status == "timed_out"
+    # Bounded by the wait budget, not by however long the lock stayed held.
+    assert elapsed < 1.0
+
+
 def test_run_action_wait_on_floor_refresh_also_only_observes(
     monkeypatch,  # type: ignore[no-untyped-def]
     tmp_path: Path,
