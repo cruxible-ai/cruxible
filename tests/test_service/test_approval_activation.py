@@ -82,13 +82,21 @@ def test_held_or_unpermitted_approval_signs_only(tmp_path: Path) -> None:
     )
     assert activated.status == "accepted"
 
-    unpermitted = _document_proposal(instance, name="unpermitted", text=b"# Second\n")
-    head = instance.accepted_coordinate()
+    # A fresh instance: the held document is now accepted in the first.
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    other, _other_owner = initialize_local(other_root)
+    unpermitted = _document_proposal(other, name="unpermitted")
+    head = other.accepted_coordinate()
     receipt = _approve(
-        instance, unpermitted, reviewer, activate_when_complete=True, may_activate=False
+        other,
+        unpermitted,
+        client_material(other_root, other),
+        activate_when_complete=True,
+        may_activate=False,
     )
     assert receipt.activation is None and receipt.not_activated == "activation_not_permitted"
-    assert instance.accepted_coordinate() == head
+    assert other.accepted_coordinate() == head
 
 
 def test_stale_candidate_is_signed_but_reported_stale(tmp_path: Path) -> None:

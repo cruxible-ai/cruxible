@@ -142,7 +142,8 @@ exempt. By that principle these are exempt:
   refused attestation writes nothing;
 - `body store`: an inert content-addressed put whose effect is its input;
 - `proposal approve`: records the caller's signed approval of an evaluation
-  already shown by `get PROPOSAL_ID`;
+  already shown by `get PROPOSAL_ID`, and activates a candidate it completes
+  (the `proposal activate` effect below);
 - `proposal activate`: its preview is the proposal's evaluation, already
   shown; the commit-time `at` check covers the head moving under it;
 - `floor delivery on|off`: its effect is its input;
@@ -1171,7 +1172,7 @@ the installed one unless `--allow-downgrade`, and the preview names the transiti
 
 `add` and `remove` land at once when the instance's approval policy requires no
 approval, like provider install and value writes; otherwise they stop at
-proposed for the ordinary `cruxible proposal approve` and `activate` steps. `add`
+proposed for the ordinary `cruxible proposal approve`, which activates them. `add`
 records a `kit_receipt` Document, `documents/kit-<id>.json`, with each path's
 release digest, installed digest and content digest, and the bundled packages.
 

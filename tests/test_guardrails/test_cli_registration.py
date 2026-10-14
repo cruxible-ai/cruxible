@@ -135,8 +135,8 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # `line evaluate --dry-run`. v1 polish added `proposal reject`; the Line inbox
     # added `inbox list|get|ack|dismiss|link`; incremental next added `instance rebuild-next`;
     # `action run` adds one more.
-    assert len(leaf_claims) == 107, (
-        f"expected 107 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    assert len(leaf_claims) == 105, (
+        f"expected 105 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)
