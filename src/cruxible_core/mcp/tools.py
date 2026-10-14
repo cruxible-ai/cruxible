@@ -157,6 +157,9 @@ McpEvidence = Annotated[
     Field(discriminator="kind"),
 ]
 _EVIDENCE_DEFAULT = "Default: the write's `because` as self evidence."
+_HOLD_DESCRIPTION = (
+    "Sign only: leave activating a candidate this approval completes to someone else."
+)
 
 
 class McpSetChange(SetChange):
@@ -399,10 +402,14 @@ def register_tools(
         *,
         proposal_id: str,
         attestation: ApprovalAttestation,
+        hold: Annotated[bool, Field(description=_HOLD_DESCRIPTION)] = False,
     ) -> contracts.ApprovalReceipt:
         """Submit a public approval attestation."""
         return handlers.handle_playbill_submit_approval(
-            require_instance_id(instance_id), proposal_id, attestation.model_dump(mode="json")
+            require_instance_id(instance_id),
+            proposal_id,
+            attestation.model_dump(mode="json"),
+            hold=hold,
         )
 
     @_tool
@@ -428,6 +435,7 @@ def register_tools(
                 )
             ),
         ] = None,
+        hold: Annotated[bool, Field(description=_HOLD_DESCRIPTION)] = False,
     ) -> contracts.ApprovalReceipt:
         """Approve a proposal with a local key: challenge, sign and submit in one call."""
         return handlers.handle_playbill_approve(
@@ -435,6 +443,7 @@ def register_tools(
             proposal_id,
             signer_id=signer_id,
             candidate_digest=candidate_digest,
+            hold=hold,
         )
 
     @_tool

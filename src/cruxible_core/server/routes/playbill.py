@@ -570,6 +570,7 @@ def submit_approval(
         resolve_server_instance_id(instance_id),
         proposal_id,
         attestation=req.attestation,
+        hold=req.hold,
     )
 
 

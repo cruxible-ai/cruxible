@@ -147,6 +147,8 @@ class ProposePrincipalRequest(_StrictPlaybillRequest):
 
 class ApprovalRequest(_StrictPlaybillRequest):
     attestation: ApprovalAttestation
+    #: Sign only: leave activating a now-complete candidate to someone else.
+    hold: bool = False
 
 
 class ReviewRequest(_StrictPlaybillRequest):

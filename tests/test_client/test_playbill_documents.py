@@ -150,7 +150,7 @@ def test_client_signer_callback_submits_only_public_attestation() -> None:
     assert seen_statement["payload_digest"] == "sha256:" + "7" * 64
     assert receipt.signer_id == "owner"
     assert requests[0] == {"signer_id": "owner", "include_body": True}
-    assert requests[1] == {"attestation": {**seen_statement, "sig": "c" * 128}}
+    assert requests[1] == {"attestation": {**seen_statement, "sig": "c" * 128}, "hold": False}
     assert "private" not in json.dumps(requests)
 
 

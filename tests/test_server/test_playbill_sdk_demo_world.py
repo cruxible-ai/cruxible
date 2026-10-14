@@ -185,9 +185,8 @@ def _approve_and_activate(
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert approved.status_code == 200, approved.text
-    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
-    assert activated.status_code == 200, activated.text
-    assert activated.json()["status"] == "accepted"
+    activated = approved.json()["activation"]
+    assert activated["status"] == "accepted", approved.text
 
 
 def _install_direct_capture_contract(

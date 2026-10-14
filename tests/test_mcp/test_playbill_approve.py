@@ -48,7 +48,9 @@ def _world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *signers: str) -> di
             signer_principal=principals[signer_id].model_dump(mode="json"),
         )
 
-    def submit(instance_id: str, proposal_id: str, attestation: dict[str, Any]) -> Any:
+    def submit(
+        instance_id: str, proposal_id: str, attestation: dict[str, Any], *, hold: bool = False
+    ) -> Any:
         calls["submitted"].append(attestation)
         return "receipt"
 

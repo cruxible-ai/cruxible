@@ -433,6 +433,8 @@ def handle_playbill_submit_approval(
     instance_id: str,
     proposal_id: str,
     attestation: dict[str, Any],
+    *,
+    hold: bool = False,
 ) -> contracts.ApprovalReceipt:
     public_attestation = ApprovalAttestation.model_validate(attestation)
     return _daemon_call(
@@ -440,6 +442,7 @@ def handle_playbill_submit_approval(
             instance_id,
             proposal_id,
             attestation=public_attestation.model_dump(mode="json"),
+            hold=hold,
         ),
         operation_name="cruxible_proposal_approve_submit",
     )
@@ -451,6 +454,7 @@ def handle_playbill_approve(
     *,
     signer_id: str | None,
     candidate_digest: str | None,
+    hold: bool = False,
 ) -> contracts.ApprovalReceipt:
     """Challenge, sign with the configured local key, and submit, as `proposal approve` does.
 
@@ -482,7 +486,7 @@ def handle_playbill_approve(
     )
     attestation = key_signer.sign(statement)
     return handle_playbill_submit_approval(
-        instance_id, proposal_id, attestation.model_dump(mode="json")
+        instance_id, proposal_id, attestation.model_dump(mode="json"), hold=hold
     )
 
 

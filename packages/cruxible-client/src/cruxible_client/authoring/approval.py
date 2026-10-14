@@ -124,6 +124,7 @@ def approve_reviewed(
     *,
     signer: ApprovalSigner,
     reviewed: ReviewedProposal,
+    hold: bool = False,
 ) -> api.ApprovalReceipt:
     if (
         not isinstance(reviewed, ReviewedProposal)
@@ -200,7 +201,7 @@ def approve_reviewed(
         raise ApprovalReviewMismatch("Signer returned an invalid or substituted approval") from exc
     expected_digest = approval_digest(attestation).tagged
     raw_receipt = cx._client.submit_approval(
-        cx._instance_id, proposal_id, attestation=attestation.model_dump(mode="json")
+        cx._instance_id, proposal_id, attestation=attestation.model_dump(mode="json"), hold=hold
     )
     receipt = api.ApprovalReceipt.model_validate(raw_receipt.model_dump(mode="json"))
     if (

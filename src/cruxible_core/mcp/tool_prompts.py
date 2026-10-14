@@ -64,16 +64,18 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when a client-held signer needs the exact immutable approval statement."
     ),
     "cruxible_proposal_approve_submit": (
-        "Use when you have a public approval attestation produced outside the daemon."
+        "Use when you have a public approval attestation produced outside the daemon; "
+        "like approve, it activates a candidate it completes unless hold is set."
     ),
     "cruxible_proposal_approve": (
         "Use after review to approve a proposal with a local key from the server's "
-        "CRUXIBLE_MCP_KEY_DIR; it challenges, signs and submits in one call and never "
-        "activates. Pass the reviewed candidate_digest to bind it to what you read."
+        "CRUXIBLE_MCP_KEY_DIR; it challenges, signs and submits in one call. The approval "
+        "that completes the candidate also activates it when your tier may; hold=true "
+        "signs only. Pass the reviewed candidate_digest to bind it to what you read."
     ),
     "cruxible_proposal_activate": (
-        "Use when an admitted Cruxible candidate has satisfied any committed requirements and "
-        "is ready to settle."
+        "Use when an admitted candidate's approvals are in but nothing activated it: a "
+        "held approval, or one that needs no approval."
     ),
     "cruxible_orient": (
         "Use first, to see what an instance holds: each Subject kind with its count and "

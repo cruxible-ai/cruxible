@@ -3672,7 +3672,7 @@ cruxible proposal reject PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OI
 cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
   [--workspace-root DIR] [--item-reasons-after CURSOR] [--item-reasons-limit N] [--json]
 cruxible proposal approve PROPOSAL_ID
-  [--signer-id ID] --key FILE [--yes] [--json]
+  [--signer-id ID] --key FILE [--yes] [--hold] [--json]
 cruxible proposal activate PROPOSAL_ID [--brief] [--json]
 cruxible get PROPOSAL_ID [--detail proof]
 ~~~
@@ -3707,6 +3707,18 @@ names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
 Activating a stale proposal refuses `cruxible.proposal.stale`, naming
 `proposal readmit` (or `withdraw`) as the repair.
+
+`proposal approve` signs the reviewed candidate. When that signature completes
+the candidate's required approvals and your tier may activate (`graph_write`),
+the same command activates it and reports both: the JSON receipt carries
+`activation`, the activation receipt. `--hold` signs only, for a reviewer
+leaving activation timing to someone else. Otherwise the receipt's
+`not_activated` says why: `approvals_remaining` (with the count in
+`approvals_remaining`), `held`, `activation_not_permitted`, or `stale` (readmit
+it first). `proposal activate` remains for a held approval, a candidate that
+needs no approval, and activation by someone other than the last signer. The
+SDK (`proposal.approve(..., hold=)`), HTTP (`hold` in the approval body) and
+MCP (`hold` on `cruxible_proposal_approve` and `_submit`) behave the same.
 `proposal readmit` replays a stale proposal's authored content through the current
 governed rebase and returns a fresh, idempotent proposal without changing the old
 proposal evidence. It refuses `cruxible.proposal.readmit_already_accepted` when
@@ -3863,8 +3875,8 @@ principal record. Every principal-lifecycle proposal requires the PROPOSING
 actor's own cryptographic approval before it can settle — the identity shown
 by `cruxible whoami`, which coincides with the affected principal only for
 self-rotation: run `cruxible proposal approve PID --signer-id <the proposing
-actor> --key <that actor's current private key> --yes`, then
-`cruxible proposal activate`. For `principal add` and `principal recover`,
+actor> --key <that actor's current private key> --yes`, which activates it
+once that signature completes it. For `principal add` and `principal recover`,
 the signer is the actor performing the operation, never the new or
 locked-out principal. Registration neither
 grants authority immediately nor sends a private key to the daemon. Other
@@ -3882,7 +3894,7 @@ principal ID, its key path, and, with auth, its credential (written, never
 printed). The agent loads it with `set -a; . DIR/cruxible.env; set +a`; the CLI,
 SDK and MCP server all read those variables. Without `--signer-key` the
 registration is only proposed and the command prints each remaining step:
-`proposal approve`, `proposal activate`, and, with auth,
+`proposal approve` (which activates it), and, with auth,
 `credential mint --principal-id ID --key-dir DIR`, which writes the token into
 the same settings file. `cruxible init` writes the owner's settings file the
 same way. `proposal approve` defaults `--signer-id` to the configured principal
@@ -3935,8 +3947,8 @@ with --help for its exact options.
 `cruxible compiler upgrade --to DIGEST --name NAME [--dry-run|--commit] [--at OID] [--json]`
 creates an admin-only
 proposal bound to the exact accepted head and target compiler. Review it, sign
-through `cruxible proposal approve`, then use
-`cruxible proposal activate`. Activation validates the full target
+through `cruxible proposal approve`, which activates it once that signature
+completes it (`cruxible proposal activate` after `--hold`). Activation validates the full target
 projection before advancing the signed ledger. Installing or restarting a daemon
 does not upgrade an instance. Historical generations keep their original compiler.
 The instance descriptor retains its genesis compiler; inspection reports the

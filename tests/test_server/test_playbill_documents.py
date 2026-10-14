@@ -85,10 +85,10 @@ def test_http_document_lifecycle_and_explanation(
     )
     assert approved.status_code == 200, approved.text
     assert approved.json()["submitted_by"] == "operator"
-    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
-    assert activated.status_code == 200, activated.text
-    assert activated.json()["activated_by"] == "operator"
-    coordinate = activated.json()["accepted_coordinate"]
+    activated = approved.json()["activation"]
+    assert activated["status"] == "accepted", approved.text
+    assert activated["activated_by"] == "operator"
+    coordinate = activated["accepted_coordinate"]
 
     listed = client.get(f"/api/v1/{instance_id}/orient", params={"section": "documents"})
     assert listed.status_code == 200, listed.text
@@ -352,8 +352,8 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert approved.status_code == 200, approved.text
-    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
-    assert activated.status_code == 200, activated.text
+    activated = approved.json()["activation"]
+    assert activated["status"] == "accepted", approved.text
 
 
 @pytest.mark.parametrize(
@@ -430,3 +430,53 @@ def test_sdk_get_reads_one_proposal_by_id_without_paging_the_list(
     # The by-ID status route is cut: get is the one proposal read.
     gone = client.get(f"/api/v1/{instance_id}/proposals/{proposal_id}/status")
     assert gone.status_code in {404, 405}, gone.text
+
+
+def test_http_held_approval_signs_only_and_activate_settles_it(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, private_key_path = playbill_http
+    stored = client.post(
+        f"/api/v1/{instance_id}/bodies",
+        json={"content_base64": base64.b64encode(b"# Held\n").decode("ascii")},
+    )
+    assert stored.status_code == 200, stored.text
+    shell = DocumentShell(
+        identity="document:held",
+        document_kind="design",
+        title="Held",
+        media_type="text/markdown",
+        body_digest=stored.json()["digest"],
+        authority=DocumentAuthority(required_tier="graph_write"),
+        governance_scope=("project:playbill",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    proposed = client.post(
+        f"/api/v1/{instance_id}/documents/proposals",
+        json={"shell": shell.model_dump(mode="json"), "proposal_name": "held"},
+    )
+    assert proposed.status_code == 200, proposed.text
+    proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
+    challenge = client.post(
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge",
+        json={"signer_id": "reviewer"},
+    ).json()
+    signer = LocalEd25519ApprovalSigner.open(
+        signer_id="reviewer",
+        private_key_path=private_key_path,
+        expected_public_key=challenge["signer_principal"]["public_key"],
+        forbidden_roots=(),
+    )
+    attestation = signer.sign(ApprovalStatement.model_validate(challenge["statement"]))
+
+    approved = client.post(
+        f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
+        json={"attestation": attestation.model_dump(mode="json"), "hold": True},
+    )
+
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["activation"] is None
+    assert approved.json()["not_activated"] == "held"
+    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["status"] == "accepted"

@@ -2080,12 +2080,23 @@ class Proposal:
         """
         return review_proposal(self._playbill, self.proposal_id)
 
-    def approve(self, *, signer: ApprovalSigner, reviewed: ReviewedProposal) -> api.ApprovalReceipt:
-        """Sign this exact review with caller-configured custody; never activate.
+    def approve(
+        self, *, signer: ApprovalSigner, reviewed: ReviewedProposal, hold: bool = False
+    ) -> api.ApprovalReceipt:
+        """Sign this exact review with caller-configured custody.
 
-        Next: ``proposal.activate()`` once enough approvals are in.
+        The approval that completes the candidate activates it in the same call
+        (``receipt.activation``) when the caller may activate; ``hold=True``
+        signs only. ``receipt.not_activated`` says why nothing activated.
+
+        Next: ``cx.at(receipt.activation.accepted_coordinate)`` once activated, or
+        ``proposal.activate()`` for a held approval.
         """
-        return approve_reviewed(self._playbill, self.proposal_id, signer=signer, reviewed=reviewed)
+        receipt = approve_reviewed(
+            self._playbill, self.proposal_id, signer=signer, reviewed=reviewed, hold=hold
+        )
+        self._playbill._observe_activation(receipt.activation)
+        return receipt
 
     def activate(self) -> api.ActivationReceipt:
         """Activate this proposal once its approvals are in: ``Cruxible.activate`` by handle.
@@ -2666,9 +2677,17 @@ class Cruxible:
         """
 
         receipt = self._client.activate_proposal(self._instance_id, proposal_id)
-        if receipt.status == "accepted" and receipt.accepted_coordinate is not None:
-            self._observe_read(_coordinate(receipt.accepted_coordinate), expected=None)
+        self._observe_activation(receipt)
         return receipt
+
+    def _observe_activation(self, receipt: api.ActivationReceipt | None) -> None:
+        """An accepted activation's coordinate becomes this connection's last observation."""
+        if (
+            receipt is not None
+            and receipt.status == "accepted"
+            and receipt.accepted_coordinate is not None
+        ):
+            self._observe_read(_coordinate(receipt.accepted_coordinate), expected=None)
 
     def proposals(
         self,

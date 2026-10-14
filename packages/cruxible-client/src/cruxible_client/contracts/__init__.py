@@ -973,7 +973,30 @@ class ApprovalChallenge(BaseModel):
     review: ProposalReview
 
 
+class ActivationReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-activation-receipt-v1"] = "playbill-activation-receipt-v1"
+    proposal_id: str
+    activated_by: str
+    status: Literal["accepted", "lost_cas"]
+    accepted_coordinate: AcceptedCoordinate | None
+    workspace_advertisement: WorkspaceAdvertisement
+
+
+#: Why an approval did not activate its candidate: the signer held activation
+#: for someone else, more approvals are required, the caller's tier may not
+#: activate, or accepted state moved past the proposal (readmit it first).
+ApprovalNotActivated = Literal["held", "approvals_remaining", "activation_not_permitted", "stale"]
+
+
 class ApprovalReceipt(BaseModel):
+    """One recorded approval, and the activation it completed or why there was none.
+
+    An approval that leaves nothing outstanding activates the candidate in the
+    same call unless the signer held it (``hold``) or may not activate.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-approval-receipt-v1"] = "playbill-approval-receipt-v1"
@@ -984,18 +1007,10 @@ class ApprovalReceipt(BaseModel):
     signing_semantic_root: str
     attestation_digest: str
     key_history_ref: str
+    activation: ActivationReceipt | None = None
+    not_activated: ApprovalNotActivated | None = None
+    approvals_remaining: int = Field(default=0, ge=0)
     git_workspace_note: GitWorkspaceNote | None = None
-
-
-class ActivationReceipt(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-activation-receipt-v1"] = "playbill-activation-receipt-v1"
-    proposal_id: str
-    activated_by: str
-    status: Literal["accepted", "lost_cas"]
-    accepted_coordinate: AcceptedCoordinate | None
-    workspace_advertisement: WorkspaceAdvertisement
 
 
 class FloorRefreshResult(BaseModel):

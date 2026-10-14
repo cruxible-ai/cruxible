@@ -93,8 +93,8 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
         public_key=key.public_key().public_bytes_raw().hex(),
     )
     reviewed = proposal.review()
-    proposal.approve(signer=signer, reviewed=reviewed)
-    assert pb.activate(proposal.proposal_id).status == "accepted"
+    receipt = proposal.approve(signer=signer, reviewed=reviewed)
+    assert receipt.activation is not None and receipt.activation.status == "accepted"
     name = definition.query_definition.identity.name
     if surface == "cli":
         page = api.QueryResultRecord.model_validate(

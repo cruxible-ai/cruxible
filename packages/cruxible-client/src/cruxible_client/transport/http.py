@@ -908,10 +908,15 @@ class CruxibleClient:
         proposal_id: str,
         *,
         attestation: Mapping[str, Any],
+        hold: bool = False,
     ) -> contracts.ApprovalReceipt:
+        """Submit one approval; the daemon activates a candidate it completes.
+
+        ``hold=True`` signs only and leaves activation to someone else.
+        """
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
-            json={"attestation": dict(attestation)},
+            json={"attestation": dict(attestation), "hold": hold},
         )
         return self._parse_model(response, contracts.ApprovalReceipt)
 
@@ -923,6 +928,7 @@ class CruxibleClient:
         signer_id: str,
         signer: Callable[[dict[str, Any]], Mapping[str, Any]],
         include_body: bool = False,
+        hold: bool = False,
     ) -> contracts.ApprovalReceipt:
         challenge = self.prepare_approval(
             instance_id,
@@ -934,6 +940,7 @@ class CruxibleClient:
             instance_id,
             proposal_id,
             attestation=signer(dict(challenge.statement)),
+            hold=hold,
         )
 
     def activate_proposal(self, instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:

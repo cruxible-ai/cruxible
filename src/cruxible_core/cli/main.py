@@ -565,9 +565,13 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill", "review_proposal", "Render structured candidate review."
             ),
             "approve": _command(
-                "playbill", "approve_proposal", "Sign locally and submit an attestation."
+                "playbill",
+                "approve_proposal",
+                "Sign locally; activates a candidate the signature completes.",
             ),
-            "activate": _command("playbill", "activate_proposal", "Settle an approved candidate."),
+            "activate": _command(
+                "playbill", "activate_proposal", "Settle a held or approval-free candidate."
+            ),
         },
         module="playbill",
         attr="proposal_group",

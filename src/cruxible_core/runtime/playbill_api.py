@@ -1241,13 +1241,21 @@ def playbill_submit_approval(
     proposal_id: str,
     *,
     attestation: ApprovalAttestation,
+    hold: bool = False,
 ) -> contracts.ApprovalReceipt:
+    """Submit one approval; it activates the candidate when it completes it.
+
+    ``hold`` signs only, leaving activation to someone else. Activation runs
+    only when the caller's tier and scope also admit ``cruxible_proposal_activate``.
+    """
     check_permission("cruxible_proposal_approve_submit", instance_id=instance_id)
     result = service_submit_playbill_approval(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
         attestation=attestation,
         authenticated_submitter=_actor_id(instance_id),
+        activate_when_complete=not hold,
+        may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
     )
     return contracts.ApprovalReceipt.model_validate(result.model_dump(mode="json"))
 

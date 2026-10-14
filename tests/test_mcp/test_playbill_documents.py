@@ -134,5 +134,5 @@ def test_playbill_handlers_decode_bytes_and_submit_only_public_attestation(monke
     )
     assert calls[0] == ("store", ("inst_1", body))
     approve_payload = calls[-1][1][2]
-    assert approve_payload == {"attestation": attestation}
+    assert approve_payload == {"attestation": attestation, "hold": False}
     assert "private" not in str(approve_payload)
