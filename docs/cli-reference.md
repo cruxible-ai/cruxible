@@ -120,6 +120,17 @@ which exists before `init` too.
   `cruxible.preview.confirmation_required`.
 - Everything else commits unless `--dry-run` is given.
 
+At an interactive terminal (standard input and output both a TTY, no
+`--json`), a change that previews by default renders its preview and asks
+`Commit this change? [y/N]`. Yes commits against the exact coordinate the
+preview answered with, exactly as `--commit --at OID` would, so it refuses
+`cruxible.preview.state_moved` if that state moved in between; no commits
+nothing and prints the `--commit --at OID` to run later. `--yes` (on every
+command that takes `--dry-run|--commit`) commits the preview without asking,
+on a terminal or not; it refuses with `--json`, `--dry-run` or `--commit`.
+Off a terminal, and with `--json`, nothing asks: the preview prints the
+`--commit --at OID` hint as before.
+
 `--at OID` pins any commit to a preview: if that state moved since, the
 commit refuses `cruxible.preview.state_moved` and changes nothing; preview
 again. The pin is checked where the change commits, under the lock its write
