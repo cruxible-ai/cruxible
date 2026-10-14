@@ -702,6 +702,54 @@ def test_a_warmed_reader_follows_a_rebuilt_projection(tmp_path: Path, how: str) 
     assert expiration.reobserved_at == _START + timedelta(minutes=100)
 
 
+def _quiesce_background_threads(instance) -> None:  # type: ignore[no-untyped-def]
+    """Drain the write path's background git refresh before forking.
+
+    Each write above (``_freshness_world``, ``_reobserve``) queues a refresh
+    on a named ``workspace-advertiser-*`` thread that shells out to git (CI
+    round 9: a child forked while that thread is mid-refresh can copy a lock
+    it holds into the child in a state no thread there will ever release).
+    These fork probes only care about the reader's own lock, so every other
+    background thread a write started must be gone -- not merely scheduled --
+    before ``os.fork()`` runs.
+    """
+
+    import threading
+
+    instance.settled_workspace_advertisement()
+    for thread in threading.enumerate():
+        if thread is threading.current_thread():
+            continue
+        if thread.name.startswith("workspace-advertiser-"):
+            thread.join(timeout=10)
+            assert not thread.is_alive(), f"{thread.name} still running before fork"
+
+
+def _wait_for_forked_child(pid: int, *, timeout: float = 10.0) -> int:
+    """Reap ``pid`` within ``timeout`` seconds; kill and fail cleanly if it hangs.
+
+    A forked child stuck on an inherited lock must never again turn into a
+    900s pytest-timeout hang that blocks the whole CI job (round 10): poll
+    instead of blocking on ``os.waitpid``, and kill the child once the bound
+    is up so the test fails fast with a clear message.
+    """
+
+    import os
+    import signal
+    import time
+
+    deadline = time.monotonic() + timeout
+    while True:
+        reaped_pid, status = os.waitpid(pid, os.WNOHANG)
+        if reaped_pid == pid:
+            return status
+        if time.monotonic() >= deadline:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            pytest.fail(f"forked child {pid} did not exit within {timeout}s; killed it")
+        time.sleep(0.05)
+
+
 def test_a_forked_child_does_not_inherit_the_reader_lock(tmp_path: Path) -> None:
     """Reviewer fork probe: the parent holds the reader's lock at fork time."""
 
@@ -718,6 +766,7 @@ def test_a_forked_child_does_not_inherit_the_reader_lock(tmp_path: Path) -> None
     _reobserve(instance, _START + timedelta(minutes=50))
     reader = ReobservationReader.of(instance)
     assert reader.sequence(claim.identity.name) == 1
+    _quiesce_background_threads(instance)
     reader._lock.acquire()
     try:
         with warnings.catch_warnings():
@@ -730,7 +779,7 @@ def test_a_forked_child_does_not_inherit_the_reader_lock(tmp_path: Path) -> None
             os._exit(code)
     finally:
         reader._lock.release()
-    _, status = os.waitpid(pid, 0)
+    status = _wait_for_forked_child(pid)
     assert os.waitstatus_to_exitcode(status) == 0
 
 
@@ -874,6 +923,7 @@ def test_a_reader_outside_the_cache_resets_before_its_inherited_lock(tmp_path: P
     reader = ReobservationReader(instance)
     assert reader.sequence(claim.identity.name) == 1
     assert reader not in ReobservationReader._cache.values()
+    _quiesce_background_threads(instance)
     reader._lock.acquire()
     try:
         with warnings.catch_warnings():
@@ -886,7 +936,7 @@ def test_a_reader_outside_the_cache_resets_before_its_inherited_lock(tmp_path: P
             os._exit(code)
     finally:
         reader._lock.release()
-    _, status = os.waitpid(pid, 0)
+    status = _wait_for_forked_child(pid)
     assert os.waitstatus_to_exitcode(status) == 0
 
 
