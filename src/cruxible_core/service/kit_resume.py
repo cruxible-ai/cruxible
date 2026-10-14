@@ -153,15 +153,20 @@ def _resuming() -> Iterator[None]:
 def resume_kits_after_activation(instance: PlaybillInstance, changed_paths: Iterable[str]) -> None:
     """Resume each kit whose last waited Provider this activation landed.
 
-    Called after the activation committed; never raises into it.
+    Called after the activation committed; never raises into it. The initial
+    waiting lookup and changed-path preparation are inside the same isolated
+    block as the resume itself: an unreadable or corrupt journal here must
+    not fail a commit that already happened.
     """
 
-    if _RESUMING.get() or not _any_waiting(instance):
-        return
-    providers = sorted({path for path in changed_paths if path.startswith("providers/")})
-    if not providers:
+    if _RESUMING.get():
         return
     try:
+        if not _any_waiting(instance):
+            return
+        providers = sorted({path for path in changed_paths if path.startswith("providers/")})
+        if not providers:
+            return
         ready = _satisfy(instance, providers)
         for kit_id in ready:
             _resume(instance, kit_id)

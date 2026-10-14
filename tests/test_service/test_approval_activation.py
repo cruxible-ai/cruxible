@@ -113,6 +113,35 @@ def test_stale_candidate_is_signed_but_reported_stale(tmp_path: Path) -> None:
     assert receipt.activation is None and receipt.not_activated == "stale"
 
 
+def test_a_corrupt_trigger_journal_never_fails_the_committed_activation(tmp_path: Path) -> None:
+    """A kit-resume lookup fault after acceptance is isolated from the receipt.
+
+    ``resume_kits_after_activation``'s initial waiting-row read opens and reads
+    the trigger journal on first use; an unreadable or corrupt file there must
+    not escape into the activation that already committed (it only defers the
+    kit resume, logged, with the pending record kept).
+    """
+    from cruxible_core.triggers.journal import journal_path
+
+    instance, _owner = initialize_local(tmp_path)
+    result = _document_proposal(instance, name="activates-despite-corrupt-journal")
+    path = journal_path(instance)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a database")
+
+    receipt = _approve(
+        instance,
+        result,
+        client_material(tmp_path, instance),
+        activate_when_complete=True,
+        may_activate=True,
+    )
+
+    assert receipt.not_activated is None
+    assert receipt.activation is not None
+    assert receipt.activation.status == "accepted"
+
+
 def test_lifecycle_candidate_counts_its_actors_own_signature(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     newcomer = generate_client_principal_key(
