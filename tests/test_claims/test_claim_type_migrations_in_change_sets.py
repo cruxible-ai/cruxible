@@ -40,7 +40,6 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV1
-from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
@@ -1158,10 +1157,7 @@ def test_a_succession_rebases_and_replays_byte_identically(tmp_path: Path) -> No
         proposal_name="advance-for-succession-rebase",
     )
 
-    rebased = coordinator.rebase(intent.intent_id, actor=actor).intent
-    assert rebased.base_coordinate == AcceptedCoordinate.from_internal(
-        instance.accepted_coordinate()
-    )
+    # Submit re-checks the stale-based set at the head and advances it there.
     _accept(instance, owner, coordinator, intent.intent_id, actor)
 
     accepted = instance.accepted_coordinate()

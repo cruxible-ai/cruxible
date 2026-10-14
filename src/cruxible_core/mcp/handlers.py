@@ -987,16 +987,6 @@ def handle_playbill_authoring_preflight(
     )
 
 
-def handle_playbill_authoring_rebase(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord:
-    return _daemon_call(
-        lambda client: client.rebase_authoring_intent(instance_id, intent_id),
-        operation_name="cruxible_authoring_rebase",
-    )
-
-
 def handle_playbill_authoring_submit(
     instance_id: str,
     *,

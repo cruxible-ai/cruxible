@@ -85,14 +85,6 @@ from cruxible_core.storage.cas import dry_run_bodies
 AUTHORING_REBASE_DOMAIN = "playbill-authoring-rebase-v1"
 
 
-class AuthoringIntentRebaseError(CruxibleError):
-    code = "cruxible.authoring.intent_rebase_not_allowed"
-
-
-class AuthoringIntentRebaseSubmitted(AuthoringIntentRebaseError):
-    code = "cruxible.authoring.intent_rebase_submitted"
-
-
 class AuthoringProgramStampError(CruxibleError):
     def __init__(self, code: str, message: str) -> None:
         self.code = code
@@ -393,79 +385,6 @@ class AuthoringIntentCoordinator:
             )
         )
 
-    def rebase(self, intent_id: str, *, actor: AuthenticatedActor) -> AuthoringIntentView:
-        """Advance one refused, unsubmitted intent to the current accepted coordinate."""
-
-        self.instance.require_writable()
-        current = self.store.get(intent_id, actor_id=actor.actor_id)
-        status = current.candidate_status
-        next_coordinate = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
-        if status.state == "draft" and current.base_coordinate == next_coordinate:
-            predecessor, latest = self.store.latest_transition(
-                intent_id,
-                actor_id=actor.actor_id,
-            )
-            if (
-                predecessor is not None
-                and predecessor.candidate_status.state == "preflight_refused"
-                and latest.operation_key
-                == _rebase_operation_key(
-                    predecessor,
-                    actor_id=actor.actor_id,
-                    next_coordinate=next_coordinate,
-                )
-            ):
-                return AuthoringIntentView(intent=latest.intent)
-        if status.proposal_id is not None or status.state in {
-            "awaiting_external_approval",
-            "approval_invalid",
-            "ready_to_activate",
-            "conflicted_after_rebase",
-            "superseded",
-            "accepted",
-            "terminal",
-        }:
-            raise AuthoringIntentRebaseSubmitted(
-                f"{AuthoringIntentRebaseSubmitted.code}: submitted intent cannot be rebased"
-            )
-        if status.state != "preflight_refused":
-            raise AuthoringIntentRebaseError(
-                f"{AuthoringIntentRebaseError.code}: only preflight_refused may advance"
-            )
-        if current.base_coordinate == next_coordinate:
-            return AuthoringIntentView(intent=current)
-        operation_key = _rebase_operation_key(
-            current,
-            actor_id=actor.actor_id,
-            next_coordinate=next_coordinate,
-        )
-
-        def advance(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-            if intent != current:
-                raise AuthoringIntentRebaseError(
-                    f"{AuthoringIntentRebaseError.code}: intent changed during rebase"
-                )
-            return intent.model_copy(
-                update={
-                    "base_coordinate": next_coordinate,
-                    "intent_revision": intent.intent_revision + 1,
-                    "last_preflight": None,
-                    "candidate_status": CandidateStatus(
-                        state="draft",
-                        current_accepted_coordinate=next_coordinate,
-                    ),
-                }
-            )
-
-        updated = self.store.transition(
-            intent_id,
-            actor_id=actor.actor_id,
-            operation_key=operation_key,
-            transform=advance,
-            allow_rebase=True,
-        )
-        return AuthoringIntentView(intent=updated)
-
     def preflight(
         self,
         intent_id: str,
@@ -488,6 +407,20 @@ class AuthoringIntentCoordinator:
     ) -> tuple[ComputedPreflight, AuthoringIntentV1]:
         current = self.store.get(intent_id, actor_id=actor.actor_id)
         computed = compute_preflight(self.instance, intent=current, actor=actor, prepared=prepared)
+        if computed.result.verdict == "refused":
+            advanced = self._at_current_head(current)
+            if advanced is not None:
+                # A refused intent whose base is behind the head is checked
+                # again at the head: when it passes there, its refusal was the
+                # stale base, and the intent advances (same payload, identity
+                # and timestamp; the next revision). A payload fault refuses at
+                # either base and the intent stays where it was.
+                rechecked = compute_preflight(
+                    self.instance, intent=advanced, actor=actor, prepared=prepared
+                )
+                if rechecked.result.verdict == "passed":
+                    current = self._advance_base(current, advanced, actor=actor)
+                    computed = rechecked
         if computed.lowered is not None and computed.lowered.subject_creations:
             # The stored intent's actual creations: the record the candidate
             # boundary reads back at admission and settlement (review F-001).
@@ -514,6 +447,58 @@ class AuthoringIntentCoordinator:
             transform=bind_preflight,
         )
         return computed, updated
+
+    def _at_current_head(self, intent: AuthoringIntentV1) -> AuthoringIntentV1 | None:
+        """The unsubmitted intent re-based on the accepted head, if its base is behind it.
+
+        In memory only; ``_advance_base`` records it. A submitted intent keeps
+        its base: its proposal is readmitted, never re-based in place.
+        """
+
+        status = intent.candidate_status
+        if status.proposal_id is not None or status.state not in {
+            "draft",
+            "ready_to_submit",
+            "preflight_refused",
+        }:
+            return None
+        head = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
+        if intent.base_coordinate == head:
+            return None
+        return intent.model_copy(
+            update={
+                "base_coordinate": head,
+                "intent_revision": intent.intent_revision + 1,
+                "last_preflight": None,
+                "candidate_status": CandidateStatus(
+                    state="draft", current_accepted_coordinate=head
+                ),
+            }
+        )
+
+    def _advance_base(
+        self,
+        current: AuthoringIntentV1,
+        advanced: AuthoringIntentV1,
+        *,
+        actor: AuthenticatedActor,
+    ) -> AuthoringIntentV1:
+        """Record the move of one unchanged intent onto the head it re-checked clean at."""
+
+        def advance(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+            if intent != current:
+                raise ValueError("AuthoringIntent changed while its base was advanced")
+            return advanced
+
+        return self.store.transition(
+            current.intent_id,
+            actor_id=actor.actor_id,
+            operation_key=_rebase_operation_key(
+                current, actor_id=actor.actor_id, next_coordinate=advanced.base_coordinate
+            ),
+            transform=advance,
+            allow_rebase=True,
+        )
 
     def compile(
         self,

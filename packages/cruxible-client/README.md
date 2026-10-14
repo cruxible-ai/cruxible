@@ -1761,8 +1761,9 @@ evidence-policy `lint` that `claim-type propose` serves for the same definition.
 `Intent` and `Proposal` are obtained from SDK factories. `from_preflight` is an
 advanced response adapter. Cached properties are not
 automatic status polling. `Intent.path_to_acceptance` calls status.
-`Intent.rebase()` clears observed preflight/status; prepare again before relying
-on a new candidate. `reprepare()` requires the same owning connection.
+A refused intent whose base the accepted head moved past advances to the head
+on `prepare()` or `submit()` when it checks clean there; a payload fault stays
+refused. `reprepare()` requires the same owning connection.
 
 `Proposal.review()` returns an immutable process-local `ReviewedProposal`.
 `approve(signer=..., reviewed=...)` checks exact proposal/candidate/session/instance
@@ -2022,16 +2023,6 @@ submit() -> Intent
 
 ```text
 status() -> api.CandidateStatusRecord
-```
-
-<a id="api-intent-rebase"></a>
-
-### `Intent.rebase`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-rebase() -> Intent
 ```
 
 <a id="api-intent-wait-for-acceptance"></a>
@@ -6040,21 +6031,6 @@ preflight_authoring_intent(
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight'`.
-
-<a id="api-cruxibleclient-rebase-authoring-intent"></a>
-
-### `CruxibleClient.rebase_authoring_intent`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-rebase_authoring_intent(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/authoring/intents/{intent_id}/rebase'`.
 
 <a id="api-cruxibleclient-submit-authoring-intent"></a>
 

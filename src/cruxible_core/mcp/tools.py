@@ -815,17 +815,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_authoring_rebase(
-        instance_id: InstanceId = None,
-        *,
-        intent_id: str,
-    ) -> contracts.AuthoringIntentViewRecord:
-        """Rebase one stale authoring intent onto the current accepted coordinate."""
-        return handlers.handle_playbill_authoring_rebase(
-            require_instance_id(instance_id), intent_id
-        )
-
-    @_tool
     def cruxible_authoring_submit(
         instance_id: InstanceId = None,
         *,

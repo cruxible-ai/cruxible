@@ -379,8 +379,8 @@ def _reference_diagnostics(
                     message=(
                         "The accepted coordinate that minted this ref cannot be "
                         "verified. Re-mint the reference against the current "
-                        "coordinate: run cruxible authoring rebase on this intent, "
-                        "then preflight again."
+                        "coordinate, then revise the intent with cruxible authoring "
+                        "compile PAYLOAD --intent-id ID."
                     ),
                     owner="daemon",
                     disposition="terminal",

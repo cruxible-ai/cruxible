@@ -78,7 +78,6 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("authoring", "bind"): "active",
     ("authoring", "compile"): "active",
     ("authoring", "preflight"): "active",
-    ("authoring", "rebase"): "active",
     ("authoring", "submit"): "active",
     ("procedure", "run"): "active",
     ("procedure", "measure"): "active",
@@ -665,11 +664,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill",
                 "preflight_authoring_intent",
                 "Recheck an authoring intent.",
-            ),
-            "rebase": _command(
-                "playbill",
-                "rebase_authoring_intent",
-                "Advance a refused intent to accepted head.",
             ),
             "submit": _command("playbill", "submit_authoring_intent", "Submit a passing intent."),
             "status": _command(

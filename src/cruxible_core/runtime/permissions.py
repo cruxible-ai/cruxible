@@ -132,7 +132,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_authoring_compile": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_bind": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_preflight": PermissionMode.GOVERNED_WRITE,
-    "cruxible_authoring_rebase": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_submit": PermissionMode.GOVERNED_WRITE,
     # The write verbs propose at GOVERNED_WRITE; each activates in the same call
     # only when the caller's tier also admits cruxible_proposal_activate.

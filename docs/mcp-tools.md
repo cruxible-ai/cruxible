@@ -266,7 +266,6 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_authoring_compile` | Stage a payload as an intent (new, or revising `intent_id`) and run every check | `GOVERNED_WRITE` |
 | `cruxible_authoring_bind` | Read an anchored selection of a catalogued workspace file (the stub's `source_id` must be its catalog name; `occurrence` picks one of several anchor matches), derive commitments, and compile | `GOVERNED_WRITE` |
 | `cruxible_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
-| `cruxible_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
 | `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
 | `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
 | `cruxible_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp and registers the block; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
@@ -277,7 +276,8 @@ from accepted law evidence, never carried forward from acceptance.
 The daemon mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.
 
-The flow is `compile` (or `bind`), then `rebase` or `preflight` as needed, then
+The flow is `compile` (or `bind`), then `preflight` as needed (a refused intent
+whose base the head moved past advances when it checks clean at the head), then
 `submit` and `status`, with `get` and `list` to find work again; a one-shot write
 is `cruxible_authoring_submit` with a `payload`. `cruxible_authoring_example`
 prints a template for any input kind.

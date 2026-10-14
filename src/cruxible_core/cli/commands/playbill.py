@@ -3726,8 +3726,8 @@ def authoring_group() -> None:
     One call:    authoring submit PAYLOAD        (compile, preflight and submit)
     Preview:     authoring submit PAYLOAD --dry-run
     Staged work: authoring compile PAYLOAD, then compile PAYLOAD --intent-id ID
-                 as often as needed, rebase ID when the head moved, and
-                 submit --intent-id ID
+                 as often as needed, and submit --intent-id ID (an intent
+                 the head moved past advances when it checks clean there)
     Templates:   authoring example [NAME]
     Find work:   authoring list, authoring get ID, authoring status ID
 
@@ -3958,11 +3958,11 @@ def bind_authoring_selection(
 @json_option
 @handle_errors
 def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: bool) -> None:
-    """Re-run every check on a staged intent against the head it is based on.
+    """Re-run every check on a staged intent.
 
-    A refused intent whose base is behind the accepted head is advanced with
-    `authoring rebase`; one with a payload fault is revised with `authoring
-    compile PAYLOAD --intent-id ID`.
+    A refused intent whose base is behind the accepted head is checked again at
+    the head and, when it passes there, advances to it; one with a payload fault
+    stays refused and is revised with `authoring compile PAYLOAD --intent-id ID`.
     """
 
     result = _server_call(
@@ -3981,33 +3981,6 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
             ),
         )
         return
-    _emit_json(result.model_dump(mode="json"))
-    if result.verdict == "refused":
-        intent = _server_call(
-            lambda client, instance_id: client.get_authoring_intent(instance_id, intent_id),
-            command_name="cruxible authoring preflight",
-        ).intent
-        if intent.get("base_coordinate") != result.certificate.accepted_coordinate.model_dump(
-            mode="json"
-        ):
-            click.echo(
-                f"Hint: run cruxible authoring rebase {intent_id}; a stale intent "
-                "coordinate advances only through rebase.",
-                err=True,
-            )
-
-
-@authoring_group.command("rebase")
-@click.argument("intent_id")
-@json_option
-@handle_errors
-def rebase_authoring_intent(intent_id: str, output_json: bool) -> None:
-    """Advance one refused, unsubmitted intent to the accepted head."""
-
-    result = _server_call(
-        lambda client, instance_id: client.rebase_authoring_intent(instance_id, intent_id),
-        command_name="cruxible authoring rebase",
-    )
     _emit_json(result.model_dump(mode="json"))
 
 

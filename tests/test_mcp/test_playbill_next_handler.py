@@ -1,4 +1,4 @@
-"""MCP reaches next and authoring rebase the way the CLI and SDK do."""
+"""MCP reaches next the way the CLI and SDK do."""
 
 from __future__ import annotations
 
@@ -36,25 +36,6 @@ def test_next_observes_the_mcp_workspace_and_stamps_the_default_request(
     assert sent["limit"] is None and sent["cursor"] is None
 
 
-def test_rebase_reaches_the_served_rebase_route(monkeypatch: pytest.MonkeyPatch) -> None:
-    rebased: list[tuple[str, str]] = []
-    view = object()
-
-    class StubClient:
-        def rebase_authoring_intent(self, instance_id: str, intent_id: str) -> object:
-            rebased.append((instance_id, intent_id))
-            return view
-
-    monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
-
-    assert handlers.handle_playbill_authoring_rebase("inst_test", "intent-1") is view
-    assert rebased == [("inst_test", "intent-1")]
-
-
-def test_next_is_a_read_and_rebase_writes_at_the_preflight_tier() -> None:
+def test_next_is_a_read() -> None:
     assert TOOL_PERMISSIONS["cruxible_next"] == PermissionMode.READ_ONLY
-    assert (
-        TOOL_PERMISSIONS["cruxible_authoring_rebase"]
-        == TOOL_PERMISSIONS["cruxible_authoring_preflight"]
-        == PermissionMode.GOVERNED_WRITE
-    )
+    assert "cruxible_authoring_rebase" not in TOOL_PERMISSIONS

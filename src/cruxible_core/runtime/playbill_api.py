@@ -1877,16 +1877,6 @@ def playbill_authoring_preflight(
     return _authoring_preflight_result(coordinator, actor=actor, result=result)
 
 
-def playbill_authoring_rebase(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_authoring_rebase", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.rebase(intent_id, actor=actor)
-    return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
-
-
 def playbill_authoring_submit(
     instance_id: str,
     intent_id: str,

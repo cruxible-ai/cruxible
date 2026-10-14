@@ -1266,17 +1266,6 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.AuthoringPreflightResult)
 
-    def rebase_authoring_intent(
-        self,
-        instance_id: str,
-        intent_id: str,
-    ) -> contracts.AuthoringIntentViewRecord:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/authoring/intents/{intent_id}/rebase",
-            json={"tag": "playbill-authoring-intent-rebase-request-v1"},
-        )
-        return self._parse_model(response, contracts.AuthoringIntentViewRecord)
-
     def submit_authoring_intent(
         self,
         instance_id: str,

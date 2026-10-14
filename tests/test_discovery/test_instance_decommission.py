@@ -256,13 +256,6 @@ def _write_doors() -> tuple[tuple[str, object], ...]:
             ),
         ),
         (
-            "authoring_rebase",
-            lambda instance: AuthoringIntentCoordinator.for_instance(instance).rebase(
-                "AIT-decommission-probe",
-                actor=none,  # type: ignore[arg-type]
-            ),
-        ),
-        (
             "authoring_submit",
             lambda instance: AuthoringIntentCoordinator.for_instance(instance).submit(
                 "AIT-decommission-probe",

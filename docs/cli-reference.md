@@ -1547,7 +1547,6 @@ cruxible authoring bind --file PATH --anchor TEXT [--occurrence N]
   [--window-lines N] [--workspace-root DIR]
   --payload-file CLAIM_STUB|- [--json]
 cruxible authoring preflight INTENT_ID [--brief] [--json]
-cruxible authoring rebase INTENT_ID [--json]
 cruxible authoring status INTENT_ID [--json]
 cruxible authoring get INTENT_ID [--json]
 cruxible authoring list [--json]
@@ -1558,8 +1557,11 @@ PAYLOAD` compiles, checks and submits in one call; `--dry-run` returns the
 preflight the submit would run, with every refusal, and saves no intent. Durable
 intents are optional, for staged work on large definitions: `compile PAYLOAD`
 creates one (its ID is `certificate.intent_id`), `compile PAYLOAD --intent-id ID`
-revises it (the daemon keeps every revision), `rebase ID` advances a refused one
-to the accepted head, and `submit --intent-id ID` submits it. `get` and `list`
+revises it (the daemon keeps every revision), and `submit --intent-id ID`
+submits it. `preflight` and `submit` check a refused intent whose base the
+accepted head moved past again at the head; when it passes there it advances to
+the head (same payload and identity, the next revision), and a payload fault
+still refuses. `get` and `list`
 find staged work again after the context that started it is gone.
 `authoring example` prints a model-generated template for NAME, or lists the
 names without one.
@@ -1642,8 +1644,8 @@ ceiling described there, which preflight checks before lowering anything.
 
 The authoring coordinator owns stable identities, timestamps, bases, and proposal
 references. `compile` creates or updates an intent and performs a binding preflight;
-`rebase` advances an unsubmitted refused intent to the current accepted coordinate;
-`submit` is idempotent and never supplies approvals. `status` reports the remaining
+`preflight` and `submit` advance an unsubmitted refused intent to the current
+accepted coordinate when it checks clean there; `submit` is idempotent and never supplies approvals. `status` reports the remaining
 approval or activation conditions without impersonating the actors who own them.
 `bind --occurrence N` counts matching anchors in ascending byte-offset order and
 selects the 1-based `N`th match. The resulting selector records the total number
