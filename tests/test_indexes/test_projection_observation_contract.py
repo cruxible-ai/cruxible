@@ -132,6 +132,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "line_inbox_unread",
         # Live Subjects of a kind no SubjectKind declares (identity D6).
         "subject_kind_undeclared",
+        # A recorded kit add whose resume refused at the head it ran on.
+        "kit_resume_blocked",
     }
     assert set(get_args(NextRepairOperation)) == {
         "cruxible.authoring.example",
@@ -160,6 +162,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         # The unread inbox row names the list that shows the Line's items.
         "cruxible.inbox.list",
         "cruxible.prediction.settle",
+        # A blocked kit resume: preview the kit add again at the head.
+        "cruxible.kit.add",
         "hand_edit",
         "cruxible.line.evaluate",
     }
