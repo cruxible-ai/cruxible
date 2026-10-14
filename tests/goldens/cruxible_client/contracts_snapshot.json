@@ -162,7 +162,8 @@
         "evidence_unavailable",
         "prediction_settleable",
         "prediction_window_unbindable",
-        "subject_kind_undeclared"
+        "subject_kind_undeclared",
+        "kit_resume_blocked"
       ]
     },
     "NextRefusalCode": {
@@ -192,6 +193,7 @@
         "cruxible.line.dispatch",
         "cruxible.inbox.list",
         "cruxible.prediction.settle",
+        "cruxible.kit.add",
         "hand_edit"
       ]
     },
@@ -30466,7 +30468,8 @@
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable",
-              "subject_kind_undeclared"
+              "subject_kind_undeclared",
+              "kit_resume_blocked"
             ],
             "title": "Reason",
             "type": "string"
@@ -30676,6 +30679,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -30747,6 +30751,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -30854,7 +30859,8 @@
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable",
-              "subject_kind_undeclared"
+              "subject_kind_undeclared",
+              "kit_resume_blocked"
             ],
             "title": "Reason",
             "type": "string"
@@ -31126,6 +31132,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -31197,6 +31204,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -31391,7 +31399,8 @@
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable",
-              "subject_kind_undeclared"
+              "subject_kind_undeclared",
+              "kit_resume_blocked"
             ],
             "title": "Reason",
             "type": "string"
@@ -31600,7 +31609,8 @@
                   "evidence_unavailable",
                   "prediction_settleable",
                   "prediction_window_unbindable",
-                  "subject_kind_undeclared"
+                  "subject_kind_undeclared",
+                  "kit_resume_blocked"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -31702,6 +31712,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -31773,6 +31784,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -31890,7 +31902,8 @@
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable",
-              "subject_kind_undeclared"
+              "subject_kind_undeclared",
+              "kit_resume_blocked"
             ],
             "title": "Reason",
             "type": "string"
@@ -32187,6 +32200,7 @@
               "cruxible.line.dispatch",
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
+              "cruxible.kit.add",
               "hand_edit"
             ],
             "title": "Operation",
@@ -32254,6 +32268,7 @@
               "cruxible.line.dispatch",
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
+              "cruxible.kit.add",
               "hand_edit"
             ],
             "title": "Operation",
@@ -32348,6 +32363,7 @@
               "cruxible.line.dispatch",
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
+              "cruxible.kit.add",
               "hand_edit"
             ],
             "title": "Operation",
@@ -32561,6 +32577,7 @@
               "cruxible.line.dispatch",
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
+              "cruxible.kit.add",
               "hand_edit"
             ],
             "title": "Operation",
@@ -32947,7 +32964,8 @@
                   "evidence_unavailable",
                   "prediction_settleable",
                   "prediction_window_unbindable",
-                  "subject_kind_undeclared"
+                  "subject_kind_undeclared",
+                  "kit_resume_blocked"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -33109,7 +33127,8 @@
                   "evidence_unavailable",
                   "prediction_settleable",
                   "prediction_window_unbindable",
-                  "subject_kind_undeclared"
+                  "subject_kind_undeclared",
+                  "kit_resume_blocked"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -33212,6 +33231,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -33283,6 +33303,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -33884,6 +33905,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -33955,6 +33977,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",

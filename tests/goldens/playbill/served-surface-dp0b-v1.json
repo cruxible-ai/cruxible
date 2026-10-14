@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-13:cli-batch-b-mechanical-bookkeeping",
-    "surface_digest": "sha256:30dee3dc89facd6bc812f04c065490940c2f869b0becca3c5dab53da11a5d0d3"
+    "surface_digest": "sha256:20ca9ec15b45becf1474c416a6b623a6ab163d9508704724fdd53949eee71045"
   },
   "surface": {
     "cli_leaves": [
@@ -1353,7 +1353,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.kits.KitStatus",
-        "response_schema_digest": "sha256:395046d1d72c2345a792f1fe4a7499a51b5bf0f8624204401afe7b27561ab556"
+        "response_schema_digest": "sha256:90fa56f9c4558fcd29c38135ef519f17f0b107c04bbeb82dc6b2355b3f8f4de9"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.kit_add",
@@ -1497,7 +1497,7 @@
         "request_model": "cruxible_core.server.playbill_request_models.NextRequest",
         "request_schema_digest": "sha256:14d072eede4cb2410b6556b1c72f72f8a62476ce192771692a1530eb499fe73b",
         "response_model": "cruxible_client.contracts.NextResult",
-        "response_schema_digest": "sha256:34658a83f59d17e77d18bcb3ffcc99c0c88432777d53389387506dc1bafad956"
+        "response_schema_digest": "sha256:6c07c43e17a141d4a5af12d98227f1aac719a100ff064060ac77e9828eb7318c"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.orient",
@@ -2311,7 +2311,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_status",
         "input_schema_digest": "sha256:7ac7b304b74762eec1aa955ef4dd274936e6b74f1e8b1d1b39f84cf9698b2ed7",
         "name": "cruxible_kit_status",
-        "output_schema_digest": "sha256:020c0d8fa3d82da55f0e848c3ec02d9063d966d590052317939163d8cf101c24",
+        "output_schema_digest": "sha256:1a520f859683a829b61a56a16f8dcfc08704dc168f4e445ac0605214ab78441d",
         "permission": "READ_ONLY"
       },
       {
@@ -2373,7 +2373,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_next",
         "input_schema_digest": "sha256:822dc04c16064413474f2632b8758500c7aa6db30bbe675a5ea7584518b5602f",
         "name": "cruxible_next",
-        "output_schema_digest": "sha256:91fd2d26bfa2e9dec851722d5c25530bce83942ad20308a9351663ff58727f5b",
+        "output_schema_digest": "sha256:b7d07378794d486c529ff913e95f99d53524e3a11418bd19a37eaf236a04e440",
         "permission": "READ_ONLY"
       },
       {
