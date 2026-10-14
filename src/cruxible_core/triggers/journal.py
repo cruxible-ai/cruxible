@@ -64,12 +64,15 @@ CREATE TRIGGER events_no_delete BEFORE DELETE ON events
  BEGIN SELECT RAISE(ABORT,'trigger events are append-only'); END;
 CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, version TEXT NOT NULL,
  listening_since TEXT NOT NULL, covered INTEGER NOT NULL) STRICT;
-PRAGMA user_version=4;
 """
-_VERSION = 4
+#: Bumped to 5 to add ``kit_resumes_by_state``; a version-4 journal upgrades in
+#: place the same one-time way a version-2/3 journal does (see ``_open``).
+_VERSION = 5
 # A kit add waiting on provider installs fires on the acceptance that lands the
 # last of them: one row per kit, one wait per Provider path still to activate.
-# Retained operational authority beside the fires, never rebuilt.
+# Retained operational authority beside the fires, never rebuilt. The state
+# index lets a blocked-only read (``next``) and the startup waiting-row pass
+# select their rows directly, instead of scanning every kit-resume row.
 _KIT_RESUME_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS kit_resumes (kit_id TEXT PRIMARY KEY, version TEXT NOT NULL, "
     "request_digest TEXT NOT NULL, actor_id TEXT NOT NULL, recorded_at TEXT NOT NULL, "
@@ -79,6 +82,7 @@ _KIT_RESUME_SCHEMA = (
     "kit_id TEXT NOT NULL, provider_id TEXT NOT NULL, "
     "PRIMARY KEY(provider_path, kit_id)) STRICT",
     "CREATE INDEX IF NOT EXISTS kit_resume_waits_by_kit ON kit_resume_waits(kit_id)",
+    "CREATE INDEX IF NOT EXISTS kit_resumes_by_state ON kit_resumes(state)",
 )
 
 
@@ -215,9 +219,12 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
                     statement = ""
             for table in _KIT_RESUME_SCHEMA:
                 connection.execute(table)
-        elif version in (2, 3):
+            connection.execute(f"PRAGMA user_version={_VERSION}")
+        elif version in (2, 3, 4):
             # A reader of an older journal sees what it holds; the next writer
-            # brings it forward one step at a time.
+            # brings it forward one step at a time. A version-4 journal has the
+            # kit-resume tables already (``IF NOT EXISTS`` statements are then
+            # no-ops) and only gains the new state index.
             if create:
                 if version == 2:
                     connection.execute(

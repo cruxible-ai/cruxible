@@ -186,7 +186,7 @@ def test_a_journal_its_creator_has_not_committed_reads_as_none(tmp_path: Path) -
     # A writer still creates the schema in it.
     fire(world, NOW + timedelta(days=1), since=NOW + timedelta(days=1))
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
 
 
 def test_timer_state_follows_the_accepted_trigger_set(tmp_path: Path) -> None:
@@ -392,7 +392,7 @@ def test_version_two_journal_migrates_in_place_without_losing_fires(tmp_path: Pa
     assert trigger_events(world) == events
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
         assert connection.execute("SELECT * FROM timers").fetchall() == timers
     assert trigger_events(world) == events
 
@@ -409,8 +409,27 @@ def test_version_three_journal_gains_the_kit_resume_tables_in_place(tmp_path: Pa
     assert trigger_events(world) == events
     schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
     with sqlite3.connect(journal_path(world)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
         assert connection.execute("SELECT count(*) FROM kit_resumes").fetchone() == (0,)
+    assert trigger_events(world) == events
+
+
+def test_version_four_journal_gains_the_state_index_in_place(tmp_path: Path) -> None:
+    world = instance(tmp_path)
+    fire(world, NOW + timedelta(hours=1))
+    events = trigger_events(world)
+    with sqlite3.connect(journal_path(world)) as connection:
+        connection.execute("DROP INDEX kit_resumes_by_state")
+        connection.execute("PRAGMA user_version=4")
+    # A reader of the pre-index journal still reads it; the next writer upgrades it.
+    assert trigger_events(world) == events
+    schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
+    with sqlite3.connect(journal_path(world)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
+        indexed = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='kit_resumes_by_state'"
+        ).fetchone()
+        assert indexed is not None
     assert trigger_events(world) == events
 
 

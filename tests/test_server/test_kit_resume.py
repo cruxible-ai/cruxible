@@ -163,3 +163,68 @@ def test_a_recorded_resume_lands_blocks_or_closes_against_the_head_it_runs_on(
     finally:
         for _ in opened:
             pass
+
+
+def test_blocked_resumes_reads_by_index_not_the_full_view(tmp_path: Path) -> None:
+    """``next``'s blocked-row read is a direct, indexed ``state`` selection.
+
+    Before: it built every stored resume's status (``kit_resume_statuses``,
+    which fetches every resume and wait row) and filtered in Python, so a
+    ``next`` read grew with every completed (``proposed``) kit, never just the
+    blocked ones.
+    """
+
+    from types import SimpleNamespace
+
+    world = SimpleNamespace(
+        root=tmp_path, descriptor=SimpleNamespace(storage=SimpleNamespace(exhaust="exhaust"))
+    )
+
+    def _insert(kit_id: str, state: str) -> None:
+        with kit_resume.retained_records(world, write=True) as connection:
+            assert connection is not None
+            connection.execute(
+                "INSERT INTO kit_resumes (kit_id,version,request_digest,actor_id,"
+                "recorded_at,recorded_head,state,proposal_id,detail,source) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    kit_id,
+                    "1.0.0",
+                    "sha256:" + "0" * 64,
+                    "operator",
+                    "2026-01-01T00:00:00.000000Z",
+                    "deadbeef",
+                    state,
+                    f"proposal-{kit_id}" if state == "proposed" else None,
+                    None,
+                    "test",
+                ),
+            )
+
+    for n in range(50):
+        _insert(f"completed-{n}", "proposed")
+    _insert("the-blocked-one", "blocked")
+
+    # The state selection is a SEARCH on the new index, never a table SCAN.
+    with kit_resume.retained_records(world, write=False) as connection:
+        assert connection is not None
+        plan = [
+            row[3]
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN SELECT kit_id FROM kit_resumes WHERE state='blocked'"
+            ).fetchall()
+        ]
+    assert any("kit_resumes_by_state" in detail for detail in plan)
+    assert not any("SCAN kit_resumes" in detail for detail in plan)
+
+    # The population-loop guard: blocked_kit_resumes never builds the all-rows view.
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(
+            kit_resume,
+            "kit_resume_statuses",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("loaded the full resume view")),
+        )
+        (blocked,) = kit_resume.blocked_kit_resumes(world)
+    assert blocked.kit_id == "the-blocked-one"
+    assert blocked.state == "blocked"
+    assert blocked.waiting_on == ()

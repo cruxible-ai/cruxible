@@ -354,7 +354,47 @@ def kit_resume_statuses(instance: PlaybillInstance) -> tuple[KitResumeStatus, ..
 
 
 def blocked_kit_resumes(instance: PlaybillInstance) -> tuple[KitResumeStatus, ...]:
-    return tuple(item for item in kit_resume_statuses(instance) if item.state == "blocked")
+    """Blocked resume rows only: ``next``'s own population.
+
+    Selects by the indexed ``state`` column directly, rather than building
+    every stored resume's status and filtering (``kit_resume_statuses``, kept
+    for ``kit status``'s all-state view). Waits are then fetched only for the
+    selected kit ids; a blocked row has none once its waits clear, but the
+    lookup is scoped to the selection either way.
+    """
+
+    with retained_records(instance, write=False) as connection:
+        rows = _rows(
+            connection,
+            "SELECT kit_id,version,state,actor_id,recorded_at,proposal_id,detail,source "
+            "FROM kit_resumes WHERE state='blocked' ORDER BY kit_id",
+        )
+        if not rows:
+            return ()
+        kit_ids = [row[0] for row in rows]
+        marks = ",".join("?" for _ in kit_ids)
+        waits = _rows(
+            connection,
+            f"SELECT kit_id,provider_id FROM kit_resume_waits WHERE kit_id IN ({marks})",
+            tuple(kit_ids),
+        )
+    waiting: dict[str, list[str]] = {}
+    for kit_id, provider_id in waits:
+        waiting.setdefault(kit_id, []).append(provider_id)
+    return tuple(
+        KitResumeStatus(
+            kit_id=kit_id,
+            version=version,
+            state=state,
+            actor_id=actor_id,
+            recorded_at=recorded_at,
+            waiting_on=tuple(sorted(waiting.get(kit_id, ()))),
+            proposal_id=proposal_id,
+            detail=detail,
+            source=source,
+        )
+        for kit_id, version, state, actor_id, recorded_at, proposal_id, detail, source in rows
+    )
 
 
 __all__ = [
