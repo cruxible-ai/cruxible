@@ -45,7 +45,7 @@ from cruxible_client.contracts.workspace_advertisement import (
     WorkspaceAdvertisement,
 )
 from cruxible_core.documents.projection_documents import DocumentProjectionView
-from cruxible_core.errors import RequestRefusedError
+from cruxible_core.errors import PermissionDeniedError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import (
     ProposalAdmissionRequest,
@@ -373,6 +373,7 @@ def service_submit_playbill_approval(
     authenticated_submitter: str,
     activate_when_complete: bool = False,
     may_activate: bool = False,
+    may_activate_compiler_upgrade: bool = False,
 ) -> ApprovalReceipt:
     """Verify and persist one public attestation; activate when it completes the candidate.
 
@@ -381,6 +382,13 @@ def service_submit_playbill_approval(
     ``may_activate`` (the caller's tier admits activation), the candidate is
     activated here by the submitter, through the one activation path. Otherwise
     the receipt says why not and how many signatures remain.
+
+    A compiler-upgrade candidate additionally requires ``cruxible_compiler_upgrade``
+    at ADMIN to activate (``may_activate_compiler_upgrade``); an eligible
+    GRAPH_WRITE approver still stores the signature but does not activate it.
+    Direct activation keeps enforcing that requirement itself, independent of
+    this up-front check: a ``PermissionDeniedError`` surfacing from the
+    activation attempt below is treated the same way.
     """
 
     instance.require_writable()
@@ -436,13 +444,23 @@ def service_submit_playbill_approval(
         principals=signing_generation.principals,
         principal_lifecycle=principal_lifecycle,
     )
+    # A compiler-upgrade candidate needs cruxible_compiler_upgrade at ADMIN to
+    # activate, on top of the generic cruxible_proposal_activate this caller's
+    # tier may already admit; decided up front so an eligible-but-insufficient
+    # approver gets the reason without an activation attempt.
+    needs_compiler_upgrade = any(
+        member.artifact_kind == "compiler-upgrade" for member in candidate.members
+    )
+    effective_may_activate = may_activate and (
+        may_activate_compiler_upgrade if needs_compiler_upgrade else True
+    )
     reason: ApprovalNotActivated | None = (
         "approvals_remaining"
         if remaining
         else "held"
         if not activate_when_complete
         else "activation_not_permitted"
-        if not may_activate
+        if not effective_may_activate
         else None
     )
     if reason is None:
@@ -453,6 +471,12 @@ def service_submit_playbill_approval(
             )
         except ProposalStale:
             reason = "stale"
+        except PermissionDeniedError:
+            # The up-front check above should have caught this; kept as the
+            # backstop so any candidate-specific activation authority this
+            # submitter lacks still reports a receipt instead of an error,
+            # with the signature already persisted above.
+            reason = "activation_not_permitted"
         else:
             return _approval_receipt(proposal_id, candidate, verified, activation=activation)
     # Publication is deliberately OUTSIDE the lock: it rebuilds the advisory

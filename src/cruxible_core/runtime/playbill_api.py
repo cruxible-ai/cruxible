@@ -1256,6 +1256,9 @@ def playbill_submit_approval(
         authenticated_submitter=_actor_id(instance_id),
         activate_when_complete=not hold,
         may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
+        may_activate_compiler_upgrade=_permits(
+            "cruxible_compiler_upgrade", instance_id=instance_id
+        ),
     )
     return contracts.ApprovalReceipt.model_validate(result.model_dump(mode="json"))
 

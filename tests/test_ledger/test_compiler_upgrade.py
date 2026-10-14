@@ -161,6 +161,42 @@ def test_upgrade_requires_signed_approval_and_admin_activation(tmp_path, monkeyp
     assert instance.accepted_coordinate() == before
 
 
+def test_graph_write_approver_completes_compiler_upgrade_without_activating(tmp_path, monkeypatch):
+    """A GRAPH_WRITE reviewer's completing signature on a compiler upgrade stores the
+    signature and reports ``activation_not_permitted``, never a ``PermissionDeniedError``:
+    the candidate-specific ``cruxible_compiler_upgrade``/ADMIN requirement is separate
+    from the generic ``cruxible_proposal_activate``/GRAPH_WRITE one this reviewer's tier
+    already admits.
+    """
+
+    instance, _, reviewer = old_instance(tmp_path, monkeypatch)
+    before = instance.accepted_coordinate()
+    proposal = propose(instance)
+    assert proposal.candidate is not None
+    signature = _sign(
+        reviewer,
+        proposal.candidate.candidate_digest,
+        proposal.candidate.candidate.parent_semantic_root,
+    )
+
+    receipt = service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        attestation=signature.attestation,
+        authenticated_submitter="reviewer",
+        activate_when_complete=True,
+        may_activate=True,
+        may_activate_compiler_upgrade=False,
+    )
+
+    assert receipt.not_activated == "activation_not_permitted"
+    assert receipt.activation is None
+    assert instance.accepted_coordinate() == before
+    assert (
+        len(instance.proposal_evidence().read_approvals(proposal.candidate.candidate_digest)) == 1
+    )
+
+
 @pytest.mark.parametrize(
     "point",
     ["before:main.cas", "after:main.cas", "before:generation.note", "before:serving.publication"],
