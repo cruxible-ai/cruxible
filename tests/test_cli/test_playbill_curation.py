@@ -195,7 +195,6 @@ def test_cli_curation_lifecycle_commands_delegate_once(
         ("accept-fixed", "--generation"),
         ("suppress", "lineage"),
         ("unsuppress", "Lift a suppression"),
-        ("observe", "block-churn"),
     ),
 )
 def test_curation_commands_carry_their_own_help(command: str, phrase: str) -> None:

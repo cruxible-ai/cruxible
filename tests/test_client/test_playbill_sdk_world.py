@@ -1437,7 +1437,7 @@ def test_a_type_checker_rejects_every_misspelling_the_stub_names(
         "\n"
         "def spelled_right(world: World) -> None:\n"
         "    world.sec.vuln.severity.high\n"
-        "    world.sec.package.cryptography\n"
+        '    world.sec.package["cryptography"]\n'
         "    world.sec.vulnerability['cve-2026-69247'].severity\n"
         "    world.sec.package.define('click')\n",
         encoding="utf-8",
