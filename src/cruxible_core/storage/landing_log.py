@@ -100,6 +100,33 @@ class _Presence:
 #: Per (held algorithm directory, log identity): a replaced log is another index.
 _INDEXES: dict[tuple[str, str], _Presence] = {}
 _INDEXES_LOCK = threading.Lock()
+#: Per held algorithm directory: the digests whose last completion this process
+#: has seen (read into an index, or written) is a damage record. A verification
+#: that finds such a body whole records its repair; one this process has not seen
+#: damaged costs that check nothing beyond this lookup (``damage_seen``).
+_DAMAGE_SEEN: dict[str, set[str]] = {}
+_DAMAGE_KINDS = frozenset({"missing", "corrupt"})
+
+
+def _saw(root: str, digest: str, kind: LandingKind) -> None:
+    """Note one completion for ``damage_seen`` (the caller holds ``_INDEXES_LOCK``)."""
+
+    if kind in _DAMAGE_KINDS:
+        _DAMAGE_SEEN.setdefault(root, set()).add(digest)
+    else:
+        _DAMAGE_SEEN.get(root, set()).discard(digest)
+
+
+def damage_seen(root: str, digest: str) -> bool:
+    """Whether this process last saw ``digest`` recorded damaged in the store at ``root``.
+
+    No I/O: a damage record another process wrote is seen once a read here has
+    extended its index past it (``LandingLog.present``); until then the evidence
+    sweep records the repair.
+    """
+
+    seen = _DAMAGE_SEEN.get(root)
+    return seen is not None and digest in seen
 
 
 def _reset_after_fork() -> None:
@@ -369,6 +396,7 @@ class LandingLog:
                 for row in self.after(index.through, through=sequence, identity=identity):
                     if not row.intent:
                         index.events.setdefault(row.digest, []).append((row.sequence, row.kind))
+                        _saw(key[0], row.digest, row.kind)
                     index.through = row.sequence
             events = index.events.get(digest)
             if not events:
@@ -414,7 +442,10 @@ class LandingLog:
                 state = recheck()
                 if not self._disagrees(digest, state):
                     return False
-                self._append("stored" if state == "present" else state, digest, sync=True)
+                kind: LandingKind = "stored" if state == "present" else state
+                self._append(kind, digest, sync=True)
+                with _INDEXES_LOCK:
+                    _saw(str(self._store._algorithm_root), digest, kind)
                 return True
             finally:
                 try:
@@ -509,6 +540,8 @@ class LandingLog:
         if completion is None or (completion == "stored") != present:
             completion = "stored" if present else "erased"
         self._append(completion, digest, sync=True)
+        with _INDEXES_LOCK:
+            _saw(str(self._store._algorithm_root), digest, completion)
         try:
             os.unlink(self._marker(digest), dir_fd=pending)
         except FileNotFoundError:
@@ -569,6 +602,7 @@ __all__ = [
     "PENDING_NAME",
     "SEED_NAME",
     "BodyState",
+    "damage_seen",
     "Landing",
     "LandingHead",
     "LandingKind",

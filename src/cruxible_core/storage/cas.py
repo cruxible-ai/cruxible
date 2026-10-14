@@ -27,7 +27,7 @@ from cruxible_client.contracts.cas_contracts import (
 )
 from cruxible_client.contracts.errors import CasError
 from cruxible_core.storage.capture_envelope_index import ENVELOPE_HEAD, CaptureEnvelopeIndex
-from cruxible_core.storage.landing_log import BodyState, LandingLog
+from cruxible_core.storage.landing_log import BodyState, LandingLog, damage_seen
 
 # Objects already hashed against their address, with the file identity observed
 # when they were: (device, inode, size, mtime, ctime). Bytes are reused without
@@ -448,6 +448,7 @@ class ContentAddressedBodyStore:
         finally:
             os.close(directory)
         if known is not None and _file_identity(before) == known == _file_identity(after):
+            self._whole(digest)
             return content
         if self.digest_bytes(content).tagged != digest:
             self._damaged(digest, "corrupt")
@@ -458,20 +459,24 @@ class ContentAddressedBodyStore:
                 _VERIFIED.move_to_end(key)
                 while len(_VERIFIED) > _VERIFIED_CAPACITY:
                     _VERIFIED.popitem(last=False)
+        self._whole(digest)
         return content
 
     def verify(self, digest: str) -> bool:
         """Verify exact bytes without disclosing them or their length."""
 
         if self._known(digest):
+            self._whole(digest)
             return True
         if self._object_status(digest) is None:
+            self._damaged(digest, "missing")
             return False
         self._verified_bytes(digest)
         return True
 
     def _damaged(self, digest: str, state: BodyState) -> None:
-        """Record damage a verified read found (``LandingLog.note``); never fails the read.
+        """Record what a verification found when the landing log says otherwise
+        (``LandingLog.note``): damage, or a repair. Never fails the verification.
 
         A record that cannot be written now is the evidence sweep's to write.
         """
@@ -480,6 +485,13 @@ class ContentAddressedBodyStore:
             self.landings.note(digest, state, recheck=lambda: self._hashed_state(digest))
         except (CasError, OSError):
             pass
+
+    def _whole(self, digest: str) -> None:
+        """Record the repair of a body a verification just found whole, if it was
+        recorded damaged: one in-memory lookup otherwise (``damage_seen``)."""
+
+        if damage_seen(str(self._algorithm_root), digest):
+            self._damaged(digest, "present")
 
     def availability(self, digest: str) -> BodyState:
         """Re-hash one stored object from disk, streaming, trusting no earlier check.

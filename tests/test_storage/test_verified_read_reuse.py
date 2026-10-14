@@ -301,6 +301,62 @@ def test_a_read_that_finds_a_landed_body_gone_records_it_and_a_store_restores_it
     assert store.landings.present(digest, identity=restored.identity, sequence=restored.sequence)
 
 
+def _present_at(store, digest, head) -> bool:  # type: ignore[no-untyped-def]
+    return store.landings.present(digest, identity=head.identity, sequence=head.sequence)
+
+
+def test_a_verify_that_finds_a_landed_body_gone_records_it_once(tmp_path):
+    store, digest, path = _store(tmp_path)
+    landed = store.landings.head()
+    path.unlink()
+    assert store.verify(digest) is False
+    assert [(row.digest, row.kind) for row in store.landings.after(landed.sequence)] == [
+        (digest, "missing")
+    ]
+    damaged = store.landings.head()
+    assert not _present_at(store, digest, damaged)
+    # A read positioned before the record still answers present.
+    assert _present_at(store, digest, landed)
+    assert store.verify(digest) is False
+    assert store.landings.head() == damaged
+
+
+def _damaged_then_restored(tmp_path):  # type: ignore[no-untyped-def]
+    store, digest, path = _store(tmp_path)
+    landed = store.landings.head()
+    os.chmod(path, 0o600)
+    path.write_bytes(b"evil")
+    with pytest.raises(CasError):
+        store.read(digest, access=READ)
+    damaged = store.landings.head()
+    assert [row.kind for row in store.landings.after(landed.sequence)] == ["corrupt"]
+    path.write_bytes(b"good")
+    return store, digest, landed, damaged
+
+
+@pytest.mark.parametrize("finding", ("verify", "read"))
+def test_a_verification_that_finds_a_damaged_body_whole_records_its_repair_once(
+    tmp_path, finding: str
+):
+    store, digest, landed, damaged = _damaged_then_restored(tmp_path)
+    if finding == "verify":
+        assert store.verify(digest) is True
+    else:
+        assert store.read(digest, access=READ) == b"good"
+    assert [(row.digest, row.kind) for row in store.landings.after(damaged.sequence)] == [
+        (digest, "stored")
+    ]
+    repaired = store.landings.head()
+    assert _present_at(store, digest, repaired)
+    # Positions before the repair keep their answers.
+    assert not _present_at(store, digest, damaged)
+    assert _present_at(store, digest, landed)
+    # Verified whole again, warm or cold, it is not recorded again.
+    assert store.verify(digest) is True
+    assert store.read(digest, access=READ) == b"good"
+    assert store.landings.head() == repaired
+
+
 def test_a_landing_logged_before_its_object_is_logged_again_once_it_is_final(tmp_path, monkeypatch):
     """A reader that consumes the first row while the write is in flight sees the
     digest again after the object lands, so nothing it derived then stays."""
