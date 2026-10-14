@@ -2929,8 +2929,10 @@ These rows come from the daemon's consumers rather than from a computation at
 read time. Findings are what a worker last observed, so each row reflects its
 last check:
 - `evidence_unavailable` names a Capture the next worker found missing or
-  corrupt, with the live Claims that cite it. Restore its bytes, or recapture
-  and re-cite; the worker's next check clears the row.
+  corrupt, with the live Claims that cite it. Their verdicts read its evidence
+  as not replayable, a corrupt body exactly as a deleted one, so `next` and
+  `orient` still answer; only a read of the bytes themselves refuses. Restore
+  its bytes, or recapture and re-cite; the worker's next check clears the row.
 - `prediction_settleable` names a ResolutionContract with a closed bound window
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the

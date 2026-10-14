@@ -793,7 +793,6 @@ def _current_replay_available(
             readers=readers,
             store=PositionedBodies(store),
             consulted=objects,
-            positioned=True,
         )
         if bodies is not None:
             bodies.update(
@@ -857,6 +856,21 @@ def _current_replay_available(
     return available
 
 
+def _verified(store: Any, digest: str) -> bool:
+    """Whether a CAS object is present with bytes that hash to its address.
+
+    A damaged object (rewritten in place, or deleted out of band from a
+    positioned read where the landing log still has it) is not there for
+    replay, exactly as an absent one: the evidence sweep reports which. Only
+    a read of the actual bytes refuses.
+    """
+
+    try:
+        return bool(store.verify(digest))
+    except CasError:
+        return False
+
+
 def _replay_available(
     instance: ClaimReadSourceProtocol,
     capture_digest_value: str,
@@ -864,28 +878,22 @@ def _replay_available(
     readers: Mapping[str, ExternalSourceReaderProtocol],
     store: Any = None,
     consulted: list[str] | None = None,
-    positioned: bool = False,
 ) -> bool:
     store = store if store is not None else instance.body_store()
     noted = consulted if consulted is not None else []
     noted.append(capture_digest_value)
-    if not store.verify(capture_digest_value):
+    if not _verified(store, capture_digest_value):
         return False
     access = BodyAccessContext(principal_id="playbill-verdict", can_read_body=True)
     try:
         body = store.read(capture_digest_value, access=access)
     except CasError:
-        if not positioned or _cas_file_identity(store, capture_digest_value) is not None:
-            # Bytes rotted in place refuse, as the fold refuses (R4).
-            raise
-        # Present at the read's landing position, but deleted out of band (the
-        # evidence sweep finds that, not each read): the evidence cannot be
-        # replayed, as the fold answers for an absent body.
+        # Damaged since it verified: unavailable, as above.
         return False
     envelope = parse_capture_envelope(body)
     if isinstance(envelope.source, CasSourceReference):
         noted.append(envelope.source.content_digest)
-        return bool(store.verify(envelope.source.content_digest))
+        return _verified(store, envelope.source.content_digest)
     if isinstance(envelope.source, LedgerSourceReference):
         try:
             material = (
@@ -904,7 +912,9 @@ def _replay_available(
             and "sha256:" + hashlib.sha256(material).hexdigest() == envelope.commitment.digest
         )
     noted.append(envelope.commitment.digest)
-    if envelope.commitment.materialization == "cas" and store.verify(envelope.commitment.digest):
+    if envelope.commitment.materialization == "cas" and _verified(
+        store, envelope.commitment.digest
+    ):
         return True
     # An external reader decides the rest; its availability is not in the CAS.
     noted.append("external")

@@ -98,11 +98,6 @@ class PositionedBodies:
     def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
         return read_body(self._store, digest, access=access)
 
-    def file_identity(self, digest: str) -> Any:
-        """The stored file's identity now, or None when it is absent (not positioned)."""
-
-        return self._store.file_identity(digest)
-
 
 __all__ = [
     "PositionedBodies",

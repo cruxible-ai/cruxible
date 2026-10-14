@@ -260,16 +260,17 @@ def test_a_remembered_derivation_is_not_served_over_a_body_rewritten_in_place(
     context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
     capture = context.claims()[0].backing.capture_digests[0]
     fingerprint = playbill_search.verdict_input_fingerprint(instance)
-    _derive(instance, fresh=True)
+    before = _derive(instance, fresh=True)[0]
 
     _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=keep_mtime)
     # The keyed evidence generation does not move; the entry must still not be served.
     assert playbill_search.verdict_input_fingerprint(instance) == fingerprint
     # Served straight from the remembered derivation: nothing is reset.
     warm = _outcome(lambda: _remembered_derivation(instance))
-    cold = _outcome(lambda: _derive(instance, fresh=True))
+    cold = _outcome(lambda: _derive(instance, fresh=True)[0])
     assert warm == cold
-    assert warm[0] == "CasError"
+    # A corrupt body reads as unavailable evidence (as a deleted one), not a refusal.
+    assert isinstance(warm, dict) and warm != before
 
 
 @pytest.mark.parametrize("keep_mtime", [False, True], ids=["rewrite", "rewrite-keep-mtime"])
@@ -306,7 +307,8 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
             mode="json", exclude={"evaluation_time"}
         )
 
-    assert read()["card"]["verdict"] == "supported"  # type: ignore[index]
+    before = read()
+    assert before["card"]["verdict"] == "supported"  # type: ignore[index]
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         digest = projection.typed.source(f"Claim:{claim_id}").statement.object.content_digest
     _rewrite_in_place(instance.body_store()._path(digest), keep_mtime=keep_mtime)
@@ -314,7 +316,7 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
     warm = _outcome(read)
     playbill_search.reset_claim_resolution_memo()
     assert warm == _outcome(read)
-    assert warm[0] == "CasError"
+    assert warm != before
 
 
 def _capture_and_source(instance, capture: str) -> tuple[str, str]:  # type: ignore[no-untyped-def]
@@ -365,15 +367,18 @@ def test_a_body_rewritten_after_its_read_but_before_the_memo_insert_is_not_remem
 
     playbill_search.reset_claim_resolution_memo()
     evidence._AVAILABILITY_MEMO.clear()
+    before = _derive(instance, fresh=True)[0]
+    playbill_search.reset_claim_resolution_memo()
+    evidence._AVAILABILITY_MEMO.clear()
     monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", evict_and_rewrite_before_insert)
     _remembered_derivation(instance)  # derives from the good bytes; the body moves
     monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", snapshot)
     assert rewritten
 
     warm = _outcome(lambda: _remembered_derivation(instance))
-    cold = _outcome(lambda: _derive(instance, fresh=True))
+    cold = _outcome(lambda: _derive(instance, fresh=True)[0])
     assert warm == cold
-    assert warm[0] == "CasError"
+    assert isinstance(warm, dict) and warm != before
 
 
 @pytest.mark.parametrize("which", ["capture", "source"])
@@ -403,12 +408,15 @@ def test_an_availability_evicted_before_the_insert_keeps_every_dependency(
 
     playbill_search.reset_claim_resolution_memo()
     evidence._AVAILABILITY_MEMO.clear()
+    before = _derive(instance, fresh=True)[0]
+    playbill_search.reset_claim_resolution_memo()
+    evidence._AVAILABILITY_MEMO.clear()
     monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", evict_before_insert)
     _remembered_derivation(instance)
     monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", snapshot)
     _rewrite_in_place(instance.body_store()._path(target), keep_mtime=True)
 
     warm = _outcome(lambda: _remembered_derivation(instance))
-    cold = _outcome(lambda: _derive(instance, fresh=True))
+    cold = _outcome(lambda: _derive(instance, fresh=True)[0])
     assert warm == cold
-    assert warm[0] == "CasError"
+    assert isinstance(warm, dict) and warm != before

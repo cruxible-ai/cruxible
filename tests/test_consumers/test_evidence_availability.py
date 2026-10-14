@@ -11,6 +11,7 @@ import pytest
 
 from cruxible_client.contracts.captures import parse_capture_envelope
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.errors import CasError
 from cruxible_core.consumers.next import NEXT_QUEUE, evidence
 from cruxible_core.consumers.next.evidence import _PART as WORKER
 from cruxible_core.consumers.next.evidence import evidence_findings
@@ -328,17 +329,31 @@ def test_sweep_resumes_a_fired_event_at_its_logged_time(
     assert capture and not tuple(WORKER.due(instance, now=NOW))
 
 
-def test_a_positioned_read_reads_a_vanished_envelope_as_unavailable(tmp_path: Path) -> None:
+@pytest.mark.parametrize("damage", ("deleted", "corrupt"))
+def test_a_positioned_read_reads_a_damaged_envelope_as_unavailable(
+    tmp_path: Path, damage: str
+) -> None:
     from cruxible_core.consumers.next.facts import read_positions
     from cruxible_core.service.evidence import evidence as verdict_evidence
     from cruxible_core.storage.read_positions import reading_at
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
 
     instance, capture = _world(tmp_path)
-    # Deleted out of band: the landing log still has it present at the read's
-    # position, and a derivation that needs its bytes reads it as unavailable,
-    # never as a refusal of the whole read.
-    instance.body_store()._path(capture).unlink()
+    path = instance.body_store()._path(capture)
+    # Deleted or rewritten out of band: the landing log still has it present at
+    # the read's position, and a derivation that needs its bytes reads it as
+    # unavailable, never as a refusal of the whole read.
+    if damage == "deleted":
+        path.unlink()
+    else:
+        _rewrite_in_place(path, keep_mtime=False)
     with reading_at(read_positions(instance)):
         assert verdict_evidence._current_replay_available(instance, capture, readers={}) is False
-        # The fold answers the same for the absent body.
+        # The fold answers the same for the damaged body.
         assert verdict_evidence._replay_available(instance, capture, readers={}) is False
+    if damage == "corrupt":
+        # Reading the bytes themselves still refuses.
+        with pytest.raises(CasError):
+            instance.body_store().read(
+                capture, access=BodyAccessContext(principal_id="test", can_read_body=True)
+            )
