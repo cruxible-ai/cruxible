@@ -87,7 +87,7 @@ class LineTriggerOccurrence(BaseModel):
 
 
 class LineEvaluateResult(BaseModel):
-    """What one evaluation found; ``pending`` is current state, ``newly_enqueued`` this call's."""
+    """One evaluation's result: ``pending`` is current state, ``newly_enqueued`` is this call's."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     line: str

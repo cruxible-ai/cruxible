@@ -29433,7 +29433,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "What one evaluation found; ``pending`` is current state, ``newly_enqueued`` is this call's.",
+        "description": "One evaluation's result: ``pending`` is current state, ``newly_enqueued`` is this call's.",
         "properties": {
           "checked_since": {
             "anyOf": [
