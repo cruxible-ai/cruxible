@@ -6419,11 +6419,16 @@ def evaluate_line(
                 f"Next cursor: {result.cursor}; retain --until {result.checked_until.isoformat()}"
             )
         return
-    # Every page of the same range: the pending set is what the whole gap produced.
+    # Every page of the same range: this call's own enqueue marks what it
+    # made pending, across pages -- never an occurrence already pending from
+    # an earlier evaluation, which the general `pending` flag cannot tell
+    # apart from one this call just enqueued.
     pages = [evaluate(cursor)]
     while pages[-1].cursor is not None:
         pages.append(evaluate(pages[-1].cursor))
-    pending = [item.occurrence_id for page in pages for item in page.occurrences if item.pending]
+    newly_enqueued = [
+        item.occurrence_id for page in pages for item in page.occurrences if item.newly_enqueued
+    ]
 
     def dispatch(occurrence_id: str) -> Any:
         request = LineDispatchRequest(occurrence_id=occurrence_id, limit=1)
@@ -6432,7 +6437,9 @@ def evaluate_line(
             command_name="cruxible line dispatch",
         )
 
-    items: list[Any] = [item for occurrence_id in pending for item in dispatch(occurrence_id).items]
+    items: list[Any] = [
+        item for occurrence_id in newly_enqueued for item in dispatch(occurrence_id).items
+    ]
     combined = _LineEvaluateDispatched(evaluations=tuple(pages), dispatched=tuple(items))
     if output_json:
         _emit_json(combined.model_dump(mode="json"))

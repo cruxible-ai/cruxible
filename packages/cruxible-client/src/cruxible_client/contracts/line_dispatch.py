@@ -75,13 +75,19 @@ class LineTriggerOccurrence(BaseModel):
     eligible_at: datetime = Field(description="Reads VALIDITY WINDOW.")
     admitted_run_id: str | None = None
     pending: bool = False
+    #: Set only by the evaluation that itself moved this occurrence to
+    #: pending (a fresh occurrence, or one reconciled back from
+    #: ``superseded``); unset for one already pending before this call, so a
+    #: caller that dispatches "what this evaluation enqueued" never drains
+    #: work a prior evaluation left pending.
+    newly_enqueued: bool = False
     dispatch_status: Literal["pending", "admitted", "rejected", "superseded", "lapsed"] | None = (
         None
     )
 
 
 class LineEvaluateResult(BaseModel):
-    """What one evaluation found; ``pending`` marks what it enqueued (never on a dry run)."""
+    """What one evaluation found; ``pending`` is current state, ``newly_enqueued`` this call's."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     line: str

@@ -132,6 +132,7 @@ def _enqueue(
     trigger_digests = {item.trigger: item.artifact_digest for item in result.triggers}
     for occurrence in result.occurrences:
         pending = False
+        newly_enqueued = False
         disposition = "admitted"
         if occurrence.admitted_run_id is None:
             exists = conn.execute(
@@ -139,6 +140,10 @@ def _enqueue(
                 "WHERE line_id=? AND epoch=? AND occurrence_id=?",
                 (result.line_identity_digest, result.occurrence_epoch, occurrence.occurrence_id),
             ).fetchone()
+            # Named before any mutation below: whether this occurrence was
+            # already pending work this evaluation found, rather than work
+            # it is itself admitting into the queue.
+            already_pending = exists is not None and exists[0] == "pending"
             trigger = None if occurrence.binding is None else occurrence.binding.trigger.qualified
             trigger_digest = trigger_digests.get(trigger or "")
             if exists is not None and exists[0] == "superseded" and trigger is not None:
@@ -181,8 +186,18 @@ def _enqueue(
                 )
             pending = exists is None or exists[0] == "pending"
             disposition = exists[0] if exists else "pending"
+            # This call moved it to pending (fresh, or reconciled back from
+            # superseded); an occurrence already pending before this call
+            # started is current state, not something this call enqueued.
+            newly_enqueued = pending and not already_pending
         occurrences.append(
-            occurrence.model_copy(update={"pending": pending, "dispatch_status": disposition})
+            occurrence.model_copy(
+                update={
+                    "pending": pending,
+                    "newly_enqueued": newly_enqueued,
+                    "dispatch_status": disposition,
+                }
+            )
         )
     return result.model_copy(update={"occurrences": tuple(occurrences)})
 
