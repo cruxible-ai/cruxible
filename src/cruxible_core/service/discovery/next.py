@@ -1362,6 +1362,8 @@ def _repair_command(
                 shlex.quote(str(since)),
                 "--until",
                 shlex.quote(str(until)),
+                # One command: evaluate the gap, then dispatch what it enqueued.
+                "--dispatch",
             ]
         )
     elif operation in {"cruxible.line.enable", "cruxible.line.dispatch"}:

@@ -2159,12 +2159,18 @@ cruxible line enable LINE [--dry-run|--commit] [--at OID] [--json]
 cruxible line disable LINE [--dry-run|--commit] [--at OID] [--json]
 cruxible line run LINE [--event FILE|-] [--repeat] [--resolution-contract FILE|-]
   [--occurrence-id ID] [--evaluation-time TS] [--json]
-cruxible line evaluate LINE [--since TS --until TS] [--dry-run] [--limit 100] [--cursor CURSOR] [--json]
+cruxible line evaluate LINE [--since TS --until TS] [--dry-run | --dispatch] [--limit 100]
+  [--cursor CURSOR] [--json]
 cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit N] [--json]
 ~~~
 
 `enable`, `disable` and `run` are the normal flow; `evaluate` and `dispatch`
-recover what automation missed, and `cruxible next` points to them. `cruxible
+recover what automation missed, and `cruxible next` points to them.
+`evaluate --dispatch` does both in one command: it evaluates every page of the
+range (following `--cursor` itself, with the same `--until`), then dispatches
+each occurrence that evaluation made pending, one by one, and reports both
+(`--json`: `evaluations` and `dispatched`). It never dispatches pending work the
+evaluation did not produce; `line dispatch` drains that. `cruxible
 get Line:NAME` reads a Line: its Triggers, its enablements (state, who enabled
 it, the pinned Line version and Trigger versions, how far its daemon has
 matched), its pending occurrences and its recent runs.
@@ -2283,8 +2289,8 @@ matching had fallen behind) in which the Line's live Triggers would have fired:
 a tick on its schedule, a generation accepted, a Capture landed or a window
 closed. A downtime range with nothing due is recorded as evaluated at the
 restart and never listed. Each row names the exact
-`cruxible line evaluate LINE --since S --until U` that covers it (the row
-leaves once an evaluation covers the range). `next` also shows one
+`cruxible line evaluate LINE --since S --until U --dispatch` that covers it and
+runs what it finds (the row leaves once an evaluation covers the range). `next` also shows one
 `line_work_pending` row while work it matched before the restart, or that was
 evaluated explicitly, waits for `line dispatch`. Nothing evaluated or matched
 before a restart is dispatched automatically. Rebuilding the disposable event

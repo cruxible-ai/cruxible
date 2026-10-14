@@ -375,7 +375,8 @@ and acquisition policy:
   either stops it until it is enabled again.
 - A Line that proposes or settles needs a covering mandate.
 - `line evaluate` and `line dispatch` recover what automation missed; `next`
-  names the exact command for each gap.
+  names the exact command for each gap (`line evaluate LINE --since S --until U
+  --dispatch` evaluates the gap and dispatches what it enqueued).
 
 A Source node reads through an accepted Provider under accepted authority, not
 through ambient filesystem or network access. Before it can run, accepted state

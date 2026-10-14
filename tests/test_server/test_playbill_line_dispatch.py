@@ -161,6 +161,47 @@ def test_cli_line_dispatch_drains_every_pending_occurrence_by_default(
     assert "No pending occurrences" in empty.output
 
 
+def test_cli_line_evaluate_dispatch_runs_what_the_range_enqueued_in_one_command(
+    playbill_http, tmp_path, monkeypatch
+):
+    """`line evaluate --dispatch`: every page of the gap, then each enqueued occurrence."""
+
+    _http, instance_id, instance, line, procedure, now, transport = _served_line_world(
+        playbill_http, tmp_path, monkeypatch
+    )
+    for index in range(3):
+        capture(instance, procedure, partition=f"run:anchor-{index}")
+    monkeypatch.setattr(commands, "_server_call", lambda call, **_: call(transport, instance_id))
+    runner = CliRunner()
+    gap = ["--since", READ_TIME.isoformat(), "--until", now.isoformat()]
+    refused = runner.invoke(
+        commands.line_group, ["evaluate", line.identity.name, "--dry-run", "--dispatch"]
+    )
+    assert refused.exit_code == 2, refused.output
+    # A page of one forces the command to follow the cursor through the whole range.
+    both = runner.invoke(
+        commands.line_group,
+        ["evaluate", line.identity.name, *gap, "--limit", "1", "--dispatch", "--json"],
+    )
+    assert both.exit_code == 0, both.output
+    payload = json.loads(both.output)
+    pending = [
+        item["occurrence_id"]
+        for page in payload["evaluations"]
+        for item in page["occurrences"]
+        if item["pending"]
+    ]
+    assert len(pending) == 3, both.output
+    assert [item["occurrence_id"] for item in payload["dispatched"]] == pending
+    assert {item["status"] for item in payload["dispatched"]} == {"admitted"}, both.output
+    empty = runner.invoke(commands.line_group, ["dispatch", line.identity.name])
+    assert empty.exit_code == 0, empty.output
+    assert "No pending occurrences" in empty.output
+    again = runner.invoke(commands.line_group, ["evaluate", line.identity.name, *gap, "--dispatch"])
+    assert again.exit_code == 0, again.output
+    assert "Nothing enqueued to dispatch." in again.output
+
+
 def test_a_read_only_caller_may_dry_run_evaluate_but_not_enqueue(
     playbill_http, tmp_path, monkeypatch
 ):

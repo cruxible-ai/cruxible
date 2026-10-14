@@ -108,6 +108,7 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     kit_version_key,
 )
+from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
@@ -6325,6 +6326,16 @@ def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: b
     default=None,
     help="Continue an incomplete page of the same range, in the same --dry-run mode.",
 )
+@click.option(
+    "--dispatch",
+    "and_dispatch",
+    is_flag=True,
+    help=(
+        "Then dispatch what this evaluation enqueued: every page of the range is "
+        "evaluated, and each occurrence it made pending is dispatched (one command "
+        "for a restart gap)."
+    ),
+)
 @json_option
 @handle_errors
 def evaluate_line(
@@ -6334,34 +6345,94 @@ def evaluate_line(
     dry_run: bool,
     limit: int,
     cursor: str | None,
+    and_dispatch: bool,
     output_json: bool,
 ) -> None:
     """Turn a missed range of LINE's Triggers into pending work; never runs anything.
 
     Use it to recover what automation missed (a daemon restart leaves a gap
-    `cruxible next` names with the exact command), then `line dispatch`.
-    Without --dry-run, --since and --until are required.
+    `cruxible next` names with the exact command), then `line dispatch`, or
+    pass --dispatch to do both in one command. Without --dry-run, --since and
+    --until are required.
     """
 
-    from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
+    from cruxible_client.contracts.line_dispatch import (
+        LineDispatchRequest,
+        LineEvaluateRequest,
+    )
 
-    request = LineEvaluateRequest.model_validate(
-        dict(since=since, until=until, limit=limit, cursor=cursor, dry_run=dry_run)
-    )
-    result = _server_call(
-        lambda client, instance_id: client.evaluate_line(instance_id, line, request=request),
-        command_name="cruxible line evaluate",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        click.echo(f"{result.line}: {result.status} ({len(result.occurrences)} occurrences)")
-        if result.detail:
-            click.echo(result.detail)
+    if and_dispatch and dry_run:
+        raise click.UsageError(
+            "--dispatch runs what the evaluation enqueues; --dry-run enqueues nothing"
+        )
+
+    def evaluate(page_cursor: str | None) -> Any:
+        request = LineEvaluateRequest.model_validate(
+            dict(since=since, until=until, limit=limit, cursor=page_cursor, dry_run=dry_run)
+        )
+        return _server_call(
+            lambda client, instance_id: client.evaluate_line(instance_id, line, request=request),
+            command_name="cruxible line evaluate",
+        )
+
+    if not and_dispatch:
+        result = evaluate(cursor)
+        if output_json:
+            _emit_json(result.model_dump(mode="json"))
+            return
+        _echo_line_evaluation(result)
         if result.cursor:
             click.echo(
                 f"Next cursor: {result.cursor}; retain --until {result.checked_until.isoformat()}"
             )
+        return
+    # Every page of the same range: the pending set is what the whole gap produced.
+    pages = [evaluate(cursor)]
+    while pages[-1].cursor is not None:
+        pages.append(evaluate(pages[-1].cursor))
+    pending = [item.occurrence_id for page in pages for item in page.occurrences if item.pending]
+    items: list[Any] = []
+    for occurrence_id in pending:
+        dispatched = _server_call(
+            lambda client, instance_id, target=occurrence_id: client.dispatch_line(
+                instance_id, line, request=LineDispatchRequest(occurrence_id=target, limit=1)
+            ),
+            command_name="cruxible line dispatch",
+        )
+        items.extend(dispatched.items)
+    combined = _LineEvaluateDispatched(evaluations=tuple(pages), dispatched=tuple(items))
+    if output_json:
+        _emit_json(combined.model_dump(mode="json"))
+        return
+    for page in pages:
+        _echo_line_evaluation(page)
+    if not items:
+        click.echo("Nothing enqueued to dispatch.")
+    for item in items:
+        _echo_line_dispatch_item(item)
+
+
+class _LineEvaluateDispatched(BaseModel):
+    """`line evaluate --dispatch`: every evaluated page, then each enqueued dispatch."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    tag: Literal["playbill-line-evaluate-dispatch-v1"] = "playbill-line-evaluate-dispatch-v1"
+    evaluations: tuple[LineEvaluateResult, ...]
+    dispatched: tuple[LineDispatchItem, ...]
+
+
+def _echo_line_evaluation(result: LineEvaluateResult) -> None:
+    click.echo(f"{result.line}: {result.status} ({len(result.occurrences)} occurrences)")
+    if result.detail:
+        click.echo(result.detail)
+
+
+def _echo_line_dispatch_item(item: LineDispatchItem) -> None:
+    click.echo(
+        f"{item.occurrence_id}: {item.status}" + (f" run={item.run_id}" if item.run_id else "")
+    )
+    if item.detail:
+        click.echo(item.detail)
 
 
 #: Occurrences one `line dispatch` request attempts while draining.
@@ -6421,12 +6492,7 @@ def dispatch_line(
         click.echo("No pending occurrences for this Line epoch.")
     else:
         for item in drained.items:
-            click.echo(
-                f"{item.occurrence_id}: {item.status}"
-                + (f" run={item.run_id}" if item.run_id else "")
-            )
-            if item.detail:
-                click.echo(item.detail)
+            _echo_line_dispatch_item(item)
 
 
 @line_group.command("run")

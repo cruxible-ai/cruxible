@@ -1840,7 +1840,7 @@ def _line_coverage_gap(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     assert datetime.fromisoformat(until) == restarted
     assert start + timedelta(seconds=2) <= datetime.fromisoformat(since) < restarted
     assert row.repair.command == (
-        f"cruxible line evaluate {line.identity.name} --since {since} --until {until}"
+        f"cruxible line evaluate {line.identity.name} --since {since} --until {until} --dispatch"
     )
 
     # The named repair: evaluate exactly that range; nothing runs.

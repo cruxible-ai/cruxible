@@ -387,8 +387,9 @@ Lines are enabled, not armed:
   settings; it never consumes or waits on a Trigger.
 - Timed Triggers tick on their schedule's own grid. Enabling or resuming a
   Line never runs a missed tick; `line evaluate` over the missed range records
-  every tick it skipped, and `line dispatch` runs them. `next` names the exact
-  command for each gap, for example after the daemon was down.
+  every tick it skipped, and `line dispatch` runs them (`line evaluate --dispatch`
+  does both). `next` names the exact command for each gap, for example after
+  the daemon was down.
 
 Internal actions (floor refresh, evidence sweeps, prediction retries, and
 curation detection once its Trigger is authored) also run on Triggers, and need

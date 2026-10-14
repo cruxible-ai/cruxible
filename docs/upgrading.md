@@ -69,7 +69,7 @@ it was accepted under.
    state was written by an earlier release rebuilds that state, and its
    findings are complete again once it has caught up. Enabled Lines stay
    enabled and watch forward from the restart; time the daemon was down needs an
-   explicit `cruxible line evaluate`, which `cruxible next` names per gap (see
+   explicit `cruxible line evaluate ... --dispatch`, which `cruxible next` names per gap (see
    [line](cli-reference.md#line)).
 
 If the `compiler` facet reads `current`, the upgrade is done.
