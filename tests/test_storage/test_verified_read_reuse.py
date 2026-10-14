@@ -240,6 +240,67 @@ def test_only_evidence_bodies_and_erasure_are_logged_as_landings(tmp_path):
     assert [row.sequence for row in store.landings.after(1, through=3)] == [2, 3]
 
 
+def test_a_body_damaged_in_place_is_recorded_once_and_cleared_by_its_repair(tmp_path):
+    """A body damaged out of band moves no operation: the verification that finds it
+    records the damage once, presence reads absent from that record on and present
+    before it, and the body found whole again is recorded present."""
+
+    store, digest, path = _store(tmp_path)
+    landed = store.landings.head()
+    os.chmod(path, 0o600)
+    path.write_bytes(b"evil")
+    # Nothing records an in-place rewrite until a verification hashes it.
+    assert store.landings.head() == landed
+    assert store.availability(digest) == "corrupt"
+    damaged = store.landings.head()
+    assert [(row.digest, row.kind) for row in store.landings.after(landed.sequence)] == [
+        (digest, "corrupt")
+    ]
+    assert not store.landings.present(digest, identity=damaged.identity, sequence=damaged.sequence)
+    assert store.landings.present(digest, identity=landed.identity, sequence=landed.sequence)
+    # Found damaged again, by a read or deleted as well, it is not recorded again.
+    with pytest.raises(CasError):
+        store.read(digest, access=READ)
+    path.unlink()
+    assert store.availability(digest) == "missing"
+    assert store.landings.head() == damaged
+    # Repaired in place: the next verification records it present.
+    path.write_bytes(b"good")
+    assert store.availability(digest) == "present"
+    assert [(row.digest, row.kind) for row in store.landings.after(damaged.sequence)] == [
+        (digest, "stored")
+    ]
+    repaired = store.landings.head()
+    assert store.landings.present(digest, identity=repaired.identity, sequence=repaired.sequence)
+    assert store.availability(digest) == "present"
+    assert store.landings.head() == repaired
+
+
+def test_a_read_that_finds_a_landed_body_gone_records_it_and_a_store_restores_it(tmp_path):
+    store, digest, path = _store(tmp_path)
+    payload = store.store(b"run record payload", journal_payload=True).digest
+    erased = store.store(b"erased body").digest
+    assert store.erase(erased)
+    landed = store.landings.head()
+    # Bodies the log never had present, or erased, are no damage.
+    store._path(payload).unlink()
+    assert store.availability(payload) == "missing"
+    assert store.availability(erased) == "missing"
+    assert store.landings.head() == landed
+    path.unlink()
+    with pytest.raises(CasError):
+        store.read(digest, access=READ)
+    assert [(row.digest, row.kind) for row in store.landings.after(landed.sequence)] == [
+        (digest, "missing")
+    ]
+    damaged = store.landings.head()
+    assert not store.landings.present(digest, identity=damaged.identity, sequence=damaged.sequence)
+    store.store(b"good")
+    restored = store.landings.head()
+    assert [row.kind for row in store.landings.after(damaged.sequence)] == ["store", "stored"]
+    assert store.landings.present(digest, identity=restored.identity, sequence=restored.sequence)
+
+
 def test_a_landing_logged_before_its_object_is_logged_again_once_it_is_final(tmp_path, monkeypatch):
     """A reader that consumes the first row while the write is in flight sees the
     digest again after the object lands, so nothing it derived then stays."""

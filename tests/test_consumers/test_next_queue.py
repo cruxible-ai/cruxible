@@ -703,6 +703,9 @@ def test_a_corrupt_body_reads_unavailable_as_the_fold_reads_it(tmp_path: Path) -
     # A corrupt body is an absent one to a verdict: the Claim's evidence is not
     # replayable, the worker does not stall, and next answers as the fold does.
     _sweep(instance, EVALUATION_TIME)
+    # The cold pass's read hashed the body and recorded the damage after its own
+    # heads: one more pass follows that record.
+    _drain(instance)
     assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
     served = _outcome(instance, EVALUATION_TIME)
     with _oracle_only():
@@ -920,6 +923,98 @@ def test_a_body_rewritten_in_place_reaches_its_claims_at_the_next_sweep(
     )
     later = EVALUATION_TIME + timedelta(days=1)
     _sweep(instance, later)
+    assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=later)
+    _assert_equivalent(instance, later)
+    assert _evidence_report(instance, later) == set()
+
+
+def _claim_facts(instance) -> dict[str, tuple[Any, ...]]:  # type: ignore[no-untyped-def]
+    tables = facts.stored_tables(instance)
+    assert tables is not None
+    return {str(row[0]): row for row in tables["claim_facts"]}
+
+
+def _replayable(instance, capture: str, positions) -> bool:  # type: ignore[no-untyped-def]
+    from cruxible_core.service.evidence import evidence as verdict_evidence
+    from cruxible_core.storage.read_positions import reading_at
+
+    with reading_at(positions):
+        return verdict_evidence._current_replay_available(instance, capture, readers={})
+
+
+@pytest.mark.parametrize("damage", ("corrupt", "deleted"))
+def test_a_damaged_commitment_reads_not_replayable_from_the_sweeps_damage_record(
+    tmp_path: Path, damage: str
+) -> None:
+    """Presence inside a read is the landing log's: a commitment damaged out of band
+    answers present until the sweep records the damage, then not replayable in the
+    stored rows and the fold alike; a read positioned before the record still answers
+    present, and a repair clears it with a record of its own."""
+
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
+
+    instance, _owner = seed_claims(tmp_path)
+    _drain(instance)
+    store = instance.body_store()
+    claim = _current_claim(instance)
+    capture = claim.backing.capture_digests[0]
+    envelope = parse_capture_envelope(store.read(capture, access=_BYTES_READER))
+    assert envelope.commitment.materialization == "cas"
+    path = store._path(envelope.commitment.digest)
+    original = path.read_bytes()
+    before = _outcome(instance, EVALUATION_TIME)
+    stored_before = _claim_facts(instance)
+    landed = facts.read_positions(instance)
+    if damage == "deleted":
+        path.unlink()
+    else:
+        _rewrite_in_place(path, keep_mtime=True)
+
+    # No record yet: next answers as before, exactly as the fold does.
+    assert _replayable(instance, capture, facts.read_positions(instance))
+    assert _outcome(instance, EVALUATION_TIME) == before
+    with _oracle_only():
+        assert _outcome(instance, EVALUATION_TIME) == before
+
+    _sweep(instance, EVALUATION_TIME)
+    damaged = facts.read_positions(instance)
+    assert damaged.landing > landed.landing
+    assert not _replayable(instance, capture, damaged)
+    # A read positioned before the damage record still answers present.
+    assert _replayable(instance, capture, landed)
+    # The sweep's pass re-derived the citing Claim with its evidence not replayable;
+    # the other work item's Claim cites another body and stands.
+    stored_after = _claim_facts(instance)
+    changed = {key for key in stored_before if stored_before[key] != stored_after[key]}
+    assert claim.identity.qualified in changed
+    other = _current_claim(instance, subject_id="wi-43").identity.qualified
+    assert other not in changed
+    assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=EVALUATION_TIME)
+    served = _outcome(instance, EVALUATION_TIME)
+    with _oracle_only():
+        assert _outcome(instance, EVALUATION_TIME) == served
+    # A corrupt body is a finding; the Capture's policy lets a missing one go.
+    expected = {(capture, "body", "corrupt")} if damage == "corrupt" else set()
+    assert _evidence_report(instance, EVALUATION_TIME) == expected
+    rows_for_capture = {
+        item.reason
+        for item in service_playbill_next(
+            instance, request=NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
+        ).items
+        if getattr(item, "subject_identity", None) == f"Capture:{capture}"
+    }
+    assert rows_for_capture == ({"evidence_unavailable"} if damage == "corrupt" else set())
+    reported = _outcome(instance, EVALUATION_TIME)
+    with _oracle_only():
+        assert _outcome(instance, EVALUATION_TIME) == reported
+
+    # Repaired: the next sweep records it present again.
+    path.write_bytes(original)
+    later = EVALUATION_TIME + timedelta(days=1)
+    _sweep(instance, later)
+    assert _replayable(instance, capture, facts.read_positions(instance))
+    assert not _replayable(instance, capture, damaged)
     assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=later)
     _assert_equivalent(instance, later)
     assert _evidence_report(instance, later) == set()

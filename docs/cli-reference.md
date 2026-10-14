@@ -408,8 +408,12 @@ not yet followed a change or a bound up to them, the read derives just that in
 memory and never writes the worker's state. Writes that land while it runs are
 simply not in that answer: a read never retries, waits or refuses because of
 them. Whether a Capture's body is present is the landing log's answer at the
-read's position (landed at or before it), never a look at the file; a body's
-bytes are read, and hash-checked, only when a row needs them. A request that
+read's position (landed at or before it, and not recorded damaged since),
+never a look at the file; a body's bytes are read, and hash-checked, only when
+a row needs them. A body deleted or rewritten out of band therefore reads as
+present until the evidence sweep (or a read that hashed it) records the
+damage in the landing log; reads at later positions answer it absent, and a
+repair is recorded the same way. A request that
 names a coordinate or attestation head reads there, independently of each
 other, as does `orient` at the coordinate it selected; once the worker has
 moved past such a head, the read folds there instead. A refusal answers as the
@@ -2929,10 +2933,12 @@ These rows come from the daemon's consumers rather than from a computation at
 read time. Findings are what a worker last observed, so each row reflects its
 last check:
 - `evidence_unavailable` names a Capture the next worker found missing or
-  corrupt, with the live Claims that cite it. Their verdicts read its evidence
-  as not replayable, a corrupt body exactly as a deleted one, so `next` and
-  `orient` still answer; only a read of the bytes themselves refuses. Restore
-  its bytes, or recapture and re-cite; the worker's next check clears the row.
+  corrupt, with the live Claims that cite it. The sweep records the damage in
+  the body store's landing log, so from then on their verdicts read its
+  evidence as not replayable, a corrupt body exactly as a deleted one, and
+  `next` and `orient` still answer; only a read of the bytes themselves
+  refuses. Restore its bytes, or recapture and re-cite; the worker's next check
+  records the repair and clears the row.
 - `prediction_settleable` names a ResolutionContract with a closed bound window
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the

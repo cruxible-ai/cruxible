@@ -31,7 +31,11 @@ Time enters only through the trigger log. Each fact holds on the half-open
 interval its verdict's boundaries bound; the part arms one deadline at the
 earliest end, and a fire recomputes the facts it reaches. The body store logs
 landings and erases, not a body rewritten in place: ``capture_bodies`` keeps the
-identity each consulted object had, for the evidence sweep to compare.
+identity each consulted object had, for the evidence sweep to compare. The
+worker's sweep pass re-hashes each object that moved before it records its
+heads, and the store records one it finds damaged (or whole again) in the
+landing log: presence at that pass's position and every later one reads it
+absent (or present), in the stored rows and a fold alike.
 """
 
 from __future__ import annotations
@@ -1036,9 +1040,22 @@ def _shells(
     return subjects, mandates
 
 
-def _rewritten(instance: Any, connection: sqlite3.Connection) -> tuple[set[str], set[str]]:
-    """The Claims that consulted a body whose file identity no longer matches, and the
-    objects that moved: those bodies and the Captures that consulted them.
+@dataclass(frozen=True)
+class _Rewritten:
+    """What one sweep's identity comparison found, against the cursors it compared from."""
+
+    cursors: _Cursors
+    sweep: int
+    claims: set[str]
+    moved: set[str]
+
+
+def _rewritten(
+    instance: Any, connection: sqlite3.Connection
+) -> tuple[set[str], set[str], set[str]]:
+    """The Claims that consulted a body whose file identity no longer matches, the
+    objects that moved (those bodies and the Captures that consulted them), and the
+    bodies alone.
 
     The landing log sees bodies arrive and leave, not a body rewritten in
     place; the daily sweep closes that gap by comparing every consulted
@@ -1059,13 +1076,38 @@ def _rewritten(instance: Any, connection: sqlite3.Connection) -> tuple[set[str],
         captures[str(body)].add(str(capture))
     claims: set[str] = set()
     moved: set[str] = set()
+    bodies: set[str] = set()
     for body, identities in recorded.items():
         found = store.file_identity(body)
         current = None if found is None else _json(list(found))
         if identities != {current}:
             claims |= consulted[body]
             moved |= {body, *captures[body]}
-    return claims, moved
+            bodies.add(body)
+    return claims, moved, bodies
+
+
+def _sweep_damage(instance: Any) -> _Rewritten | None:
+    """On a sweep fire the worker has not followed: compare identities, and hash each
+    body that moved so the store records the damaged (or repaired) ones.
+
+    Run before the pass records its heads, so the damage records are at or before
+    its landing position and the Claims it re-derives read them absent, as a fold
+    at that position does. Only the worker records; a read catching up over a
+    pending sweep compares identities in memory and writes nothing.
+    """
+
+    sweep = latest_sequence(instance, action=EVIDENCE_SWEEP)
+    with _STATE.open(instance) as connection:
+        assert connection is not None
+        cursors = _read_cursors(connection)
+        if cursors is None or cursors.sweep == sweep:
+            return None
+        claims, moved, bodies = _rewritten(instance, connection)
+    store = instance.body_store()
+    for body in sorted(bodies):
+        store.availability(body)
+    return _Rewritten(cursors=cursors, sweep=sweep, claims=claims, moved=moved)
 
 
 def _expired_facts(connection: sqlite3.Connection, at: datetime) -> set[str]:
@@ -1099,6 +1141,7 @@ def _touched(
     door_rows: Sequence[tuple[Any, ...]] = (),
     *,
     now: datetime,
+    swept: _Rewritten | None = None,
 ) -> _Touched:
     """The Claims the records past each cursor touch, and the instant to evaluate them at.
 
@@ -1108,6 +1151,7 @@ def _touched(
     facts through the trigger log: a pass that follows a deadline fire
     evaluates at the fire's instant, as the fold does, never the worker's
     clock; every stored fact that does not hold then is derived again.
+    ``swept`` is the worker's own comparison for this sweep (``_sweep_damage``).
     """
 
     from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
@@ -1178,7 +1222,10 @@ def _touched(
                 break
             after = fires[-1].sequence
     if heads.sweep != cursors.sweep:
-        rewritten_claims, rewritten = _rewritten(instance, connection)
+        if swept is not None and swept.cursors == cursors and swept.sweep == heads.sweep:
+            rewritten_claims, rewritten = swept.claims, swept.moved
+        else:
+            rewritten_claims, rewritten, _bodies = _rewritten(instance, connection)
         claims |= rewritten_claims
         landed |= rewritten
         # A derivation that failed may have read nothing to compare: retry it.
@@ -1911,6 +1958,7 @@ def _changes(
     *,
     now: datetime,
     connection: sqlite3.Connection | None = None,
+    swept: _Rewritten | None = None,
 ) -> _Change | None:
     """The Layer 1 change set from the stored cursors to ``heads``, or None when they
     cannot reach it (only a rebuild, or a fold at ``heads``, will do).
@@ -1945,7 +1993,7 @@ def _changes(
         with _STATE.open(instance, create=False) as opened:
             if opened is None or _read_cursors(opened) != original:
                 raise _StateGone
-            touched = _touched(instance, opened, original, heads, door_rows, now=now)
+            touched = _touched(instance, opened, original, heads, door_rows, now=now, swept=swept)
             stored = _stored_facts(opened, touched.claims)
         load = partial(_load_facts, instance)
         door_stored = partial(_load_door_captures, instance)
@@ -1975,6 +2023,8 @@ def catch_up(instance: Any, *, now: datetime) -> None:
 
     # Settle any landing a writer left unfinished, so its completion is a row to follow.
     instance.body_store().landings.reconcile()
+    # A sweep's damage records land before the heads, so this pass derives with them.
+    swept = _sweep_damage(instance)
     heads = read_heads(instance)
     with _STATE.open(instance) as connection:
         assert connection is not None
@@ -1982,14 +2032,21 @@ def catch_up(instance: Any, *, now: datetime) -> None:
     if original is not None and original.heads == heads.key():
         return
     with reading_at(heads.positions):
-        _catch_up_to(instance, heads, original, now=now)
+        _catch_up_to(instance, heads, original, now=now, swept=swept)
 
 
 def _catch_up_to(
-    instance: Any, heads: ReadHeads, original: _Cursors | None, *, now: datetime
+    instance: Any,
+    heads: ReadHeads,
+    original: _Cursors | None,
+    *,
+    now: datetime,
+    swept: _Rewritten | None = None,
 ) -> None:
     try:
-        change = None if original is None else _changes(instance, original, heads, now=now)
+        change = (
+            None if original is None else _changes(instance, original, heads, now=now, swept=swept)
+        )
     except _StateGone:
         return  # another pass moved the state; the next pass starts from there
     rebuild = change is None

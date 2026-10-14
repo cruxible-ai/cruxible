@@ -357,3 +357,65 @@ def test_a_positioned_read_reads_a_damaged_envelope_as_unavailable(
             instance.body_store().read(
                 capture, access=BodyAccessContext(principal_id="test", can_read_body=True)
             )
+
+
+@pytest.mark.parametrize("damage", ("deleted", "corrupt"))
+@pytest.mark.parametrize("kind", ("source", "commitment"))
+def test_a_positioned_read_answers_a_damaged_dependency_by_its_damage_record(
+    tmp_path: Path, kind: str, damage: str
+) -> None:
+    from cruxible_client.contracts.captures import render_capture_envelope
+    from cruxible_client.contracts.source_references import CasSourceReference
+    from cruxible_core.consumers.next.facts import read_positions
+    from cruxible_core.service.evidence import evidence as verdict_evidence
+    from cruxible_core.storage.read_positions import reading_at
+    from tests.core_support._knowledge_loop_support import seed_claims
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
+    from tests.test_integration.test_next_closed_loop import _current_claim
+
+    instance, _owner = seed_claims(tmp_path)
+    store = instance.body_store()
+    capture = _current_claim(instance).backing.capture_digests[0]
+    envelope = parse_capture_envelope(store.read(capture, access=READ))
+    assert envelope.commitment.materialization == "cas"
+    target = envelope.commitment.digest
+    if kind == "source":
+        # The same bytes as a Capture's CAS source rather than its commitment.
+        envelope = envelope.model_copy(update={"source": CasSourceReference(content_digest=target)})
+        capture = store.store(render_capture_envelope(envelope)).digest
+    path = store._path(target)
+    original = path.read_bytes()
+
+    def replayable(positions):  # type: ignore[no-untyped-def]
+        with reading_at(positions):
+            return verdict_evidence._current_replay_available(instance, capture, readers={})
+
+    landed = read_positions(instance)
+    assert replayable(landed)
+    if damage == "deleted":
+        path.unlink()
+    else:
+        _rewrite_in_place(path, keep_mtime=True)
+    # Presence is the landing log's, never the file's: no read stats or hashes it,
+    # so until the damage is recorded a positioned read answers as before.
+    assert replayable(read_positions(instance))
+    # The evidence sweep's hash records the damage once.
+    found = "missing" if damage == "deleted" else "corrupt"
+    assert store.availability(target) == found
+    damaged = read_positions(instance)
+    assert damaged.landing == landed.landing + 1
+    assert store.availability(target) == found
+    assert read_positions(instance) == damaged
+    assert replayable(damaged) is False
+    with reading_at(damaged):
+        # The full verifier answers the same.
+        assert verdict_evidence._replay_available(instance, capture, readers={}) is False
+    # A read positioned before the damage record still answers present.
+    assert replayable(landed)
+    # Repaired, the next verification clears it with a record of its own.
+    path.write_bytes(original)
+    assert store.availability(target) == "present"
+    repaired = read_positions(instance)
+    assert repaired.landing == damaged.landing + 1
+    assert replayable(repaired)
+    assert replayable(damaged) is False

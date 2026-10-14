@@ -859,10 +859,11 @@ def _current_replay_available(
 def _verified(store: Any, digest: str) -> bool:
     """Whether a CAS object is present with bytes that hash to its address.
 
-    A damaged object (rewritten in place, or deleted out of band from a
-    positioned read where the landing log still has it) is not there for
-    replay, exactly as an absent one: the evidence sweep reports which. Only
-    a read of the actual bytes refuses.
+    A damaged object (rewritten in place, or deleted out of band) is not there
+    for replay, exactly as an absent one. In a positioned read presence is the
+    landing log's: an object damaged in place answers present until the
+    evidence sweep (or a read that hashed it) records the damage, and absent at
+    every position after that record. Only a read of the actual bytes refuses.
     """
 
     try:

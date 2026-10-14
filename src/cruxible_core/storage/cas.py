@@ -27,7 +27,7 @@ from cruxible_client.contracts.cas_contracts import (
 )
 from cruxible_client.contracts.errors import CasError
 from cruxible_core.storage.capture_envelope_index import ENVELOPE_HEAD, CaptureEnvelopeIndex
-from cruxible_core.storage.landing_log import LandingLog
+from cruxible_core.storage.landing_log import BodyState, LandingLog
 
 # Objects already hashed against their address, with the file identity observed
 # when they were: (device, inode, size, mtime, ctime). Bytes are reused without
@@ -438,7 +438,9 @@ class ContentAddressedBodyStore:
                 try:
                     status = os.stat(name, dir_fd=directory, follow_symlinks=False)
                 except FileNotFoundError as exc:
+                    self._damaged(digest, "missing")
                     raise CasError("CAS object is missing") from exc
+                self._damaged(digest, "corrupt")
                 if not stat.S_ISREG(status.st_mode):
                     raise CasError("CAS object must be a regular file")
                 raise CasError("CAS object cannot be read")
@@ -448,6 +450,7 @@ class ContentAddressedBodyStore:
         if known is not None and _file_identity(before) == known == _file_identity(after):
             return content
         if self.digest_bytes(content).tagged != digest:
+            self._damaged(digest, "corrupt")
             raise CasError("CAS object bytes do not match their content address")
         if _file_identity(before) == _file_identity(after):
             with _VERIFIED_LOCK:
@@ -467,13 +470,36 @@ class ContentAddressedBodyStore:
         self._verified_bytes(digest)
         return True
 
-    def availability(self, digest: str) -> Literal["present", "missing", "corrupt"]:
+    def _damaged(self, digest: str, state: BodyState) -> None:
+        """Record damage a verified read found (``LandingLog.note``); never fails the read.
+
+        A record that cannot be written now is the evidence sweep's to write.
+        """
+
+        try:
+            self.landings.note(digest, state, recheck=lambda: self._hashed_state(digest))
+        except (CasError, OSError):
+            pass
+
+    def availability(self, digest: str) -> BodyState:
         """Re-hash one stored object from disk, streaming, trusting no earlier check.
 
         `verify` reuses an earlier hash while the file's identity is unchanged;
         bytes that rot in place keep that identity, so a sweep looking for rot
         must hash again. Nothing is held beyond one read buffer.
+
+        What it finds is recorded in the landing log when the log says otherwise
+        (``LandingLog.note``): a landed body found missing or corrupt gets a damage
+        record, so reads at a later position answer it absent, and a damaged one
+        found whole again a ``stored`` record that clears it.
         """
+
+        state = self._hashed_state(digest)
+        self.landings.note(digest, state, recheck=lambda: self._hashed_state(digest))
+        return state
+
+    def _hashed_state(self, digest: str) -> BodyState:
+        """What one stored object is now, re-hashed from disk."""
 
         shard, name = self._names(digest)
         directory = self._shard(shard)
@@ -509,6 +535,7 @@ class ContentAddressedBodyStore:
         if not access.can_read_body:
             raise CasError("body access is denied")
         if self._object_status(digest) is None:
+            self._damaged(digest, "missing")
             raise CasError("CAS object is missing")
         return self._verified_bytes(digest)
 
