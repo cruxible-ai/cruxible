@@ -613,6 +613,74 @@ def test_seeded_floor_trigger_delivers_after_accept_and_retirement_stops_it(tmp_
     )
 
 
+def test_manual_floor_fire_activates_the_runner_without_a_live_trigger(tmp_path, monkeypatch):
+    """A manual `floor.refresh` fire needs no live Trigger to wake the normal runner."""
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.triggers import parse_trigger, trigger_path
+    from cruxible_core.consumers.runner import ConsumerRunner
+    from cruxible_core.triggers.journal import fire_manual
+    from tests.core_support._support import initialize_local
+    from tests.support.lines import successor, trigger_members
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, owner = initialize_local(tmp_path)
+    workspace = tmp_path / "workspace"
+    registry = InstanceRegistry(tmp_path / "state")
+    registry.create_governed_instance_with_id(instance.descriptor.instance_id, workspace)
+    monkeypatch.setattr(floor, "get_registry", lambda: registry)
+    manager = SimpleNamespace(get=lambda _: instance)
+    runner = ConsumerRunner(manager, kinds=(FLOOR,))
+    instance_id = instance.descriptor.instance_id
+    floor_root = workspace / ".cruxible/floor"
+
+    def tick(at):
+        runner.match_once(instance_id, instance, now=at)
+        for work in FLOOR.due(instance, now=at):
+            FLOOR.run(manager, instance_id, work, now=at)
+
+    tick(NOW)  # sets listening_since; genesis itself fires nothing new
+    assert not floor_root.exists()
+
+    at = NOW + timedelta(seconds=1)
+    path = trigger_path("floor-refresh")
+    seeded = parse_trigger(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(trigger_members(successor(seeded, state="retired")))
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=at.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        proposal_name="retire-floor",
+    )
+    tick(at)
+    # Retiring the Trigger is itself a generation acceptance, but it is not a
+    # floor.refresh fire: nothing was delivered and no live Trigger remains.
+    assert not any(item.action == "floor.refresh" for item in floor.internal_triggers(instance))
+    assert not FLOOR.active(instance)
+    assert not floor_root.exists()
+
+    event = fire_manual(
+        instance, action="floor.refresh", principal="owner", now=at + timedelta(seconds=1)
+    )
+    assert floor.refresh_covered_sequence(instance) < event.sequence
+    # The regression under test: no live Trigger exists, yet the pending
+    # manual fire alone wakes the consumer.
+    assert FLOOR.active(instance)
+
+    tick(at + timedelta(seconds=2))
+    assert floor.refresh_covered_sequence(instance) >= event.sequence
+    assert not FLOOR.active(instance)
+    assert floor_root.exists()
+    assert (
+        read_floor_manifest(floor_root).coordinate.git_oid == instance.accepted_coordinate().git_oid
+    )
+
+
 @pytest.mark.parametrize("relative", ["floor/.gitignore", "coverage.json"])
 def test_fifo_local_input_stalls_delivery_promptly_and_releases_admission(world, relative):
     import os

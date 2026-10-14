@@ -333,7 +333,13 @@ class FloorConsumers:
         if any(item.action == "floor.refresh" for item in internal_triggers(instance)):
             return True
         progress = _progress(instance)
-        return progress is not None and progress[1] != progress[2] and progress[1] != progress[3]
+        if progress is not None and progress[1] != progress[2] and progress[1] != progress[3]:
+            return True
+        # A manual `floor.refresh` fire needs no live Trigger to wake this
+        # consumer: an indexed pending fire beyond the covered cursor (0,
+        # absent any progress row yet) is itself runnable work.
+        covered = 0 if progress is None else progress[0]
+        return latest_sequence(instance, action="floor.refresh") > covered
 
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
         target = _target(instance, get_registry().get(instance.descriptor.instance_id))
