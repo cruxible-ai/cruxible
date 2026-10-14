@@ -47,6 +47,9 @@
   "/api/v1/{instance_id}/blocks/depublish": {
     "POST": "BlockDepublishResult"
   },
+  "/api/v1/{instance_id}/blocks/observe": {
+    "POST": "BlockObserveResult"
+  },
   "/api/v1/{instance_id}/bodies": {
     "POST": "CasObjectResult"
   },
@@ -88,9 +91,6 @@
   },
   "/api/v1/{instance_id}/curation/list": {
     "POST": "CurationListResult"
-  },
-  "/api/v1/{instance_id}/curation/observe": {
-    "POST": "CurationObserveResult"
   },
   "/api/v1/{instance_id}/curation/overrule": {
     "POST": "CurationActionResult"
