@@ -104,7 +104,8 @@ def run(
         reviewed = proposal.review()
         if not review_decision(reviewed):
             raise RuntimeError(f"Left proposal {proposal_id} pending after review")
-        proposal.approve(signer=signer, reviewed=reviewed)
+        # Hold: acceptance is its own decision below, so the approval signs only.
+        proposal.approve(signer=signer, reviewed=reviewed, hold=True)
         if not accept_decision(proposal_id):
             raise RuntimeError(f"Left approved proposal {proposal_id} pending acceptance")
         receipt = cx.activate(proposal_id)

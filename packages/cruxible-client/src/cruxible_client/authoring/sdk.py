@@ -1816,7 +1816,7 @@ class SubjectDraft(_IntentDraft):
 class Intent:
     """One authoring intent: a draft compiled by the daemon, then preflighted and submitted.
 
-    An intent is revised in place (``reprepare``, ``rebase``) and owns the proposal its
+    An intent is revised in place (``reprepare``) and owns the proposal its
     submission makes. Next: ``intent.submit()``, then ``intent.proposal.review()``.
     """
 
@@ -1962,7 +1962,10 @@ class Intent:
         return self._playbill.proposal(status.proposal_id)
 
     def prepare(self) -> Intent:
-        """Preflight this intent again at current head, without changing its draft.
+        """Preflight this intent again, without changing its draft.
+
+        A refused intent whose base the head moved past is checked at the head
+        and advances there when it passes; a payload fault stays refused.
 
         Next: ``intent.refused`` and ``intent.diagnostics``, then ``intent.submit()``.
         """
@@ -2020,8 +2023,8 @@ class Intent:
     def status(self) -> api.CandidateStatusRecord:
         """Read this intent's candidate state fresh from the daemon.
 
-        Next: ``intent.path_to_acceptance`` for what remains, or ``intent.rebase()`` if head
-        moved past it.
+        Next: ``intent.path_to_acceptance`` for what remains; a refused intent whose
+        base the head moved past advances on ``intent.prepare()`` when it checks clean there.
         """
 
         status = self._playbill._client.authoring_intent_status(
@@ -2029,20 +2032,6 @@ class Intent:
         )
         self._candidate_status = status
         return status
-
-    def rebase(self) -> Intent:
-        """Rebase this intent onto current head, dropping its last preflight.
-
-        Next: ``intent.prepare()``, then ``intent.submit()``.
-        """
-
-        self._candidate_status = None
-        self._raw = self._playbill._client.rebase_authoring_intent(
-            self._playbill._instance_id, self.intent_id
-        ).intent
-        self._preflight = None
-        self._candidate_status = None
-        return self
 
     def wait_for_acceptance(
         self,
@@ -2080,12 +2069,23 @@ class Proposal:
         """
         return review_proposal(self._playbill, self.proposal_id)
 
-    def approve(self, *, signer: ApprovalSigner, reviewed: ReviewedProposal) -> api.ApprovalReceipt:
-        """Sign this exact review with caller-configured custody; never activate.
+    def approve(
+        self, *, signer: ApprovalSigner, reviewed: ReviewedProposal, hold: bool = False
+    ) -> api.ApprovalReceipt:
+        """Sign this exact review with caller-configured custody.
 
-        Next: ``proposal.activate()`` once enough approvals are in.
+        The approval that completes the candidate activates it in the same call
+        (``receipt.activation``) when the caller may activate; ``hold=True``
+        signs only. ``receipt.not_activated`` says why nothing activated.
+
+        Next: ``cx.at(receipt.activation.accepted_coordinate)`` once activated, or
+        ``proposal.activate()`` for a held approval.
         """
-        return approve_reviewed(self._playbill, self.proposal_id, signer=signer, reviewed=reviewed)
+        receipt = approve_reviewed(
+            self._playbill, self.proposal_id, signer=signer, reviewed=reviewed, hold=hold
+        )
+        self._playbill._observe_activation(receipt.activation)
+        return receipt
 
     def activate(self) -> api.ActivationReceipt:
         """Activate this proposal once its approvals are in: ``Cruxible.activate`` by handle.
@@ -2666,9 +2666,17 @@ class Cruxible:
         """
 
         receipt = self._client.activate_proposal(self._instance_id, proposal_id)
-        if receipt.status == "accepted" and receipt.accepted_coordinate is not None:
-            self._observe_read(_coordinate(receipt.accepted_coordinate), expected=None)
+        self._observe_activation(receipt)
         return receipt
+
+    def _observe_activation(self, receipt: api.ActivationReceipt | None) -> None:
+        """An accepted activation's coordinate becomes this connection's last observation."""
+        if (
+            receipt is not None
+            and receipt.status == "accepted"
+            and receipt.accepted_coordinate is not None
+        ):
+            self._observe_read(_coordinate(receipt.accepted_coordinate), expected=None)
 
     def proposals(
         self,

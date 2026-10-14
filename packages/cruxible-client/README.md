@@ -1748,13 +1748,15 @@ evidence-policy `lint` that `claim-type propose` serves for the same definition.
 `Intent` and `Proposal` are obtained from SDK factories. `from_preflight` is an
 advanced response adapter. Cached properties are not
 automatic status polling. `Intent.path_to_acceptance` calls status.
-`Intent.rebase()` clears observed preflight/status; prepare again before relying
-on a new candidate. `reprepare()` requires the same owning connection.
+A refused intent whose base the accepted head moved past advances to the head
+on `prepare()` or `submit()` when it checks clean there; a payload fault stays
+refused. `reprepare()` requires the same owning connection.
 
 `Proposal.review()` returns an immutable process-local `ReviewedProposal`.
 `approve(signer=..., reviewed=...)` checks exact proposal/candidate/session/instance
 binding, obtains current governance/challenge data, signs locally, and submits
-public approval. Its `.details` returns a fresh copy. The token is not proof a
+public approval; the approval that completes the candidate also activates it
+unless `hold=True`. Its `.details` returns a fresh copy. The token is not proof a
 human read it. A new process must review again. Wait methods return the last
 observed status at timeout; they do not throw a synthetic failure or retry writes.
 
@@ -2010,16 +2012,6 @@ submit() -> Intent
 status() -> api.CandidateStatusRecord
 ```
 
-<a id="api-intent-rebase"></a>
-
-### `Intent.rebase`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-rebase() -> Intent
-```
-
 <a id="api-intent-wait-for-acceptance"></a>
 
 ### `Intent.wait_for_acceptance`
@@ -2079,10 +2071,15 @@ Re-admits this stale proposal at the current head under a new proposal ID; revie
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-approve(*, signer: ApprovalSigner, reviewed: ReviewedProposal) -> api.ApprovalReceipt
+approve(
+    *, signer: ApprovalSigner, reviewed: ReviewedProposal, hold: bool = False
+) -> api.ApprovalReceipt
 ```
 
-Sign this exact review with caller-configured custody; never activate.
+Sign this exact review with caller-configured custody. The approval that
+completes the candidate activates it in the same call (`receipt.activation`)
+when the caller may activate; `hold=True` signs only. `receipt.not_activated`
+says why nothing activated.
 
 <a id="api-prediction"></a>
 
@@ -5633,8 +5630,12 @@ submit_approval(
     proposal_id: str,
     *,
     attestation: Mapping[str, Any],
+    hold: bool = False,
 ) -> contracts.ApprovalReceipt
 ```
+
+Submit one approval; the daemon activates a candidate it completes.
+``hold=True`` signs only and leaves activation to someone else.
 
 HTTP: `POST f'/api/v1/{instance_id}/proposals/{proposal_id}/approvals'`.
 
@@ -5652,6 +5653,7 @@ approve_proposal(
     signer_id: str,
     signer: Callable[[dict[str, Any]], Mapping[str, Any]],
     include_body: bool = False,
+    hold: bool = False,
 ) -> contracts.ApprovalReceipt
 ```
 
@@ -5834,18 +5836,6 @@ append_claim_attestation(
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/claim-attestations'`.
-
-<a id="api-cruxibleclient-recover-claim-attestations"></a>
-
-### `CruxibleClient.recover_claim_attestations`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-recover_claim_attestations(instance_id: str) -> None
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/claim-attestations/recover'`.
 
 <a id="api-cruxibleclient-list-predictions"></a>
 
@@ -6036,21 +6026,6 @@ preflight_authoring_intent(
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight'`.
-
-<a id="api-cruxibleclient-rebase-authoring-intent"></a>
-
-### `CruxibleClient.rebase_authoring_intent`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-rebase_authoring_intent(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/authoring/intents/{intent_id}/rebase'`.
 
 <a id="api-cruxibleclient-submit-authoring-intent"></a>
 
@@ -8014,10 +7989,11 @@ or send private key bytes to the daemon.
 proposal = cx.proposal(intent.status().proposal_id)
 reviewed = proposal.review()
 review = reviewed.details  # Inspect all members, evidence, governance and provenance.
-# After deciding to approve this exact candidate:
+# After deciding to approve this exact candidate. The approval that completes
+# it activates it; approval.not_activated says why not otherwise.
 approval = proposal.approve(signer=configured_signer, reviewed=reviewed)
-# After a separate decision to accept:
-receipt = cx.activate(proposal.proposal_id)
+# To keep acceptance a separate decision, sign with hold=True, then later:
+# receipt = cx.activate(proposal.proposal_id)
 world = cx.world()
 ```
 
@@ -8025,8 +8001,9 @@ world = cx.world()
 `details` returns a fresh copy; editing it cannot alter the approved candidate.
 The token binds identity, not proof that a human or agent actually read it.
 The helper obtains fresh governance/challenge data, checks the reviewed candidate,
-root and signer, verifies the local signature and submits it. It never accepts
-or refreshes implicitly. The authenticated submitter may differ from the signer.
+root and signer, verifies the local signature and submits it. It activates only
+a candidate this approval completes, when the caller's tier may activate and
+`hold` is not set; it never refreshes the local floor. The authenticated submitter may differ from the signer.
 
 This convenience path requires a complete unredacted review. An
 `ApprovalReviewMismatch` includes a repair instruction and never automatically

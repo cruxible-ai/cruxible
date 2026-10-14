@@ -208,6 +208,9 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "proposal_awaiting_approval": "review_and_approve_the_candidate_with_your_signing_key",
     # The caller's own candidate needs no further approval: activating it is next.
     "proposal_awaiting_activation": "activate_your_proposal_its_approvals_are_met",
+    # A recorded kit add whose provider installs activated, but proposing its
+    # definitions refused at the head it resumed on; the detail says why.
+    "kit_resume_blocked": "resolve_the_refusal_then_add_the_kit_again",
 }
 
 

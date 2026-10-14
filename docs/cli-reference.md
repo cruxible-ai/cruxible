@@ -153,7 +153,8 @@ exempt. By that principle these are exempt:
   refused attestation writes nothing;
 - `body store`: an inert content-addressed put whose effect is its input;
 - `proposal approve`: records the caller's signed approval of an evaluation
-  already shown by `get PROPOSAL_ID`;
+  already shown by `get PROPOSAL_ID`, and activates a candidate it completes
+  (the `proposal activate` effect below);
 - `proposal activate`: its preview is the proposal's evaluation, already
   shown; the commit-time `at` check covers the head moving under it;
 - `floor delivery on|off`: its effect is its input;
@@ -237,7 +238,7 @@ credential, but never receives a replacement for someone else's principal.
 The bootstrap claim and `recover-admin` mint unbound operator credentials: they
 carry transport authority (host, init, credentials, daemon lifecycle) but act as
 no principal, so they cannot author or perform any other instance write --
-body store, ledger mirror binding and publication, attestation recovery
+body store, ledger mirror binding and publication
 included (`cruxible.identity.credential_unbound`).
 `cruxible init` under such a credential designates the owner it names.
 Credentials minted before credentials named a principal are migrated as
@@ -1187,7 +1188,7 @@ the installed one unless `--allow-downgrade`, and the preview names the transiti
 
 `add` and `remove` land at once when the instance's approval policy requires no
 approval, like provider install and value writes; otherwise they stop at
-proposed for the ordinary `cruxible proposal approve` and `activate` steps. `add`
+proposed for the ordinary `cruxible proposal approve`, which activates them. `add`
 records a `kit_receipt` Document, `documents/kit-<id>.json`, with each path's
 release digest, installed digest and content digest, and the bundled packages.
 
@@ -1198,8 +1199,14 @@ installs each package not yet installed through the ordinary transfer install,
 which needs the install permission (`ADMIN`) and lands when the approval policy
 requires no approval. The definitions are proposed once every bundled provider
 is installed; while an install awaits approval the result is
-`awaiting_providers` with that install's proposal, and `kit add` again after it
-is activated proposes the definitions. A commit first reads the staged files
+`awaiting_providers` with that install's proposal. The daemon records that
+kit add, and the activation that lands the last awaited install proposes the
+definitions on its own, as the principal who ran it, at the head it lands on:
+they land at once when the approval policy requires none, exactly as the
+original add would. `kit status` lists each recorded resume (`waiting`,
+`proposed` with its proposal, or `blocked` with why); a blocked one is also a
+`kit_resume_blocked` row in `next`. A later commit `kit add` of the same kit
+replaces the record. A commit first reads the staged files
 (metadata only), refuses `cruxible.kit.provider_manifest_mismatch` unless they
 reproduce the manifest, and refuses what the current state already decides
 (ownership overlap, a definition another installed kit owns or holds, a pinned
@@ -1505,7 +1512,6 @@ version; the refusal names them.
 ~~~text
 cruxible claim attest CLAIM_ID --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS] [--json]
-cruxible claim recover-attestation
 ~~~
 
 Claims are read through `cruxible query`, `cruxible get` and `cruxible orient`.
@@ -1545,9 +1551,10 @@ the hold.
 predicate, object, role, qualifier, lifecycle, predecessor digest) in its
 top-level `statement` field alongside the canonical envelope.
 
-`recover-attestation` is an admin-only repair for an interrupted
-Claim-attestation evidence-ledger append. It rolls the sole durable unpublished
-event forward and refuses rather than choosing between ambiguous histories.
+An interrupted Claim-attestation append needs no repair command: the next
+attestation read or write (in the same daemon, or the first after a restart)
+rolls the sole durable unpublished event forward, and refuses as corrupt rather
+than choosing between ambiguous histories.
 
 ## authoring
 
@@ -1563,7 +1570,6 @@ cruxible authoring bind --file PATH --anchor TEXT [--occurrence N]
   [--window-lines N] [--workspace-root DIR]
   --payload-file CLAIM_STUB|- [--json]
 cruxible authoring preflight INTENT_ID [--brief] [--json]
-cruxible authoring rebase INTENT_ID [--json]
 cruxible authoring status INTENT_ID [--json]
 cruxible authoring get INTENT_ID [--json]
 cruxible authoring list [--json]
@@ -1574,8 +1580,11 @@ PAYLOAD` compiles, checks and submits in one call; `--dry-run` returns the
 preflight the submit would run, with every refusal, and saves no intent. Durable
 intents are optional, for staged work on large definitions: `compile PAYLOAD`
 creates one (its ID is `certificate.intent_id`), `compile PAYLOAD --intent-id ID`
-revises it (the daemon keeps every revision), `rebase ID` advances a refused one
-to the accepted head, and `submit --intent-id ID` submits it. `get` and `list`
+revises it (the daemon keeps every revision), and `submit --intent-id ID`
+submits it. `preflight` and `submit` check a refused intent whose base the
+accepted head moved past again at the head; when it passes there it advances to
+the head (same payload and identity, the next revision), and a payload fault
+still refuses. `get` and `list`
 find staged work again after the context that started it is gone.
 `authoring example` prints a model-generated template for NAME, or lists the
 names without one.
@@ -1658,8 +1667,8 @@ ceiling described there, which preflight checks before lowering anything.
 
 The authoring coordinator owns stable identities, timestamps, bases, and proposal
 references. `compile` creates or updates an intent and performs a binding preflight;
-`rebase` advances an unsubmitted refused intent to the current accepted coordinate;
-`submit` is idempotent and never supplies approvals. `status` reports the remaining
+`preflight` and `submit` advance an unsubmitted refused intent to the current
+accepted coordinate when it checks clean there; `submit` is idempotent and never supplies approvals. `status` reports the remaining
 approval or activation conditions without impersonating the actors who own them.
 `bind --occurrence N` counts matching anchors in ascending byte-offset order and
 selects the 1-based `N`th match. The resulting selector records the total number
@@ -3132,6 +3141,14 @@ repair is `cruxible proposal activate PROPOSAL_ID`, which closes the row. Your
 candidate still waiting on others' approval is listed in their queues as
 `proposal_awaiting_approval`.
 
+A `kit_resume_blocked` row is a recorded `kit add` whose provider installs
+activated but whose definitions were refused at the head the resume ran on
+(another kit took a definition over, the principal who ran it can no longer
+author, or another refusal `detail` names). Its repair is `cruxible kit add`
+with the recorded source, a preview of the add at the current head. A kit
+still waiting on an install that was rejected or withdrawn is shown by `kit
+status` only.
+
 A `mandate_expiring` row is a live, unsuspended ProcedureMandate whose
 `expires_at` falls after the evaluation time and within `--expiring-within`.
 Nothing renews a mandate, so its repair starts a successor from
@@ -3719,7 +3736,7 @@ cruxible proposal reject PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OI
 cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
   [--workspace-root DIR] [--item-reasons-after CURSOR] [--item-reasons-limit N] [--json]
 cruxible proposal approve PROPOSAL_ID
-  [--signer-id ID] --key FILE [--yes] [--json]
+  [--signer-id ID] --key FILE [--yes] [--hold] [--json]
 cruxible proposal activate PROPOSAL_ID [--brief] [--json]
 cruxible get PROPOSAL_ID [--detail proof]
 ~~~
@@ -3754,6 +3771,18 @@ names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
 Activating a stale proposal refuses `cruxible.proposal.stale`, naming
 `proposal readmit` (or `withdraw`) as the repair.
+
+`proposal approve` signs the reviewed candidate. When that signature completes
+the candidate's required approvals and your tier may activate (`graph_write`),
+the same command activates it and reports both: the JSON receipt carries
+`activation`, the activation receipt. `--hold` signs only, for a reviewer
+leaving activation timing to someone else. Otherwise the receipt's
+`not_activated` says why: `approvals_remaining` (with the count in
+`approvals_remaining`), `held`, `activation_not_permitted`, or `stale` (readmit
+it first). `proposal activate` remains for a held approval, a candidate that
+needs no approval, and activation by someone other than the last signer. The
+SDK (`proposal.approve(..., hold=)`), HTTP (`hold` in the approval body) and
+MCP (`hold` on `cruxible_proposal_approve` and `_submit`) behave the same.
 `proposal readmit` replays a stale proposal's authored content through the current
 governed rebase and returns a fresh, idempotent proposal without changing the old
 proposal evidence. It refuses `cruxible.proposal.readmit_already_accepted` when
@@ -3910,8 +3939,8 @@ principal record. Every principal-lifecycle proposal requires the PROPOSING
 actor's own cryptographic approval before it can settle — the identity shown
 by `cruxible whoami`, which coincides with the affected principal only for
 self-rotation: run `cruxible proposal approve PID --signer-id <the proposing
-actor> --key <that actor's current private key> --yes`, then
-`cruxible proposal activate`. For `principal add` and `principal recover`,
+actor> --key <that actor's current private key> --yes`, which activates it
+once that signature completes it. For `principal add` and `principal recover`,
 the signer is the actor performing the operation, never the new or
 locked-out principal. Registration neither
 grants authority immediately nor sends a private key to the daemon. Other
@@ -3929,7 +3958,7 @@ principal ID, its key path, and, with auth, its credential (written, never
 printed). The agent loads it with `set -a; . DIR/cruxible.env; set +a`; the CLI,
 SDK and MCP server all read those variables. Without `--signer-key` the
 registration is only proposed and the command prints each remaining step:
-`proposal approve`, `proposal activate`, and, with auth,
+`proposal approve` (which activates it), and, with auth,
 `credential mint --principal-id ID --key-dir DIR`, which writes the token into
 the same settings file. `cruxible init` writes the owner's settings file the
 same way. `proposal approve` defaults `--signer-id` to the configured principal
@@ -4000,8 +4029,8 @@ with --help for its exact options.
 `cruxible compiler upgrade --to DIGEST --name NAME [--dry-run|--commit] [--at OID] [--json]`
 creates an admin-only
 proposal bound to the exact accepted head and target compiler. Review it, sign
-through `cruxible proposal approve`, then use
-`cruxible proposal activate`. Activation validates the full target
+through `cruxible proposal approve`, which activates it once that signature
+completes it (`cruxible proposal activate` after `--hold`). Activation validates the full target
 projection before advancing the signed ledger. Installing or restarting a daemon
 does not upgrade an instance. Historical generations keep their original compiler.
 The instance descriptor retains its genesis compiler; inspection reports the

@@ -433,6 +433,8 @@ def handle_playbill_submit_approval(
     instance_id: str,
     proposal_id: str,
     attestation: dict[str, Any],
+    *,
+    hold: bool = False,
 ) -> contracts.ApprovalReceipt:
     public_attestation = ApprovalAttestation.model_validate(attestation)
     return _daemon_call(
@@ -440,6 +442,7 @@ def handle_playbill_submit_approval(
             instance_id,
             proposal_id,
             attestation=public_attestation.model_dump(mode="json"),
+            hold=hold,
         ),
         operation_name="cruxible_proposal_approve_submit",
     )
@@ -451,6 +454,7 @@ def handle_playbill_approve(
     *,
     signer_id: str | None,
     candidate_digest: str | None,
+    hold: bool = False,
 ) -> contracts.ApprovalReceipt:
     """Challenge, sign with the configured local key, and submit, as `proposal approve` does.
 
@@ -482,7 +486,7 @@ def handle_playbill_approve(
     )
     attestation = key_signer.sign(statement)
     return handle_playbill_submit_approval(
-        instance_id, proposal_id, attestation.model_dump(mode="json")
+        instance_id, proposal_id, attestation.model_dump(mode="json"), hold=hold
     )
 
 
@@ -980,16 +984,6 @@ def handle_playbill_authoring_preflight(
     return _daemon_call(
         lambda client: client.preflight_authoring_intent(instance_id, intent_id),
         operation_name="cruxible_authoring_preflight",
-    )
-
-
-def handle_playbill_authoring_rebase(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord:
-    return _daemon_call(
-        lambda client: client.rebase_authoring_intent(instance_id, intent_id),
-        operation_name="cruxible_authoring_rebase",
     )
 
 

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Literal, cast
 
 import structlog
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cruxible_client.contracts.actor_types import TransportCapability
 from cruxible_client.contracts.attestations import (
@@ -37,6 +37,7 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.principal_rendering import render_principal
+from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
 from cruxible_client.contracts.workspace_advertisement import (
@@ -44,7 +45,7 @@ from cruxible_client.contracts.workspace_advertisement import (
     WorkspaceAdvertisement,
 )
 from cruxible_core.documents.projection_documents import DocumentProjectionView
-from cruxible_core.errors import RequestRefusedError
+from cruxible_core.errors import PermissionDeniedError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import (
     ProposalAdmissionRequest,
@@ -118,6 +119,21 @@ class ProposalInspection(_StrictServiceModel):
     workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
+class ActivationReceipt(_StrictServiceModel):
+    tag: Literal["playbill-activation-receipt-v1"] = "playbill-activation-receipt-v1"
+    proposal_id: str
+    activated_by: str
+    status: Literal["accepted", "lost_cas"]
+    accepted_coordinate: AcceptedCoordinate | None
+    workspace_advertisement: WorkspaceAdvertisement
+
+
+#: Why an approval did not activate its candidate: the signer held activation
+#: for someone else, more approvals are required, the caller's tier may not
+#: activate, or accepted state moved past the proposal (readmit it first).
+ApprovalNotActivated = Literal["held", "approvals_remaining", "activation_not_permitted", "stale"]
+
+
 class ApprovalReceipt(_StrictServiceModel):
     tag: Literal["playbill-approval-receipt-v1"] = "playbill-approval-receipt-v1"
     proposal_id: str
@@ -127,15 +143,20 @@ class ApprovalReceipt(_StrictServiceModel):
     signing_semantic_root: str
     attestation_digest: str
     key_history_ref: str
+    #: The activation this approval completed: it was the last one required and
+    #: the caller may activate. Exactly one of this and ``not_activated``.
+    activation: ActivationReceipt | None = None
+    not_activated: ApprovalNotActivated | None = None
+    #: Signatures still required before the candidate can activate.
+    approvals_remaining: int = Field(default=0, ge=0)
 
-
-class ActivationReceipt(_StrictServiceModel):
-    tag: Literal["playbill-activation-receipt-v1"] = "playbill-activation-receipt-v1"
-    proposal_id: str
-    activated_by: str
-    status: Literal["accepted", "lost_cas"]
-    accepted_coordinate: AcceptedCoordinate | None
-    workspace_advertisement: WorkspaceAdvertisement
+    @model_validator(mode="after")
+    def _one_outcome(self) -> "ApprovalReceipt":
+        if (self.activation is None) == (self.not_activated is None):
+            raise ValueError("an approval receipt reports its activation or why there was none")
+        if (self.approvals_remaining > 0) != (self.not_activated == "approvals_remaining"):
+            raise ValueError("approvals_remaining is counted exactly when approvals remain")
+        return self
 
 
 class RefusalInspection(_StrictServiceModel):
@@ -350,8 +371,25 @@ def service_submit_playbill_approval(
     proposal_id: str,
     attestation: ApprovalAttestation,
     authenticated_submitter: str,
+    activate_when_complete: bool = False,
+    may_activate: bool = False,
+    may_activate_compiler_upgrade: bool = False,
 ) -> ApprovalReceipt:
-    """Verify and persist only a public attestation under historical key state."""
+    """Verify and persist one public attestation; activate when it completes the candidate.
+
+    When this signature leaves no approval outstanding, ``activate_when_complete``
+    is set (the caller did not hold activation for someone else) and
+    ``may_activate`` (the caller's tier admits activation), the candidate is
+    activated here by the submitter, through the one activation path. Otherwise
+    the receipt says why not and how many signatures remain.
+
+    A compiler-upgrade candidate additionally requires ``cruxible_compiler_upgrade``
+    at ADMIN to activate (``may_activate_compiler_upgrade``); an eligible
+    GRAPH_WRITE approver still stores the signature but does not activate it.
+    Direct activation keeps enforcing that requirement itself, independent of
+    this up-front check: a ``PermissionDeniedError`` surfacing from the
+    activation attempt below is treated the same way.
+    """
 
     instance.require_writable()
     proposal, candidate = _candidate_for_proposal(instance, proposal_id)
@@ -374,7 +412,7 @@ def service_submit_playbill_approval(
     ):
         raise ApprovalIntegrityError(
             "cruxible.approval.creator_forbidden: ordinary candidate creator cannot approve; "
-            "after an eligible signer approves, run cruxible proposal activate"
+            "an eligible signer's approval activates it"
         )
     verified = verify_approval(
         submission,
@@ -399,19 +437,114 @@ def service_submit_playbill_approval(
             previous_notes = grouped.validate_and_snapshot(instance._ledger, affected)
             evidence.write_approval(candidate.candidate_digest, submission)
             grouped.publish(instance._ledger, affected, previous=previous_notes)
+    remaining = _approvals_remaining(
+        evidence.read_approvals(candidate.candidate_digest),
+        candidate,
+        creator=proposal.admission.actor_id,
+        principals=signing_generation.principals,
+        principal_lifecycle=principal_lifecycle,
+    )
+    # A compiler-upgrade candidate needs cruxible_compiler_upgrade at ADMIN to
+    # activate, on top of the generic cruxible_proposal_activate this caller's
+    # tier may already admit; decided up front so an eligible-but-insufficient
+    # approver gets the reason without an activation attempt.
+    needs_compiler_upgrade = any(
+        member.artifact_kind == "compiler-upgrade" for member in candidate.members
+    )
+    effective_may_activate = may_activate and (
+        may_activate_compiler_upgrade if needs_compiler_upgrade else True
+    )
+    reason: ApprovalNotActivated | None = (
+        "approvals_remaining"
+        if remaining
+        else "held"
+        if not activate_when_complete
+        else "activation_not_permitted"
+        if not effective_may_activate
+        else None
+    )
+    if reason is None:
+        # Activation advertises the workspace and requests the mirror itself.
+        try:
+            activation = service_activate_playbill_proposal(
+                instance, proposal_id=proposal_id, activated_by=authenticated_submitter
+            )
+        except ProposalStale:
+            reason = "stale"
+        except PermissionDeniedError:
+            # The up-front check above should have caught this; kept as the
+            # backstop so any candidate-specific activation authority this
+            # submitter lacks still reports a receipt instead of an error,
+            # with the signature already persisted above.
+            reason = "activation_not_permitted"
+        else:
+            return _approval_receipt(proposal_id, candidate, verified, activation=activation)
     # Publication is deliberately OUTSIDE the lock: it rebuilds the advisory
     # branch and its notes from the store and now takes the same candidate lock
     # around projected approval rendering, so nesting would deadlock. Both lanes
     # are refreshed so the next reviewer can see the new approval.
     instance.advertise_workspace()
     instance.request_ledger_mirror()
-    return _approval_receipt(proposal_id, candidate, verified)
+    return _approval_receipt(
+        proposal_id, candidate, verified, not_activated=reason, approvals_remaining=remaining
+    )
+
+
+def _approvals_remaining(
+    submissions: tuple[ApprovalSubmission, ...],
+    candidate: CandidateRecordAnyVersion,
+    *,
+    creator: str,
+    principals: PrincipalRegistrySnapshot,
+    principal_lifecycle: bool,
+) -> int:
+    """Signatures settlement still needs, counted as settlement counts them.
+
+    Distinct active ordinary signers other than the creator toward the approval
+    requirement; a principal-lifecycle candidate also needs its actor's own
+    signature, and a compiler upgrade at least one signature of any kind.
+    """
+
+    verified: list[VerifiedApproval] = []
+    for submission in submissions:
+        try:
+            verified.append(
+                verify_approval(
+                    submission,
+                    candidate=candidate.candidate,
+                    principals=principals,
+                    purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
+                )
+            )
+        except ApprovalIntegrityError:
+            continue
+    signers = {approval.signer_id for approval in verified}
+    remaining = 0
+    if candidate.approval_requirements:
+        eligible = {
+            signer
+            for signer in signers
+            if signer != creator and principals.require_active(signer).kind == "ordinary"
+        }
+        minimum = candidate.approval_requirements[0].minimum_distinct_signers
+        remaining = max(0, minimum - len(eligible))
+    if principal_lifecycle and creator not in signers:
+        remaining += 1
+    if not verified and any(
+        member.artifact_kind == "compiler-upgrade" for member in candidate.members
+    ):
+        remaining = max(remaining, 1)
+    return remaining
 
 
 def _approval_receipt(
     proposal_id: str,
     candidate: CandidateRecordAnyVersion,
     verified: VerifiedApproval,
+    *,
+    activation: ActivationReceipt | None = None,
+    not_activated: ApprovalNotActivated | None = None,
+    approvals_remaining: int = 0,
 ) -> ApprovalReceipt:
     return ApprovalReceipt(
         proposal_id=proposal_id,
@@ -421,6 +554,9 @@ def _approval_receipt(
         signing_semantic_root=verified.submission.attestation.signing_semantic_root,
         attestation_digest=verified.digest.tagged,
         key_history_ref=verified.signer_key_history_ref,
+        activation=activation,
+        not_activated=not_activated,
+        approvals_remaining=approvals_remaining,
     )
 
 
@@ -568,6 +704,7 @@ def service_activate_playbill_proposal(
         reset_claim_resolution_memo(slots=False)
         if status == "accepted":
             _finalize_completed_intents(instance)
+            _resume_waiting_kits(instance, candidate)
         advertisement = instance.advertise_workspace()
         # Publish accepted main and remove the closed review branch.
         instance.request_ledger_mirror()
@@ -582,6 +719,16 @@ def service_activate_playbill_proposal(
         ),
         workspace_advertisement=advertisement,
     )
+
+
+def _resume_waiting_kits(instance: PlaybillInstance, candidate: CandidateRecordAnyVersion) -> None:
+    """Resume a kit add this acceptance completed, looked up by its own changed paths.
+
+    The activation is already committed; the resume is isolated from it.
+    """
+    from cruxible_core.service.kit_resume import resume_kits_after_activation
+
+    resume_kits_after_activation(instance, (member.path for member in candidate.members))
 
 
 def _finalize_completed_intents(instance: PlaybillInstance) -> None:

@@ -167,7 +167,7 @@ adds, replaces and retires definitions. A kit also bundles the provider packages
 its Procedures run on (wheel, uv lock and path-dependency wheels; never source):
 `kit_add` installs the missing ones first, under the install permission, and
 proposes the definitions once they land (`awaiting_providers` while an install
-awaits approval). A kit can instead name a default provider for a contract its
+awaits approval; the activation that lands it proposes them on its own). A kit can instead name a default provider for a contract its
 Blueprints leave open (`delivery: index`): `kit_add` installs it by name and
 exact version from the provider index unless a live Provider here already
 implements its interfaces (`satisfied`). Activation and any approval stay the
@@ -188,8 +188,8 @@ ordinary steps.
 | `cruxible_document_propose` | Propose a canonical Document envelope | `GOVERNED_WRITE` |
 | `cruxible_proposal_review` | Render review material; a Procedure proposal's item reasons page with `item_reasons_after` / `item_reasons_limit` | `READ_ONLY` |
 | `cruxible_proposal_approve_prepare` | Return the exact approval challenge | `READ_ONLY` |
-| `cruxible_proposal_approve_submit` | Submit a public signed attestation | `GRAPH_WRITE` |
-| `cruxible_proposal_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call | `GRAPH_WRITE` |
+| `cruxible_proposal_approve_submit` | Submit a public signed attestation; activates a candidate it completes unless `hold` | `GRAPH_WRITE` |
+| `cruxible_proposal_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call; the approval that completes the candidate activates it unless `hold` | `GRAPH_WRITE` |
 | `cruxible_proposal_activate` | Activate by compare-and-set; returns the activation receipt (the daemon delivers the floor) | `GRAPH_WRITE` |
 | `cruxible_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
@@ -266,7 +266,6 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_authoring_compile` | Stage a payload as an intent (new, or revising `intent_id`) and run every check | `GOVERNED_WRITE` |
 | `cruxible_authoring_bind` | Read an anchored selection of a catalogued workspace file (the stub's `source_id` must be its catalog name; `occurrence` picks one of several anchor matches), derive commitments, and compile | `GOVERNED_WRITE` |
 | `cruxible_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
-| `cruxible_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
 | `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
 | `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
 | `cruxible_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp, registers the block and records the page's declared blocks for block-churn detection; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
@@ -277,7 +276,8 @@ from accepted law evidence, never carried forward from acceptance.
 The daemon mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.
 
-The flow is `compile` (or `bind`), then `rebase` or `preflight` as needed, then
+The flow is `compile` (or `bind`), then `preflight` as needed (a refused intent
+whose base the head moved past advances when it checks clean at the head), then
 `submit` and `status`, with `get` and `list` to find work again; a one-shot write
 is `cruxible_authoring_submit` with a `payload`. `cruxible_authoring_example`
 prints a template for any input kind.

@@ -51,7 +51,7 @@ NULL_DIGEST = "sha256:" + "0" * 64
 
 
 class ClaimAttestationStoreError(CruxibleError):
-    """Persisted evidence is corrupt, ambiguous, or temporarily poisoned."""
+    """Persisted evidence is corrupt or ambiguous, or a request is refused."""
 
     def __init__(self, code: str, message: str) -> None:
         self.error_code = code
@@ -222,7 +222,9 @@ class ClaimAttestationEvidenceStore:
         self.lock_path = self.exhaust_root / LOCK_FILE
         self.instance_id = instance_id
         self.crash_hook = crash_hook
-        self._poisoned = False
+        #: An append failed after its event became durable: this process's
+        #: verified views may predate that event, so the next access re-verifies.
+        self._interrupted = False
         self._chain_cache: _Chain | None = None
         self._frontier: _Frontier | None = None
         self._partition_tips_verified = False
@@ -721,29 +723,30 @@ class ClaimAttestationEvidenceStore:
         if eligible:
             self._publish_event(eligible[0], previous_root=chain.tip, crash=False)
 
-    def recover(self) -> None:
-        with self._locked():
-            if not self.root.exists():
-                self._poisoned = False
-                return
-            self._load_manifest()
-            self._partition_tips_verified = False
-            self._partition_tips = {}
-            self._unpublished_checked = False
-            self._root_children_verified = False
-            self._root_children = {}
-            self._load_pointer()
-            self._ensure_root_children()
-            self._recover_unpublished()
-            self._unpublished_checked = True
-            self._poisoned = False
+    def _forget_verified(self) -> None:
+        """Drop what this process verified about durable state, so it is read again.
+
+        After an interrupted append the durable partition tips, root children
+        and unpublished-event check may all predate the event it left behind.
+        Forgetting them makes the next ``_ready`` re-verify and roll that event
+        forward exactly as a new process does: one determinable roll-forward,
+        refused as corrupt or ambiguous rather than ever chosen between.
+        """
+
+        self._partition_tips_verified = False
+        self._partition_tips = {}
+        self._unpublished_checked = False
+        self._root_children_verified = False
+        self._root_children = {}
 
     def _ready(self) -> ClaimAttestationPublishedRoot:
-        if self._poisoned:
-            raise _error(
-                "store_poisoned",
-                "attestation store requires recovery; run `cruxible claim recover-attestation`",
-            )
+        if self._interrupted:
+            # Recovery is a determinable roll-forward with no judgment in it,
+            # so it runs here, under the store lock, on the next access. Should
+            # it fail, the unpublished check stays pending and the access after
+            # retries it.
+            self._forget_verified()
+            self._interrupted = False
         # Recover or refuse an unreadable pointer before the global fork check,
         # so multiple replay-valid maximal roots retain their distinct typed
         # recovery_ambiguous classification.
@@ -751,9 +754,9 @@ class ClaimAttestationEvidenceStore:
         self._ensure_root_children()
         if not self._unpublished_checked:
             # Every durable partition tip is compared with the published map once
-            # per process (and again after `recover`): an event this process
-            # appends is published before `append` returns, and one that is not
-            # poisons the store until recovery.
+            # per process, and again after an interrupted append: an event this
+            # process appends is published before `append` returns, and one that
+            # is not is rolled forward on the next access.
             self._recover_unpublished()
             self._unpublished_checked = True
         pointer = self._load_pointer()
@@ -1013,7 +1016,7 @@ class ClaimAttestationEvidenceStore:
                 root = self._publish_event(event, previous_root=current_root, crash=True)
             except BaseException:
                 if self._chain_marker_path(event).exists():
-                    self._poisoned = True
+                    self._interrupted = True
                 raise
             return self._result(event, payload, root, root)
 

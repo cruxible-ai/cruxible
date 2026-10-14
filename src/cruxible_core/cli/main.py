@@ -74,11 +74,9 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("action", "run"): "active",
     ("prediction", "propose"): "active",
     ("prediction", "settle"): "active",
-    ("claim", "recover-attestation"): "active",
     ("authoring", "bind"): "active",
     ("authoring", "compile"): "active",
     ("authoring", "preflight"): "active",
-    ("authoring", "rebase"): "active",
     ("authoring", "submit"): "active",
     ("procedure", "run"): "active",
     ("procedure", "measure"): "active",
@@ -565,9 +563,13 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill", "review_proposal", "Render structured candidate review."
             ),
             "approve": _command(
-                "playbill", "approve_proposal", "Sign locally and submit an attestation."
+                "playbill",
+                "approve_proposal",
+                "Sign locally; activates a candidate the signature completes.",
             ),
-            "activate": _command("playbill", "activate_proposal", "Settle an approved candidate."),
+            "activate": _command(
+                "playbill", "activate_proposal", "Settle a held or approval-free candidate."
+            ),
         },
         module="playbill",
         attr="proposal_group",
@@ -597,11 +599,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill",
                 "attest_claim",
                 "Sign that this caller examined the current exact Claim.",
-            ),
-            "recover-attestation": _command(
-                "playbill",
-                "recover_claim_attestations",
-                "Roll the sole durable unpublished attestation forward.",
             ),
         },
         module="playbill",
@@ -661,11 +658,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill",
                 "preflight_authoring_intent",
                 "Recheck an authoring intent.",
-            ),
-            "rebase": _command(
-                "playbill",
-                "rebase_authoring_intent",
-                "Advance a refused intent to accepted head.",
             ),
             "submit": _command("playbill", "submit_authoring_intent", "Submit a passing intent."),
             "status": _command(

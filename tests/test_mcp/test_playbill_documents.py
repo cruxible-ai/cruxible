@@ -38,7 +38,7 @@ def test_playbill_tools_register_without_private_key_or_local_path_inputs(
     tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
     assert PLAYBILL_DOCUMENT_TOOLS <= set(tools)
     approval = tools["cruxible_proposal_approve_submit"].inputSchema
-    assert set(approval["properties"]) == {"instance_id", "proposal_id", "attestation"}
+    assert set(approval["properties"]) == {"instance_id", "proposal_id", "attestation", "hold"}
     # The adapter compiles the catalog itself: no bundle travels through the caller.
     source = tools["cruxible_sources_propose"].inputSchema
     assert set(source["properties"]) == {
@@ -134,5 +134,5 @@ def test_playbill_handlers_decode_bytes_and_submit_only_public_attestation(monke
     )
     assert calls[0] == ("store", ("inst_1", body))
     approve_payload = calls[-1][1][2]
-    assert approve_payload == {"attestation": attestation}
+    assert approve_payload == {"attestation": attestation, "hold": False}
     assert "private" not in str(approve_payload)

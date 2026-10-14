@@ -223,8 +223,8 @@ def verify_candidate_approvals(
     if purpose == "ordinary-artifact" and independent_required and creator_present:
         raise ApprovalIntegrityError(
             "cruxible.approval.creator_forbidden: independent_approval_required mode needs "
-            "an active ordinary approver other than the candidate creator; after that "
-            "eligible signer approves, run cruxible proposal activate"
+            "an active ordinary approver other than the candidate creator, whose "
+            "approval activates it"
         )
     if not approval_requirements_satisfied(
         candidate,

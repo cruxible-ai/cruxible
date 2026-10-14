@@ -115,8 +115,9 @@ class Client:
         raw.update(self.changes)
         return api.ApprovalChallenge.model_validate(raw)
 
-    def submit_approval(self, *_args: object, attestation: dict[str, Any]):
+    def submit_approval(self, *_args: object, attestation: dict[str, Any], hold: bool = False):
         self.submitted += 1
+        self.held = hold
         signed = ApprovalAttestation.model_validate(attestation)
         return api.ApprovalReceipt(
             proposal_id="wrong" if self.receipt_change else self.review.proposal_id,
@@ -126,6 +127,8 @@ class Client:
             signing_semantic_root=signed.signing_semantic_root,
             attestation_digest=approval_digest(signed).tagged,
             key_history_ref=f"principals/{signed.signer_id}.json@{ROOT}",
+            not_activated="held" if hold else "approvals_remaining",
+            approvals_remaining=0 if hold else 1,
         )
 
 
@@ -143,7 +146,7 @@ def setup(tmp_path: Path):
     return pb, client, signer
 
 
-def test_exact_approval_detaches_nested_review_and_never_activates(setup) -> None:
+def test_exact_approval_detaches_nested_review(setup) -> None:
     pb, client, signer = setup
     proposal = pb.proposal("proposal-one")
     reviewed = proposal.review()
@@ -155,7 +158,16 @@ def test_exact_approval_detaches_nested_review_and_never_activates(setup) -> Non
     receipt = proposal.approve(signer=signer, reviewed=reviewed)
     assert receipt.submitted_by == "relay"  # submitter is not signer
     assert signer.calls == client.submitted == 1
+    assert client.held is False  # the daemon activates a candidate this completes
     assert CoreSigner is LocalEd25519ApprovalSigner
+
+
+def test_held_approval_asks_the_daemon_to_sign_only(setup) -> None:
+    pb, client, signer = setup
+    proposal = pb.proposal("proposal-one")
+    receipt = proposal.approve(signer=signer, reviewed=proposal.review(), hold=True)
+    assert client.held is True
+    assert receipt.activation is None and receipt.not_activated == "held"
 
 
 @pytest.mark.parametrize("other", ["session", "instance", "proposal"])

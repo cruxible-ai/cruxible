@@ -29,9 +29,6 @@
   "/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight": {
     "POST": "AuthoringPreflightResult"
   },
-  "/api/v1/{instance_id}/authoring/intents/{intent_id}/rebase": {
-    "POST": "AuthoringIntentViewRecord"
-  },
   "/api/v1/{instance_id}/authoring/intents/{intent_id}/status": {
     "GET": "CandidateStatusRecord"
   },
@@ -58,9 +55,6 @@
   },
   "/api/v1/{instance_id}/claim-attestations": {
     "POST": "ClaimAttestationAppendResult"
-  },
-  "/api/v1/{instance_id}/claim-attestations/recover": {
-    "POST": null
   },
   "/api/v1/{instance_id}/claim-types/migrations": {
     "POST": "ClaimTypeMigrationResultV1 | ClaimTypeMigrationPreflight | ClaimTypeMigrationResultV2 | ClaimTypeMigrationResult"

@@ -133,8 +133,8 @@ The result is one of:
 | Status | Meaning | Next |
 |---|---|---|
 | `accepted` | The change set landed: the approval policy required no approval. | Nothing. |
-| `proposed` | It awaits approval. | `cruxible proposal approve`, then `cruxible proposal activate`. |
-| `awaiting_providers` | A provider installation the kit needs awaits approval. | Approve and activate that installation, then run `kit add` again. |
+| `proposed` | It awaits approval. | `cruxible proposal approve`; the approval that completes it activates it. |
+| `awaiting_providers` | A provider installation the kit needs awaits approval. | Approve that installation; its activation proposes the definitions on their own, as you (`kit status` shows the resume). |
 | `blocked` | Something in current state stops it; the detail says what. | Fix the cause, or choose another release. |
 
 Installing the provider packages a kit needs requires `admin` permission. A

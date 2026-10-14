@@ -8,6 +8,14 @@
         "not_supported"
       ]
     },
+    "ApprovalNotActivated": {
+      "values": [
+        "held",
+        "approvals_remaining",
+        "activation_not_permitted",
+        "stale"
+      ]
+    },
     "ApprovalPolicyMode": {
       "values": [
         "self_approval_allowed",
@@ -154,7 +162,8 @@
         "evidence_unavailable",
         "prediction_settleable",
         "prediction_window_unbindable",
-        "subject_kind_undeclared"
+        "subject_kind_undeclared",
+        "kit_resume_blocked"
       ]
     },
     "NextRefusalCode": {
@@ -184,6 +193,7 @@
         "cruxible.line.dispatch",
         "cruxible.inbox.list",
         "cruxible.prediction.settle",
+        "cruxible.kit.add",
         "hand_edit"
       ]
     },
@@ -1728,6 +1738,39 @@
     },
     "ApprovalReceipt": {
       "fields": {
+        "activation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "activation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ActivationReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "approvals_remaining": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "approvals_remaining",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Approvals Remaining",
+            "type": "integer"
+          }
+        },
         "attestation_digest": {
           "has_default": false,
           "has_default_factory": false,
@@ -1775,6 +1818,32 @@
           "schema": {
             "title": "Key History Ref",
             "type": "string"
+          }
+        },
+        "not_activated": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "not_activated",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "held",
+                  "approvals_remaining",
+                  "activation_not_permitted",
+                  "stale"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Not Activated"
           }
         },
         "proposal_id": {
@@ -1834,6 +1903,91 @@
       },
       "json_schema": {
         "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ActivationReceipt": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/AcceptedCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "activated_by": {
+                "title": "Activated By",
+                "type": "string"
+              },
+              "proposal_id": {
+                "title": "Proposal Id",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "accepted",
+                  "lost_cas"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-activation-receipt-v1",
+                "default": "playbill-activation-receipt-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_advertisement": {
+                "$ref": "#/$defs/WorkspaceAdvertisement"
+              }
+            },
+            "required": [
+              "proposal_id",
+              "activated_by",
+              "status",
+              "accepted_coordinate",
+              "workspace_advertisement"
+            ],
+            "title": "ActivationReceipt",
+            "type": "object"
+          },
           "GitWorkspaceNote": {
             "additionalProperties": false,
             "description": "Client-side advisory when CWD wins over inherited Git selectors.",
@@ -1859,10 +2013,102 @@
             ],
             "title": "GitWorkspaceNote",
             "type": "object"
+          },
+          "WorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "git_unavailable",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed",
+                      "unexpected_failure"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "cruxible-ledger",
+                "default": "cruxible-ledger",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "scheduled",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "WorkspaceAdvertisement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
+        "description": "One recorded approval, and the activation it completed or why there was none.\n\nAn approval that leaves nothing outstanding activates the candidate in the\nsame call unless the signer held it (``hold``) or may not activate.",
         "properties": {
+          "activation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ActivationReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "approvals_remaining": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Approvals Remaining",
+            "type": "integer"
+          },
           "attestation_digest": {
             "title": "Attestation Digest",
             "type": "string"
@@ -1885,6 +2131,24 @@
           "key_history_ref": {
             "title": "Key History Ref",
             "type": "string"
+          },
+          "not_activated": {
+            "anyOf": [
+              {
+                "enum": [
+                  "held",
+                  "approvals_remaining",
+                  "activation_not_permitted",
+                  "stale"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Not Activated"
           },
           "proposal_id": {
             "title": "Proposal Id",
@@ -30230,7 +30494,8 @@
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable",
-              "subject_kind_undeclared"
+              "subject_kind_undeclared",
+              "kit_resume_blocked"
             ],
             "title": "Reason",
             "type": "string"
@@ -30440,6 +30705,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -30511,6 +30777,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -30618,7 +30885,8 @@
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable",
-              "subject_kind_undeclared"
+              "subject_kind_undeclared",
+              "kit_resume_blocked"
             ],
             "title": "Reason",
             "type": "string"
@@ -30890,6 +31158,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -30961,6 +31230,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -31155,7 +31425,8 @@
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable",
-              "subject_kind_undeclared"
+              "subject_kind_undeclared",
+              "kit_resume_blocked"
             ],
             "title": "Reason",
             "type": "string"
@@ -31364,7 +31635,8 @@
                   "evidence_unavailable",
                   "prediction_settleable",
                   "prediction_window_unbindable",
-                  "subject_kind_undeclared"
+                  "subject_kind_undeclared",
+                  "kit_resume_blocked"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -31466,6 +31738,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -31537,6 +31810,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -31654,7 +31928,8 @@
               "evidence_unavailable",
               "prediction_settleable",
               "prediction_window_unbindable",
-              "subject_kind_undeclared"
+              "subject_kind_undeclared",
+              "kit_resume_blocked"
             ],
             "title": "Reason",
             "type": "string"
@@ -31951,6 +32226,7 @@
               "cruxible.line.dispatch",
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
+              "cruxible.kit.add",
               "hand_edit"
             ],
             "title": "Operation",
@@ -32018,6 +32294,7 @@
               "cruxible.line.dispatch",
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
+              "cruxible.kit.add",
               "hand_edit"
             ],
             "title": "Operation",
@@ -32112,6 +32389,7 @@
               "cruxible.line.dispatch",
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
+              "cruxible.kit.add",
               "hand_edit"
             ],
             "title": "Operation",
@@ -32325,6 +32603,7 @@
               "cruxible.line.dispatch",
               "cruxible.inbox.list",
               "cruxible.prediction.settle",
+              "cruxible.kit.add",
               "hand_edit"
             ],
             "title": "Operation",
@@ -32711,7 +32990,8 @@
                   "evidence_unavailable",
                   "prediction_settleable",
                   "prediction_window_unbindable",
-                  "subject_kind_undeclared"
+                  "subject_kind_undeclared",
+                  "kit_resume_blocked"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -32873,7 +33153,8 @@
                   "evidence_unavailable",
                   "prediction_settleable",
                   "prediction_window_unbindable",
-                  "subject_kind_undeclared"
+                  "subject_kind_undeclared",
+                  "kit_resume_blocked"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -32976,6 +33257,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -33047,6 +33329,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -33648,6 +33931,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -33719,6 +34003,7 @@
                   "cruxible.line.dispatch",
                   "cruxible.inbox.list",
                   "cruxible.prediction.settle",
+                  "cruxible.kit.add",
                   "hand_edit"
                 ],
                 "title": "Operation",

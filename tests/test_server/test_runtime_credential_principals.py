@@ -243,8 +243,8 @@ def _accept_principal_change(
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert approved.status_code == 200, approved.text
-    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
-    assert activated.status_code == 200, activated.text
+    activated = approved.json()["activation"]
+    assert activated["status"] == "accepted", approved.text
 
 
 def test_a_recovery_principal_never_holds_a_credential(
@@ -520,7 +520,6 @@ _UNGUARDED_WRITES = (
     ("/ledger/mirror", {"url": "https://mirror.example.test/ledger.git"}),
     ("/ledger/mirror/clear", {}),
     ("/ledger/publish", {"timeout": 0}),
-    ("/claim-attestations/recover", {}),
     ("/claim-types/upgrade", {}),
     ("/claim-types/upgrade", {"dry_run": True}),
 )

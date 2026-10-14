@@ -131,7 +131,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_authoring_compile": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_bind": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_preflight": PermissionMode.GOVERNED_WRITE,
-    "cruxible_authoring_rebase": PermissionMode.GOVERNED_WRITE,
     "cruxible_authoring_submit": PermissionMode.GOVERNED_WRITE,
     # The write verbs propose at GOVERNED_WRITE; each activates in the same call
     # only when the caller's tier also admits cruxible_proposal_activate.
@@ -171,7 +170,6 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_floor_deliver_now": PermissionMode.READ_ONLY,
     "cruxible_instance_decommission": PermissionMode.ADMIN,
     "cruxible_instance_rebuild_next": PermissionMode.ADMIN,
-    "cruxible_claim_attestation_recover": PermissionMode.ADMIN,
     "cruxible_host_workspace_registration": PermissionMode.READ_ONLY,
     "cruxible_host_show": PermissionMode.READ_ONLY,
     "cruxible_inspect": PermissionMode.READ_ONLY,

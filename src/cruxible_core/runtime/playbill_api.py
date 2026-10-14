@@ -1241,13 +1241,24 @@ def playbill_submit_approval(
     proposal_id: str,
     *,
     attestation: ApprovalAttestation,
+    hold: bool = False,
 ) -> contracts.ApprovalReceipt:
+    """Submit one approval; it activates the candidate when it completes it.
+
+    ``hold`` signs only, leaving activation to someone else. Activation runs
+    only when the caller's tier and scope also admit ``cruxible_proposal_activate``.
+    """
     check_permission("cruxible_proposal_approve_submit", instance_id=instance_id)
     result = service_submit_playbill_approval(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
         attestation=attestation,
         authenticated_submitter=_actor_id(instance_id),
+        activate_when_complete=not hold,
+        may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
+        may_activate_compiler_upgrade=_permits(
+            "cruxible_compiler_upgrade", instance_id=instance_id
+        ),
     )
     return contracts.ApprovalReceipt.model_validate(result.model_dump(mode="json"))
 
@@ -1450,14 +1461,6 @@ def playbill_append_claim_attestation(
         request=request,
         actor_id=_actor_id(instance_id),
     )
-
-
-def playbill_recover_claim_attestations(instance_id: str) -> None:
-    """Synchronously restore the sole replay-valid evidence-ledger head."""
-
-    check_permission("cruxible_claim_attestation_recover", instance_id=instance_id)
-    _require_writer(instance_id)
-    get_playbill_manager().get(instance_id).claim_attestation_evidence_store().recover()
 
 
 def _authoring_coordinator(
@@ -1867,16 +1870,6 @@ def playbill_authoring_preflight(
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.preflight(intent_id, actor=actor)
     return _authoring_preflight_result(coordinator, actor=actor, result=result)
-
-
-def playbill_authoring_rebase(
-    instance_id: str,
-    intent_id: str,
-) -> contracts.AuthoringIntentViewRecord:
-    check_permission("cruxible_authoring_rebase", instance_id=instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    result = coordinator.rebase(intent_id, actor=actor)
-    return contracts.AuthoringIntentViewRecord.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_authoring_submit(

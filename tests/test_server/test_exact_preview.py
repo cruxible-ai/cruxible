@@ -132,8 +132,10 @@ def _move_head(client: TestClient, instance_id: str, reviewer_key: Path) -> None
         forbidden_roots=(),
     )
     attestation = signer.sign(ApprovalStatement.model_validate(challenge["statement"]))
-    _ok(client.post(f"{base}/approvals", json={"attestation": attestation.model_dump(mode="json")}))
-    assert _ok(client.post(f"{base}/activate"))["status"] == "accepted"
+    approved = _ok(
+        client.post(f"{base}/approvals", json={"attestation": attestation.model_dump(mode="json")})
+    )
+    assert approved["activation"]["status"] == "accepted"
 
 
 def _principal(tmp_path: Path, principal_id: str) -> dict[str, Any]:

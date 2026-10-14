@@ -206,7 +206,7 @@ the value verbs do not express.
 
 - **MCP** (full profile): `cruxible_authoring_submit` with a `payload` checks
   and submits in one call; `cruxible_authoring_compile` stages a durable
-  intent you can revise (`intent_id`), `preflight`, `rebase` and submit;
+  intent you can revise (`intent_id`), `preflight` and submit;
   `cruxible_authoring_status` says what still separates it from acceptance;
   `cruxible_authoring_list` and `cruxible_authoring_get` find unfinished work.
   `cruxible_authoring_example` prints a template for every input kind.

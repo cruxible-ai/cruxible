@@ -157,7 +157,7 @@ policy, alone or as members of one change set. `cruxible authoring submit
 PAYLOAD` checks and submits a payload in one call, and `--dry-run` returns
 every refusal without saving anything. For staged work on a large definition,
 `authoring compile` keeps a durable intent that `compile --intent-id`,
-`preflight`, `rebase` and `submit --intent-id` revise and advance. In the SDK,
+`preflight` and `submit --intent-id` revise and advance. In the SDK,
 `cx.changes(rationale=...)` collects definitions and Claims into one change
 set that `.submit()` sends. `cruxible authoring example NAME` prints a
 template for each input.

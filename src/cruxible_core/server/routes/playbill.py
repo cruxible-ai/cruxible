@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, Query, Request
 from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
@@ -69,7 +69,6 @@ from cruxible_core.server.playbill_request_models import (
     AuthoringInputCompileRequest,
     AuthoringInputSubmitRequest,
     AuthoringPreflightRequest,
-    AuthoringRebaseRequest,
     AuthoringSubmitRequest,
     BlockDeclareRequest,
     BlockDepublishRequest,
@@ -570,6 +569,7 @@ def submit_approval(
         resolve_server_instance_id(instance_id),
         proposal_id,
         attestation=req.attestation,
+        hold=req.hold,
     )
 
 
@@ -683,18 +683,6 @@ def append_claim_attestation(
 
 
 @router.post(
-    "/{instance_id}/claim-attestations/recover",
-    response_model=None,
-    status_code=204,
-)
-def recover_claim_attestations(instance_id: str) -> Response:
-    playbill_api.playbill_recover_claim_attestations(
-        resolve_server_instance_id(instance_id),
-    )
-    return Response(status_code=204)
-
-
-@router.post(
     "/{instance_id}/predictions/query",
     response_model=contracts.ResolutionContractsResult,
 )
@@ -802,20 +790,6 @@ def get_authoring_intent(
     intent_id: str,
 ) -> contracts.AuthoringIntentViewRecord:
     return playbill_api.playbill_authoring_get(resolve_server_instance_id(instance_id), intent_id)
-
-
-@router.post(
-    "/{instance_id}/authoring/intents/{intent_id}/rebase",
-    response_model=contracts.AuthoringIntentViewRecord,
-)
-def rebase_authoring_intent(
-    instance_id: str,
-    intent_id: str,
-    _req: AuthoringRebaseRequest,
-) -> contracts.AuthoringIntentViewRecord:
-    return playbill_api.playbill_authoring_rebase(
-        resolve_server_instance_id(instance_id), intent_id
-    )
 
 
 @router.post(

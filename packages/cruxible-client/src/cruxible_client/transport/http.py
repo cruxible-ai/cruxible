@@ -928,10 +928,15 @@ class CruxibleClient:
         proposal_id: str,
         *,
         attestation: Mapping[str, Any],
+        hold: bool = False,
     ) -> contracts.ApprovalReceipt:
+        """Submit one approval; the daemon activates a candidate it completes.
+
+        ``hold=True`` signs only and leaves activation to someone else.
+        """
         response = self._client.post(
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
-            json={"attestation": dict(attestation)},
+            json={"attestation": dict(attestation), "hold": hold},
         )
         return self._parse_model(response, contracts.ApprovalReceipt)
 
@@ -943,6 +948,7 @@ class CruxibleClient:
         signer_id: str,
         signer: Callable[[dict[str, Any]], Mapping[str, Any]],
         include_body: bool = False,
+        hold: bool = False,
     ) -> contracts.ApprovalReceipt:
         challenge = self.prepare_approval(
             instance_id,
@@ -954,6 +960,7 @@ class CruxibleClient:
             instance_id,
             proposal_id,
             attestation=signer(dict(challenge.statement)),
+            hold=hold,
         )
 
     def activate_proposal(self, instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
@@ -1088,12 +1095,6 @@ class CruxibleClient:
         )
         self._check_error(response)
         return ClaimAttestationAppendResult.model_validate(response.json())
-
-    def recover_claim_attestations(self, instance_id: str) -> None:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/claim-attestations/recover",
-        )
-        self._check_error(response)
 
     def list_predictions(
         self, instance_id: str, *, request: contracts.ResolutionContractsRequest
@@ -1278,17 +1279,6 @@ class CruxibleClient:
             json={"tag": "playbill-authoring-intent-preflight-request-v1"},
         )
         return self._parse_model(response, contracts.AuthoringPreflightResult)
-
-    def rebase_authoring_intent(
-        self,
-        instance_id: str,
-        intent_id: str,
-    ) -> contracts.AuthoringIntentViewRecord:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/authoring/intents/{intent_id}/rebase",
-            json={"tag": "playbill-authoring-intent-rebase-request-v1"},
-        )
-        return self._parse_model(response, contracts.AuthoringIntentViewRecord)
 
     def submit_authoring_intent(
         self,

@@ -52,8 +52,8 @@ def _accept_document(client: TestClient, instance_id: str, key: Path) -> None:
         json={"attestation": attestation.model_dump(mode="json")},
     )
     assert approved.status_code == 200, approved.text
-    activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
-    assert activated.status_code == 200, activated.text
+    activated = approved.json()["activation"]
+    assert activated["status"] == "accepted", approved.text
 
 
 def test_get_serves_cards_details_and_coded_refusals(

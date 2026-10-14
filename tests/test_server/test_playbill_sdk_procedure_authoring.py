@@ -82,10 +82,9 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
         proposal_id = submitted.status.proposal_id
         assert proposal_id is not None
         _approve_and_activate(http, instance_id, reviewer_key, proposal_id)
-        # Retrying preserves the original intent base. Explicit rebasing makes
-        # the newly accepted dependency available; no client pin substitution.
-        assert missing.prepare().refused
-        intent = missing.rebase().prepare()
+        # Retrying re-checks the refused intent at the head, where the newly
+        # accepted dependency resolves, and advances it; no client pin substitution.
+        intent = missing.prepare()
     else:
         intent = pb.procedure(definition=definition).prepare()
     assert not intent.refused, intent.diagnostics

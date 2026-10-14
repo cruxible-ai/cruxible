@@ -194,9 +194,13 @@ def bootstrap(*, key_dir: Path, server_url: str) -> str:
 
 
 def approve_and_activate(proposal_id: str, *, key_dir: Path) -> dict[str, Any]:
-    """The two governed acts the seed command deliberately does not perform."""
+    """The governed acts the seed command deliberately does not perform.
 
-    run_cli(
+    Approving the candidate's last required signature activates it; a held or
+    incomplete approval is activated explicitly.
+    """
+
+    approval = run_cli_json(
         "proposal",
         "approve",
         proposal_id,
@@ -205,9 +209,8 @@ def approve_and_activate(proposal_id: str, *, key_dir: Path) -> dict[str, Any]:
         "--key",
         str(key_dir / f"{SIGNER_ID}.ed25519"),
         "--yes",
-        "--json",
     )
-    activated = run_cli_json("proposal", "activate", proposal_id)
+    activated = approval.get("activation") or run_cli_json("proposal", "activate", proposal_id)
     if activated["status"] != "accepted":  # pragma: no cover - a refusal raises earlier
         raise RuntimeError(f"proposal {proposal_id} did not settle: {activated}")
     return dict(activated)

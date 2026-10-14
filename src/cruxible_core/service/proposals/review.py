@@ -646,8 +646,8 @@ def service_prepare_playbill_approval(
     ):
         raise ApprovalIntegrityError(
             "cruxible.approval.creator_forbidden: independent_approval_required mode needs "
-            "an active ordinary approver other than the candidate creator; after that "
-            "eligible signer approves, run cruxible proposal activate"
+            "an active ordinary approver other than the candidate creator, whose "
+            "approval activates it"
         )
     if not principal_lifecycle and principal.kind == "recovery":
         raise ApprovalIntegrityError("recovery principal cannot approve ordinary Documents")

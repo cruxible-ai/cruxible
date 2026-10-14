@@ -119,7 +119,7 @@ def test_proposal_uses_submit_result_without_status_read(pb, monkeypatch):
     assert calls == ["submit", "status"]
 
 
-@pytest.mark.parametrize("operation", ["prepare", "reprepare", "rebase", "submit"])
+@pytest.mark.parametrize("operation", ["prepare", "reprepare", "submit"])
 @pytest.mark.parametrize("fails", [False, True])
 def test_mutations_clear_previous_candidate_even_on_uncertain_failure(
     pb, monkeypatch, operation, fails
@@ -132,7 +132,6 @@ def test_mutations_clear_previous_candidate_even_on_uncertain_failure(
     methods = {
         "prepare": "preflight_authoring_intent",
         "reprepare": "compile_authoring",
-        "rebase": "rebase_authoring_intent",
         "submit": "submit_authoring_intent",
     }
 

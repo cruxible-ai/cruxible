@@ -355,47 +355,6 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     assert "No such command 'create'" in create.output
 
 
-def test_cli_refused_stale_preflight_teaches_rebase(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    old_coordinate = COORDINATE.model_copy(update={"git_oid": "a" * 40})
-
-    class StubClient:
-        def preflight_authoring_intent(
-            self, _instance_id: str, _intent_id: str
-        ) -> contracts.AuthoringPreflightResult:
-            return stub_preflight_result(
-                verdict="refused",
-                diagnostics=(stub_diagnostic("x"),),
-                accepted_coordinate=COORDINATE.model_dump(mode="json"),
-            )
-
-        def get_authoring_intent(
-            self, _instance_id: str, _intent_id: str
-        ) -> contracts.AuthoringIntentViewRecord:
-            return contracts.AuthoringIntentViewRecord(
-                intent={"base_coordinate": old_coordinate.model_dump(mode="json")}
-            )
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-
-    result = CliRunner().invoke(
-        cli,
-        [
-            "--server-url",
-            "https://authoring.example.test",
-            "--instance-id",
-            "inst_authoring",
-            "authoring",
-            "preflight",
-            INTENT_ID,
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert f"cruxible authoring rebase {INTENT_ID}" in result.stderr
-    assert "advances only through rebase" in result.stderr
-
-
 def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
     monkeypatch,
     tmp_path: Path,

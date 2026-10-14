@@ -37,7 +37,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "bundling provider packages installs them first (admin; a commit stages their files), "
         "and a default provider by name unless something here implements it (satisfied), "
         "then proposes the definitions; an install awaiting approval stops at "
-        "awaiting_providers."
+        "awaiting_providers, and its activation proposes them on their own."
     ),
     "cruxible_claim_type_upgrade": (
         "Use to move ClaimTypes before v7 to v7, which states revision_evidence "
@@ -64,16 +64,18 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when a client-held signer needs the exact immutable approval statement."
     ),
     "cruxible_proposal_approve_submit": (
-        "Use when you have a public approval attestation produced outside the daemon."
+        "Use when you have a public approval attestation produced outside the daemon; "
+        "like approve, it activates a candidate it completes unless hold is set."
     ),
     "cruxible_proposal_approve": (
         "Use after review to approve a proposal with a local key from the server's "
-        "CRUXIBLE_MCP_KEY_DIR; it challenges, signs and submits in one call and never "
-        "activates. Pass the reviewed candidate_digest to bind it to what you read."
+        "CRUXIBLE_MCP_KEY_DIR; it challenges, signs and submits in one call. The approval "
+        "that completes the candidate also activates it when your tier may; hold=true "
+        "signs only. Pass the reviewed candidate_digest to bind it to what you read."
     ),
     "cruxible_proposal_activate": (
-        "Use when an admitted Cruxible candidate has satisfied any committed requirements and "
-        "is ready to settle."
+        "Use when an admitted candidate's approvals are in but nothing activated it: a "
+        "held approval, or one that needs no approval."
     ),
     "cruxible_orient": (
         "Use first, to see what an instance holds: each Subject kind with its count and "
@@ -154,10 +156,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_authoring_preflight": (
         "Use when you need a complete binding check of an existing authoring intent."
-    ),
-    "cruxible_authoring_rebase": (
-        "Use when an authoring intent went stale because accepted state moved and must be "
-        "rebased onto the current coordinate before preflight or submit."
     ),
     "cruxible_next": (
         "Use when you need what to work on next: ranked repair work, conflicts, and stale "

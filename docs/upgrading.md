@@ -91,10 +91,11 @@ exact accepted head and target compiler. Then:
 ~~~bash
 cruxible proposal review PROPOSAL_ID
 cruxible proposal approve PROPOSAL_ID
-cruxible proposal activate PROPOSAL_ID
 ~~~
 
-Approval follows the instance's approval policy, as for any proposal.
+Approval follows the instance's approval policy, as for any proposal; the
+approval that completes it activates it (`cruxible proposal activate` after
+`proposal approve --hold`).
 Activation validates the full projection under the target compiler before it
 advances the signed ledger; a projection that does not validate leaves the
 instance on its current compiler.

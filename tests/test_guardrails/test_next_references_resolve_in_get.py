@@ -34,7 +34,7 @@ _PROFILE = {"profile_id": "guardrail", "permitted_access_classes": ["instance", 
 # state and operational state; a workspace reason names things in the
 # caller's working tree (a floor, a source file, a projection block), which
 # are read with the workspace tools, not `get`.
-_REFERENCE_FORMS: dict[str, Literal["get", "workspace"]] = {
+_REFERENCE_FORMS: dict[str, Literal["get", "workspace", "kit_status"]] = {
     "claim_conflicted": "get",
     "claim_uncovered": "get",
     "claim_stale_evidence": "get",
@@ -66,6 +66,8 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace"]] = {
     "line_work_pending": "get",
     "line_settled_prior_refusals": "get",
     "line_inbox_unread": "get",
+    # A kit is read with kit status, not get.
+    "kit_resume_blocked": "kit_status",
 }
 
 

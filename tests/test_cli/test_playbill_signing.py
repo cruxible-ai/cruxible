@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
 from cruxible_client import contracts
@@ -22,9 +23,11 @@ from cruxible_core.storage.cas import BodyAccessContext
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
 
 
+@pytest.mark.parametrize("hold", (False, True))
 def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     tmp_path: Path,
     monkeypatch,
+    hold: bool,
 ) -> None:
     instance, owner, reviewer = _instance(tmp_path)
     body = service_store_playbill_body(instance, content=b"# Review me\n")
@@ -50,6 +53,7 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     assert proposal.candidate is not None
     proposal_id = proposal.admission.proposal_id
     submitted: list[dict[str, Any]] = []
+    holds: list[bool] = []
 
     class StubClient:
         def resolve_proposal_selector(
@@ -86,14 +90,18 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
             selected_proposal_id: str,
             *,
             attestation: dict[str, Any],
+            hold: bool = False,
         ) -> contracts.ApprovalReceipt:
             assert instance_id == "inst_cli"
             submitted.append(attestation)
+            holds.append(hold)
             receipt = service_submit_playbill_approval(
                 instance,
                 proposal_id=selected_proposal_id,
                 attestation=ApprovalAttestation.model_validate(attestation),
                 authenticated_submitter="reviewer",
+                activate_when_complete=not hold,
+                may_activate=True,
             )
             return contracts.ApprovalReceipt.model_validate(receipt.model_dump(mode="json"))
 
@@ -116,11 +124,21 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
             "--key",
             str(reviewer.private_key_path),
             "--yes",
+            *(("--hold",) if hold else ()),
             "--json",
         ],
     )
 
     assert result.exit_code == 0, result.output
+    assert holds == [hold]
+    receipt = json.loads(result.stdout)
+    # The reviewer's signature completes the candidate: it activates unless held.
+    if hold:
+        assert receipt["activation"] is None and receipt["not_activated"] == "held"
+    else:
+        assert receipt["not_activated"] is None
+        assert receipt["activation"]["status"] == "accepted"
+        assert receipt["activation"]["activated_by"] == "reviewer"
     assert len(submitted) == 1
     assert submitted[0]["payload_digest"] == proposal.candidate.candidate_digest
     assert submitted[0]["signing_semantic_root"] == (

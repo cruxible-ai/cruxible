@@ -148,6 +148,8 @@ class ProposePrincipalRequest(_StrictPlaybillRequest):
 
 class ApprovalRequest(_StrictPlaybillRequest):
     attestation: ApprovalAttestation
+    #: Sign only: leave activating a now-complete candidate to someone else.
+    hold: bool = False
 
 
 class ReviewRequest(_StrictPlaybillRequest):
@@ -232,12 +234,6 @@ class AuthoringInputSubmitRequest(_StrictPlaybillRequest):
 class AuthoringPreflightRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-intent-preflight-request-v1"] = (
         "playbill-authoring-intent-preflight-request-v1"
-    )
-
-
-class AuthoringRebaseRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-authoring-intent-rebase-request-v1"] = (
-        "playbill-authoring-intent-rebase-request-v1"
     )
 
 

@@ -1776,7 +1776,7 @@ def _echo_kit_change(result: KitChangeResult) -> None:
             if result.approval_required:
                 click.echo(
                     f"Next: cruxible proposal approve {result.proposal_id} "
-                    "--signer-id ID --key FILE, then activate it."
+                    "--signer-id ID --key FILE (the approval that completes it activates it)"
                 )
             else:
                 click.echo(f"Next: cruxible proposal activate {result.proposal_id}")
@@ -1930,8 +1930,9 @@ def add_kit(
     resolve from the daemon's provider index, PyPI unless configured), installs a
     default provider by name from that index unless an installed Provider already
     implements its interfaces (satisfied), and proposes the definitions once they
-    land; an install awaiting approval stops at awaiting_providers (run kit add
-    again after activating it). It previews by default; commit with
+    land; an install awaiting approval stops at awaiting_providers, and its
+    activation proposes the definitions on their own, as you (kit status shows
+    the resume). It previews by default; commit with
     ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
@@ -2013,6 +2014,15 @@ def kit_status(offline: bool, output_json: bool) -> None:
         return
     if not result.kits:
         click.echo("No kits installed.")
+    for resume in result.resumes:
+        line = f"{resume.kit_id} {resume.version}: kit add {resume.state} (as {resume.actor_id})"
+        if resume.waiting_on:
+            line += f"; waiting on provider install {', '.join(resume.waiting_on)}"
+        if resume.proposal_id is not None:
+            line += f"; proposal {resume.proposal_id}"
+        click.echo(line)
+        if resume.detail:
+            click.echo(f"  {printable(resume.detail)}")
     for kit in result.kits:
         available = ""
         if kit.update_check == "checked" and kit.latest_available is not None:
@@ -2363,6 +2373,11 @@ def review_proposal(
     help="The signer's private key (also CRUXIBLE_PRINCIPAL_KEY).",
 )
 @click.option("--yes", is_flag=True, help="Approve after rendering without an interactive prompt.")
+@click.option(
+    "--hold",
+    is_flag=True,
+    help="Sign only: leave activating a candidate this approval completes to someone else.",
+)
 @json_option
 @handle_errors
 def approve_proposal(
@@ -2370,8 +2385,17 @@ def approve_proposal(
     signer_id: str | None,
     private_key_path: str,
     yes: bool,
+    hold: bool,
     output_json: bool,
 ) -> None:
+    """Sign one reviewed candidate; the approval that completes it activates it.
+
+    Activation runs in the same command when no approval is still required and
+    your tier may activate (graph_write). `--hold` signs only, for a reviewer
+    leaving activation timing to someone else, who runs `proposal activate`.
+    Otherwise the result says what remains.
+    """
+
     configured = _root_ctx_obj().get("principal_id")
     if signer_id is None:
         if configured is None:
@@ -2412,14 +2436,50 @@ def approve_proposal(
             instance_id,
             resolved_id,
             attestation=attestation.model_dump(mode="json"),
+            hold=hold,
         ),
         command_name="cruxible proposal approve",
     )
     result = _with_git_workspace_note(result)
     if output_json:
         _emit_json(_json_receipt(result))
-    else:
-        click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
+        return
+    click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
+    for line in _approval_outcome_lines(result):
+        click.echo(line)
+
+
+def _approval_outcome_lines(receipt: contracts.ApprovalReceipt) -> list[str]:
+    """What the approval did after signing: the activation, or what remains."""
+
+    activation = receipt.activation
+    if activation is not None:
+        if activation.status == "accepted" and activation.accepted_coordinate is not None:
+            return [f"Activated at {activation.accepted_coordinate.git_oid}"]
+        return [
+            "Not activated: another change was accepted first; "
+            f"Next: cruxible proposal readmit {receipt.proposal_id}"
+        ]
+    proposal = receipt.proposal_id
+    if receipt.not_activated == "approvals_remaining":
+        count = receipt.approvals_remaining
+        return [
+            f"Awaiting {count} more approval{'s' if count != 1 else ''}; the approval "
+            "that completes it activates it"
+        ]
+    if receipt.not_activated == "held":
+        return [f"Held: not activated. Next: cruxible proposal activate {proposal}"]
+    if receipt.not_activated == "activation_not_permitted":
+        return [
+            "Not activated: your tier cannot activate (needs graph_write). "
+            f"Next: someone who can runs cruxible proposal activate {proposal}"
+        ]
+    if receipt.not_activated == "stale":
+        return [
+            "Not activated: accepted state moved past this proposal. "
+            f"Next: cruxible proposal readmit {proposal}"
+        ]
+    return []
 
 
 @proposal_group.command("activate")
@@ -2428,7 +2488,10 @@ def approve_proposal(
 @json_option
 @handle_errors
 def activate_proposal(proposal_id: str, output_brief: bool, output_json: bool) -> None:
-    """Settle an approved candidate; the daemon delivers the floor to its workspace.
+    """Settle a candidate nothing activated yet; the daemon delivers the floor.
+
+    That is one whose approval was held (`proposal approve --hold`), one that
+    needs no approval, or one another signer completed without activating.
 
     Activation is a daemon act and writes nothing locally. A workspace the local
     daemon serves gets its floor from the daemon's floor-refresh trigger; other
@@ -2969,15 +3032,18 @@ def add_principal(
         if identity.actor_id is None:
             return outcome
         outcome.signer_id = identity.actor_id
-        _approve_with_key(
+        approval = _approve_with_key(
             client,
             instance_id,
             outcome.proposal_id,
             signer_id=identity.actor_id,
             private_key_path=Path(signer_key).expanduser(),
         )
-        activated = client.activate_proposal(instance_id, outcome.proposal_id)
-        outcome.activated = activated.status == "accepted"
+        # The actor's own signature completes a lifecycle candidate, so the
+        # approval activates it unless more approvals are required.
+        outcome.activated = (
+            approval.activation is not None and approval.activation.status == "accepted"
+        )
         if outcome.activated and identity.authenticated and principal_kind == "ordinary":
             minted = client.create_runtime_credential(
                 instance_id,
@@ -3069,7 +3135,7 @@ def _approve_with_key(
     *,
     signer_id: str,
     private_key_path: Path,
-) -> None:
+) -> contracts.ApprovalReceipt:
     challenge = client.prepare_approval(instance_id, proposal_id, signer_id=signer_id)
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     signer = LocalEd25519ApprovalSigner.open(
@@ -3079,7 +3145,7 @@ def _approve_with_key(
         forbidden_roots=_custody_forbidden_roots(),
     )
     attestation = signer.sign(ApprovalStatement.model_validate(challenge.statement))
-    client.submit_approval(
+    return client.submit_approval(
         instance_id, proposal_id, attestation=attestation.model_dump(mode="json")
     )
 
@@ -3732,22 +3798,6 @@ def run_action(
         click.echo(f"Detail: {result.outcome.detail}")
 
 
-@claim_group.command("recover-attestation")
-@handle_errors
-def recover_claim_attestations() -> None:
-    """Roll the sole durable unpublished attestation forward after a poison refusal.
-
-    Run this when a Claim write or attestation refuses because the
-    Claim-attestation evidence ledger requires recovery.
-    """
-
-    _server_call(
-        lambda client, instance_id: client.recover_claim_attestations(instance_id),
-        command_name="cruxible claim recover-attestation",
-    )
-    click.echo("Claim-attestation evidence ledger recovered.")
-
-
 @claim_group.command("attest")
 @click.argument("claim_id")
 @click.option("--support", is_flag=True)
@@ -3828,8 +3878,8 @@ def authoring_group() -> None:
     One call:    authoring submit PAYLOAD        (compile, preflight and submit)
     Preview:     authoring submit PAYLOAD --dry-run
     Staged work: authoring compile PAYLOAD, then compile PAYLOAD --intent-id ID
-                 as often as needed, rebase ID when the head moved, and
-                 submit --intent-id ID
+                 as often as needed, and submit --intent-id ID (an intent
+                 the head moved past advances when it checks clean there)
     Templates:   authoring example [NAME]
     Find work:   authoring list, authoring get ID, authoring status ID
 
@@ -4060,11 +4110,11 @@ def bind_authoring_selection(
 @json_option
 @handle_errors
 def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: bool) -> None:
-    """Re-run every check on a staged intent against the head it is based on.
+    """Re-run every check on a staged intent.
 
-    A refused intent whose base is behind the accepted head is advanced with
-    `authoring rebase`; one with a payload fault is revised with `authoring
-    compile PAYLOAD --intent-id ID`.
+    A refused intent whose base is behind the accepted head is checked again at
+    the head and, when it passes there, advances to it; one with a payload fault
+    stays refused and is revised with `authoring compile PAYLOAD --intent-id ID`.
     """
 
     result = _server_call(
@@ -4083,33 +4133,6 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
             ),
         )
         return
-    _emit_json(result.model_dump(mode="json"))
-    if result.verdict == "refused":
-        intent = _server_call(
-            lambda client, instance_id: client.get_authoring_intent(instance_id, intent_id),
-            command_name="cruxible authoring preflight",
-        ).intent
-        if intent.get("base_coordinate") != result.certificate.accepted_coordinate.model_dump(
-            mode="json"
-        ):
-            click.echo(
-                f"Hint: run cruxible authoring rebase {intent_id}; a stale intent "
-                "coordinate advances only through rebase.",
-                err=True,
-            )
-
-
-@authoring_group.command("rebase")
-@click.argument("intent_id")
-@json_option
-@handle_errors
-def rebase_authoring_intent(intent_id: str, output_json: bool) -> None:
-    """Advance one refused, unsubmitted intent to the accepted head."""
-
-    result = _server_call(
-        lambda client, instance_id: client.rebase_authoring_intent(instance_id, intent_id),
-        command_name="cruxible authoring rebase",
-    )
     _emit_json(result.model_dump(mode="json"))
 
 
@@ -4240,7 +4263,7 @@ def _not_activated_note(state: str) -> str:
     if state == "awaiting_external_approval":
         return (
             "not activated: the candidate needs an external approval. "
-            "Collect it with `cruxible proposal approve`, then activate."
+            "The eligible signer's `cruxible proposal approve` activates it."
         )
     return f"not activated: the candidate is {state}, not ready_to_activate"
 

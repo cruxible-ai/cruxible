@@ -572,6 +572,35 @@ class PlaybillInstanceManager:
                 )
         return recovered
 
+    def resume_pending_kits(self) -> dict[str, tuple[str, ...]]:
+        """Resume each recorded kit add whose provider installs already activated.
+
+        Before serving requests; reads only the pending kit-resume rows of each
+        instance, logs and continues per instance, never keeps the daemon from
+        starting.
+        """
+
+        from cruxible_core.service.kit_resume import resume_pending_kits
+
+        resumed: dict[str, tuple[str, ...]] = {}
+        try:
+            records = get_registry().list_instances()
+        except Exception as exc:
+            _log.warning("kit_resume_enumeration_failed", reason=str(exc))
+            return resumed
+        for record in records:
+            if record.backend != GOVERNED_DAEMON_BACKEND:
+                continue
+            try:
+                done = resume_pending_kits(self.get(record.instance_id))
+            except Exception as exc:
+                _log.warning("kit_resume_failed", instance_id=record.instance_id, reason=str(exc))
+                continue
+            if done:
+                resumed[record.instance_id] = done
+                _log.info("kits_resumed", instance_id=record.instance_id, kits=list(done))
+        return resumed
+
     def _fold_provider_recovery(
         self,
         operator: ProviderRuntimeOperator,

@@ -175,6 +175,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ClaimAdmissionCandidateContext", "evaluation_time"): "EVALUATION INSTANT",
     ("ClaimAttestationAppendResult", "partition_sequence"): "SETTLEMENT ORDER",
     ("ClaimAttestationAppendResult", "recorded_at"): "ASSERTION TIME",
+    # When the daemon recorded a kit add that stopped at awaiting_providers.
+    ("KitResumeStatus", "recorded_at"): "ASSERTION TIME",
     ("ClaimAttestationEventPayload", "recorded_at"): "ASSERTION TIME",
     ("ClaimAttestationEvent", "sequence"): "SETTLEMENT ORDER",
     ("ClaimAttestationPartitionGenesis", "sequence"): "SETTLEMENT ORDER",

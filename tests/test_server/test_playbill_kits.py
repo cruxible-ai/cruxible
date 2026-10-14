@@ -150,9 +150,8 @@ class _World:
             f"{base}/approvals", json={"attestation": attestation.model_dump(mode="json")}
         )
         assert approved.status_code == 200, approved.text
-        activated = self.http.post(f"{base}/activate")
-        assert activated.status_code == 200, activated.text
-        assert activated.json()["status"] == "accepted", activated.text
+        # The approval that completes the candidate activates it.
+        assert approved.json()["activation"]["status"] == "accepted", approved.text
 
     def author(
         self,

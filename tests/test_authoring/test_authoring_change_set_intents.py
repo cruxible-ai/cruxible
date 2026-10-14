@@ -654,10 +654,10 @@ def test_an_indexed_member_reference_expectation_resolves_and_refuses(
     }
 
 
-def test_a_refused_set_rebases_and_its_generation_replays_byte_identically(
+def test_a_refused_set_advances_and_its_generation_replays_byte_identically(
     tmp_path: Path,
 ) -> None:
-    """A set advances over an unrelated acceptance, then replays from disk unchanged."""
+    """A set refused only by its stale base advances on preflight, then replays unchanged."""
 
     instance, owner = initialize_local(tmp_path)
     _seed(instance, owner)
@@ -680,10 +680,12 @@ def test_a_refused_set_rebases_and_its_generation_replays_byte_identically(
     ).intent
     _accept(instance, owner, coordinator, advance.intent_id, actor)
 
-    rebased = coordinator.rebase(intent.intent_id, actor=actor).intent
+    assert coordinator.preflight(intent.intent_id, actor=actor).verdict == "passed"
+    rebased = coordinator.get(intent.intent_id, actor=actor).intent
     assert rebased.base_coordinate == AcceptedCoordinate.from_internal(
         instance.accepted_coordinate()
     )
+    assert rebased.intent_revision == intent.intent_revision + 1
     assert rebased.change_set_claim_identities == intent.change_set_claim_identities
     _accept(instance, owner, coordinator, intent.intent_id, actor)
 

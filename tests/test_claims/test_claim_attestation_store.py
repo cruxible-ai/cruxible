@@ -168,7 +168,7 @@ def test_crash_windows_are_inert_or_roll_forward(
         )
 
 
-def test_post_chain_exception_poison_requires_recovery(tmp_path: Path) -> None:
+def test_post_chain_exception_rolls_forward_on_the_next_access(tmp_path: Path) -> None:
     def crash(at: str) -> None:
         if at == "after_step2":
             raise RuntimeError(at)
@@ -181,10 +181,15 @@ def test_post_chain_exception_poison_requires_recovery(tmp_path: Path) -> None:
             verification_account=_account(attestation),
             note=None,
         )
-    with pytest.raises(ClaimAttestationStoreError, match="store_poisoned"):
-        store.head()
     store.crash_hook = None
-    store.recover()
+    # The same process re-verifies and publishes the durable event itself.
+    assert len(store.events()) == 1
+    retried = store.append(
+        attestation=attestation,
+        verification_account=_account(attestation),
+        note=None,
+    )
+    assert retried.partition_sequence == 1
     assert len(store.events()) == 1
 
 

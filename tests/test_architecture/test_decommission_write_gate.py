@@ -100,7 +100,6 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "AuthoringIntentCoordinator.compile_input",
             "AuthoringIntentCoordinator.compile_and_submit",
             "AuthoringIntentCoordinator.submit_input",
-            "AuthoringIntentCoordinator.rebase",
             "AuthoringIntentCoordinator.submit",
             # A dry run writes nothing, but it is the write's own path up to
             # the commit, so it refuses exactly where the write would.
