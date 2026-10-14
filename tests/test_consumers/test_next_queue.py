@@ -1674,7 +1674,9 @@ def test_workspace_reads_take_citations_from_the_maintained_table(tmp_path: Path
             behind.model_dump_json()
             == service_playbill_next(instance, request=request).model_dump_json()
         )
-    # A citation the facts could not read refuses the inventory, as the fold does.
+    # A citation that failed for a reason other than an unreadable envelope still
+    # refuses the inventory, as the fold does; an unreadable envelope is named a row
+    # instead (tests.test_integration.test_next_queue).
     _drain(instance, request.evaluation_time)
     with sqlite3.connect(facts._STATE.path(instance)) as connection:
         connection.execute("UPDATE claim_facts SET citation_error='CasError'")
@@ -1683,6 +1685,64 @@ def test_workspace_reads_take_citations_from_the_maintained_table(tmp_path: Path
         pytest.raises(next_module.NextAcceptedStateInvalid, match="citation"),
     ):
         service_playbill_next(instance, request=request)
+
+
+def test_a_warm_workspace_read_names_an_unreadable_citation_from_the_maintained_table(
+    tmp_path: Path,
+) -> None:
+    """Maintainer ruling 2026-10-13 (extends dev.decision/corrupt-body-unavailable-1013):
+    a warm workspace read's citation inventory never rebuilds from the fold (F-007) and
+    never fails whole on one cited Capture's unreadable envelope; it names that
+    citation's evidence unavailable from the maintained table, equal to the fold."""
+
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_client.contracts.claims import claim_citation_references
+    from cruxible_core.service.claims.claims import _claim_from_view, service_list_playbill_claims
+    from cruxible_core.service.discovery.next import (
+        NextDriftObservation,
+        NextWorkspaceObservation,
+    )
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
+
+    instance, _owner = seed_claims(tmp_path)
+    listed = service_list_playbill_claims(instance)
+    claim = _claim_from_view(listed.claims[0])
+    citation = claim_citation_references(claim)[0]
+    store = instance.body_store()
+    envelope = parse_capture_envelope(store.read(citation.capture_digest, access=_BYTES_READER))
+    _rewrite_in_place(store._path(citation.capture_digest), keep_mtime=True)
+
+    request = NextRequest(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+        access_profile=_access(),
+        workspace_observation=NextWorkspaceObservation(
+            drift_observations=(
+                NextDriftObservation(
+                    citation_id=citation.citation_id,
+                    expected_commitment_digest=envelope.commitment.digest,
+                    observed_commitment_digest=envelope.commitment.digest,
+                ),
+            ),
+        ),
+    )
+    _drain(instance, request.evaluation_time)
+
+    # _maintained_workspace_reads asserts the fold inventory and backing-verdict
+    # derivation are never reached; a drift-only request has no backed Claims to
+    # scope a query over, so there is nothing else to assert about scopes here.
+    with _maintained_workspace_reads():
+        warm = service_playbill_next(instance, request=request)
+    unavailable = [item for item in warm.items if item.reason == "evidence_unavailable"]
+    assert len(unavailable) == 1
+    assert unavailable[0].related_identities == (claim.identity.qualified,)
+    assert unavailable[0].subject_identity == f"Capture:{citation.capture_digest}"
+
+    with _oracle_only():
+        assert (
+            warm.model_dump_json()
+            == service_playbill_next(instance, request=request).model_dump_json()
+        )
 
 
 def _vm_steps(connection: sqlite3.Connection, read: Any) -> int:
@@ -1733,8 +1793,9 @@ def test_source_observations_read_only_source_citations_by_index() -> None:
                 ),
             )
         )
-        commitments, error = found[0]
-        assert not error and sorted(commitments) == [f"citation:s{i}" for i in range(3)]
+        commitments, error, unavailable = found[0]
+        assert not error and not unavailable
+        assert sorted(commitments) == [f"citation:s{i}" for i in range(3)]
     assert steps[0] == steps[1], steps
 
 
