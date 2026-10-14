@@ -181,6 +181,20 @@ def _instant(value: str) -> datetime:
     return parsed
 
 
+def retry_covered_sequence(instance: Any, *, timeout: float | None = None) -> int:
+    """The trigger fire sequence through which ``prediction.anchor_retry`` has completed.
+
+    ``timeout``, when given, bounds the read to that many seconds and raises
+    ``StateBusyError`` rather than waiting on a worker's own transaction.
+    """
+
+    with _STATE.open(instance, create=False, timeout=timeout) as connection:
+        if connection is None:
+            return 0
+        row = connection.execute("SELECT retry_completed_sequence FROM progress").fetchone()
+        return 0 if row is None else int(row[0])
+
+
 def _microseconds(value: datetime) -> int:
     from cruxible_core.indexes.typed_state import utc_microseconds
 

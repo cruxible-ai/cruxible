@@ -1,5 +1,13 @@
 {
   "literal_aliases": {
+    "ActionRunOutcomeStatus": {
+      "values": [
+        "completed",
+        "timed_out",
+        "not_waited",
+        "not_supported"
+      ]
+    },
     "ApprovalPolicyMode": {
       "values": [
         "self_approval_allowed",
@@ -365,6 +373,300 @@
         "generation_root",
         "git_oid",
         "semantic_root"
+      ]
+    },
+    "ActionRunOutcome": {
+      "fields": {
+        "detail": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "completed",
+              "timed_out",
+              "not_waited",
+              "not_supported"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "timed_out",
+              "not_waited",
+              "not_supported"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ActionRunOutcome",
+        "type": "object"
+      },
+      "required_fields": [
+        "status"
+      ]
+    },
+    "ActionRunRequest": {
+      "fields": {
+        "action": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "action",
+          "required": true,
+          "schema": {
+            "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry, curation.detect.",
+            "examples": [
+              "floor.refresh",
+              "evidence.sweep",
+              "prediction.anchor_retry",
+              "curation.detect"
+            ],
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-action-run-request-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-action-run-request-v1",
+            "default": "playbill-action-run-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "wait": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "wait",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Wait",
+            "type": "boolean"
+          }
+        },
+        "wait_timeout_seconds": {
+          "default": 60.0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "wait_timeout_seconds",
+          "required": false,
+          "schema": {
+            "default": 60.0,
+            "exclusiveMinimum": 0,
+            "maximum": 300,
+            "title": "Wait Timeout Seconds",
+            "type": "number"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry, curation.detect.",
+            "examples": [
+              "floor.refresh",
+              "evidence.sweep",
+              "prediction.anchor_retry",
+              "curation.detect"
+            ],
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+            "title": "Action",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-action-run-request-v1",
+            "default": "playbill-action-run-request-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "wait": {
+            "default": false,
+            "title": "Wait",
+            "type": "boolean"
+          },
+          "wait_timeout_seconds": {
+            "default": 60.0,
+            "exclusiveMinimum": 0,
+            "maximum": 300,
+            "title": "Wait Timeout Seconds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "ActionRunRequest",
+        "type": "object"
+      },
+      "required_fields": [
+        "action"
+      ]
+    },
+    "ActionRunResult": {
+      "fields": {
+        "action": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "action",
+          "required": true,
+          "schema": {
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "event_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "event_id",
+          "required": true,
+          "schema": {
+            "title": "Event Id",
+            "type": "integer"
+          }
+        },
+        "fired_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "fired_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Fired At",
+            "type": "string"
+          }
+        },
+        "outcome": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "outcome",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ActionRunOutcome"
+          }
+        },
+        "tag": {
+          "default": "playbill-action-run-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-action-run-result-v1",
+            "default": "playbill-action-run-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ActionRunOutcome": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "additionalProperties": true,
+                "title": "Detail",
+                "type": "object"
+              },
+              "status": {
+                "enum": [
+                  "completed",
+                  "timed_out",
+                  "not_waited",
+                  "not_supported"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "ActionRunOutcome",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          },
+          "fired_at": {
+            "format": "date-time",
+            "title": "Fired At",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/$defs/ActionRunOutcome"
+          },
+          "tag": {
+            "const": "playbill-action-run-result-v1",
+            "default": "playbill-action-run-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "event_id",
+          "fired_at",
+          "outcome"
+        ],
+        "title": "ActionRunResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "action",
+        "event_id",
+        "fired_at",
+        "outcome"
       ]
     },
     "ActivationReceipt": {

@@ -11,6 +11,9 @@
   "/api/v1/server/stop": {
     "POST": "ServerStopResult"
   },
+  "/api/v1/{instance_id}/actions/run": {
+    "POST": "ActionRunResult"
+  },
   "/api/v1/{instance_id}/audit": {
     "POST": "AuditResult"
   },

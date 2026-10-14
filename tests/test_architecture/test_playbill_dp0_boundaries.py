@@ -414,6 +414,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "link_inbox_item",
         "predict",
         "settle_prediction",
+        "run_internal_action",
         "export_floor",
         "floor_delta",
         "resolve_coverage",

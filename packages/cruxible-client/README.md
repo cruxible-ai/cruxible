@@ -5889,6 +5889,34 @@ settle_prediction(
 
 HTTP: `POST f'/api/v1/{instance_id}/predictions/{prediction_id}/settlements'`.
 
+<a id="api-cruxibleclient-run-internal-action"></a>
+
+### `CruxibleClient.run_internal_action`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+run_internal_action(
+    instance_id: str,
+    *,
+    request: contracts.ActionRunRequest,
+) -> contracts.ActionRunResult
+```
+
+Fires one registered internal action by hand, outside any Trigger's
+schedule: `floor.refresh`, `evidence.sweep`, `prediction.anchor_retry`, or
+`curation.detect`. The fire is appended to the same trigger journal a
+Trigger's own schedule writes to, so the daemon's normal consumer runner
+picks it up and runs it exactly as a scheduled fire; an unregistered action
+name is refused. `request.wait` starts and runs no work itself: it only
+waits, bounded by `request.wait_timeout_seconds`, until the owning part's
+own recorded progress shows this fire processed, and reports what it found
+in the result's `outcome` (`completed`, `timed_out` -- the fire stays
+queued and still runs normally -- or `not_supported` for a part that
+exposes no completion cursor).
+
+HTTP: `POST f'/api/v1/{instance_id}/actions/run'`.
+
 <a id="api-cruxibleclient-get-authoring-intent"></a>
 
 ### `CruxibleClient.get_authoring_intent`

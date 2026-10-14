@@ -107,14 +107,31 @@ def _post_apply_joins(workspace: Path) -> None:
     write_projection_index(workspace)
 
 
-def _progress(instance: Any) -> tuple[int, str, str | None, str | None] | None:
-    with _STATE.open(instance, create=False) as connection:
+def _progress(
+    instance: Any, *, timeout: float | None = None
+) -> tuple[int, str, str | None, str | None] | None:
+    with _STATE.open(instance, create=False, timeout=timeout) as connection:
         if connection is None:
             return None
         return cast(
             tuple[int, str, str | None, str | None] | None,
             connection.execute("SELECT covered,target,completed,failed FROM progress").fetchone(),
         )
+
+
+def refresh_covered_sequence(instance: Any, *, timeout: float | None = None) -> int:
+    """The trigger fire sequence through which a ``floor.refresh`` render has caught up.
+
+    One render always folds every pending fire into the current head, so a
+    render that started at or after a given fire's sequence always covers
+    it; 0 before this part has ever recorded a render.
+
+    ``timeout``, when given, bounds the read to that many seconds and raises
+    ``StateBusyError`` rather than waiting on a worker's own transaction.
+    """
+
+    progress = _progress(instance, timeout=timeout)
+    return 0 if progress is None else progress[0]
 
 
 def floor_outcomes(instance: Any) -> tuple[contracts.FloorConsumerOutcome, ...]:
@@ -316,7 +333,13 @@ class FloorConsumers:
         if any(item.action == "floor.refresh" for item in internal_triggers(instance)):
             return True
         progress = _progress(instance)
-        return progress is not None and progress[1] != progress[2] and progress[1] != progress[3]
+        if progress is not None and progress[1] != progress[2] and progress[1] != progress[3]:
+            return True
+        # A manual `floor.refresh` fire needs no live Trigger to wake this
+        # consumer: an indexed pending fire beyond the covered cursor (0,
+        # absent any progress row yet) is itself runnable work.
+        covered = 0 if progress is None else progress[0]
+        return latest_sequence(instance, action="floor.refresh") > covered
 
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
         target = _target(instance, get_registry().get(instance.descriptor.instance_id))

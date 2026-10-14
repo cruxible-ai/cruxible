@@ -2367,7 +2367,12 @@ procedure-mandate`. An observe-only Line -- one whose Procedure's terminals, or
 whose `max_authority`, stop at observe -- needs no mandate. A mandate whose
 `resource_ceiling` exceeds the Procedure's hard caps is refused naming each
 widened cap with both values; `authoring example procedure-mandate` uses the
-`authoring example procedure` caps.
+`authoring example procedure` caps. Every `authoring example` template's own
+`budget.wall_clock` and `hard_caps.max_wall_clock` (`procedure`, `blueprint`,
+and the Procedures `procedure-mandate` and `line` carry forward) are 10
+minutes per run and 30 minutes overall: a wall-clock budget catches an
+obviously bad run, not compute management, so the example leaves a large
+safety factor rather than a tight one.
 
 A Line whose Procedure ends in a `propose_change_set` terminal produces a
 proposal. Its `candidate_templates` are a fixed list of templates, or
@@ -2594,6 +2599,32 @@ reproduces against the new head. Retrying the same operation recovers the
 same proposal and refuses the same way. Withdraw it with `cruxible proposal
 withdraw`; the Line's next due occurrence settles against the current head
 under a new operation key.
+
+## action
+
+~~~text
+cruxible action run NAME [--wait] [--wait-timeout SECONDS] [--json]
+~~~
+
+Fire one registered internal action (`floor.refresh`, `evidence.sweep`,
+`prediction.anchor_retry`, or `curation.detect`) by hand, outside any
+Trigger's schedule. The fire is appended to the same trigger journal a
+Trigger's own schedule writes to -- the manual fire's occurrence records
+that it was manual and the writer principal -- so the owning consumer's
+`due()` picks it up exactly as it would a scheduled fire; NAME need not have
+any live Trigger aimed at it at all. An unregistered NAME is refused naming
+every registered action. Tier: GOVERNED_WRITE. The result names the fired
+event's journal sequence (`event_id`) and `fired_at`.
+
+Without `--wait` this only records the fire; the daemon's normal consumer
+runner picks it up and runs it exactly as a scheduled fire, whenever it next
+runs. `--wait` (default timeout 60s, up to 300s via `--wait-timeout`) starts
+and runs no work itself: it only waits until the owning part's own recorded
+progress shows this fire processed, and reports `outcome.status`:
+`completed` (the sequence it covers through), `timed_out` (the fire stays
+queued and still runs on the daemon's next tick), or `not_supported` (that
+part exposes no completion cursor the wait path can observe; the fire is
+still recorded and still runs normally).
 
 ## inbox
 

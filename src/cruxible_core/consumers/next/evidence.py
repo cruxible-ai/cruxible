@@ -120,6 +120,24 @@ def _instant(value: str) -> datetime:
     return parsed
 
 
+def sweep_covered_sequence(instance: Any, *, timeout: float | None = None) -> int:
+    """The trigger fire sequence through which ``evidence.sweep`` has fully swept.
+
+    Advances only once a sweep is exhausted (``_sweep``'s ``stopped is None``
+    branch), never mid-page, so a paged sweep behind a large cited-Capture
+    population is never reported covered early.
+
+    ``timeout``, when given, bounds the read to that many seconds and raises
+    ``StateBusyError`` rather than waiting on a worker's own transaction.
+    """
+
+    with _STATE.open(instance, create=False, timeout=timeout) as connection:
+        if connection is None:
+            return 0
+        row = connection.execute("SELECT sweep_sequence FROM progress").fetchone()
+        return 0 if row is None else int(row[0])
+
+
 def _cited_captures(
     connection: sqlite3.Connection, *, after: str, limit: int
 ) -> tuple[list[str], str | None]:

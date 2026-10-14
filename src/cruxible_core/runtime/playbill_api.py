@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -290,6 +291,8 @@ from cruxible_core.service.proposals.review import (
 from cruxible_core.storage.cas import BodyAccessContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from cruxible_client.contracts.triggers import InternalActionSpec
+    from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
     from cruxible_core.service.discovery.operational_viewer import OperationalViewer
 
 _ProposalResultT = TypeVar("_ProposalResultT")
@@ -1512,6 +1515,149 @@ def playbill_settle_prediction(
         actor_context=actor_context,
         recorded_at=actor_context.timestamp,
     )
+
+
+def playbill_action_run(
+    instance_id: str,
+    *,
+    request: contracts.ActionRunRequest,
+) -> contracts.ActionRunResult:
+    """Fire one registered internal action by hand, outside any Trigger's schedule.
+
+    The fire is appended to the same trigger journal every Trigger-aimed and
+    deadline fire shares, so the owning consumer's own ``due()`` -- which
+    reads that journal by action name, never by whether a Trigger exists --
+    picks it up exactly as it would a scheduled fire. ``request.wait`` never
+    runs or admits that work itself: it only observes the owning part's own
+    recorded progress until it shows this fire processed; see
+    ``ActionRunOutcome`` for the statuses that can report.
+    """
+
+    from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
+    from cruxible_core.triggers.journal import fire_manual
+
+    check_permission("cruxible_action_run", instance_id=instance_id)
+    spec = INTERNAL_ACTIONS.get(request.action)
+    if spec is None:
+        raise ConfigError(
+            f"Internal action {request.action!r} is not registered; choose one of: "
+            + ", ".join(sorted(INTERNAL_ACTIONS))
+            + "."
+        )
+    actor_context = _write_actor_context(instance_id)
+    if actor_context is None:
+        raise AuthenticationError(
+            "Firing an internal action requires an authenticated actor identity"
+        )
+    manager = get_playbill_manager()
+    instance = manager.get(instance_id)
+    event = fire_manual(
+        instance, action=spec.name, principal=actor_context.actor_id, now=actor_context.timestamp
+    )
+    outcome = (
+        _wait_for_action_fire(
+            manager,
+            instance_id,
+            spec,
+            event_sequence=event.sequence,
+            timeout_seconds=request.wait_timeout_seconds,
+        )
+        if request.wait
+        else contracts.ActionRunOutcome(status="not_waited")
+    )
+    return contracts.ActionRunResult(
+        action=spec.name, event_id=event.sequence, fired_at=event.fired_at, outcome=outcome
+    )
+
+
+def _action_fire_reader(spec: InternalActionSpec) -> Callable[..., int] | None:
+    """``spec``'s owning part's own completion-cursor reader, or ``None`` if it has none.
+
+    Every reader takes ``instance`` and an optional ``timeout`` keyword (seconds)
+    that bounds its read -- the same indexed completion cursor that part's own
+    ``due()`` or ``health()`` reads, one primary-key row lookup, never a scan --
+    so a waiter costs the same as a health check, not the instance. This is a
+    structural lookup only, with no I/O: ``None`` means this part exposes no
+    such cursor; every part wired in today does.
+    """
+
+    if spec.consumer == "floor":
+        from cruxible_core.consumers.floor import refresh_covered_sequence
+
+        return refresh_covered_sequence
+    if spec.consumer == "next":
+        from cruxible_core.consumers.next import curation, evidence, predictions
+
+        readers: dict[str, Callable[..., int]] = {
+            "evidence": evidence.sweep_covered_sequence,
+            "prediction": predictions.retry_covered_sequence,
+            "curation": curation.covered_sequence,
+        }
+        return readers.get(spec.part)
+    return None
+
+
+_WAIT_POLL_SECONDS = 0.05
+
+
+def _wait_for_action_fire(
+    manager: PlaybillInstanceManager,
+    instance_id: str,
+    spec: InternalActionSpec,
+    *,
+    event_sequence: int,
+    timeout_seconds: float,
+) -> contracts.ActionRunOutcome:
+    """Observe this fire's owning part until its own progress covers it.
+
+    Starts, admits and runs no work of its own: the fire was already appended
+    to the trigger journal every scheduled fire shares, so the daemon's
+    normal consumer runner picks it up exactly as it would a scheduled fire,
+    under its own admission and worker limits. This only polls that part's
+    indexed completion cursor on a bounded wait, sleeping between checks on
+    the calling thread -- no executor, no drain, no pass cap -- and reports
+    ``completed`` once the cursor covers ``event_sequence``, ``timed_out`` at
+    ``timeout_seconds`` with the fire left queued for the next tick, or
+    ``not_supported`` for a part that exposes no completion cursor.
+
+    The deadline is set before the first cursor read, and every read --
+    including the first -- is given only its remaining share of the budget:
+    a worker transaction holding that part's state lock (prediction
+    requeuing, a state rebuild) makes the read raise ``StateBusyError``
+    rather than block past the deadline, which this treats as "not yet
+    covered" and retries until the budget itself runs out. A wait never
+    runs past ``wait_timeout_seconds``, regardless of contention.
+    """
+
+    from cruxible_core.consumers.state import StateBusyError
+    from cruxible_core.server.config import get_disabled_consumers
+
+    if spec.consumer in get_disabled_consumers():
+        return contracts.ActionRunOutcome(
+            status="not_supported",
+            detail={"reason": f"the {spec.consumer!r} consumer is disabled on this daemon"},
+        )
+    reader = _action_fire_reader(spec)
+    if reader is None:
+        return contracts.ActionRunOutcome(status="not_supported")
+    instance = manager.get(instance_id)
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return contracts.ActionRunOutcome(status="timed_out")
+        try:
+            covered = reader(instance, timeout=remaining)
+        except StateBusyError:
+            covered = None
+        if covered is not None and covered >= event_sequence:
+            return contracts.ActionRunOutcome(
+                status="completed", detail={"covered_through": covered}
+            )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return contracts.ActionRunOutcome(status="timed_out")
+        time.sleep(min(_WAIT_POLL_SECONDS, remaining))
 
 
 def playbill_authoring_get(

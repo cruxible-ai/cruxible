@@ -76,6 +76,20 @@ def curation_detection(instance: Any) -> CurationDetection | None:
     )
 
 
+def covered_sequence(instance: Any, *, timeout: float | None = None) -> int:
+    """The trigger fire sequence through which ``curation.detect`` has run; 0 before it has.
+
+    ``timeout``, when given, bounds the read to that many seconds and raises
+    ``StateBusyError`` rather than waiting on a worker's own transaction.
+    """
+
+    with _STATE.open(instance, create=False, timeout=timeout) as connection:
+        if connection is None:
+            return 0
+        row = connection.execute("SELECT sequence FROM progress").fetchone()
+        return 0 if row is None else int(row[0])
+
+
 def record_detection(instance: Any, *, sequence: int, detection: CurationDetection) -> None:
     """Keep what one detection run covered, as handled through trigger fire ``sequence``."""
 
