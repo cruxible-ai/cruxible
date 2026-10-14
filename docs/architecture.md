@@ -85,6 +85,18 @@ history. A separate daemon key signs ledger mechanics. Recovery authority can
 repair principal state but cannot approve ordinary content. See [Principals and
 credentials](concepts.md#principals-and-credentials).
 
+## Integrity and isolation
+
+On-disk integrity checks (content hashes, read-back verification on store, a
+periodic evidence sweep) protect against accidents: crashes, partial writes,
+media errors and stray edits. A body found missing or damaged is recorded, and
+reads report the evidence that depends on it as unavailable rather than failing;
+reading the damaged bytes themselves still refuses. These checks are not a
+security boundary, since a process running as the daemon's user can rewrite its
+files. Security against agents comes from isolation (agents talk to the daemon,
+never to its state directory) and from the API: authenticated transport,
+permission tiers and signed governance authority.
+
 ## Semantic families
 
 The ledger holds typed artifacts, each checked by its own law at acceptance:

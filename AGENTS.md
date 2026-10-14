@@ -271,6 +271,22 @@ correct.
   for each write, tick and read route at two instance sizes; a route that grows
   today carries a strict xfail naming where, and a fix removes that xfail.
 
+### Integrity and isolation
+
+On-disk checks protect against accidents, not against agents. Hashes, read-back
+verification, the evidence sweep and the landing log's damage records catch
+crashes, partial writes, bit rot and stray edits: a body found missing or
+corrupt is recorded as a sequenced change, and reads then treat it as
+unavailable (never as an error that fails a whole `next` or `orient`), while a
+direct byte read still refuses. Reads take presence from the landing index and
+never stat or hash bodies on the clean path. None of this is a security
+boundary: any process running as the daemon's user can rewrite its files.
+Security against agents comes from process isolation (agents never get the
+state root; the daemon owns it) plus the API: authenticated transport,
+permission tiers and signed governance authority. Do not add per-read file
+checks to defend against same-user tampering, and size test instrumentation for
+honest product code.
+
 ### Key design decisions
 
 - **Zero LLM dependencies.** Deterministic runtime; agents supply judgment
