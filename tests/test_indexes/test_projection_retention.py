@@ -18,6 +18,23 @@ from tests.test_floor.test_floor_index import _set, _write
 WI1 = f"{KIND}/wi-1"
 
 
+@pytest.fixture(autouse=True)
+def _no_background_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the advisory workspace refresh, and the Git it forks, off a background thread.
+
+    A child forked on another thread shares every piece hold open at that
+    instant until it execs, so an eviction in that window finds the piece held
+    by another process and leaves it for the next open, as designed. These
+    tests pin exact retention outcomes, so no write starts that thread here.
+    """
+
+    from cruxible_client.contracts.workspace_advertisement import NOT_ATTACHED_ADVERTISEMENT
+
+    monkeypatch.setattr(
+        PlaybillInstance, "advertise_workspace", lambda self: NOT_ATTACHED_ADVERTISEMENT
+    )
+
+
 def _projections(instance: PlaybillInstance) -> Path:
     return instance._validated_paths(instance.root, instance.descriptor.storage)["projections"]
 
