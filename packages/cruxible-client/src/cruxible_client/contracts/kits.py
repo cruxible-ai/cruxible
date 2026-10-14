@@ -709,8 +709,9 @@ class KitChangeResult(_Strict):
     # policy requires no approval, like provider install and value writes;
     # otherwise it stops at ``proposed`` for the ordinary review and activation.
     # A kit that bundles providers installs them first: when an install awaits
-    # approval the change stops at ``awaiting_providers`` and proposes the
-    # definitions once they land (run kit add again). A preview (the default)
+    # approval the change stops at ``awaiting_providers``, and the definitions
+    # are proposed on their own, as this caller, once those installs activate
+    # (``kit status`` shows the pending resume). A preview (the default)
     # answers would_propose or would_block and proposes nothing; commit with
     # dry_run=false and at=<coordinate>.
     status: Literal[
@@ -776,6 +777,32 @@ class InstalledKit(_Strict):
     update_check: KitUpdateCheck = "not_checked"
 
 
+#: A recorded kit add waiting on its provider installs: ``waiting`` (an install
+#: has not activated yet), ``proposed`` (the definitions were proposed, or
+#: landed, once they did), ``blocked`` (proposing them refused; ``detail`` says why).
+KitResumeState = Literal["waiting", "proposed", "blocked"]
+
+
+class KitResumeStatus(_Strict):
+    """A ``kit add`` that stopped at awaiting_providers and resumes on activation."""
+
+    kit_id: str
+    version: str
+    state: KitResumeState
+    #: The principal whose kit add this is; the definitions are proposed as it.
+    actor_id: str
+    recorded_at: str
+    #: Bundled providers whose install has not activated here yet.
+    waiting_on: tuple[str, ...] = ()
+    #: The definitions' proposal, once proposed.
+    proposal_id: str | None = None
+    detail: str | None = None
+    #: Where the bundle came from, as the kit add recorded it.
+    source: str | None = None
+
+
 class KitStatus(_Strict):
     tag: Literal["playbill-kit-status-v1"] = "playbill-kit-status-v1"
     kits: tuple[InstalledKit, ...] = ()
+    #: Kit adds waiting on provider installs, or whose resume proposed or refused.
+    resumes: tuple[KitResumeStatus, ...] = ()

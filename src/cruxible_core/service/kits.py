@@ -1502,8 +1502,13 @@ def service_add_kit(
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
     A kit naming provider packages installs the missing ones first, through
     ``install_provider``; the definitions follow once they land. An index
-    default another live Provider stands in for is not installed.
+    default another live Provider stands in for is not installed. A commit that
+    stops at ``awaiting_providers`` is recorded, and the activation that lands
+    the last awaited install proposes the definitions as this caller
+    (``kit_resume``); any other commit of the kit replaces that record.
     """
+
+    from cruxible_core.service import kit_resume
 
     with change_scope(
         instance,
@@ -1513,7 +1518,7 @@ def service_add_kit(
         operation="cruxible.kit.add",
         describe=f"installing kit {request.bundle.manifest.kit_id}",
     ) as mode:
-        return _add_kit(
+        result = _add_kit(
             instance,
             mode,
             request,
@@ -1521,6 +1526,32 @@ def service_add_kit(
             timestamp=timestamp,
             install_provider=install_provider,
         )
+        previewing = mode.previewing
+    if previewing or kit_resume.resuming():
+        return result
+    if result.status == "awaiting_providers":
+        awaited = {
+            step.provider_id for step in result.providers if step.action == "awaiting_approval"
+        }
+        kit_resume.record_kit_resume(
+            instance,
+            request,
+            actor_id=actor_id,
+            waiting_on=(
+                provider
+                for provider in request.bundle.manifest.providers
+                if provider.provider_id in awaited
+            ),
+        )
+        return result.model_copy(
+            update={
+                "detail": (result.detail or "")
+                + "; the definitions are proposed automatically, as you, once these "
+                "installs activate (kit status shows the pending resume)"
+            }
+        )
+    kit_resume.forget_kit_resume(instance, result.kit_id)
+    return result
 
 
 def _add_kit(
@@ -1913,4 +1944,6 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
                 providers=tuple(providers),
             )
         )
-    return KitStatus(kits=tuple(kits))
+    from cruxible_core.service.kit_resume import kit_resume_statuses
+
+    return KitStatus(kits=tuple(kits), resumes=kit_resume_statuses(instance))

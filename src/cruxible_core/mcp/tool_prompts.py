@@ -37,7 +37,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "bundling provider packages installs them first (admin; a commit stages their files), "
         "and a default provider by name unless something here implements it (satisfied), "
         "then proposes the definitions; an install awaiting approval stops at "
-        "awaiting_providers."
+        "awaiting_providers, and its activation proposes them on their own."
     ),
     "cruxible_claim_type_upgrade": (
         "Use to move ClaimTypes before v7 to v7, which states revision_evidence "

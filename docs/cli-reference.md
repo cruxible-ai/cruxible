@@ -1183,8 +1183,14 @@ installs each package not yet installed through the ordinary transfer install,
 which needs the install permission (`ADMIN`) and lands when the approval policy
 requires no approval. The definitions are proposed once every bundled provider
 is installed; while an install awaits approval the result is
-`awaiting_providers` with that install's proposal, and `kit add` again after it
-is activated proposes the definitions. A commit first reads the staged files
+`awaiting_providers` with that install's proposal. The daemon records that
+kit add, and the activation that lands the last awaited install proposes the
+definitions on its own, as the principal who ran it, at the head it lands on:
+they land at once when the approval policy requires none, exactly as the
+original add would. `kit status` lists each recorded resume (`waiting`,
+`proposed` with its proposal, or `blocked` with why); a blocked one is also a
+`kit_resume_blocked` row in `next`. A later commit `kit add` of the same kit
+replaces the record. A commit first reads the staged files
 (metadata only), refuses `cruxible.kit.provider_manifest_mismatch` unless they
 reproduce the manifest, and refuses what the current state already decides
 (ownership overlap, a definition another installed kit owns or holds, a pinned
@@ -3098,6 +3104,14 @@ that carries a signature): activation is all it waits on.
 repair is `cruxible proposal activate PROPOSAL_ID`, which closes the row. Your
 candidate still waiting on others' approval is listed in their queues as
 `proposal_awaiting_approval`.
+
+A `kit_resume_blocked` row is a recorded `kit add` whose provider installs
+activated but whose definitions were refused at the head the resume ran on
+(another kit took a definition over, the principal who ran it can no longer
+author, or another refusal `detail` names). Its repair is `cruxible kit add`
+with the recorded source, a preview of the add at the current head. A kit
+still waiting on an install that was rejected or withdrawn is shown by `kit
+status` only.
 
 A `mandate_expiring` row is a live, unsuspended ProcedureMandate whose
 `expires_at` falls after the evaluation time and within `--expiring-within`.

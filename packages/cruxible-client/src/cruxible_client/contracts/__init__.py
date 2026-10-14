@@ -405,6 +405,7 @@ NextReason: TypeAlias = Literal[
     "prediction_settleable",
     "prediction_window_unbindable",
     "subject_kind_undeclared",
+    "kit_resume_blocked",
 ]
 NextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
 NextRepairOperation: TypeAlias = Literal[
@@ -428,6 +429,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.line.dispatch",
     "cruxible.inbox.list",
     "cruxible.prediction.settle",
+    "cruxible.kit.add",
     "hand_edit",
 ]
 # The next queue's own refusals that carry a declared repair. A page cursor

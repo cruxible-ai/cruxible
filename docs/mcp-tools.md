@@ -167,7 +167,7 @@ adds, replaces and retires definitions. A kit also bundles the provider packages
 its Procedures run on (wheel, uv lock and path-dependency wheels; never source):
 `kit_add` installs the missing ones first, under the install permission, and
 proposes the definitions once they land (`awaiting_providers` while an install
-awaits approval). A kit can instead name a default provider for a contract its
+awaits approval; the activation that lands it proposes them on its own). A kit can instead name a default provider for a contract its
 Blueprints leave open (`delivery: index`): `kit_add` installs it by name and
 exact version from the provider index unless a live Provider here already
 implements its interfaces (`satisfied`). Activation and any approval stay the

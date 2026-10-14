@@ -887,6 +887,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.line.dispatch": "line dispatch",
     "cruxible.inbox.list": "inbox list",
     "cruxible.prediction.settle": "prediction settle",
+    "cruxible.kit.add": "kit add",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -973,6 +974,7 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.line.dispatch": "cruxible_line_dispatch",
     "cruxible.inbox.list": "cruxible_inbox_list",
     "cruxible.prediction.settle": "cruxible_prediction_settle",
+    "cruxible.kit.add": "cruxible_kit_add",
     "hand_edit": None,
 }
 _GOVERNED_WRITE_RUNG = 1
@@ -1142,6 +1144,8 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _mcp_call("cruxible_line_dispatch", line=text("line"), request=request)
     if operation == "cruxible.inbox.list" and text("line"):
         return _mcp_call("cruxible_inbox_list", line=text("line"), status="unread")
+    if operation == "cruxible.kit.add" and text("reference"):
+        return _mcp_call("cruxible_kit_add", reference=text("reference"))
     if operation == "cruxible.prediction.settle" and text("prediction_id"):
         # The observation is the settler's to choose: its Claim ID is the one
         # argument left to add.
@@ -1377,6 +1381,12 @@ def _repair_command(
         if not isinstance(line, str) or not line:
             return None
         parts.extend(["--line", shlex.quote(line), "--status", "unread"])
+    elif operation == "cruxible.kit.add":
+        # A preview by default: it shows what the add would do at the head now.
+        reference = values.get("reference")
+        if not isinstance(reference, str) or not reference:
+            return None
+        parts.append(shlex.quote(reference))
     elif operation == "cruxible.prediction.settle":
         # The daemon resolves the exact contract and window from the bound
         # window id; the observation is the settler's to choose, so its Claim
@@ -4321,6 +4331,45 @@ def _line_inbox_items(
     )
 
 
+def _kit_resume_items(
+    instance: PlaybillInstance,
+    *,
+    access_profile: CoverageAccessProfile,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """One row per recorded kit add whose resume refused, with the refusal and its repair.
+
+    Read from the pending kit-resume rows alone. A kit still waiting on a provider
+    install, including one that was rejected or withdrawn, is in ``kit status``
+    only.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.service.kit_resume import blocked_kit_resumes
+
+    return tuple(
+        _item(
+            severity="repair",
+            reason="kit_resume_blocked",
+            subject_identity=f"kit:{resume.kit_id}",
+            detail={
+                "kit_id": resume.kit_id,
+                "version": resume.version,
+                "actor_id": resume.actor_id,
+                "recorded_at": resume.recorded_at,
+                "detail": resume.detail,
+            },
+            repair=PlaybillNextRepairV1(
+                operation="cruxible.kit.add",
+                target=f"kit:{resume.kit_id}",
+                required_change="resolve_the_refusal_then_add_the_kit_again",
+                arguments={} if resume.source is None else {"reference": resume.source},
+            ),
+        )
+        for resume in blocked_kit_resumes(instance)
+    )
+
+
 def _evidence_unavailable_items(
     instance: PlaybillInstance,
     *,
@@ -6025,6 +6074,7 @@ def _queue_at(
             instance, coordinate=coordinate, access_profile=request.access_profile
         ),
         *_line_inbox_items(instance, access_profile=request.access_profile),
+        *_kit_resume_items(instance, access_profile=request.access_profile),
     )
     caller = _CallerView(
         instance,

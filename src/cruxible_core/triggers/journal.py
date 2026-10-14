@@ -64,9 +64,22 @@ CREATE TRIGGER events_no_delete BEFORE DELETE ON events
  BEGIN SELECT RAISE(ABORT,'trigger events are append-only'); END;
 CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, version TEXT NOT NULL,
  listening_since TEXT NOT NULL, covered INTEGER NOT NULL) STRICT;
-PRAGMA user_version=3;
+PRAGMA user_version=4;
 """
-_VERSION = 3
+_VERSION = 4
+# A kit add waiting on provider installs fires on the acceptance that lands the
+# last of them: one row per kit, one wait per Provider path still to activate.
+# Retained operational authority beside the fires, never rebuilt.
+_KIT_RESUME_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS kit_resumes (kit_id TEXT PRIMARY KEY, version TEXT NOT NULL, "
+    "request_digest TEXT NOT NULL, actor_id TEXT NOT NULL, recorded_at TEXT NOT NULL, "
+    "recorded_head TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN "
+    "('waiting','proposed','blocked')), proposal_id TEXT, detail TEXT, source TEXT) STRICT",
+    "CREATE TABLE IF NOT EXISTS kit_resume_waits (provider_path TEXT NOT NULL, "
+    "kit_id TEXT NOT NULL, provider_id TEXT NOT NULL, "
+    "PRIMARY KEY(provider_path, kit_id)) STRICT",
+    "CREATE INDEX IF NOT EXISTS kit_resume_waits_by_kit ON kit_resume_waits(kit_id)",
+)
 
 
 @dataclass(frozen=True)
@@ -200,20 +213,40 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
                 if sqlite3.complete_statement(statement):
                     connection.execute(statement)
                     statement = ""
-        elif version == 2:
+            for table in _KIT_RESUME_SCHEMA:
+                connection.execute(table)
+        elif version in (2, 3):
+            # A reader of an older journal sees what it holds; the next writer
+            # brings it forward one step at a time.
             if create:
-                connection.execute(
-                    "CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, "
-                    "version TEXT NOT NULL, listening_since TEXT NOT NULL, "
-                    "covered INTEGER NOT NULL) STRICT"
-                )
-                connection.execute("PRAGMA user_version=3")
+                if version == 2:
+                    connection.execute(
+                        "CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, "
+                        "version TEXT NOT NULL, listening_since TEXT NOT NULL, "
+                        "covered INTEGER NOT NULL) STRICT"
+                    )
+                for table in _KIT_RESUME_SCHEMA:
+                    connection.execute(table)
+                connection.execute(f"PRAGMA user_version={_VERSION}")
         elif version != _VERSION:
             raise ValueError("Unsupported trigger journal; retain it for operator repair")
         yield connection
         connection.commit()
     finally:
         connection.close()
+
+
+@contextmanager
+def retained_records(instance: Any, *, write: bool) -> Iterator[sqlite3.Connection | None]:
+    """The journal's connection, for a record retained beside the fires (kit resumes).
+
+    ``write`` opens it for writing, creating or upgrading it, in one immediate
+    transaction committed on exit; otherwise it is read only, and None when
+    there is no journal yet.
+    """
+
+    with _open(instance, create=write) as connection:
+        yield connection
 
 
 def _instant(value: str) -> datetime:

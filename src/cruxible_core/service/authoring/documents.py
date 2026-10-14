@@ -680,6 +680,7 @@ def service_activate_playbill_proposal(
         reset_claim_resolution_memo(slots=False)
         if status == "accepted":
             _finalize_completed_intents(instance)
+            _resume_waiting_kits(instance, candidate)
         advertisement = instance.advertise_workspace()
         # Publish accepted main and remove the closed review branch.
         instance.request_ledger_mirror()
@@ -694,6 +695,16 @@ def service_activate_playbill_proposal(
         ),
         workspace_advertisement=advertisement,
     )
+
+
+def _resume_waiting_kits(instance: PlaybillInstance, candidate: CandidateRecordAnyVersion) -> None:
+    """Resume a kit add this acceptance completed, looked up by its own changed paths.
+
+    The activation is already committed; the resume is isolated from it.
+    """
+    from cruxible_core.service.kit_resume import resume_kits_after_activation
+
+    resume_kits_after_activation(instance, (member.path for member in candidate.members))
 
 
 def _finalize_completed_intents(instance: PlaybillInstance) -> None:

@@ -137,6 +137,9 @@ def create_app() -> FastAPI:
     # the proposal it produced, then its finalization. Recovery logs and
     # continues per instance; it never keeps the daemon from starting.
     manager.recover_proposal_egress()
+    # A kit add whose provider installs activated just before a crash resumes
+    # here, from its pending rows alone.
+    manager.resume_pending_kits()
     # Still before serving: no writer can be mid-flight, so unreachable ledger
     # objects may be pruned; live compaction runs later on a generation stride.
     manager.compact_ledgers_at_start()

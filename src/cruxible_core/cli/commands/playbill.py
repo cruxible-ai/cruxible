@@ -1905,8 +1905,9 @@ def add_kit(
     resolve from the daemon's provider index, PyPI unless configured), installs a
     default provider by name from that index unless an installed Provider already
     implements its interfaces (satisfied), and proposes the definitions once they
-    land; an install awaiting approval stops at awaiting_providers (run kit add
-    again after activating it). It previews by default; commit with
+    land; an install awaiting approval stops at awaiting_providers, and its
+    activation proposes the definitions on their own, as you (kit status shows
+    the resume). It previews by default; commit with
     ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
@@ -1988,6 +1989,15 @@ def kit_status(offline: bool, output_json: bool) -> None:
         return
     if not result.kits:
         click.echo("No kits installed.")
+    for resume in result.resumes:
+        line = f"{resume.kit_id} {resume.version}: kit add {resume.state} (as {resume.actor_id})"
+        if resume.waiting_on:
+            line += f"; waiting on provider install {', '.join(resume.waiting_on)}"
+        if resume.proposal_id is not None:
+            line += f"; proposal {resume.proposal_id}"
+        click.echo(line)
+        if resume.detail:
+            click.echo(f"  {printable(resume.detail)}")
     for kit in result.kits:
         available = ""
         if kit.update_check == "checked" and kit.latest_available is not None:
