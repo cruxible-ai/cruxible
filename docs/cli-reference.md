@@ -652,8 +652,9 @@ workspace gets an atomic `.cruxible/coverage.json` v2 write containing exactly
 one transport, the instance ID, and the fixed floor profile; bearer credentials
 and secrets are never inputs to that writer. A differing config is refused
 unless `--replace` is explicit. Because the binding may carry a local socket,
-the writer adds `.cruxible/coverage.json` to this repository's machine-local
-`.git/info/exclude` rather than changing a shared ignore file.
+the writer adds `.cruxible/coverage.json` and the derived world stub
+`.cruxible/world.pyi` to this repository's machine-local `.git/info/exclude`
+rather than changing a shared ignore file.
 
 Daemon floor delivery is on by default when a local workspace is registered.
 `workspace attach` enables it unless `--no-floor-delivery` is supplied;
@@ -3467,16 +3468,26 @@ coordinate and generation); it never re-exports.
 cruxible stub [--out PATH]
 ~~~
 
-Writes a `.pyi` typing this instance's accepted world -- its Subject kinds, the
-Subject IDs that can be spelled as Python attributes, every predicate, and each
-enum member a literal schema names -- so an editor and a model complete the real
-vocabulary instead of `Any`. Without `--out` the stub goes to standard output.
+Writes a `.pyi` typing this instance's accepted vocabulary -- its Subject
+kinds, every predicate, and each enum member a literal schema names -- so an
+editor and a model complete the real vocabulary instead of `Any`. Subjects are
+typed by kind (`world.<kind>["<id>"]`, iteration, `in`), never one attribute
+per Subject, so the stub depends on the vocabulary alone: it does not grow with
+the data and changes only when a ClaimType does. Without `--out` the stub goes
+to standard output.
 
-The stub names in a header comment the exact accepted coordinate it was read at,
-and is byte-identical for that coordinate, so regenerating after an activation
-shows the vocabulary movement as an ordinary diff. It types one coordinate and
-carries no authority over the next: the SDK still refuses a world whose
-orientation has moved.
+The stub names in a header comment the digest of the vocabulary it types, and
+is byte-identical for that vocabulary, so a regenerated stub shows the
+vocabulary movement as an ordinary diff. It carries no authority: the SDK still
+refuses a world whose orientation has moved.
+
+The workspace keeps one at `.cruxible/world.pyi`, beside the floor. `cruxible
+init` and `workspace attach` write it the first time; with floor delivery on,
+the daemon keeps it current as part of each floor refresh, re-rendering it only
+when an accepted generation changed the vocabulary (it reads only the change
+records since the generation it last checked, and writes the file only when its
+bytes differ). With delivery off, `cruxible stub --out .cruxible/world.pyi` is
+the refresh.
 
 ## since
 
@@ -3498,7 +3509,8 @@ cruxible floor delivery STATE [--instance-id ID] [--json]
 
 The floor has one writer. A local daemon with a registered workspace and
 delivery on writes it after every accepted generation (the `floor-refresh`
-Trigger), and `floor export` over its socket only asks it to deliver now; over
+Trigger), together with the world stub `.cruxible/world.pyi` when that
+generation changed the vocabulary (see [stub](#stub)), and `floor export` over its socket only asks it to deliver now; over
 TCP the export refuses, naming `floor delivery off` as the way to write from the
 client. Everywhere else `floor export` is the pull. `floor delivery` (local
 socket only) chooses between the two.

@@ -22,6 +22,8 @@ from cruxible_client.contracts.errors import CruxibleError
 #: The workspace directory: client custody, sources, manifests and the floor.
 WORKSPACE_DIRECTORY = ".cruxible"
 FLOOR_PATH = ".cruxible/floor"
+#: The world stub: a `.pyi` typing the accepted vocabulary, beside the floor.
+WORLD_STUB_PATH = ".cruxible/world.pyi"
 #: What a 0.3-era per-project instance kept in the same directory name.
 LEGACY_INSTANCE_FILES = ("instance.json", "state.db")
 #: Relocates the daemon state root from ``~/.cruxible``.
@@ -144,6 +146,7 @@ __all__ = [
     "LEGACY_INSTANCE_FILES",
     "STATE_ROOT_ENV",
     "WORKSPACE_DIRECTORY",
+    "WORLD_STUB_PATH",
     "WorkspaceDirectoryConflict",
     "WorkspaceError",
     "daemon_state_root",

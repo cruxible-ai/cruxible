@@ -25,6 +25,11 @@ from cruxible_client.authoring.workspace import (
     sync_floor_directory,
     write_projection_index,
 )
+from cruxible_client.authoring.world_stub import (
+    render_vocabulary_stub,
+    stub_vocabulary_digest,
+    write_world_stub,
+)
 from cruxible_client.contracts.floor import (
     FloorHead,
     FloorManifest,
@@ -32,6 +37,7 @@ from cruxible_client.contracts.floor import (
     seal_floor_delta,
 )
 from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.workspace_layout import WORLD_STUB_PATH
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
@@ -46,14 +52,23 @@ from cruxible_core.runtime.admission import FLOOR_ADMISSION
 from cruxible_core.server.registry import InstanceRecord, get_registry
 from cruxible_core.service.floor.floor import service_export_playbill_floor
 from cruxible_core.service.floor.floor_delta import service_playbill_floor_delta
-from cruxible_core.service.floor.floor_index import advance_floor_index
+from cruxible_core.service.floor.floor_index import (
+    CLAIM_TYPES_PREFIX,
+    FloorRender,
+    advance_floor_index,
+)
 from cruxible_core.triggers.journal import internal_triggers, latest_sequence
 
 _STATE = DisposableState(
     "floor",
     "CREATE TABLE progress (id INTEGER PRIMARY KEY CHECK(id=1), covered INTEGER NOT NULL, "
     "target TEXT NOT NULL, completed TEXT, failed TEXT) STRICT;"
-    "CREATE TABLE outcomes (sequence INTEGER PRIMARY KEY, payload TEXT NOT NULL) STRICT;",
+    "CREATE TABLE outcomes (sequence INTEGER PRIMARY KEY, payload TEXT NOT NULL) STRICT;"
+    # The world stub last delivered into the workspace, and the generation the
+    # vocabulary was last checked through: the next refresh reads only the change
+    # records after it.
+    "CREATE TABLE stub (id INTEGER PRIMARY KEY CHECK(id=1), workspace TEXT NOT NULL, "
+    "generation INTEGER NOT NULL, git_oid TEXT NOT NULL, digest TEXT NOT NULL) STRICT;",
 )
 
 
@@ -105,6 +120,49 @@ def _post_apply_joins(workspace: Path) -> None:
     """
 
     write_projection_index(workspace)
+
+
+def _deliver_world_stub(instance: Any, render: FloorRender, root: Path) -> None:
+    """Keep the workspace's world stub current, rendering it only when the vocabulary moved.
+
+    The stub types the accepted vocabulary alone, so a generation that touched
+    no ClaimType leaves it as it is: the check reads only the change records
+    after the generation last checked (one ranged lookup), never the vocabulary
+    or the instance. A changed vocabulary, a new workspace, a rewound history,
+    a missing stub or a cold start renders it once, from the ClaimTypes the
+    floor index already holds; the file is written only when its bytes differ.
+    """
+
+    head = render.inputs.coordinate
+    generation = render.generation
+    with _STATE.open(instance) as connection:
+        assert connection is not None
+        kept = connection.execute("SELECT workspace,generation,git_oid,digest FROM stub").fetchone()
+    current = kept is not None and kept[0] == str(root) and (root / WORLD_STUB_PATH).is_file()
+    if current:
+        with instance.accepted_history_reader() as history:
+            current = (
+                int(kept[1]) <= generation
+                and history.generation(int(kept[1])).git_oid == kept[2]
+                and not history.touched_under(CLAIM_TYPES_PREFIX, int(kept[1]), generation)
+            )
+    if current:
+        digest = str(kept[3])
+    else:
+        rendered = render_vocabulary_stub(
+            (claim_type.model_dump(mode="json") for claim_type in render.inputs.types.values()),
+            coordinate=contracts.AcceptedCoordinate.model_validate(head.model_dump(mode="json")),
+        )
+        write_world_stub(root, rendered)
+        digest = stub_vocabulary_digest(rendered) or ""
+    with _STATE.open(instance) as connection:
+        assert connection is not None
+        connection.execute(
+            "INSERT INTO stub VALUES (1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+            "workspace=excluded.workspace,generation=excluded.generation,"
+            "git_oid=excluded.git_oid,digest=excluded.digest",
+            (str(root), generation, head.git_oid, digest),
+        )
 
 
 def _progress(
@@ -262,7 +320,7 @@ def _refresh_floor_admitted(
     written = None
     error = None
     try:
-        advance_floor_index(instance, head)
+        render = advance_floor_index(instance, head)
         if record is not None and record.floor_delivery and record.workspace_root is not None:
             root, floor = _floor_directory(
                 record.workspace_root, state_root=get_registry().state_root
@@ -284,6 +342,7 @@ def _refresh_floor_admitted(
                     floor,
                 )
             _post_apply_joins(root)
+            _deliver_world_stub(instance, render, root)
             assert applied.floor_digest is not None
             receipt = contracts.WorkspaceFloorWriteResult(
                 status="unchanged" if applied.status == "unchanged" else "written",

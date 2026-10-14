@@ -167,9 +167,10 @@ or revises a ClaimType, `migrate` succeeds one and decides, in the same change
 set, what happens to every Claim that depends on it (carry it to the new
 version, retire it, or say it again under the new vocabulary), and `upgrade`
 moves older ClaimTypes to the current format. Changing vocabulary disposes
-dependent Claims, so it is never a side effect of another write. After an
-activation that changes vocabulary, rerun `cruxible stub` if you use a typed
-stub.
+dependent Claims, so it is never a side effect of another write. With floor
+delivery on, the daemon rewrites the workspace's typed stub
+(`.cruxible/world.pyi`) when an activation changes vocabulary; with it off,
+rerun `cruxible stub`.
 
 Every payload argument accepts `-` for standard input, so a heredoc or a pipe
 works and no throwaway file lands on disk. Real artifacts stay files:
@@ -272,9 +273,10 @@ accepted generation, while delivery is on (`cruxible floor delivery on|off`;
 with delivery off, pull it with `cruxible floor export` or
 `cx.refresh_workspace()`.
 
-`cruxible stub --out world.pyi` writes the accepted vocabulary as Python types
-for an editor or a model. A stub describes one coordinate: regenerate it after
-activations that change vocabulary.
+`.cruxible/world.pyi` types the accepted vocabulary as Python types for an
+editor or a model. It depends on the vocabulary alone (Subjects are typed by
+kind), so floor delivery keeps it current by rewriting it only when the
+vocabulary changes; `cruxible stub --out PATH` writes one explicitly.
 
 ## Work queues
 

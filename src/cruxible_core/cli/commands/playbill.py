@@ -72,7 +72,7 @@ from cruxible_client.authoring.workspace import (
     write_workspace_floor,
     write_workspace_floor_delta,
 )
-from cruxible_client.authoring.world_stub import render_world_stub_for
+from cruxible_client.authoring.world_stub import render_world_stub_for, write_world_stub
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
@@ -782,6 +782,7 @@ def attach_workspace(
         allow_local=False,
         command_name="cruxible workspace attach",
     )
+    _write_world_stub(workspace, selected)
     result = contracts.WorkspaceAttachResult(
         instance_id=selected,
         workspace_root=str(workspace),
@@ -835,6 +836,23 @@ def detach_workspace(
         echo_preview_next(result.status, result.coordinate)
         return
     click.echo(f"Detached {result.workspace_root} from Cruxible host {selected}")
+
+
+def _write_world_stub(workspace: Path, instance_id: str) -> None:
+    """Write the world stub into a workspace the first time it is bound to a host.
+
+    With floor delivery on, the daemon keeps it current from then on; `cruxible
+    stub` writes it explicitly.
+    """
+
+    rendered = _dispatch_cli(
+        lambda client: render_world_stub_for(client, instance_id, workspace=workspace),
+        lambda: None,
+        allow_local=False,
+        command_name="cruxible stub",
+    )
+    if rendered is not None:
+        write_world_stub(workspace, rendered)
 
 
 def _active_server_transport() -> str:
@@ -1187,6 +1205,8 @@ def init_playbill(
         written_by="cruxible init",
     )
     _remember_principal_settings(result.instance_id, principal_id, settings, activate=True)
+    if git_workspace is not None:
+        _write_world_stub(git_workspace, result.instance_id)
     if output_json:
         _emit_json({**_json_receipt(result), "owner_settings_path": str(settings)})
         return
@@ -7488,12 +7508,15 @@ def orient(
 )
 @handle_errors
 def world_stub(out_path: str | None) -> None:
-    """Write a .pyi stub typing this instance's accepted world.
+    """Write a .pyi stub typing this instance's accepted vocabulary.
 
     A world is discovered at runtime, so an editor and a model both see `Any`
-    where the instance's own kinds, Subjects and predicates are. This writes
-    them down as types at exactly one accepted coordinate, which the stub names
-    in its header. Regenerate it after every activation.
+    where the instance's own kinds, predicates and enum members are. This
+    writes them down as types; Subjects are typed by kind, never one attribute
+    each, so the stub moves only when the vocabulary does, and its header names
+    the vocabulary's digest. `cruxible init` and `workspace attach` write it to
+    .cruxible/world.pyi, and with floor delivery on the daemon keeps that file
+    current; this is the explicit write (standard output, or --out).
     """
 
     rendered = _server_call(

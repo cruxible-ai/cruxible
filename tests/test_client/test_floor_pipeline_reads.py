@@ -218,7 +218,9 @@ def test_git_info_fifo_swap_refuses_or_persists_through_the_held_descriptor(
             assert (held / "exclude").read_bytes() == old_bytes
         else:
             assert call_with_fifo_timeout(info, write)[1].status == "written"
-            assert (held / "exclude").read_bytes() == old_bytes + b"/.cruxible/coverage.json\n"
+            assert (held / "exclude").read_bytes() == (
+                old_bytes + b"/.cruxible/coverage.json\n/.cruxible/world.pyi\n"
+            )
             assert (held / "exclude").stat().st_mode & 0o777 == 0o640
             assert sorted(path.name for path in held.iterdir()) == ["exclude"]
     finally:

@@ -807,7 +807,7 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
 
     assert result.exit_code == 0, result.output
     assert result.stderr == ""
-    assert result.stdout.startswith("# playbill-world-stub-v1:")
+    assert result.stdout.startswith("# playbill-world-stub-v2:")
     assert "class _W_sec__vuln__severity(ClaimTypeRef):" in result.stdout
     # The leaf reaches the client through the client package's own sanctioned
     # entry point, not through a private constructor.

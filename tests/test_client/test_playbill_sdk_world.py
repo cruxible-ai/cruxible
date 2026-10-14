@@ -35,7 +35,7 @@ from cruxible_client.authoring.world import (
     WorldClaimType,
     WorldStructureError,
 )
-from cruxible_client.authoring.world_stub import STUB_HEADER_TAG
+from cruxible_client.authoring.world_stub import STUB_HEADER_TAG, stub_vocabulary_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from tests.test_client._read_fakes import ClaimTypeListing, ClaimTypeRead
 
@@ -864,7 +864,7 @@ def _resolution_policy() -> Any:
 # ---------------------------------------------------------------------------
 
 
-def test_the_stub_is_byte_identical_for_the_same_coordinate_and_moves_with_it(
+def test_the_stub_types_the_vocabulary_alone_and_is_byte_identical_across_coordinates(
     connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, client = connection
@@ -874,13 +874,20 @@ def test_the_stub_is_byte_identical_for_the_same_coordinate_and_moves_with_it(
     assert first == second
 
     assert first.startswith(f"# {STUB_HEADER_TAG}:")
-    assert f"#   git_oid          {'a' * 40}" in first
+    assert stub_vocabulary_digest(first) is not None
+    assert "a" * 40 not in first
     # The emitted classes inherit no runtime class carrying `__getattr__`, which
     # is what makes an undeclared name a type error rather than `Any`.
     assert "class _W_sec__vuln__severity(ClaimTypeRef):" in first
     assert "    high: LiteralValue" in first
     assert "    low: LiteralValue" in first
-    assert "    cryptography: _S_sec__package" in first
+    # Subjects are typed by kind, never one attribute each: the stub reads no
+    # Subject and does not grow with them.
+    assert "cryptography" not in first
+    assert "    def __getitem__(self, subject_id: str) -> _S_sec__package: ..." in first
+    assert "    def __iter__(self) -> Iterator[_S_sec__package]: ..." in first
+    assert "    def __contains__(self, subject_id: object) -> bool: ..." in first
+    assert client.subject_queries == []
     assert "class _W_sec__vulnerability:" in first
     assert "class _S_sec__vulnerability(SubjectRef):" in first
     assert "    severity: tuple[ClaimView, ...]" in first
@@ -891,11 +898,10 @@ def test_the_stub_is_byte_identical_for_the_same_coordinate_and_moves_with_it(
     assert "cve-2026-69247" not in first
     assert "# object_kind=literal cardinality=one referent_sensitivity=identity" in first
 
+    # The head moved but the vocabulary did not: the stub is the same bytes.
     client.coordinate = _MOVED_COORDINATE
     playbill.refresh()
-    moved = playbill.world().stub()
-    assert moved != first
-    assert f"#   git_oid          {'b' * 40}" in moved
+    assert playbill.world().stub() == first
 
 
 def test_a_v7_predicate_carries_its_meaning_into_the_world_and_the_stub(

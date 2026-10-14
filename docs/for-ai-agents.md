@@ -153,9 +153,11 @@ predicates=...)` returns values and verdicts without full Claim views, and
 `cx.query(kind, where=[...], select=[...])`. A World is pinned to the
 coordinate it was read at and stays readable when the live client advances.
 
-`cruxible stub --out world.pyi` writes the vocabulary as closed Python types,
-stamped with its coordinate, so an editor or a model completes real names
-instead of `Any`. Regenerate it after any activation that changes vocabulary.
+`.cruxible/world.pyi` holds the vocabulary as closed Python types, stamped with
+its vocabulary digest, so an editor or a model completes real names instead of
+`Any`. Subjects are typed by kind (`world.<kind>["<id>"]`), so the stub stays
+small and changes only with the vocabulary; floor delivery keeps it current,
+and `cruxible stub --out PATH` writes one explicitly.
 
 ## Write values
 

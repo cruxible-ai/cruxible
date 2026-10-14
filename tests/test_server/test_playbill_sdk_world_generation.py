@@ -19,7 +19,11 @@ from cruxible_client.authoring.sdk_types import (
     PendingClaimTypeRef,
     PendingSubjectRef,
 )
-from cruxible_client.authoring.world_stub import STUB_HEADER_TAG
+from cruxible_client.authoring.world_stub import (
+    STUB_HEADER_TAG,
+    render_vocabulary_stub,
+    stub_vocabulary_digest,
+)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.claim_types import ClaimType
@@ -326,7 +330,7 @@ def test_the_world_reads_the_accepted_vocabulary_and_refuses_what_it_does_not_na
         world.sec.package["click"]
 
 
-def test_the_cli_leaf_writes_a_coordinate_stamped_stub_for_the_live_world(
+def test_the_cli_leaf_writes_a_vocabulary_stub_the_daemon_renders_identically(
     connection: tuple[Cruxible, TestClient, str, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -353,9 +357,23 @@ def test_the_cli_leaf_writes_a_coordinate_stamped_stub_for_the_live_world(
     assert result.exit_code == 0, result.output
     rendered = out_path.read_text(encoding="utf-8")
     assert rendered.startswith(f"# {STUB_HEADER_TAG}:")
-    assert f"#   git_oid          {playbill.coordinate.git_oid}" in rendered
+    assert stub_vocabulary_digest(rendered) is not None
+    assert playbill.coordinate.git_oid not in rendered
     assert "class _W_sec__vuln__severity(ClaimTypeRef):" in rendered
     assert "    high: LiteralValue" in rendered
     assert rendered == playbill.world().stub()
     # The stub the daemon's own world renders is a file a type checker reads.
     ast.parse(rendered)
+    # Floor delivery renders it from the ClaimTypes its floor index holds, with
+    # no client; the bytes are the ones `cruxible stub` wrote.
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from cruxible_core.service.floor.floor_index import advance_floor_index
+
+    held = advance_floor_index(get_playbill_manager().get(instance_id)).inputs.types
+    assert (
+        render_vocabulary_stub(
+            (claim_type.model_dump(mode="json") for claim_type in held.values()),
+            coordinate=playbill.coordinate,
+        )
+        == rendered
+    )
