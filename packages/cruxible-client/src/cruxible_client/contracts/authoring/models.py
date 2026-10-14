@@ -2236,9 +2236,12 @@ class ProjectionCheckResult(_StrictAuthoringModel):
     results: tuple[BlockSyncReadResult, ...]
 
 
+#: ``rendered``: a stale block whose body is its query's rendering, re-rendered
+#: from the query at the head and repinned (`block sync` without ``--check``).
 BlockSyncOutcome: TypeAlias = Literal[
     "unchanged",
     "stale",
+    "rendered",
     "dirty",
     "detached",
     "would_detach",
@@ -2324,8 +2327,10 @@ class BlockSyncResult(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _summary_shape(self) -> "BlockSyncResult":
-        changed = {item.path for item in self.items if item.outcome == "detached"}
-        prospective = any(item.outcome in {"detached", "would_detach"} for item in self.items)
+        changed = {item.path for item in self.items if item.outcome in {"detached", "rendered"}}
+        prospective = any(
+            item.outcome in {"detached", "would_detach", "rendered"} for item in self.items
+        )
         # Currency policy gates drift; integrity refusals always fail the check.
         refused = any(item.blocking for item in self.items)
         if self.changed_file_count != len(changed):

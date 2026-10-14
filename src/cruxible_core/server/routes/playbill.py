@@ -73,10 +73,10 @@ from cruxible_core.server.playbill_request_models import (
     AuthoringSubmitRequest,
     BlockDeclareRequest,
     BlockDepublishRequest,
+    BlockObserveRequest,
     CompilerUpgradeRequest,
     CurationAcceptFixedRequest,
     CurationListRequest,
-    CurationObserveRequest,
     CurationOverruleRequest,
     CurationSuppressRequest,
     CurationUnsuppressRequest,
@@ -889,6 +889,20 @@ def authoring_intent_status(
 
 
 @router.post(
+    "/{instance_id}/blocks/observe",
+    response_model=contracts.BlockObserveResult,
+)
+def observe_playbill_blocks(
+    instance_id: str,
+    req: BlockObserveRequest,
+) -> contracts.BlockObserveResult:
+    return playbill_api.playbill_block_observe(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json"),
+    )
+
+
+@router.post(
     "/{instance_id}/blocks/declare",
     response_model=contracts.BlockDeclareResult,
 )
@@ -1302,20 +1316,6 @@ def curation_unsuppress(
     req: CurationUnsuppressRequest,
 ) -> contracts.CurationActionResult:
     return playbill_api.playbill_curation_unsuppress(
-        resolve_server_instance_id(instance_id),
-        request=req.model_dump(mode="json"),
-    )
-
-
-@router.post(
-    "/{instance_id}/curation/observe",
-    response_model=contracts.CurationObserveResult,
-)
-def curation_observe(
-    instance_id: str,
-    req: CurationObserveRequest,
-) -> contracts.CurationObserveResult:
-    return playbill_api.playbill_curation_observe(
         resolve_server_instance_id(instance_id),
         request=req.model_dump(mode="json"),
     )

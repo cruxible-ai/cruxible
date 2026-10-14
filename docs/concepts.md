@@ -306,9 +306,10 @@ either:
 
 Both are governed the same way. When the state behind a block moves, `next`
 reports it (`projection_backing_stale`, or `projection_dirty` when someone
-edited the block's text) and `block sync` shows it; you re-check it, and
-rewrite or repin it. Only a rendered block can regenerate itself; an authored
-one needs only the staleness signal. See [Projection
+edited the block's text) and `block sync` shows it. A stale rendered block
+regenerates itself: `block sync` re-renders it from its query and repins it.
+An authored one needs only the staleness signal: you re-check it, and rewrite
+or repin it. See [Projection
 blocks](declared-blocks.md).
 
 ## Predictions

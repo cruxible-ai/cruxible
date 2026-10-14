@@ -1,25 +1,14 @@
-"""CLI curation: list is a pure read, observe records one explicit local scan."""
+"""CLI curation: list is a pure read; block sync and repin record what churn reads."""
 
 from __future__ import annotations
 
-import hashlib
-import json
-from pathlib import Path
 from typing import Any
 
 import pytest
 from click.testing import CliRunner
 
 from cruxible_client import contracts
-from cruxible_client.authoring.blocks import render_projection_opening
-from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.declared_blocks import (
-    ProjectionBlockStampV1,
-    ProjectionClaimBacking,
-)
-from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
-from cruxible_core.service.discovery.curation import PlaybillCurationObserveRequestV1
 
 COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
@@ -100,128 +89,9 @@ def test_cli_curation_list_is_one_read_that_prints_each_item(
     assert values["access_profile"]["profile_id"] == "cli-curation"
 
 
-def test_cli_curation_observe_scans_a_real_catalog_and_declared_block(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    playbill_dir = tmp_path / ".cruxible"
-    playbill_dir.mkdir()
-    (playbill_dir / "sources.yaml").write_text(
-        "tag: playbill-source-catalog-v1\n"
-        "catalog_kind: portable\n"
-        "entries:\n"
-        "  - name: corpus.runbook\n"
-        "    locator: runbook.md\n"
-        "    document_id: runbook\n"
-        "    document_kind: runbook\n"
-        "    title: Runbook\n"
-        "    media_type: text/markdown\n"
-        "    governance_scope: [Document:runbook]\n",
-        encoding="utf-8",
-    )
-    body = b"status: ready\n"
-    stamp = ProjectionBlockStampV1(
-        source_id="corpus.runbook",
-        block_id="status",
-        declared_generation=1,
-        declared_coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
-        backing=(
-            ProjectionClaimBacking(
-                identity=ArtifactIdentity(kind="Claim", name="CLM-existing"),
-                statement_digest="sha256:" + "7" * 64,
-            ),
-        ),
-        body_digest="sha256:" + hashlib.sha256(body).hexdigest(),
-    )
-    (tmp_path / "runbook.md").write_bytes(
-        render_projection_opening(stamp) + body + b"<!-- /cruxible:block:status -->\n"
-    )
-    seen: list[dict[str, object]] = []
-
-    class CatalogClient:
-        def resolve_coverage(self, instance_id: str, **values: Any) -> contracts.CoverageResult:
-            assert instance_id == "inst"
-            (source,) = values["observations"]
-            assert source["source"]["identity"] == "corpus.runbook"
-            return contracts.CoverageResult(
-                coordinate=COORDINATE,
-                result={
-                    "tag": "playbill-coverage-result-v3",
-                    "at": COORDINATE.model_dump(mode="json"),
-                    "access_profile": {
-                        "tag": "playbill-coverage-access-profile-v1",
-                        "profile_id": "cruxible.coverage.read",
-                        "permitted_access_classes": ["instance", "public"],
-                        "disclose_restricted_existence": True,
-                    },
-                    "spans": [
-                        {
-                            "tag": "playbill-coverage-span-result-v3",
-                            "request": {"source": source["source"]},
-                            "health": "complete",
-                            "ambiguous_occurrence_count": 0,
-                            "omitted_card_count": 0,
-                            "cards": [],
-                            "commitment_scan_proofs": [],
-                            "citation_window_observations": [],
-                        }
-                    ],
-                },
-            )
-
-        def observe_curation(
-            self,
-            instance_id: str,
-            *,
-            workspace_observation: object,
-            dry_run: bool | None = None,
-            at: str | None = None,
-        ) -> contracts.CurationObserveResult:
-            assert instance_id == "inst"
-            assert isinstance(workspace_observation, dict)
-            (source,) = workspace_observation["source_observations"]
-            assert source["tag"] == "playbill-next-source-observation-v4"
-            assert source["document_id"] == "runbook"
-            assert source["scan_notes"] == []
-            assert source["commitment_scan_proofs"] == []
-            assert len(source["marker_summaries"]) == 1
-            PlaybillCurationObserveRequestV1.model_validate(
-                {"workspace_observation": workspace_observation, "dry_run": dry_run, "at": at}
-            )
-            seen.append(workspace_observation)
-            return contracts.CurationObserveResult(
-                coordinate=COORDINATE,
-                generation=1,
-                observation_coverage={
-                    "tag": "playbill-curation-observation-coverage-v1",
-                    "source_count": 1,
-                    "observed_block_count": 1,
-                    "omitted_source_count": 0,
-                    "omissions": [],
-                },
-            )
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: CatalogClient())
-    base = [
-        "--server-url",
-        "https://curation.example.test",
-        "--instance-id",
-        "inst",
-        "curation",
-        "observe",
-        "--workspace-root",
-        str(tmp_path),
-    ]
-
-    text_result = CliRunner().invoke(cli, base)
-    json_result = CliRunner().invoke(cli, [*base, "--json"])
-
-    assert text_result.exit_code == 0, text_result.output
-    assert "Recorded 1 declared block(s) at generation 1." in text_result.output
-    assert json_result.exit_code == 0, json_result.output
-    payload = json.loads(json_result.output)
-    assert payload["observation_coverage"]["observed_block_count"] == 1
-    assert len(seen) == 2
+def test_curation_observe_is_gone_block_sync_and_repin_record_instead() -> None:
+    result = CliRunner().invoke(cli, ["curation", "observe", "--help"])
+    assert result.exit_code == 2
 
 
 @pytest.mark.parametrize(

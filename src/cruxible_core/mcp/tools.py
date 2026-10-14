@@ -1560,18 +1560,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_curation_observe(
-        instance_id: InstanceId = None,
-        *,
-        dry_run: DryRun = None,
-        at: PreviewAt = None,
-    ) -> contracts.CurationObserveResult:
-        """Record this workspace's declared blocks for block-churn detection."""
-        return handlers.handle_playbill_curation_observe(
-            require_instance_id(instance_id), dry_run=dry_run, at=at
-        )
-
-    @_tool
     def cruxible_audit(
         instance_id: InstanceId = None,
         *,

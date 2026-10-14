@@ -756,11 +756,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "curation_duplicates",
                 "List possible duplicates of one kind for an agent to resolve.",
             ),
-            "observe": _command(
-                "playbill",
-                "curation_observe",
-                "Record this workspace's declared blocks for block-churn detection.",
-            ),
             "overrule": _command(
                 "playbill", "curation_overrule", "Close an item as not applying, permanently."
             ),

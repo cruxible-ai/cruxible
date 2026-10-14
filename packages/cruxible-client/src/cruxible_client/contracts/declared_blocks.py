@@ -385,6 +385,54 @@ class ProjectionMarkerSummary(_StrictDeclaredBlockModel):
         return self
 
 
+#: Why a page's declared blocks were only partly readable: a marker that does not
+#: parse (no block on the page is read), or a block with no stamp yet (skipped).
+DeclaredBlockPageNote: TypeAlias = Literal[
+    "projection_block_unstamped", "projection_marker_invalid"
+]
+
+
+class DeclaredBlockPageObservation(_StrictDeclaredBlockModel):
+    """One workspace page's stamped blocks as a client read them, for block-churn detection.
+
+    The daemon never reads the workspace, so `block sync` and `block repin`
+    send what they read of each page they touched: its digest, and each
+    stamped block's marker summary (stamp, body digest, byte window).
+    """
+
+    tag: Literal["playbill-declared-block-page-observation-v1"] = (
+        "playbill-declared-block-page-observation-v1"
+    )
+    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    #: The Document the page's catalog entry compiles to; None for evidence-only.
+    document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
+    observed_source_digest: str
+    byte_length: int = Field(ge=0)
+    marker_summaries: tuple[ProjectionMarkerSummary, ...] = ()
+    marker_notes: tuple[DeclaredBlockPageNote, ...] = ()
+
+    @field_validator("observed_source_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _page(self) -> DeclaredBlockPageObservation:
+        ids = tuple(marker.stamp.block_id for marker in self.marker_summaries)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("declared block summaries must be sorted and unique by block ID")
+        for marker in self.marker_summaries:
+            if marker.stamp.source_id != self.source_id:
+                raise ValueError("a declared block summary names a different source")
+            if marker.end_byte > self.byte_length:
+                raise ValueError("a declared block summary window escapes its page")
+        notes = self.marker_notes
+        if notes != tuple(sorted(set(notes), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("declared block page notes must be sorted and unique")
+        return self
+
+
 class ProjectionMarkerError(CruxibleError):
     code = "cruxible.projection.marker_invalid"
 
@@ -967,6 +1015,8 @@ class BlockRepinResult(BaseModel):
 
 __all__ = [
     "BlockRepinResult",
+    "DeclaredBlockPageNote",
+    "DeclaredBlockPageObservation",
     "MAX_PROJECTION_CARDS_PER_SOURCE",
     "MAX_PROJECTION_COVERAGE_BINDINGS",
     "PROJECTION_MARKER_GRAMMAR",

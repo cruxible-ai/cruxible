@@ -29,6 +29,7 @@ from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeRequest,
     ClaimTypeUpgradeResult,
 )
+from cruxible_client.contracts.declared_blocks import DeclaredBlockPageObservation
 from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, DuplicatesAuditResult
 from cruxible_client.contracts.errors import (
     SinceRequestInvalid,
@@ -328,6 +329,25 @@ class CruxibleClient:
             json={"stamp": dict(stamp)},
         )
         return self._parse_model(response, contracts.BlockDeclareResult)
+
+    def observe_blocks(
+        self,
+        instance_id: str,
+        *,
+        pages: Sequence[DeclaredBlockPageObservation],
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> contracts.BlockObserveResult:
+        """Record the declared blocks read on these pages, for block-churn detection."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/blocks/observe",
+            json={
+                "tag": "playbill-block-observe-request-v1",
+                "pages": [page.model_dump(mode="json") for page in pages],
+                **_change_control(dry_run, at),
+            },
+        )
+        return self._parse_model(response, contracts.BlockObserveResult)
 
     def depublish_block(
         self,
@@ -1713,25 +1733,6 @@ class CruxibleClient:
             json=request.model_dump(mode="json", exclude_none=True),
         )
         return self._parse_model(response, DuplicatesAuditResult)
-
-    def observe_curation(
-        self,
-        instance_id: str,
-        *,
-        workspace_observation: Mapping[str, Any],
-        dry_run: bool | None = None,
-        at: str | None = None,
-    ) -> contracts.CurationObserveResult:
-        """Record one workspace scan's declared blocks for block-churn detection."""
-        response = self._client.post(
-            f"/api/v1/{instance_id}/curation/observe",
-            json={
-                "tag": "playbill-curation-observe-request-v1",
-                "workspace_observation": dict(workspace_observation),
-                **_change_control(dry_run, at),
-            },
-        )
-        return self._parse_model(response, contracts.CurationObserveResult)
 
     def audit(
         self,

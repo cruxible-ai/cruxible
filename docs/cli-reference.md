@@ -2744,7 +2744,7 @@ cruxible block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
   [--evaluation-time TS] [--artifact ID]... [--currency-policy warn|require_current]
   [--clear-claims] [--clear-queries] [--clear-artifacts] [--render] [--dry-run]
-cruxible block sync [PATH]... [--all] [--workspace-root DIR] [--json]
+cruxible block sync [PATH]... [--all] [--workspace-root DIR] [--check] [--json]
 cruxible block detach PATH... [--workspace-root DIR] [--dry-run|--commit] [--at DIGEST] [--json]
 cruxible block depublish SOURCE_ID BLOCK_ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
@@ -2753,7 +2753,8 @@ Blocks are stamped, and nothing regenerates them on its own. The workflow: write
 the markers and the prose (or `repin --render` for a rendered table or list),
 `repin` to stamp, let `next` or `block sync` report a block stale or dirty,
 re-check it and repin; `block detach` and `block depublish` when its backings
-are gone. The client, not the daemon, computes every stamp: `repin` reads the
+are gone. A rendered block is the exception: it is derived from state, so
+`block sync` re-renders a stale one itself (below). The client, not the daemon, computes every stamp: `repin` reads the
 backings, writes the marker and then declares the block to the instance.
 `--render` writes the body from the block's one `--query` backing: a Markdown
 table of the result Subjects and their projected fields, or a bulleted list of
@@ -2833,7 +2834,7 @@ On MCP the same adapter runs in the MCP server process:
 `cruxible_block_repin` takes the block and its page (`file`,
 workspace-relative, or `source`, its catalog id) and computes the stamp there,
 so an agent never builds one (`render: true` is `--render`);
-`cruxible_block_sync` is `block sync`, a read that edits no page. Detaching is
+`cruxible_block_sync` is `block sync --check`, a read that edits no page. Detaching is
 `block detach` and the write-tier `cruxible_block_detach` (`files`, `dry_run`,
 `at`): its preview
 reports what the edit would change and is pinned to the pages' bytes, and a
@@ -2881,8 +2882,17 @@ check with diagnostic details. A dirty body does not suppress dependency checks,
 and one failed dependency does not hide the others. Repin acknowledges a reviewed
 body and refreshes its dependencies; there is no separate accept-local bypass.
 
-`block sync` writes nothing. Advisory findings remain visible without a nonzero
-exit; `require_current` findings and integrity errors fail the check. An unreadable or ambiguous lineage remains an incomplete check, with
+Without `--check`, `block sync` converges what is mechanical. A stale block
+whose body is its query's rendering -- one query backing, an unedited body, and
+that query evaluated again at the stamp's own coordinate and evaluation time
+renders exactly the stamped body -- is derived from state: sync re-renders it
+from the query at the head, writes the page (whole-file compare-and-swap) and
+repins it, reporting `rendered`. Stale prose is only reported: repinning it is
+the author declaring the text right. Sync then records the declared blocks of
+the pages it checked for block-churn detection (as every `block repin` does for
+its page), which needs governed write. `--check` is the pure report: it
+re-renders nothing, records nothing and writes nothing. Advisory findings
+remain visible without a nonzero exit; `require_current` findings and integrity errors fail the check. An unreadable or ambiguous lineage remains an incomplete check, with
 exact successor candidates where available. `repin --backing DIGEST` selects a
 live successor explicitly.
 
@@ -3125,7 +3135,6 @@ the row.
 ~~~text
 cruxible curation list [--access-profile FILE] [--limit N] [--cursor CURSOR] [--json]
 cruxible curation duplicates --kind KIND [--limit N] [--cursor CURSOR] [--json]
-cruxible curation observe [--workspace-root PATH] [--dry-run|--commit] [--at DIGEST] [--json]
 cruxible curation overrule ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT [--attribution-ref REF]...
   [--dry-run|--commit] [--at OID] [--json]
@@ -3150,14 +3159,15 @@ at the fire's recorded instant. `curation list` is a pure read of that queue: it
 pattern kind, subject and `latest_event_digest` (what every ruling needs), when
 detection last ran (`current`, `behind` or `never_run`) and whether its Trigger
 is live, and the detectors that cannot run here and why (dead vocabulary needs
-`CRUXIBLE_CONSUMPTION_RECEIPTS=on`; block churn needs a recorded workspace scan).
+`CRUXIBLE_CONSUMPTION_RECEIPTS=on`; block churn needs recorded block observations).
 With no such Trigger, `curation list` reports detection `never_run` and its
 Trigger `missing`.
 
 Block churn is the one detector that reads the workspace, which the daemon never
-does: `curation observe` scans the workspace's declared blocks client-side and
-records them, with the scan's accounting, for detection to read when it next
-runs.
+does: `block repin` and `block sync` (without `--check`) record the declared
+blocks of the pages they touched, with their accounting, for detection to read
+when it next runs. Nothing else records them, and nothing reads the whole
+workspace to do it.
 
 The queue is paged (default 25 items, at most 200); a cut page has
 `truncated: true` and a `next_cursor` for `--cursor`, which continues only while

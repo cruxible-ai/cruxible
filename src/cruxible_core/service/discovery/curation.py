@@ -16,7 +16,10 @@ from cruxible_client.contracts import (
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
-from cruxible_client.contracts.declared_blocks import ProjectionMarkerSummary
+from cruxible_client.contracts.declared_blocks import (
+    DeclaredBlockPageObservation,
+    ProjectionMarkerSummary,
+)
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -50,12 +53,7 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import change_entry, change_scope
-from cruxible_core.service.discovery.next import (
-    NextAccessProfileInvalid,
-    NextSourceObservationV3,
-    NextWorkspaceObservation,
-    NextWorkspaceObservationInvalid,
-)
+from cruxible_core.service.discovery.next import NextAccessProfileInvalid
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.service.list_pages import (
     ListCursorStale,
@@ -74,8 +72,6 @@ PlaybillCurationObservationOmissionReason: TypeAlias = Literal[
     "marker_coordinate_unaccepted",
     "projection_block_unstamped",
     "projection_marker_invalid",
-    "source_observation_not_v3",
-    "source_scan_incomplete",
 ]
 
 
@@ -140,29 +136,47 @@ def validate_playbill_curation_list_request(
         raise CurationError(f"{CurationError.code}: {validation_summary(exc)}") from exc
 
 
-class PlaybillCurationObserveRequestV1(_StrictCurationModel):
-    """Record the declared blocks a client scan of its workspace saw, for block churn."""
+class BlockObservationInvalid(CurationError):
+    code = "cruxible.block.observation_invalid"
 
-    tag: Literal["playbill-curation-observe-request-v1"] = "playbill-curation-observe-request-v1"
-    workspace_observation: NextWorkspaceObservation
+
+#: The most pages one block observation records; `block sync --all` sends its pages in
+#: batches of this size.
+BLOCK_OBSERVE_MAX_PAGES = 256
+
+
+class PlaybillBlockObserveRequestV1(_StrictCurationModel):
+    """Record the declared blocks a client read on the pages it touched, for block churn."""
+
+    tag: Literal["playbill-block-observe-request-v1"] = "playbill-block-observe-request-v1"
+    pages: tuple[DeclaredBlockPageObservation, ...] = Field(
+        min_length=1, max_length=BLOCK_OBSERVE_MAX_PAGES
+    )
     dry_run: DryRun = None
     at: PreviewAt = None
 
+    @field_validator("pages")
+    @classmethod
+    def _pages(
+        cls, value: tuple[DeclaredBlockPageObservation, ...]
+    ) -> tuple[DeclaredBlockPageObservation, ...]:
+        ids = tuple(page.source_id for page in value)
+        if len(set(ids)) != len(ids):
+            raise ValueError("a block observation names each page once")
+        return value
 
-def validate_playbill_curation_observe_request(
-    value: PlaybillCurationObserveRequestV1 | Mapping[str, object],
-) -> PlaybillCurationObserveRequestV1:
-    if isinstance(value, PlaybillCurationObserveRequestV1):
+
+def validate_playbill_block_observe_request(
+    value: PlaybillBlockObserveRequestV1 | Mapping[str, object],
+) -> PlaybillBlockObserveRequestV1:
+    if isinstance(value, PlaybillBlockObserveRequestV1):
         return value
     try:
-        return PlaybillCurationObserveRequestV1.model_validate(value)
+        return PlaybillBlockObserveRequestV1.model_validate(value)
     except ValidationError as exc:
-        roots = {str(item["loc"][0]) for item in exc.errors() if item["loc"]}
-        if "workspace_observation" in roots:
-            raise NextWorkspaceObservationInvalid(
-                f"{NextWorkspaceObservationInvalid.code}: {validation_summary(exc)}"
-            ) from exc
-        raise CurationError(f"{CurationError.code}: {validation_summary(exc)}") from exc
+        raise BlockObservationInvalid(
+            f"{BlockObservationInvalid.code}: {validation_summary(exc)}"
+        ) from exc
 
 
 class PlaybillCurationOverruleRequestV1(_StrictCurationModel):
@@ -408,9 +422,9 @@ class PlaybillCurationListResultV1(_StrictCurationModel):
         return self
 
 
-class PlaybillCurationObserveResultV1(_StrictCurationModel):
-    tag: Literal["playbill-curation-observe-result-v1"] = "playbill-curation-observe-result-v1"
-    #: ``would_record`` answers a preview: the scan was checked, nothing appended.
+class PlaybillBlockObserveResultV1(_StrictCurationModel):
+    tag: Literal["playbill-block-observe-result-v1"] = "playbill-block-observe-result-v1"
+    #: ``would_record`` answers a preview: the pages were checked, nothing appended.
     status: Literal["recorded", "would_record"] = "recorded"
     coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
@@ -461,7 +475,7 @@ def block_observation_id(observation: BlockObservationV1) -> str:
 def build_block_observation(
     *,
     document_identity: ArtifactIdentity,
-    source: NextSourceObservationV3,
+    source: DeclaredBlockPageObservation,
     marker: ProjectionMarkerSummary,
     scan_coordinate: AcceptedCoordinate,
     scan_generation: int,
@@ -498,14 +512,14 @@ def build_block_observation(
 
 
 def _generation(instance: PlaybillInstance, coordinate: AcceptedCoordinate) -> int:
-    matches = tuple(
-        item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    if len(matches) != 1:
+    # One indexed lookup, not a walk of the whole accepted history.
+    with instance.accepted_history_reader() as history:
+        location = history.generation_for_oid(coordinate.git_oid)
+    if location is None:
         raise CurationCoordinateNotAccepted(
             "curation requires the current replay-verified accepted coordinate"
         )
-    return matches[0]
+    return location.sequence
 
 
 def _valid_document_identity(
@@ -525,7 +539,7 @@ def _valid_document_identity(
 def _record_block_observations(
     instance: PlaybillInstance,
     *,
-    observation: NextWorkspaceObservation,
+    pages: tuple[DeclaredBlockPageObservation, ...],
     actor_context: GovernedActorContext,
     previewing: bool = False,
 ) -> PlaybillCurationObservationCoverageV1:
@@ -534,68 +548,55 @@ def _record_block_observations(
     generation = _generation(instance, coordinate)
     tree = ClaimVerdictReadContext(instance, accepted).tree
     counts: Counter[PlaybillCurationObservationOmissionReason] = Counter()
-    source_count = 0
     observed = 0
-    sources = observation.source_observations
-    if sources is not None:
-        for source in sources:
-            source_count += 1
-            if not isinstance(source, NextSourceObservationV3):
-                counts["source_observation_not_v3"] += 1
-                continue
-            if not source.scan_complete:
-                counts["source_scan_incomplete"] += 1
-                continue
-            if source.document_id is None:
-                counts["block_subject_unresolved"] += 1
-                continue
-            document_identity = _valid_document_identity(tree, source.document_id)
-            if document_identity is None:
-                counts["block_subject_unresolved"] += 1
-                continue
-            for note in source.marker_notes:
-                if note == "projection_block_unstamped":
-                    counts["projection_block_unstamped"] += 1
-                elif note == "projection_marker_invalid":
-                    counts["projection_marker_invalid"] += 1
-            for marker in source.marker_summaries:
-                try:
-                    instance.resolve_accepted_coordinate(
-                        git_oid=marker.stamp.declared_coordinate.git_oid,
-                        semantic_root=marker.stamp.declared_coordinate.semantic_root,
-                        generation_root=marker.stamp.declared_coordinate.generation_root,
-                        compiler_digest=marker.stamp.declared_coordinate.compiler_digest,
-                    )
-                except CruxibleError:
-                    counts["marker_coordinate_unaccepted"] += 1
-                    continue
-                block = build_block_observation(
-                    document_identity=document_identity,
-                    source=source,
-                    marker=marker,
-                    scan_coordinate=coordinate,
-                    scan_generation=generation,
-                    actor_context=actor_context,
+    for source in pages:
+        if source.document_id is None:
+            counts["block_subject_unresolved"] += 1
+            continue
+        document_identity = _valid_document_identity(tree, source.document_id)
+        if document_identity is None:
+            counts["block_subject_unresolved"] += 1
+            continue
+        for note in source.marker_notes:
+            counts[note] += 1
+        for marker in source.marker_summaries:
+            try:
+                instance.resolve_accepted_coordinate(
+                    git_oid=marker.stamp.declared_coordinate.git_oid,
+                    semantic_root=marker.stamp.declared_coordinate.semantic_root,
+                    generation_root=marker.stamp.declared_coordinate.generation_root,
+                    compiler_digest=marker.stamp.declared_coordinate.compiler_digest,
                 )
-                if previewing:
-                    observed += 1
-                    continue
-                instance.review_operational_store().append(
-                    family="block_observation",
-                    partition_id=(
-                        f"{document_identity.qualified}/{source.source_id}/{marker.stamp.block_id}"
-                    ),
-                    event_id=block.observation_id,
-                    payload=block,
-                    coordinate=coordinate,
-                    generation=generation,
-                    actor_context=actor_context,
-                    recorded_at=actor_context.timestamp,
-                )
+            except CruxibleError:
+                counts["marker_coordinate_unaccepted"] += 1
+                continue
+            block = build_block_observation(
+                document_identity=document_identity,
+                source=source,
+                marker=marker,
+                scan_coordinate=coordinate,
+                scan_generation=generation,
+                actor_context=actor_context,
+            )
+            if previewing:
                 observed += 1
+                continue
+            instance.review_operational_store().append(
+                family="block_observation",
+                partition_id=(
+                    f"{document_identity.qualified}/{source.source_id}/{marker.stamp.block_id}"
+                ),
+                event_id=block.observation_id,
+                payload=block,
+                coordinate=coordinate,
+                generation=generation,
+                actor_context=actor_context,
+                recorded_at=actor_context.timestamp,
+            )
+            observed += 1
 
     return PlaybillCurationObservationCoverageV1(
-        source_count=source_count,
+        source_count=len(pages),
         observed_block_count=observed,
         omitted_source_count=sum(counts.values()),
         omissions=tuple(
@@ -622,17 +623,18 @@ def _latest_block_scan(instance: PlaybillInstance) -> BlockScanV1 | None:
     return None
 
 
-def service_observe_playbill_curation_blocks(
+def service_observe_playbill_blocks(
     instance: PlaybillInstance,
     *,
-    request: PlaybillCurationObserveRequestV1,
+    request: PlaybillBlockObserveRequestV1,
     actor_context: GovernedActorContext,
-) -> PlaybillCurationObserveResultV1:
-    """Record the declared blocks one client workspace scan saw, and the scan's accounting.
+) -> PlaybillBlockObserveResultV1:
+    """Record the declared blocks a client read on the pages it touched, and their accounting.
 
     Block churn is the one detector that needs the workspace, which the daemon
-    never reads, so the client's scan is recorded here and detection reads it
-    when it next runs.
+    never reads, so `block sync` and `block repin` send what they read of each
+    page they touched; detection reads it when it next runs. The work is the
+    pages sent, never the workspace.
     """
 
     instance.require_writable()
@@ -644,17 +646,17 @@ def service_observe_playbill_curation_blocks(
             dry_run=request.dry_run,
             at=request.at,
             kind="direct",
-            operation="cruxible.curation.observe",
-            describe="recording a workspace block scan",
+            operation="cruxible.block.observe",
+            describe="recording the declared blocks of the pages a client read",
         ) as mode:
             if mode.previewing:
                 coverage = _record_block_observations(
                     instance,
-                    observation=request.workspace_observation,
+                    pages=request.pages,
                     actor_context=actor_context,
                     previewing=True,
                 )
-                return PlaybillCurationObserveResultV1(
+                return PlaybillBlockObserveResultV1(
                     status="would_record",
                     coordinate=coordinate,
                     generation=generation,
@@ -663,7 +665,7 @@ def service_observe_playbill_curation_blocks(
             with mode.committing():
                 coverage = _record_block_observations(
                     instance,
-                    observation=request.workspace_observation,
+                    pages=request.pages,
                     actor_context=actor_context,
                 )
                 placeholder = BlockScanV1.model_construct(
@@ -691,7 +693,7 @@ def service_observe_playbill_curation_blocks(
                     actor_context=actor_context,
                     recorded_at=actor_context.timestamp,
                 )
-        return PlaybillCurationObserveResultV1(
+        return PlaybillBlockObserveResultV1(
             coordinate=coordinate, generation=generation, observation_coverage=coverage
         )
 
@@ -1428,8 +1430,10 @@ __all__ = [
     "CurationResolvingProposalInvalid",
     "PlaybillCurationSuppressRequestV1",
     "PlaybillCurationUnsuppressRequestV1",
-    "PlaybillCurationObserveRequestV1",
-    "PlaybillCurationObserveResultV1",
+    "BLOCK_OBSERVE_MAX_PAGES",
+    "BlockObservationInvalid",
+    "PlaybillBlockObserveRequestV1",
+    "PlaybillBlockObserveResultV1",
     "PlaybillCurationDetectionV1",
     "PlaybillCurationInactiveDetectorV1",
     "BlockScanV1",
@@ -1442,8 +1446,8 @@ __all__ = [
     "service_overrule_playbill_curation",
     "service_suppress_playbill_curation",
     "service_unsuppress_playbill_curation",
-    "service_observe_playbill_curation_blocks",
+    "service_observe_playbill_blocks",
     "run_playbill_curation_detection",
     "validate_playbill_curation_list_request",
-    "validate_playbill_curation_observe_request",
+    "validate_playbill_block_observe_request",
 ]

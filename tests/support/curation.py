@@ -8,12 +8,12 @@ from typing import Any
 from cruxible_core.consumers.next.curation import CurationDetection, record_detection
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.service.discovery.curation import (
+    PlaybillBlockObserveRequestV1,
     PlaybillCurationListRequestV1,
     PlaybillCurationListResultV1,
-    PlaybillCurationObserveRequestV1,
     run_playbill_curation_detection,
     service_list_playbill_curation,
-    service_observe_playbill_curation_blocks,
+    service_observe_playbill_blocks,
 )
 
 
@@ -43,15 +43,15 @@ def detect_and_list(
     request: PlaybillCurationListRequestV1 | dict[str, Any],
     evaluation_time: datetime,
     actor_context: GovernedActorContext | None = None,
-    workspace_observation: Any = None,
+    pages: Any = None,
 ) -> PlaybillCurationListResultV1:
-    """Record a workspace scan (when given), run detection, then list: the old one-call road."""
+    """Record pages' declared blocks (when given), run detection, then list."""
 
-    if workspace_observation is not None:
+    if pages is not None:
         assert actor_context is not None
-        service_observe_playbill_curation_blocks(
+        service_observe_playbill_blocks(
             instance,
-            request=PlaybillCurationObserveRequestV1(workspace_observation=workspace_observation),
+            request=PlaybillBlockObserveRequestV1(pages=pages),
             actor_context=actor_context,
         )
     detect(instance, evaluation_time=evaluation_time)

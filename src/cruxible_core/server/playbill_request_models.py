@@ -23,6 +23,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.declared_blocks import (
+    DeclaredBlockPageObservation,
     ProjectionBlockStampAny,
     ReviewWorkspaceObservation,
 )
@@ -308,9 +309,11 @@ class CurationListRequest(_StrictPlaybillRequest):
     cursor: str | None = Field(default=None, max_length=4096)
 
 
-class CurationObserveRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-curation-observe-request-v1"] = "playbill-curation-observe-request-v1"
-    workspace_observation: dict[str, Any]
+class BlockObserveRequest(_StrictPlaybillRequest):
+    """The declared blocks a client read on the pages it touched, for block churn."""
+
+    tag: Literal["playbill-block-observe-request-v1"] = "playbill-block-observe-request-v1"
+    pages: tuple[DeclaredBlockPageObservation, ...]
     dry_run: DryRun = None
     at: PreviewAt = None
 

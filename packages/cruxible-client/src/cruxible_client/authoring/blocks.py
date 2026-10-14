@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -29,6 +29,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.claims import ClaimStatement, claim_statement_digest
 from cruxible_client.contracts.declared_blocks import (
+    DeclaredBlockPageObservation,
     ParsedProjectionBlock,
     ProjectionArtifactBacking,
     ProjectionBacking,
@@ -63,6 +64,7 @@ from cruxible_client.contracts.query.results import QueryResultRow
 from cruxible_client.contracts.repairs import RepairOperation, ServedRepair
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.workspace_layout import ensure_workspace_directory, workspace_path
+from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
 
@@ -395,8 +397,12 @@ def _result(items: Sequence[BlockSyncItem]) -> BlockSyncResult:
     )
     return BlockSyncResult(
         items=ordered,
-        changed_file_count=len({item.path for item in ordered if item.outcome == "detached"}),
-        would_change=any(item.outcome in {"detached", "would_detach"} for item in ordered),
+        changed_file_count=len(
+            {item.path for item in ordered if item.outcome in {"detached", "rendered"}}
+        ),
+        would_change=any(
+            item.outcome in {"detached", "would_detach", "rendered"} for item in ordered
+        ),
         has_refusals=any(item.blocking for item in ordered),
     )
 
@@ -692,6 +698,116 @@ def _sync_item_from_read_refusal(
     )
 
 
+#: Pages one block observation request carries (the daemon's ceiling).
+_OBSERVE_PAGE_BATCH = 256
+
+
+def declared_block_page(
+    root: Path, *, source_id: str, document_id: str | None, content: bytes
+) -> DeclaredBlockPageObservation:
+    """What one page's bytes declare: each stamped block's summary, and why any were unread."""
+
+    digest = _digest(content)
+    try:
+        blocks = parse_projection_blocks(
+            content,
+            source_id=source_id,
+            allow_bootstrap=True,
+            manifests=load_projection_manifests(root, content),
+        )
+    except (ProjectionMarkerError, ValueError):
+        return DeclaredBlockPageObservation(
+            source_id=source_id,
+            document_id=document_id,
+            observed_source_digest=digest,
+            byte_length=len(content),
+            marker_notes=("projection_marker_invalid",),
+        )
+    return DeclaredBlockPageObservation(
+        source_id=source_id,
+        document_id=document_id,
+        observed_source_digest=digest,
+        byte_length=len(content),
+        marker_summaries=tuple(
+            block.summary()
+            for block in sorted(blocks, key=lambda item: item.block_id.encode("utf-8"))
+            if block.stamp is not None
+        ),
+        marker_notes=(
+            ("projection_block_unstamped",) if any(block.stamp is None for block in blocks) else ()
+        ),
+    )
+
+
+def record_declared_blocks(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    root: Path,
+    sources: WorkspaceSources | None,
+    pages: Iterable[tuple[Path, str]],
+) -> int:
+    """Record the declared blocks of the pages this call touched, for block-churn detection.
+
+    Block churn is the one detector that needs the workspace, which the daemon
+    never reads; `block sync` and `block repin` send what they read of the
+    pages they touched (never the whole workspace), re-read now so a page they
+    just rewrote is recorded as written. Returns how many pages were sent.
+    """
+
+    observed: list[DeclaredBlockPageObservation] = []
+    for path, source_id in sorted(pages, key=lambda item: item[1].encode("utf-8")):
+        try:
+            content = read_projection_source(path)
+        except (OSError, ProjectionProcessingLimitExceeded):
+            continue
+        document_id: str | None = None
+        if sources is not None:
+            try:
+                document_id = sources.entry_for_source(source_id).document_id
+            except (ValueError, CruxibleError):
+                document_id = None
+        observed.append(
+            declared_block_page(root, source_id=source_id, document_id=document_id, content=content)
+        )
+    for start in range(0, len(observed), _OBSERVE_PAGE_BATCH):
+        client.observe_blocks(instance_id, pages=observed[start : start + _OBSERVE_PAGE_BATCH])
+    return len(observed)
+
+
+def _rendered_from_its_query(
+    client: CruxibleClient, instance_id: str, block: ParsedProjectionBlock
+) -> bool:
+    """Whether this block's body is its one query's rendering at the stamp it carries.
+
+    A rendered block (`block repin --render`) is a projection of state, so a
+    sync may re-render it; prose an author wrote is theirs to re-declare. The
+    bytes decide: the stamp's query, evaluated again at the stamp's own
+    coordinate and evaluation time, must render exactly the stamped body.
+    """
+
+    stamp = block.stamp
+    if stamp is None or block.body_digest != stamp.body_digest or len(stamp.backing) != 1:
+        return False
+    (backing,) = stamp.backing
+    if not isinstance(backing, ProjectionQueryBacking):
+        return False
+    try:
+        _declared, rows = _evaluated_query_backing(
+            client,
+            instance_id,
+            name=backing.identity.name,
+            parameters={item.name: item.value for item in backing.resolved_parameter_bindings},
+            coordinate=stamp.declared_coordinate,
+            evaluation_time=backing.declared_evaluation_time,
+        )
+    except (CoreError, ValueError):
+        # The stamp's coordinate no longer answers the query: nothing proves
+        # the body was rendered, so it stays the author's.
+        return False
+    return _digest(render_query_block_body(rows)) == stamp.body_digest
+
+
 def sync_projection_blocks(
     client: CruxibleClient,
     instance_id: str,
@@ -702,6 +818,7 @@ def sync_projection_blocks(
     check: bool = False,
     detach_paths: Sequence[str | Path] = (),
     observe_preimages: Callable[[Mapping[Path, bytes]], None] | None = None,
+    converge_at: datetime | None = None,
 ) -> BlockSyncResult:
     """Check all dependencies without authoring prose. Only ``detach_paths`` edits files.
 
@@ -710,6 +827,13 @@ def sync_projection_blocks(
     detach then replaces a page only if it still holds exactly those bytes
     (a whole-file compare-and-swap), so a caller that pins its commit to those
     bytes (R12 ``at``) can raise here and nothing is written.
+
+    ``converge_at`` (`block sync` without ``--check``) also converges what is
+    mechanical: each stale block whose body is its query's rendering is
+    re-rendered from that query at the head, evaluated at ``converge_at``, and
+    repinned (outcome ``rendered``); stale prose is still only reported. The
+    declared blocks of every page checked are then recorded for block-churn
+    detection. Without it the call writes nothing.
     """
 
     root = ensure_workspace_directory(Path(workspace).expanduser().resolve())
@@ -824,7 +948,11 @@ def sync_projection_blocks(
                     continue
                 selected[source.path] = source.source_id
     detach = bool(detach_paths)
+    if converge_at is not None and detach:
+        raise ProjectionSyncError("detaching blocks converges nothing else")
     prepared: list[tuple[Path, str, bytes, tuple[ParsedProjectionBlock, ...]]] = []
+    # Stale blocks a converging sync may re-render: (item index, source, block).
+    stale_rendered: list[tuple[int, str, ParsedProjectionBlock]] = []
     for path, source_id in sorted(selected.items(), key=lambda item: item[1].encode("utf-8")):
         relative = _relative_path(root, path)
         content = b""
@@ -1016,7 +1144,11 @@ def sync_projection_blocks(
                 continue
             # A held member moved under the block. No verb converges the prose
             # -- the author wrote it -- so the row names every member that moved
-            # and the repin that re-declares the list the block still means.
+            # and the repin that re-declares the list the block still means. A
+            # converging sync re-renders the block instead when its body is a
+            # rendering of its query (checked after every page is read).
+            if converge_at is not None and block.body_digest == stamp.body_digest:
+                stale_rendered.append((len(items), source_id, block))
             items.append(
                 BlockSyncItem(
                     path=relative,
@@ -1116,7 +1248,71 @@ def sync_projection_blocks(
                     reason="block_concurrent_edit",
                     detail={"message": str(exc)},
                 )
+    if converge_at is not None:
+        _converge(client, instance_id, root=root, items=items, stale=stale_rendered, at=converge_at)
+        record_declared_blocks(
+            client,
+            instance_id,
+            root=root,
+            sources=sources,
+            pages=[(path, source_id) for path, source_id, _content, _blocks in prepared],
+        )
     return _result(items)
+
+
+def _converge(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    root: Path,
+    items: list[BlockSyncItem],
+    stale: Sequence[tuple[int, str, ParsedProjectionBlock]],
+    at: datetime,
+) -> None:
+    """Re-render each stale block whose body is its query's rendering, in place in ``items``."""
+
+    for index, source_id, block in stale:
+        if not _rendered_from_its_query(client, instance_id, block):
+            continue
+        found = items[index]
+        try:
+            stamp = repin_projection_block(
+                client,
+                instance_id,
+                workspace=root,
+                source_id=source_id,
+                block_id=block.block_id,
+                evaluation_time=at,
+                render=True,
+                record_blocks=False,
+            )
+        except (ProjectionRepinError, ProjectionMarkerError, CoreError) as exc:
+            items[index] = BlockSyncItem(
+                path=found.path,
+                source_id=source_id,
+                block_id=block.block_id,
+                currency_policy=found.currency_policy,
+                outcome="refused",
+                reason="block_sync_failed",
+                repair=RepairOperation(
+                    operation="cruxible.block.repin",
+                    arguments={"source_id": source_id, "block_id": block.block_id},
+                ),
+                detail={**found.detail, "message": str(exc)},
+            )
+            continue
+        items[index] = BlockSyncItem(
+            path=found.path,
+            source_id=source_id,
+            block_id=block.block_id,
+            currency_policy=found.currency_policy,
+            outcome="rendered",
+            detail={
+                **found.detail,
+                "declared_generation": stamp.declared_generation,
+                "body_digest": stamp.body_digest,
+            },
+        )
 
 
 def repin_projection_block(
@@ -1137,6 +1333,7 @@ def repin_projection_block(
     compact: bool = True,
     render: bool = False,
     dry_run: bool = False,
+    record_blocks: bool = True,
 ) -> ProjectionBlockStamp:
     """Repin one block, optionally installing explicitly supplied agent-authored body bytes.
 
@@ -1148,6 +1345,9 @@ def repin_projection_block(
     The whole-file compare-and-swap preserves concurrent author edits.
     ``dry_run`` computes and checks the stamp on this same path and stops before
     the first write: no manifest, no page edit, no declaration (R12).
+    A repin that writes then records the page's declared blocks for
+    block-churn detection (``record_blocks``; a converging sync records its
+    pages once instead).
     """
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
@@ -1327,6 +1527,10 @@ def repin_projection_block(
     # declaration is recorded after the write, because a registration for a
     # marker that never landed would be the same lie in the other direction.
     client.declare_block(instance_id, stamp.model_dump(mode="json"))
+    if record_blocks:
+        record_declared_blocks(
+            client, instance_id, root=root, sources=sources, pages=((path, source_id),)
+        )
     return stamp
 
 
@@ -1341,6 +1545,8 @@ __all__ = [
     "parse_projection_blocks",
     "render_projection_opening",
     "render_query_block_body",
+    "declared_block_page",
+    "record_declared_blocks",
     "repin_projection_block",
     "sync_projection_blocks",
 ]

@@ -1684,7 +1684,7 @@ class CurationInactiveDetector(BaseModel):
     pattern_kind: str
     #: ``consumption_receipts_off``: dead vocabulary needs consumption receipts
     #: (CRUXIBLE_CONSUMPTION_RECEIPTS=on); ``no_block_observations``: block churn
-    #: needs a recorded workspace scan (``curation observe``).
+    #: needs the declared blocks `block sync` or `block repin` recorded.
     reason: Literal["consumption_receipts_off", "no_block_observations"]
 
 
@@ -1707,12 +1707,12 @@ class CurationListResult(BaseModel):
     result_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
-class CurationObserveResult(BaseModel):
-    """One workspace scan's declared blocks recorded for block-churn detection."""
+class BlockObserveResult(BaseModel):
+    """The declared blocks of the pages a client read, recorded for block-churn detection."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-curation-observe-result-v1"] = "playbill-curation-observe-result-v1"
+    tag: Literal["playbill-block-observe-result-v1"] = "playbill-block-observe-result-v1"
     #: ``would_record`` answers a preview, which appended nothing.
     status: Literal["recorded", "would_record"] = "recorded"
     coordinate: AcceptedCoordinate

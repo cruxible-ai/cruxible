@@ -353,6 +353,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "set_floor_delivery",
         "deliver_floor_now",
         "declare_block",
+        "observe_blocks",
         "depublish_block",
         "measure_procedure",
         "list_procedure_readings",
@@ -445,7 +446,6 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "accept_fixed_curation",
         "suppress_curation",
         "unsuppress_curation",
-        "observe_curation",
         "since",
     }
 

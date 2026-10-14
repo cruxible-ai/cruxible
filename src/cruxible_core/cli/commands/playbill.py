@@ -5217,19 +5217,31 @@ def repin_projection(
     type=click.Path(file_okay=False),
     help="The attached workspace whose pages are checked.",
 )
+@click.option(
+    "--check",
+    is_flag=True,
+    help="Only report each block's drift: re-render nothing, record nothing, write nothing.",
+)
 @json_option
 @handle_errors
 def sync_projection(
     paths: tuple[str, ...],
     all_sources: bool,
     workspace_root: str,
+    check: bool,
     output_json: bool,
 ) -> None:
-    """Check each block against its backings and report drift; writes nothing.
+    """Check each block against its backings, and re-render what is a projection of state.
 
-    Each block reads unchanged, stale (its backing moved: repin it), dirty (its
-    prose moved from the stamp: re-check and repin) or skipped (unstamped).
-    Exits non-zero on a refusal, which a require_current block's drift is.
+    Each block reads unchanged, stale (its backing moved), dirty (its prose
+    moved from the stamp: re-check and repin) or skipped (unstamped). A stale
+    block whose body is its query's rendering (`block repin --render`) is
+    derived from state, so sync re-renders it from the query at the head and
+    repins it (rendered); stale prose is only reported, since repinning it is
+    the author declaring the text right. Sync then records the declared blocks
+    of the pages it checked for block-churn detection. --check is the pure
+    report. Exits non-zero on a refusal, which a require_current block's drift
+    is.
     """
 
     result = _server_call(
@@ -5239,6 +5251,7 @@ def sync_projection(
             workspace=workspace_root,
             paths=paths,
             all_sources=all_sources,
+            converge_at=None if check else datetime.now(UTC),
         ),
         command_name="cruxible block sync",
     )
@@ -6391,15 +6404,15 @@ def evaluate_line(
     while pages[-1].cursor is not None:
         pages.append(evaluate(pages[-1].cursor))
     pending = [item.occurrence_id for page in pages for item in page.occurrences if item.pending]
-    items: list[Any] = []
-    for occurrence_id in pending:
-        dispatched = _server_call(
-            lambda client, instance_id, target=occurrence_id: client.dispatch_line(
-                instance_id, line, request=LineDispatchRequest(occurrence_id=target, limit=1)
-            ),
+
+    def dispatch(occurrence_id: str) -> Any:
+        request = LineDispatchRequest(occurrence_id=occurrence_id, limit=1)
+        return _server_call(
+            lambda client, instance_id: client.dispatch_line(instance_id, line, request=request),
             command_name="cruxible line dispatch",
         )
-        items.extend(dispatched.items)
+
+    items: list[Any] = [item for occurrence_id in pending for item in dispatch(occurrence_id).items]
     combined = _LineEvaluateDispatched(evaluations=tuple(pages), dispatched=tuple(items))
     if output_json:
         _emit_json(combined.model_dump(mode="json"))
@@ -6947,48 +6960,6 @@ def curation_duplicates(kind: str, limit: int, cursor: str | None, output_json: 
             members = ", ".join(f"{item.value!r} {item.claim}" for item in group.values)
             click.echo(f"  {group.predicate} {group.key!r}: {members}")
     _echo_list_continuation(result.next_cursor)
-
-
-@curation_group.command("observe")
-@click.option(
-    "--workspace-root",
-    default=".",
-    show_default=True,
-    type=click.Path(file_okay=False),
-    help="The workspace whose declared blocks are scanned.",
-)
-@change_control_options
-@json_option
-@handle_errors
-def curation_observe(
-    workspace_root: str, dry_run: bool | None, at: str | None, output_json: bool
-) -> None:
-    """Record this workspace's declared blocks for block-churn detection.
-
-    Block churn is the one detector that needs the workspace, which the daemon
-    never reads; detection picks the recorded scan up when it next runs.
-    """
-
-    observation = observe_next_workspace(Path(workspace_root))
-
-    def call(client: CruxibleClient, instance_id: str) -> contracts.CurationObserveResult:
-        observed, _coordinate = observe_next_workspace_with_coverage(
-            client, instance_id, Path(workspace_root), observation=observation
-        )
-        return client.observe_curation(
-            instance_id, workspace_observation=observed, dry_run=dry_run, at=at
-        )
-
-    result = _server_call(call, command_name="cruxible curation observe")
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    verb = "Would record" if result.status == "would_record" else "Recorded"
-    click.echo(
-        f"{verb} {result.observation_coverage['observed_block_count']} declared block(s) "
-        f"at generation {result.generation}."
-    )
-    echo_preview_next(result.status, result.coordinate)
 
 
 @curation_group.command("overrule")

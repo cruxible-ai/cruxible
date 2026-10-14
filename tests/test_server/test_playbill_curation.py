@@ -46,29 +46,37 @@ def test_http_curation_list_is_read_tier_and_returns_operational_head(
     assert payload["operational_head_digest"].startswith("sha256:")
 
 
-def test_http_curation_observe_maps_raw_source_observation_to_typed_refusal(
+def test_http_block_observe_records_pages_and_refuses_an_empty_batch_typed(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
     client, instance_id, _private_key = playbill_http
-    response = client.post(
-        f"/api/v1/{instance_id}/curation/observe",
-        json={
-            "tag": "playbill-curation-observe-request-v1",
-            "workspace_observation": {
-                "tag": "playbill-next-workspace-observation-v1",
-                "source_observations": [
-                    {
-                        "source_id": "corpus.runbook",
-                        "document_id": "runbook",
-                        "observed_source_digest": "sha256:" + "1" * 64,
-                    }
-                ],
-            },
-        },
+    page = {
+        "tag": "playbill-declared-block-page-observation-v1",
+        "source_id": "corpus.notes",
+        "observed_source_digest": "sha256:" + "1" * 64,
+        "byte_length": 12,
+    }
+    recorded = client.post(
+        f"/api/v1/{instance_id}/blocks/observe",
+        json={"tag": "playbill-block-observe-request-v1", "pages": [page]},
     )
+    assert recorded.status_code == 200, recorded.text
+    payload = recorded.json()
+    assert payload["tag"] == "playbill-block-observe-result-v1"
+    assert payload["status"] == "recorded"
+    # An evidence-only page names no Document, so its blocks cannot be tied to one.
+    assert payload["observation_coverage"]["omissions"] == [
+        {"reason": "block_subject_unresolved", "count": 1}
+    ]
 
-    assert response.status_code == 400, response.text
-    assert response.json()["error_code"] == "cruxible.next.workspace_observation_invalid"
+    empty = client.post(
+        f"/api/v1/{instance_id}/blocks/observe",
+        json={"tag": "playbill-block-observe-request-v1", "pages": []},
+    )
+    assert empty.status_code == 400, empty.text
+    assert empty.json()["error_code"] == "cruxible.block.observation_invalid"
+    retired = client.post(f"/api/v1/{instance_id}/curation/observe", json={})
+    assert retired.status_code in {404, 405}, retired.text
 
 
 @pytest.mark.parametrize(
