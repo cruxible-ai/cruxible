@@ -5830,18 +5830,6 @@ append_claim_attestation(
 
 HTTP: `POST f'/api/v1/{instance_id}/claim-attestations'`.
 
-<a id="api-cruxibleclient-recover-claim-attestations"></a>
-
-### `CruxibleClient.recover_claim_attestations`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-recover_claim_attestations(instance_id: str) -> None
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/claim-attestations/recover'`.
-
 <a id="api-cruxibleclient-list-predictions"></a>
 
 ### `CruxibleClient.list_predictions`

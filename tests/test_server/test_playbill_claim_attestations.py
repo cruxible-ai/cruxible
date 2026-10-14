@@ -104,7 +104,7 @@ def test_http_read_only_refuses_attestation_append(
     assert instance.claim_attestation_evidence_store().events() == ()
 
 
-def test_http_admin_recovery_rolls_forward_and_clears_poison(
+def test_interrupted_append_rolls_forward_on_the_next_attestation(
     attestation_http,  # type: ignore[no-untyped-def]
     tmp_path: Path,
 ) -> None:
@@ -123,28 +123,15 @@ def test_http_admin_recovery_rolls_forward_and_clears_poison(
             request=request,
             actor_id="owner",
         )
-    with pytest.raises(ClaimAttestationStoreError, match="claim recover-attestation"):
-        store.head()
     store.crash_hook = None
 
-    response = client.post(f"/api/v1/{instance.descriptor.instance_id}/claim-attestations/recover")
+    # No repair step: the retry finds its own event rolled forward, once.
+    retried = service_append_claim_attestation(instance, request=request, actor_id="owner")
 
-    assert response.status_code == 204, response.text
+    assert retried.partition_sequence == 1
     assert len(store.events()) == 1
-
-
-def test_http_recovery_is_admin_only(
-    attestation_http,  # type: ignore[no-untyped-def]
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    client, instance, _claim_id, _owner = attestation_http
-    monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
-    reset_permissions()
-
-    response = client.post(f"/api/v1/{instance.descriptor.instance_id}/claim-attestations/recover")
-
-    assert response.status_code == 403
-    assert response.json()["context"]["required_mode"] == "ADMIN"
+    removed = client.post(f"/api/v1/{instance.descriptor.instance_id}/claim-attestations/recover")
+    assert removed.status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -153,7 +140,6 @@ def test_http_recovery_is_admin_only(
         ("attestation_head_unknown", 400),
         ("idempotency_payload_mismatch", 400),
         ("store_corrupt", 500),
-        ("store_poisoned", 500),
         ("recovery_ambiguous", 500),
     ],
 )

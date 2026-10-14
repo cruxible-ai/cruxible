@@ -393,7 +393,6 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "propose_claim_type",
         "propose_claim_type_input",
         "append_claim_attestation",
-        "recover_claim_attestations",
         "read_claim_batch",
         "get_claim_backings",
         "query",

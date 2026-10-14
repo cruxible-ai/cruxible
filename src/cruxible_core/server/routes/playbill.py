@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, Query, Request
 from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
@@ -680,18 +680,6 @@ def append_claim_attestation(
         resolve_server_instance_id(instance_id),
         request=req,
     )
-
-
-@router.post(
-    "/{instance_id}/claim-attestations/recover",
-    response_model=None,
-    status_code=204,
-)
-def recover_claim_attestations(instance_id: str) -> Response:
-    playbill_api.playbill_recover_claim_attestations(
-        resolve_server_instance_id(instance_id),
-    )
-    return Response(status_code=204)
 
 
 @router.post(

@@ -3630,22 +3630,6 @@ def run_action(
         click.echo(f"Detail: {result.outcome.detail}")
 
 
-@claim_group.command("recover-attestation")
-@handle_errors
-def recover_claim_attestations() -> None:
-    """Roll the sole durable unpublished attestation forward after a poison refusal.
-
-    Run this when a Claim write or attestation refuses because the
-    Claim-attestation evidence ledger requires recovery.
-    """
-
-    _server_call(
-        lambda client, instance_id: client.recover_claim_attestations(instance_id),
-        command_name="cruxible claim recover-attestation",
-    )
-    click.echo("Claim-attestation evidence ledger recovered.")
-
-
 @claim_group.command("attest")
 @click.argument("claim_id")
 @click.option("--support", is_flag=True)

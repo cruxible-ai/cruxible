@@ -226,7 +226,7 @@ credential, but never receives a replacement for someone else's principal.
 The bootstrap claim and `recover-admin` mint unbound operator credentials: they
 carry transport authority (host, init, credentials, daemon lifecycle) but act as
 no principal, so they cannot author or perform any other instance write --
-body store, ledger mirror binding and publication, attestation recovery
+body store, ledger mirror binding and publication
 included (`cruxible.identity.credential_unbound`).
 `cruxible init` under such a credential designates the owner it names.
 Credentials minted before credentials named a principal are migrated as
@@ -1489,7 +1489,6 @@ version; the refusal names them.
 ~~~text
 cruxible claim attest CLAIM_ID --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS] [--json]
-cruxible claim recover-attestation
 ~~~
 
 Claims are read through `cruxible query`, `cruxible get` and `cruxible orient`.
@@ -1529,9 +1528,10 @@ the hold.
 predicate, object, role, qualifier, lifecycle, predecessor digest) in its
 top-level `statement` field alongside the canonical envelope.
 
-`recover-attestation` is an admin-only repair for an interrupted
-Claim-attestation evidence-ledger append. It rolls the sole durable unpublished
-event forward and refuses rather than choosing between ambiguous histories.
+An interrupted Claim-attestation append needs no repair command: the next
+attestation read or write (in the same daemon, or the first after a restart)
+rolls the sole durable unpublished event forward, and refuses as corrupt rather
+than choosing between ambiguous histories.
 
 ## authoring
 

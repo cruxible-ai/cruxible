@@ -1076,12 +1076,6 @@ class CruxibleClient:
         self._check_error(response)
         return ClaimAttestationAppendResult.model_validate(response.json())
 
-    def recover_claim_attestations(self, instance_id: str) -> None:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/claim-attestations/recover",
-        )
-        self._check_error(response)
-
     def list_predictions(
         self, instance_id: str, *, request: contracts.ResolutionContractsRequest
     ) -> contracts.ResolutionContractsResult:
