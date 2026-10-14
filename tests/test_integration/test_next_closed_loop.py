@@ -2040,7 +2040,15 @@ def _kit_resume_blocked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from cruxible_client.kits import stage_kit_providers
     from cruxible_core.runtime.playbill_manager import get_playbill_manager
     from cruxible_core.service import kit_resume
-    from tests.test_server.test_kit_providers import _add, _build, _client, _install, _package
+    from tests.test_server.test_kit_providers import (
+        PROCEDURE,
+        _add,
+        _build,
+        _client,
+        _install,
+        _package,
+        _tree,
+    )
     from tests.test_server.test_kit_resume import _PROVIDER, _open_worlds, _release, _resumes
 
     provider_checkout = _PROVIDER_CHECKOUT.get()
@@ -2062,10 +2070,11 @@ def _kit_resume_blocked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             waiting_on=staged.manifest.providers,
         )
         kit_resume.resume_kits_after_activation(instance, (_PROVIDER,))
+        # No approval round to run here: the resume's own commit lands at
+        # once, the same self-resolving activation ``_add`` gets directly.
         (resumed,) = _resumes(consumer)
         assert resumed.state == "proposed" and resumed.proposal_id is not None
-        consumer.approve(resumed.proposal_id)
-        assert _resumes(consumer) == ()
+        assert f"procedures/{PROCEDURE}.json" in _tree(consumer)
 
         # A stale recorded resume for an older release: its head no longer
         # agrees with what landed, so the resume blocks instead of applying.
