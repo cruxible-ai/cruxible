@@ -65,9 +65,7 @@ CREATE TRIGGER events_no_delete BEFORE DELETE ON events
 CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, version TEXT NOT NULL,
  listening_since TEXT NOT NULL, covered INTEGER NOT NULL) STRICT;
 """
-#: Bumped to 5 to add ``kit_resumes_by_state``; a version-4 journal upgrades in
-#: place the same one-time way a version-2/3 journal does (see ``_open``).
-_VERSION = 5
+_VERSION = 4
 # A kit add waiting on provider installs fires on the acceptance that lands the
 # last of them: one row per kit, one wait per Provider path still to activate.
 # Retained operational authority beside the fires, never rebuilt. The state
@@ -220,11 +218,9 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
             for table in _KIT_RESUME_SCHEMA:
                 connection.execute(table)
             connection.execute(f"PRAGMA user_version={_VERSION}")
-        elif version in (2, 3, 4):
+        elif version in (2, 3):
             # A reader of an older journal sees what it holds; the next writer
-            # brings it forward one step at a time. A version-4 journal has the
-            # kit-resume tables already (``IF NOT EXISTS`` statements are then
-            # no-ops) and only gains the new state index.
+            # brings it forward one step at a time.
             if create:
                 if version == 2:
                     connection.execute(
