@@ -3908,6 +3908,10 @@ trusted and could load another principal's settings. See the
 ## sources
 
 ~~~text
+cruxible sources add NAME PATH [--document-id ID --document-kind KIND --title TEXT
+  --scope SCOPE... [--media-type TYPE] [--required-tier TIER] [--public-uri URI]]
+  [--replace] [--root DIR] [--json]
+cruxible sources remove NAME [--root DIR] [--json]
 cruxible sources check [--catalog FILE] [--local-catalog FILE] [--root DIR]
   [--root-alias NAME=PATH]... [--json]
 cruxible sources compile --output FILE [--catalog FILE] [--local-catalog FILE]
@@ -3925,6 +3929,20 @@ another. An entry needs only `name` and `locator` to be cited as evidence
 `next`; adding `document_id`, `document_kind`, `title`, `media_type` and
 `governance_scope` (all five together) makes it a Document that compiles and
 can be proposed.
+
+`sources add NAME PATH` writes that entry so nobody hand-writes the YAML: PATH
+(relative to the current directory) must be a file inside the workspace, and
+becomes the entry's workspace-relative `locator`. `--document-id`,
+`--document-kind`, `--title` and `--scope` (repeatable) declare the Document;
+`--media-type` defaults from the file suffix (`.md` is `text/markdown`). The
+whole catalog is validated before the file is rewritten, so an existing NAME
+refuses `cruxible.sources.catalog_edit_refused` (`entry_exists`) unless
+`--replace`, and a partial Document, a duplicate Document target or a
+malformed value refuses (`entry_invalid`) with the catalog model's reason;
+nothing is written on a refusal. The file is rewritten canonically (entries
+sorted, defaults omitted, comments not kept); it is created on the first
+`add`. `sources remove NAME` drops one entry (the file goes with the last).
+Both edit only the catalog file: commit it with Git.
 
 `sources compile` reads the catalogued Documents' bytes client-side and writes a
 path-free bundle; `sources check` reports each one's alignment (aligned,

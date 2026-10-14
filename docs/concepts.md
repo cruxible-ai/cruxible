@@ -87,7 +87,7 @@ the verdict `uncovered`.
 
 The source catalog, `.cruxible/sources.yaml`, gives each workspace file a
 stable name. An entry needs only a `name` and a `locator` (its path) to be
-cited. Two different things can then rest on a catalogued file:
+cited; `cruxible sources add NAME PATH` writes one. Two different things can then rest on a catalogued file:
 
 | | Citation | Document |
 |---|---|---|

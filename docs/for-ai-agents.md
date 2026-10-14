@@ -272,7 +272,7 @@ slot. The deprecated `invalidation` disposition is refused inside a change set
 
 - **Own words**: every write's `because` (or a Claim's `self_source`).
 - **A file passage**: catalogue the file in `.cruxible/sources.yaml` (a
-  `name` and a `locator` suffice) and cite `PATH#ANCHOR`: `--evidence-file`
+  `name` and a `locator` suffice: `cruxible sources add NAME PATH`) and cite `PATH#ANCHOR`: `--evidence-file`
   on the CLI, `{"kind": "file", "file": "PATH#ANCHOR"}` as `evidence` on MCP
   `cruxible_set`, `FileEvidence` on SDK writes, or `cx.file(path).anchor(...)`
   as `supported_by` or `copied_from` on an authored Claim. The client reads the

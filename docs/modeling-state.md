@@ -44,7 +44,7 @@ Warning signs that something is in the wrong place:
 ## Citation or Document
 
 When a Claim rests on what a file says, **cite** it: catalogue the file in
-`.cruxible/sources.yaml` (a `name` and a `locator` are enough) and pass
+`.cruxible/sources.yaml` (`cruxible sources add NAME PATH`) and pass
 `--evidence-file PATH#ANCHOR`. The quoted passage is retained, and `next`
 reports `citation_drifted` when it changes; repair by binding the Claim to the
 new text or retiring it.

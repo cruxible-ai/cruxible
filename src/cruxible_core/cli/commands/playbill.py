@@ -52,8 +52,12 @@ from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.authoring.sources import (
+    SourceCatalogEdit,
+    add_catalog_entry,
     compile_client_source_context,
     load_source_catalog,
+    media_type_for,
+    remove_catalog_entry,
     root_aliases,
 )
 from cruxible_client.authoring.workspace import (
@@ -2609,6 +2613,139 @@ def check_sources(
         click.echo(f"{alignment.get('name')}: {alignment.get('state')}")
     if not result.alignments:
         click.echo("No catalogued Documents to check.")
+
+
+def _catalog_edit_root(repository_root: str | None) -> Path:
+    if repository_root is not None:
+        return Path(repository_root).expanduser().resolve()
+    resolution = _local_git_workspace_root()
+    _emit_git_workspace_note(resolution)
+    if resolution.workspace_root is None:
+        raise click.UsageError("cruxible sources add/remove must run inside one Git worktree")
+    return resolution.workspace_root
+
+
+def _echo_catalog_edit(result: SourceCatalogEdit, *, output_json: bool) -> None:
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    if result.status == "removed":
+        suffix = (
+            " (it was the last entry; the catalog file is gone)" if result.catalog_removed else ""
+        )
+        click.echo(f"Removed source {result.name} from {result.catalog_path}{suffix}")
+        return
+    assert result.entry is not None
+    shape = "Document" if result.entry.is_document else "evidence-only"
+    click.echo(
+        f"{result.status.capitalize()} source {result.name} -> {result.entry.locator} "
+        f"({shape}) in {result.catalog_path}"
+    )
+
+
+@sources_group.command("add")
+@click.argument("name")
+@click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
+@click.option("--document-id", default=None, help="The Document this file compiles to.")
+@click.option("--document-kind", default=None, help="The Document's kind (with --document-id).")
+@click.option("--title", default=None, help="The Document's title (with --document-id).")
+@click.option(
+    "--media-type",
+    default=None,
+    help="The Document's media type (default: from the file suffix, e.g. text/markdown).",
+)
+@click.option(
+    "--scope",
+    "governance_scope",
+    multiple=True,
+    help="A governance scope the Document is in (repeatable; with --document-id).",
+)
+@click.option(
+    "--required-tier",
+    type=click.Choice(["governed_write", "graph_write", "admin"]),
+    default=None,
+    help="The tier activating the Document needs (default graph_write).",
+)
+@click.option("--public-uri", default=None, help="A public URI for the Document.")
+@click.option("--replace", is_flag=True, help="Update NAME's entry when it is already catalogued.")
+@click.option(
+    "--root",
+    "repository_root",
+    default=None,
+    help="Workspace root the catalog belongs to (default: this worktree).",
+)
+@json_option
+@handle_errors
+def add_source(
+    name: str,
+    path: Path,
+    document_id: str | None,
+    document_kind: str | None,
+    title: str | None,
+    media_type: str | None,
+    governance_scope: tuple[str, ...],
+    required_tier: str | None,
+    public_uri: str | None,
+    replace: bool,
+    repository_root: str | None,
+    output_json: bool,
+) -> None:
+    """Catalogue PATH under NAME in the workspace's .cruxible/sources.yaml.
+
+    NAME is the stable source name evidence is cited under (`--evidence-file
+    PATH#ANCHOR` resolves through it). With --document-id, --document-kind,
+    --title and --scope the entry also declares the Document it compiles to
+    (sources compile, sources propose); without them it is evidence-only. The
+    whole catalog is validated before the file is rewritten: an existing NAME
+    refuses unless --replace, and a partial Document or a duplicate Document
+    target refuses. Writes only the catalog file; commit it with Git.
+    """
+
+    fields: dict[str, object] = {
+        key: value
+        for key, value in {
+            "document_id": document_id,
+            "document_kind": document_kind,
+            "title": title,
+            "media_type": media_type,
+            "required_tier": required_tier,
+            "public_uri": public_uri,
+        }.items()
+        if value is not None
+    }
+    if document_id is not None:
+        fields.setdefault("media_type", media_type_for(path))
+        fields["governance_scope"] = tuple(
+            sorted(set(governance_scope), key=lambda item: item.encode("utf-8"))
+        )
+        fields = {key: value for key, value in fields.items() if value is not None}
+    elif governance_scope:
+        fields["governance_scope"] = governance_scope
+    result = add_catalog_entry(
+        _catalog_edit_root(repository_root), name=name, path=path, fields=fields, replace=replace
+    )
+    _echo_catalog_edit(result, output_json=output_json)
+
+
+@sources_group.command("remove")
+@click.argument("name")
+@click.option(
+    "--root",
+    "repository_root",
+    default=None,
+    help="Workspace root the catalog belongs to (default: this worktree).",
+)
+@json_option
+@handle_errors
+def remove_source(name: str, repository_root: str | None, output_json: bool) -> None:
+    """Remove NAME's entry from the workspace's .cruxible/sources.yaml.
+
+    Evidence already cited under NAME keeps its retained passage; new
+    citations of the file stop resolving. Writes only the catalog file.
+    """
+
+    result = remove_catalog_entry(_catalog_edit_root(repository_root), name=name)
+    _echo_catalog_edit(result, output_json=output_json)
 
 
 @sources_group.command("propose")
