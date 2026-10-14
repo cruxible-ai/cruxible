@@ -6,10 +6,14 @@ journal -- and answers as of exactly those positions. Writes that land while it
 runs are not in its answer; it never waits for them, retries or refuses.
 
 Within a read (``reading_at``) a Capture body's presence is the landing log's
-answer at the read's landing position (``body_present``), never the file's;
-a body's bytes are read only when the reader needs them, and only if the body
-had landed by then (``read_body``). Re-observations count through the read's
-journal sequence (``reobservations_through``).
+answer at the read's landing position (``body_present``), never the file's: it
+had landed at or before that position and was not recorded damaged (missing or
+corrupt, ``LandingLog.note``) at or before it since. Integrity is the evidence
+sweep's job, and its damage record is what changes later reads' answer; no read
+stats or hashes a body to decide presence. A body's bytes are read only when
+the reader needs them, and only if the body was present by then
+(``read_body``). Re-observations count through the read's journal sequence
+(``reobservations_through``).
 """
 
 from __future__ import annotations
@@ -63,7 +67,7 @@ def reobservations_through() -> int | None:
 
 
 def body_present(store: Any, digest: str) -> bool | None:
-    """Whether ``digest`` had landed by the read's landing position.
+    """Whether ``digest`` was present at the read's landing position (landed, not damaged).
 
     None outside a positioned read, or for a store that keeps no landing log.
     """
@@ -86,7 +90,11 @@ def read_body(store: Any, digest: str, *, access: BodyAccessContext) -> bytes:
 
 
 class PositionedBodies:
-    """A body store whose presence is the landing log's at the read's position."""
+    """A body store whose presence is the landing log's at the read's position.
+
+    ``verify`` hashes nothing: an object damaged in place still verifies until a
+    damage record at or before the read's position says otherwise.
+    """
 
     def __init__(self, store: Any) -> None:
         self._store = store
@@ -97,11 +105,6 @@ class PositionedBodies:
 
     def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
         return read_body(self._store, digest, access=access)
-
-    def file_identity(self, digest: str) -> Any:
-        """The stored file's identity now, or None when it is absent (not positioned)."""
-
-        return self._store.file_identity(digest)
 
 
 __all__ = [

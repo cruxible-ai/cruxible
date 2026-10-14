@@ -9,6 +9,15 @@ A read decides a body's presence from the log alone (``present``): the digest's
 last completion at or before the read's recorded position, kept per process in
 an index the log extends as it grows. Files are opened only for their bytes.
 
+A body damaged out of band -- deleted, or rewritten in place -- moves no
+operation. Whoever verifies it and finds the damage (the evidence sweep, or any
+read that hashes it) records a *damage* completion (``missing``/``corrupt``,
+``note``) once, while the log still has the digest ``stored``; a body later
+found whole again, repaired in place or stored again, gets a ``stored``
+completion of its own. So a read at a position after the damage record answers
+absent, one before it present, and a follower sees the damage as one more row
+naming the digest.
+
 A log minted over a store that already holds objects (a store from before the
 log, or bodies first stored as journal payloads) records each of them as
 ``stored`` first, so the log names every object the store held when it began.
@@ -42,7 +51,7 @@ import os
 import stat
 import threading
 from bisect import bisect_right
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -53,13 +62,22 @@ from cruxible_client.contracts.primitives import new_id
 if TYPE_CHECKING:
     from cruxible_core.storage.cas import ContentAddressedBodyStore
 
-LandingKind = Literal["store", "stored", "erase", "erased"]
+LandingKind = Literal["store", "stored", "erase", "erased", "missing", "corrupt"]
+#: What a verification found an object to be.
+BodyState = Literal["present", "missing", "corrupt"]
 LOG_NAME = "landings.log"
 SEED_NAME = "landings.seed"
 PENDING_NAME = "landings.pending"
 RECORD = 96
 _HEADER = b"cruxible-landings-v1 "
-_CODES: dict[LandingKind, bytes] = {"store": b"s", "stored": b"S", "erase": b"e", "erased": b"E"}
+_CODES: dict[LandingKind, bytes] = {
+    "store": b"s",
+    "stored": b"S",
+    "erase": b"e",
+    "erased": b"E",
+    "missing": b"M",
+    "corrupt": b"C",
+}
 _KINDS: dict[int, LandingKind] = {code[0]: kind for kind, code in _CODES.items()}
 _COMPLETION: dict[str, LandingKind] = {"store": "stored", "erase": "erased"}
 _FILE = os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
@@ -75,13 +93,40 @@ class _Presence:
 
     def __init__(self) -> None:
         self.through = 0
-        #: Each digest's completions in log order: (sequence, present after it).
-        self.events: dict[str, list[tuple[int, bool]]] = {}
+        #: Each digest's completions in log order: (sequence, completion kind).
+        self.events: dict[str, list[tuple[int, LandingKind]]] = {}
 
 
 #: Per (held algorithm directory, log identity): a replaced log is another index.
 _INDEXES: dict[tuple[str, str], _Presence] = {}
 _INDEXES_LOCK = threading.Lock()
+#: Per held algorithm directory: the digests whose last completion this process
+#: has seen (read into an index, or written) is a damage record. A verification
+#: that finds such a body whole records its repair; one this process has not seen
+#: damaged costs that check nothing beyond this lookup (``damage_seen``).
+_DAMAGE_SEEN: dict[str, set[str]] = {}
+_DAMAGE_KINDS = frozenset({"missing", "corrupt"})
+
+
+def _saw(root: str, digest: str, kind: LandingKind) -> None:
+    """Note one completion for ``damage_seen`` (the caller holds ``_INDEXES_LOCK``)."""
+
+    if kind in _DAMAGE_KINDS:
+        _DAMAGE_SEEN.setdefault(root, set()).add(digest)
+    else:
+        _DAMAGE_SEEN.get(root, set()).discard(digest)
+
+
+def damage_seen(root: str, digest: str) -> bool:
+    """Whether this process last saw ``digest`` recorded damaged in the store at ``root``.
+
+    No I/O: a damage record another process wrote is seen once a read here has
+    extended its index past it (``LandingLog.present``); until then the evidence
+    sweep records the repair.
+    """
+
+    seen = _DAMAGE_SEEN.get(root)
+    return seen is not None and digest in seen
 
 
 def _reset_after_fork() -> None:
@@ -330,13 +375,19 @@ class LandingLog:
         """Whether ``digest`` is in the store as of ``sequence`` of the log ``identity``.
 
         Its last completion at or before that position decides: ``stored``
-        present, ``erased`` or none absent. An operation whose completion comes
-        later has not happened yet. Read from the process's index of the log,
-        extended by the rows it has not yet read: never from the object itself.
+        present; ``erased``, a damage record (``missing``/``corrupt``) or none
+        absent. An operation whose completion comes later has not happened yet.
+        Read from the process's index of the log, extended by the rows it has not
+        yet read: never from the object itself.
         """
 
+        return self.last_completion(digest, identity=identity, sequence=sequence) == "stored"
+
+    def last_completion(self, digest: str, *, identity: str, sequence: int) -> LandingKind | None:
+        """The digest's last completion at or before ``sequence`` of the log ``identity``."""
+
         if not identity or sequence <= 0:
-            return False
+            return None
         key = (str(self._store._algorithm_root), identity)
         with _INDEXES_LOCK:
             index = _INDEXES.setdefault(key, _Presence())
@@ -344,15 +395,66 @@ class LandingLog:
             if index.through < sequence:
                 for row in self.after(index.through, through=sequence, identity=identity):
                     if not row.intent:
-                        index.events.setdefault(row.digest, []).append(
-                            (row.sequence, row.kind == "stored")
-                        )
+                        index.events.setdefault(row.digest, []).append((row.sequence, row.kind))
+                        _saw(key[0], row.digest, row.kind)
                     index.through = row.sequence
             events = index.events.get(digest)
             if not events:
-                return False
+                return None
             found = bisect_right(events, sequence, key=lambda event: event[0])
-            return found > 0 and events[found - 1][1]
+            return events[found - 1][1] if found > 0 else None
+
+    def _disagrees(self, digest: str, state: BodyState) -> bool:
+        """Whether what a verification found contradicts the log's current presence.
+
+        Only a ``stored`` digest can be damaged, and only a damaged one repaired:
+        an erased body, or a journal payload the log never named, records nothing.
+        """
+
+        head = self.head()
+        last = self.last_completion(digest, identity=head.identity, sequence=head.sequence)
+        if state == "present":
+            return last in {"missing", "corrupt"}
+        return last == "stored"
+
+    def note(self, digest: str, state: BodyState, *, recheck: Callable[[], BodyState]) -> bool:
+        """Record what a verification found when the log says otherwise: one completion.
+
+        A ``stored`` digest found missing or corrupt gets that damage record; a
+        damaged one found whole again gets ``stored``. The finding is checked
+        again (``recheck``) under the digest's pending marker, so it never lands
+        over a store or erase completing meanwhile; while another operation on
+        the digest holds the marker nothing is recorded, as that operation's
+        completion says what the object then is. Returns whether a row landed.
+        """
+
+        if not self._disagrees(digest, state):
+            return False
+        # A marker a dead writer left is settled first, never taken over.
+        self.reconcile(digest)
+        pending = self._pending(create=True)
+        assert pending is not None
+        try:
+            marker = self._hold_marker(pending, digest, wait=False)
+            if marker is None:
+                return False
+            try:
+                state = recheck()
+                if not self._disagrees(digest, state):
+                    return False
+                kind: LandingKind = "stored" if state == "present" else state
+                self._append(kind, digest, sync=True)
+                with _INDEXES_LOCK:
+                    _saw(str(self._store._algorithm_root), digest, kind)
+                return True
+            finally:
+                try:
+                    os.unlink(self._marker(digest), dir_fd=pending)
+                except FileNotFoundError:
+                    pass
+                os.close(marker)
+        finally:
+            os.close(pending)
 
     def ensure_landed(self, digest: str) -> None:
         """Log an object the store holds but the log does not name as present.
@@ -398,15 +500,8 @@ class LandingLog:
         pending = self._pending(create=True)
         assert pending is not None
         try:
-            while True:
-                marker = os.open(
-                    self._marker(digest), os.O_RDWR | os.O_CREAT | _FILE, 0o600, dir_fd=pending
-                )
-                fcntl.flock(marker, fcntl.LOCK_EX)
-                if os.fstat(marker).st_nlink:
-                    break
-                # Reconciled away between create and lock: take a fresh marker.
-                os.close(marker)
+            marker = self._hold_marker(pending, digest, wait=True)
+            assert marker is not None
             try:
                 self._append(kind, digest, sync=False)
                 try:
@@ -418,6 +513,23 @@ class LandingLog:
         finally:
             os.close(pending)
 
+    def _hold_marker(self, pending: int, digest: str, *, wait: bool) -> int | None:
+        """Create and exclusively lock the digest's pending marker (None: held elsewhere)."""
+
+        while True:
+            marker = os.open(
+                self._marker(digest), os.O_RDWR | os.O_CREAT | _FILE, 0o600, dir_fd=pending
+            )
+            try:
+                fcntl.flock(marker, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(marker)
+                return None
+            if os.fstat(marker).st_nlink:
+                return marker
+            # Reconciled away between create and lock: take a fresh marker.
+            os.close(marker)
+
     def _settle(self, digest: str, pending: int, *, completion: LandingKind | None) -> None:
         """Publish an operation's completion, then drop its marker (the caller holds its lock).
 
@@ -428,6 +540,8 @@ class LandingLog:
         if completion is None or (completion == "stored") != present:
             completion = "stored" if present else "erased"
         self._append(completion, digest, sync=True)
+        with _INDEXES_LOCK:
+            _saw(str(self._store._algorithm_root), digest, completion)
         try:
             os.unlink(self._marker(digest), dir_fd=pending)
         except FileNotFoundError:
@@ -487,6 +601,8 @@ __all__ = [
     "LOG_NAME",
     "PENDING_NAME",
     "SEED_NAME",
+    "BodyState",
+    "damage_seen",
     "Landing",
     "LandingHead",
     "LandingKind",

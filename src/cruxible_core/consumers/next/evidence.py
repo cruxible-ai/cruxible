@@ -10,7 +10,14 @@ What counts is the Capture's own retention policy, exactly as admission reads
 it: the envelope is the evidence record and must always be there, a body that
 is present must hash to its address, and a missing body is a finding only
 while the Capture's contract requires it to be retained. Absence a policy
-permits is not a defect.
+permits is not a defect. The bodies checked are the ones replay reads: a CAS
+source and a CAS-materialized commitment.
+
+Hashing a body records what it finds in the body store's landing log when the
+log says otherwise (``LandingLog.note``): a landed body found missing or
+corrupt is recorded damaged, so every read at a later position answers it
+absent and the next part's Claims citing it re-derive as not replayable; one
+found whole again is recorded present.
 
 Retention is evaluated at the generation or trigger event's recorded instant,
 never the worker's clock. The findings are a disposable projection of the
@@ -38,6 +45,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.source_references import CasSourceReference
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
 from cruxible_core.consumers.protocol import (
@@ -347,21 +355,43 @@ class EvidencePart:
                 except CruxibleError:
                     observed.append((digest, "envelope", digest, "corrupt"))
                     continue
-                if envelope.commitment.materialization != "cas":
-                    continue
-                body = envelope.commitment.digest
-                body_state = store.availability(body)
-                if body_state == "corrupt" or (
-                    body_state == "missing"
-                    and not _absence_permitted(
-                        _retention(
-                            instance, projection, git_oid=coordinate.git_oid, capture_digest=digest
-                        ),
-                        observed_at=envelope.observed_at,
-                        now=now,
-                    )
-                ):
-                    observed.append((digest, "body", body, body_state))
+                # The bytes replay reads: a CAS source, and a CAS-materialized commitment.
+                bodies = [
+                    *(
+                        [envelope.commitment.digest]
+                        if envelope.commitment.materialization == "cas"
+                        else []
+                    ),
+                    *(
+                        [envelope.source.content_digest]
+                        if isinstance(envelope.source, CasSourceReference)
+                        else []
+                    ),
+                ]
+                reported = False
+                for body in dict.fromkeys(bodies):
+                    # Hashing it records a damaged (or repaired) body in the landing
+                    # log, so the Claims citing it re-derive as not replayable.
+                    body_state = store.availability(body)
+                    if not reported and (
+                        body_state == "corrupt"
+                        or (
+                            body_state == "missing"
+                            and not _absence_permitted(
+                                _retention(
+                                    instance,
+                                    projection,
+                                    git_oid=coordinate.git_oid,
+                                    capture_digest=digest,
+                                ),
+                                observed_at=envelope.observed_at,
+                                now=now,
+                            )
+                        )
+                    ):
+                        # One row per Capture part: the first damaged body it names.
+                        observed.append((digest, "body", body, body_state))
+                        reported = True
         with _STATE.open(instance) as connection:
             assert connection is not None
             connection.executemany(
