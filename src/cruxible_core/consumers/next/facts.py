@@ -1831,13 +1831,20 @@ def _settle(
 
 #: Every probe a pass or a read makes of the stored state: each one seek or one
 #: range on a partial index, sized by its answer (pinned by plan tests).
+#: The two interval unions name their indexes: to feed the UNION's merge in key
+#: order, some SQLite builds (3.45 on Ubuntu) otherwise walk the whole table by
+#: its primary key for the ``lower_us`` arm instead of sorting the few matches.
 _EXPIRED_FACTS = (
-    "SELECT claim_id FROM claim_facts WHERE upper_us IS NOT NULL AND upper_us<=? "
-    "UNION SELECT claim_id FROM claim_facts WHERE lower_us IS NOT NULL AND lower_us>?"
+    "SELECT claim_id FROM claim_facts INDEXED BY claim_facts_by_upper "
+    "WHERE upper_us IS NOT NULL AND upper_us<=? "
+    "UNION SELECT claim_id FROM claim_facts INDEXED BY claim_facts_by_lower "
+    "WHERE lower_us IS NOT NULL AND lower_us>?"
 )
 _EXPIRED_KEYS = (
-    "SELECT family,key FROM row_keys WHERE upper_us IS NOT NULL AND upper_us<=? "
-    "UNION SELECT family,key FROM row_keys WHERE lower_us IS NOT NULL AND lower_us>?"
+    "SELECT family,key FROM row_keys INDEXED BY row_keys_by_upper "
+    "WHERE upper_us IS NOT NULL AND upper_us<=? "
+    "UNION SELECT family,key FROM row_keys INDEXED BY row_keys_by_lower "
+    "WHERE lower_us IS NOT NULL AND lower_us>?"
 )
 _BROKEN_KEYS = "SELECT family,key FROM row_keys WHERE error_code IS NOT NULL"
 _BROKEN_OF_KEYS = (
