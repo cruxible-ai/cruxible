@@ -105,6 +105,27 @@ class ProjectionRepinError(CruxibleError):
         super().__init__(f"{self.code}: {message}")
 
 
+class ProjectionRepinConflict(ProjectionRepinError):
+    """The block changed after being proved, and before this write read it.
+
+    A converging sync proves a block against the bytes it scanned, then
+    repins it; the proof names nothing about the page between that scan and
+    repin's own read. Without this check, an author's edit landing in that
+    gap is silently overturned by the render it proved. Nothing is written
+    when this raises.
+    """
+
+    code = "cruxible.projection.repin_conflict"
+
+    def __init__(self, *, source_id: str, block_id: str) -> None:
+        self.source_id = source_id
+        self.block_id = block_id
+        super().__init__(
+            f"block {block_id!r} in source {source_id!r} changed after it was proved "
+            "rendered; re-run sync to re-prove it before converging"
+        )
+
+
 class ProjectionSyncError(CruxibleError):
     code = "cruxible.projection.sync_refused"
 
@@ -1285,7 +1306,22 @@ def _converge(
                 evaluation_time=at,
                 render=True,
                 record_blocks=False,
+                proved=block,
             )
+        except ProjectionRepinConflict as exc:
+            # The page moved under this block between its proof and this
+            # write's own read: the edit is real prose, kept exactly as
+            # found, never the stale render the proof was taken from.
+            items[index] = BlockSyncItem(
+                path=found.path,
+                source_id=source_id,
+                block_id=block.block_id,
+                currency_policy=found.currency_policy,
+                outcome="dirty",
+                reason="block_locally_modified",
+                detail={**found.detail, "message": str(exc)},
+            )
+            continue
         except (ProjectionRepinError, ProjectionMarkerError, CoreError) as exc:
             items[index] = BlockSyncItem(
                 path=found.path,
@@ -1334,6 +1370,7 @@ def repin_projection_block(
     render: bool = False,
     dry_run: bool = False,
     record_blocks: bool = True,
+    proved: ParsedProjectionBlock | None = None,
 ) -> ProjectionBlockStamp:
     """Repin one block, optionally installing explicitly supplied agent-authored body bytes.
 
@@ -1348,6 +1385,13 @@ def repin_projection_block(
     A repin that writes then records the page's declared blocks for
     block-churn detection (``record_blocks``; a converging sync records its
     pages once instead).
+    ``proved`` is the block a caller already proved something about (a
+    converging sync proves a rendered block is its query's rendering) before
+    this call made its own read; this read may land after a concurrent edit
+    the proof never saw. When given, this call raises
+    ``ProjectionRepinConflict`` -- writing nothing -- if the block it reads
+    here no longer matches it, rather than silently overwriting the edit with
+    what the stale proof found.
     """
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
@@ -1367,6 +1411,10 @@ def repin_projection_block(
     block = next((item for item in blocks if item.block_id == block_id), None)
     if block is None:
         raise ProjectionRepinError(f"source {source_id!r} has no block {block_id!r}")
+    if proved is not None and (
+        block.body_digest != proved.body_digest or block.stamp != proved.stamp
+    ):
+        raise ProjectionRepinConflict(source_id=source_id, block_id=block_id)
 
     previous = () if block.stamp is None else block.stamp.backing
     claim_refs = (
@@ -1538,6 +1586,7 @@ __all__ = [
     "ParsedProjectionBlock",
     "ProjectionIndependentEvidenceForbidden",
     "ProjectionMarkerError",
+    "ProjectionRepinConflict",
     "ProjectionRepinError",
     "ProjectionSyncError",
     "assert_independent_projection_evidence",

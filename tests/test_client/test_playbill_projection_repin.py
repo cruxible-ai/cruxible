@@ -802,6 +802,58 @@ def test_a_converging_sync_rerenders_a_stale_rendered_block_and_records_the_page
     )
 
 
+def test_sync_preserves_prose_edited_during_render_proof(tmp_path: Path) -> None:
+    """Review clia F-001: an edit between the render proof and repin's own read survives."""
+
+    from datetime import timedelta
+
+    from cruxible_client.authoring.blocks import sync_projection_blocks
+
+    source = _workspace(tmp_path)
+    _attach(tmp_path)
+    setup_client = _StaleClient()
+    repin_projection_block(
+        setup_client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        source_id="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    rendered = source.read_bytes()
+    edited = rendered.replace(b"_No rows._\n", b"Author wrote new prose.\n")
+    assert edited != rendered
+
+    class _EditDuringProofClient(_StaleClient):
+        """Edits the page the first time a query answers -- the proof's query."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._edited = False
+
+        def query(self, instance_id: str, *, request: Any) -> Any:
+            if not self._edited:
+                self._edited = True
+                source.write_bytes(edited)
+            return super().query(instance_id, request=request)
+
+    client = _EditDuringProofClient()
+
+    converged = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_sources=True,
+        converge_at=NOW + timedelta(hours=1),
+    )
+
+    (item,) = converged.items
+    assert (item.outcome, item.reason) == ("dirty", "block_locally_modified"), item
+    assert source.read_bytes() == edited
+
+
 def test_a_converging_sync_leaves_stale_prose_to_its_author(tmp_path: Path) -> None:
     from datetime import timedelta
 
