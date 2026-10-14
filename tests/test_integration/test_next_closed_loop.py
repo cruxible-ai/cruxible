@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -190,6 +191,9 @@ EXPECTED_OPERATIONS = {
     "prediction_window_unbindable": "hand_edit",
     # A kind with Subjects and no SubjectKind: authoring one lets it create again.
     "subject_kind_undeclared": "cruxible.authoring.example",
+    # A recorded kit add resume whose head moved out from under it: run kit
+    # add again, resolving the refusal that recorded the resume.
+    "kit_resume_blocked": "cruxible.kit.add",
 }
 
 
@@ -2017,6 +2021,81 @@ def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) 
     _assert_gone(instance, "prediction_window_unbindable", _request(instance))
 
 
+#: ``_kit_resume_blocked`` needs the session-scoped ``provider_checkout`` fixture,
+#: which the ``RepairCase`` signature has no room for; the test fetches it lazily
+#: (``request.getfixturevalue``, only for this one case) and hands it over here,
+#: so every other case's run pays nothing towards building the provider wheels.
+_PROVIDER_CHECKOUT: ContextVar[Any] = ContextVar("next_closed_loop_provider_checkout")
+
+
+def _kit_resume_blocked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A recorded kit add resume whose head moved out from under it (a downgrade):
+
+    next names the stuck resume's repair, and a commit kit add at the live
+    release -- running that repair -- replaces the stale record and clears the
+    row.
+    """
+
+    from cruxible_client.contracts.kits import KitAddRequest
+    from cruxible_client.kits import stage_kit_providers
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from cruxible_core.service import kit_resume
+    from tests.test_server.test_kit_providers import _add, _build, _client, _install, _package
+    from tests.test_server.test_kit_resume import _PROVIDER, _open_worlds, _release, _resumes
+
+    provider_checkout = _PROVIDER_CHECKOUT.get()
+    opened = _open_worlds(root, monkeypatch, independent=False)
+    publisher, consumer = next(opened)
+    try:
+        bundled = _package(root / "kit-source", provider_checkout, name="kit-call")
+        release = _release(publisher, bundled)
+        older = _build(publisher, bundled, version="0.9.0")
+        instance = get_playbill_manager().get(consumer.instance_id)
+
+        # The install is already live here, as after a kit add that landed.
+        _install(consumer, bundled)
+        staged = stage_kit_providers(_client(consumer.http), consumer.instance_id, release)
+        kit_resume.record_kit_resume(
+            instance,
+            KitAddRequest(bundle=staged, source="test"),
+            actor_id="operator",
+            waiting_on=staged.manifest.providers,
+        )
+        kit_resume.resume_kits_after_activation(instance, (_PROVIDER,))
+        (resumed,) = _resumes(consumer)
+        assert resumed.state == "proposed" and resumed.proposal_id is not None
+        consumer.approve(resumed.proposal_id)
+        assert _resumes(consumer) == ()
+
+        # A stale recorded resume for an older release: its head no longer
+        # agrees with what landed, so the resume blocks instead of applying.
+        older_staged = stage_kit_providers(_client(consumer.http), consumer.instance_id, older)
+        kit_resume.record_kit_resume(
+            instance,
+            KitAddRequest(bundle=older_staged, source="test"),
+            actor_id="operator",
+            waiting_on=older_staged.manifest.providers,
+        )
+        kit_resume.resume_kits_after_activation(instance, (_PROVIDER,))
+        (blocked,) = _resumes(consumer)
+        assert blocked.state == "blocked" and "older than installed" in (blocked.detail or "")
+
+        request = _request(instance)
+        row = _row(instance, "kit_resume_blocked", request)
+        assert row.subject_identity == "kit:acme"
+        assert row.detail["detail"] == blocked.detail
+        assert row.repair.operation == EXPECTED_OPERATIONS["kit_resume_blocked"]
+
+        # The named repair: a commit kit add at the live release replaces the
+        # stale record outright.
+        assert _add(consumer, release, dry_run=False).status == "unchanged"
+        assert _resumes(consumer) == ()
+        _assert_gone(instance, "kit_resume_blocked", _request(instance))
+    finally:
+        for _ in opened:
+            pass
+
+
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_conflicted", None): _claim_conflicted,
     ("claim_uncovered", None): _claim_uncovered,
@@ -2071,6 +2150,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("evidence_unavailable", None): _evidence_unavailable,
     ("prediction_settleable", None): _prediction_settleable,
     ("prediction_window_unbindable", None): _prediction_window_unbindable,
+    ("kit_resume_blocked", None): _kit_resume_blocked,
 }
 
 
@@ -2080,6 +2160,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
 def test_every_next_reason_has_an_effective_named_repair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
     key: ClosedLoopKey,
 ) -> None:
     reasons = set(get_args(NextReason))
@@ -2098,6 +2179,10 @@ def test_every_next_reason_has_an_effective_named_repair(
 
     case_root = tmp_path / "-".join(part for part in key if part is not None)
     case_root.mkdir()
+    if key == ("kit_resume_blocked", None):
+        # The only case needing the provider wheels; fetched lazily so every
+        # other case's run never builds them.
+        _PROVIDER_CHECKOUT.set(request.getfixturevalue("provider_checkout"))
     CLOSED_LOOP_CASES[key](case_root, monkeypatch)
 
 
