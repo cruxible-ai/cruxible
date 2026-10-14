@@ -183,9 +183,17 @@ class _SyncClient:
     ) -> None:
         self.requests: list[BlockSyncReadRequest] = []
         self.declared: list[dict[str, object]] = []
+        self.observed: list[tuple[object, ...]] = []
         self.status = status
         self.refusal = refusal
         self.moved = moved
+
+    def observe_blocks(self, _instance_id: str, *, pages: object) -> object:
+        """Record the pages a repin or converging sync reports for block churn."""
+
+        assert isinstance(pages, list | tuple)
+        self.observed.append(tuple(pages))
+        return SimpleNamespace(status="recorded")
 
     def declare_block(
         self,

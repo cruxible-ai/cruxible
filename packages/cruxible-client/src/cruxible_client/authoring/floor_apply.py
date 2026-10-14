@@ -648,4 +648,36 @@ def apply_floor_delta(floor_dir: Path, delta: FloorDelta) -> FloorApplyResult:
         return _result(delta, head, "applied", len(writes), removed)
 
 
-__all__ = ["FloorApplyError", "apply_floor_delta", "read_floor_manifest"]
+def write_workspace_file(workspace: Path, path: str, content: bytes) -> bool:
+    """Write workspace-relative ``path`` atomically unless it already holds ``content``.
+
+    The floor's write, outside the floor: every component is opened through a
+    directory descriptor without following a link, and the bytes land by a
+    staged file renamed over the old one. Returns whether it wrote.
+    """
+
+    try:
+        root = os.open(workspace, _DIRECTORY)
+    except OSError as exc:
+        raise FloorApplyError(f"the workspace cannot be opened: {exc}") from exc
+    try:
+        parts, name = _split(path)
+        with _directory(root, parts, create=False) as directory:
+            if directory is not None:
+                try:
+                    if _read_at(directory, name) == content:
+                        return False
+                except FileNotFoundError:
+                    pass
+        _write_file(root, path, content)
+        return True
+    finally:
+        os.close(root)
+
+
+__all__ = [
+    "FloorApplyError",
+    "apply_floor_delta",
+    "read_floor_manifest",
+    "write_workspace_file",
+]

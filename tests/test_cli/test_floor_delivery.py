@@ -54,6 +54,8 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
     assert payload["instance_id"] == "inst_floor"
     if command.startswith("attach"):
         assert (workspace / ".cruxible" / "coverage.json").exists()
+        # Attach writes the world stub the first time; delivery keeps it current.
+        assert (workspace / ".cruxible" / "world.pyi").exists()
     else:
         assert payload["floor_delivery"] == (command == "on")
 

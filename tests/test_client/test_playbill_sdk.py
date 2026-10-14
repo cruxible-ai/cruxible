@@ -183,20 +183,6 @@ class _Client:
             result_digest="sha256:" + "7" * 64,
         )
 
-    def observe_curation(self, _instance_id: str, **values: object) -> api.CurationObserveResult:
-        self.curation_observation = values["workspace_observation"]
-        return api.CurationObserveResult(
-            coordinate=_COORDINATE,
-            generation=4,
-            observation_coverage={
-                "tag": "playbill-curation-observation-coverage-v1",
-                "source_count": 1,
-                "observed_block_count": 0,
-                "omitted_source_count": 0,
-                "omissions": [],
-            },
-        )
-
     def audit(self, _instance_id: str, **values: object) -> api.AuditResult:
         self.audit_request = values
         return api.AuditResult(
@@ -305,9 +291,7 @@ def test_sdk_since_uses_its_active_orientation(tmp_path: Path) -> None:
     assert result.rows == []
 
 
-def test_sdk_curation_observe_uses_the_existing_explicit_workspace_scanner(
-    tmp_path: Path,
-) -> None:
+def test_sdk_curation_list_is_a_pure_read(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _Client()
     pb = Cruxible._from_client(  # type: ignore[arg-type]
@@ -320,16 +304,7 @@ def test_sdk_curation_observe_uses_the_existing_explicit_workspace_scanner(
     listed = pb.curation_list()
     assert listed.detection.state == "never_run"
     assert set(client.curation_list_request) == {"access_profile", "limit", "cursor"}
-
-    result = pb.curation_observe()
-
-    assert result.generation == 4
-    assert isinstance(client.curation_observation, dict)
-    assert client.curation_observation["tag"] == "playbill-next-workspace-observation-v1"
-    (source_row,) = client.curation_observation["source_observations"]
-    assert source_row["tag"] == "playbill-next-source-observation-v4"
-    assert source_row["source_id"] == "corpus.runbook"
-    assert isinstance(client.coverage_observations, list)
+    assert not hasattr(pb, "curation_observe")
 
 
 def test_sdk_audit_uses_current_head_and_explicit_time(tmp_path: Path) -> None:

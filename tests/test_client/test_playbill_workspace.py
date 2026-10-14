@@ -175,6 +175,12 @@ def test_workspace_config_writer_adds_machine_local_git_exclusion(tmp_path: Path
     )
     assert excluded.returncode == 0
     assert b"/.cruxible/coverage.json\n" in (workspace / ".git/info/exclude").read_bytes()
+    # The derived world stub stays out of Git too.
+    stub_excluded = subprocess.run(
+        ["git", "-C", str(workspace), "check-ignore", "--quiet", ".cruxible/world.pyi"],
+        check=False,
+    )
+    assert stub_excluded.returncode == 0
 
 
 @pytest.mark.parametrize(

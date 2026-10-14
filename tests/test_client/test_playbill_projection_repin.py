@@ -65,6 +65,23 @@ class _RepinClient:
         self.clipped_budgets: list[str] = []
         self.on_claim = lambda: None
         self.declared: list[dict[str, Any]] = []
+        self.observed: list[Any] = []
+
+    def observe_blocks(self, _instance_id: str, *, pages: Any) -> api.BlockObserveResult:
+        """Record the pages a repin reports for block-churn detection."""
+
+        self.observed.append(tuple(pages))
+        return api.BlockObserveResult(
+            coordinate=COORDINATE,
+            generation=7,
+            observation_coverage={
+                "tag": "playbill-curation-observation-coverage-v1",
+                "source_count": len(pages),
+                "observed_block_count": sum(len(page.marker_summaries) for page in pages),
+                "omitted_source_count": 0,
+                "omissions": [],
+            },
+        )
 
     def declare_block(
         self,
@@ -665,3 +682,199 @@ def test_sdk_get_source_ref_reads_its_document_or_its_evidence_only_entry(
     assert document.value == {"document_id": "runbook"}
     assert entry.value["locator"] == "notes.md"
     assert entry.value["document_id"] is None
+
+
+def _attach(root: Path) -> None:
+    """Bind the workspace to the fake's instance, as `block sync` requires."""
+
+    (root / ".cruxible" / "coverage.json").write_text(
+        '{"tag":"playbill-coverage-workspace-config-v2",'
+        '"server_url":"https://sync.example.test","instance_id":"inst_projection"}',
+        encoding="utf-8",
+    )
+
+
+class _StaleClient(_RepinClient):
+    """Every held backing moved under its stamp (a `successor` verdict at the head)."""
+
+    def check_projection_blocks(self, _instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.contracts.authoring.models import BlockSyncReadResult
+
+        head = AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json"))
+        return SimpleNamespace(
+            results=tuple(
+                BlockSyncReadResult(
+                    status="successor",
+                    original_artifact_digest="sha256:" + "5" * 64,
+                    artifact_digest="sha256:" + "6" * 64,
+                    coordinate=head,
+                    generation=7,
+                    current_backings=stamp.backing,
+                    moved_backings=stamp.backing,
+                )
+                for stamp in request.stamps
+            )
+        )
+
+
+def _stamp_of(source: Path, root: Path) -> Any:
+    (block,) = parse_projection_blocks(
+        source.read_bytes(),
+        source_id="corpus.runbook",
+        manifests=load_projection_manifests(root, source.read_bytes()),
+    )
+    assert block.stamp is not None
+    return block.stamp
+
+
+def test_repin_records_its_page_for_block_churn(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _RepinClient()
+
+    _repin(client, tmp_path, claims=("CLM-first",))
+
+    ((page,),) = client.observed
+    assert (page.source_id, page.document_id) == ("corpus.runbook", "runbook")
+    assert [marker.stamp.block_id for marker in page.marker_summaries] == ["summary"]
+    dry = repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        source_id="corpus.runbook",
+        block_id="summary",
+        evaluation_time=NOW,
+        dry_run=True,
+    )
+    assert dry.block_id == "summary"
+    assert len(client.observed) == 1
+
+
+def test_a_converging_sync_rerenders_a_stale_rendered_block_and_records_the_page(
+    tmp_path: Path,
+) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.authoring.blocks import sync_projection_blocks
+
+    source = _workspace(tmp_path)
+    _attach(tmp_path)
+    client = _StaleClient()
+    repin_projection_block(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        source_id="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    assert len(client.observed) == 1
+    rendered = source.read_bytes()
+
+    checked = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_sources=True,
+    )
+    assert [item.outcome for item in checked.items] == ["stale"]
+    assert source.read_bytes() == rendered
+    assert len(client.observed) == 1
+
+    later = NOW + timedelta(hours=1)
+    converged = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_sources=True,
+        converge_at=later,
+    )
+    (item,) = converged.items
+    assert item.outcome == "rendered", item
+    assert converged.changed_file_count == 1 and not converged.has_refusals
+    (backing,) = _stamp_of(source, tmp_path).backing
+    assert isinstance(backing, ProjectionQueryBacking)
+    assert backing.declared_evaluation_time == later
+    assert len(client.observed) == 2
+    assert client.observed[-1][0].observed_source_digest == (
+        "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+
+
+def test_sync_preserves_prose_edited_during_render_proof(tmp_path: Path) -> None:
+    """Review clia F-001: an edit between the render proof and repin's own read survives."""
+
+    from datetime import timedelta
+
+    from cruxible_client.authoring.blocks import sync_projection_blocks
+
+    source = _workspace(tmp_path)
+    _attach(tmp_path)
+    setup_client = _StaleClient()
+    repin_projection_block(
+        setup_client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        source_id="corpus.runbook",
+        block_id="summary",
+        queries=(("project.items", {}),),
+        evaluation_time=NOW,
+        render=True,
+    )
+    rendered = source.read_bytes()
+    edited = rendered.replace(b"_No rows._\n", b"Author wrote new prose.\n")
+    assert edited != rendered
+
+    class _EditDuringProofClient(_StaleClient):
+        """Edits the page the first time a query answers -- the proof's query."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._edited = False
+
+        def query(self, instance_id: str, *, request: Any) -> Any:
+            if not self._edited:
+                self._edited = True
+                source.write_bytes(edited)
+            return super().query(instance_id, request=request)
+
+    client = _EditDuringProofClient()
+
+    converged = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_sources=True,
+        converge_at=NOW + timedelta(hours=1),
+    )
+
+    (item,) = converged.items
+    assert (item.outcome, item.reason) == ("dirty", "block_locally_modified"), item
+    assert source.read_bytes() == edited
+
+
+def test_a_converging_sync_leaves_stale_prose_to_its_author(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.authoring.blocks import sync_projection_blocks
+
+    source = _workspace(tmp_path)
+    _attach(tmp_path)
+    client = _StaleClient()
+    # The prose body is kept: a query backs it, but the body is not its rendering.
+    _repin(client, tmp_path, queries=(("project.items", {}),))
+    before = source.read_bytes()
+
+    converged = sync_projection_blocks(
+        client,  # type: ignore[arg-type]
+        "inst_projection",
+        workspace=tmp_path,
+        all_sources=True,
+        converge_at=NOW + timedelta(hours=1),
+    )
+
+    (item,) = converged.items
+    assert (item.outcome, item.reason) == ("stale", "block_backing_changed")
+    assert source.read_bytes() == before
+    assert len(client.observed) == 2

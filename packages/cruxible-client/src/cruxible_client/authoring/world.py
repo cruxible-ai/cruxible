@@ -1624,6 +1624,32 @@ def build_world(
     )
 
 
+class _VocabularyOnly:
+    """The session of a World built for its vocabulary alone: it reads nothing.
+
+    The daemon renders the world stub from the ClaimTypes its floor index holds,
+    with no client; a World over this answers names and structure, and any read
+    of state fails because there is no session to read with.
+    """
+
+    def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:
+        return None
+
+
+def vocabulary_world(
+    *,
+    coordinate: AcceptedCoordinate,
+    claim_type_envelopes: Sequence[Mapping[str, object]],
+) -> World:
+    """A World over accepted ClaimType envelopes alone, for rendering its stub."""
+
+    return build_world(
+        cast("Cruxible", _VocabularyOnly()),
+        coordinate=coordinate,
+        claim_type_envelopes=claim_type_envelopes,
+    )
+
+
 __all__ = [
     "CLAIM_TYPE_MEMBERS",
     "KindNamespace",
@@ -1636,4 +1662,5 @@ __all__ = [
     "admit_literal",
     "build_world",
     "literal_schema_members",
+    "vocabulary_world",
 ]

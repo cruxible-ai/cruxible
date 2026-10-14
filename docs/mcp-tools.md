@@ -269,8 +269,8 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
 | `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
 | `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
-| `cruxible_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp and registers the block; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
-| `cruxible_block_sync` | Check each projection block's backings; edits no page | `READ_ONLY` |
+| `cruxible_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp, registers the block and records the page's declared blocks for block-churn detection; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
+| `cruxible_block_sync` | Check each projection block's backings (the CLI's `block sync --check`); edits no page | `READ_ONLY` |
 | `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
 | `cruxible_block_depublish` | Release the declaration that registers one page block | `GOVERNED_WRITE` |
 
@@ -398,7 +398,6 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
 | `cruxible_curation_list` | List one page of the curation queue detection recorded (`limit`, `cursor`), with when detection last ran and which detectors are inactive; a pure read | `READ_ONLY` |
 | `cruxible_curation_duplicates` | List possible duplicates of one kind (`kind`, `limit`, `cursor`): Subjects and values equal under a broad comparison but distinct under the declared rules; a pure, bounded read | `READ_ONLY` |
-| `cruxible_curation_observe` | Scan the MCP workspace's declared blocks and record them for block-churn detection (`dry_run`, `at`) | `GOVERNED_WRITE` |
 | `cruxible_curation_overrule` | Close an item as not applying, permanently, with attribution | `GOVERNED_WRITE` |
 | `cruxible_curation_accept_fixed` | Link an item to the accepted change that fixed it, by `accepted_proposal_id` or `accepted_generation` | `GOVERNED_WRITE` |
 | `cruxible_curation_suppress` | Hide an item (`scope: item`) or its lineage (`scope: lineage`) without resolving it | `GOVERNED_WRITE` |

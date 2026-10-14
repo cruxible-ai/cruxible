@@ -1362,6 +1362,8 @@ def _repair_command(
                 shlex.quote(str(since)),
                 "--until",
                 shlex.quote(str(until)),
+                # One command: evaluate the gap, then dispatch what it enqueued.
+                "--dispatch",
             ]
         )
     elif operation in {"cruxible.line.enable", "cruxible.line.dispatch"}:
@@ -5648,6 +5650,14 @@ class _CallerView:
         static = _tool_rung(tool)
         if repair.operation == "cruxible.line.evaluate":
             # The tool's own tier is a dry-run read; enqueueing the range writes.
+            return _GOVERNED_WRITE_RUNG
+        if repair.operation == "cruxible.block.sync" and self.surface not in ("mcp", "sdk"):
+            # The tool's own tier is a pure check. The CLI's rendering of
+            # this repair runs `block sync --all` with no `--check`, which
+            # converges stale rendered blocks and records their pages'
+            # observations (a GOVERNED_WRITE write) by default; MCP and the
+            # SDK facade never converge or record on their own, so they stay
+            # at the tool's own read tier.
             return _GOVERNED_WRITE_RUNG
         if repair.operation != "cruxible.line.dispatch":
             return static

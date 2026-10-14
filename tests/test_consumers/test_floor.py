@@ -702,3 +702,52 @@ def test_fifo_local_input_stalls_delivery_promptly_and_releases_admission(world,
     health = FLOOR.health(instance, now=NOW)
     assert health[0].state == "stalled"
     assert health[0].repair.operation == "cruxible.floor.export"
+
+
+def test_delivery_keeps_the_world_stub_current_rendering_only_on_vocabulary_change(
+    world, monkeypatch
+):
+    import ast
+
+    from tests.test_floor.test_floor_index import add_lead_field
+
+    instance, workspace, registry = world
+    instance_id = instance.descriptor.instance_id
+    registry.set_floor_delivery(instance_id, True)
+    renders = []
+    real = floor.render_vocabulary_stub
+
+    def counted(envelopes, **values):
+        renders.append(values["coordinate"].git_oid)
+        return real(envelopes, **values)
+
+    monkeypatch.setattr(floor, "render_vocabulary_stub", counted)
+    stub = workspace / ".cruxible" / "world.pyi"
+
+    refresh_floor(instance, instance_id)
+    first = stub.read_text(encoding="utf-8")
+    assert first.startswith("# playbill-world-stub-v2:")
+    ast.parse(first)
+    assert len(renders) == 1
+
+    # A generation that touches no ClaimType renders nothing and leaves the stub.
+    _write(instance, _set(WI1, "status", "blocked"))
+    refresh_floor(instance, instance_id)
+    assert len(renders) == 1
+    assert stub.read_text(encoding="utf-8") == first
+
+    # A vocabulary change renders it once, at the head.
+    add_lead_field(instance)
+    refresh_floor(instance, instance_id)
+    assert len(renders) == 2
+    moved = stub.read_text(encoding="utf-8")
+    assert moved != first and "lead" in moved
+
+    # A missing stub is written again; delivery off writes nothing.
+    stub.unlink()
+    refresh_floor(instance, instance_id)
+    assert stub.read_text(encoding="utf-8") == moved
+    registry.set_floor_delivery(instance_id, False)
+    stub.unlink()
+    refresh_floor(instance, instance_id)
+    assert not stub.exists()

@@ -310,11 +310,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "retire, or semantic.distinct_from; a value group with "
         "a canonical_form succession. A pure, bounded read; pass next_cursor while truncated."
     ),
-    "cruxible_curation_observe": (
-        "Beta curation (detection only with an authored curation-detect Trigger). "
-        "Record this workspace's declared blocks for block-churn detection, which needs the "
-        "workspace the daemon never reads."
-    ),
     "cruxible_audit": (
         "Rank visible Claim verification work by exact stake, weakness, and recency factors. "
         "This read records completed coverage but never recommends or executes a repair."

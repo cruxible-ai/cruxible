@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -43,15 +45,72 @@ json_option = click.option(
 )
 
 
+#: ``ctx.meta`` keys: whether this invocation offers to commit its preview, and
+#: the coordinate a preview answered with when it does.
+_COMMIT_OFFER_KEY = "cruxible.change_control.offer_commit"
+_COMMIT_PIN_KEY = "cruxible.change_control.preview_pin"
+
+
+def _interactive_terminal() -> bool:
+    """Whether a person is at this invocation: standard input and output are both a TTY."""
+
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def change_control_options(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """``--dry-run/--commit`` and ``--at``: the R12 change control on every change.
+    """``--dry-run/--commit``, ``--at`` and ``--yes``: the R12 change control on every change.
 
     Neither flag: the operation's default (a change derived across several
     artifacts, or one that cannot be undone, previews). ``--commit --at OID``
     commits exactly the preview that answered at OID.
+
+    At an interactive terminal (no ``--json``), a change that previews by
+    default renders the preview and asks ``Commit this change? [y/N]``; yes
+    commits against the exact coordinate the preview answered with, and so
+    refuses the same way ``--commit --at OID`` would if that state moved.
+    ``--yes`` commits the preview without asking. Anywhere else the preview
+    prints the ``--commit --at`` hint, unchanged.
     """
 
-    fn = click.option(
+    @functools.wraps(fn)
+    def run(*args: Any, **kwargs: Any) -> Any:
+        yes = bool(kwargs.pop("yes", False))
+        output_json = bool(kwargs.get("output_json", False))
+        if yes and output_json:
+            raise click.UsageError(
+                "--yes renders the preview and then commits it; with --json, commit the "
+                "preview with --commit --at OID"
+            )
+        if yes and kwargs.get("dry_run") is not None:
+            raise click.UsageError(
+                "--yes commits a change that previews by default; drop --dry-run/--commit"
+            )
+        ctx = click.get_current_context()
+        offer = kwargs.get("dry_run") is None and not output_json
+        offer = offer and (yes or _interactive_terminal())
+        ctx.meta[_COMMIT_OFFER_KEY] = offer
+        ctx.meta.pop(_COMMIT_PIN_KEY, None)
+        result = fn(*args, **kwargs)
+        ctx.meta[_COMMIT_OFFER_KEY] = False
+        pin = ctx.meta.pop(_COMMIT_PIN_KEY, None)
+        if not offer or pin is None:
+            return result
+        if not yes and not click.confirm("Commit this change?", default=False):
+            click.echo(f"Not committed. Commit it later: rerun with --commit --at {pin}")
+            return result
+        return fn(*args, **{**kwargs, "dry_run": False, "at": pin})
+
+    command = click.option(
+        "--yes",
+        "yes",
+        is_flag=True,
+        default=False,
+        help=(
+            "Commit the preview without asking (a change that previews by default); "
+            "at an interactive terminal it otherwise asks."
+        ),
+    )(run)
+    command = click.option(
         "--at",
         "at",
         default=None,
@@ -61,7 +120,7 @@ def change_control_options(fn: Callable[..., Any]) -> Callable[..., Any]:
             "its digest); the commit refuses if that state moved since. Required to commit "
             "a change that cannot be undone."
         ),
-    )(fn)
+    )(command)
     return click.option(
         "--dry-run/--commit",
         "dry_run",
@@ -71,11 +130,16 @@ def change_control_options(fn: Callable[..., Any]) -> Callable[..., Any]:
             "Default: preview a change derived across several artifacts or one that "
             "cannot be undone; commit anything else."
         ),
-    )(fn)
+    )(command)
 
 
 def echo_preview_next(status: str, coordinate: Any) -> None:
-    """After a preview, say nothing was written and how to commit exactly it."""
+    """After a preview, say nothing was written and how to commit exactly it.
+
+    When the invocation offers to commit its preview (an interactive terminal,
+    or ``--yes``), the pin is handed to ``change_control_options``, which asks
+    once the command has rendered everything.
+    """
 
     if not status.startswith("would_") or coordinate is None:
         return
@@ -84,8 +148,13 @@ def echo_preview_next(status: str, coordinate: Any) -> None:
     if pin is None:
         return
     click.echo(f"Preview at {pin}; nothing was written.")
-    if status != "would_block" and status != "would_refuse":
-        click.echo(f"Commit it: rerun the same command with --commit --at {pin}")
+    if status == "would_block" or status == "would_refuse":
+        return
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.meta.get(_COMMIT_OFFER_KEY):
+        ctx.meta[_COMMIT_PIN_KEY] = pin
+        return
+    click.echo(f"Commit it: rerun the same command with --commit --at {pin}")
 
 
 brief_option = click.option(

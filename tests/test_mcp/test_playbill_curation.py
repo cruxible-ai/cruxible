@@ -6,7 +6,6 @@ import pytest
 
 from cruxible_client import contracts
 from cruxible_core.mcp import handlers
-from cruxible_core.service.discovery.next import NextWorkspaceObservationInvalid
 from tests.support.mcp_daemon import bind_mcp_daemon
 
 
@@ -66,24 +65,18 @@ def test_mcp_curation_list_is_one_thin_read_delegate(monkeypatch) -> None:  # ty
     assert request.get("cursor") is None
 
 
-def test_curation_observe_refuses_a_raw_source_observation_with_a_typed_error() -> None:
+def test_block_observe_refuses_a_malformed_page_with_a_typed_error() -> None:
     from cruxible_core.service.discovery.curation import (
-        validate_playbill_curation_observe_request,
+        BlockObservationInvalid,
+        validate_playbill_block_observe_request,
     )
 
-    raw = {
-        "tag": "playbill-next-workspace-observation-v1",
-        "source_observations": [
-            {
-                "source_id": "corpus.runbook",
-                "document_id": "runbook",
-                "observed_source_digest": "sha256:" + "1" * 64,
-            }
-        ],
-    }
+    page = {"source_id": "corpus.runbook", "observed_source_digest": "not-a-digest"}
 
-    with pytest.raises(NextWorkspaceObservationInvalid):
-        validate_playbill_curation_observe_request({"workspace_observation": raw})
+    with pytest.raises(BlockObservationInvalid):
+        validate_playbill_block_observe_request({"pages": [page]})
+    with pytest.raises(BlockObservationInvalid):
+        validate_playbill_block_observe_request({"pages": []})
 
 
 def test_mcp_curation_lifecycle_actions_are_thin_delegates(monkeypatch) -> None:  # type: ignore[no-untyped-def]

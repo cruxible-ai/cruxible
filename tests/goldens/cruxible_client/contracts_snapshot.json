@@ -11275,6 +11275,156 @@
         "source_id"
       ]
     },
+    "BlockObserveResult": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "observation_coverage": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation_coverage",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Observation Coverage",
+            "type": "object"
+          }
+        },
+        "status": {
+          "default": "recorded",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "default": "recorded",
+            "enum": [
+              "recorded",
+              "would_record"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-block-observe-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-block-observe-result-v1",
+            "default": "playbill-block-observe-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The declared blocks of the pages a client read, recorded for block-churn detection.",
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "observation_coverage": {
+            "additionalProperties": true,
+            "title": "Observation Coverage",
+            "type": "object"
+          },
+          "status": {
+            "default": "recorded",
+            "enum": [
+              "recorded",
+              "would_record"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-block-observe-result-v1",
+            "default": "playbill-block-observe-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "generation",
+          "observation_coverage"
+        ],
+        "title": "BlockObserveResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "generation",
+        "observation_coverage"
+      ]
+    },
     "BlockSyncItem": {
       "fields": {
         "block_id": {
@@ -11334,6 +11484,7 @@
             "enum": [
               "unchanged",
               "stale",
+              "rendered",
               "dirty",
               "detached",
               "would_detach",
@@ -11543,6 +11694,7 @@
             "enum": [
               "unchanged",
               "stale",
+              "rendered",
               "dirty",
               "detached",
               "would_detach",
@@ -13043,6 +13195,7 @@
                 "enum": [
                   "unchanged",
                   "stale",
+                  "rendered",
                   "dirty",
                   "detached",
                   "would_detach",
@@ -18893,156 +19046,6 @@
         "generation",
         "operational_head_digest",
         "result_digest"
-      ]
-    },
-    "CurationObserveResult": {
-      "fields": {
-        "coordinate": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "coordinate",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          }
-        },
-        "generation": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "generation",
-          "required": true,
-          "schema": {
-            "minimum": 0,
-            "title": "Generation",
-            "type": "integer"
-          }
-        },
-        "observation_coverage": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "observation_coverage",
-          "required": true,
-          "schema": {
-            "additionalProperties": true,
-            "title": "Observation Coverage",
-            "type": "object"
-          }
-        },
-        "status": {
-          "default": "recorded",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "status",
-          "required": false,
-          "schema": {
-            "default": "recorded",
-            "enum": [
-              "recorded",
-              "would_record"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "tag": {
-          "default": "playbill-curation-observe-result-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-curation-observe-result-v1",
-            "default": "playbill-curation-observe-result-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "AcceptedCoordinate": {
-            "additionalProperties": false,
-            "description": "Path-free public handle for one fully verified accepted generation.",
-            "properties": {
-              "compiler_digest": {
-                "title": "Compiler Digest",
-                "type": "string"
-              },
-              "generation_root": {
-                "title": "Generation Root",
-                "type": "string"
-              },
-              "git_oid": {
-                "title": "Git Oid",
-                "type": "string"
-              },
-              "semantic_root": {
-                "title": "Semantic Root",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-accepted-coordinate-v1",
-                "default": "playbill-accepted-coordinate-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "git_oid",
-              "semantic_root",
-              "generation_root",
-              "compiler_digest"
-            ],
-            "title": "AcceptedCoordinate",
-            "type": "object"
-          }
-        },
-        "additionalProperties": false,
-        "description": "One workspace scan's declared blocks recorded for block-churn detection.",
-        "properties": {
-          "coordinate": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          },
-          "generation": {
-            "minimum": 0,
-            "title": "Generation",
-            "type": "integer"
-          },
-          "observation_coverage": {
-            "additionalProperties": true,
-            "title": "Observation Coverage",
-            "type": "object"
-          },
-          "status": {
-            "default": "recorded",
-            "enum": [
-              "recorded",
-              "would_record"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "tag": {
-            "const": "playbill-curation-observe-result-v1",
-            "default": "playbill-curation-observe-result-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "required": [
-          "coordinate",
-          "generation",
-          "observation_coverage"
-        ],
-        "title": "CurationObserveResult",
-        "type": "object"
-      },
-      "required_fields": [
-        "coordinate",
-        "generation",
-        "observation_coverage"
       ]
     },
     "DiagnosticFrontier": {
@@ -29352,6 +29355,11 @@
                 "title": "Eligible At",
                 "type": "string"
               },
+              "newly_enqueued": {
+                "default": false,
+                "title": "Newly Enqueued",
+                "type": "boolean"
+              },
               "occurrence_id": {
                 "title": "Occurrence Id",
                 "type": "string"
@@ -29425,7 +29433,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "What one evaluation found; ``pending`` marks what it enqueued (never on a dry run).",
+        "description": "One evaluation's result: ``pending`` is current state, ``newly_enqueued`` is this call's.",
         "properties": {
           "checked_since": {
             "anyOf": [
@@ -29859,6 +29867,19 @@
             "type": "string"
           }
         },
+        "newly_enqueued": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "newly_enqueued",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Newly Enqueued",
+            "type": "boolean"
+          }
+        },
         "occurrence_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -30083,6 +30104,11 @@
             "format": "date-time",
             "title": "Eligible At",
             "type": "string"
+          },
+          "newly_enqueued": {
+            "default": false,
+            "title": "Newly Enqueued",
+            "type": "boolean"
           },
           "occurrence_id": {
             "title": "Occurrence Id",

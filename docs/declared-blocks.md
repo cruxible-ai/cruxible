@@ -35,8 +35,9 @@ staleness, not derivation.
    <!-- /cruxible:block:status -->
    ~~~
 
-   The page must be catalogued in `.cruxible/sources.yaml`; its entry name is
-   the block's source ID.
+   The page must be catalogued in `.cruxible/sources.yaml`
+   (`cruxible sources add status-page notes/status.md`); its entry name is the
+   block's source ID.
 
 2. **Repin to stamp it.** Name what the block reflects:
 
@@ -52,8 +53,11 @@ staleness, not derivation.
 
 3. **Let `next` or `block sync` report it.** When a backing changes,
    `cruxible next` reports `projection_backing_stale`, and when someone edits
-   the block's text, `projection_dirty`. `cruxible block sync --all` checks
-   every catalogued page and edits nothing.
+   the block's text, `projection_dirty`. `cruxible block sync --all --check`
+   checks every catalogued page and edits nothing; without `--check`, sync
+   also re-renders each stale rendered block (`--render`) from its query and
+   repins it, since a rendered block is derived from state. Prose is only
+   reported.
 
 4. **Re-check and repin.** Read what changed, revise the prose if it no longer
    holds (or rerun `--render`), and repin. A repin is your declaration that

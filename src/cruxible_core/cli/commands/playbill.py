@@ -52,8 +52,12 @@ from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.authoring.sources import (
+    SourceCatalogEdit,
+    add_catalog_entry,
     compile_client_source_context,
     load_source_catalog,
+    media_type_for,
+    remove_catalog_entry,
     root_aliases,
 )
 from cruxible_client.authoring.workspace import (
@@ -68,7 +72,7 @@ from cruxible_client.authoring.workspace import (
     write_workspace_floor,
     write_workspace_floor_delta,
 )
-from cruxible_client.authoring.world_stub import render_world_stub_for
+from cruxible_client.authoring.world_stub import render_world_stub_for, write_world_stub
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
@@ -104,6 +108,7 @@ from cruxible_client.contracts.kits import (
     KitRemoveRequest,
     kit_version_key,
 )
+from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
 from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
@@ -777,6 +782,7 @@ def attach_workspace(
         allow_local=False,
         command_name="cruxible workspace attach",
     )
+    _write_world_stub(workspace, selected)
     result = contracts.WorkspaceAttachResult(
         instance_id=selected,
         workspace_root=str(workspace),
@@ -830,6 +836,23 @@ def detach_workspace(
         echo_preview_next(result.status, result.coordinate)
         return
     click.echo(f"Detached {result.workspace_root} from Cruxible host {selected}")
+
+
+def _write_world_stub(workspace: Path, instance_id: str) -> None:
+    """Write the world stub into a workspace the first time it is bound to a host.
+
+    With floor delivery on, the daemon keeps it current from then on; `cruxible
+    stub` writes it explicitly.
+    """
+
+    rendered = _dispatch_cli(
+        lambda client: render_world_stub_for(client, instance_id, workspace=workspace),
+        lambda: None,
+        allow_local=False,
+        command_name="cruxible stub",
+    )
+    if rendered is not None:
+        write_world_stub(workspace, rendered)
 
 
 def _active_server_transport() -> str:
@@ -1182,6 +1205,8 @@ def init_playbill(
         written_by="cruxible init",
     )
     _remember_principal_settings(result.instance_id, principal_id, settings, activate=True)
+    if git_workspace is not None:
+        _write_world_stub(git_workspace, result.instance_id)
     if output_json:
         _emit_json({**_json_receipt(result), "owner_settings_path": str(settings)})
         return
@@ -2609,6 +2634,139 @@ def check_sources(
         click.echo(f"{alignment.get('name')}: {alignment.get('state')}")
     if not result.alignments:
         click.echo("No catalogued Documents to check.")
+
+
+def _catalog_edit_root(repository_root: str | None) -> Path:
+    if repository_root is not None:
+        return Path(repository_root).expanduser().resolve()
+    resolution = _local_git_workspace_root()
+    _emit_git_workspace_note(resolution)
+    if resolution.workspace_root is None:
+        raise click.UsageError("cruxible sources add/remove must run inside one Git worktree")
+    return resolution.workspace_root
+
+
+def _echo_catalog_edit(result: SourceCatalogEdit, *, output_json: bool) -> None:
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    if result.status == "removed":
+        suffix = (
+            " (it was the last entry; the catalog file is gone)" if result.catalog_removed else ""
+        )
+        click.echo(f"Removed source {result.name} from {result.catalog_path}{suffix}")
+        return
+    assert result.entry is not None
+    shape = "Document" if result.entry.is_document else "evidence-only"
+    click.echo(
+        f"{result.status.capitalize()} source {result.name} -> {result.entry.locator} "
+        f"({shape}) in {result.catalog_path}"
+    )
+
+
+@sources_group.command("add")
+@click.argument("name")
+@click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
+@click.option("--document-id", default=None, help="The Document this file compiles to.")
+@click.option("--document-kind", default=None, help="The Document's kind (with --document-id).")
+@click.option("--title", default=None, help="The Document's title (with --document-id).")
+@click.option(
+    "--media-type",
+    default=None,
+    help="The Document's media type (default: from the file suffix, e.g. text/markdown).",
+)
+@click.option(
+    "--scope",
+    "governance_scope",
+    multiple=True,
+    help="A governance scope the Document is in (repeatable; with --document-id).",
+)
+@click.option(
+    "--required-tier",
+    type=click.Choice(["governed_write", "graph_write", "admin"]),
+    default=None,
+    help="The tier activating the Document needs (default graph_write).",
+)
+@click.option("--public-uri", default=None, help="A public URI for the Document.")
+@click.option("--replace", is_flag=True, help="Update NAME's entry when it is already catalogued.")
+@click.option(
+    "--root",
+    "repository_root",
+    default=None,
+    help="Workspace root the catalog belongs to (default: this worktree).",
+)
+@json_option
+@handle_errors
+def add_source(
+    name: str,
+    path: Path,
+    document_id: str | None,
+    document_kind: str | None,
+    title: str | None,
+    media_type: str | None,
+    governance_scope: tuple[str, ...],
+    required_tier: str | None,
+    public_uri: str | None,
+    replace: bool,
+    repository_root: str | None,
+    output_json: bool,
+) -> None:
+    """Catalogue PATH under NAME in the workspace's .cruxible/sources.yaml.
+
+    NAME is the stable source name evidence is cited under (`--evidence-file
+    PATH#ANCHOR` resolves through it). With --document-id, --document-kind,
+    --title and --scope the entry also declares the Document it compiles to
+    (sources compile, sources propose); without them it is evidence-only. The
+    whole catalog is validated before the file is rewritten: an existing NAME
+    refuses unless --replace, and a partial Document or a duplicate Document
+    target refuses. Writes only the catalog file; commit it with Git.
+    """
+
+    fields: dict[str, object] = {
+        key: value
+        for key, value in {
+            "document_id": document_id,
+            "document_kind": document_kind,
+            "title": title,
+            "media_type": media_type,
+            "required_tier": required_tier,
+            "public_uri": public_uri,
+        }.items()
+        if value is not None
+    }
+    if document_id is not None:
+        fields.setdefault("media_type", media_type_for(path))
+        fields["governance_scope"] = tuple(
+            sorted(set(governance_scope), key=lambda item: item.encode("utf-8"))
+        )
+        fields = {key: value for key, value in fields.items() if value is not None}
+    elif governance_scope:
+        fields["governance_scope"] = governance_scope
+    result = add_catalog_entry(
+        _catalog_edit_root(repository_root), name=name, path=path, fields=fields, replace=replace
+    )
+    _echo_catalog_edit(result, output_json=output_json)
+
+
+@sources_group.command("remove")
+@click.argument("name")
+@click.option(
+    "--root",
+    "repository_root",
+    default=None,
+    help="Workspace root the catalog belongs to (default: this worktree).",
+)
+@json_option
+@handle_errors
+def remove_source(name: str, repository_root: str | None, output_json: bool) -> None:
+    """Remove NAME's entry from the workspace's .cruxible/sources.yaml.
+
+    Evidence already cited under NAME keeps its retained passage; new
+    citations of the file stop resolving. Writes only the catalog file.
+    """
+
+    result = remove_catalog_entry(_catalog_edit_root(repository_root), name=name)
+    _echo_catalog_edit(result, output_json=output_json)
 
 
 @sources_group.command("propose")
@@ -5079,19 +5237,31 @@ def repin_projection(
     type=click.Path(file_okay=False),
     help="The attached workspace whose pages are checked.",
 )
+@click.option(
+    "--check",
+    is_flag=True,
+    help="Only report each block's drift: re-render nothing, record nothing, write nothing.",
+)
 @json_option
 @handle_errors
 def sync_projection(
     paths: tuple[str, ...],
     all_sources: bool,
     workspace_root: str,
+    check: bool,
     output_json: bool,
 ) -> None:
-    """Check each block against its backings and report drift; writes nothing.
+    """Check each block against its backings, and re-render what is a projection of state.
 
-    Each block reads unchanged, stale (its backing moved: repin it), dirty (its
-    prose moved from the stamp: re-check and repin) or skipped (unstamped).
-    Exits non-zero on a refusal, which a require_current block's drift is.
+    Each block reads unchanged, stale (its backing moved), dirty (its prose
+    moved from the stamp: re-check and repin) or skipped (unstamped). A stale
+    block whose body is its query's rendering (`block repin --render`) is
+    derived from state, so sync re-renders it from the query at the head and
+    repins it (rendered); stale prose is only reported, since repinning it is
+    the author declaring the text right. Sync then records the declared blocks
+    of the pages it checked for block-churn detection. --check is the pure
+    report. Exits non-zero on a refusal, which a require_current block's drift
+    is.
     """
 
     result = _server_call(
@@ -5101,6 +5271,7 @@ def sync_projection(
             workspace=workspace_root,
             paths=paths,
             all_sources=all_sources,
+            converge_at=None if check else datetime.now(UTC),
         ),
         command_name="cruxible block sync",
     )
@@ -6188,6 +6359,16 @@ def disable_line(line: str, dry_run: bool | None, at: str | None, output_json: b
     default=None,
     help="Continue an incomplete page of the same range, in the same --dry-run mode.",
 )
+@click.option(
+    "--dispatch",
+    "and_dispatch",
+    is_flag=True,
+    help=(
+        "Then dispatch what this evaluation enqueued: every page of the range is "
+        "evaluated, and each occurrence it made pending is dispatched (one command "
+        "for a restart gap)."
+    ),
+)
 @json_option
 @handle_errors
 def evaluate_line(
@@ -6197,34 +6378,101 @@ def evaluate_line(
     dry_run: bool,
     limit: int,
     cursor: str | None,
+    and_dispatch: bool,
     output_json: bool,
 ) -> None:
     """Turn a missed range of LINE's Triggers into pending work; never runs anything.
 
     Use it to recover what automation missed (a daemon restart leaves a gap
-    `cruxible next` names with the exact command), then `line dispatch`.
-    Without --dry-run, --since and --until are required.
+    `cruxible next` names with the exact command), then `line dispatch`, or
+    pass --dispatch to do both in one command. Without --dry-run, --since and
+    --until are required.
     """
 
-    from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
+    from cruxible_client.contracts.line_dispatch import (
+        LineDispatchRequest,
+        LineEvaluateRequest,
+    )
 
-    request = LineEvaluateRequest.model_validate(
-        dict(since=since, until=until, limit=limit, cursor=cursor, dry_run=dry_run)
-    )
-    result = _server_call(
-        lambda client, instance_id: client.evaluate_line(instance_id, line, request=request),
-        command_name="cruxible line evaluate",
-    )
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-    else:
-        click.echo(f"{result.line}: {result.status} ({len(result.occurrences)} occurrences)")
-        if result.detail:
-            click.echo(result.detail)
+    if and_dispatch and dry_run:
+        raise click.UsageError(
+            "--dispatch runs what the evaluation enqueues; --dry-run enqueues nothing"
+        )
+
+    def evaluate(page_cursor: str | None) -> Any:
+        request = LineEvaluateRequest.model_validate(
+            dict(since=since, until=until, limit=limit, cursor=page_cursor, dry_run=dry_run)
+        )
+        return _server_call(
+            lambda client, instance_id: client.evaluate_line(instance_id, line, request=request),
+            command_name="cruxible line evaluate",
+        )
+
+    if not and_dispatch:
+        result = evaluate(cursor)
+        if output_json:
+            _emit_json(result.model_dump(mode="json"))
+            return
+        _echo_line_evaluation(result)
         if result.cursor:
             click.echo(
                 f"Next cursor: {result.cursor}; retain --until {result.checked_until.isoformat()}"
             )
+        return
+    # Every page of the same range: this call's own enqueue marks what it
+    # made pending, across pages -- never an occurrence already pending from
+    # an earlier evaluation, which the general `pending` flag cannot tell
+    # apart from one this call just enqueued.
+    pages = [evaluate(cursor)]
+    while pages[-1].cursor is not None:
+        pages.append(evaluate(pages[-1].cursor))
+    newly_enqueued = [
+        item.occurrence_id for page in pages for item in page.occurrences if item.newly_enqueued
+    ]
+
+    def dispatch(occurrence_id: str) -> Any:
+        request = LineDispatchRequest(occurrence_id=occurrence_id, limit=1)
+        return _server_call(
+            lambda client, instance_id: client.dispatch_line(instance_id, line, request=request),
+            command_name="cruxible line dispatch",
+        )
+
+    items: list[Any] = [
+        item for occurrence_id in newly_enqueued for item in dispatch(occurrence_id).items
+    ]
+    combined = _LineEvaluateDispatched(evaluations=tuple(pages), dispatched=tuple(items))
+    if output_json:
+        _emit_json(combined.model_dump(mode="json"))
+        return
+    for page in pages:
+        _echo_line_evaluation(page)
+    if not items:
+        click.echo("Nothing enqueued to dispatch.")
+    for item in items:
+        _echo_line_dispatch_item(item)
+
+
+class _LineEvaluateDispatched(BaseModel):
+    """`line evaluate --dispatch`: every evaluated page, then each enqueued dispatch."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    tag: Literal["playbill-line-evaluate-dispatch-v1"] = "playbill-line-evaluate-dispatch-v1"
+    evaluations: tuple[LineEvaluateResult, ...]
+    dispatched: tuple[LineDispatchItem, ...]
+
+
+def _echo_line_evaluation(result: LineEvaluateResult) -> None:
+    click.echo(f"{result.line}: {result.status} ({len(result.occurrences)} occurrences)")
+    if result.detail:
+        click.echo(result.detail)
+
+
+def _echo_line_dispatch_item(item: LineDispatchItem) -> None:
+    click.echo(
+        f"{item.occurrence_id}: {item.status}" + (f" run={item.run_id}" if item.run_id else "")
+    )
+    if item.detail:
+        click.echo(item.detail)
 
 
 #: Occurrences one `line dispatch` request attempts while draining.
@@ -6284,12 +6532,7 @@ def dispatch_line(
         click.echo("No pending occurrences for this Line epoch.")
     else:
         for item in drained.items:
-            click.echo(
-                f"{item.occurrence_id}: {item.status}"
-                + (f" run={item.run_id}" if item.run_id else "")
-            )
-            if item.detail:
-                click.echo(item.detail)
+            _echo_line_dispatch_item(item)
 
 
 @line_group.command("run")
@@ -6744,48 +6987,6 @@ def curation_duplicates(kind: str, limit: int, cursor: str | None, output_json: 
             members = ", ".join(f"{item.value!r} {item.claim}" for item in group.values)
             click.echo(f"  {group.predicate} {group.key!r}: {members}")
     _echo_list_continuation(result.next_cursor)
-
-
-@curation_group.command("observe")
-@click.option(
-    "--workspace-root",
-    default=".",
-    show_default=True,
-    type=click.Path(file_okay=False),
-    help="The workspace whose declared blocks are scanned.",
-)
-@change_control_options
-@json_option
-@handle_errors
-def curation_observe(
-    workspace_root: str, dry_run: bool | None, at: str | None, output_json: bool
-) -> None:
-    """Record this workspace's declared blocks for block-churn detection.
-
-    Block churn is the one detector that needs the workspace, which the daemon
-    never reads; detection picks the recorded scan up when it next runs.
-    """
-
-    observation = observe_next_workspace(Path(workspace_root))
-
-    def call(client: CruxibleClient, instance_id: str) -> contracts.CurationObserveResult:
-        observed, _coordinate = observe_next_workspace_with_coverage(
-            client, instance_id, Path(workspace_root), observation=observation
-        )
-        return client.observe_curation(
-            instance_id, workspace_observation=observed, dry_run=dry_run, at=at
-        )
-
-    result = _server_call(call, command_name="cruxible curation observe")
-    if output_json:
-        _emit_json(result.model_dump(mode="json"))
-        return
-    verb = "Would record" if result.status == "would_record" else "Recorded"
-    click.echo(
-        f"{verb} {result.observation_coverage['observed_block_count']} declared block(s) "
-        f"at generation {result.generation}."
-    )
-    echo_preview_next(result.status, result.coordinate)
 
 
 @curation_group.command("overrule")
@@ -7314,12 +7515,15 @@ def orient(
 )
 @handle_errors
 def world_stub(out_path: str | None) -> None:
-    """Write a .pyi stub typing this instance's accepted world.
+    """Write a .pyi stub typing this instance's accepted vocabulary.
 
     A world is discovered at runtime, so an editor and a model both see `Any`
-    where the instance's own kinds, Subjects and predicates are. This writes
-    them down as types at exactly one accepted coordinate, which the stub names
-    in its header. Regenerate it after every activation.
+    where the instance's own kinds, predicates and enum members are. This
+    writes them down as types; Subjects are typed by kind, never one attribute
+    each, so the stub moves only when the vocabulary does, and its header names
+    the vocabulary's digest. `cruxible init` and `workspace attach` write it to
+    .cruxible/world.pyi, and with floor delivery on the daemon keeps that file
+    current; this is the explicit write (standard output, or --out).
     """
 
     rendered = _server_call(

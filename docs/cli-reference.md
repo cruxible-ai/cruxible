@@ -120,6 +120,17 @@ which exists before `init` too.
   `cruxible.preview.confirmation_required`.
 - Everything else commits unless `--dry-run` is given.
 
+At an interactive terminal (standard input and output both a TTY, no
+`--json`), a change that previews by default renders its preview and asks
+`Commit this change? [y/N]`. Yes commits against the exact coordinate the
+preview answered with, exactly as `--commit --at OID` would, so it refuses
+`cruxible.preview.state_moved` if that state moved in between; no commits
+nothing and prints the `--commit --at OID` to run later. `--yes` (on every
+command that takes `--dry-run|--commit`) commits the preview without asking,
+on a terminal or not; it refuses with `--json`, `--dry-run` or `--commit`.
+Off a terminal, and with `--json`, nothing asks: the preview prints the
+`--commit --at OID` hint as before.
+
 `--at OID` pins any commit to a preview: if that state moved since, the
 commit refuses `cruxible.preview.state_moved` and changes nothing; preview
 again. The pin is checked where the change commits, under the lock its write
@@ -645,8 +656,9 @@ workspace gets an atomic `.cruxible/coverage.json` v2 write containing exactly
 one transport, the instance ID, and the fixed floor profile; bearer credentials
 and secrets are never inputs to that writer. A differing config is refused
 unless `--replace` is explicit. Because the binding may carry a local socket,
-the writer adds `.cruxible/coverage.json` to this repository's machine-local
-`.git/info/exclude` rather than changing a shared ignore file.
+the writer adds `.cruxible/coverage.json` and the derived world stub
+`.cruxible/world.pyi` to this repository's machine-local `.git/info/exclude`
+rather than changing a shared ignore file.
 
 Daemon floor delivery is on by default when a local workspace is registered.
 `workspace attach` enables it unless `--no-floor-delivery` is supplied;
@@ -2152,12 +2164,18 @@ cruxible line enable LINE [--dry-run|--commit] [--at OID] [--json]
 cruxible line disable LINE [--dry-run|--commit] [--at OID] [--json]
 cruxible line run LINE [--event FILE|-] [--repeat] [--resolution-contract FILE|-]
   [--occurrence-id ID] [--evaluation-time TS] [--json]
-cruxible line evaluate LINE [--since TS --until TS] [--dry-run] [--limit 100] [--cursor CURSOR] [--json]
+cruxible line evaluate LINE [--since TS --until TS] [--dry-run | --dispatch] [--limit 100]
+  [--cursor CURSOR] [--json]
 cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit N] [--json]
 ~~~
 
 `enable`, `disable` and `run` are the normal flow; `evaluate` and `dispatch`
-recover what automation missed, and `cruxible next` points to them. `cruxible
+recover what automation missed, and `cruxible next` points to them.
+`evaluate --dispatch` does both in one command: it evaluates every page of the
+range (following `--cursor` itself, with the same `--until`), then dispatches
+each occurrence that evaluation made pending, one by one, and reports both
+(`--json`: `evaluations` and `dispatched`). It never dispatches pending work the
+evaluation did not produce; `line dispatch` drains that. `cruxible
 get Line:NAME` reads a Line: its Triggers, its enablements (state, who enabled
 it, the pinned Line version and Trigger versions, how far its daemon has
 matched), its pending occurrences and its recent runs.
@@ -2276,8 +2294,8 @@ matching had fallen behind) in which the Line's live Triggers would have fired:
 a tick on its schedule, a generation accepted, a Capture landed or a window
 closed. A downtime range with nothing due is recorded as evaluated at the
 restart and never listed. Each row names the exact
-`cruxible line evaluate LINE --since S --until U` that covers it (the row
-leaves once an evaluation covers the range). `next` also shows one
+`cruxible line evaluate LINE --since S --until U --dispatch` that covers it and
+runs what it finds (the row leaves once an evaluation covers the range). `next` also shows one
 `line_work_pending` row while work it matched before the restart, or that was
 evaluated explicitly, waits for `line dispatch`. Nothing evaluated or matched
 before a restart is dispatched automatically. Rebuilding the disposable event
@@ -2731,7 +2749,7 @@ cruxible block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
   [--evaluation-time TS] [--artifact ID]... [--currency-policy warn|require_current]
   [--clear-claims] [--clear-queries] [--clear-artifacts] [--render] [--dry-run]
-cruxible block sync [PATH]... [--all] [--workspace-root DIR] [--json]
+cruxible block sync [PATH]... [--all] [--workspace-root DIR] [--check] [--json]
 cruxible block detach PATH... [--workspace-root DIR] [--dry-run|--commit] [--at DIGEST] [--json]
 cruxible block depublish SOURCE_ID BLOCK_ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
@@ -2740,7 +2758,8 @@ Blocks are stamped, and nothing regenerates them on its own. The workflow: write
 the markers and the prose (or `repin --render` for a rendered table or list),
 `repin` to stamp, let `next` or `block sync` report a block stale or dirty,
 re-check it and repin; `block detach` and `block depublish` when its backings
-are gone. The client, not the daemon, computes every stamp: `repin` reads the
+are gone. A rendered block is the exception: it is derived from state, so
+`block sync` re-renders a stale one itself (below). The client, not the daemon, computes every stamp: `repin` reads the
 backings, writes the marker and then declares the block to the instance.
 `--render` writes the body from the block's one `--query` backing: a Markdown
 table of the result Subjects and their projected fields, or a bulleted list of
@@ -2820,7 +2839,7 @@ On MCP the same adapter runs in the MCP server process:
 `cruxible_block_repin` takes the block and its page (`file`,
 workspace-relative, or `source`, its catalog id) and computes the stamp there,
 so an agent never builds one (`render: true` is `--render`);
-`cruxible_block_sync` is `block sync`, a read that edits no page. Detaching is
+`cruxible_block_sync` is `block sync --check`, a read that edits no page. Detaching is
 `block detach` and the write-tier `cruxible_block_detach` (`files`, `dry_run`,
 `at`): its preview
 reports what the edit would change and is pinned to the pages' bytes, and a
@@ -2868,8 +2887,17 @@ check with diagnostic details. A dirty body does not suppress dependency checks,
 and one failed dependency does not hide the others. Repin acknowledges a reviewed
 body and refreshes its dependencies; there is no separate accept-local bypass.
 
-`block sync` writes nothing. Advisory findings remain visible without a nonzero
-exit; `require_current` findings and integrity errors fail the check. An unreadable or ambiguous lineage remains an incomplete check, with
+Without `--check`, `block sync` converges what is mechanical. A stale block
+whose body is its query's rendering -- one query backing, an unedited body, and
+that query evaluated again at the stamp's own coordinate and evaluation time
+renders exactly the stamped body -- is derived from state: sync re-renders it
+from the query at the head, writes the page (whole-file compare-and-swap) and
+repins it, reporting `rendered`. Stale prose is only reported: repinning it is
+the author declaring the text right. Sync then records the declared blocks of
+the pages it checked for block-churn detection (as every `block repin` does for
+its page), which needs governed write. `--check` is the pure report: it
+re-renders nothing, records nothing and writes nothing. Advisory findings
+remain visible without a nonzero exit; `require_current` findings and integrity errors fail the check. An unreadable or ambiguous lineage remains an incomplete check, with
 exact successor candidates where available. `repin --backing DIGEST` selects a
 live successor explicitly.
 
@@ -3116,7 +3144,6 @@ the row.
 ~~~text
 cruxible curation list [--access-profile FILE] [--limit N] [--cursor CURSOR] [--json]
 cruxible curation duplicates --kind KIND [--limit N] [--cursor CURSOR] [--json]
-cruxible curation observe [--workspace-root PATH] [--dry-run|--commit] [--at DIGEST] [--json]
 cruxible curation overrule ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT [--attribution-ref REF]...
   [--dry-run|--commit] [--at OID] [--json]
@@ -3141,14 +3168,15 @@ at the fire's recorded instant. `curation list` is a pure read of that queue: it
 pattern kind, subject and `latest_event_digest` (what every ruling needs), when
 detection last ran (`current`, `behind` or `never_run`) and whether its Trigger
 is live, and the detectors that cannot run here and why (dead vocabulary needs
-`CRUXIBLE_CONSUMPTION_RECEIPTS=on`; block churn needs a recorded workspace scan).
+`CRUXIBLE_CONSUMPTION_RECEIPTS=on`; block churn needs recorded block observations).
 With no such Trigger, `curation list` reports detection `never_run` and its
 Trigger `missing`.
 
 Block churn is the one detector that reads the workspace, which the daemon never
-does: `curation observe` scans the workspace's declared blocks client-side and
-records them, with the scan's accounting, for detection to read when it next
-runs.
+does: `block repin` and `block sync` (without `--check`) record the declared
+blocks of the pages they touched, with their accounting, for detection to read
+when it next runs. Nothing else records them, and nothing reads the whole
+workspace to do it.
 
 The queue is paged (default 25 items, at most 200); a cut page has
 `truncated: true` and a `next_cursor` for `--cursor`, which continues only while
@@ -3448,16 +3476,26 @@ coordinate and generation); it never re-exports.
 cruxible stub [--out PATH]
 ~~~
 
-Writes a `.pyi` typing this instance's accepted world -- its Subject kinds, the
-Subject IDs that can be spelled as Python attributes, every predicate, and each
-enum member a literal schema names -- so an editor and a model complete the real
-vocabulary instead of `Any`. Without `--out` the stub goes to standard output.
+Writes a `.pyi` typing this instance's accepted vocabulary -- its Subject
+kinds, every predicate, and each enum member a literal schema names -- so an
+editor and a model complete the real vocabulary instead of `Any`. Subjects are
+typed by kind (`world.<kind>["<id>"]`, iteration, `in`), never one attribute
+per Subject, so the stub depends on the vocabulary alone: it does not grow with
+the data and changes only when a ClaimType does. Without `--out` the stub goes
+to standard output.
 
-The stub names in a header comment the exact accepted coordinate it was read at,
-and is byte-identical for that coordinate, so regenerating after an activation
-shows the vocabulary movement as an ordinary diff. It types one coordinate and
-carries no authority over the next: the SDK still refuses a world whose
-orientation has moved.
+The stub names in a header comment the digest of the vocabulary it types, and
+is byte-identical for that vocabulary, so a regenerated stub shows the
+vocabulary movement as an ordinary diff. It carries no authority: the SDK still
+refuses a world whose orientation has moved.
+
+The workspace keeps one at `.cruxible/world.pyi`, beside the floor. `cruxible
+init` and `workspace attach` write it the first time; with floor delivery on,
+the daemon keeps it current as part of each floor refresh, re-rendering it only
+when an accepted generation changed the vocabulary (it reads only the change
+records since the generation it last checked, and writes the file only when its
+bytes differ). With delivery off, `cruxible stub --out .cruxible/world.pyi` is
+the refresh.
 
 ## since
 
@@ -3479,7 +3517,8 @@ cruxible floor delivery STATE [--instance-id ID] [--json]
 
 The floor has one writer. A local daemon with a registered workspace and
 delivery on writes it after every accepted generation (the `floor-refresh`
-Trigger), and `floor export` over its socket only asks it to deliver now; over
+Trigger), together with the world stub `.cruxible/world.pyi` when that
+generation changed the vocabulary (see [stub](#stub)), and `floor export` over its socket only asks it to deliver now; over
 TCP the export refuses, naming `floor delivery off` as the way to write from the
 client. Everywhere else `floor export` is the pull. `floor delivery` (local
 socket only) chooses between the two.
@@ -3905,6 +3944,10 @@ trusted and could load another principal's settings. See the
 ## sources
 
 ~~~text
+cruxible sources add NAME PATH [--document-id ID --document-kind KIND --title TEXT
+  --scope SCOPE... [--media-type TYPE] [--required-tier TIER] [--public-uri URI]]
+  [--replace] [--root DIR] [--json]
+cruxible sources remove NAME [--root DIR] [--json]
 cruxible sources check [--catalog FILE] [--local-catalog FILE] [--root DIR]
   [--root-alias NAME=PATH]... [--json]
 cruxible sources compile --output FILE [--catalog FILE] [--local-catalog FILE]
@@ -3922,6 +3965,20 @@ another. An entry needs only `name` and `locator` to be cited as evidence
 `next`; adding `document_id`, `document_kind`, `title`, `media_type` and
 `governance_scope` (all five together) makes it a Document that compiles and
 can be proposed.
+
+`sources add NAME PATH` writes that entry so nobody hand-writes the YAML: PATH
+(relative to the current directory) must be a file inside the workspace, and
+becomes the entry's workspace-relative `locator`. `--document-id`,
+`--document-kind`, `--title` and `--scope` (repeatable) declare the Document;
+`--media-type` defaults from the file suffix (`.md` is `text/markdown`). The
+whole catalog is validated before the file is rewritten, so an existing NAME
+refuses `cruxible.sources.catalog_edit_refused` (`entry_exists`) unless
+`--replace`, and a partial Document, a duplicate Document target or a
+malformed value refuses (`entry_invalid`) with the catalog model's reason;
+nothing is written on a refusal. The file is rewritten canonically (entries
+sorted, defaults omitted, comments not kept); it is created on the first
+`add`. `sources remove NAME` drops one entry (the file goes with the last).
+Both edit only the catalog file: commit it with Git.
 
 `sources compile` reads the catalogued Documents' bytes client-side and writes a
 path-free bundle; `sources check` reports each one's alignment (aligned,

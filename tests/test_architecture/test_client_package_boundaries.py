@@ -18,10 +18,12 @@ CORE_ROOT = ROOT / "src" / "cruxible_core"
 # belongs to neither surface alone).
 CLIENT_ADAPTER_PREFIXES = ("adapters/", "cli/", "client/", "mcp/")
 LEGACY_CLIENT_SIGNING_BRIDGES = {"ledger/signing.py"}
-# This workspace-output consumer reuses the floor writer; it imports neither
-# transport nor signing. Keep the exception to this one module and import.
+# This workspace-output consumer reuses the floor writer, and the world-stub
+# renderer and writer it delivers beside the floor; it imports neither transport
+# nor signing. Keep the exception to this one module and these imports.
 WORKSPACE_OUTPUT_ADAPTER_IMPORTS = {
     ("consumers/floor.py", "cruxible_client.authoring.workspace"),
+    ("consumers/floor.py", "cruxible_client.authoring.world_stub"),
 }
 LEGACY_ERROR_BRIDGES = {"errors.py", "server/errors.py"}
 

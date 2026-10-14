@@ -98,6 +98,26 @@ class _ServiceClient:
             declared_at="2026-09-10T12:00:00.000000Z",
         )
 
+    def observe_blocks(self, instance_id, *, pages):  # type: ignore[no-untyped-def]
+        from cruxible_core.governance.actor_context import GovernedActorContext
+        from cruxible_core.service.discovery.curation import (
+            PlaybillBlockObserveRequestV1,
+            service_observe_playbill_blocks,
+        )
+
+        assert instance_id == self.instance.descriptor.instance_id
+        return service_observe_playbill_blocks(
+            self.instance,
+            request=PlaybillBlockObserveRequestV1(pages=tuple(pages)),
+            actor_context=GovernedActorContext(
+                actor_type="service_account",
+                actor_id="owner",
+                org_id="org-test",
+                operation_id="op-block-observe",
+                timestamp=EVALUATION_TIME,
+            ),
+        )
+
     def resolve_coverage(  # type: ignore[no-untyped-def]
         self,
         instance_id,

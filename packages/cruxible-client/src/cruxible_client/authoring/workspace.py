@@ -78,7 +78,8 @@ from cruxible_client.contracts.workspace_layout import (
 )
 
 _CONFIG_PATH = PurePosixPath(".cruxible/coverage.json")
-_CONFIG_EXCLUDE_RULE = b"/.cruxible/coverage.json\n"
+#: Machine-local files kept out of Git: the client binding and the derived world stub.
+_EXCLUDE_RULES = (b"/.cruxible/coverage.json\n", b"/.cruxible/world.pyi\n")
 _FLOOR_DOMAIN = FLOOR_FORMAT
 # A workspace's floor_output profile names a format; live workspaces still hold
 # profiles written as v2 or v5, which refresh to the current floor unchanged.
@@ -231,12 +232,14 @@ def _ensure_workspace_config_ignored(workspace: Path) -> None:
             existing = b""
         except OSError as exc:
             raise WorkspaceError(f"Git info/exclude cannot be read: {exc}") from exc
-        if _CONFIG_EXCLUDE_RULE.rstrip(b"\n") in existing.splitlines():
+        present = set(existing.splitlines())
+        missing = [rule for rule in _EXCLUDE_RULES if rule.rstrip(b"\n") not in present]
+        if not missing:
             return
         content = existing
         if content and not content.endswith(b"\n"):
             content += b"\n"
-        content += _CONFIG_EXCLUDE_RULE
+        content += b"".join(missing)
         try:
             try:
                 mode = os.stat("exclude", dir_fd=descriptor, follow_symlinks=False).st_mode & 0o777

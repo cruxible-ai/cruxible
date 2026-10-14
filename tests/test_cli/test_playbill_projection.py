@@ -170,16 +170,34 @@ def test_cli_sync_passes_local_edit_and_path_controls(
     )
 
     assert result.exit_code == 0, result.output
-    assert calls == [
-        {
-            "workspace": str(tmp_path),
-            "paths": ("corpus/runbook.md",),
-            "all_sources": False,
-        }
-    ]
+    (converging,) = calls
+    # Without --check, sync converges rendered blocks at the caller's instant.
+    assert isinstance(converging.pop("converge_at"), datetime)
+    assert converging == {
+        "workspace": str(tmp_path),
+        "paths": ("corpus/runbook.md",),
+        "all_sources": False,
+    }
+    checked = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://projection.example.test",
+            "--instance-id",
+            "inst_projection",
+            "block",
+            "sync",
+            "--all",
+            "--check",
+            "--workspace-root",
+            str(tmp_path),
+        ],
+    )
+    assert checked.exit_code == 0, checked.output
+    assert calls[-1]["converge_at"] is None
 
 
-def test_cli_sync_is_a_pure_check_and_detach_is_its_own_command(
+def test_cli_sync_takes_no_detach_flag_and_detach_is_its_own_command(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls: list[dict[str, object]] = []
@@ -213,9 +231,8 @@ def test_cli_sync_is_a_pure_check_and_detach_is_its_own_command(
         "inst_projection",
         "block",
     ]
-    for flag in ("--detach", "--check"):
-        refused = CliRunner().invoke(cli, [*base, "sync", "--all", flag, "x.md"])
-        assert refused.exit_code == 2, refused.output
+    refused = CliRunner().invoke(cli, [*base, "sync", "--all", "--detach", "x.md"])
+    assert refused.exit_code == 2, refused.output
 
     invoked = CliRunner().invoke(
         cli,

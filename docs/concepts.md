@@ -87,7 +87,7 @@ the verdict `uncovered`.
 
 The source catalog, `.cruxible/sources.yaml`, gives each workspace file a
 stable name. An entry needs only a `name` and a `locator` (its path) to be
-cited. Two different things can then rest on a catalogued file:
+cited; `cruxible sources add NAME PATH` writes one. Two different things can then rest on a catalogued file:
 
 | | Citation | Document |
 |---|---|---|
@@ -167,9 +167,10 @@ or revises a ClaimType, `migrate` succeeds one and decides, in the same change
 set, what happens to every Claim that depends on it (carry it to the new
 version, retire it, or say it again under the new vocabulary), and `upgrade`
 moves older ClaimTypes to the current format. Changing vocabulary disposes
-dependent Claims, so it is never a side effect of another write. After an
-activation that changes vocabulary, rerun `cruxible stub` if you use a typed
-stub.
+dependent Claims, so it is never a side effect of another write. With floor
+delivery on, the daemon rewrites the workspace's typed stub
+(`.cruxible/world.pyi`) when an activation changes vocabulary; with it off,
+rerun `cruxible stub`.
 
 Every payload argument accepts `-` for standard input, so a heredoc or a pipe
 works and no throwaway file lands on disk. Real artifacts stay files:
@@ -272,9 +273,10 @@ accepted generation, while delivery is on (`cruxible floor delivery on|off`;
 with delivery off, pull it with `cruxible floor export` or
 `cx.refresh_workspace()`.
 
-`cruxible stub --out world.pyi` writes the accepted vocabulary as Python types
-for an editor or a model. A stub describes one coordinate: regenerate it after
-activations that change vocabulary.
+`.cruxible/world.pyi` types the accepted vocabulary as Python types for an
+editor or a model. It depends on the vocabulary alone (Subjects are typed by
+kind), so floor delivery keeps it current by rewriting it only when the
+vocabulary changes; `cruxible stub --out PATH` writes one explicitly.
 
 ## Work queues
 
@@ -306,9 +308,10 @@ either:
 
 Both are governed the same way. When the state behind a block moves, `next`
 reports it (`projection_backing_stale`, or `projection_dirty` when someone
-edited the block's text) and `block sync` shows it; you re-check it, and
-rewrite or repin it. Only a rendered block can regenerate itself; an authored
-one needs only the staleness signal. See [Projection
+edited the block's text) and `block sync` shows it. A stale rendered block
+regenerates itself: `block sync` re-renders it from its query and repins it.
+An authored one needs only the staleness signal: you re-check it, and rewrite
+or repin it. See [Projection
 blocks](declared-blocks.md).
 
 ## Predictions
@@ -387,8 +390,9 @@ Lines are enabled, not armed:
   settings; it never consumes or waits on a Trigger.
 - Timed Triggers tick on their schedule's own grid. Enabling or resuming a
   Line never runs a missed tick; `line evaluate` over the missed range records
-  every tick it skipped, and `line dispatch` runs them. `next` names the exact
-  command for each gap, for example after the daemon was down.
+  every tick it skipped, and `line dispatch` runs them (`line evaluate --dispatch`
+  does both). `next` names the exact command for each gap, for example after
+  the daemon was down.
 
 Internal actions (floor refresh, evidence sweeps, prediction retries, and
 curation detection once its Trigger is authored) also run on Triggers, and need

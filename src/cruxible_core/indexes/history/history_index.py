@@ -684,6 +684,22 @@ class HistoryReader:
             )
         )
 
+    def touched_under(self, prefix: str, low: int, high: int) -> bool:
+        """Whether a change record in ``(low, high]`` touched a member path under ``prefix``.
+
+        Reads only the change records of that range (the primary key orders them
+        by generation), stopping at the first match.
+        """
+
+        if not 0 <= low <= high <= self.sequence:
+            raise FormatError("generation is outside requested accepted history")
+        row = self._connection.execute(
+            "SELECT 1 FROM accepted_member_locations WHERE sequence>? AND sequence<=? "
+            "AND substr(member_path,1,?)=? LIMIT 1",
+            (low, high, len(prefix), prefix),
+        ).fetchone()
+        return row is not None
+
     def latest_member(self, path: str) -> AcceptedMemberLocation | None:
         row = self._connection.execute(
             "SELECT * FROM accepted_member_locations WHERE member_path=? AND sequence<=? "

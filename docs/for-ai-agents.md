@@ -153,9 +153,11 @@ predicates=...)` returns values and verdicts without full Claim views, and
 `cx.query(kind, where=[...], select=[...])`. A World is pinned to the
 coordinate it was read at and stays readable when the live client advances.
 
-`cruxible stub --out world.pyi` writes the vocabulary as closed Python types,
-stamped with its coordinate, so an editor or a model completes real names
-instead of `Any`. Regenerate it after any activation that changes vocabulary.
+`.cruxible/world.pyi` holds the vocabulary as closed Python types, stamped with
+its vocabulary digest, so an editor or a model completes real names instead of
+`Any`. Subjects are typed by kind (`world.<kind>["<id>"]`), so the stub stays
+small and changes only with the vocabulary; floor delivery keeps it current,
+and `cruxible stub --out PATH` writes one explicitly.
 
 ## Write values
 
@@ -272,7 +274,7 @@ slot. The deprecated `invalidation` disposition is refused inside a change set
 
 - **Own words**: every write's `because` (or a Claim's `self_source`).
 - **A file passage**: catalogue the file in `.cruxible/sources.yaml` (a
-  `name` and a `locator` suffice) and cite `PATH#ANCHOR`: `--evidence-file`
+  `name` and a `locator` suffice: `cruxible sources add NAME PATH`) and cite `PATH#ANCHOR`: `--evidence-file`
   on the CLI, `{"kind": "file", "file": "PATH#ANCHOR"}` as `evidence` on MCP
   `cruxible_set`, `FileEvidence` on SDK writes, or `cx.file(path).anchor(...)`
   as `supported_by` or `copied_from` on an authored Claim. The client reads the
@@ -375,7 +377,8 @@ and acquisition policy:
   either stops it until it is enabled again.
 - A Line that proposes or settles needs a covering mandate.
 - `line evaluate` and `line dispatch` recover what automation missed; `next`
-  names the exact command for each gap.
+  names the exact command for each gap (`line evaluate LINE --since S --until U
+  --dispatch` evaluates the gap and dispatches what it enqueued).
 
 A Source node reads through an accepted Provider under accepted authority, not
 through ambient filesystem or network access. Before it can run, accepted state

@@ -1674,28 +1674,6 @@ def handle_playbill_curation_duplicates(
     )
 
 
-def handle_playbill_curation_observe(
-    instance_id: str,
-    *,
-    dry_run: bool | None = None,
-    at: str | None = None,
-) -> contracts.CurationObserveResult:
-    """Scan the MCP workspace's declared blocks and record them for block churn."""
-
-    workspace = mcp_workspace_root()
-    observation = observe_next_workspace(workspace)
-
-    def remote(client: CruxibleClient) -> contracts.CurationObserveResult:
-        observed, _coordinate = observe_next_workspace_with_coverage(
-            client, instance_id, workspace, observation=observation
-        )
-        return client.observe_curation(
-            instance_id, workspace_observation=observed, dry_run=dry_run, at=at
-        )
-
-    return _daemon_call(remote, operation_name="cruxible_curation_observe")
-
-
 def handle_playbill_audit(
     instance_id: str,
     *,

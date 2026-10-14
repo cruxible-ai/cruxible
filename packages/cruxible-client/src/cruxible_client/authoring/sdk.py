@@ -4467,29 +4467,6 @@ class Cruxible:
             self._instance_id, kind=kind, limit=limit, cursor=cursor
         )
 
-    def curation_observe(
-        self, *, dry_run: bool | None = None, at: str | None = None
-    ) -> api.CurationObserveResult:
-        """Record this workspace's declared blocks for block-churn detection.
-
-        Block churn is the one detector that needs the workspace, which the daemon
-        never reads; detection picks the scan up the next time it runs.
-
-        Next: ``cx.curation_list()`` after the next accepted generation.
-        """
-
-        access_profile = self._access_profile.model_dump()
-        observation, _coordinate = observe_next_workspace_with_coverage(
-            self._client,
-            self._instance_id,
-            self._workspace_root,
-            observation=observe_next_workspace(self._workspace_root),
-            access_profile=access_profile,
-        )
-        return self._client.observe_curation(
-            self._instance_id, workspace_observation=observation, dry_run=dry_run, at=at
-        )
-
     def audit(
         self,
         *,

@@ -202,20 +202,20 @@ from cruxible_core.service.discovery.coverage import (
 )
 from cruxible_core.service.discovery.curation import (
     CurationError,
+    PlaybillBlockObserveRequestV1,
     PlaybillCurationAcceptFixedRequestV1,
     PlaybillCurationListRequestV1,
-    PlaybillCurationObserveRequestV1,
     PlaybillCurationOverruleRequestV1,
     PlaybillCurationSuppressRequestV1,
     PlaybillCurationUnsuppressRequestV1,
     service_accept_fixed_playbill_curation,
     service_list_playbill_curation,
-    service_observe_playbill_curation_blocks,
+    service_observe_playbill_blocks,
     service_overrule_playbill_curation,
     service_suppress_playbill_curation,
     service_unsuppress_playbill_curation,
+    validate_playbill_block_observe_request,
     validate_playbill_curation_list_request,
-    validate_playbill_curation_observe_request,
 )
 from cruxible_core.service.discovery.next import (
     NextRequest,
@@ -2487,20 +2487,22 @@ def playbill_curation_duplicates(
     return service_duplicates_audit(get_playbill_manager().get(instance_id), request=request)
 
 
-def playbill_curation_observe(
+def playbill_block_observe(
     instance_id: str,
     *,
-    request: PlaybillCurationObserveRequestV1 | Mapping[str, object],
-) -> contracts.CurationObserveResult:
-    check_permission("cruxible_curation_observe", instance_id=instance_id)
-    parsed = validate_playbill_curation_observe_request(request)
+    request: PlaybillBlockObserveRequestV1 | Mapping[str, object],
+) -> contracts.BlockObserveResult:
+    """Record the declared blocks `block sync`/`block repin` read, for block churn."""
+
+    check_permission("cruxible_block_observe", instance_id=instance_id)
+    parsed = validate_playbill_block_observe_request(request)
     with change_entry(parsed.dry_run, "direct"):
-        result = service_observe_playbill_curation_blocks(
+        result = service_observe_playbill_blocks(
             get_playbill_manager().get(instance_id),
             request=parsed,
             actor_context=_curation_actor(instance_id),
         )
-    return contracts.CurationObserveResult.model_validate(result.model_dump(mode="json"))
+    return contracts.BlockObserveResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_audit(

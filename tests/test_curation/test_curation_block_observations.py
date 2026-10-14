@@ -8,6 +8,7 @@ from typing import get_args
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.declared_blocks import (
+    DeclaredBlockPageObservation,
     ProjectionBlockStampV1,
     ProjectionClaimBacking,
     ProjectionMarkerSummary,
@@ -28,10 +29,6 @@ from cruxible_core.service.discovery.curation import (
     PlaybillCurationObservationOmissionReason,
     build_block_observation,
 )
-from cruxible_core.service.discovery.next import (
-    NextSourceObservationV3,
-    NextWorkspaceObservation,
-)
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._support import initialize_local
 from tests.support.curation import detect_and_list
@@ -46,8 +43,6 @@ def test_observation_omission_reasons_exhaust_the_closed_wire_vocabulary() -> No
         "marker_coordinate_unaccepted",
         "projection_block_unstamped",
         "projection_marker_invalid",
-        "source_observation_not_v3",
-        "source_scan_incomplete",
     }
 
 
@@ -107,48 +102,41 @@ def _marker(coordinate: AcceptedCoordinate) -> ProjectionMarkerSummary:
     )
 
 
-def _v3(
+def _page(
     coordinate: AcceptedCoordinate,
     *,
-    complete: bool = True,
     document_id: str | None = "runbook",
-) -> NextSourceObservationV3:
-    return NextSourceObservationV3(
-        tag="playbill-next-source-observation-v3",
+) -> DeclaredBlockPageObservation:
+    return DeclaredBlockPageObservation(
         source_id="docs.runbook",
         document_id=document_id,
         observed_source_digest="sha256:" + "e" * 64,
         byte_length=200,
         marker_summaries=(_marker(coordinate),),
-        occurrences=(),
-        scanned_commitment_digests=(),
-        scan_complete=complete,
-        scan_notes=() if complete else ("scan_incomplete",),
-        marker_notes=(),
     )
 
 
-def test_valid_stamped_v3_observation_persists_once_and_remains_client_observed(
+def test_a_stamped_page_observation_persists_once_and_remains_client_observed(
     tmp_path: Path,
 ) -> None:
     instance = _instance_with_document(tmp_path)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     request = PlaybillCurationListRequestV1(access_profile=ACCESS)
-    observation = NextWorkspaceObservation(source_observations=(_v3(coordinate),))
+    observation = (_page(coordinate),)
 
     first = detect_and_list(
         instance,
         request=request,
         evaluation_time=NOW,
         actor_context=_actor(),
-        workspace_observation=observation,
+        pages=observation,
     )
     retry = detect_and_list(
         instance,
         request=request,
         evaluation_time=NOW,
         actor_context=_actor(),
-        workspace_observation=observation,
+        pages=observation,
     )
     events = instance.review_operational_store().events(family="block_observation")
 
@@ -161,19 +149,17 @@ def test_valid_stamped_v3_observation_persists_once_and_remains_client_observed(
     assert block.document_identity.qualified == "document:runbook"
 
 
-def test_incomplete_and_unresolved_document_sources_are_coverage_omissions(
+def test_unresolved_document_sources_are_coverage_omissions(
     tmp_path: Path,
 ) -> None:
     instance = _instance_with_document(tmp_path)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     request = PlaybillCurationListRequestV1(access_profile=ACCESS)
-    observation = NextWorkspaceObservation(
-        source_observations=(
-            _v3(coordinate, complete=False),
-            _v3(coordinate, document_id="missing").model_copy(
-                update={"source_id": "docs.unresolved", "marker_summaries": ()}
-            ),
-        )
+    observation = (
+        _page(coordinate, document_id=None),
+        _page(coordinate, document_id="missing").model_copy(
+            update={"source_id": "docs.unresolved", "marker_summaries": ()}
+        ),
     )
 
     result = detect_and_list(
@@ -181,13 +167,12 @@ def test_incomplete_and_unresolved_document_sources_are_coverage_omissions(
         request=request,
         evaluation_time=NOW,
         actor_context=_actor(),
-        workspace_observation=observation,
+        pages=observation,
     )
 
     assert result.observation_coverage.observed_block_count == 0
     assert {item.reason: item.count for item in result.observation_coverage.omissions} == {
-        "block_subject_unresolved": 1,
-        "source_scan_incomplete": 1,
+        "block_subject_unresolved": 2,
     }
     assert instance.review_operational_store().events(family="block_observation") == ()
     block_coverage = next(
@@ -196,7 +181,7 @@ def test_incomplete_and_unresolved_document_sources_are_coverage_omissions(
         if item.pattern_kind == "playbill.curation.block_churn.v1"
     )
     assert [item.model_dump(mode="json") for item in block_coverage.omissions] == [
-        {"reason": "block_document_association_unavailable", "count": 1}
+        {"reason": "block_document_association_unavailable", "count": 2}
     ]
 
 
@@ -205,7 +190,7 @@ def test_bootstrap_and_malformed_markers_are_explicit_coverage_omissions(
 ) -> None:
     instance = _instance_with_document(tmp_path)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    source = _v3(coordinate).model_copy(
+    source = _page(coordinate).model_copy(
         update={
             "marker_summaries": (),
             "marker_notes": (
@@ -220,7 +205,7 @@ def test_bootstrap_and_malformed_markers_are_explicit_coverage_omissions(
         request=PlaybillCurationListRequestV1(access_profile=ACCESS),
         evaluation_time=NOW,
         actor_context=_actor(),
-        workspace_observation=NextWorkspaceObservation(source_observations=(source,)),
+        pages=(source,),
     )
 
     assert {item.reason: item.count for item in result.observation_coverage.omissions} == {
@@ -242,7 +227,7 @@ def test_unaccepted_marker_coordinate_is_an_explicit_coverage_omission(
         request=PlaybillCurationListRequestV1(access_profile=ACCESS),
         evaluation_time=NOW,
         actor_context=_actor(),
-        workspace_observation=NextWorkspaceObservation(source_observations=(_v3(unaccepted),)),
+        pages=(_page(unaccepted),),
     )
 
     assert result.observation_coverage.observed_block_count == 0
@@ -263,7 +248,7 @@ def test_block_churn_counts_body_transitions_across_the_bounded_generation_windo
         marker = _marker(coordinate).model_copy(
             update={"observed_body_digest": "sha256:" + str(index + 1) * 64}
         )
-        source = _v3(coordinate).model_copy(
+        source = _page(coordinate).model_copy(
             update={
                 "observed_source_digest": "sha256:" + str(index + 4) * 64,
                 "marker_summaries": (marker,),

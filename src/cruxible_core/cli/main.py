@@ -756,11 +756,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "curation_duplicates",
                 "List possible duplicates of one kind for an agent to resolve.",
             ),
-            "observe": _command(
-                "playbill",
-                "curation_observe",
-                "Record this workspace's declared blocks for block-churn detection.",
-            ),
             "overrule": _command(
                 "playbill", "curation_overrule", "Close an item as not applying, permanently."
             ),
@@ -823,8 +818,14 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         attr="coverage_group",
     ),
     "sources": _group(
-        "Compile declared local files into exact-byte bundles.",
+        "Catalogue workspace files and compile them into exact-byte bundles.",
         {
+            "add": _command(
+                "playbill", "add_source", "Catalogue one workspace file under a source name."
+            ),
+            "remove": _command(
+                "playbill", "remove_source", "Remove one source from the workspace catalog."
+            ),
             "compile": _command(
                 "playbill", "compile_sources", "Compile a read-only frozen bundle."
             ),

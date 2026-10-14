@@ -107,7 +107,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:996b99d47af94b8dce4099626caf1acadced5c89f50d5c61deb2c4b12e5ff68d"
+    "sha256:805e7b3d3e8577172cc31ad621df85008670c6a70c28870c636c82c3501706c2"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -2236,9 +2236,12 @@ class ProjectionCheckResult(_StrictAuthoringModel):
     results: tuple[BlockSyncReadResult, ...]
 
 
+#: ``rendered``: a stale block whose body is its query's rendering, re-rendered
+#: from the query at the head and repinned (`block sync` without ``--check``).
 BlockSyncOutcome: TypeAlias = Literal[
     "unchanged",
     "stale",
+    "rendered",
     "dirty",
     "detached",
     "would_detach",
@@ -2324,8 +2327,10 @@ class BlockSyncResult(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _summary_shape(self) -> "BlockSyncResult":
-        changed = {item.path for item in self.items if item.outcome == "detached"}
-        prospective = any(item.outcome in {"detached", "would_detach"} for item in self.items)
+        changed = {item.path for item in self.items if item.outcome in {"detached", "rendered"}}
+        prospective = any(
+            item.outcome in {"detached", "would_detach", "rendered"} for item in self.items
+        )
         # Currency policy gates drift; integrity refusals always fail the check.
         refused = any(item.blocking for item in self.items)
         if self.changed_file_count != len(changed):
