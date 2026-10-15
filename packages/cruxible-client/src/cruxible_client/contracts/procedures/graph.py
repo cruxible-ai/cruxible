@@ -9,6 +9,7 @@ from typing import Iterator
 from pydantic import BaseModel
 
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_NODE_KINDS,
@@ -393,6 +394,15 @@ def _node_local_payload(node: ProcedureNode) -> dict[str, object]:
 def compute_procedure_node_digests(
     definition: ProcedureDefinition,
 ) -> dict[str, ProcedureNodeDigests]:
+    """Every node's local and subtree digests, keyed by node id (a fresh dict per call)."""
+
+    return dict(_procedure_node_digests(definition))
+
+
+@sealed_memo
+def _procedure_node_digests(
+    definition: ProcedureDefinition,
+) -> tuple[tuple[str, ProcedureNodeDigests], ...]:
     graph = analyze_procedure(definition)
     nodes = {node.node_id: node for node in definition.nodes}
     result: dict[str, ProcedureNodeDigests] = {}
@@ -418,11 +428,12 @@ def compute_procedure_node_digests(
             local_digest=local,
             subtree_digest=subtree,
         )
-    return result
+    return tuple(result.items())
 
 
+@sealed_memo
 def compute_procedure_definition_digest(definition: ProcedureDefinition) -> ArtifactDigest:
-    node_digests = compute_procedure_node_digests(definition)
+    node_digests = dict(_procedure_node_digests(definition))
     payload = definition.model_dump(mode="json", by_alias=True)
     payload.pop("nodes")
     return typed_digest(

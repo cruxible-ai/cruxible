@@ -33,7 +33,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.content_memo import ParseMemo
+from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import SubjectFormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -201,6 +201,7 @@ SUBJECT_DIGEST_FUNCTIONS: dict[str, Callable[[SubjectShell], ArtifactDigest]] = 
 }
 
 
+@sealed_memo
 def subject_digest(shell: SubjectShell) -> ArtifactDigest:
     return SUBJECT_DIGEST_FUNCTIONS[shell.artifact_format](shell)
 

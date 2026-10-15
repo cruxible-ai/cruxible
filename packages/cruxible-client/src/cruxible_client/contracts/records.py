@@ -213,12 +213,18 @@ def record_normalization_schema(schema: ContractSchema, value: object) -> Contra
     """
     if not isinstance(value, Mapping):
         return schema
-    adjusted = schema.model_copy(deep=True)
-    for name, field in adjusted.fields.items():
-        if name in value and value[name] is None and field.json_schema is not None:
-            if _matches_json_schema(None, field.json_schema):
-                field.optional = True
-    return adjusted
+    fields = {
+        name: (
+            field.model_copy(update={"optional": True})
+            if name in value
+            and value[name] is None
+            and field.json_schema is not None
+            and _matches_json_schema(None, field.json_schema)
+            else field
+        )
+        for name, field in schema.fields.items()
+    }
+    return schema.model_copy(update={"fields": fields})
 
 
 def validate_record_constraints(

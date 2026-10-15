@@ -27,7 +27,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.content_memo import ParseMemo
+from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -754,6 +754,7 @@ def _parse_provider(
     return provider
 
 
+@sealed_memo
 def provider_digest(provider: ProviderAny) -> ArtifactDigest:
     if isinstance(provider, ProviderV2):
         return typed_digest(

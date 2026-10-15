@@ -45,6 +45,7 @@ from cruxible_client.contracts.authoring.models import (
     authoring_payload_digest,
     reference_expectations_digest,
 )
+from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
     parse_capture_envelope,
@@ -128,6 +129,10 @@ class AuthoringIntentCoordinator:
     store: AuthoringIntentStore
     claim_id_factory: Callable[[], str] = new_claim_id
     clock: Callable[[], datetime] = utc_now
+    #: Told the candidate each submit admitted, as admission evaluated it (after
+    #: any rebase onto a moved head), so a caller can report its verdicts
+    #: without reading them back at the accepted coordinate.
+    on_admitted: Callable[[CandidateRecordAnyVersion], None] | None = None
 
     @classmethod
     def for_instance(cls, instance: PlaybillInstance) -> "AuthoringIntentCoordinator":
@@ -1027,6 +1032,8 @@ class AuthoringIntentCoordinator:
                     raise RuntimeError("submit broke its unchanged-coordinate preflight binding")
                 # The fresh evaluation at the moved head refused the rebase.
                 return moved_on()
+            if self.on_admitted is not None:
+                self.on_admitted(result.candidate)
 
             operation_key = typed_digest(
                 Sha256Value,

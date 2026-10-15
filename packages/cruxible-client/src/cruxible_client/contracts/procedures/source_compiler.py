@@ -1550,14 +1550,22 @@ class _Compiler:
                             f"Branch values for {name!r} have incompatible types",
                             "branch_type",
                         )
-                    field = _field_type(left.type).model_copy(deep=True)
+                    field = _field_type(left.type)
                     other = _field_type(right.type)
-                    field.enum = (
-                        list({canonical_bytes(v): v for v in field.enum + other.enum}.values())
-                        if field.enum and other.enum
-                        else None
+                    fields[name] = field.model_copy(
+                        update={
+                            "enum": (
+                                list(
+                                    {
+                                        canonical_bytes(v): v for v in field.enum + other.enum
+                                    }.values()
+                                )
+                                if field.enum and other.enum
+                                else None
+                            )
+                        },
+                        deep=True,
                     )
-                    fields[name] = field
                 schema = ContractSchema(fields=fields)
                 contract = self.anonymous(schema)
                 self.tail = left_tail

@@ -43,7 +43,7 @@ from cruxible_client.contracts.canonical_forms import (
     validate_canonical_form,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole, ClaimTypeStructure
-from cruxible_client.contracts.content_memo import ParseMemo
+from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
@@ -625,6 +625,7 @@ CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = 
 }
 
 
+@sealed_memo
 def claim_type_digest(claim_type: ClaimType) -> ArtifactDigest:
     return CLAIM_TYPE_DIGEST_FUNCTIONS[claim_type.artifact_format](claim_type)
 

@@ -48,6 +48,7 @@ from cruxible_client.contracts.claims import (
     SubjectClaimObject,
     claim_path,
 )
+from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBacking,
     ProjectionBlockStampAny,
@@ -1373,16 +1374,21 @@ def authoring_claim_member_identity(payload: ClaimAuthoringPayloadV1) -> str:
 
     if payload.revises is not None:
         return f"Claim:{payload.revises}"
-    statement = payload.statement.model_dump(mode="json")
-    statement.pop("tag")
-    digest = typed_digest(
+    return f"Claim:@{_authored_statement_identity_digest(payload.statement)}"
+
+
+@sealed_memo
+def _authored_statement_identity_digest(statement: AuthoringClaimStatement) -> str:
+    preimage = statement.model_dump(mode="json")
+    preimage.pop("tag")
+    return typed_digest(
         Sha256Value,
         AUTHORING_CLAIM_MEMBER_IDENTITY_DIGEST_DOMAIN,
-        statement,
+        preimage,
     ).tagged.removeprefix("sha256:")
-    return f"Claim:@{digest}"
 
 
+@sealed_memo
 def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
     if isinstance(payload, ResolutionContractAuthoringPayload):
         return payload.resolution_contract.identity.qualified
