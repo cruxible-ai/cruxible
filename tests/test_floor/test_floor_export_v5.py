@@ -10,12 +10,10 @@ from cruxible_client.contracts.write import WriteRequest
 from cruxible_core.proposals.proposal_notes import admission_bytes
 from cruxible_core.service.authoring.write_verbs import service_playbill_write
 from cruxible_core.service.floor.floor import service_export_playbill_floor
-from cruxible_core.service.floor.floor_content import (
-    change_rationales,
-    review_snapshot_oid,
-)
+from cruxible_core.service.floor.floor_content import change_rationales
 from tests.core_support._knowledge_loop_support import seed_claims
 from tests.core_support._write_support import KIND, caller, seed_write_surface
+from tests.test_floor.test_floor_notes_and_retention import review_notes_oid
 
 
 def test_floor_v5_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> None:
@@ -100,11 +98,11 @@ def test_change_rationale_is_the_one_get_shows(tmp_path: Path, monkeypatch) -> N
     )
     written = service_playbill_write(instance, request=request, caller=caller())
     assert written.status == "accepted"
-    notes_oid = review_snapshot_oid(instance)
+    notes_oid = review_notes_oid(instance)
     assert notes_oid is not None
     with instance.accepted_history_reader() as history:
         generations = [history.generation(item) for item in range(1, history.sequence + 1)]
-    expected = change_rationales(instance, generations, notes_oid)
+    expected = change_rationales(instance, generations)
     assert expected[generations[-1].sequence] == ("The writer checked it.",)
     files = service_export_playbill_floor(instance)
     (change,) = (
@@ -129,8 +127,8 @@ def test_change_rationale_is_the_one_get_shows(tmp_path: Path, monkeypatch) -> N
     instance._ledger.write_proposal_note(
         "evaluation", admission.candidate_commit_oid, admission_bytes(revised) + lines[1]
     )
-    assert review_snapshot_oid(instance) != notes_oid
-    assert change_rationales(instance, generations, review_snapshot_oid(instance)) == expected
+    assert review_notes_oid(instance) != notes_oid
+    assert change_rationales(instance, generations) == expected
 
     # The notes are never read for a rationale, whole or by path.
     def no_tree(_oid):
@@ -138,4 +136,4 @@ def test_change_rationale_is_the_one_get_shows(tmp_path: Path, monkeypatch) -> N
 
     monkeypatch.setattr(instance._ledger, "read_tree", no_tree)
     monkeypatch.setattr(instance, "read_proposal_notes", no_tree)
-    assert change_rationales(instance, generations, notes_oid) == expected
+    assert change_rationales(instance, generations) == expected

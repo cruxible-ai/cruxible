@@ -1,9 +1,11 @@
-"""One review-notes snapshot per render, and no floor published over a lost body.
+"""A change's rationale is fixed at acceptance, and no floor is published over a lost body.
 
-A rationale revised after acceptance moves the warm floor exactly as it moves
-a cold one, and a client floor installed before the revision is repaired
-whole. A retained body or Capture envelope that is gone refuses a fresh
-render instead of rendering something else for the same accepted inputs.
+The floor reads a change's rationale from its accepting admission (the one
+``get`` shows), never from the review notes: a note revised after acceptance
+moves neither the warm floor nor a cold one, and a client floor installed
+before the revision is still the head's floor. A retained body or Capture
+envelope that is gone refuses a fresh render instead of rendering something
+else for the same accepted inputs.
 """
 
 from __future__ import annotations
@@ -18,9 +20,10 @@ from cruxible_client.authoring.workspace import sync_floor_directory
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_client.contracts.proposal_models import ProposalAdmissionRecord
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.ledger.git import NOTE_REFS
 from cruxible_core.proposals.proposal_notes import admission_bytes
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.floor.floor_content import review_snapshot_oid
+from cruxible_core.service.discovery import change_reasons
 from cruxible_core.service.floor.floor_delta import (
     advance_floor_index,
     service_playbill_floor_delta,
@@ -33,14 +36,23 @@ WI3 = f"{KIND}/wi-3"
 RULING = "Rulings are text.\nEvery line greps on its own.\n"
 
 
+def review_notes_oid(instance: PlaybillInstance) -> str | None:
+    """The review-notes commit the evaluation notes ref names now."""
+
+    return instance._ledger._resolve_ref(NOTE_REFS["evaluation"])
+
+
 def _revise_rationale(instance: PlaybillInstance, old: str, new: str, *, back: int = 0) -> None:
-    """Rewrite the note of the change ``back`` generations before the head to read ``new``."""
+    """Rewrite the review note of the change ``back`` generations before the head to read ``new``.
+
+    The admission itself is immutable; only its copy in the review notes moves.
+    """
 
     from cruxible_client.contracts.proposal_models import ProposalEvaluationRecord
 
     with instance.accepted_history_reader() as history:
         candidate = history.generation(history.sequence - back).candidate_digest
-    notes = instance._ledger.read_tree(review_snapshot_oid(instance))
+    notes = instance._ledger.read_tree(review_notes_oid(instance))
     for content in notes.values():
         lines = content.splitlines(keepends=True)
         evaluation = ProposalEvaluationRecord.model_validate_json(lines[1])
@@ -56,6 +68,7 @@ def _revise_rationale(instance: PlaybillInstance, old: str, new: str, *, back: i
 
 def _cold(instance: PlaybillInstance) -> Any:
     instance.floor_current_memo.clear()
+    change_reasons._ADMISSIONS.clear()
     return advance_floor_index(instance)
 
 
@@ -71,20 +84,25 @@ def _tree(directory: Path) -> dict[str, bytes]:
     }
 
 
-def test_a_rationale_revised_after_acceptance_moves_warm_and_cold_alike(tmp_path: Path) -> None:
+def test_a_review_note_revised_after_acceptance_moves_neither_warm_nor_cold(
+    tmp_path: Path,
+) -> None:
     instance, _owner = seed_write_surface(tmp_path)
     _write(instance, _set(WI1, "status", "ready"))
     before = advance_floor_index(instance)
+    assert any(b"The writer checked it." in content for content, _ in before.files.values())
     _revise_rationale(instance, "The writer checked it.", "Later review text.")
     warm = advance_floor_index(instance)
     assert warm.generation == before.generation
-    assert warm.notes_digest != before.notes_digest
-    assert any(b"Later review text." in content for content, _ in warm.files.values())
-    assert dict(warm.files) == dict(_cold(instance).files)
-    assert warm.manifest() == _cold(instance).manifest()
+    assert warm.notes_digest == before.notes_digest
+    assert dict(warm.files) == dict(before.files)
+    assert not any(b"Later review text." in content for content, _ in warm.files.values())
+    cold = _cold(instance)
+    assert dict(warm.files) == dict(cold.files)
+    assert warm.manifest() == cold.manifest()
 
 
-def test_a_floor_installed_before_a_notes_revision_is_repaired_whole(tmp_path: Path) -> None:
+def test_a_floor_installed_before_a_notes_revision_is_still_the_heads(tmp_path: Path) -> None:
     (tmp_path / "instance").mkdir()
     instance, _owner = seed_write_surface(tmp_path / "instance")
     _write(instance, _set(WI1, "status", "ready"))
@@ -99,18 +117,16 @@ def test_a_floor_installed_before_a_notes_revision_is_repaired_whole(tmp_path: P
     installed = _tree(floor)
     _revise_rationale(instance, "The writer checked it.", "Later review text.")
     head = advance_floor_index(instance).generation
-    # Same generation, other notes: the delta from the installed floor cannot
-    # name its base, so the apply asks for the whole floor.
-    assert apply_floor_delta(floor, fetch(head, fetch(None, None).renderer)).status == (
-        "base_mismatch"
-    )
+    # Same generation, other notes: the rationale is the admission's, so the
+    # installed floor is the head's and the delta from it changes nothing.
+    assert apply_floor_delta(floor, fetch(head, fetch(None, None).renderer)).status == ("unchanged")
     assert _tree(floor) == installed
-    _delta, applied = sync_floor_directory(fetch, floor)
-    assert applied.status == "applied"
+    instance.floor_current_memo.clear()
+    change_reasons._ADMISSIONS.clear()
     expected = tmp_path / "expected"
     apply_floor_delta(expected, fetch(None, None))
     assert _tree(floor) == _tree(expected)
-    assert any(b"Later review text." in content for content in _tree(floor).values())
+    assert not any(b"Later review text." in content for content in _tree(floor).values())
 
 
 def test_a_lost_ruling_body_refuses_a_fresh_render_never_renders_it_otherwise(

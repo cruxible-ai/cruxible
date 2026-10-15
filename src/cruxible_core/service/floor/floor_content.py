@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.primitives import pretty_json
@@ -21,7 +20,6 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
 
 CHANGES_PREFIX = "changes/"
-NOTES_REF = "refs/notes/playbill-eval"
 
 FLOOR_README = """\
 # Cruxible floor
@@ -131,98 +129,28 @@ def member_ref(path: str) -> str:
     return path
 
 
-def review_snapshot_oid(instance: PlaybillInstance) -> str | None:
-    """The review notes commit the notes ref names now: one immutable snapshot."""
-
-    return instance._ledger._resolve_ref(NOTES_REF)
-
-
-def notes_changed_between(
-    instance: PlaybillInstance, before: str | None, after: str | None
-) -> frozenset[str] | None:
-    """The commits whose note differs between two notes snapshots; None for every one."""
-
-    if before == after:
-        return frozenset()
-    if before is None or after is None:
-        return None
-    return frozenset(
-        change.path.replace("/", "") for change in instance._ledger.changed_entries(before, after)
-    )
-
-
-@dataclass(frozen=True)
-class ChangeNote:
-    """One accepted change's proposal commits (followed in the notes) and its rationale."""
-
-    commits: tuple[str, ...]
-    rationale: tuple[str, ...]
-
-
-def _candidate_commits(
-    instance: PlaybillInstance, candidate_digests: Iterable[str]
-) -> dict[str, tuple[str, ...]]:
-    """Every proposal commit that published each candidate digest."""
-
-    digests = sorted(set(candidate_digests))
-    if not digests:
-        return {}
-    evidence = instance.proposal_evidence()
-    assert evidence.index is not None
-    found: dict[str, set[str]] = {digest: set() for digest in digests}
-    with evidence.index.read(evidence) as connection:
-        for start in range(0, len(digests), 500):
-            chunk = digests[start : start + 500]
-            for digest, candidate, review in connection.execute(
-                "SELECT candidate_digest,candidate_commit_oid,review_commit_oid FROM proposals "
-                "WHERE candidate_digest IN (" + ",".join("?" for _ in chunk) + ")",
-                chunk,
-            ):
-                found[str(digest)].update(oid for oid in (candidate, review) if oid is not None)
-    return {digest: tuple(sorted(oids)) for digest, oids in found.items()}
-
-
 def change_rationales(
-    instance: PlaybillInstance,
-    generations: Iterable[AcceptedGenerationLocation],
-    notes_oid: str | None,
+    instance: PlaybillInstance, generations: Iterable[AcceptedGenerationLocation]
 ) -> dict[int, tuple[str, ...]]:
-    """Each accepted change's rationale: the accepting admission's, as ``get`` shows it."""
+    """Each accepted change's rationale: the one ``get`` shows (``ChangeReasons``).
 
-    return {
-        sequence: note.rationale
-        for sequence, note in change_notes(instance, generations, notes_oid).items()
-    }
-
-
-def change_notes(
-    instance: PlaybillInstance,
-    generations: Iterable[AcceptedGenerationLocation],
-    notes_oid: str | None,
-) -> dict[int, ChangeNote]:
-    """Each accepted change's rationale and the review-notes commits it is tracked by.
-
-    The rationale is the one ``get`` shows (``ChangeReasons``): the exact
-    admission that accepted the change's candidate, by its own actor, never
-    withdrawn -- none or several and the change shows none, never invented.
-    ``commits`` are the proposal commits that published the candidate, which
-    the floor's refresh follows in the notes snapshot ``notes_oid`` names
-    (None: no notes at all).
+    The exact admission that accepted the change's candidate, by its own
+    actor, never withdrawn -- none or several and the change shows none, never
+    invented. Admissions are immutable, so a change's rationale is fixed once
+    it is accepted: the floor reads it when the change enters and never again.
     """
 
+    generations = list(generations)
+    result: dict[int, tuple[str, ...]] = {item.sequence: () for item in generations}
     wanted = [item for item in generations if item.candidate_digest is not None]
-    result: dict[int, ChangeNote] = {item.sequence: ChangeNote((), ()) for item in generations}
     if not wanted:
         return result
-    commits = _candidate_commits(instance, (str(item.candidate_digest) for item in wanted))
     reasons = ChangeReasons(instance)
     reasons.prefetch(wanted)
     for generation in wanted:
         admission = reasons.admission(generation)
-        result[generation.sequence] = ChangeNote(
-            commits.get(str(generation.candidate_digest), ()),
-            () if admission is None or not admission.rationale else (admission.rationale,),
-        )
+        if admission is not None and admission.rationale:
+            result[generation.sequence] = (admission.rationale,)
     return result
 
 

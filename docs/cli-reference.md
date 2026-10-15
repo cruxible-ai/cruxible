@@ -3613,8 +3613,8 @@ with `contains` on MCP) instead.
 
 ### What is in the floor
 
-The floor is a pure function of the accepted coordinate (and the pinned review
-notes snapshot its change rationale is read from). It holds no source content:
+The floor is a pure function of the accepted coordinate (a change's rationale
+is its accepting admission's, the one `get` shows). It holds no source content:
 Document and evidence bodies stay behind `get`, and the ledger clone is the
 audit path.
 
