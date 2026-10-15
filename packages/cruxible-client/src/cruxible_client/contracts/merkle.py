@@ -48,6 +48,7 @@ from cruxible_client.contracts.canonical import (
     normalize_manifest_paths,
     typed_digest,
 )
+from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.errors import CanonicalEncodingError, MerkleIntegrityError
 from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 
@@ -259,15 +260,23 @@ def _bottom_up(prefixes: Iterable[str]) -> list[str]:
     return sorted(prefixes, key=lambda prefix: (-_depth(prefix), prefix.encode("utf-8")))
 
 
+#: Leaf digests by (leaf domain, path, member digest): one change's leaves are
+#: hashed by its evaluation, its derived state and its activation in turn.
+_LEAF_DIGESTS: ValueMemo[MerkleNodeDigest] = ValueMemo(capacity=16384)
+
+
 def _leaf_digest(
     path: str,
     member_digest: str,
     domains: MerkleDomainFamily[RootT],
 ) -> MerkleNodeDigest:
-    return typed_digest(
-        MerkleNodeDigest,
-        domains.leaf,
-        {"path": path, "member_digest": member_digest},
+    return _LEAF_DIGESTS.derive(
+        (domains.leaf, path, member_digest),
+        lambda: typed_digest(
+            MerkleNodeDigest,
+            domains.leaf,
+            {"path": path, "member_digest": member_digest},
+        ),
     )
 
 

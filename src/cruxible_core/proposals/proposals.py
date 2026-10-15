@@ -109,6 +109,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.codes import CurrentCode, normalize_code
+from cruxible_client.contracts.content_memo import seal, sealed_derive
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     AcceptedDocument,
@@ -984,9 +985,14 @@ class _ForkRebase:
 
 
 def _canonical_model_digest(domain: str, model: BaseModel) -> str:
-    payload = model.model_dump(mode="json")
-    payload.pop("tag", None)
-    return typed_digest(Sha256Value, domain, payload).tagged
+    """One policy's digest under ``domain``, taken once per sealed model (a ClaimType's)."""
+
+    def derive() -> str:
+        payload = model.model_dump(mode="json")
+        payload.pop("tag", None)
+        return typed_digest(Sha256Value, domain, payload).tagged
+
+    return sealed_derive(model, ("proposals._canonical_model_digest", domain), derive)
 
 
 def _member_disposition(
@@ -4821,26 +4827,28 @@ def _multi_member_evidence(
             query_receipt_digests=item.query_receipt_digests,
             result=item.result,
         )
+        # Validated entries are sealed (``MemberLawEvaluation._sealed``): each is
+        # encoded and digested once however often the candidate and its receipt
+        # are verified in-process.
         law_evidence.append(evidence)
         disposition = _member_disposition(
             predecessor_digest=item.predecessor_artifact_digest,
             candidate_digest_value=item.candidate_artifact_digest,
             retired=item.retired,
         )
-        members.append(
-            CandidateMemberLawEvidence(
-                path=item.path,
-                artifact_kind=item.artifact_kind,
-                disposition=disposition,
-                predecessor_artifact_digest=item.predecessor_artifact_digest,
-                candidate_artifact_digest=item.candidate_artifact_digest,
-                law_identifier=item.law_identifier,
-                law_digest=item.law_digest,
-                law_evidence_digest=member_law_evidence_digest(evidence),
-                closure_role="invalidation" if disposition == "retire" else "authored",
-                dependency_proof_refs=proofs,
-            )
+        member = CandidateMemberLawEvidence(
+            path=item.path,
+            artifact_kind=item.artifact_kind,
+            disposition=disposition,
+            predecessor_artifact_digest=item.predecessor_artifact_digest,
+            candidate_artifact_digest=item.candidate_artifact_digest,
+            law_identifier=item.law_identifier,
+            law_digest=item.law_digest,
+            law_evidence_digest=member_law_evidence_digest(evidence),
+            closure_role="invalidation" if disposition == "retire" else "authored",
+            dependency_proof_refs=proofs,
         )
+        members.append(member)
     return tuple(members), tuple(law_evidence)
 
 
@@ -4880,7 +4888,11 @@ def _candidate_record_v3(
     timestamp: str,
     approval_requirements: tuple[ApprovalRequirement, ...],
 ) -> CandidateRecord:
-    """Assemble the candidate this build produces: merkle root, edge root."""
+    """Assemble the candidate this build produces: merkle root, edge root.
+
+    The record is sealed (its members already are): the receipt that settles it
+    and every in-process re-verification reuse its encodings and digests.
+    """
 
     semantic_candidate = SemanticCandidate(
         parent_semantic_root=current.semantic_root,
@@ -4889,13 +4901,14 @@ def _candidate_record_v3(
         scope=scope,
         timestamp=timestamp,
     )
+    seal(semantic_candidate)
     members, law_evidence = _multi_member_evidence(
         accepted,
         closure=closure,
         current=current,
         timestamp=timestamp,
     )
-    return CandidateRecord(
+    record = CandidateRecord(
         candidate=semantic_candidate,
         candidate_digest=candidate_digest(semantic_candidate).tagged,
         required_tier=_aggregate_tier([item.required_tier for item in accepted]),
@@ -4911,6 +4924,8 @@ def _candidate_record_v3(
         law_digests=_law_digests(accepted),
         compiler_digest=current.compiler.rule_digest,
     )
+    seal(record)
+    return record
 
 
 def _candidate_record_v2(

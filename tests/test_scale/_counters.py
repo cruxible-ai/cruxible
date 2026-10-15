@@ -4,9 +4,10 @@
 whose managed root is ``root`` and fills a ``Counter`` with the work done:
 
 - ``claim_parses``: calls of ``parse_claim``;
-- ``canonical_encodes``: calls of ``canonical_bytes`` and ``pretty_canonical_bytes``
-  (a digest's own encode included);
-- ``canonical_digests``: calls of ``canonical_digest``;
+- ``canonical_encodes``: calls of ``canonical_bytes``, ``pretty_canonical_bytes``,
+  ``composed_canonical_bytes`` and ``dependency_proof_order`` (a digest's own
+  encode included);
+- ``canonical_digests``: calls of ``canonical_digest`` and ``composed_canonical_digest``;
 - ``file_opens``: ``open`` audit events for paths under ``root``, plus relative
   paths, which inside a window are only ever opened against a directory
   descriptor the instance (or its workspace) holds;
@@ -118,6 +119,11 @@ _FUNCTIONS = (
     ("cruxible_client.contracts.canonical", "canonical_bytes", "canonical_encodes"),
     ("cruxible_client.contracts.canonical", "pretty_canonical_bytes", "canonical_encodes"),
     ("cruxible_client.contracts.canonical", "canonical_digest", "canonical_digests"),
+    # Encodes and digests composed from parts already encoded, and the proof
+    # reference sort key the stdlib encoder writes directly: each still counts.
+    ("cruxible_client.contracts.canonical", "composed_canonical_bytes", "canonical_encodes"),
+    ("cruxible_client.contracts.canonical", "composed_canonical_digest", "canonical_digests"),
+    ("cruxible_client.contracts.candidates", "dependency_proof_order", "canonical_encodes"),
 )
 _METHODS = (
     ("cruxible_core.runtime.instance", "PlaybillInstance", "bind_accepted_projection"),

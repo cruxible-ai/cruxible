@@ -235,7 +235,6 @@ from cruxible_core.procedures.terminal_dependencies import (
     produced_capture_token,
     receipt_token,
     terminal_item_key,
-    terminal_item_manifest_digest,
 )
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
@@ -261,7 +260,6 @@ from cruxible_core.storage.material_reservations import (
     ProcedureMaterialReservationStore,
     ReservedCaptureStore,
     make_run_reservation,
-    run_material_invocation_id,
 )
 
 ProcedureRunStatusV1 = Literal[
@@ -4125,8 +4123,12 @@ class ProcedureExecutor:
             assert isinstance(source, ExternalSourceReference)
             material_bytes = base64.b64decode(provider_result.content_base64, validate=True)
             material = normalize_canonical(json.loads(material_bytes))
-            if canonical_bytes(material) != material_bytes:
-                raise ValueError("Source material is not canonical JSON")
+            # A workspace read's material is the canonical encoding this run made
+            # of its output, and the Capture build verified it canonical again;
+            # any other Provider's material is checked here.
+            if workspace_request is None or source_read_receipt is None:
+                if canonical_bytes(material) != material_bytes:
+                    raise ValueError("Source material is not canonical JSON")
             acquisition_receipt = CaptureAcquisitionReceiptV1(
                 capture_contract_digest=envelope.capture_contract_digest,
                 producer=envelope.producer,
@@ -4200,6 +4202,7 @@ class ProcedureExecutor:
             decision=decision,
             occurrence_path=occurrence.occurrence_path,
             invocation_receipt_digest=invocation_receipt_digest,
+            material_byte_length=len(material_bytes),
         )
         if decision.disposition == "selected":
             state.source_capture_associations.append(
@@ -4231,7 +4234,14 @@ class ProcedureExecutor:
         decision: AcquisitionInputDecision,
         occurrence_path: str | None = None,
         invocation_receipt_digest: str | None = None,
+        material_byte_length: int | None = None,
     ) -> None:
+        """Bind one acquisition result to the run.
+
+        ``material_byte_length`` is the length of the selected material's exact
+        canonical bytes when the caller holds them, so the run's Capture budget
+        is charged without encoding the material again.
+        """
         base = _node_policy_tokens(node) | state.control
         if admission.acquisition_policy_digest is not None:
             base = base | {policy_token(admission.acquisition_policy_digest)}
@@ -4289,8 +4299,13 @@ class ProcedureExecutor:
                 "This acquisition mode produced no canonical material for the run.",
                 node_id=node.node_id,
             )
-        state.capture_bytes += len(canonical_bytes(normalize_canonical(material)))
-        state.outputs[node.as_] = normalize_canonical(material)
+        normalized = normalize_canonical(material)
+        state.capture_bytes += (
+            len(canonical_bytes(normalized))
+            if material_byte_length is None
+            else material_byte_length
+        )
+        state.outputs[node.as_] = normalized
         state.facts[acquisition.capture_digest] = DependencyEvidenceFactsV1(
             epistemic_grade=acquisition.epistemic_grade,
             provenance_grade=acquisition.provenance_grade,
@@ -5024,7 +5039,8 @@ class ProcedureExecutor:
                 TerminalChildReceiptV1(
                     child_index=index,
                     item_key=item_key,
-                    manifest_digest=terminal_item_manifest_digest(manifest),
+                    # The derived facts already digested this exact manifest.
+                    manifest_digest=derived.manifest_digest,
                     record_digest=stored.record_digest,
                     sequence=stored.record.sequence,
                 )
@@ -5765,20 +5781,17 @@ class ProcedureExecutor:
                     _journal_refusal_code(exc),
                     "Procedure journal append refused.",
                 ) from exc
+            # The reservation's invocation id is a function of exactly the six
+            # values it was minted from (the admission's instance and partition,
+            # the event kind, run, binding and body digest), so the stored record
+            # reproduces it iff it carries those same six values.
             if (
                 stored.record.payload_digest != reservation.body_digest
                 or stored.record.event_kind != reservation.intended_event_kind
                 or stored.record.run_id != reservation.run_id
                 or stored.record.admission_binding_digest != reservation.admission_binding_digest
-                or reservation.invocation_id
-                != run_material_invocation_id(
-                    instance_id=stored.record.stream.instance_id,
-                    partition_id=stored.record.partition_id,
-                    event_kind=stored.record.event_kind,
-                    run_id=stored.record.run_id,
-                    admission_binding_digest=stored.record.admission_binding_digest,
-                    body_digest=stored.record.payload_digest,
-                )
+                or stored.record.stream.instance_id != admission.instance_id
+                or stored.record.partition_id != admission.journal_partition_id
             ):
                 raise ExecutionError("journal append did not reproduce its material reservation")
             for pending in pending_to_release:

@@ -14,6 +14,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationInfo,
     field_serializer,
     field_validator,
     model_validator,
@@ -266,6 +267,34 @@ class JournalStreamIdentityV1(_StrictJournalModel):
 
 
 _GENESIS_DIGESTS: ValueMemo[str] = ValueMemo(capacity=4096)
+#: A stream identity's canonical text and its SHA-256, by the identity's strings.
+_STREAM_KEYS: ValueMemo[tuple[str, str]] = ValueMemo(capacity=1024)
+
+
+def journal_stream_strings(stream: JournalStreamIdentityV1) -> tuple[str, str, str, str]:
+    """The identity's own strings: what every per-stream memo is keyed by, never the model."""
+
+    return (stream.tag, stream.instance_id, stream.journal_family, stream.stream_id)
+
+
+def _stream_keys(stream: JournalStreamIdentityV1) -> tuple[str, str]:
+    def derive() -> tuple[str, str]:
+        text = canonical_bytes(stream.model_dump(mode="json")).decode()
+        return text, hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    return _STREAM_KEYS.derive(journal_stream_strings(stream), derive)
+
+
+def journal_stream_key(stream: JournalStreamIdentityV1) -> str:
+    """The stream identity's canonical JSON text, encoded once per identity per process."""
+
+    return _stream_keys(stream)[0]
+
+
+def journal_stream_directory_key(stream: JournalStreamIdentityV1) -> str:
+    """The SHA-256 of the stream identity's canonical bytes (its directory name)."""
+
+    return _stream_keys(stream)[1]
 
 
 def journal_genesis_digest(stream: JournalStreamIdentityV1, partition_id: str) -> str:
@@ -277,7 +306,7 @@ def journal_genesis_digest(stream: JournalStreamIdentityV1, partition_id: str) -
 
     _identifier(partition_id, label="journal partition_id", pattern=_PARTITION_RE)
     # Keyed by the identity's own strings, never by the caller's model object.
-    key = (stream.tag, stream.instance_id, stream.journal_family, stream.stream_id, partition_id)
+    key = (*journal_stream_strings(stream), partition_id)
     return _GENESIS_DIGESTS.derive(key, lambda: _journal_genesis_digest(stream, partition_id))
 
 
@@ -653,10 +682,39 @@ class StoredProcedureJournalRecordV1(_StrictJournalModel):
         return _digest(value, label="stored journal record_digest")
 
     @model_validator(mode="after")
-    def _reproduce(self) -> "StoredProcedureJournalRecordV1":
+    def _reproduce(self, info: ValidationInfo) -> "StoredProcedureJournalRecordV1":
+        # The writer that just digested this very record object hands the digest
+        # in (``bind_stored``) rather than have it taken twice.
+        context = info.context
+        if (
+            isinstance(context, _JustDigested)
+            and context.record is self.record
+            and context.digest == self.record_digest
+        ):
+            return self
         if self.record_digest != procedure_journal_record_digest(self.record):
             raise ValueError("stored journal record digest does not reproduce")
         return self
+
+    @classmethod
+    def bind_stored(cls, record: ProcedureJournalRecordV1) -> "StoredProcedureJournalRecordV1":
+        """Store one record under its digest, taken exactly once."""
+
+        digest = procedure_journal_record_digest(record)
+        return cls.model_validate(
+            {"record": record, "record_digest": digest},
+            context=_JustDigested(record, digest),
+        )
+
+
+class _JustDigested:
+    """Validation context: ``digest`` was taken of exactly this ``record`` object."""
+
+    __slots__ = ("record", "digest")
+
+    def __init__(self, record: ProcedureJournalRecordV1, digest: str) -> None:
+        self.record = record
+        self.digest = digest
 
 
 class JournalRangeV1(_StrictJournalModel):
@@ -772,6 +830,9 @@ __all__ = [
     "journal_head_key",
     "journal_head_statement_bytes",
     "journal_payload_bytes",
+    "journal_stream_directory_key",
+    "journal_stream_key",
+    "journal_stream_strings",
     "payload_digest",
     "parse_journal_payload",
     "procedure_journal_record_digest",

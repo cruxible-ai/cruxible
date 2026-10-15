@@ -37,6 +37,7 @@ from cruxible_client.contracts.canonical import (
     artifact_path_for_codec,
     artifact_path_matches,
     canonical_bytes,
+    model_canonical_bytes,
     normalize_canonical,
     pretty_canonical_bytes,
     typed_digest,
@@ -59,6 +60,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretReference,
     provider_external_occurrence_plan_digest,
     provider_invocation_output_digest,
+    provider_invocation_output_digest_of_bytes,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
@@ -1420,10 +1422,25 @@ _CAPTURE_ENVELOPE_ADAPTER: TypeAdapter[CaptureEnvelopeV1 | CaptureEnvelope] = Ty
 def render_capture_envelope(envelope: CaptureEnvelopeV1 | CaptureEnvelope) -> bytes:
     """Return the exact CAS object bytes; Capture envelopes carry no newline."""
 
-    return canonical_bytes(envelope.model_dump(mode="json"))
+    return model_canonical_bytes(envelope)
+
+
+#: Envelopes parsed once per exact bytes and shared sealed: one Capture cited by a
+#: whole fan-out of Claims is read back once per citing Claim.
+_CAPTURE_ENVELOPE_PARSES: ParseMemo[CaptureEnvelopeV1 | CaptureEnvelope] = ParseMemo(
+    capacity=4096, max_bytes=32 * 1024 * 1024
+)
 
 
 def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelope:
+    """Parse one Capture envelope once per exact bytes; see ``content_memo``."""
+
+    return _CAPTURE_ENVELOPE_PARSES.parse(
+        content, "capture-envelope", None, lambda: _parse_capture_envelope(content)
+    )
+
+
+def _parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelope:
     try:
         envelope = _CAPTURE_ENVELOPE_ADAPTER.validate_json(content)
     except ValidationError as exc:
@@ -1443,6 +1460,7 @@ def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelop
     return envelope
 
 
+@sealed_memo
 def capture_digest(envelope: CaptureEnvelopeV1 | CaptureEnvelope) -> CasDigest:
     return CasDigest(hashlib.sha256(render_capture_envelope(envelope)).hexdigest())
 
@@ -2411,9 +2429,18 @@ def build_provider_external_capture_v2(
         )
     except (UnicodeDecodeError, ValueError) as exc:
         raise CaptureFormatError("workspace.file result is not canonical JSON") from exc
-    if (workspace_source and canonical_bytes(provider_output) != content) or (
-        output_commitment.output_digest != provider_invocation_output_digest(provider_output)
-    ):
+    if workspace_source:
+        # Verified canonical, the material's own bytes are the output's encoding.
+        reproduces = canonical_bytes(
+            provider_output
+        ) == content and output_commitment.output_digest == (
+            provider_invocation_output_digest_of_bytes(content)
+        )
+    else:
+        reproduces = output_commitment.output_digest == provider_invocation_output_digest(
+            provider_output
+        )
+    if not reproduces:
         raise CaptureFormatError("Provider Capture result differs from its invocation receipt")
     if workspace_source:
         assert source_read_receipt is not None
@@ -3175,8 +3202,9 @@ def _verify_capture_once(
                     raise CaptureFormatError(
                         "workspace.file invocation output digest is unavailable"
                     ) from exc
-                if output_commitment.output_digest != provider_invocation_output_digest(
-                    workspace_body
+                # The material was just verified canonical: its bytes are the encoding.
+                if output_commitment.output_digest != provider_invocation_output_digest_of_bytes(
+                    material
                 ):
                     raise CaptureFormatError(
                         "workspace.file material differs from its invocation receipt"

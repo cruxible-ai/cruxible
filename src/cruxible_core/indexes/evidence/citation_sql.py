@@ -222,6 +222,20 @@ def populate_citations(
     # SAVEPOINT composes with a larger transaction and rolls back a partial owner
     # replacement on failed/missing CAS reads without committing caller writes.
     connection.execute("SAVEPOINT populate_citations")
+    # One Capture cited by many changed owners is read, verified and inserted
+    # once per call, and its citation groups derived once. A row inserted here
+    # keeps the citation use inserted right after it, so no owner's cleanup in
+    # this call can remove it before a later owner cites it again.
+    envelopes: dict[str, CaptureEnvelopeAny] = {}
+    groups_of: dict[str, list[tuple[str, str]]] = {}
+
+    def insert_capture(digest: str) -> CaptureEnvelopeAny:
+        envelope = envelopes.get(digest)
+        if envelope is None:
+            envelope = _insert_capture(connection, digest, bodies)
+            envelopes[digest] = envelope
+        return envelope
+
     try:
         for path, content in sorted(sources.items()):
             if path.startswith("attestations/"):
@@ -238,7 +252,7 @@ def populate_citations(
                     raise ProjectionFormatError("citation attestation owner is not published")
                 remove_owner_citations(connection, (("attestation", key),))
                 for digest in value.statement.cited_capture_digests:
-                    _insert_capture(connection, digest, bodies)
+                    insert_capture(digest)
                     connection.execute(
                         "INSERT INTO citation_uses VALUES ('attestation',?,?,?,NULL,NULL)",
                         (key, digest, digest),
@@ -264,13 +278,9 @@ def populate_citations(
             connection.execute(
                 "DELETE FROM citation_uses WHERE owner_kind='Claim' AND owner_key=?", (identity,)
             )
-            envelopes: dict[str, CaptureEnvelopeAny] = {}
             for reference in claim_citation_references(claim):
                 digest = reference.capture_digest
-                envelope = envelopes.get(digest)
-                if envelope is None:
-                    envelope = _insert_capture(connection, digest, bodies)
-                    envelopes[digest] = envelope
+                envelope = insert_capture(digest)
                 connection.execute(
                     "INSERT INTO citation_uses VALUES ('Claim',?,?,?,?,?)",
                     (
@@ -281,16 +291,19 @@ def populate_citations(
                         getattr(reference, "role", "legacy"),
                     ),
                 )
-                groups = [("capture", digest)]
-                if isinstance(envelope.source, ExternalSourceReference):
-                    groups.append(
-                        ("exact_external", external_source_relation_subject(envelope.source))
-                    )
-                    span = _same_version_span_key(
-                        {"source": envelope.source.model_dump(mode="json")}
-                    )
-                    if span is not None:
-                        groups.append(("same_version_span", span[0]))
+                groups = groups_of.get(digest)
+                if groups is None:
+                    groups = [("capture", digest)]
+                    if isinstance(envelope.source, ExternalSourceReference):
+                        groups.append(
+                            ("exact_external", external_source_relation_subject(envelope.source))
+                        )
+                        span = _same_version_span_key(
+                            {"source": envelope.source.model_dump(mode="json")}
+                        )
+                        if span is not None:
+                            groups.append(("same_version_span", span[0]))
+                    groups_of[digest] = groups
                 connection.executemany(
                     "INSERT INTO citation_group_members VALUES (?,?,?,?)",
                     [(kind, key, identity, reference.citation_id) for kind, key in groups],

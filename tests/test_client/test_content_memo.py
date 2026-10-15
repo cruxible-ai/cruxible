@@ -26,6 +26,7 @@ from cruxible_client.contracts.content_memo import (
     ValueMemo,
     is_sealed,
     seal,
+    sealed_derive,
     sealed_memo,
 )
 from cruxible_client.contracts.subjects import (
@@ -275,3 +276,332 @@ def test_owner_contract_schemas_are_frozen_so_procedures_can_be_sealed():
     assert schema.fields["payload"].optional is False
     assert seal(schema) and isinstance(schema.fields, FrozenDict)
     assert isinstance(schema.fields["payload"].json_schema, FrozenDict)
+
+
+def test_a_keyed_derivation_is_remembered_per_sealed_object_and_key():
+    calls = []
+
+    def derive(label: str) -> str:
+        calls.append(label)
+        return label.upper()
+
+    sealed = _Leaf(tags=["a"], meta={})
+    assert seal(sealed)
+    first = sealed_derive(sealed, ("test.keyed", "x"), lambda: derive("x"))
+    again = sealed_derive(sealed, ("test.keyed", "x"), lambda: derive("x"))
+    other = sealed_derive(sealed, ("test.keyed", "y"), lambda: derive("y"))
+    assert (first, again, other) == ("X", "X", "Y") and calls == ["x", "y"]
+    # An unsealed object, or a copy of a sealed one, derives afresh every time.
+    plain = _Leaf(tags=["a"], meta={})
+    copied = sealed.model_copy()
+    for value in (plain, plain, copied):
+        sealed_derive(value, ("test.keyed", "x"), lambda: derive("x"))
+    assert calls == ["x", "y", "x", "x", "x"]
+
+
+def test_a_sealed_model_is_encoded_once_and_a_copy_afresh(monkeypatch):
+    from cruxible_client.contracts import canonical
+
+    encoded = []
+    real = canonical.canonical_bytes
+
+    def counted(value):  # type: ignore[no-untyped-def]
+        encoded.append(value)
+        return real(value)
+
+    monkeypatch.setattr(canonical, "canonical_bytes", counted)
+    sealed = _Leaf(tags=["é", "b"], meta={"k": [1, None]})
+    assert seal(sealed)
+    expected = real(sealed.model_dump(mode="json"))
+    assert {canonical.model_canonical_bytes(sealed) for _ in range(3)} == {expected}
+    assert len(encoded) == 1
+    copied = sealed.model_copy(update={"tags": ["c"]})
+    assert canonical.model_canonical_bytes(copied) == real(copied.model_dump(mode="json"))
+    assert len(encoded) == 2
+
+
+def test_composed_digests_and_cheap_comparisons_equal_the_canonical_ones():
+    from cruxible_client.contracts.candidates import (
+        DependencyProofReference,
+        dependency_proof_order,
+    )
+    from cruxible_client.contracts.canonical import (
+        canonical_bytes,
+        canonical_digest,
+        canonical_equal,
+        canonical_list_bytes,
+        canonical_list_digest,
+        composed_canonical_digest,
+    )
+    from cruxible_client.contracts.errors import CanonicalEncodingError
+
+    items = [{"b": "é", "a": [1, "x", None]}, {"z": True}, {}]
+    payload = {"sequence": 3, "alpha": "ç", "nested": {"y": [False, None]}}
+    encoded = [canonical_bytes(item) for item in items]
+    assert canonical_list_digest("dom-é", "members", encoded) == canonical_digest(
+        "dom-é", {"members": items}
+    )
+    assert composed_canonical_digest(
+        "d",
+        payload,
+        {
+            "members": canonical_list_bytes(encoded),
+            "law_evidence": canonical_list_bytes([]),
+            "whole": canonical_bytes(items[0]),
+        },
+    ) == canonical_digest("d", {**payload, "members": items, "law_evidence": [], "whole": items[0]})
+    with pytest.raises(CanonicalEncodingError):
+        canonical_list_digest("d", "tag", encoded)
+    with pytest.raises(CanonicalEncodingError):
+        composed_canonical_digest("d", {"members": 1}, {"members": canonical_list_bytes(encoded)})
+    for path in ("claims/ab/CLM-1.json", "subjects/kïnd/é.json"):
+        reference = DependencyProofReference(
+            source_path=path,
+            source_artifact_digest="sha256:" + "1" * 64,
+            target_path="claim-types/x.json",
+            target_artifact_digest="sha256:" + "2" * 64,
+            pin_role="claim-type",
+        )
+        assert dependency_proof_order(reference) == canonical_bytes(
+            reference.model_dump(mode="json")
+        )
+    for left, right in (
+        ({"a": "x", "b": [1, None]}, {"a": "x", "b": [1, None]}),
+        ({"a": 1}, {"a": True}),
+        ({"a": "é"}, {"a": "é"}),
+        ({"a": "x"}, {"a": "y"}),
+        (FrozenDict({"a": FrozenList(["x"])}), {"a": ["x"]}),
+    ):
+        assert canonical_equal(left, right) is (canonical_bytes(left) == canonical_bytes(right))
+
+
+def test_a_memo_of_few_large_records_may_keep_an_entry_over_a_sixteenth():
+    large: ParseMemo[_Leaf] = ParseMemo(capacity=2, max_bytes=4096, max_entry_bytes=2048)
+    content = b"y" * 300
+    first = large.parse(content, "p", None, lambda: _Leaf(tags=["a"], meta={}))
+    assert large.parse(content, "p", None, lambda: _Leaf(tags=["b"], meta={})) is first
+    assert is_sealed(first)
+    small: ParseMemo[_Leaf] = ParseMemo(capacity=2, max_bytes=4096)
+    small.parse(content, "p", None, lambda: _Leaf(tags=["a"], meta={}))
+    assert not small._entries
+
+
+def test_a_member_file_digest_is_taken_once_per_exact_bytes(monkeypatch):
+    import hashlib
+
+    from cruxible_client.contracts import canonical
+
+    hashed: list[bytes] = []
+    real = hashlib.sha256
+
+    def counted(content=b""):  # type: ignore[no-untyped-def]
+        hashed.append(bytes(content))
+        return real(content)
+
+    monkeypatch.setattr(canonical.hashlib, "sha256", counted)
+    canonical._FILE_DIGESTS.clear()
+    content = b'{"member": "first"}\n'
+    first = canonical.file_digest(content)
+    # The same object, and equal bytes read back elsewhere, reuse the one digest.
+    assert canonical.file_digest(content) is first
+    assert canonical.file_digest(bytes(bytearray(content))) is first
+    assert first.value == real(content).hexdigest() and hashed == [content]
+
+    class Tricky(bytes):
+        pass
+
+    # A bytes subclass is never kept: it is hashed afresh every time.
+    canonical.file_digest(Tricky(content))
+    canonical.file_digest(Tricky(content))
+    assert len(hashed) == 3
+    assert canonical.file_digest(b"other").value == real(b"other").hexdigest()
+    canonical._FILE_DIGESTS.clear()
+
+
+def test_claim_type_derived_rules_and_digests_are_taken_once_per_sealed_claim_type(
+    monkeypatch,
+):
+    from cruxible_client.contracts import claim_verdicts
+
+    claim_types._CLAIM_TYPE_PARSES.clear()
+    value = _claim_type("sha256:" + "4" * 64)
+    sealed = parse_claim_type(render_claim_type(value), path=claim_type_path(value.predicate))
+    digest = claim_type_digest(sealed).tagged
+    hashed: list[str] = []
+    real = claim_verdicts.typed_digest
+
+    def counted(kind, domain, payload):  # type: ignore[no-untyped-def]
+        hashed.append(domain)
+        return real(kind, domain, payload)
+
+    monkeypatch.setattr(claim_verdicts, "typed_digest", counted)
+    rules = [
+        claim_verdicts.claim_adjudication_rule(sealed, claim_type_digest=digest) for _ in range(3)
+    ]
+    assert rules[0] is rules[1] is rules[2] and is_sealed(rules[0])
+    digests = {claim_verdicts.claim_adjudication_rule_digest(rule) for rule in rules}
+    assert len(digests) == 1 and len(hashed) == 2  # the policy digest, then the rule's
+    # Another argument is another rule; an unsealed ClaimType compiles afresh, equal.
+    other = claim_verdicts.claim_adjudication_rule(
+        sealed, claim_type_digest=digest, origin_supports=True
+    )
+    assert other is not rules[0] and other.tag == "playbill-claim-adjudication-rule-v2"
+    fresh = claim_verdicts.claim_adjudication_rule(value, claim_type_digest=digest)
+    assert fresh == rules[0] and fresh is not rules[0]
+
+
+class _Stamped(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: str
+    meta: dict[str, object]
+
+
+class _Stamp(_Stamped):
+    extra: str = "x"
+
+
+class _Holder(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: str = "holder"
+    one: _Stamped
+    many: tuple[_Stamped, ...]
+    maybe: _Stamped | None = None
+    plain: dict[str, str]
+
+
+def test_a_model_holding_sealed_models_composes_their_encodings(monkeypatch):
+    import warnings
+
+    from cruxible_client.contracts import canonical
+
+    first = _Stamped(name="é", meta={"z": [1, None], "a": "b"})
+    second = _Stamped(name="b", meta={})
+    assert seal(first) and seal(second)
+    holder = _Holder(one=first, many=(first, second), plain={"k": "v"})
+    expected = canonical.canonical_bytes(holder.model_dump(mode="json"))
+    assert canonical.model_canonical_bytes(first)  # remembered on the sealed member
+    encoded: list[object] = []
+    real = canonical.canonical_bytes
+    monkeypatch.setattr(
+        canonical, "canonical_bytes", lambda value: encoded.append(value) or real(value)
+    )
+    # The unsealed holder is composed: only its new member is encoded, never the
+    # remembered one, and the bytes are exactly the whole dump's.
+    assert canonical.model_canonical_bytes(holder) == expected
+    assert len(encoded) == 1 and encoded[0] == second.model_dump(mode="json")
+    # A subclass is dumped as its declared class, so it is never composed.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        subclassed = _Stamp(name="q", meta={})
+        assert seal(subclassed)
+        other = _Holder(one=subclassed, many=(first,), plain={})
+        assert canonical.model_canonical_bytes(other) == real(other.model_dump(mode="json"))
+
+
+def test_the_direct_encoder_writes_exactly_the_normalizing_encoders_bytes():
+    import random
+
+    from cruxible_client.contracts import canonical
+    from cruxible_client.contracts.errors import CanonicalEncodingError
+    from cruxible_client.contracts.primitives import canonical_json, pretty_json
+
+    def outcome(encode, value):  # type: ignore[no-untyped-def]
+        try:
+            return encode(value)
+        except CanonicalEncodingError as exc:
+            return (type(exc), str(exc))
+
+    def normalizing(value):  # type: ignore[no-untyped-def]
+        return canonical_json(canonical.normalize_canonical(value)).encode("utf-8")
+
+    def normalizing_pretty(value):  # type: ignore[no-untyped-def]
+        return pretty_json(canonical.normalize_canonical(value)).encode("utf-8") + b"\n"
+
+    # NFC and decomposed spellings (which collide as keys), surrogates, escapes,
+    # astral characters, big integers, bools, sealed containers, and refusals.
+    strings = ["", "a", "é", "é", "Å", "\ud800", "x\udfffy", "😀", '\x00\n"\\', "ß"]
+    scalars: list[object] = [*strings, 0, -5, 10**30, True, False, None]
+    random_values = random.Random(1015)
+
+    def value(depth: int = 0) -> object:
+        roll = random_values.random()
+        if depth > 3 or roll < 0.3:
+            return random_values.choice(scalars)
+        if roll < 0.6:
+            return [value(depth + 1) for _ in range(random_values.randint(0, 4))]
+        return {
+            random_values.choice(strings): value(depth + 1)
+            for _ in range(random_values.randint(0, 4))
+        }
+
+    fixed: list[object] = [
+        1.5,
+        b"x",
+        (1, 2),
+        {1: "x"},
+        FrozenDict({"b": FrozenList([1, "é"]), "a": None}),
+        {"é": 1, "é": 2},
+    ]
+    for item in [*fixed, *(value() for _ in range(5000))]:
+        assert outcome(canonical.canonical_bytes, item) == outcome(normalizing, item)
+        assert outcome(canonical.pretty_canonical_bytes, item) == outcome(normalizing_pretty, item)
+
+
+@pytest.mark.parametrize("shape", ["lists", "dicts", "mixed"])
+def test_deeply_nested_values_encode_and_refuse_exactly_as_the_normalizing_encoder(shape):
+    """The direct encoder's readiness check (and ``canonical_equal``'s identity
+    check) hand any value nested past ``_DIRECT_DEPTH`` to the normalizing path:
+    on every supported Python, a value the original accepts gets its exact
+    bytes, and one too deep for the original still raises RecursionError."""
+
+    import sys
+
+    from cruxible_client.contracts import canonical
+    from cruxible_client.contracts.primitives import canonical_json, pretty_json
+
+    def nested(depth: int) -> object:
+        value: object = 1
+        for level in range(depth):
+            if shape == "lists" or (shape == "mixed" and level % 2):
+                value = [value]
+            else:
+                value = {"k": value}
+        return value
+
+    def outcome(encode, value):  # type: ignore[no-untyped-def]
+        try:
+            return encode(value)
+        except RecursionError:
+            return RecursionError
+
+    encoders = (
+        (
+            canonical.canonical_bytes,
+            lambda value: canonical_json(canonical.normalize_canonical(value)).encode("utf-8"),
+        ),
+        (
+            canonical.pretty_canonical_bytes,
+            lambda value: pretty_json(canonical.normalize_canonical(value)).encode("utf-8") + b"\n",
+        ),
+    )
+    limit = sys.getrecursionlimit()
+    threshold = canonical._DIRECT_DEPTH
+    # Within the threshold the direct path stands; past it the original path
+    # decides, so every outcome (bytes or RecursionError) is the original's on
+    # the running Python. 600 is the reviewer's case: refused on 3.11.
+    assert canonical._canonical_ready(nested(threshold)) is True
+    assert canonical._canonical_ready(nested(threshold + 1)) is False
+    accepted = 0
+    for depth in (threshold - 1, threshold, threshold + 1, limit // 4, 400, 600, 2 * limit):
+        value = nested(depth)
+        for encode, original in encoders:
+            expected = outcome(original, value)
+            accepted += expected is not RecursionError
+            assert outcome(encode, value) == expected, (depth, encode.__name__)
+        old = encoders[0][1]
+        for other in (nested(depth), nested(depth - 1)):
+            pair = (value, other)
+            equal = outcome(lambda both: canonical.canonical_equal(*both), pair)
+            same = outcome(lambda both: old(both[0]) == old(both[1]), pair)
+            assert equal == same, depth
+    assert accepted >= 2

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
@@ -111,20 +112,29 @@ def _reservation_preimage(record: MaterialReservationV1) -> dict[str, object]:
     return payload
 
 
+#: Reservation ids by their exact preimage strings: a reservation is minted and
+#: then validated, which reproduces its id, so each id is hashed once.
+_RESERVATION_IDS: ValueMemo[str] = ValueMemo(capacity=1024)
+
+
+def _reservation_id(domain: str, record: MaterialReservationV1) -> str:
+    preimage = _reservation_preimage(record)
+
+    def derive() -> str:
+        return typed_digest(Sha256Value, domain, preimage).tagged
+
+    if not all(value is None or type(value) is str for value in preimage.values()):
+        return derive()
+    # Keyed by the preimage's own strings, never by the record object.
+    return _RESERVATION_IDS.derive((domain, tuple(preimage.items())), derive)
+
+
 def pending_reservation_id(record: PendingAdmissionMaterialReservationV1) -> str:
-    return typed_digest(
-        Sha256Value,
-        PENDING_RESERVATION_DOMAIN,
-        _reservation_preimage(record),
-    ).tagged
+    return _reservation_id(PENDING_RESERVATION_DOMAIN, record)
 
 
 def run_reservation_id(record: RunMaterialReservationV1) -> str:
-    return typed_digest(
-        Sha256Value,
-        RUN_RESERVATION_DOMAIN,
-        _reservation_preimage(record),
-    ).tagged
+    return _reservation_id(RUN_RESERVATION_DOMAIN, record)
 
 
 def make_pending_reservation(

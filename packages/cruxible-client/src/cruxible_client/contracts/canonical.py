@@ -5,12 +5,18 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
+import typing
 import unicodedata
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar, TypeVar, cast
 
+from pydantic import BaseModel
+
+from cruxible_client.contracts.content_memo import FrozenDict, FrozenList, is_sealed, sealed_memo
 from cruxible_client.contracts.errors import CanonicalEncodingError
 from cruxible_client.contracts.primitives import canonical_json, pretty_json
 
@@ -96,15 +102,307 @@ def normalize_canonical(value: object, *, location: str = "$") -> CanonicalValue
     raise CanonicalEncodingError(f"{location}: unsupported value type {type(value).__name__}")
 
 
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _canonical_string(value: str) -> bool:
+    # Exactly what ``_normalize_string`` returns unchanged: NFC and surrogate-free.
+    return value.isascii() or (
+        unicodedata.is_normalized("NFC", value) and _SURROGATE.search(value) is None
+    )
+
+
+#: Nesting depth past which a value always takes the original normalizing path.
+#: Far below any supported Python's recursion limit for that path (3.11 spends
+#: two frames per list level, 3.12+ one), so the direct path never accepts, or
+#: refuses, a value the original would not: deeper values meet exactly the
+#: original's limit.
+_DIRECT_DEPTH = 200
+
+
+def _canonical_ready(value: object) -> bool:
+    """Whether ``value`` takes the direct encoder (``_ready``).
+
+    A value nested deeper than ``_DIRECT_DEPTH``, or too deep to check from
+    this stack, is left to the normalizing path, which accepts it, or refuses
+    it, exactly as before.
+    """
+
+    try:
+        return _ready(value, 0)
+    except RecursionError:
+        return False
+
+
+def _ready(value: object, depth: int) -> bool:
+    """Whether ``value`` is already in the closed canonical value set, exactly.
+
+    Exact ``str`` (NFC, no surrogate), ``int``, ``bool`` and ``None``, and exact
+    lists and string-keyed dicts of them (the sealed containers included): for
+    such a value ``normalize_canonical`` changes nothing a JSON encoder sees --
+    its keys are already NFC, so none can collide, and sorting by code point is
+    sorting by UTF-8 -- so the stdlib encoder writes the canonical bytes
+    directly. Anything else (a float, bytes, a tuple, a subclass, a non-NFC or
+    surrogate string) takes the normalizing path and refuses exactly as before.
+
+    ``depth`` is the containers above ``value``; one frame per level.
+    """
+
+    kind = type(value)
+    if kind is str:
+        return _canonical_string(cast(str, value))
+    if kind is int or kind is bool or value is None:
+        return True
+    if depth >= _DIRECT_DEPTH:
+        return False
+    if kind is dict or kind is FrozenDict:
+        for key, item in cast(dict[object, object], value).items():
+            if type(key) is not str or not _canonical_string(key) or not _ready(item, depth + 1):
+                return False
+        return True
+    if kind is list or kind is FrozenList:
+        for item in cast(list[object], value):
+            if not _ready(item, depth + 1):
+                return False
+        return True
+    return False
+
+
 def canonical_bytes(value: object) -> bytes:
     """Encode one normalized value as whitespace-free UTF-8 JSON."""
 
+    if _canonical_ready(value):
+        return canonical_json(value).encode("utf-8")
     return canonical_json(normalize_canonical(value)).encode("utf-8")
+
+
+def _model_classes(annotation: object) -> frozenset[type]:
+    """Every model class an annotation names, through unions, tuples and Annotated."""
+
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return frozenset((annotation,))
+    found: set[type] = set()
+    for argument in typing.get_args(annotation):
+        found |= _model_classes(argument)
+    return frozenset(found)
+
+
+_COMPOSABLE_FIELDS: dict[type, dict[str, frozenset[type]]] = {}
+
+
+def _composable_fields(cls: type[BaseModel]) -> dict[str, frozenset[type]]:
+    """The fields of ``cls`` whose JSON dump is exactly their model value's own dump.
+
+    A field qualifies when the class has no model serializer, computed field or
+    alias-keyed dump, and the field is neither excluded, aliased nor given its
+    own serializer; the value's class must then be one the annotation names (a
+    subclass would be dumped as its declared class). Decided once per class.
+    """
+
+    found = _COMPOSABLE_FIELDS.get(cls)
+    if found is None:
+        decorators = cls.__pydantic_decorators__
+        serialized = {
+            name
+            for decorator in decorators.field_serializers.values()
+            for name in decorator.info.fields
+        }
+        found = {}
+        if (
+            not decorators.model_serializers
+            and not cls.model_computed_fields
+            and not cls.model_config.get("serialize_by_alias")
+        ):
+            for name, info in cls.model_fields.items():
+                classes = _model_classes(info.annotation)
+                if (
+                    classes
+                    and not info.exclude
+                    and info.serialization_alias is None
+                    and name not in serialized
+                ):
+                    found[name] = classes
+        _COMPOSABLE_FIELDS[cls] = found
+    return found
+
+
+def _sealed_field_bytes(value: object, classes: frozenset[type]) -> bytes | None:
+    """A field value's canonical bytes from sealed models' remembered encodings, if it is one."""
+
+    if type(value) in classes and is_sealed(value):
+        return model_canonical_bytes(cast(BaseModel, value))
+    if (
+        type(value) is tuple
+        and value
+        and all(type(item) in classes and is_sealed(item) for item in value)
+    ):
+        return canonical_list_bytes([model_canonical_bytes(item) for item in value])
+    return None
+
+
+@sealed_memo
+def model_canonical_bytes(model: BaseModel) -> bytes:
+    """``canonical_bytes(model.model_dump(mode="json"))``, encoded once per sealed model.
+
+    A sealed model cannot change, so its encoding is remembered with it; any
+    other model (built in code and never sealed, or a copy) is encoded afresh.
+    Either way, a field holding sealed models (or a tuple of them) takes their
+    remembered encodings and only the rest of the model is dumped and encoded:
+    a record rebuilt around sealed members never re-encodes a member.
+    """
+
+    composed: dict[str, bytes] = {}
+    for name, classes in _composable_fields(type(model)).items():
+        encoded = _sealed_field_bytes(model.__dict__.get(name), classes)
+        if encoded is not None:
+            composed[name] = encoded
+    if not composed:
+        return canonical_bytes(model.model_dump(mode="json"))
+    return composed_canonical_bytes(model.model_dump(mode="json", exclude=set(composed)), composed)
+
+
+def composed_canonical_bytes(payload: Mapping[str, object], encoded: Mapping[str, bytes]) -> bytes:
+    """``canonical_bytes({**payload, **values})``, each of ``values`` given already encoded.
+
+    An object's canonical encoding is its keys' and values' encodings joined in
+    key order, and a list's is its items' joined in order, so a value that was
+    already encoded once (verified bytes, ``model_canonical_bytes`` of a sealed
+    model, or a list composed by ``canonical_list_bytes``) composes into the same
+    bytes without being normalized or encoded again. Each entry of ``encoded``
+    must be exactly ``canonical_bytes`` of its value; ``payload`` is normalized
+    here.
+    """
+
+    normalized = normalize_canonical(dict(payload))
+    assert isinstance(normalized, dict)
+    members: dict[str, bytes] = {
+        key: canonical_json(value).encode("utf-8") for key, value in normalized.items()
+    }
+    for raw_key, value in encoded.items():
+        key = _normalize_string(raw_key)
+        if key in members:
+            raise CanonicalEncodingError(f"$: keys collide after NFC normalization: {key!r}")
+        members[key] = value
+    return (
+        b"{"
+        + b",".join(
+            canonical_json(key).encode("utf-8") + b":" + members[key]
+            for key in sorted(members, key=lambda name: name.encode("utf-8"))
+        )
+        + b"}"
+    )
+
+
+def composed_canonical_digest(
+    domain: str,
+    payload: Mapping[str, object],
+    encoded: Mapping[str, bytes],
+) -> str:
+    """``canonical_digest(domain, {**payload, **values})``, each of ``values`` given encoded.
+
+    The preimage is ``composed_canonical_bytes`` of the payload with the domain
+    as its reserved ``tag``.
+    """
+
+    if "tag" in payload or "tag" in {_normalize_string(key) for key in encoded}:
+        raise CanonicalEncodingError("payload must not supply the reserved tag field")
+    return hashlib.sha256(
+        composed_canonical_bytes(
+            payload,
+            {**encoded, "tag": canonical_json(_normalize_string(domain)).encode("utf-8")},
+        )
+    ).hexdigest()
+
+
+def canonical_list_bytes(items: Sequence[bytes]) -> bytes:
+    """The canonical encoding of a list from each item's own canonical bytes."""
+
+    return b"[" + b",".join(items) + b"]"
+
+
+def canonical_list_digest(domain: str, field: str, items: Sequence[bytes]) -> str:
+    """``canonical_digest(domain, {field: values})`` from each value's own canonical bytes."""
+
+    return composed_canonical_digest(domain, {}, {field: canonical_list_bytes(items)})
+
+
+_DICTS = (dict, FrozenDict)
+_LISTS = (list, FrozenList)
+
+
+def _identical(left: object, right: object, depth: int = 0) -> bool:
+    """Equal in content and in every value's kind, built only of plain ASCII-keyed JSON.
+
+    Strings must be ASCII, integers and bools compare only with their own kind
+    (``1 == True`` in Python, never in JSON), and dicts and lists only with
+    dicts and lists (sealed ones included). One frame per nesting level; past
+    ``_DIRECT_DEPTH`` the values are left to ``canonical_bytes`` (``False``).
+    """
+
+    kind = type(left)
+    if kind is str:
+        return type(right) is str and left == right and cast(str, left).isascii()
+    if kind is int or kind is bool:
+        return type(right) is kind and left == right
+    if left is None:
+        return right is None
+    if depth >= _DIRECT_DEPTH:
+        return False
+    if kind in _DICTS:
+        if type(right) not in _DICTS:
+            return False
+        mine = cast(dict[object, object], left)
+        theirs = cast(dict[object, object], right)
+        if len(mine) != len(theirs):
+            return False
+        for key, item in mine.items():
+            if not (
+                type(key) is str
+                and key.isascii()
+                and key in theirs
+                and _identical(item, theirs[key], depth + 1)
+            ):
+                return False
+        return True
+    if kind in _LISTS:
+        if type(right) not in _LISTS:
+            return False
+        mine_items = cast(list[object], left)
+        their_items = cast(list[object], right)
+        if len(mine_items) != len(their_items):
+            return False
+        for item, other in zip(mine_items, their_items):
+            if not _identical(item, other, depth + 1):
+                return False
+        return True
+    return False
+
+
+def canonical_equal(left: object, right: object) -> bool:
+    """``canonical_bytes(left) == canonical_bytes(right)``, encoding only when it must.
+
+    Two values identical in content and kind, built only of ASCII strings,
+    integers, bools, None, lists and ASCII-keyed dicts, have one canonical
+    encoding (ASCII is its own NFC form and can neither collide nor hold a
+    surrogate), so they are decided without encoding. Anything else --
+    different values that might still share an encoding, or values holding
+    other types -- is encoded and compared, refusing exactly as
+    ``canonical_bytes`` does, as do values too deeply nested to compare.
+    """
+
+    try:
+        if _identical(left, right):
+            return True
+    except RecursionError:
+        pass
+    return canonical_bytes(left) == canonical_bytes(right)
 
 
 def pretty_canonical_bytes(value: object) -> bytes:
     """Encode one normalized value as sorted indent-2 JSON with one final LF."""
 
+    if _canonical_ready(value):
+        return pretty_json(value).encode("utf-8") + b"\n"
     return pretty_json(normalize_canonical(value)).encode("utf-8") + b"\n"
 
 
@@ -300,10 +598,61 @@ def typed_digest(digest_type: type[DigestT], domain: str, payload: Mapping[str, 
     return digest_type(canonical_digest(domain, payload))
 
 
-def file_digest(content: bytes) -> ArtifactDigest:
-    """Hash exact artifact bytes independently of Git's object format."""
+class _FileDigests:
+    """Member digests by their exact bytes, bounded by entries and by bytes held.
 
-    return ArtifactDigest(hashlib.sha256(content).hexdigest())
+    A new member's bytes travel by reference from the lowering that renders them
+    through evaluation, the evaluated tree state, the Merkle update and the
+    projection rows, and each of those layers takes the member's file digest. A
+    ``bytes`` object caches its own hash, so every layer handed the same object
+    finds the digest with one dict probe; equal bytes read back from Git find it
+    with one comparison. Only exact ``bytes`` are kept (a subclass could compare
+    or hash otherwise), and a value is an immutable digest shared by every
+    caller.
+    """
+
+    _CAPACITY = 16384
+    _MAX_BYTES = 32 * 1024 * 1024
+    _MAX_ENTRY = 1024 * 1024
+
+    def __init__(self) -> None:
+        self._entries: OrderedDict[bytes, ArtifactDigest] = OrderedDict()
+        self._bytes = 0
+        self._lock = threading.Lock()
+
+    def digest(self, content: bytes) -> ArtifactDigest:
+        if type(content) is not bytes or len(content) > self._MAX_ENTRY:
+            return ArtifactDigest(hashlib.sha256(content).hexdigest())
+        with self._lock:
+            found = self._entries.get(content)
+            if found is not None:
+                self._entries.move_to_end(content)
+                return found
+        value = ArtifactDigest(hashlib.sha256(content).hexdigest())
+        with self._lock:
+            if content not in self._entries:
+                self._entries[content] = value
+                self._bytes += len(content)
+            while self._entries and (
+                len(self._entries) > self._CAPACITY or self._bytes > self._MAX_BYTES
+            ):
+                old, _digest = self._entries.popitem(last=False)
+                self._bytes -= len(old)
+        return value
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            self._bytes = 0
+
+
+_FILE_DIGESTS = _FileDigests()
+
+
+def file_digest(content: bytes) -> ArtifactDigest:
+    """Hash exact artifact bytes independently of Git's object format, once per content."""
+
+    return _FILE_DIGESTS.digest(content)
 
 
 def normalize_ledger_path(path: str) -> str:
@@ -533,11 +882,17 @@ __all__ = [
     "Sha256Value",
     "canonical_bytes",
     "canonical_digest",
+    "canonical_equal",
+    "canonical_list_bytes",
+    "canonical_list_digest",
+    "composed_canonical_bytes",
+    "composed_canonical_digest",
     "file_digest",
     "manifest_for_tree",
     "manifest_for_tree_carrying",
     "manifest_root",
     "manifest_root_from_members",
+    "model_canonical_bytes",
     "normalize_canonical",
     "normalize_ledger_path",
     "normalize_manifest_paths",

@@ -31,14 +31,13 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
     parse_artifact_identity,
 )
-from cruxible_client.contracts.candidates import DependencyProofReference
+from cruxible_client.contracts.candidates import DependencyProofReference, dependency_proof_order
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
-    CanonicalValue,
     DependencyEdgeRoot,
     Sha256Value,
     canonical_bytes,
-    canonical_digest,
+    canonical_list_digest,
     normalize_manifest_paths,
     typed_digest,
 )
@@ -458,10 +457,6 @@ class MemberDependencyProofsV1(_StrictClosureModel):
 DEPENDENCY_EDGE_SET_DOMAIN: Final = "playbill-depgraph-edges-v1"
 
 
-def _edge_sort_key(edge: DependencyProofReference) -> bytes:
-    return canonical_bytes(edge.model_dump(mode="json"))
-
-
 def dependency_edge_members(
     edges: Sequence[DependencyProofReference],
 ) -> dict[str, str]:
@@ -479,11 +474,15 @@ def dependency_edge_members(
     content digest.
     """
 
-    grouped: dict[str, list[CanonicalValue]] = {}
-    for edge in sorted(edges, key=_edge_sort_key):
-        grouped.setdefault(edge.source_path, []).append(edge.model_dump(mode="json"))
+    # Each edge is encoded once: its canonical bytes are both its sort key and,
+    # composed in order, its member's preimage.
+    grouped: dict[str, list[bytes]] = {}
+    for encoded, edge in sorted(
+        ((dependency_proof_order(edge), edge) for edge in edges), key=lambda pair: pair[0]
+    ):
+        grouped.setdefault(edge.source_path, []).append(encoded)
     return {
-        path: canonical_digest(DEPENDENCY_EDGE_SET_DOMAIN, {"edges": entries})
+        path: canonical_list_digest(DEPENDENCY_EDGE_SET_DOMAIN, "edges", entries)
         for path, entries in grouped.items()
     }
 
@@ -665,14 +664,10 @@ def is_provenance_pin(source_kind: str, pin_role: str) -> bool:
     return (source_kind, pin_role) in PROVENANCE_PIN_ROLES
 
 
-def _edge_order(edge: DependencyProofReference) -> bytes:
-    return canonical_bytes(edge.model_dump(mode="json"))
-
-
 def _sorted_edges(
     edges: Iterable[DependencyProofReference],
 ) -> tuple[DependencyProofReference, ...]:
-    return tuple(sorted(edges, key=_edge_order))
+    return tuple(sorted(edges, key=dependency_proof_order))
 
 
 def _outgoing_edges(
@@ -938,7 +933,8 @@ def _encode_state(value: ArtifactDependencyStateV1) -> bytes:
 
 
 def _encode_edges(value: tuple[DependencyProofReference, ...]) -> bytes:
-    return canonical_bytes([edge.model_dump(mode="json") for edge in value])
+    # A list's canonical encoding is its items' joined in order.
+    return b"[" + b",".join(dependency_proof_order(edge) for edge in value) + b"]"
 
 
 def _state_rows(

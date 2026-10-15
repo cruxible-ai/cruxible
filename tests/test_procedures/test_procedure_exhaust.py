@@ -142,3 +142,47 @@ def test_writer_refuses_inactive_fence_without_journal_record(tmp_path) -> None:
         )
 
     assert journal.all_records(stream, partition_id) == ()
+
+
+def test_partition_names_are_derived_once_and_identity_is_still_checked(
+    tmp_path, monkeypatch
+) -> None:
+    from cruxible_client.contracts.errors import JournalIntegrityError
+    from cruxible_core.exhaust import backends, journal_index
+
+    writer, journal, _bodies, stream, partition_id = _writer(tmp_path)
+
+    def append(number: int) -> None:
+        writer.append(
+            stream=stream,
+            partition_id=partition_id,
+            event_kind="procedure_reading",
+            accepted_coordinate=_coordinate(),
+            procedure_artifact_digest=_digest("procedure"),
+            definition_digest=_digest("definition"),
+            actor_context=_actor(),
+            recorded_at=NOW,
+            payload={"measurement": number},
+            run_id="run-a",
+        )
+
+    append(0)
+    encoded: list[str] = []
+    for module in (backends, journal_index):
+        real = module.canonical_bytes
+        monkeypatch.setattr(
+            module,
+            "canonical_bytes",
+            lambda value, real=real, name=module.__name__: encoded.append(name) or real(value),
+        )
+    append(1)
+    assert len(journal.all_records(stream, partition_id)) == 2
+    # The new frame is encoded once and verified once on read-back; no partition
+    # name, identity, dirty marker, stream key or writer fence is encoded again,
+    # and re-reading verified frames costs nothing.
+    assert encoded == ["cruxible_core.exhaust.backends"] * 2
+    # The identity file is still read and compared on every access.
+    identity = next((tmp_path / "journal" / "streams").glob("*/*/identity.json"))
+    identity.write_bytes(identity.read_bytes() + b" ")
+    with pytest.raises(JournalIntegrityError, match="identity substitution"):
+        journal.read_head(stream, partition_id)

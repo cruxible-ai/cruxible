@@ -32,6 +32,7 @@ from typing import Any, cast
 from cruxible_client.contracts.canonical import (
     Sha256Value,
     canonical_bytes,
+    canonical_equal,
     normalize_canonical,
     typed_digest,
 )
@@ -825,8 +826,8 @@ def evaluate_claim_query(
         )
     bindings: tuple[QueryParameterBinding, ...] | None = None
     try:
-        if canonical_bytes(coordinate.model_dump(mode="json")) != canonical_bytes(
-            facts.coordinate.model_dump(mode="json")
+        if not canonical_equal(
+            coordinate.model_dump(mode="json"), facts.coordinate.model_dump(mode="json")
         ):
             raise _refuse(
                 COORDINATE_MISMATCH,
@@ -1080,8 +1081,8 @@ def _evaluate(
 ) -> ClaimQueryResult:
     query = definition.query
     backend = backend_factory(facts, definition=query, evaluation_time=evaluation_time)
-    if canonical_bytes(backend.coordinate.model_dump(mode="json")) != canonical_bytes(
-        coordinate.model_dump(mode="json")
+    if not canonical_equal(
+        backend.coordinate.model_dump(mode="json"), coordinate.model_dump(mode="json")
     ):
         raise _refuse(
             COORDINATE_MISMATCH,

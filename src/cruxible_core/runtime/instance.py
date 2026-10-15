@@ -191,8 +191,10 @@ from cruxible_core.proposals.proposals import (
 from cruxible_core.proposals.settlement import (
     ChangeActorBinding,
     ChangeSetRecordAnyVersion,
+    SemanticRootDerivation,
     VerifiedGenerationBundle,
     prepare_generation,
+    record_semantic_root_derivation,
     render_generation_descriptor,
 )
 from cruxible_core.runtime.phase_timing import phase
@@ -2978,7 +2980,32 @@ class PlaybillInstance:
             principal_registry_provider=self.accepted_principal_registry,
             subject_assignment_authority=self.subject_assignment_authority(),
             admitted=admitted,
+            parent_derivation=self._parent_derivation(base, sequence=sequence),
         )
+
+    def _parent_derivation(
+        self, base: AcceptedProjectionCoordinate, *, sequence: int
+    ) -> SemanticRootDerivation | None:
+        """The base generation's semantic-root derivation, when this instance holds it.
+
+        The verified head keeps its own receipt, so a settle on the head reads
+        the one fact its successor's root needs from it instead of re-reading
+        and re-parsing the parent's whole change-set record. Any other base
+        (``None``) is read from its tree as before.
+        """
+
+        if sequence <= 1:
+            return record_semantic_root_derivation(None)
+        with self._state_lock:
+            head = self._recovered.head
+        if (
+            head.oid != base.git_oid
+            or head.sequence != sequence - 1
+            or head.retained_record is None
+            or head.retained_record.sequence != head.sequence
+        ):
+            return None
+        return record_semantic_root_derivation(head.retained_record)
 
     def settle_and_activate(
         self,

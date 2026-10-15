@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 from pathlib import Path
 
@@ -168,9 +169,15 @@ def test_subsequent_reads_recheck_source_bytes_and_capture_cas(tmp_path: Path) -
     index, first = coverage._accepted_evidence_inputs_v2(instance, at=at)
     # The runbook's Capture (the Subject's key Claim cites one of its own).
     digest = next(d for d, envelope in first.items() if envelope.source.kind == "external")
-    first[digest].source.selector["test_mutation"] = True
+    # A read's envelope is sealed: it refuses an in-place change, and a caller's
+    # changed copy never reaches a later read.
+    with pytest.raises(TypeError, match="sealed artifact cannot change in place"):
+        first[digest].source.selector["test_mutation"] = True
+    changed = copy.deepcopy(first[digest])
+    changed.source.selector["test_mutation"] = True
     _, second = coverage._accepted_evidence_inputs_v2(instance, at=at)
     assert "test_mutation" not in second[digest].source.selector
+    assert second[digest] == first[digest] != changed
     path = instance.body_store()._path(digest)
     content = path.read_bytes()
     path.unlink()

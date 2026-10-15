@@ -28,6 +28,7 @@ from cruxible_client.contracts.canonical import (
     artifact_path_for_codec,
     artifact_path_matches,
     canonical_bytes,
+    canonical_equal,
     normalize_canonical,
     pretty_canonical_bytes,
     typed_digest,
@@ -78,7 +79,7 @@ from cruxible_client.contracts.claim_verdicts import (
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
 )
-from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
+from cruxible_client.contracts.content_memo import ParseMemo, ValueMemo, sealed_memo
 from cruxible_client.contracts.declared_blocks import (
     ProjectionWindow,
     projection_window_intersecting,
@@ -278,7 +279,7 @@ def _verified_contract_subject_binding(
     ):
         return False
     declared = envelope_source.selector.get("semantic_subject")
-    return canonical_bytes(declared) == canonical_bytes(subject.model_dump(mode="json"))
+    return canonical_equal(declared, subject.model_dump(mode="json"))
 
 
 class ClaimBackingV1(_StrictClaimModel):
@@ -339,6 +340,9 @@ CitationRole: TypeAlias = Literal["evidence", "copy"]
 CitationOrigin: TypeAlias = Literal["independent", "self_source"]
 
 
+_CITATION_IDS: ValueMemo[Sha256Value] = ValueMemo(capacity=16384)
+
+
 def claim_citation_id(
     claim_identity: ArtifactIdentity,
     *,
@@ -351,15 +355,20 @@ def claim_citation_id(
     if claim_identity.kind != "Claim":
         raise ValueError("Claim citation identity requires a Claim identity")
     CasDigest.from_tagged(capture_digest)
-    return typed_digest(
-        Sha256Value,
-        "playbill-claim-citation-v1",
-        {
-            "claim_identity": claim_identity.model_dump(mode="json"),
-            "capture_digest": capture_digest,
-            "origin": origin,
-            "role": role,
-        },
+    # A citation is built once and reproduced by every validation of the Claim
+    # that carries it; the id is a pure function of these strings.
+    return _CITATION_IDS.derive(
+        (claim_identity.kind, claim_identity.name, capture_digest, origin, role),
+        lambda: typed_digest(
+            Sha256Value,
+            "playbill-claim-citation-v1",
+            {
+                "claim_identity": claim_identity.model_dump(mode="json"),
+                "capture_digest": capture_digest,
+                "origin": origin,
+                "role": role,
+            },
+        ),
     )
 
 

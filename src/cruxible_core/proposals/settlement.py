@@ -45,9 +45,13 @@ from cruxible_client.contracts.canonical import (
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
+    canonical_list_bytes,
+    composed_canonical_digest,
+    model_canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.captures import ProducerReceiptResolverProtocol
+from cruxible_client.contracts.content_memo import ParseMemo, seal, sealed_memo
 from cruxible_client.contracts.documents import BodyVerifierProtocol
 from cruxible_client.contracts.errors import (
     SettlementEvidenceUnproven,
@@ -398,11 +402,34 @@ def _verify_multi_member_change_set(
         raise ValueError(f"{label} self digest does not reproduce")
 
 
+#: The receipt fields that hold one entry per member: composed from each entry's
+#: own canonical bytes, which a sealed entry keeps (``_receipt_digest``).
+_MEMBER_LISTS: Final = ("members", "law_evidence")
+
+
+def _receipt_digest(tag: str, values: Mapping[str, object]) -> ChangeSetDigest:
+    """The change-set digest of ``values`` (models, or tuples of models, or JSON values).
+
+    The per-member lists are composed from their entries' canonical bytes, so a
+    receipt built from a sealed candidate encodes none of its members again; the
+    preimage is byte for byte the one the whole record's JSON dump hashes to.
+    """
+
+    lists = {
+        name: canonical_list_bytes([model_canonical_bytes(item) for item in value])
+        for name, value in values.items()
+        if name in _MEMBER_LISTS and isinstance(value, tuple)
+    }
+    rest = _json_values({name: value for name, value in values.items() if name not in lists})
+    return ChangeSetDigest(composed_canonical_digest(tag, rest, lists))
+
+
+@sealed_memo
 def change_set_digest(record: ChangeSetRecordAnyVersion) -> ChangeSetDigest:
-    payload = record.model_dump(mode="json")
-    payload.pop("tag")
-    payload.pop("changeset_digest")
-    return typed_digest(ChangeSetDigest, record.tag, payload)
+    values = {name: getattr(record, name) for name in type(record).model_fields}
+    values.pop("tag")
+    values.pop("changeset_digest")
+    return _receipt_digest(record.tag, values)
 
 
 def build_change_set_record(
@@ -443,11 +470,16 @@ def build_change_set_record(
             "actor_binding": actor_binding,
             "mandate_digest": mandate_digest,
         }
-        digest = typed_digest(ChangeSetDigest, tag, _json_values(multi_member_values))
+        digest = _receipt_digest(tag, multi_member_values)
         record = {**multi_member_values, "changeset_digest": digest.tagged}
-        if isinstance(candidate, CandidateRecord):
-            return ChangeSetRecordV3.model_validate(record)
-        return ChangeSetRecordV2.model_validate(record)
+        receipt: ChangeSetRecordAnyVersion = (
+            ChangeSetRecordV3.model_validate(record)
+            if isinstance(candidate, CandidateRecord)
+            else ChangeSetRecordV2.model_validate(record)
+        )
+        # Built here and final: sealed, it is rendered and digested once.
+        seal(receipt)
+        return receipt
     values = {
         "sequence": sequence,
         "members": candidate.members,
@@ -463,7 +495,7 @@ def build_change_set_record(
         "actor_binding": actor_binding,
         "mandate_digest": mandate_digest,
     }
-    digest = typed_digest(ChangeSetDigest, "playbill-changeset-v1", _json_values(values))
+    digest = _receipt_digest("playbill-changeset-v1", values)
     return ChangeSetRecord.model_validate({**values, "changeset_digest": digest.tagged})
 
 
@@ -487,7 +519,7 @@ def change_set_path(record: ChangeSetRecordAnyVersion) -> str:
 
 
 def render_change_set(record: ChangeSetRecordAnyVersion) -> bytes:
-    return canonical_bytes(record.model_dump(mode="json")) + b"\n"
+    return model_canonical_bytes(record) + b"\n"
 
 
 _CHANGE_SET_RECORD_ADAPTER: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(
@@ -495,6 +527,15 @@ _CHANGE_SET_RECORD_ADAPTER: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter
 )
 _TAGGED_CHANGE_SET_RECORD_ADAPTER: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(
     Annotated[ChangeSetRecordAnyVersion, Field(discriminator="tag")]
+)
+
+
+#: Accepted change-set receipts, parsed once per exact (path, bytes) and shared
+#: sealed (``content_memo``): one settle reads its parent's receipt and its own
+#: (handoff, history) more than once, and each parse re-verifies every member's
+#: law evidence. Few and large: a handful are kept, each up to a few MB of JSON.
+_CHANGE_SET_PARSES: ParseMemo[ChangeSetRecordAnyVersion] = ParseMemo(
+    capacity=8, max_bytes=96 * 1024 * 1024, max_entry_bytes=48 * 1024 * 1024
 )
 
 
@@ -508,21 +549,35 @@ def parse_change_set_record(
     instance has ever settled parses here, and each is verified by the derivation
     it was written under: a ledger that crossed the succession boundary carries a
     v1 or v2 prefix and a v3 suffix, and replaying it end to end is ordinary.
+
+    A parse runs once per exact (path, bytes) and every caller gets the one
+    sealed record; a refusal is never remembered.
     """
 
+    return _CHANGE_SET_PARSES.parse(
+        content,
+        path,
+        None,
+        lambda: _parse_change_set_record(content, path=path, canonical_cache=canonical_cache),
+    )
+
+
+def _parse_change_set_record(
+    content: bytes, *, path: str, canonical_cache: BoundedCache[bool] | None
+) -> ChangeSetRecordAnyVersion:
     try:
         try:
             record = _TAGGED_CHANGE_SET_RECORD_ADAPTER.validate_json(content)
         except (ValueError, ValidationError):
             # Retain the ordinary union's historical malformed/missing-tag
             # behavior and refusal cause. Only valid tagged records avoid
-            # probing unrelated versions; parsed models are never retained.
+            # probing unrelated versions.
             record = _CHANGE_SET_RECORD_ADAPTER.validate_json(content)
     except (ValueError, ValidationError) as exc:
         raise SettlementIntegrityError(f"generation change-set record is invalid: {path}") from exc
-    # History readers still fetch source bytes and construct fresh models. Only
-    # the expensive canonical round trip is reusable for identical content;
-    # this marker neither authenticates a locator nor proves source availability.
+    # A record too large for the parse memo is parsed afresh, and the expensive
+    # canonical round trip stays reusable for identical content; this marker
+    # neither authenticates a locator nor proves source availability.
     key = hashlib.sha256(content).digest() if canonical_cache is not None else None
     if canonical_cache is None or canonical_cache.get(key) is None:
         if render_change_set(record) != content:
@@ -644,7 +699,8 @@ def semantic_root_for_record(
     *,
     approval_digests: tuple[str, ...],
     parent_semantic_root: str,
-    parent_record: ChangeSetRecordAnyVersion | None,
+    parent_record: ChangeSetRecordAnyVersion | None = None,
+    parent_derivation: SemanticRootDerivation | None = None,
 ) -> SemanticRoot:
     """Derive one accepted generation's semantic root under its own derivation.
 
@@ -653,16 +709,23 @@ def semantic_root_for_record(
     over a succession boundary is three chances to disagree about which side of
     it a generation is on. The manifest root enters from the receipt the caller
     has already reproduced from member bytes, so nothing here is believed that
-    was not first recomputed.
+    was not first recomputed. The parent enters as its record or as the one
+    fact of it the derivation reads (``parent_derivation``), never both.
     """
 
+    if parent_derivation is not None and parent_record is not None:
+        raise SettlementIntegrityError("a parent enters as its record or its derivation, not both")
     if isinstance(record, ChangeSetRecordV3):
         return compute_semantic_root_v2(
             manifest_root_value=record.candidate.candidate_manifest_root,
             changeset_digest_value=record.changeset_digest,
             approval_digests=approval_digests,
             parent_semantic_root=parent_semantic_root,
-            parent_derivation=record_semantic_root_derivation(parent_record),
+            parent_derivation=(
+                record_semantic_root_derivation(parent_record)
+                if parent_derivation is None
+                else parent_derivation
+            ),
         )
     return compute_semantic_root(
         manifest_root_value=record.candidate.candidate_manifest_root,
@@ -767,6 +830,7 @@ def prepare_generation(
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
     admitted: AdmittedEvaluation | None = None,
+    parent_derivation: SemanticRootDerivation | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state.
 
@@ -776,6 +840,12 @@ def prepare_generation(
     the same candidate and tree, an unchanged derived-state epoch, every
     observed body read and fact build answering the same) and the laws are the
     build's own; every check below runs on it as on a fresh evaluation.
+
+    ``parent_derivation`` is the base generation's own semantic-root derivation,
+    read off the receipt its acceptance verified (``record_semantic_root_derivation``)
+    by a caller that holds it. The new root needs only that one fact of the
+    parent, so the parent's whole receipt is read and parsed only when no caller
+    carries it: a settle's cost then follows its own change, not its parent's.
     """
 
     if actor_binding.actor_id != proposal_actor_id:
@@ -949,7 +1019,11 @@ def prepare_generation(
         record,
         approval_digests=approval_digests,
         parent_semantic_root=base.semantic_root,
-        parent_record=parent_change_set_record(base_tree, sequence=sequence),
+        parent_derivation=(
+            record_semantic_root_derivation(parent_change_set_record(base_tree, sequence=sequence))
+            if parent_derivation is None
+            else parent_derivation
+        ),
     )
     parent_generation = GenerationRoot.from_tagged(base.generation_root)
     descriptor = GenerationDescriptor(

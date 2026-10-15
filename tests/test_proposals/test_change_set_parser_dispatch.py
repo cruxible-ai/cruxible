@@ -1,4 +1,4 @@
-"""Version dispatch retains ordinary-union bytes, refusals, and fresh outputs."""
+"""Version dispatch retains ordinary-union bytes and refusals; a parse is one sealed record."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.content_memo import is_sealed
 from cruxible_client.contracts.documents import render_document
 from cruxible_client.contracts.errors import SettlementIntegrityError
 from cruxible_core.proposals import settlement
@@ -150,10 +151,20 @@ def test_refusals_match_original_union(record_bytes: bytes, mutation: str) -> No
     assert _refusal(parse_change_set_record, content) == _refusal(_ordinary_parse, content)
 
 
-def test_outputs_are_independent_mutable_models(record_bytes: bytes) -> None:
+def test_a_parse_is_one_sealed_record_shared_by_every_caller(record_bytes: bytes) -> None:
     first = parse_change_set_record(record_bytes, path="record")
-    second = parse_change_set_record(record_bytes, path="record")
-    assert first is not second and first.law_digests is not second.law_digests
-    first.law_digests.clear()
+    second = parse_change_set_record(bytes(bytearray(record_bytes)), path="record")
+    assert first is second and is_sealed(first)
+    # Sealed at every depth: nothing a caller does can change what the next one reads.
+    with pytest.raises(TypeError):
+        first.law_digests.clear()
+    with pytest.raises(ValidationError):
+        first.sequence = 99  # type: ignore[misc]
     assert render_change_set(second) == record_bytes
+    # A copy is the caller's own plain record again.
+    copied = first.model_copy(deep=True)
+    assert not is_sealed(copied) and type(copied.law_digests) is dict
+    copied.law_digests.clear()
     assert render_change_set(parse_change_set_record(record_bytes, path="record")) == record_bytes
+    # A different path is its own parse.
+    assert parse_change_set_record(record_bytes, path="other") is not first

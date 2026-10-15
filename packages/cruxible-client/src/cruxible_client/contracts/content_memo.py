@@ -20,12 +20,14 @@ different laws and indexes. These memos make each of those a lookup:
   carries extra or private state, or holds a value whose immutability it
   cannot prove. A sealed object therefore cannot change, so nothing derived
   from it can go stale.
-- ``sealed_memo`` remembers one pure derivation (a digest) per sealed object.
-  The lookup is the object's identity checked against a weak reference: one
-  dict probe, never a re-canonicalization. Every object that is not sealed --
-  built in code, ``model_copy``'d, deep-copied, unpickled -- is derived afresh
-  on every call. Copies are never sealed, and a copy's containers are plain
-  mutable ones again.
+- ``sealed_memo`` remembers one pure derivation (a digest, a canonical
+  encoding) per sealed object. The lookup is the object's identity checked
+  against a weak reference: one dict probe, never a re-canonicalization. Every
+  object that is not sealed -- built in code and never sealed, ``model_copy``'d,
+  deep-copied, unpickled -- is derived afresh on every call. Copies are never
+  sealed, and a copy's containers are plain mutable ones again. ``sealed_derive``
+  is the same memo for a derivation that also takes arguments other than the
+  object: they join its key, which holds immutable values only.
 - ``ValueMemo`` keys a pure function by a key made of immutable values only
   (strings, numbers, tuples of them), never by a model a caller holds.
 
@@ -221,7 +223,7 @@ class _Seal:
 
     def __init__(self, ref: weakref.ref[BaseModel]) -> None:
         self.ref = ref
-        self.derived: dict[str, object] = {}
+        self.derived: dict[object, object] = {}
 
 
 _SEALED: dict[int, _Seal] = {}
@@ -299,6 +301,27 @@ def sealed_memo(derive: Callable[[_A], _V]) -> Callable[[_A], _V]:
     return memoized
 
 
+def sealed_derive(value: object, key: tuple[object, ...], derive: Callable[[], _V]) -> _V:
+    """Remember ``derive()`` once per sealed ``value`` under ``key``; derive afresh otherwise.
+
+    For a pure derivation of ``value`` that also depends on other arguments:
+    ``key`` names the derivation (its first element, a string no other caller
+    uses) and those arguments, and holds immutable values only -- strings,
+    numbers, ``None`` and tuples of them, never a model or a container a caller
+    could change. ``derive`` must return an immutable result: every caller gets
+    the one remembered value.
+    """
+
+    entry = _sealed_entry(value)
+    if entry is None:
+        return derive()
+    found = entry.derived.get(key, _MISSING)
+    if found is _MISSING:
+        found = derive()
+        entry.derived[key] = found
+    return found  # type: ignore[return-value]
+
+
 class _Shared:
     """A sealed parse: the one immutable value every caller receives."""
 
@@ -308,15 +331,25 @@ class _Shared:
         self.value = value
 
 
+#: How many times its content's size a sealed parse is weighed at, for its parsed
+#: model tree (the pickle of one ran from two to four times the JSON it parsed).
+_SEALED_WEIGHT = 4
+
+
 class ParseMemo(Generic[_V]):
     """``(path, codec, exact bytes) -> parsed artifact``, bounded by entries and bytes."""
 
-    def __init__(self, *, capacity: int, max_bytes: int) -> None:
+    def __init__(
+        self, *, capacity: int, max_bytes: int, max_entry_bytes: int | None = None
+    ) -> None:
         self._entries: OrderedDict[tuple[str, object, bytes], tuple[_Shared | bytes, int]] = (
             OrderedDict()
         )
         self._capacity = capacity
         self._max_bytes = max_bytes
+        # One entry may take at most this much of the budget: a sixteenth unless
+        # a memo of few large records (a change-set receipt) says otherwise.
+        self._max_entry_bytes = max_bytes // 16 if max_entry_bytes is None else max_entry_bytes
         self._bytes = 0
         self._lock = threading.Lock()
 
@@ -338,15 +371,23 @@ class ParseMemo(Generic[_V]):
                 return stored.value  # type: ignore[return-value]
             return pickle.loads(stored)  # type: ignore[no-any-return]
         value = parse()
-        try:
-            pickled = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-        except (pickle.PicklingError, TypeError, AttributeError):
-            return value
-        # The pickled size weighs either form of the entry.
-        weight = len(content) + len(path) + len(pickled)
-        if weight * 16 > self._max_bytes:
-            return value
-        stored_value: _Shared | bytes = _Shared(value) if seal(value) else pickled
+        stored_value: _Shared | bytes
+        if seal(value):
+            # A sealed value is shared, never copied, so it is never pickled:
+            # it is weighed as its content's size several times over instead.
+            weight = len(content) * (1 + _SEALED_WEIGHT) + len(path)
+            if weight > self._max_entry_bytes:
+                return value
+            stored_value = _Shared(value)
+        else:
+            try:
+                pickled = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+            except (pickle.PicklingError, TypeError, AttributeError):
+                return value
+            weight = len(content) + len(path) + len(pickled)
+            if weight > self._max_entry_bytes:
+                return value
+            stored_value = pickled
         with self._lock:
             if key not in self._entries:
                 self._entries[key] = (stored_value, weight)
@@ -402,5 +443,6 @@ __all__ = [
     "ValueMemo",
     "is_sealed",
     "seal",
+    "sealed_derive",
     "sealed_memo",
 ]
