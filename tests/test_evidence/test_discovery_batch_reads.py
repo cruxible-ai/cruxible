@@ -148,8 +148,11 @@ def test_retained_records_answer_only_their_exact_location(tmp_path):
         location = history.generation(history.sequence)
     record = instance.retained_record_reader().read(location)
     expected = record.model_copy(deep=True)
-    # Each request gets a detached copy: mutating one cannot reach the next.
-    record.law_evidence[0].result.clear()
+    # The first read answers with the one sealed, shared record: mutating it in
+    # place is refused outright, so nothing can leak to a later read.
+    with pytest.raises(TypeError, match="sealed artifact"):
+        record.law_evidence[0].result.clear()
+    # Once resident, a later request gets its own independent, mutable copy.
     again = instance.retained_record_reader().read(location)
     assert again == expected and again is not record
     again.law_evidence[0].result.clear()
