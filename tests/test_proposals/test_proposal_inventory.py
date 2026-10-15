@@ -913,7 +913,9 @@ def test_a_reviewer_rejects_an_open_proposal_with_a_recorded_reason(tmp_path: Pa
     )
     proposal_id = opened.proposal.admission.proposal_id
 
-    with pytest.raises(ProposalAdmissionError, match="withdraws it rather than rejecting") as excinfo:
+    with pytest.raises(
+        ProposalAdmissionError, match="withdraws it rather than rejecting"
+    ) as excinfo:
         service_reject_playbill_proposal(
             instance,
             proposal_id=proposal_id,
