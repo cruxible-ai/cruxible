@@ -1488,7 +1488,9 @@ def _fitting_names(projection: Any, builds: tuple[str, ...]) -> tuple[str, ...]:
 
     names = []
     for name in sorted({build.partition("/")[0] for build in builds}):
-        rows = [row for row in indexed_provider_builds(projection.typed.connection, name) if row.live]
+        rows = [
+            row for row in indexed_provider_builds(projection.typed.connection, name) if row.live
+        ]
         if len(rows) > 1 and projection.typed.history is not None:
             with projection.typed.history() as history:
                 try:

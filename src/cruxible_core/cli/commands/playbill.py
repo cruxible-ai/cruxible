@@ -113,7 +113,11 @@ from cruxible_client.contracts.principals import is_canonical_principal_id
 from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
-from cruxible_client.contracts.provider_installation import ProviderInstallRequest
+from cruxible_client.contracts.provider_installation import (
+    ProviderInstallRequest,
+    ProviderMoveRequest,
+    ProviderRetireRequest,
+)
 from cruxible_client.contracts.read_values import shown_plain
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
@@ -1604,7 +1608,9 @@ def list_provider_packages(output_json: bool) -> None:
     click.echo("Installed:" if result.installed else "Installed: none")
     for installed in result.installed:
         runs = "" if installed.package is None else f" ({installed.package} {installed.version})"
-        click.echo(f"  {installed.provider}{runs}: {', '.join(installed.interfaces) or '-'}")
+        marker = " [newest]" if installed.newest else ""
+        interfaces = ", ".join(installed.interfaces) or "-"
+        click.echo(f"  {installed.build}{runs}{marker}: {interfaces}")
     if result.packages:
         click.echo("Provider repository:")
     for package in result.packages:
@@ -1703,7 +1709,7 @@ def install_provider(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        click.echo(f"{result.provider_id}: {result.status}")
+        click.echo(f"{result.build or result.provider_id}: {result.status}")
         if result.detail:
             click.echo(result.detail)
         if result.preview_scope == "validation_only":
@@ -1717,6 +1723,78 @@ def install_provider(
         for operation in result.operations:
             if operation.missing_requirements:
                 click.echo(f"{operation.interface_id}: {', '.join(operation.missing_requirements)}")
+
+
+@provider_group.command("retire")
+@click.argument("build")
+@change_control_options
+@json_option
+@handle_errors
+def retire_provider(build: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+    """Retire NAME/BUILD when no live definition pins it; keep its runtime environment."""
+    request = ProviderRetireRequest(build=build, dry_run=dry_run, at=at)
+    result = _server_call(
+        lambda client, instance_id: client.retire_provider(instance_id, request),
+        command_name="cruxible provider retire",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        click.echo(f"{result.build}: {result.status}")
+        for identity in result.pinned_by:
+            click.echo(f"  pinned by {identity}")
+        if result.detail:
+            click.echo(result.detail)
+        if result.proposal_id:
+            click.echo(f"Proposal: {result.proposal_id}")
+        echo_preview_next(result.status, result.coordinate)
+
+
+@provider_group.command("move")
+@click.argument("provider")
+@click.option(
+    "--to", required=True, help="newest (most recently registered) or an exact build key."
+)
+@click.option("--only", multiple=True, help="Move only this Procedure or Blueprint (repeatable).")
+@change_control_options
+@json_option
+@handle_errors
+def move_provider(
+    provider: str,
+    to: str,
+    only: tuple[str, ...],
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
+    """Move live definitions to NAME's build, with a preview of re-pins and stopped automation."""
+    request = ProviderMoveRequest(
+        provider=provider, to=to, only=tuple(sorted(set(only))), dry_run=dry_run, at=at
+    )
+    result = _server_call(
+        lambda client, instance_id: client.move_provider(instance_id, request),
+        command_name="cruxible provider move",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        click.echo(f"{result.provider} -> {result.to.resolved}: {result.status}")
+        _echo_provider_repins(result.moved, result.stops)
+        if result.detail:
+            click.echo(result.detail)
+        if result.proposal_id:
+            click.echo(f"Proposal: {result.proposal_id}")
+        echo_preview_next(result.status, result.coordinate)
+
+
+def _echo_provider_repins(repins: Any, stops: Any) -> None:
+    for item in repins:
+        click.echo(
+            f"  {item.action}: {item.identity}: {item.from_build} -> {item.to_build}"
+            + (f" ({item.reason})" if item.reason else "")
+        )
+    for item in stops:
+        click.echo(f"  stop {item.kind}: {item.identity} (over {item.stopped_by})")
 
 
 @playbill_group.group("kit")
@@ -1750,6 +1828,7 @@ def _echo_kit_change(result: KitChangeResult) -> None:
         if step.detail is not None:
             line += f" ({printable(step.detail)})"
         click.echo(line)
+    _echo_provider_repins(result.repins, result.stops)
     if result.provenance is not None:
         provenance = result.provenance
         click.echo(
@@ -1908,6 +1987,12 @@ def build_kit(
     help="Retire a definition the release dropped together with its live dependents.",
 )
 @click.option(
+    "--keep-build",
+    multiple=True,
+    metavar="Procedure:NAME",
+    help="Keep this Procedure on its current provider build (repeatable).",
+)
+@click.option(
     "--allow-downgrade", is_flag=True, help="Install a release older than the installed one."
 )
 @change_control_options
@@ -1919,6 +2004,7 @@ def add_kit(
     keep: tuple[str, ...],
     keep_local_edits: bool,
     retire_dependents: tuple[str, ...],
+    keep_build: tuple[str, ...],
     allow_downgrade: bool,
     dry_run: bool | None,
     at: str | None,
@@ -1959,6 +2045,7 @@ def add_kit(
             keep=tuple(sorted(set(keep))),
             keep_local_edits=keep_local_edits,
             retire_dependents=tuple(sorted(set(retire_dependents))),
+            keep_build=tuple(sorted(set(keep_build))),
             allow_downgrade=allow_downgrade,
             dry_run=dry_run,
             at=at,

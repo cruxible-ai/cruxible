@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from .canonical import Sha256Value
 from .change_control import DryRun, PreviewAt
 from .projection import AcceptedCoordinate
-from .providers import ProviderLocalDistributionPin
+from .providers import ProviderLocalDistributionPin, parse_provider_build_name
 
 
 class _Strict(BaseModel):
@@ -254,6 +254,11 @@ class ProviderRetireRequest(_Strict):
     dry_run: DryRun = None
     at: PreviewAt = None
 
+    @field_validator("build")
+    @classmethod
+    def _build(cls, value: str) -> str:
+        return parse_provider_build_name(value.removeprefix("Provider:")).identity_name
+
 
 class ProviderRetireResult(_Strict):
     tag: Literal["cruxible-provider-retire-result-v1"] = "cruxible-provider-retire-result-v1"
@@ -281,6 +286,23 @@ class ProviderMoveRequest(_Strict):
     only: tuple[str, ...] = ()
     dry_run: DryRun = None
     at: PreviewAt = None
+
+    @field_validator("provider")
+    @classmethod
+    def _provider(cls, value: str) -> str:
+        parsed = parse_provider_build_name(value.removeprefix("Provider:"))
+        if parsed.build is not None:
+            raise ValueError("provider names a provider, and to names its build")
+        return parsed.name
+
+    @model_validator(mode="after")
+    def _target(self) -> "ProviderMoveRequest":
+        if self.to != "newest":
+            target = self.to if "/" in self.to else f"{self.provider}/{self.to}"
+            parsed = parse_provider_build_name(target)
+            if parsed.name != self.provider:
+                raise ValueError("the target build belongs to another provider")
+        return self
 
     @field_validator("only")
     @classmethod

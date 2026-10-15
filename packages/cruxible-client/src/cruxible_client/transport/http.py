@@ -63,6 +63,10 @@ from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
     ProviderInstallResult,
+    ProviderMoveRequest,
+    ProviderMoveResult,
+    ProviderRetireRequest,
+    ProviderRetireResult,
 )
 from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProof
 from cruxible_client.contracts.types import CompilerCoordinate
@@ -647,6 +651,20 @@ class CruxibleClient:
             timeout=600,
         )
         return self._parse_model(response, ProviderInstallResult)
+
+    def retire_provider(
+        self, instance_id: str, request: ProviderRetireRequest
+    ) -> ProviderRetireResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/providers/retire", json=request.model_dump(mode="json")
+        )
+        return self._parse_model(response, ProviderRetireResult)
+
+    def move_provider(self, instance_id: str, request: ProviderMoveRequest) -> ProviderMoveResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/providers/move", json=request.model_dump(mode="json")
+        )
+        return self._parse_model(response, ProviderMoveResult)
 
     def build_kit(self, instance_id: str, request: KitBuildRequest) -> KitBuildResult:
         response = self._client.post(

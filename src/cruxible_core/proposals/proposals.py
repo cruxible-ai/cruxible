@@ -2650,6 +2650,24 @@ def _sibling_control_domains(
 
 def _provider_member(context: _MemberContext) -> _MemberVerdict:
     provider = parse_provider(context.content, path=context.path)
+    from cruxible_core.compiler.compiler import PROVIDER_BUILDS_COMPILER
+
+    if (
+        context.current.compiler == PROVIDER_BUILDS_COMPILER
+        and context.parent_content is None
+        and "/" not in provider.identity.name
+        and provider.identity.name != "cruxible-builtin"
+    ):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.provider.single_path_closed",
+                    "New package Providers use a build-qualified identity; "
+                    "install a provider build.",
+                    context.path,
+                ),
+            )
+        )
     predecessor: AcceptedProvider | None = None
     if context.parent_content is not None:
         previous = parse_provider(context.parent_content, path=context.path)

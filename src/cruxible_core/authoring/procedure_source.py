@@ -56,7 +56,6 @@ from cruxible_client.contracts.provider_interfaces import (
 )
 from cruxible_client.contracts.providers import ProviderV2, provider_digest
 from cruxible_client.contracts.query.definitions import QueryDefinition, query_definition_digest
-
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.providers.builds import BuildResolver, pinned_interface
 

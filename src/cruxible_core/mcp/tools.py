@@ -57,6 +57,10 @@ from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
     ProviderInstallResult,
+    ProviderMoveRequest,
+    ProviderMoveResult,
+    ProviderRetireRequest,
+    ProviderRetireResult,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
@@ -248,6 +252,24 @@ def register_tools(
         return handlers.handle_playbill_provider_install(require_instance_id(instance_id), request)
 
     @_tool
+    def cruxible_provider_retire(
+        instance_id: InstanceId = None,
+        *,
+        request: ProviderRetireRequest,
+    ) -> ProviderRetireResult:
+        """Retire an unpinned provider build, retaining its environment."""
+        return handlers.handle_playbill_provider_retire(require_instance_id(instance_id), request)
+
+    @_tool
+    def cruxible_provider_move(
+        instance_id: InstanceId = None,
+        *,
+        request: ProviderMoveRequest,
+    ) -> ProviderMoveResult:
+        """Move Procedures to a provider build; preview every re-pin and automation it stops."""
+        return handlers.handle_playbill_provider_move(require_instance_id(instance_id), request)
+
+    @_tool
     def cruxible_kit_build(
         instance_id: InstanceId = None,
         *,
@@ -297,6 +319,12 @@ def register_tools(
             list[str] | None,
             Field(description="Dropped definitions to retire with their live dependents."),
         ] = None,
+        keep_build: Annotated[
+            list[str] | None,
+            Field(
+                description="Procedures (Procedure:NAME) to keep on their current provider build."
+            ),
+        ] = None,
         allow_downgrade: bool = False,
         dry_run: DryRun = None,
         at: PreviewAt = None,
@@ -309,6 +337,7 @@ def register_tools(
             keep=keep or (),
             keep_local_edits=keep_local_edits,
             retire_dependents=retire_dependents or (),
+            keep_build=keep_build or (),
             allow_downgrade=allow_downgrade,
             dry_run=dry_run,
             at=at,

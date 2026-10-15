@@ -503,19 +503,15 @@ def test_a_package_whose_bucket_metadata_never_matched_installs_binds_and_runs(
     }
 
 
-def test_reinstalling_the_registrant_of_a_retained_web_fetch_registration_binds_it(
+def test_reinstalling_the_registrant_binds_the_existing_contract_registration(
     installer_http, tmp_path, provider_checkout, monkeypatch
 ):
-    """Review F-002: state from before core owned web.fetch can hold a package's own
-    v3 registration. On a daemon with no deployment or prepared install left,
-    reinstalling that exact package binds the retained registration rather than
-    comparing against core's registration it would propose on a fresh instance."""
-
     from cruxible_client.contracts.provider_interfaces import (
-        ProviderInterfaceRegistration,
+        ProviderInterfaceContract,
         parse_provider_interface,
+        provider_interface_path,
     )
-    from cruxible_core.providers import package_registration
+    from cruxible_core.providers.web_fetch import web_fetch_interface_registration
     from tests.support.provider_installation import build_web_fetch_alternative
 
     http, instance_id, _reviewer = installer_http
@@ -523,38 +519,25 @@ def test_reinstalling_the_registrant_of_a_retained_web_fetch_registration_binds_
     client._client = http
     runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
     wheel, lock = build_web_fetch_alternative(tmp_path, provider_checkout.repository)
-    path = "provider-interfaces/web.fetch.json"
-    manager = get_playbill_manager()
-    instance = manager.get(instance_id)
-
-    def held() -> bytes:
-        return instance.immutable_tree_at(instance.accepted_coordinate().git_oid)[path]
-
-    with monkeypatch.context() as earlier:
-        # The installer before core owned the contract registered the package's own.
-        earlier.setattr(
-            package_registration, "core_owned_interface_registration", lambda digest: None
-        )
-        first = install_provider_wheel(
-            client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
-        )
+    instance = get_playbill_manager().get(instance_id)
+    first = install_provider_wheel(
+        client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
+    )
     assert first.status == "ready", first
-    retained = parse_provider_interface(held(), path=path)
-    assert isinstance(retained, ProviderInterfaceRegistration)
-
-    # A fresh daemon over the same accepted state: no deployment, no prepared install.
+    path = provider_interface_path(web_fetch_interface_registration().identity.name)
+    retained = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)[path]
+    assert isinstance(parse_provider_interface(retained, path=path), ProviderInterfaceContract)
     (instance.root / "exhaust" / "provider-installations").rename(
         instance.root / "exhaust" / "earlier-installations"
     )
-    operator = manager.provider_runtime_operator()
+    operator = get_playbill_manager().provider_runtime_operator()
     monkeypatch.setattr(operator, "config", operator.config.model_copy(update={"deployments": ()}))
-
     again = install_provider_wheel(
         client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
     )
     assert again.status == "ready" and again.registered, again
-    assert parse_provider_interface(held(), path=path) == retained
-    assert len(manager.provider_runtime_operator().config.deployments) == 1
+    assert instance.immutable_tree_at(instance.accepted_coordinate().git_oid)[path] == retained
+    assert len(operator.config.deployments) == 1
 
 
 def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
@@ -590,14 +573,17 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     )
     # Core owns web.fetch: the package installs onto core's registration of the
     # definition it ships.
-    from cruxible_client.contracts.provider_interfaces import render_provider_interface
+    from cruxible_client.contracts.provider_interfaces import (
+        provider_interface_path,
+        render_provider_interface,
+    )
     from cruxible_core.providers.web_fetch import web_fetch_interface_registration
 
     instance = get_playbill_manager().get(instance_id)
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-    assert tree["provider-interfaces/web.fetch.json"] == render_provider_interface(
-        web_fetch_interface_registration()
-    )
+    assert tree[
+        provider_interface_path(web_fetch_interface_registration().identity.name)
+    ] == render_provider_interface(web_fetch_interface_registration())
     assert len(get_playbill_manager().provider_runtime_operator().config.deployments) == 1
     pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
     base = capture_contract()

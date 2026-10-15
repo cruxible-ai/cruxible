@@ -147,7 +147,7 @@ def registration_sequences(history: Any, rows: Sequence[BuildRow]) -> dict[str, 
         sequences = [
             sequence
             for sequence, digest in versions.get(row.path, ())
-            if digest == row.artifact_digest
+            if "/" in row.identity or digest == row.artifact_digest
         ]
         if sequences:
             found[row.identity] = min(sequences)
@@ -235,7 +235,9 @@ def resolve_provider_build(
     exact = None
     newest = None
     if parsed.build is not None:
-        exact = next((row for row in rows if row.identity == f"Provider:{requested}"), None)
+        exact = next(
+            (row for row in rows if row.identity == f"Provider:{parsed.identity_name}"), None
+        )
         if exact is None:
             raise RequestRefusedError(
                 "cruxible.provider.unknown",

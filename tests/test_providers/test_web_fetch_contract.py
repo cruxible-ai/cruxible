@@ -17,6 +17,7 @@ import pytest
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.provider_interfaces import (
     evaluate_provider_interface_law,
+    parse_provider_interface,
     provider_external_interface_definition_digest,
     provider_interface_digest,
     provider_interface_path,
@@ -61,32 +62,27 @@ def test_core_owns_one_registration_per_web_fetch_definition() -> None:
     assert v3.interface_digest == provider_external_interface_definition_digest(
         canonical_bytes(WEB_FETCH_INTERFACE_DEFINITION).hex(), domain="cruxible.interface.stub.v1"
     )
-    assert v2.model_dump(exclude={"interface_bytes_hex", "interface_digest"}) == v3.model_dump(
-        exclude={"interface_bytes_hex", "interface_digest"}
-    )
-    # The proof menu is fixed: changing it is a successor every pin must follow.
-    assert [(proof.fixture_id, proof.selector) for proof in v3.conformance_proofs] == sorted(
-        (
-            ("web-fetch-api-json", "source_kind=api_json;access=*;page_weight=*"),
-            ("web-fetch-rendered", "source_kind=js_rendered;access=public;page_weight=*"),
-            ("web-fetch-static-light", "source_kind=static_html;access=*;page_weight=light"),
-            ("web-fetch-static-medium", "source_kind=static_html;access=*;page_weight=medium"),
-        ),
-        key=lambda row: row[1].encode(),
-    )
+    assert v2.model_dump(
+        exclude={"identity", "interface_bytes_hex", "interface_digest"}
+    ) == v3.model_dump(exclude={"identity", "interface_bytes_hex", "interface_digest"})
+    assert not hasattr(v3, "classifier_code")
+    assert not hasattr(v3, "conformance_proofs")
     assert core_owned_interface_registration(WEB_FETCH_INTERFACE_DIGEST) == v3
     assert core_owned_interface_registration(WEB_FETCH_INTERFACE_V2_DIGEST) == v2
     assert core_owned_interface_registration("sha256:" + "0" * 64) is None
     for name, registration in (("v2", v2), ("v3", v3)):
-        path = provider_interface_path("web.fetch")
+        path = provider_interface_path(registration.identity.name)
         law = evaluate_provider_interface_law(registration, path=path, predecessor=None)
         assert law.verdict == "accepted", law.diagnostics
-        assert (
-            provider_interface_digest(registration).tagged
-            == (REGISTRATION_ARTIFACT_DIGESTS[registration.interface_digest])
-        )
         content = files("cruxible_core.providers").joinpath(f"web-fetch-registration-{name}.json")
-        assert content.read_bytes() == render_provider_interface(registration)
+        legacy = parse_provider_interface(
+            content.read_bytes(), path=provider_interface_path("web.fetch")
+        )
+        assert (
+            provider_interface_digest(legacy).tagged
+            == REGISTRATION_ARTIFACT_DIGESTS[registration.interface_digest]
+        )
+        assert render_provider_interface(legacy) == content.read_bytes()
 
 
 def test_the_v3_definition_is_the_package_file_byte_for_byte() -> None:
