@@ -126,6 +126,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
     ClaimBacking,
     ClaimCitation,
+    ClaimFormatError,
     ClaimReferentContext,
     ClaimRetireDependent,
     ClaimStatement,
@@ -1926,6 +1927,15 @@ def _lower_claim(
     contract_member_path = capture_contract_path(contract.identity.name)
     contract_bytes = render_capture_contract(contract)
     claim_bytes = render_claim(claim)
+    # The Claim is final: take the one sealed parse of its bytes that evaluation
+    # and projection share, so its statement and artifact digests are taken once
+    # in this process. A Claim its own law would refuse stays as built here; the
+    # law reports it.
+    final: ClaimArtifactAny = claim
+    try:
+        final = parse_claim(claim_bytes, path=path)
+    except ClaimFormatError:
+        pass
     if install_contract:
         candidate_tree[contract_member_path] = contract_bytes
     candidate_tree[path] = claim_bytes
@@ -1955,7 +1965,7 @@ def _lower_claim(
     # many-valued restatement keeps) changes nothing about the Claim restated.
     same_statement = (
         predecessor is not None
-        and claim.statement == predecessor.statement
+        and final.statement == predecessor.statement
         and all(item.disposition == "not_tested" for item in payload.existing_claim_dispositions)
         and not dependency_paths
     )
@@ -1980,7 +1990,7 @@ def _lower_claim(
     resolved_artifact_digest = (
         claim_artifact_digest(predecessor).tagged
         if idempotent and predecessor is not None
-        else claim_artifact_digest(claim).tagged
+        else claim_artifact_digest(final).tagged
     )
     return LoweredAuthoring(
         proposed_tree=candidate_tree,
@@ -2014,7 +2024,7 @@ def _lower_claim(
                 for item in payload.existing_claim_dispositions
             ],
             "identity": identity.model_dump(mode="json"),
-            "predecessor_digest": claim.lifecycle.predecessor_digest,
+            "predecessor_digest": final.lifecycle.predecessor_digest,
             "statement": statement.model_dump(mode="json"),
         },
         changed_members=changed,
