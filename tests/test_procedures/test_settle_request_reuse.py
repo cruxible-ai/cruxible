@@ -837,7 +837,6 @@ def test_an_unchanged_facts_replay_touches_no_body_file_however_many_claims_it_r
 
     from functools import partial
 
-    from cruxible_client.contracts.claims import parse_claim
     from cruxible_core.proposals.prepared_evaluation import facts_replay, observed_facts_build
     from cruxible_core.storage.cas import ContentAddressedBodyStore
 
@@ -848,9 +847,10 @@ def test_an_unchanged_facts_replay_touches_no_body_file_however_many_claims_it_r
         if batch + 1 not in (2, 6):
             continue
         coordinate = instance.accepted_coordinate()
-        tree = instance.immutable_tree_at(coordinate.git_oid)
-        path = next(item for item in tree if item.startswith("claims/"))
-        predicate = parse_claim(tree[path], path=path).statement.predicate
+        # The settled ClaimType's predicate, named: the tree also holds the
+        # Subject's key Claim (another predicate), and Claim ids are random, so
+        # "the first Claim path" names either one.
+        predicate = SD.PREDICATE
         source = partial(instance._accepted_query_facts, instance)
         with instance.projection_scope():
             value, fact = observed_facts_build(
