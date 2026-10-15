@@ -9,21 +9,14 @@ the PC-F query-engine slice; nothing here reads accepted state.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, get_args, get_origin
+from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    SerializationInfo,
-    SerializerFunctionWrapHandler,
-    field_validator,
-    model_serializer,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
 
@@ -46,35 +39,67 @@ QueryTraversalDirection = Literal["forward", "reverse"]
 QuerySubjectField = Literal["subject_id", "subject_kind"]
 
 
-def emit_literal_discriminators(instance: BaseModel, data: Any, info: SerializationInfo) -> Any:
-    """Keep every single-valued ``Literal`` field in a dump, even under exclude_defaults/unset.
+def reinsert_literal_discriminators(instance: object, data: object) -> object:
+    """Restore every single-valued ``Literal`` field a dump dropped, recursively.
 
     A ``tag``/``kind``/``artifact_format``-style field pinned to one literal
     value is a format or discriminator marker, not an ordinary default that is
     safe to omit: a discriminated union (or a version-checked loader) cannot
     re-parse a dump that silently dropped it, which is exactly what
-    ``model_dump(exclude_defaults=True)`` or ``exclude_unset=True`` does today.
-    Detected structurally (a ``Literal`` annotation with exactly one allowed
-    value), so every model built on this convention is covered without having
-    to name each field.
+    ``model_dump(exclude_defaults=True)`` or ``exclude_unset=True`` does by
+    default. Detected structurally (a ``Literal`` annotation with exactly one
+    allowed value), so every model built on this convention is covered
+    without having to name each field.
+
+    Walks ``data`` beside the ``instance`` that produced it, in plain Python
+    after the real dump -- never as a registered pydantic serializer. A
+    serializer is part of the model's core schema, and FastAPI/pydantic mint
+    a separate, far less specific "-Output" JSON Schema variant for any model
+    whose serialization can no longer be determined statically; that would
+    move the served OpenAPI surface's pin for the worse (an object that
+    documents no properties) merely from adding this quality-of-life fix.
     """
 
-    if not isinstance(data, dict) or not (info.exclude_defaults or info.exclude_unset):
+    if isinstance(instance, BaseModel):
+        if not isinstance(data, dict):
+            return data
+        for name, field in type(instance).model_fields.items():
+            value = getattr(instance, name)
+            if name in data:
+                data[name] = reinsert_literal_discriminators(value, data[name])
+            elif get_origin(field.annotation) is Literal and len(get_args(field.annotation)) == 1:
+                data[name] = value
         return data
-    for name, field in type(instance).model_fields.items():
-        if name in data:
-            continue
-        if get_origin(field.annotation) is Literal and len(get_args(field.annotation)) == 1:
-            data[name] = getattr(instance, name)
+    if isinstance(instance, Mapping) and isinstance(data, Mapping):
+        return {
+            key: reinsert_literal_discriminators(value, data.get(key))
+            for key, value in instance.items()
+        }
+    if isinstance(instance, list | tuple) and isinstance(data, list):
+        return [reinsert_literal_discriminators(item, sub) for item, sub in zip(instance, data)]
+    return data
+
+
+def dump_with_literal_discriminators(
+    instance: BaseModel, dump: Callable[..., dict[str, Any]], **kwargs: Any
+) -> dict[str, Any]:
+    data = dump(**kwargs)
+    if kwargs.get("exclude_defaults") or kwargs.get("exclude_unset"):
+        data = cast(dict[str, Any], reinsert_literal_discriminators(instance, data))
     return data
 
 
 class _StrictQueryModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
-    @model_serializer(mode="wrap")
-    def _serialize(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> Any:
-        return emit_literal_discriminators(self, handler(self), info)
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        return dump_with_literal_discriminators(self, super().model_dump, **kwargs)
+
+    def model_dump_json(self, **kwargs: Any) -> str:
+        if not (kwargs.get("exclude_defaults") or kwargs.get("exclude_unset")):
+            return super().model_dump_json(**kwargs)
+        indent = kwargs.pop("indent", None)
+        return json.dumps(self.model_dump(mode="json", **kwargs), indent=indent)
 
 
 def _nfc(value: str, *, label: str) -> str:
