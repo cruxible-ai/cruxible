@@ -21,6 +21,7 @@ from cruxible_client.contracts.claim_types import (
     EvidenceRequirement,
     RevisionEvidence,
 )
+from cruxible_client.contracts.claims import ClaimRetirementReason
 from cruxible_client.contracts.operational_reads import (
     GetCaptureCard,
     GetLineCard,
@@ -66,7 +67,8 @@ ReadSurface = Literal["mcp", "cli", "sdk"]
 GET_BODY_DEFAULT_MAX_BYTES = 64 * 1024
 #: The widest byte range one ``get(detail="body")`` returns.
 GET_BODY_RANGE_MAX_BYTES = 256 * 1024
-#: Revisions per ``get(detail="history")`` page, by default and at most.
+#: Revisions (a Subject's field events) per ``get(detail="history")`` page,
+#: by default and at most.
 GET_HISTORY_DEFAULT_LIMIT = 20
 GET_HISTORY_MAX_LIMIT = 200
 
@@ -146,6 +148,8 @@ class GetRequest(_StrictGetModel):
     # opaque ``next_cursor`` of the page before.
     limit: int | None = Field(default=None, ge=1, le=GET_HISTORY_MAX_LIMIT)
     cursor: str | None = Field(default=None, min_length=1)
+    # ``detail="history"`` on a Subject: only this field's events.
+    field: str | None = Field(default=None, min_length=1, max_length=512)
     # Also answer the full four-digest accepted coordinate, which only
     # ``detail="proof"`` carries otherwise (the SDK pins reads with it).
     full_coordinate: bool = False
@@ -174,6 +178,8 @@ class GetRequest(_StrictGetModel):
             raise ValueError('range applies only to detail="body"')
         if (self.limit is not None or self.cursor is not None) and self.detail != "history":
             raise ValueError('limit and cursor page detail="history" only')
+        if self.field is not None and self.detail != "history":
+            raise ValueError('field narrows detail="history" on a Subject only')
         return self
 
 
@@ -583,7 +589,19 @@ GetRevisionReason = Annotated[GetChangeSetReason | GetProposedReason, Field(disc
 """Why one accepted revision was proposed: its Procedure item's reason, else its change set's."""
 
 
+RevisionChange = Literal["stated", "changed", "reobserved", "retired"]
+"""What one Claim revision did: the first of its lineage, a new value, the same
+value on new backing, or its retirement."""
+
+
 class GetRevision(_StrictGetModel):
+    """One accepted revision of the thing ``get`` names, and why it was proposed.
+
+    A Claim's revision says what it did (``change``) and, when retired, why it
+    ended (``retirement``); ``reason`` is the shared resolver's: the Procedure
+    item's own reason for it, else its change set's rationale, else absent.
+    """
+
     revision: int
     sequence: int
     # The accepted generation's git oid (12-hex prefix): pass it, or the
@@ -596,6 +614,9 @@ class GetRevision(_StrictGetModel):
     value: ShownValue = Field(default=None, exclude_if=_omit_none)
     content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     digest: str = Field(description="Artifact digest prefix of this revision.")
+    change: RevisionChange | None = Field(default=None, exclude_if=_omit_none)
+    reason: GetRevisionReason | None = Field(default=None, exclude_if=_omit_none)
+    retirement: ClaimRetirementReason | None = Field(default=None, exclude_if=_omit_none)
     # Read a cut value in full at this revision's accepted generation.
     next: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
@@ -608,7 +629,81 @@ class GetHistory(_StrictGetModel):
     revision's whole value at its own generation.
     """
 
+    kind: Literal["revisions"] = "revisions"
     revisions: tuple[GetRevision, ...]
+
+
+class _GetFieldEvent(_StrictGetModel):
+    """One change to one field of a Subject: one revision of one of its Claims."""
+
+    #: The field's short name, as ``get`` and ``orient`` show it.
+    field: str
+    predicate: str
+    qualifier: str | None = Field(default=None, exclude_if=_omit_none)
+    claim: str
+    sequence: int
+    # The accepted generation's git oid (12-hex prefix): pass it, or the
+    # sequence, back as ``at`` to read the Subject as this event left it.
+    git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
+    accepted: str
+    actor: str | None = Field(default=None, exclude_if=_omit_none)
+    approved_by: tuple[str, ...] = ()
+    reason: GetRevisionReason | None = Field(default=None, exclude_if=_omit_none)
+    value: ShownValue = Field(default=None, exclude_if=_omit_none)
+    content_digest: str | None = Field(default=None, exclude_if=_omit_none)
+    # Read a cut value in full at this event's accepted generation.
+    next: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+
+class GetFieldStated(_GetFieldEvent):
+    """A new Claim lineage: the field's first value, one more of a many-valued field,
+    or (``contended``) a competing value beside a live one of a single-value field."""
+
+    change: Literal["stated"] = "stated"
+    contended: bool = Field(default=False, exclude_if=lambda value: value is False)
+
+
+class GetFieldChanged(_GetFieldEvent):
+    """A revision with a new value; ``before`` is the value it replaced."""
+
+    change: Literal["changed"] = "changed"
+    before: ShownValue = None
+
+
+class GetFieldReobserved(_GetFieldEvent):
+    """A revision with the same value on new backing (evidence refreshed)."""
+
+    change: Literal["reobserved"] = "reobserved"
+
+
+class GetFieldRetired(_GetFieldEvent):
+    """The Claim's retirement: the field no longer holds ``value``."""
+
+    change: Literal["retired"] = "retired"
+    retirement: ClaimRetirementReason | None = Field(default=None, exclude_if=_omit_none)
+
+
+GetFieldEvent = Annotated[
+    GetFieldStated | GetFieldChanged | GetFieldReobserved | GetFieldRetired,
+    Field(discriminator="change"),
+]
+
+
+class GetSubjectHistory(_StrictGetModel):
+    """A Subject's history: its shell's revisions, and one page of its field events.
+
+    ``revisions`` are the Subject shell's own (created, pins, retired), all of
+    them. ``events`` are its fields' changes, newest first, one page: each
+    revision of each Claim about the Subject, with what it did and why. Group
+    them by ``field`` for each field's value timeline.
+    """
+
+    kind: Literal["subject"] = "subject"
+    revisions: tuple[GetRevision, ...]
+    events: tuple[GetFieldEvent, ...]
+
+
+GetHistoryAny = Annotated[GetHistory | GetSubjectHistory, Field(discriminator="kind")]
 
 
 class GetBody(_StrictGetModel):
@@ -631,7 +726,7 @@ class GetResult(_StrictGetModel):
     detail: GetDetail
     card: GetCard | None = Field(default=None, exclude_if=_omit_none)
     evidence: GetEvidence | None = Field(default=None, exclude_if=_omit_none)
-    history: GetHistory | None = Field(default=None, exclude_if=_omit_none)
+    history: GetHistoryAny | None = Field(default=None, exclude_if=_omit_none)
     body: GetBody | None = Field(default=None, exclude_if=_omit_none)
     # Today's explain output, unchanged.
     why: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
@@ -709,7 +804,13 @@ __all__ = [
     "GetRevisionReason",
     "GetDocumentCard",
     "GetEvidence",
+    "GetFieldChanged",
+    "GetFieldEvent",
+    "GetFieldReobserved",
+    "GetFieldRetired",
+    "GetFieldStated",
     "GetHistory",
+    "GetHistoryAny",
     "GetPrincipalCard",
     "GetBlueprintCard",
     "GetBlueprintSlot",
@@ -731,6 +832,8 @@ __all__ = [
     "GetSourceAcquisitionPolicyCard",
     "GetSubjectCard",
     "GetSubjectClaim",
+    "GetSubjectHistory",
     "ReadFlag",
     "ReadSurface",
+    "RevisionChange",
 ]

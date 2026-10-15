@@ -4840,6 +4840,12 @@ def write_changes(
 )
 @click.option("--cursor", default=None, help="Continue --detail history from its next_cursor.")
 @click.option(
+    "--field",
+    "field_name",
+    default=None,
+    help="With --detail history on a Subject: only this field's events.",
+)
+@click.option(
     "--output",
     "output_path",
     type=click.Path(dir_okay=False),
@@ -4856,6 +4862,7 @@ def get_by_ref(
     evaluation_time: str | None,
     limit: int | None,
     cursor: str | None,
+    field_name: str | None,
     output_path: str | None,
     output_json: bool,
 ) -> None:
@@ -4881,6 +4888,7 @@ def get_by_ref(
                 "surface": "cli",
                 "limit": limit,
                 "cursor": cursor,
+                "field": field_name,
             }
         )
     except (ValidationError, ValueError) as exc:
@@ -4903,8 +4911,10 @@ def get_by_ref(
         return
     _emit_get_text(result)
     if result.next_cursor is not None:
+        narrowed = "" if field_name is None else f" --field {shlex.quote(field_name)}"
         click.echo(
-            f"next: cruxible get {shlex.quote(ref)} --detail history --cursor {result.next_cursor}"
+            f"next: cruxible get {shlex.quote(ref)} --detail history{narrowed} "
+            f"--cursor {result.next_cursor}"
         )
 
 
@@ -5118,18 +5128,7 @@ def _emit_get_text(result: Any) -> None:
             click.echo(f"rationale: {printable(result.evidence.rationale)}")
         return
     if result.history is not None:
-        for revision in result.history.revisions:
-            value = (
-                ""
-                if revision.value is None
-                else f"  = {_get_value_text(revision.value, width=GET_CLI_HISTORY_VALUE_WIDTH)}"
-            )
-            click.echo(
-                f"rev {revision.revision}  seq {revision.sequence} at {revision.git_oid}  "
-                f"{revision.accepted}  by {revision.actor or '-'}{value}"
-            )
-            for step in revision.next:
-                click.echo(f"next: {step}")
+        _echo_history(result.history)
         return
     if result.body is not None:
         body = result.body
@@ -5149,6 +5148,63 @@ def _emit_get_text(result: Any) -> None:
             _echo_proposed_reason(result.reason)
         return
     _emit_json(result.proof)
+
+
+def _history_value(value: Any) -> str:
+    return _get_value_text(value, width=GET_CLI_HISTORY_VALUE_WIDTH)
+
+
+def _reason_text(reason: Any) -> str:
+    """One revision's reason on one escaped line: its item's words, else its change set's."""
+
+    if reason.kind == "procedure_item":
+        text = f"{printable(reason.reason)}  (Procedure {reason.procedure}, run {reason.run})"
+    else:
+        text = printable(reason.text)
+    return text + ("  (truncated)" if reason.truncated else "")
+
+
+def _echo_history(history: Any) -> None:
+    """Revisions newest first; a Subject's field events grouped by field, each its timeline."""
+
+    for revision in history.revisions:
+        value = "" if revision.value is None else f"  = {_history_value(revision.value)}"
+        change = "" if revision.change is None else f"  {revision.change}"
+        if revision.retirement is not None:
+            change += f" ({revision.retirement})"
+        click.echo(
+            f"rev {revision.revision}  seq {revision.sequence} at {revision.git_oid}  "
+            f"{revision.accepted}  by {revision.actor or '-'}{change}{value}"
+        )
+        if revision.reason is not None:
+            click.echo(f"    reason: {_reason_text(revision.reason)}")
+        for step in revision.next:
+            click.echo(f"next: {step}")
+    if history.kind != "subject":
+        return
+    by_field: dict[str, list[Any]] = {}
+    for event in history.events:
+        by_field.setdefault(event.field, []).append(event)
+    for name, events in by_field.items():
+        click.echo(printable(name))
+        for event in events:
+            if event.change == "changed":
+                what = f"changed  {_history_value(event.before)} -> {_history_value(event.value)}"
+            elif event.change == "retired":
+                ended = "" if event.retirement is None else f" ({event.retirement})"
+                what = f"retired{ended}  {_history_value(event.value)}"
+            else:
+                what = f"{event.change}  {_history_value(event.value)}"
+                if getattr(event, "contended", False):
+                    what += "  (contends with a live value)"
+            click.echo(
+                f"  seq {event.sequence}  {event.git_oid}  {event.accepted}  "
+                f"by {event.actor or '-'}  {what}  [{event.claim}]"
+            )
+            if event.reason is not None:
+                click.echo(f"      reason: {_reason_text(event.reason)}")
+            for step in event.next:
+                click.echo(f"      next: {step}")
 
 
 def _echo_proposed_reason(reason: Any) -> None:

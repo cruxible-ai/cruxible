@@ -982,12 +982,19 @@ def register_tools(
             Field(
                 ge=1,
                 le=GET_HISTORY_MAX_LIMIT,
-                description='Revisions per detail="history" page, newest first; default 20.',
+                description=(
+                    'Revisions (a Subject\'s field events) per detail="history" page, '
+                    "newest first; default 20."
+                ),
             ),
         ] = None,
         cursor: Annotated[
             str | None,
             Field(description='next_cursor of the previous detail="history" page.'),
+        ] = None,
+        field: Annotated[
+            str | None,
+            Field(description='detail="history" on a Subject: only this field\'s events.'),
         ] = None,
     ) -> GetResult:
         """Read one governed thing by reference, values first."""
@@ -1000,6 +1007,7 @@ def register_tools(
             evaluation_time=evaluation_time,
             limit=limit,
             cursor=cursor,
+            field=field,
         )
 
     @_tool

@@ -208,6 +208,7 @@ from cruxible_client.contracts.get_reads import (
     GetProcedureTrackRecord,
     GetRequest,
     GetResult,
+    GetSubjectHistory,
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
@@ -4004,6 +4005,7 @@ class Cruxible:
         *,
         detail: GetDetail = "summary",
         range: tuple[int, int] | str | None = None,
+        field: str | ClaimTypeRef | None = None,
     ) -> KnowledgeCard:
         """Read one governed thing by reference, resolved directly by the daemon.
 
@@ -4017,6 +4019,11 @@ class Cruxible:
         ambiguous name refuses with the nearest names. A Claim summary is a
         ``ClaimView``; other summaries are the values-first card; other
         details carry that detail's payload.
+
+        ``detail="history"`` on a Subject answers its field events, every page
+        read (``GetSubjectHistory``): each revision of each Claim about it,
+        newest first, with what changed and why; ``field`` narrows them to one
+        field. On anything else it answers its revisions (``GetHistory``).
 
         Next: ``detail="evidence"`` for what backs a Claim, ``detail="history"`` for its
         revisions, ``detail="proof"`` for the full envelope; ``card.ref`` passes the thing
@@ -4049,7 +4056,10 @@ class Cruxible:
             (not isinstance(ref, str) and ref.kind is RefKind.CLAIM)
             or (isinstance(ref, str) and ref.removeprefix("Claim:").startswith("CLM-"))
         )
-        result = self._get(text, "proof" if claim_summary else detail, window, coordinate)
+        named = field.address if isinstance(field, ClaimTypeRef) else field
+        result = self._get(
+            text, "proof" if claim_summary else detail, window, coordinate, field=named
+        )
         if detail == "summary" and result.kind == "claim" and not claim_summary:
             # The reference resolved to a Claim only on the daemon; read its
             # envelope at the same coordinate for the typed view.
@@ -4204,12 +4214,15 @@ class Cruxible:
         detail: GetDetail,
         window: ByteRange | None,
         coordinate: AcceptedCoordinate | None,
+        *,
+        field: str | None = None,
     ) -> GetResult:
         requested = self._read_at(coordinate)
         request = GetRequest(
             ref=ref,
             detail=detail,
             range=window,
+            field=field,
             at=requested,
             evaluation_time=datetime.fromisoformat(self._evaluation_time()),
             surface="sdk",
@@ -4222,8 +4235,12 @@ class Cruxible:
         if result.history is not None:
             # History pages newest first; the SDK reads every page, pinned to
             # the first page's coordinate by the cursor, so it never answers
-            # a silently cut history.
-            revisions = list(result.history.revisions)
+            # a silently cut history. A Subject's pages are its field events;
+            # its shell's revisions come whole on each page.
+            first = result.history
+            items: list[Any] = list(
+                first.events if isinstance(first, GetSubjectHistory) else first.revisions
+            )
             page = result
             while page.truncated and page.next_cursor is not None:
                 page = self._client.get(
@@ -4231,13 +4248,18 @@ class Cruxible:
                     request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
                 )
                 assert page.history is not None
-                revisions.extend(page.history.revisions)
+                items.extend(
+                    page.history.events
+                    if isinstance(page.history, GetSubjectHistory)
+                    else page.history.revisions
+                )
+            whole = (
+                first.model_copy(update={"events": tuple(items)})
+                if isinstance(first, GetSubjectHistory)
+                else first.model_copy(update={"revisions": tuple(items)})
+            )
             result = result.model_copy(
-                update={
-                    "history": result.history.model_copy(update={"revisions": tuple(revisions)}),
-                    "truncated": False,
-                    "next_cursor": None,
-                }
+                update={"history": whole, "truncated": False, "next_cursor": None}
             )
         return result
 

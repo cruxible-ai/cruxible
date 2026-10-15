@@ -269,6 +269,95 @@ def test_detail_why_prints_a_readable_summary_and_json_keeps_the_whole_payload(
     ]
 
 
+def test_a_subject_history_prints_each_field_s_timeline_with_its_reasons(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.get_reads import (
+        GetChangeSetReason,
+        GetFieldChanged,
+        GetFieldRetired,
+        GetFieldStated,
+        GetRevision,
+        GetSubjectHistory,
+    )
+
+    def common(sequence: int, claim: str, reason: str) -> dict[str, Any]:
+        return {
+            "claim": claim,
+            "sequence": sequence,
+            "git_oid": str(sequence) * 12,
+            "accepted": f"2026-10-1{sequence}T09:12:00Z",
+            "actor": "ada",
+            "reason": GetChangeSetReason(text=reason, proposal="sha256:" + "p" * 64),
+        }
+
+    stub = _stub(
+        monkeypatch,
+        _result(
+            "subject",
+            detail="history",
+            history=GetSubjectHistory(
+                revisions=(
+                    GetRevision(
+                        revision=1,
+                        sequence=1,
+                        git_oid="1" * 12,
+                        accepted="2026-10-11T00:00:00Z",
+                        actor="ada",
+                        lifecycle="live",
+                        digest="sha256:abc",
+                    ),
+                ),
+                events=(
+                    GetFieldRetired(
+                        field="status",
+                        predicate="app.service.status",
+                        value="done",
+                        retirement="was-wrong",
+                        **common(4, "CLM-2", "It never shipped.\nError: forged"),
+                    ),
+                    GetFieldChanged(
+                        field="owner",
+                        predicate="app.service.owner",
+                        value="linus",
+                        before="grace",
+                        **common(3, "CLM-1", "Linus took over search."),
+                    ),
+                    GetFieldStated(
+                        field="owner",
+                        predicate="app.service.owner",
+                        value="grace",
+                        **common(2, "CLM-1", "Pins from each service."),
+                    ),
+                ),
+            ),
+            truncated=True,
+            next_cursor="CURSOR",
+        ),
+    )
+
+    printed = CliRunner().invoke(
+        cli, [*PREFIX, "get", "app.service/search", "--detail", "history", "--field", "owner"]
+    )
+
+    assert printed.exit_code == 0, printed.output
+    assert stub.requests[0].field == "owner"
+    lines = printed.output.splitlines()
+    owner = lines.index("owner")
+    assert lines[owner + 1].startswith(f"  seq 3  {'3' * 12}  2026-10-13T09:12:00Z  by ada  ")
+    assert "changed  grace -> linus" in lines[owner + 1]
+    assert lines[owner + 2] == "      reason: Linus took over search."
+    assert "stated  grace" in lines[owner + 3]
+    status = lines.index("status")
+    assert "retired (was-wrong)  done" in lines[status + 1]
+    # Authored text cannot forge a line of output.
+    assert lines[status + 2] == "      reason: It never shipped.\\nError: forged"
+    assert (
+        "next: cruxible get app.service/search --detail history --field owner --cursor CURSOR"
+        in printed.output
+    )
+
+
 def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

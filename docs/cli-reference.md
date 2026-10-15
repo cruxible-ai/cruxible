@@ -3392,8 +3392,8 @@ depend on it.
 
 ~~~text
 cruxible get REF [--detail summary|evidence|why|history|proof|body]
-  [--range START:END] [--output FILE] [--limit N] [--cursor C] [--at GIT_OID]
-  [--evaluation-time TS] [--json]
+  [--range START:END] [--output FILE] [--limit N] [--cursor C] [--field FIELD]
+  [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
 
 Reads one thing by any reference form you have seen: `CLM-...` (or a unique
@@ -3431,9 +3431,21 @@ aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
 `contradicted`, `uncovered`, `unsure_hold`) -- `evidence` lists a Claim's captures by
 CaptureContract name and version, its attestations and rationale, `why` and
 `proof` print today's explanation and full envelope, `history` lists revisions
-newest first with values and who changed them (`--limit`, default 20, per page;
-a cut page prints the `--cursor` command that continues it), and `body` prints
-a Document's bytes. A body over 64 KiB needs `--range`. A summary cuts a string
+newest first with values, who changed them and why (`--limit`, default 20, per
+page; a cut page prints the `--cursor` command that continues it), and `body`
+prints a Document's bytes. A Claim's revision says what it did -- `stated` (its
+first), `changed`, `reobserved` (the same value on new backing) or `retired`
+(with `was-rescinded`, `was-wrong` or `superseded`) -- and every revision its
+`reason`: the Procedure item's own reason when a Procedure proposed it, else
+the rationale of the change set that accepted it (a write's `--because` with
+any per-retire note), cut past 500 characters (`get <proposal>` reads it whole),
+or none when no single admission accepted it. A Subject's history is its
+fields' events: its shell's own revisions, then one page of changes to its
+fields grouped by field, each field's value timeline (`changed  grace ->
+linus`, `stated ... (contends with a live value)` for a competing value in a
+single-value field); `--field FIELD` narrows them to one field. Locating a page
+reads the Subject's own Claims and revisions; only the page's revisions are
+read. A body over 64 KiB needs `--range`. A summary cuts a string
 value over 500 characters and says how long it is; `--detail evidence` or
 `proof` shows it whole. Subject rows carry the Claim id behind each value. A
 summary's coordinate is the git oid's 12-hex prefix and the generation; the

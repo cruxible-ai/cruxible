@@ -296,3 +296,30 @@ def test_a_hint_key_two_subjects_hold_is_ambiguous_to_define(typed: Cruxible) ->
     with pytest.raises(WriteRefusalError) as refused:
         typed.world().dev.note.define("SAME").write(because="Which one?")
     assert refused.value.error_code == "cruxible.subject.key_ambiguous"
+
+
+def test_the_sdk_reads_a_subject_s_whole_field_history_across_pages(
+    pb: Cruxible, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.get_reads import GetSubjectHistory
+    from cruxible_core.service.discovery import get as get_module
+
+    for value, because in (("ready", "Started."), ("blocked", "Waiting."), ("done", "Shipped.")):
+        pb.set(f"{KIND}/wi-1", "status", value, because=because)
+    # Pages of two events: the SDK follows the cursor to the last one.
+    monkeypatch.setattr(get_module, "GET_HISTORY_DEFAULT_LIMIT", 2)
+
+    history = pb.get(f"{KIND}/wi-1", detail="history", field="status").value
+
+    assert isinstance(history, GetSubjectHistory)
+    assert [(event.change, event.value) for event in history.events] == [
+        ("changed", "done"),
+        ("changed", "blocked"),
+        ("stated", "ready"),
+    ]
+    assert [event.reason.text for event in history.events] == [  # type: ignore[union-attr]
+        "Shipped.",
+        "Waiting.",
+        "Started.",
+    ]
+    assert history.events[0].before == "blocked"  # type: ignore[union-attr]

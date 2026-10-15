@@ -11,11 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts import ClaimViewRecord as ClientClaimViewV2
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
-from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.candidates import CandidateMemberEvidence
-from cruxible_client.contracts.canonical import (
-    file_digest,
-)
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     parse_capture_envelope,
@@ -39,14 +34,11 @@ from cruxible_client.contracts.claims import (
     ClaimLawEvidenceV1,
     ClaimStatementCard,
     ClaimUnsupportedFormatError,
-    claim_artifact_digest,
     claim_citation_references,
     claim_path,
     claim_statement_address,
     claim_statement_card,
-    claim_statement_digest,
     evaluate_capture_evidence_admissions,
-    parse_claim,
     parse_claim_law_evidence,
 )
 from cruxible_client.contracts.codes import CurrentCode
@@ -169,24 +161,6 @@ class PlaybillClaimGroupResolution:
     contender_claim_identities: tuple[str, ...]
     claims: tuple[ClaimArtifactAny, ...]
     verdicts: tuple[ClaimVerdictResultAny, ...]
-
-
-class PlaybillClaimHistoryEntry(_StrictClaimServiceModel):
-    sequence: int
-    coordinate: AcceptedCoordinate
-    statement_digest: str
-    artifact_digest: str
-    predecessor_digest: str | None
-    lifecycle_state: Literal["live", "retired"]
-    change_set_path: str
-    changeset_digest: str
-    candidate_digest: str
-
-
-class PlaybillClaimHistory(_StrictClaimServiceModel):
-    tag: Literal["playbill-claim-history-v1"] = "playbill-claim-history-v1"
-    identity: str
-    entries: tuple[PlaybillClaimHistoryEntry, ...]
 
 
 class PlaybillClaimExplanationV2(_StrictClaimServiceModel):
@@ -805,60 +779,6 @@ def resolve_playbill_claim_group(
     )
 
 
-def service_playbill_claim_history(
-    instance: PlaybillInstance,
-    *,
-    identity: str,
-) -> PlaybillClaimHistory:
-    parsed_identity = ArtifactIdentity(
-        kind="Claim",
-        name=_resolved_claim_id(instance, identity, coordinate=_resolve_coordinate(instance, None)),
-    )
-    path = claim_path(parsed_identity.name)
-    entries: list[PlaybillClaimHistoryEntry] = []
-    records = instance.retained_record_reader()
-    with instance.accepted_history_reader() as history:
-        for location in history.member_history(path):
-            generation = history.generation(location.sequence)
-            # The member alone, verified against its record's accepted binding.
-            member = history.read_member(location, records)
-            content = instance.blob_at(generation.git_oid, path)
-            if member.disposition == "delete" and content is None:
-                continue
-            if content is None:
-                raise ProjectionIntegrityError("Claim history source is unavailable")
-            claim = parse_claim(content, path=path)
-            digest = claim_artifact_digest(claim).tagged
-            source_digest = (
-                file_digest(content).tagged
-                if isinstance(member, CandidateMemberEvidence)
-                else digest
-            )
-            if source_digest != location.artifact_digest:
-                raise ProjectionIntegrityError("Claim history source binding differs")
-            entries.append(
-                PlaybillClaimHistoryEntry(
-                    sequence=generation.sequence,
-                    coordinate=AcceptedCoordinate(
-                        git_oid=generation.git_oid,
-                        semantic_root=generation.semantic_root,
-                        generation_root=generation.generation_root,
-                        compiler_digest=generation.compiler_digest,
-                    ),
-                    statement_digest=claim_statement_digest(claim.statement).tagged,
-                    artifact_digest=digest,
-                    predecessor_digest=claim.lifecycle.predecessor_digest,
-                    lifecycle_state=claim.lifecycle.state,
-                    change_set_path=f"changesets/cs-{generation.sequence:020d}.json",
-                    changeset_digest=str(generation.source_record_digest),
-                    candidate_digest=str(generation.candidate_digest),
-                )
-            )
-    if not entries:
-        raise ClaimNotFoundError(identity)
-    return PlaybillClaimHistory(identity=parsed_identity.qualified, entries=tuple(entries))
-
-
 def service_explain_playbill_claim(
     instance: PlaybillInstance,
     *,
@@ -1105,8 +1025,6 @@ __all__ = [
     "PlaybillClaimExplanationV2",
     "PlaybillClaimExplanationV3",
     "PlaybillClaimGroupResolution",
-    "PlaybillClaimHistory",
-    "PlaybillClaimHistoryEntry",
     "PlaybillClaimList",
     "PlaybillClaimView",
     "ClaimViewRecord",
@@ -1115,5 +1033,4 @@ __all__ = [
     "service_get_playbill_claim",
     "service_list_playbill_claims",
     "service_open_playbill_source",
-    "service_playbill_claim_history",
 ]

@@ -298,7 +298,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillClaimExplanationV2", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimExplanationV3", "admission_evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimExplanationV3", "evaluation_time"): "EVALUATION INSTANT",
-    ("PlaybillClaimHistoryEntry", "sequence"): "SETTLEMENT ORDER",
     ("PlaybillClaimVerdictQueryV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimVerdictQueryV2", "evaluation_time"): "EVALUATION INSTANT",
     ("ClaimViewRecord", "admission_evaluation_time"): "EVALUATION INSTANT",
@@ -361,6 +360,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("GetCaptureEvidence", "observed_at"): "ASSERTION TIME",
     ("GetAttestationEvidence", "at"): "ASSERTION TIME",
     ("GetRevision", "sequence"): "SETTLEMENT ORDER",
+    ("_GetFieldEvent", "sequence"): "SETTLEMENT ORDER",
     ("GetCoordinate", "generation"): "SETTLEMENT ORDER",
     ("_RevisionEntry", "sequence"): "SETTLEMENT ORDER",
     # Operational reads: Lines, Captures, predictions, mandates and runs. An

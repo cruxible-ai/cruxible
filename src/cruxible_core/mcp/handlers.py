@@ -1164,6 +1164,7 @@ def handle_playbill_get(
     evaluation_time: str | None = None,
     limit: int | None = None,
     cursor: str | None = None,
+    field: str | None = None,
 ) -> GetResult:
     try:
         request = GetRequest.model_validate(
@@ -1176,6 +1177,7 @@ def handle_playbill_get(
                 "surface": "mcp",
                 "limit": limit,
                 "cursor": cursor,
+                "field": field,
             }
         )
     except ValidationError as exc:
