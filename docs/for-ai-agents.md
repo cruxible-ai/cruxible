@@ -101,12 +101,11 @@ cruxible set app.service/search owner grace --because "Grace took over search."
 # awaiting approval ... proposal: sha256:…
 cruxible proposal activate PROPOSAL_ID            # refused: needs graph_write
 cruxible context use --principal YOUR_ID
-cruxible proposal approve PROPOSAL_ID --yes
-cruxible proposal activate PROPOSAL_ID
+cruxible proposal approve PROPOSAL_ID --yes      # approving activates it
 ~~~
 
-You review, approve and accept what the agent proposes under your own
-settings. With auth off, the same `principal add` registers the agent and
+You review and approve what the agent proposes under your own settings;
+approving activates it. With auth off, the same `principal add` registers the agent and
 writes its settings without a credential, but every process of your OS user is
 equally trusted, so nothing stops a process from loading your settings
 instead: the principal ID is a claim, not a boundary.

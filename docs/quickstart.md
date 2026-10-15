@@ -54,12 +54,13 @@ cruxible kit add quickstart:1.0.0
 ~~~text
 quickstart 1.0.0: would_propose (install)
 ...
-Preview at 34a7d27b72b7; nothing was written.
-Commit it: rerun the same command with --commit --at 34a7d27b72b7
+Preview at 500307c09f66; nothing was written.
+Commit this change? [y/N]: y
 ~~~
 
-Run the command it prints (`cruxible kit add quickstart:1.0.0 --commit --at
-<oid>`), then look at what you have:
+It shows what it will add and asks first; answering `y` commits exactly the
+change you saw (`--yes` skips the question in scripts). Now look at what you
+have:
 
 ~~~bash
 cruxible orient
@@ -87,14 +88,7 @@ query, used later.
 
 ## Write state
 
-Generate Python types for this vocabulary, so your editor knows every kind,
-field and allowed value:
-
-~~~bash
-cruxible stub --out world.pyi
-~~~
-
-Then record the inventory. Save this as `seed.py` and run it with `python
+Record the inventory. Save this as `seed.py` and run it with `python
 seed.py`:
 
 ~~~python
@@ -139,7 +133,11 @@ app.service/search    linus  app.library/libbar  -
 
 ## Typed edits
 
-Once a thing exists, edit it through the typed world. Save as `update.py`:
+Cruxible keeps Python types for this vocabulary in `.cruxible/world.pyi`:
+every kind, field and allowed value. `init` wrote it, and it is kept current
+whenever the vocabulary changes, as it just did. Put `.cruxible` on your type
+checker's search path (for mypy, `MYPYPATH=.cruxible`), and edit through the
+typed world. Save as `update.py`:
 
 ~~~python
 from typing import TYPE_CHECKING, cast
@@ -156,7 +154,7 @@ with Cruxible.connect() as cx:
     libfoo.set(advisory="opne", because="A typo.")
 ~~~
 
-Your editor completes `app.library`, `latest` and `advisory`, and a type
+Your editor completes `app.library`, `latest` and `advisory`, and the type
 checker rejects the typo before anything runs:
 
 ~~~text
@@ -190,18 +188,12 @@ EOF
 ~~~
 
 `world/advisories.json` stands in for an outside source, like a security
-advisory feed. List both files in `.cruxible/sources.yaml`, so Cruxible can
-refer to them by name, and commit:
+advisory feed. Give both files a name Cruxible can refer to them by, and
+commit:
 
 ~~~bash
-cat > .cruxible/sources.yaml <<'EOF'
-catalog_kind: portable
-entries:
-  - name: advisories
-    locator: world/advisories.json
-  - name: status
-    locator: STATUS.md
-EOF
+cruxible sources add advisories world/advisories.json
+cruxible sources add status STATUS.md
 git add -A && git commit -m "Status page and advisory feed"
 ~~~
 
@@ -218,7 +210,9 @@ Repinned status#release at generation 3.
 
 The marker now carries a stamp of the state the prose reflects. Note the
 generation, 3: you will read history at it later. A stamped passage is a
-**projection block**: prose you own, which Cruxible checks but never edits.
+**projection block**: prose you own, which Cruxible checks but never edits. (A
+block can instead hold a table generated from a query; `cruxible block sync
+--all` regenerates those for you.)
 
 ## The world changes
 
@@ -259,24 +253,27 @@ cruxible proposal review PROPOSAL_ID
 ~~~
 
 ~~~text
+Why:
+  The advisory feed lists GHSA-2026-0042 against libfoo.
 Changes (1):
   set app.library/libfoo advisory: none -> open  [CLM-…]
 ~~~
 
-Approve it (this signs it with the key `init` made for you) and accept it:
+Approve it. This signs it with the key `init` made for you, and since your
+approval is the one it needed, the same command accepts it:
 
 ~~~bash
 cruxible proposal approve PROPOSAL_ID --yes
-cruxible proposal activate PROPOSAL_ID
 ~~~
 
 ~~~text
-accepted (9ebcfcaee5f2) by YOUR_ID
-next: cruxible next
+Approved sha256:… as YOUR_ID
+Activated at e68b51892af7…
 ~~~
 
 Here you approve your own changes. An instance can instead require someone
-else's approval, so an agent's proposals wait for a person.
+else's approval, so an agent's proposals wait for a person. (`--hold` signs
+without accepting, when someone else should decide when it lands.)
 
 ## Out-of-date pages are flagged
 
@@ -347,7 +344,7 @@ cruxible get CLAIM_ID --detail evidence
 
 ~~~text
 value: open
-capture CAP-922df1bae414  ...  source=advisories  observed=2026-10-13T22:25:38Z  evidence admitted
+capture CAP-7c69c2e6b0e6  ...  source=advisories  observed=2026-10-15T12:34:25Z  evidence admitted
 rationale: The advisory feed lists GHSA-2026-0042 against libfoo.
 ~~~
 
@@ -375,8 +372,8 @@ cruxible get CLAIM_ID --detail history
 ~~~
 
 ~~~text
-rev 2  seq 4 at 9ebcfcaee5f2  2026-10-13T22:25:38Z  by YOUR_ID  = open
-rev 1  seq 2 at 91b2b27d8348  2026-10-13T22:25:02Z  by YOUR_ID  = none
+rev 2  seq 4 at e68b51892af7  2026-10-15T12:34:25Z  by YOUR_ID  = open
+rev 1  seq 2 at 96161787588b  2026-10-15T12:34:04Z  by YOUR_ID  = none
 ~~~
 
 ## Next
