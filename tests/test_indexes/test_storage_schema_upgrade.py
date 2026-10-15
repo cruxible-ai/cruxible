@@ -42,7 +42,8 @@ def _manifests(root: Path) -> dict[str, int]:
 
 
 def test_a_retained_schema_14_projection_is_rebuilt_not_bound(tmp_path: Path) -> None:
-    assert PROJECTION_STORAGE_SCHEMA_VERSION == 15
+    current = PROJECTION_STORAGE_SCHEMA_VERSION
+    assert current > 14
     root, history = _historical_instance(tmp_path)
     retained = _manifests(root)
     assert set(retained.values()) == {14} and len(retained) == 2
@@ -75,8 +76,11 @@ def test_a_retained_schema_14_projection_is_rebuilt_not_bound(tmp_path: Path) ->
         }
         assert {"subject_keys", "subject_keys_by_key", "claims_by_predicate"} <= tables
 
-    # Head and genesis each hold a schema-15 projection now; the schema-14 ones
-    # are never bound (reopen may sweep them).
+    # Head and genesis each hold a current-schema projection now; the schema-14
+    # ones are never bound (reopen may sweep them).
     rebuilt = _manifests(root)
-    assert sorted(version for version in rebuilt.values() if version == 15) == [15, 15]
+    assert sorted(version for version in rebuilt.values() if version == current) == [
+        current,
+        current,
+    ]
     assert len(set(rebuilt) - set(retained)) == 2

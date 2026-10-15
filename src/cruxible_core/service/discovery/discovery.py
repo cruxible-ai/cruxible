@@ -62,6 +62,9 @@ class ProviderInterfaceImplementationV1(_StrictDiscoveryServiceModel):
     provider_identity: str
     provider_artifact_digest: str
     implementation_digest: str
+    #: This build is its provider name's most recently registered live build:
+    #: what a bare provider name selects.
+    newest: bool = True
 
     @field_validator("provider_artifact_digest", "implementation_digest")
     @classmethod
@@ -97,35 +100,43 @@ class AcceptedProviderInterface:
 
     registration: ProviderInterfaceRegistrationAny
     entry: ProviderInterfaceEntryV1
+    #: The name to reference it by: its interface id when it is that id's most
+    #: recently registered live contract (a bare id resolves to it), otherwise
+    #: its full identity name (``<id>/<contract key>``).
+    name: str = ""
 
 
-def _provider_interfaces(tree: Mapping[str, bytes]) -> tuple[AcceptedProviderInterface, ...]:
-    implementations: dict[str, list[ProviderInterfaceImplementationV1]] = {}
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("providers/"):
-            continue
-        provider = parse_provider(tree[path], path=path)
-        if provider.lifecycle.state != "live" or not isinstance(provider, ProviderV2):
-            continue
+def _provider_interfaces(
+    providers: Iterable[ProviderV2],
+    registrations: Iterable[ProviderInterfaceRegistrationAny],
+    *,
+    newest: Mapping[str, str],
+    newest_builds: frozenset[str],
+) -> tuple[AcceptedProviderInterface, ...]:
+    """The inventory entries of live registrations, each with the live builds
+    implementing its exact contract (interface id and digest)."""
+
+    implementations: dict[tuple[str, str], list[ProviderInterfaceImplementationV1]] = {}
+    for provider in providers:
         for implementation in provider.implementations:
-            implementations.setdefault(implementation.interface_id, []).append(
+            implementations.setdefault(
+                (implementation.interface_id, implementation.interface_digest), []
+            ).append(
                 ProviderInterfaceImplementationV1(
                     provider_identity=provider.identity.qualified,
                     provider_artifact_digest=provider_digest(provider).tagged,
                     implementation_digest=implementation.implementation_digest,
+                    newest=provider.identity.qualified in newest_builds,
                 )
             )
     entries: list[AcceptedProviderInterface] = []
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("provider-interfaces/"):
-            continue
-        registration = parse_provider_interface(tree[path], path=path)
-        if registration.lifecycle.state != "live":
-            continue
+    for registration in registrations:
         entry = ProviderInterfaceEntryV1(
             providers=tuple(
                 sorted(
-                    implementations.get(registration.interface_id, ()),
+                    implementations.get(
+                        (registration.interface_id, registration.interface_digest), ()
+                    ),
                     key=lambda item: (
                         item.provider_identity.encode("utf-8"),
                         item.implementation_digest.encode("ascii"),
@@ -142,7 +153,15 @@ def _provider_interfaces(tree: Mapping[str, bytes]) -> tuple[AcceptedProviderInt
             ),
             effect_class=registration.effect_class,
         )
-        entries.append(AcceptedProviderInterface(registration=registration, entry=entry))
+        entries.append(
+            AcceptedProviderInterface(
+                registration=registration,
+                entry=entry,
+                name=registration.interface_id
+                if newest.get(registration.interface_id) == registration.identity.qualified
+                else registration.identity.name,
+            )
+        )
     return tuple(sorted(entries, key=lambda item: item.entry.identity.encode("utf-8")))
 
 
@@ -153,16 +172,72 @@ def accepted_provider_interfaces(
     """Every live accepted provider interface at one coordinate, sorted by identity.
 
     The one inventory source: ``discover(profile="interfaces")`` serves its
-    entries, and ``orient(section="interfaces")`` its compact rows.
+    entries, and ``orient(section="interfaces")`` its compact rows. It reads the
+    live rows only (a retired build or registration costs nothing here).
     """
 
+    from cruxible_core.errors import RequestRefusedError
+    from cruxible_core.providers.builds import BuildRow, newest_live, registration_sequences
+
     with instance.bind_accepted_projection(coordinate) as projection:
-        tree = {
-            row.path: projection.typed.member_bytes(row.path)
-            for kind in ("provider", "provider-interface")
-            for row in projection.typed.envelopes(kind=kind)
-        }
-    return _provider_interfaces(tree)
+        typed = projection.typed
+        provider_rows = typed.connection.execute(
+            "SELECT path,identity,artifact_digest,provider_name FROM main.providers "
+            "WHERE lifecycle='live' ORDER BY path"
+        ).fetchall()
+        interface_rows = typed.connection.execute(
+            "SELECT identity,path,artifact_digest,interface_id FROM main.provider_interfaces "
+            "WHERE lifecycle='live' ORDER BY path"
+        ).fetchall()
+        typed.prefetch_members(tuple(row[0] for row in (*provider_rows, *interface_rows)))
+        providers = [
+            provider
+            for (path, *_rest) in provider_rows
+            if isinstance(
+                provider := parse_provider(typed.member_bytes(path), path=path), ProviderV2
+            )
+        ]
+        registrations = [
+            parse_provider_interface(typed.member_bytes(row[1]), path=row[1])
+            for row in interface_rows
+        ]
+    by_id: dict[str, list[BuildRow]] = {}
+    for identity, path, digest, interface_id in interface_rows:
+        by_id.setdefault(interface_id, []).append(BuildRow(identity, path, digest, True))
+    by_name: dict[str, list[BuildRow]] = {}
+    for path, identity, digest, name in provider_rows:
+        by_name.setdefault(name, []).append(BuildRow(identity, path, digest, True))
+    newest = {key: rows[0].identity for key, rows in by_id.items()}
+    newest_builds = {key: rows[0].identity for key, rows in by_name.items()}
+    contested = [
+        (target, rows)
+        for target, groups in ((newest, by_id), (newest_builds, by_name))
+        for rows in groups.values()
+        if len(rows) > 1
+    ]
+    if contested:
+        # Several live contracts of one id, or builds of one name: the most
+        # recently registered one is what a bare name selects. One history read
+        # for just those paths.
+        with instance.accepted_history_reader(
+            at=AcceptedCoordinate.from_internal(coordinate)
+        ) as history:
+            for target, rows in contested:
+                try:
+                    chosen = newest_live(rows, registration_sequences(history, rows))
+                except RequestRefusedError:
+                    chosen = None
+                key = rows[0].identity.partition(":")[2].partition("/")[0]
+                if chosen is None:
+                    target.pop(key, None)
+                else:
+                    target[key] = chosen.identity
+    return _provider_interfaces(
+        providers,
+        registrations,
+        newest=newest,
+        newest_builds=frozenset(newest_builds.values()),
+    )
 
 
 def _resolve_coordinate(

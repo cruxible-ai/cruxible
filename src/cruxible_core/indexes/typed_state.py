@@ -283,7 +283,19 @@ OWNER_CODECS = (
         ),
     ),
     OwnerCodec(
-        "provider", "Provider", "providers", parse_provider, (("control_domain", "TEXT NOT NULL"),)
+        "provider",
+        "Provider",
+        "providers",
+        parse_provider,
+        (
+            ("control_domain", "TEXT NOT NULL"),
+            # Every build of one name shares ``provider_name``; ``build_key`` is
+            # NULL for a single-path Provider (the built-in, or one registered
+            # before builds), which is itself one build of its name.
+            ("provider_name", "TEXT NOT NULL"),
+            ("build_key", "TEXT"),
+            ("distribution_version", "TEXT"),
+        ),
     ),
     OwnerCodec(
         "provider-interface",
@@ -294,6 +306,8 @@ OWNER_CODECS = (
             ("interface_id", "TEXT NOT NULL"),
             ("interface_digest", "TEXT NOT NULL"),
             ("effect_class", "TEXT NOT NULL"),
+            # NULL for a single-path (v1/v2) registration.
+            ("contract_key", "TEXT"),
         ),
     ),
     OwnerCodec(
@@ -495,6 +509,10 @@ def schema_sql() -> str:
             "CREATE INDEX claims_by_predicate ON claims(predicate,lifecycle,path)",
             "CREATE INDEX claims_by_object_subject ON claims(object_path,identity) WHERE object_kind='subject'",
             "CREATE INDEX provider_interfaces_by_interface ON provider_interfaces(interface_digest,identity)",
+            "CREATE INDEX provider_interfaces_by_id ON provider_interfaces(interface_id,identity)",
+            # The builds of one provider name: newest-build resolution and the
+            # build verbs read one name's rows, never every Provider.
+            "CREATE INDEX providers_by_name ON providers(provider_name,identity)",
             "CREATE INDEX lines_by_identity_digest ON lines(identity_digest,identity)",
             "CREATE INDEX triggers_by_target ON triggers(target_kind,target,identity) WHERE lifecycle='live'",
             "CREATE INDEX procedure_mandates_by_procedure ON procedure_mandates(procedure_identity,procedure_digest,valid_from_us,identity) WHERE lifecycle='live'",
@@ -629,6 +647,9 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
         )
     if owner.kind == "blueprint":
         result["slot_count"] = len(source.definition.pin_slots)
+    if owner.kind == "provider":
+        runtime = getattr(source, "runtime_artifact", None)
+        result["distribution_version"] = None if runtime is None else runtime.distribution.version
     if owner.kind in ("line", "procedure-mandate"):
         result.update(
             procedure_identity=source.procedure.target.qualified,

@@ -131,17 +131,35 @@ from tests.test_server.test_playbill_line_run_refusals import (
 
 
 def _indexed_instance(tree: dict[str, bytes]) -> SimpleNamespace:
-    """Unit double for the selected member reader, without a whole-tree API."""
-    rows = tuple(
-        SimpleNamespace(
-            path=path, kind=("provider" if path.startswith("providers/") else "provider-interface")
-        )
-        for path in tree
+    """Unit double for the pinned-version reader: one row per exact (identity, digest)."""
+    from cruxible_client.contracts.provider_interfaces import (
+        parse_provider_interface,
+        provider_interface_digest,
     )
+    from cruxible_client.contracts.providers import parse_provider, provider_digest
+
+    sources: dict[str, object] = {}
+    rows: dict[tuple[str, str], str] = {}
+    for path, content in tree.items():
+        if path.startswith("providers/"):
+            provider = parse_provider(content, path=path)
+            digest = provider_digest(provider).tagged
+            source: object = provider
+        else:
+            provider = parse_provider_interface(content, path=path)
+            digest = provider_interface_digest(provider).tagged
+            source = provider
+        sources[provider.identity.qualified] = source
+        if provider.lifecycle.state == "live":
+            rows[(provider.identity.qualified, digest)] = path
+
+    def execute(_sql: str, parameters: tuple[str, str]) -> SimpleNamespace:
+        path = rows.get(parameters)
+        return SimpleNamespace(fetchone=lambda: None if path is None else (path,))
+
     typed = SimpleNamespace(
-        envelopes=lambda *, kind: tuple(row for row in rows if row.kind == kind),
-        prefetch_members=lambda paths: None,
-        member_bytes=lambda path: tree[path],
+        connection=SimpleNamespace(execute=execute),
+        source=lambda identity: sources.get(identity),
     )
     return SimpleNamespace(
         coordinate_for_oid=lambda oid: oid,
@@ -398,7 +416,22 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     assert recovery.recovered == ()
     assert recovery.removed == ()
     assert recovery.could_not_clean == ()
-    invoker = operator.invoker_for(instance, accepted_oid="a" * 40)  # type: ignore[arg-type]
+    invoker = operator.invoker_for(  # type: ignore[arg-type]
+        instance,
+        accepted_oid="a" * 40,
+        pins=(
+            ArtifactPin(
+                role="provider",
+                target=accepted_provider.provider.identity,
+                artifact_digest=accepted_provider.artifact_digest,
+            ),
+            ArtifactPin(
+                role="provider-interface",
+                target=interface.registration.identity,
+                artifact_digest=interface.artifact_digest,
+            ),
+        ),
+    )
     admitted_binding = operator.driver.bind(
         accepted_provider,
         interface,

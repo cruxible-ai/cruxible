@@ -8,7 +8,7 @@ import os
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -22,17 +22,10 @@ from pydantic import (
 )
 
 from cruxible_client.contracts import ProviderLaneUnavailableCode
+from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.provider_execution import VerifiedProviderBinding
-from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistration,
-    parse_provider_interface,
-    provider_interface_digest,
-)
-from cruxible_client.contracts.providers import (
-    AcceptedProvider,
-    parse_provider,
-    provider_digest,
-)
+from cruxible_client.contracts.provider_interfaces import AcceptedProviderInterfaceRegistration
+from cruxible_client.contracts.providers import AcceptedProvider
 from cruxible_core.providers.builtin_runtime import (
     BuiltinDispatchingInvoker,
     builtin_provider_binding,
@@ -236,6 +229,46 @@ def _inapplicable_lane_status() -> tuple[Literal["not_applicable"], None, str] |
     if provider_lane_applicable():
         return None
     return ("not_applicable", None, PROVIDER_LANE_NOT_APPLICABLE_DETAIL)
+
+
+def pinned_provider_catalogs(
+    instance: PlaybillInstance,
+    coordinate: Any,
+    pins: Sequence[ArtifactPin],
+) -> tuple[
+    dict[str, AcceptedProvider],
+    dict[str, AcceptedProviderInterfaceRegistration],
+]:
+    """The live Providers and registrations ``pins`` name, keyed by artifact digest.
+
+    One indexed row per pinned version: O(pins), whatever else is installed.
+    """
+
+    providers: dict[str, AcceptedProvider] = {}
+    interfaces: dict[str, AcceptedProviderInterfaceRegistration] = {}
+    with instance.bind_accepted_projection(coordinate) as projection:
+        for pin in dict.fromkeys(pins):
+            if pin.target.kind not in {"Provider", "ProviderInterface"}:
+                continue
+            table = "providers" if pin.target.kind == "Provider" else "provider_interfaces"
+            row = projection.typed.connection.execute(
+                f"SELECT path FROM {table} "
+                "WHERE identity=? AND artifact_digest=? AND lifecycle='live'",
+                (pin.target.qualified, pin.artifact_digest),
+            ).fetchone()
+            if row is None:
+                continue
+            source = projection.typed.source(pin.target.qualified)
+            assert source is not None
+            if pin.target.kind == "Provider":
+                providers[pin.artifact_digest] = AcceptedProvider(
+                    path=row[0], provider=source, artifact_digest=pin.artifact_digest
+                )
+            else:
+                interfaces[pin.artifact_digest] = AcceptedProviderInterfaceRegistration(
+                    path=row[0], registration=source, artifact_digest=pin.artifact_digest
+                )
+    return providers, interfaces
 
 
 class ProviderRuntimeOperator:
@@ -676,7 +709,16 @@ class ProviderRuntimeOperator:
         instance: PlaybillInstance,
         *,
         accepted_oid: str,
+        pins: Sequence[ArtifactPin] = (),
     ) -> Any:
+        """An invoker for one Procedure: only the Providers and registrations it pins.
+
+        ``pins`` are the Procedure's own pins, so the invoker reads one typed row
+        per pinned version and never every Provider (several builds of one name
+        can be live; each Procedure runs the build it pins). With no Provider
+        pins it serves the core built-ins alone.
+        """
+
         with self._lock:
             self._lazy_rearm_locked()
             if self.unavailable_reason is not None:
@@ -688,42 +730,14 @@ class ProviderRuntimeOperator:
                     )
                 )
             assert self.process_leases is not None
-        coordinate = instance.coordinate_for_oid(accepted_oid)
-        with instance.bind_accepted_projection(coordinate) as projection:
-            rows = sorted(
-                (
-                    *projection.typed.envelopes(kind="provider"),
-                    *projection.typed.envelopes(kind="provider-interface"),
-                ),
-                key=lambda row: row.path.encode("utf-8"),
-            )
-            projection.typed.prefetch_members(tuple(row.path for row in rows))
-            contents = {row.path: projection.typed.member_bytes(row.path) for row in rows}
-        providers: dict[str, AcceptedProvider] = {}
-        interfaces: dict[str, AcceptedProviderInterfaceRegistration] = {}
-        for row in rows:
-            path = row.path
-            content = contents[path]
-            if row.kind == "provider":
-                provider = parse_provider(content, path=path)
-                if provider.lifecycle.state != "live":
-                    continue
-                digest = provider_digest(provider).tagged
-                providers[digest] = AcceptedProvider(
-                    path=path,
-                    provider=provider,
-                    artifact_digest=digest,
-                )
-            elif row.kind == "provider-interface":
-                registration = parse_provider_interface(content, path=path)
-                if registration.lifecycle.state != "live":
-                    continue
-                digest = provider_interface_digest(registration).tagged
-                interfaces[digest] = AcceptedProviderInterfaceRegistration(
-                    path=path,
-                    registration=registration,
-                    artifact_digest=digest,
-                )
+        selected = tuple(
+            pin for pin in pins if pin.target.kind in {"Provider", "ProviderInterface"}
+        )
+        providers, interfaces = (
+            pinned_provider_catalogs(instance, instance.coordinate_for_oid(accepted_oid), selected)
+            if selected
+            else ({}, {})
+        )
         invoker = ProviderLocalRuntimeInvoker(
             deployments_by_digest=self.deployments,
             accepted_providers_by_digest=providers,

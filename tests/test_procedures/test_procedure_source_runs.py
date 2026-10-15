@@ -202,7 +202,7 @@ class _Operator:
     def __init__(self, invoker: _WorkspaceInvoker) -> None:
         self.invoker = invoker
 
-    def invoker_for(self, instance, *, accepted_oid):  # type: ignore[no-untyped-def]
+    def invoker_for(self, instance, *, accepted_oid, pins=()):  # type: ignore[no-untyped-def]
         return self.invoker
 
     def admit_line_provider(  # type: ignore[no-untyped-def]

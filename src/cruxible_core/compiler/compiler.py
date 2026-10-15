@@ -35,6 +35,7 @@ from cruxible_core.compiler.projection_artifacts import (
     P2_B1_ARTIFACT_KINDS,
     P2_C_ARTIFACT_KINDS,
     PLAYBILL_ARTIFACT_KINDS,
+    PROVIDER_BUILDS_ARTIFACT_KINDS,
     PROVIDER_CONTRACT_ARTIFACT_KINDS,
     PROVIDER_PACKAGE_ARTIFACT_KINDS,
     RESOLUTION_ARTIFACT_KINDS,
@@ -206,6 +207,18 @@ SUBJECT_IDENTITY_COMPILER = _coordinate(
     revision_name="subject-identity-v1",
 )
 
+# Revision 34: several builds per provider name. A build is its own artifact at
+# providers/<name>/<build>.json and a contract registration its own at
+# provider-interfaces/<id>/<contract>.json, so installing a build or a changed
+# contract adds an artifact and never replaces one. Single-path Providers and
+# registrations stay readable as builds.
+PROVIDER_BUILDS_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=34,
+    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
+    revision_name="provider-builds-v1",
+)
+
 # The renderer a coordinate commits to is resolved from the coordinate itself,
 # never from a second copy of its preimage. A duplicated preimage with its own
 # revision literal silently returns None the moment the revision is succeeded,
@@ -227,6 +240,7 @@ _CARD_RENDERER_BY_COMPILER: dict[str, str] = {
     AUTHORITY_VERBS_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     GOVERNED_TRIGGERS_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     SUBJECT_IDENTITY_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
+    PROVIDER_BUILDS_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
 }
 
 
@@ -271,6 +285,7 @@ SUPPORTED_COMPILERS = (
     AUTHORITY_VERBS_COMPILER,
     GOVERNED_TRIGGERS_COMPILER,
     SUBJECT_IDENTITY_COMPILER,
+    PROVIDER_BUILDS_COMPILER,
 )
 # Immutable human-facing revision labels.  The digest remains the authority;
 # these labels are display metadata and must never be inferred from the moving
@@ -308,6 +323,7 @@ COMPILER_REVISION_LABELS = {
     AUTHORITY_VERBS_COMPILER: "authority-verbs-settle-mandates-v1",
     GOVERNED_TRIGGERS_COMPILER: "governed-triggers-v1",
     SUBJECT_IDENTITY_COMPILER: "subject-identity-v1",
+    PROVIDER_BUILDS_COMPILER: "provider-builds-v1",
 }
 PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
     {
@@ -333,17 +349,20 @@ PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
         AUTHORITY_VERBS_COMPILER,
         GOVERNED_TRIGGERS_COMPILER,
         SUBJECT_IDENTITY_COMPILER,
+        PROVIDER_BUILDS_COMPILER,
     }
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return SUBJECT_IDENTITY_COMPILER
+    return PROVIDER_BUILDS_COMPILER
 
 
 def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindRegistry:
     """Return the frozen ledger path grammar selected by one compiler."""
 
+    if compiler == PROVIDER_BUILDS_COMPILER:
+        return PROVIDER_BUILDS_ARTIFACT_KINDS
     if compiler == SUBJECT_IDENTITY_COMPILER:
         return SUBJECT_IDENTITY_ARTIFACT_KINDS
     if compiler == GOVERNED_TRIGGERS_COMPILER:
@@ -418,7 +437,7 @@ def projection_registry_for_compiler(
         AUTHORITY_VERBS_COMPILER,
     }:
         return p2c_extension_registry().with_artifact_kinds("attestation", "resolution-contract")
-    if compiler == SUBJECT_IDENTITY_COMPILER:
+    if compiler in {SUBJECT_IDENTITY_COMPILER, PROVIDER_BUILDS_COMPILER}:
         return p2c_extension_registry().with_artifact_kinds(
             "attestation", "resolution-contract", "trigger", "blueprint", "subject-kind"
         )
@@ -478,6 +497,7 @@ __all__ = [
     "AUTHORITY_VERBS_COMPILER",
     "GOVERNED_TRIGGERS_COMPILER",
     "SUBJECT_IDENTITY_COMPILER",
+    "PROVIDER_BUILDS_COMPILER",
     "RESOLUTION_COMPILER",
     "PB_B_COMPILER",
     "PB_C_COMPILER",

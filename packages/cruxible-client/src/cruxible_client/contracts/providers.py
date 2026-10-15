@@ -34,6 +34,11 @@ from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
+_BUILD_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+_DISTRIBUTION_SEPARATORS_RE = re.compile(r"[-_.]+")
+#: The format of one provider build: its own artifact at
+#: ``providers/<name>/<build>.json``, identity ``Provider:<name>/<build>``.
+PROVIDER_BUILD_FORMAT = "cruxible-provider-v4"
 _KEY_ID_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,127}$")
 _PUBLIC_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -155,11 +160,33 @@ class ProviderV1(_StrictProviderModel):
 
     @model_validator(mode="after")
     def _identity(self) -> "ProviderV1":
-        if self.identity.kind != "Provider" or not _PROVIDER_NAME_RE.fullmatch(self.identity.name):
+        # A build names its provider and build (``name/<64 hex>``); every earlier
+        # format is the single artifact of its name. ``/`` is outside the name
+        # grammar, so the two spellings never collide.
+        name, slash, build = self.identity.name.partition("/")
+        built = self.artifact_format == PROVIDER_BUILD_FORMAT
+        if (
+            self.identity.kind != "Provider"
+            or not _PROVIDER_NAME_RE.fullmatch(name)
+            or bool(slash) != built
+            or (built and not _BUILD_KEY_RE.fullmatch(build))
+        ):
             raise ValueError("Provider identity must be path-addressable")
         if self.artifact_format == "playbill-provider-v1" and not self.signing_keys:
             raise ValueError("Provider v1 signing keys must be nonempty")
         return self
+
+    @property
+    def provider_name(self) -> str:
+        """The provider this artifact is a build of: its identity without a build key."""
+
+        return self.identity.name.partition("/")[0]
+
+    @property
+    def build_key(self) -> str | None:
+        """The 64-hex build key a build is named by; None for a single-path Provider."""
+
+        return self.identity.name.partition("/")[2] or None
 
     def require_key(self, key_id: str, *, at: datetime) -> ProviderSigningKey:
         for key in self.signing_keys:
@@ -672,8 +699,8 @@ class ProviderV2(ProviderV1):
         ):
             raise ValueError("keyless Provider v2 is restricted to local materialization")
         if (
-            payload.provider_id != self.identity.name
-            or payload.manifest.provider_id != self.identity.name
+            payload.provider_id != self.provider_name
+            or payload.manifest.provider_id != self.provider_name
         ):
             raise ValueError(
                 "manifest_divergence: Provider identity does not match runtime payload"
@@ -705,17 +732,137 @@ class Provider(ProviderV2):
     runtime_artifact: ProviderRuntimeArtifactPayload
 
 
+def normalized_distribution_name(name: str) -> str:
+    """A distribution name as PEP 503 compares it: one name however it is spelled."""
+
+    return _DISTRIBUTION_SEPARATORS_RE.sub("-", name).lower()
+
+
+def provider_build_key_of(
+    *,
+    provider_id: str,
+    distribution_name: str,
+    distribution_version: str,
+    distribution_sha256: str,
+    lock_sha256: str | None,
+    image_digest: str | None = None,
+) -> ArtifactDigest:
+    """The key one build of ``provider_id`` is named by.
+
+    It covers what the build runs -- the exact wheel and the lock (or image) it
+    was built with -- and nothing a host decides: the environment a host
+    materializes the lock into is left out, so one wheel and lock name the same
+    build on every host, as a kit names it from its manifest.
+    """
+
+    return typed_digest(
+        ArtifactDigest,
+        "cruxible-provider-build-key-v1",
+        {
+            "provider_id": provider_id,
+            "distribution": {
+                "name": normalized_distribution_name(distribution_name),
+                "version": distribution_version,
+                "sha256": distribution_sha256,
+            },
+            "lock_sha256": lock_sha256,
+            "image_digest": image_digest,
+        },
+    )
+
+
+def provider_build_key(runtime: ProviderRuntimeArtifactPayloadV1) -> ArtifactDigest:
+    """The build key of one runtime artifact (``provider_build_key_of``)."""
+
+    return provider_build_key_of(
+        provider_id=runtime.provider_id,
+        distribution_name=runtime.distribution.name,
+        distribution_version=runtime.distribution.version,
+        distribution_sha256=runtime.distribution.sha256,
+        lock_sha256=None if runtime.local_env is None else runtime.local_env.lock_sha256,
+        image_digest=None if runtime.container is None else runtime.container.image_digest,
+    )
+
+
+class ProviderBuild(Provider):
+    """One build of a provider: several live side by side under one name.
+
+    Each build is its own artifact, named ``Provider:<name>/<build key>`` and
+    held at ``providers/<name>/<build key>.json``, so installing a new build adds
+    an artifact rather than replacing one, and every Procedure keeps the exact
+    build it pins. A build's runtime never changes: a successor only retires it
+    or changes its signing keys and capture declarations.
+    """
+
+    artifact_format: Literal["cruxible-provider-v4"] = "cruxible-provider-v4"  # type: ignore[assignment]
+
+    @model_validator(mode="after")
+    def _build_key_reproduces(self) -> "ProviderBuild":
+        if self.build_key != provider_build_key(self.runtime_artifact).value:
+            raise ValueError(
+                "build_key_mismatch: the identity's build key is not the key of the "
+                "runtime artifact it carries"
+            )
+        return self
+
+
 ProviderAny: TypeAlias = Annotated[
-    ProviderV1 | ProviderV2 | Provider,
+    ProviderV1 | ProviderV2 | Provider | ProviderBuild,
     Field(discriminator="artifact_format"),
 ]
 _PROVIDER_ADAPTER: TypeAdapter[ProviderAny] = TypeAdapter(ProviderAny)
 
 
+class ProviderBuildName(_StrictProviderModel):
+    """A Provider identity name split into the provider and, for a build, its key."""
+
+    name: str
+    #: The 64-hex build key; None names a single-path Provider (a built-in, or
+    #: one registered before builds), which is itself one build of its name.
+    build: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        if not _PROVIDER_NAME_RE.fullmatch(value):
+            raise ValueError("Provider name must be a canonical identifier")
+        return value
+
+    @field_validator("build")
+    @classmethod
+    def _build(cls, value: str | None) -> str | None:
+        if value is not None and not _BUILD_KEY_RE.fullmatch(value):
+            raise ValueError("a build key is 64 lowercase hex characters")
+        return value
+
+    @property
+    def identity_name(self) -> str:
+        return self.name if self.build is None else f"{self.name}/{self.build}"
+
+
+def parse_provider_build_name(identity_name: str) -> ProviderBuildName:
+    """``name`` or ``name/<64 hex>``; anything else is not a Provider identity name."""
+
+    name, slash, build = identity_name.partition("/")
+    try:
+        return ProviderBuildName(name=name, build=build if slash else None)
+    except ValueError as exc:
+        raise ProviderFormatError("Provider identity is not path-addressable") from exc
+
+
 def provider_path(name: str) -> str:
-    if not _PROVIDER_NAME_RE.fullmatch(name):
-        raise ProviderFormatError("Provider identity is not path-addressable")
-    return f"providers/{name}.json"
+    """The path of the Provider whose identity name is ``name`` (a build or single path)."""
+
+    parsed = parse_provider_build_name(name)
+    if parsed.build is None:
+        return f"providers/{parsed.name}.json"
+    return f"providers/{parsed.name}/{parsed.build}.json"
+
+
+def provider_builds_prefix(name: str) -> str:
+    """The tree prefix holding every build of ``name`` (its single path aside)."""
+
+    return f"providers/{parse_provider_build_name(name).name}/"
 
 
 def render_provider(provider: ProviderAny) -> bytes:
@@ -805,13 +952,53 @@ def _law_refusal(code: str, message: str, *, path: str) -> ProviderLawResult:
     )
 
 
+def provider_interface_pin(provider: ProviderV1, interface_id: str) -> ArtifactPin | None:
+    """The pin naming the registration ``provider`` binds for ``interface_id``.
+
+    A registration is named ``ProviderInterface:<id>`` (single path) or
+    ``ProviderInterface:<id>/<contract key>`` (one per contract), so the pin is
+    found by the interface id its target names, never by spelling the identity.
+    """
+
+    for pin in provider.pins:
+        if (
+            pin.role == "provider-interface"
+            and pin.target.kind == "ProviderInterface"
+            and pin.target.name.partition("/")[0] == interface_id
+        ):
+            return pin
+    return None
+
+
+def _build_runtime(provider: ProviderBuild) -> dict[str, object]:
+    """What a build runs: fixed for its whole lineage."""
+
+    return {
+        "control_domain": provider.control_domain,
+        "runtime_artifact": provider.runtime_artifact.model_dump(mode="json"),
+        "implementations": [item.model_dump(mode="json") for item in provider.implementations],
+        "interface_pins": [
+            item.model_dump(mode="json")
+            for item in provider.pins
+            if item.role == "provider-interface"
+        ],
+    }
+
+
 def evaluate_provider_law(
     provider: ProviderAny,
     *,
     path: str,
     predecessor: AcceptedProvider | None,
     interface_registrations: Mapping[str, object] | None = None,
+    sibling_control_domains: frozenset[str] = frozenset(),
 ) -> ProviderLawResult:
+    """Identity, path, succession and the registrations a Provider binds.
+
+    ``sibling_control_domains`` are the control domains of the other builds of
+    this provider name: a new build joins its name's one control domain.
+    """
+
     if path != provider_path(provider.identity.name):
         return _law_refusal(
             "cruxible.provider.path_mismatch",
@@ -823,6 +1010,14 @@ def evaluate_provider_law(
             return _law_refusal(
                 "cruxible.provider.predecessor_missing",
                 "A new Provider cannot name a predecessor.",
+                path=path,
+            )
+        if any(domain != provider.control_domain for domain in sibling_control_domains):
+            return _law_refusal(
+                "cruxible.provider.control_domain_differs",
+                f"Every build of {provider.provider_name} shares one control domain; this "
+                f"build names {provider.control_domain!r}, another build names "
+                f"{min(sibling_control_domains - {provider.control_domain})!r}.",
                 path=path,
             )
     else:
@@ -849,6 +1044,17 @@ def evaluate_provider_law(
                 "A Provider v2 lineage cannot be succeeded by the historical v1 wire.",
                 path=path,
             )
+        if isinstance(provider, ProviderBuild) and (
+            not isinstance(predecessor.provider, ProviderBuild)
+            or _build_runtime(provider) != _build_runtime(predecessor.provider)
+        ):
+            return _law_refusal(
+                "cruxible.provider.build_immutable",
+                "A provider build never changes what it runs: a successor may only retire "
+                "it or change its signing keys and capture declarations. Install the new "
+                "build alongside it.",
+                path=path,
+            )
     pinned_contracts = {
         pin.artifact_digest for pin in provider.pins if pin.role == "capture-contract"
     }
@@ -860,12 +1066,13 @@ def evaluate_provider_law(
         )
     if isinstance(provider, ProviderV2):
         registrations = {} if interface_registrations is None else interface_registrations
-        interface_pins = {
-            pin.target.qualified: pin for pin in provider.pins if pin.role == "provider-interface"
-        }
         for implementation in provider.runtime_artifact.manifest.implementations:
-            identity = f"ProviderInterface:{implementation.interface_id}"
-            accepted = registrations.get(identity) or registrations.get(implementation.interface_id)
+            interface_pin = provider_interface_pin(provider, implementation.interface_id)
+            accepted = registrations.get(
+                f"ProviderInterface:{implementation.interface_id}"
+                if interface_pin is None
+                else interface_pin.target.qualified
+            )
             registration = getattr(accepted, "registration", accepted)
             if registration is None:
                 return _law_refusal(
@@ -874,7 +1081,6 @@ def evaluate_provider_law(
                     path=path,
                 )
             accepted_digest = getattr(accepted, "artifact_digest", None)
-            interface_pin = interface_pins.get(identity)
             if interface_pin is None or interface_pin.artifact_digest != accepted_digest:
                 return _law_refusal(
                     "cruxible.provider.interface_pin_missing",
@@ -908,7 +1114,10 @@ def evaluate_provider_law(
 
 __all__ = [
     "AcceptedProvider",
+    "PROVIDER_BUILD_FORMAT",
     "ProviderAny",
+    "ProviderBuild",
+    "ProviderBuildName",
     "ProviderContainerBackendPin",
     "ProviderContainerMaterializationReference",
     "ProviderDistributionPin",
@@ -932,8 +1141,14 @@ __all__ = [
     "ProviderImplementationManifest",
     "ProviderLawResult",
     "evaluate_provider_law",
+    "normalized_distribution_name",
     "parse_provider",
+    "parse_provider_build_name",
+    "provider_build_key",
+    "provider_build_key_of",
+    "provider_builds_prefix",
     "provider_digest",
+    "provider_interface_pin",
     "provider_expected_implementation_records",
     "provider_implementation_digest",
     "provider_manifest_digest",

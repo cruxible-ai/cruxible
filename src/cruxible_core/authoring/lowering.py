@@ -2302,7 +2302,10 @@ def _lower_procedure(
     if source_authoring:
         from cruxible_client.contracts.procedures.source_compiler import SourceCompileError
         from cruxible_client.contracts.procedures.source_requests import ProcedureSourceRequest
-        from cruxible_core.authoring.procedure_source import resolve_indexed_source
+        from cruxible_core.authoring.procedure_source import (
+            accepted_build_resolver,
+            resolve_indexed_source,
+        )
         from cruxible_core.indexes.evaluated_state import EvaluationRows
 
         try:
@@ -2319,7 +2322,13 @@ def _lower_procedure(
                 # Child Procedures continue to resolve at the accepted base.
                 edits = {path: base_tree[path] for path in candidate_paths if path in base_tree}
                 selected = rows.overlay(edits) if edits else rows
-                compiled = resolve_indexed_source(source_request, selected)
+                # A bare provider name in a selection binds its most recently
+                # registered live build at the base; the definition pins it exactly.
+                compiled = resolve_indexed_source(
+                    source_request,
+                    selected,
+                    builds=accepted_build_resolver(instance, base, rows),
+                )
                 policy = getattr(payload, "acquisition_policy", None)
                 if policy is not None:
                     identity = "SourceAcquisitionPolicy:" + policy
@@ -2663,6 +2672,28 @@ def _lower_blueprint_instance(
         )
     providers: dict[str, AcceptedProvider] = {}
     for slot, name in sorted(instantiation.bindings.items()):
+        # A bare provider name binds its most recently registered live build; a
+        # build (``name/<build key>``) binds itself. Either way the instance
+        # pins one exact build.
+        from cruxible_core.errors import RequestRefusedError
+        from cruxible_core.providers.builds import resolve_in_tree
+
+        try:
+            name = resolve_in_tree(instance, base, base_tree, name).resolved
+        except RequestRefusedError as exc:
+            _refuse(
+                "cruxible.authoring.blueprint_provider_ambiguous"
+                if exc.error_code == "cruxible.provider.build_ambiguous"
+                else "cruxible.authoring.blueprint_provider_missing",
+                f"definition.bindings.{slot}",
+                f"Slot {slot!r}: {exc}",
+                repair_kind="replace_binding",
+                repair_description=(
+                    "Bind an installed Provider (or one exact build of it) that implements "
+                    f"the slot's interface (cruxible get Blueprint:{instantiation.blueprint} "
+                    "lists them)."
+                ),
+            )
         target = provider_path(name)
         content = base_tree.get(target)
         if content is None:

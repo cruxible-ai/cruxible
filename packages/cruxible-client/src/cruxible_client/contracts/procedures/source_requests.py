@@ -18,6 +18,7 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceMapEntry,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.provider_installation import ProviderBuildResolutionV1
 
 
 class _Closed(BaseModel):
@@ -88,6 +89,10 @@ class ProcedureSourcePreview(_Closed):
         "Admission verifies installation, authority and effective budgets.",
         "Runtime values must satisfy the pinned contracts. Preview executes no effects.",
     )
+    #: Which provider build each provider selection resolved to: a bare name
+    #: resolves to its most recently registered live build, and the compiled
+    #: definition pins that exact build.
+    provider_builds: tuple[ProviderBuildResolutionV1, ...] = ()
 
     @property
     def ready_for_prepare(self) -> bool:

@@ -2002,6 +2002,8 @@ class ProviderInterfaceImplementation(BaseModel):
     provider_identity: str
     provider_artifact_digest: str
     implementation_digest: str
+    #: The most recently registered live build of its provider name.
+    newest: bool = True
 
 
 class ProviderInterfaceEntry(BaseModel):

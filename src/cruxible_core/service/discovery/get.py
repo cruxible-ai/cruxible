@@ -650,6 +650,13 @@ def _resolve_typed(
     row = _envelope(projection, identity)
     if row is not None:
         return ResolvedRef(kind, row.identity, _display(kind, row.identity), row.path)
+    if kind == "provider_interface" and "/" not in name:
+        # A bare interface id names its most recently registered live contract.
+        newest = _newest_interface(projection, name.removeprefix("ProviderInterface:"))
+        if newest is not None:
+            row = _envelope(projection, newest)
+            if row is not None:
+                return ResolvedRef(kind, row.identity, _display(kind, row.identity), row.path)
     names = _names_of(projection, kind)
     if kind == "subject":
         match = _SUBJECT.fullmatch(name)
@@ -686,6 +693,32 @@ def _resolve_typed(
         for item in nearest(name, names)
     )
     raise _not_found(what, ref, candidates, surface=surface, section=_ORIENT_SECTION.get(kind))
+
+
+def _newest_interface(projection: Any, interface_id: str) -> str | None:
+    """The identity of ``interface_id``'s most recently registered live registration."""
+
+    from cruxible_core.providers.builds import (
+        indexed_interface_registrations,
+        newest_live,
+        registration_sequences,
+    )
+
+    rows = [
+        row
+        for row in indexed_interface_registrations(projection.typed.connection, interface_id)
+        if row.live
+    ]
+    if len(rows) <= 1 or projection.typed.history is None:
+        return rows[0].identity if len(rows) == 1 else None
+    from cruxible_core.errors import RequestRefusedError
+
+    with projection.typed.history() as history:
+        try:
+            chosen = newest_live(rows, registration_sequences(history, rows))
+        except RequestRefusedError:
+            return None
+    return None if chosen is None else chosen.identity
 
 
 def _resolve_subject_text(
@@ -1441,6 +1474,37 @@ def _provider_interface_card(
     )
 
 
+def _fitting_names(projection: Any, builds: tuple[str, ...]) -> tuple[str, ...]:
+    """How to bind each fitting build: its provider name when that is the name's
+    most recently registered live build (a bare name resolves to it), otherwise
+    the exact build."""
+
+    from cruxible_core.errors import RequestRefusedError
+    from cruxible_core.providers.builds import (
+        indexed_provider_builds,
+        newest_live,
+        registration_sequences,
+    )
+
+    names = []
+    for name in sorted({build.partition("/")[0] for build in builds}):
+        rows = [row for row in indexed_provider_builds(projection.typed.connection, name) if row.live]
+        if len(rows) > 1 and projection.typed.history is not None:
+            with projection.typed.history() as history:
+                try:
+                    newest = newest_live(rows, registration_sequences(history, rows))
+                except RequestRefusedError:
+                    newest = None
+        else:
+            newest = rows[0] if len(rows) == 1 else None
+        fitting = sorted(build for build in builds if build.partition("/")[0] == name)
+        if newest is not None and newest.identity.partition(":")[2] in fitting:
+            names.append(name)
+        else:
+            names.extend(fitting)
+    return tuple(names)
+
+
 def _pin_name(binding: Any) -> str:
     target = getattr(binding, "target", None)
     if target is not None:
@@ -1554,16 +1618,30 @@ def _blueprint_card(
 
     with instance.bind_accepted_projection(coordinate) as projection:
         blueprint = cast(BlueprintArtifact, projection.typed.source(resolved.identity))
-        providers = []
-        for row in projection.typed.envelopes(kind="provider"):
-            provider = projection.typed.source(row.identity)
-            if provider is not None and provider.lifecycle.state == "live":
-                providers.append(
-                    AcceptedProvider(
-                        path=row.path, provider=provider, artifact_digest=row.artifact_digest
-                    )
+        definition = blueprint.definition
+        fits: dict[str, tuple[str, ...]] = {}
+        for slot in definition.pin_slots:
+            # Only the live builds bound to a registration of the slot's exact
+            # contract are read (the pin index), never every Provider.
+            candidates = []
+            for (identity,) in projection.typed.connection.execute(
+                "SELECT DISTINCT p.source_identity FROM main.provider_interfaces i "
+                "JOIN main.pins p ON p.target_identity=i.identity "
+                "AND p.target_digest=i.artifact_digest AND p.edge_kind='required_pin' "
+                "JOIN main.providers r ON r.identity=p.source_identity "
+                "WHERE i.interface_digest=? AND r.lifecycle='live' ORDER BY p.source_identity",
+                (slot.interface_digest,),
+            ):
+                row = projection.typed.envelope(str(identity))
+                provider = projection.typed.source(str(identity))
+                if row is None or provider is None:
+                    continue
+                accepted = AcceptedProvider(
+                    path=row.path, provider=provider, artifact_digest=row.artifact_digest
                 )
-    definition = blueprint.definition
+                if fitting_implementation(accepted, slot) is not None:
+                    candidates.append(provider.identity.name)
+            fits[slot.slot_name] = _fitting_names(projection, tuple(candidates))
     inputs: dict[str, Any] = {"input": _pin_name(definition.contract_in)}
     if definition.parameter_contract is not None:
         inputs["parameters"] = _pin_name(definition.parameter_contract)
@@ -1574,13 +1652,7 @@ def _blueprint_card(
             GetBlueprintSlot(
                 slot=slot.slot_name,
                 interface="" if interface is None else interface.target.qualified,
-                fits=tuple(
-                    sorted(
-                        item.provider.identity.name
-                        for item in providers
-                        if fitting_implementation(item, slot) is not None
-                    )
-                ),
+                fits=fits[slot.slot_name],
             )
         )
     name = _name(resolved.identity)

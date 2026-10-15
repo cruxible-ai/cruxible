@@ -42,6 +42,7 @@ from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_core.claims.artifact_references import (
+    ProviderBuildMove,
     movable_references,
     move_references,
     reference_fields,
@@ -593,6 +594,7 @@ def _canonical_successor_bytes(
     claim_effective_until: datetime | None = None,
     typed_references: bool = False,
     move_graphs: bool = False,
+    builds: Mapping[str, ProviderBuildMove] | None = None,
 ) -> bytes:
     """Return the exact successor bytes one dependent takes under its disposition.
 
@@ -694,7 +696,7 @@ def _canonical_successor_bytes(
         payload = None
     elif supplied is None:
         payload = (
-            move_references(current.path, json.loads(content), replacements)
+            move_references(current.path, json.loads(content), replacements, builds)
             if typed_references
             else _replace_exact_digests(json.loads(content), replacements)
         )
@@ -1036,8 +1038,14 @@ def build_dependent_closure_candidate(
     inventory: tuple[ClaimTypeMigrationInventoryItemV1, ...],
     dispositions: tuple[ClaimTypeDependentDisposition, ...],
     move_graphs: bool = False,
+    builds: Mapping[str, ProviderBuildMove] | None = None,
+    unmoved: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, bytes], tuple[ClaimTypeMigrationDispositionV3, ...]]:
     """Settle the closure of several changed definitions as one generation.
+
+    ``builds`` (old provider build identity -> move) also moves each dependent
+    Procedure's occurrences bound to an old build onto its new build, except the
+    dependents named in ``unmoved``, which keep the builds they pin.
 
     The multi-root form of `build_claim_type_migration_candidate`, with the
     same per-dependent law: every dependent is read at its ACCEPTED bytes, so
@@ -1104,6 +1112,7 @@ def build_dependent_closure_candidate(
             claim_effective_until=entry.claim_effective_until,
             typed_references=True,
             move_graphs=move_graphs,
+            builds=None if identity in unmoved else builds,
         )
         writes[row.path] = content
         overlay[row.path] = content

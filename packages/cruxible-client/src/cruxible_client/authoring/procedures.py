@@ -132,9 +132,20 @@ class ProviderBinding(BaseModel):
         identity = (
             None if provider is None else _accepted(provider, "Provider", "provider")["target"]
         )
+        # A bare provider name selects any build of that name; an exact build
+        # (``name/<build key>``) selects itself.
         matches = [
-            p for p in entry.providers if identity is None or p.provider_identity == identity
+            p
+            for p in entry.providers
+            if identity is None
+            or p.provider_identity == identity
+            or ("/" not in identity and p.provider_identity.partition("/")[0] == identity)
         ]
+        names = {p.provider_identity.partition("/")[0] for p in matches}
+        if len(matches) > 1 and len(names) == 1:
+            # Several builds of one name: the bare name selects its most
+            # recently registered live build.
+            matches = [p for p in matches if p.newest]
         if len(matches) != 1:
             raise ValueError("Select exactly one registered provider for this interface")
         selected = matches[0]

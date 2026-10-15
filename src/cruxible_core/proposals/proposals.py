@@ -232,10 +232,13 @@ from cruxible_client.contracts.provider_interfaces import (
 )
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
+    ProviderAny,
     ProviderFormatError,
     evaluate_provider_law,
     parse_provider,
+    provider_builds_prefix,
     provider_digest,
+    provider_path,
 )
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
@@ -305,7 +308,7 @@ from cruxible_core.compiler.compiler import (
     candidate_card_renderer_digest_for_compiler,
     projection_registry_for_compiler,
 )
-from cruxible_core.derived.derived_state import SnapshotTree, snapshot_against
+from cruxible_core.derived.derived_state import SnapshotTree, paths_with_prefix, snapshot_against
 from cruxible_core.exhaust.promotions import (
     AcceptedExhaustPromotionV1,
     ExhaustPromotionError,
@@ -412,8 +415,12 @@ class _AttestationPrincipalReader:
 
 _ATTESTATION_PATH_RE = re.compile(r"^attestations/[0-9a-f]{2}/[0-9a-f]{64}\.json$")
 _CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.json$")
-_PROVIDER_PATH_RE = re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}\.json$")
-_PROVIDER_INTERFACE_PATH_RE = re.compile(r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}\.json$")
+# A single-path Provider or registration, or one build / contract registration
+# (compiler revision 34); the path grammar decides which a coordinate admits.
+_PROVIDER_PATH_RE = re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$")
+_PROVIDER_INTERFACE_PATH_RE = re.compile(
+    r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$"
+)
 _SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
     r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.json$"
 )
@@ -2624,6 +2631,23 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _sibling_control_domains(
+    tree: Mapping[str, bytes], provider: ProviderAny, path: str
+) -> frozenset[str]:
+    """The control domains of the other builds of ``provider``'s name in ``tree``.
+
+    One prefix range plus the name's single path: O(builds of one name).
+    """
+
+    name = provider.provider_name
+    paths = [*paths_with_prefix(tree, provider_builds_prefix(name)), provider_path(name)]
+    return frozenset(
+        parse_provider(content, path=sibling).control_domain
+        for sibling in paths
+        if sibling != path and (content := tree.get(sibling)) is not None
+    )
+
+
 def _provider_member(context: _MemberContext) -> _MemberVerdict:
     provider = parse_provider(context.content, path=context.path)
     predecessor: AcceptedProvider | None = None
@@ -2639,6 +2663,11 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
         path=context.path,
         predecessor=predecessor,
         interface_registrations=context.resolved.provider_interfaces,
+        sibling_control_domains=(
+            _sibling_control_domains(context.candidate_tree, provider, context.path)
+            if predecessor is None
+            else frozenset()
+        ),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -3430,6 +3459,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         AUTHORITY_VERBS_COMPILER,
         CLAIM_EVIDENCE_COMPILER,
         GOVERNED_TRIGGERS_COMPILER,
+        PROVIDER_BUILDS_COMPILER,
         SOURCE_CHECKED_COMPILER,
         SUBJECT_IDENTITY_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
@@ -3442,6 +3472,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         AUTHORITY_VERBS_COMPILER,
         GOVERNED_TRIGGERS_COMPILER,
         SUBJECT_IDENTITY_COMPILER,
+        PROVIDER_BUILDS_COMPILER,
     }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())

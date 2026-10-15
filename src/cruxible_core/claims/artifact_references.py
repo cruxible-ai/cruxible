@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel
@@ -21,6 +22,12 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+from cruxible_client.contracts.procedures.models import (
+    CallNode,
+    RepeatBodyNode,
+    SourceNode,
+    iter_pin_bindings,
+)
 from cruxible_client.contracts.procedures.source_program import (
     ProcedureSourceProgram,
     SourceClaimType,
@@ -148,8 +155,80 @@ def _source_versions(source: ProcedureSourceProgram | None) -> Iterator[str]:
     yield from source.capture_contracts.values()
 
 
-def _moved(value: Any, remap: Mapping[str, str]) -> Any:
-    """``value`` with every pin and source version string moved through ``remap``."""
+class ProviderBuildMoveRefused(ValueError):
+    """An occurrence cannot move to the target build: it implements none of the
+    exact contracts the occurrence uses (``reason`` = ``contract_changed``)."""
+
+    def __init__(self, message: str, *, reason: str = "contract_changed") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class ProviderBuildMove:
+    """Move every occurrence bound to one provider build onto another build.
+
+    Unlike a digest remap this moves the pin's target identity too: the old and
+    new builds are different artifacts (``Provider:<name>/<build key>``). Each
+    occurrence moves to the new build's implementation of the same interface
+    contract, and to the registration the new build binds for it.
+    """
+
+    source: ArtifactPin
+    target: ArtifactPin
+    #: Old implementation digest -> the new build's implementation of the same
+    #: interface id and interface digest.
+    implementations: Mapping[str, str] = field(default_factory=dict)
+    #: Old registration artifact digest -> the registration pin the new build binds.
+    interfaces: Mapping[str, ArtifactPin] = field(default_factory=dict)
+
+
+def _moved_occurrence(value: Any, move: ProviderBuildMove) -> dict[str, Any]:
+    implementation = move.implementations.get(value.implementation_digest)
+    interface = move.interfaces.get(value.interface.artifact_digest)
+    if implementation is None or interface is None:
+        raise ProviderBuildMoveRefused(
+            f"{move.target.target.name} implements no exact contract of "
+            f"{value.interface.target.name} that this occurrence uses"
+        )
+    return {
+        "provider": move.target,
+        "implementation_digest": implementation,
+        "interface": interface,
+    }
+
+
+def _moved_binding(value: SourceProviderBinding, move: ProviderBuildMove) -> dict[str, Any]:
+    implementation = move.implementations.get(value.implementation_digest)
+    interface = move.interfaces.get(value.interface_version)
+    if implementation is None or interface is None:
+        raise ProviderBuildMoveRefused(
+            f"{move.target.target.name} implements no exact contract of {value.interface} "
+            "that this source binding uses"
+        )
+    return {
+        "provider": move.target.target.name,
+        "provider_version": move.target.artifact_digest,
+        "implementation_digest": implementation,
+        "interface": interface.target.name,
+        "interface_version": interface.artifact_digest,
+    }
+
+
+def _build_move(pin: Any, builds: Mapping[str, ProviderBuildMove]) -> ProviderBuildMove | None:
+    if not isinstance(pin, ArtifactPin):
+        return None
+    move = builds.get(pin.target.qualified)
+    return move if move is not None and move.source.artifact_digest == pin.artifact_digest else None
+
+
+def _moved(
+    value: Any,
+    remap: Mapping[str, str],
+    builds: Mapping[str, ProviderBuildMove] | None = None,
+) -> Any:
+    """``value`` with every pin and source version string moved through ``remap``,
+    and every occurrence bound to a moved provider build moved to its new build."""
 
     def move(digest: str) -> str:
         return remap.get(digest, digest)
@@ -164,11 +243,32 @@ def _moved(value: Any, remap: Mapping[str, str]) -> Any:
     if isinstance(value, BlueprintOrigin):
         return value
     updates: dict[str, Any] = {}
+    if builds and isinstance(value, SourceNode | CallNode | RepeatBodyNode):
+        occurrence_move = _build_move(value.provider, builds)
+        if occurrence_move is not None:
+            updates = _moved_occurrence(value, occurrence_move)
     if isinstance(value, SourceProviderBinding):
-        updates = {
-            "provider_version": move(value.provider_version),
-            "interface_version": move(value.interface_version),
-        }
+        binding_move = (
+            None
+            if not builds
+            else next(
+                (
+                    item
+                    for item in builds.values()
+                    if item.source.target.name == value.provider
+                    and item.source.artifact_digest == value.provider_version
+                ),
+                None,
+            )
+        )
+        updates = (
+            _moved_binding(value, binding_move)
+            if binding_move is not None
+            else {
+                "provider_version": move(value.provider_version),
+                "interface_version": move(value.interface_version),
+            }
+        )
     elif isinstance(value, SourceSlotBinding):
         updates = {"interface_version": move(value.interface_version)}
     elif isinstance(value, SourceQueryBinding | SourceProcedureBinding | SourceClaimType):
@@ -184,18 +284,18 @@ def _moved(value: Any, remap: Mapping[str, str]) -> Any:
             if name in updates:
                 continue
             item = getattr(value, name)
-            moved_item = _moved(item, remap)
+            moved_item = _moved(item, remap, builds)
             if moved_item is not item:
                 updates[name] = moved_item
         changed = {name: item for name, item in updates.items() if item != getattr(value, name)}
         return value.model_copy(update=changed) if changed else value
     if isinstance(value, tuple | list):
-        items = [_moved(item, remap) for item in value]
+        items = [_moved(item, remap, builds) for item in value]
         if all(new is old for new, old in zip(items, value, strict=True)):
             return value
         return type(value)(items)
     if isinstance(value, dict):
-        moved_values = {key: _moved(item, remap) for key, item in value.items()}
+        moved_values = {key: _moved(item, remap, builds) for key, item in value.items()}
         if all(moved_values[key] is value[key] for key in value):
             return value
         return moved_values
@@ -211,21 +311,37 @@ def _graph_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
     yield from _source_versions(graph.definition.source)
 
 
-def _move_graph(path: str, payload: Mapping[str, Any], remap: Mapping[str, str]) -> dict[str, Any]:
+_OCCURRENCE_PIN_ROLES = frozenset({"provider", "provider-interface"})
+
+
+def _move_graph(
+    path: str,
+    payload: Mapping[str, Any],
+    remap: Mapping[str, str],
+    builds: Mapping[str, ProviderBuildMove] | None = None,
+) -> dict[str, Any]:
     model = _graph_model(path)
     assert model is not None
     graph = model.model_validate(payload)
-    definition = _moved(graph.definition, remap)
-    pins = tuple(
-        sorted(
-            (_moved(pin, remap) for pin in graph.pins),
-            key=lambda pin: (
-                pin.role.encode("utf-8"),
-                pin.target.qualified.encode("utf-8"),
-                pin.artifact_digest.encode("ascii"),
-            ),
-        )
-    )
+    definition = _moved(graph.definition, remap, builds)
+    moved_pins = [_moved(pin, remap) for pin in graph.pins]
+    if builds and definition is not graph.definition:
+        # The Provider and interface pins are exactly the ones the occurrences
+        # name: after a build move, read them again from the moved definition.
+        moved_pins = [pin for pin in moved_pins if pin.role not in _OCCURRENCE_PIN_ROLES] + [
+            pin
+            for pin in iter_pin_bindings(definition)
+            if isinstance(pin, ArtifactPin) and pin.role in _OCCURRENCE_PIN_ROLES
+        ]
+    unique = {
+        (
+            pin.role.encode("utf-8"),
+            pin.target.qualified.encode("utf-8"),
+            pin.artifact_digest.encode("ascii"),
+        ): pin
+        for pin in moved_pins
+    }
+    pins = tuple(unique[key] for key in sorted(unique))
     moved = model.model_validate(
         {
             **graph.model_dump(mode="json", by_alias=True),
@@ -303,12 +419,20 @@ def referenced_digests(path: str, payload: Mapping[str, Any]) -> Iterator[str]:
 
 
 def move_references(
-    path: str, payload: Mapping[str, Any], remap: Mapping[str, str]
+    path: str,
+    payload: Mapping[str, Any],
+    remap: Mapping[str, str],
+    builds: Mapping[str, ProviderBuildMove] | None = None,
 ) -> dict[str, Any]:
-    """A copy of ``payload`` with its reference fields moved through ``remap``."""
+    """A copy of ``payload`` with its reference fields moved through ``remap``.
+
+    ``builds`` (old build identity -> move) also moves a Procedure's occurrences
+    bound to an old provider build onto the new build; it raises
+    ``ProviderBuildMoveRefused`` when the new build lacks a contract one uses.
+    """
 
     if path.startswith(_GRAPH_FAMILIES):
-        return _move_graph(path, payload, remap)
+        return _move_graph(path, payload, remap, builds)
     fields = reference_fields(path)
     if fields is None:
         raise ValueError(f"{path} has no reference table; it cannot be re-pinned automatically")

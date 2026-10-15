@@ -117,6 +117,10 @@ class ProviderInstallResult(_Strict):
     not_run: tuple[ProviderInstallPreviewStep, ...] = ()
     #: The accepted coordinate a preview evaluated at; commit it with ``at``.
     coordinate: AcceptedCoordinate | None = None
+    #: The build this install registers (``name/<build key>``), once the package
+    #: is prepared. Installing adds this build beside any other build of the
+    #: name; every Procedure keeps the build it pins.
+    build: str | None = None
 
     @model_validator(mode="after")
     def _preview_label(self) -> "ProviderInstallResult":
@@ -137,13 +141,22 @@ class ProviderPackageSummary(_Strict):
 
 
 class InstalledProvider(_Strict):
-    """One live Provider at the accepted head: what is installed here, and what it implements."""
+    """One live provider build at the accepted head: what it runs and implements."""
 
+    #: The provider name; several builds of one name can be live together.
     provider: str
     #: The distribution it runs, when it runs one (the built-in runs inside core).
     package: str | None = None
     version: str | None = None
     interfaces: tuple[str, ...]
+    #: The build's identity name (``name/<build key>``, or the bare name of a
+    #: single-path Provider such as the built-in).
+    build: str
+    #: The most recently registered live build of its name: what new authoring
+    #: and unpinned references resolve to.
+    newest: bool = True
+    #: Live definitions pinning this exact build; a build is retired only at 0.
+    pinned_by: int = 0
 
 
 class ProviderCatalog(_Strict):
@@ -153,3 +166,145 @@ class ProviderCatalog(_Strict):
     installed: tuple[InstalledProvider, ...] = ()
     packages: tuple[ProviderPackageSummary, ...] = ()
     detail: str | None = None
+
+
+class ProviderBuildSummaryV1(_Strict):
+    """One build of a provider name, as resolution and the build verbs see it."""
+
+    tag: Literal["cruxible-provider-build-summary-v1"] = "cruxible-provider-build-summary-v1"
+    #: The build's identity name: ``name/<build key>``, or a single-path name.
+    build: str
+    version: str | None = None
+    state: Literal["live", "retired"]
+    newest: bool = False
+    #: Live definitions pinning this exact build.
+    pinned_by: int = 0
+
+
+#: How a provider reference resolved: ``exact`` (it named one build) or
+#: ``most_recently_registered`` (a bare name: the live build registered last).
+ProviderBuildRule = Literal["exact", "most_recently_registered"]
+
+
+class ProviderBuildResolutionV1(_Strict):
+    """Which build a provider reference resolved to, and from what."""
+
+    tag: Literal["cruxible-provider-build-resolution-v1"] = "cruxible-provider-build-resolution-v1"
+    requested: str
+    rule: ProviderBuildRule
+    #: The build's identity name and exact artifact digest: what gets pinned.
+    resolved: str
+    artifact_digest: str
+    version: str | None = None
+    #: The live builds the rule chose among (one for an exact reference).
+    considered: tuple[ProviderBuildSummaryV1, ...] = ()
+    coordinate: AcceptedCoordinate
+
+    @field_validator("artifact_digest")
+    @classmethod
+    def _artifact_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+#: Why one definition was not moved to a build: ``contract_changed`` (the build
+#: implements none of its interfaces' exact contracts), ``not_movable`` (its
+#: family cannot be re-pinned automatically, or its Blueprint cannot be
+#: instantiated again), ``keep_build`` (the request kept it on its build).
+ProviderRepinReason = Literal["contract_changed", "not_movable", "keep_build"]
+
+
+class ProviderRepinV1(_Strict):
+    """One live definition moved (or not) from a provider build to another."""
+
+    tag: Literal["cruxible-provider-repin-v1"] = "cruxible-provider-repin-v1"
+    #: The definition (``Procedure:<name>`` or ``Blueprint:<name>``).
+    identity: str
+    from_build: str
+    to_build: str
+    action: Literal["successor", "kept", "refused"]
+    reason: ProviderRepinReason | None = None
+
+    @model_validator(mode="after")
+    def _reason(self) -> "ProviderRepinV1":
+        if (self.action == "successor") != (self.reason is None):
+            raise ValueError("a re-pin names a reason exactly when it does not move")
+        return self
+
+
+class StoppedAutomationV1(_Strict):
+    """A Line, Trigger or Mandate a re-pin retires: it pinned the moved definition's
+    old version and cannot be carried to the new one, so its automation stops.
+    Author it again over the moved definition to resume it."""
+
+    tag: Literal["cruxible-stopped-automation-v1"] = "cruxible-stopped-automation-v1"
+    identity: str
+    kind: Literal["line", "trigger", "mandate"]
+    #: The moved definition whose re-pin stops it.
+    stopped_by: str
+
+
+class ProviderRetireRequest(_Strict):
+    """Retire one provider build: new authoring and unpinned references stop
+    resolving to it. Refused while any live definition pins it; its runtime
+    environment stays, so what ran on it stays replayable."""
+
+    #: The exact build: ``name/<build key>`` (or a single-path Provider's name).
+    build: str
+    dry_run: DryRun = None
+    at: PreviewAt = None
+
+
+class ProviderRetireResult(_Strict):
+    tag: Literal["cruxible-provider-retire-result-v1"] = "cruxible-provider-retire-result-v1"
+    build: str
+    status: Literal["would_retire", "retired", "proposed", "blocked", "would_block", "unchanged"]
+    #: The live definitions pinning the build, when that blocks it.
+    pinned_by: tuple[str, ...] = ()
+    proposal_id: str | None = None
+    approval_required: bool = False
+    detail: str | None = None
+    coordinate: AcceptedCoordinate | None = None
+
+
+class ProviderMoveRequest(_Strict):
+    """Move the live definitions pinning other builds of one provider to one build,
+    as one governed change: each moves to the build's exact implementation of
+    the contract it uses, and its dependents are carried with it."""
+
+    provider: str
+    #: ``newest`` (the most recently registered live build) or one exact build,
+    #: by its build key or ``name/<build key>``.
+    to: str = "newest"
+    #: Only these definitions (``Procedure:<name>``); empty moves every live
+    #: definition pinning another build of the provider.
+    only: tuple[str, ...] = ()
+    dry_run: DryRun = None
+    at: PreviewAt = None
+
+    @field_validator("only")
+    @classmethod
+    def _only(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value))):
+            raise ValueError("only must be sorted and unique")
+        for identity in value:
+            kind, separator, name = identity.partition(":")
+            if not separator or kind not in {"Procedure", "Blueprint"} or not name:
+                raise ValueError("only names definitions as Procedure:NAME or Blueprint:NAME")
+        return value
+
+
+class ProviderMoveResult(_Strict):
+    tag: Literal["cruxible-provider-move-result-v1"] = "cruxible-provider-move-result-v1"
+    provider: str
+    to: ProviderBuildResolutionV1
+    moved: tuple[ProviderRepinV1, ...] = ()
+    #: Automation the move stops (carrying it is not automatic yet).
+    stops: tuple[StoppedAutomationV1, ...] = ()
+    #: Other live dependents carried (re-pinned) with the moved definitions.
+    carried_dependents: int = 0
+    status: Literal["unchanged", "would_propose", "would_block", "proposed", "accepted", "blocked"]
+    proposal_id: str | None = None
+    approval_required: bool = False
+    detail: str | None = None
+    coordinate: AcceptedCoordinate | None = None
