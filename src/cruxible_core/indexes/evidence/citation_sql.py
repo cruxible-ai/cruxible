@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC, ArtifactCodec
 from cruxible_client.contracts.captures import (
@@ -33,6 +33,7 @@ from cruxible_core.evidence.citation_relations import (
     _same_version_span_key,
     external_source_relation_subject,
 )
+from cruxible_core.indexes.sql_batch import execute_in, insert_rows, select_in
 
 OwnerKind = Literal["Claim", "attestation"]
 OwnerExists = Callable[[str, str], bool]
@@ -228,6 +229,7 @@ def populate_citations(
     # this call can remove it before a later owner cites it again.
     envelopes: dict[str, CaptureEnvelopeAny] = {}
     groups_of: dict[str, list[tuple[str, str]]] = {}
+    claims: list[tuple[str, Any]] = []
 
     def insert_capture(digest: str) -> CaptureEnvelopeAny:
         envelope = envelopes.get(digest)
@@ -264,32 +266,43 @@ def populate_citations(
             identity = claim.identity.qualified
             if not owner_exists("Claim", identity):
                 raise ProjectionFormatError("citation Claim owner is not published")
-            old_captures = [
-                r[0]
-                for r in connection.execute(
-                    "SELECT capture_digest FROM citation_uses "
-                    "WHERE owner_kind='Claim' AND owner_key=?",
-                    (identity,),
-                )
-            ]
-            connection.execute(
-                "DELETE FROM citation_group_members WHERE claim_identity=?", (identity,)
+            claims.append((identity, claim))
+        # Every changed Claim's old relationships go, then all new ones are written,
+        # one statement per table: the rows the per-Claim statements left, with no
+        # cleanup able to remove a Capture a later Claim of this call cites.
+        owned = [identity for identity, _claim in claims]
+        old_captures = [
+            r[0]
+            for r in select_in(
+                connection,
+                "SELECT capture_digest FROM citation_uses "
+                "WHERE owner_kind='Claim' AND owner_key IN ({})",
+                owned,
             )
-            connection.execute(
-                "DELETE FROM citation_uses WHERE owner_kind='Claim' AND owner_key=?", (identity,)
-            )
+        ]
+        execute_in(
+            connection, "DELETE FROM citation_group_members WHERE claim_identity IN ({})", owned
+        )
+        execute_in(
+            connection,
+            "DELETE FROM citation_uses WHERE owner_kind='Claim' AND owner_key IN ({})",
+            owned,
+        )
+        uses: list[tuple[object, ...]] = []
+        members: list[tuple[object, ...]] = []
+        for identity, claim in claims:
             for reference in claim_citation_references(claim):
                 digest = reference.capture_digest
                 envelope = insert_capture(digest)
-                connection.execute(
-                    "INSERT INTO citation_uses VALUES ('Claim',?,?,?,?,?)",
+                uses.append(
                     (
+                        "Claim",
                         identity,
                         reference.citation_id,
                         digest,
                         getattr(reference, "origin", "legacy"),
                         getattr(reference, "role", "legacy"),
-                    ),
+                    )
                 )
                 groups = groups_of.get(digest)
                 if groups is None:
@@ -304,11 +317,10 @@ def populate_citations(
                         if span is not None:
                             groups.append(("same_version_span", span[0]))
                     groups_of[digest] = groups
-                connection.executemany(
-                    "INSERT INTO citation_group_members VALUES (?,?,?,?)",
-                    [(kind, key, identity, reference.citation_id) for kind, key in groups],
-                )
-            _cleanup_captures(connection, old_captures)
+                members.extend((kind, key, identity, reference.citation_id) for kind, key in groups)
+        insert_rows(connection, "citation_uses", uses)
+        insert_rows(connection, "citation_group_members", members)
+        _cleanup_captures(connection, old_captures)
         connection.execute("RELEASE populate_citations")
     except BaseException:
         connection.execute("ROLLBACK TO populate_citations")

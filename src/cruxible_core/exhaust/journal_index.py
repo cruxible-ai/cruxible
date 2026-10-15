@@ -42,7 +42,7 @@ _R = TypeVar("_R")
 #: Bumped whenever a table or index changes shape: an index file written under
 #: another version is dropped and rebuilt from the retained journal, which is
 #: the authority (this file is a disposable cache).
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 _TABLES = (
     "capture_selectors",
     "capture_progress",
@@ -96,10 +96,6 @@ CREATE TABLE IF NOT EXISTS invocation_pending (
  record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
  stream TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS invocation_pending_stream ON invocation_pending(stream, record_id);
-CREATE TRIGGER IF NOT EXISTS records_invocation_started AFTER INSERT ON records
- WHEN new.event_kind='provider_invocation_started' BEGIN
- INSERT INTO invocation_pending VALUES(new.id, new.stream);
-END;
 -- Admissions whose run has no attempt_finalized record yet, keyed by the
 -- admission row: running runs are read without visiting finished ones.
 CREATE TABLE IF NOT EXISTS open_runs (
@@ -114,20 +110,26 @@ CREATE TABLE IF NOT EXISTS run_tallies (
  stream TEXT NOT NULL, partition_id TEXT NOT NULL, admitted INTEGER NOT NULL,
  PRIMARY KEY(stream, partition_id));
 -- Triggers keep both current on every insert and delete of an indexed record,
--- including a partition rebuilt after replacement.
-CREATE TRIGGER IF NOT EXISTS records_admitted AFTER INSERT ON records
- WHEN new.event_kind='admission_bound' AND new.run_id IS NOT NULL BEGIN
- INSERT INTO run_tallies VALUES(new.stream,new.partition_id,1)
+-- including a partition rebuilt after replacement. One trigger per event serves
+-- every kind (each statement guarded by its kind), so an insert runs one
+-- trigger program, not one per kind it might be.
+CREATE TRIGGER IF NOT EXISTS records_inserted AFTER INSERT ON records
+ WHEN new.event_kind IN ('provider_invocation_started','admission_bound','attempt_finalized')
+ BEGIN
+ INSERT INTO invocation_pending SELECT new.id, new.stream
+  WHERE new.event_kind='provider_invocation_started';
+ INSERT INTO run_tallies SELECT new.stream,new.partition_id,1
+  WHERE new.event_kind='admission_bound' AND new.run_id IS NOT NULL
   ON CONFLICT(stream,partition_id) DO UPDATE SET admitted=admitted+1;
- INSERT INTO run_tallies VALUES(new.stream,'',1)
+ INSERT INTO run_tallies SELECT new.stream,'',1
+  WHERE new.event_kind='admission_bound' AND new.run_id IS NOT NULL
   ON CONFLICT(stream,partition_id) DO UPDATE SET admitted=admitted+1;
  INSERT INTO open_runs SELECT new.id,new.stream,new.partition_id,new.run_id
-  WHERE NOT EXISTS(SELECT 1 FROM records f WHERE f.stream=new.stream
+  WHERE new.event_kind='admission_bound' AND new.run_id IS NOT NULL
+  AND NOT EXISTS(SELECT 1 FROM records f WHERE f.stream=new.stream
   AND f.run_id=new.run_id AND f.event_kind='attempt_finalized');
-END;
-CREATE TRIGGER IF NOT EXISTS records_finalized AFTER INSERT ON records
- WHEN new.event_kind='attempt_finalized' AND new.run_id IS NOT NULL BEGIN
- DELETE FROM open_runs WHERE stream=new.stream AND run_id=new.run_id;
+ DELETE FROM open_runs WHERE new.event_kind='attempt_finalized' AND new.run_id IS NOT NULL
+  AND stream=new.stream AND run_id=new.run_id;
 END;
 CREATE TRIGGER IF NOT EXISTS records_unadmitted AFTER DELETE ON records
  WHEN old.event_kind='admission_bound' AND old.run_id IS NOT NULL BEGIN

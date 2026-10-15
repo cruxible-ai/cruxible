@@ -48,6 +48,7 @@ from cruxible_core.indexes.acquisition import (
     WorkingDatabaseChangedError,
     open_working_snapshot,
 )
+from cruxible_core.indexes.sql_batch import insert_rows
 from cruxible_core.ledger.recovery import RecoveredInstanceState
 from cruxible_core.proposals.settlement import (
     ChangeSetRecord,
@@ -1786,9 +1787,7 @@ class AcceptedHistoryIndex:
                 connection.execute(
                     "DELETE FROM artifact_versions WHERE occurrence_sequence=?", (position,)
                 )
-                connection.executemany(
-                    "INSERT INTO artifact_versions VALUES (?,?,?,?,?,?)", versions
-                )
+                insert_rows(connection, "artifact_versions", versions)
                 self.generations_written += 1
                 self.artifact_rows_written += len(versions)
             members = []
@@ -1822,9 +1821,7 @@ class AcceptedHistoryIndex:
                 connection.execute(
                     "DELETE FROM accepted_member_locations WHERE sequence=?", (position,)
                 )
-                connection.executemany(
-                    "INSERT INTO accepted_member_locations VALUES (?,?,?,?,?,?,?)", members
-                )
+                insert_rows(connection, "accepted_member_locations", members)
         from cruxible_core.indexes.proposals.proposal_index import refresh_acceptance
 
         # The proposal component's acceptance marker is derived from the

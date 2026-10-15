@@ -23,6 +23,7 @@ from collections.abc import Mapping
 from cruxible_client.contracts.canonical import LogicalDigest, typed_digest
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.indexes.projection import PROJECTION_STORAGE_SCHEMA_VERSION
+from cruxible_core.indexes.sql_batch import insert_rows
 
 LOGICAL_DIGEST_DOMAIN = "playbill-projection-logical-v4"
 ROW_DOMAIN = b"playbill-projection-logical-v4-row\x00"
@@ -53,6 +54,12 @@ def row_term(table: str, row: tuple[object, ...] | list[object]) -> int:
     return int.from_bytes(hashlib.shake_128(ROW_DOMAIN + encoded).digest(_BYTES), "little")
 
 
+#: A table's columns by its name and exact ``CREATE TABLE`` text, which fixes them:
+#: read once per process, not once per table per publication.
+_COLUMNS: dict[tuple[str, str], tuple[str, ...]] = {}
+_COLUMNS_CAPACITY = 4096
+
+
 def logical_tables(connection: sqlite3.Connection) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
     """(name, sql, columns) of every logical table, in schema order."""
 
@@ -63,10 +70,16 @@ def logical_tables(connection: sqlite3.Connection) -> tuple[tuple[str, str, tupl
     ):
         if name in NON_LOGICAL_TABLES:
             continue
-        columns = tuple(
-            str(row[1]) for row in connection.execute(f"PRAGMA main.table_info({name})")
-        )
-        tables.append((str(name), str(sql), columns))
+        key = (str(name), str(sql))
+        columns = _COLUMNS.get(key)
+        if columns is None:
+            columns = tuple(
+                str(row[1]) for row in connection.execute(f"PRAGMA main.table_info({name})")
+            )
+            if len(_COLUMNS) >= _COLUMNS_CAPACITY:
+                _COLUMNS.clear()
+            _COLUMNS[key] = columns
+        tables.append((key[0], key[1], columns))
     return tuple(tables)
 
 
@@ -94,12 +107,13 @@ def stored_table_sums(connection: sqlite3.Connection) -> TableSums:
 
 def store_table_sums(connection: sqlite3.Connection, sums: Mapping[str, tuple[int, int]]) -> None:
     connection.execute("DELETE FROM main.logical_accumulators")
-    connection.executemany(
-        "INSERT INTO main.logical_accumulators VALUES (?,?,?)",
-        (
+    insert_rows(
+        connection,
+        "main.logical_accumulators",
+        [
             (name, count, total.to_bytes(_BYTES, "little"))
             for name, (count, total) in sorted(sums.items())
-        ),
+        ],
     )
 
 
@@ -146,49 +160,53 @@ class RowDeltaRecorder:
     TEMP objects live outside the database file, so the published schema is
     unchanged. Foreign-key actions fire triggers, and ``recursive_triggers``
     makes REPLACE-conflict deletions fire them too, so no row change escapes.
+    Every table logs into one TEMP table, each row tagged with its table's
+    position and padded to the widest table; they go with the connection.
     """
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
         self._tables = logical_tables(connection)
         connection.execute("PRAGMA recursive_triggers=ON")
+        width = max((len(columns) for _name, _sql, columns in self._tables), default=0)
+        # Untyped columns keep each value's storage class exactly.
+        connection.execute(
+            "CREATE TEMP TABLE _row_delta (t, sign" + "".join(f", c{i}" for i in range(width)) + ")"
+        )
         for index, (name, _sql, columns) in enumerate(self._tables):
             # Trigger bodies may not qualify table names; TEMP resolves first.
-            log = f"_row_delta_{index}"
-            old = ",".join(f'OLD."{column}"' for column in columns)
-            new = ",".join(f'NEW."{column}"' for column in columns)
-            # Untyped columns keep each value's storage class exactly.
-            connection.execute(
-                f"CREATE TEMP TABLE {log} (sign, {','.join(f'c{i}' for i in range(len(columns)))})"
-            )
+            into = "_row_delta (t, sign" + "".join(f", c{i}" for i in range(len(columns))) + ")"
+            old = "".join(f',OLD."{column}"' for column in columns)
+            new = "".join(f',NEW."{column}"' for column in columns)
             connection.execute(
                 f"CREATE TEMP TRIGGER _row_delta_{index}_i AFTER INSERT ON {name} "
-                f"BEGIN INSERT INTO {log} VALUES (1,{new}); END"
+                f"BEGIN INSERT INTO {into} VALUES ({index},1{new}); END"
             )
             connection.execute(
                 f"CREATE TEMP TRIGGER _row_delta_{index}_d AFTER DELETE ON {name} "
-                f"BEGIN INSERT INTO {log} VALUES (-1,{old}); END"
+                f"BEGIN INSERT INTO {into} VALUES ({index},-1{old}); END"
             )
             connection.execute(
                 f"CREATE TEMP TRIGGER _row_delta_{index}_u AFTER UPDATE ON {name} "
-                f"BEGIN INSERT INTO {log} VALUES (-1,{old}); "
-                f"INSERT INTO {log} VALUES (1,{new}); END"
+                f"BEGIN INSERT INTO {into} VALUES ({index},-1{old}); "
+                f"INSERT INTO {into} VALUES ({index},1{new}); END"
             )
 
     def apply(self, parent: TableSums) -> tuple[TableSums, frozenset[str]]:
         """The successor's sums, and the tables whose rows actually changed."""
 
+        nets: list[dict[tuple[object, ...], int]] = [{} for _ in self._tables]
+        for index, sign, *values in self._connection.execute("SELECT * FROM temp._row_delta"):
+            key = tuple(values[: len(self._tables[index][2])])
+            net = nets[index]
+            net[key] = net.get(key, 0) + int(sign)
         sums = dict(parent)
         changed: set[str] = set()
         for index, (name, _sql, _columns) in enumerate(self._tables):
             if name not in sums:
                 raise ProjectionIntegrityError("parent projection has no logical sum for a table")
             count, total = sums[name]
-            net: dict[tuple[object, ...], int] = {}
-            for sign, *row in self._connection.execute(f"SELECT * FROM temp._row_delta_{index}"):
-                key = tuple(row)
-                net[key] = net.get(key, 0) + int(sign)
-            for row, multiplicity in net.items():
+            for row, multiplicity in nets[index].items():
                 if multiplicity:
                     count += multiplicity
                     total += multiplicity * row_term(name, row)
@@ -199,10 +217,12 @@ class RowDeltaRecorder:
         return sums, frozenset(changed)
 
     def close(self) -> None:
+        """Drop the TEMP log and triggers, for a connection that stays open afterwards."""
+
         for index in range(len(self._tables)):
             for suffix in ("i", "d", "u"):
                 self._connection.execute(f"DROP TRIGGER IF EXISTS temp._row_delta_{index}_{suffix}")
-            self._connection.execute(f"DROP TABLE IF EXISTS temp._row_delta_{index}")
+        self._connection.execute("DROP TABLE IF EXISTS temp._row_delta")
 
 
 __all__ = [
