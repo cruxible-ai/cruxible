@@ -2080,7 +2080,7 @@ class _Planner:
             index=index,
             op=change.op,
             outcome={
-                "subject": subject,
+                "subject": subject if pending is None else None,
                 "field": name,
                 "predicate": info.predicate,
                 # before is the revised Claim at the planning head; after is
@@ -2542,11 +2542,11 @@ def _bind_pending(
         bound.path = path
         bound.resolved = "created" if path in created_paths else "existing"
         kind, subject_id = subject_kind_of(path)
-        ref = f"{kind}/{subject_id}"
-        refs[label] = ref
+        assigned_ref = f"{kind}/{subject_id}"
+        refs[label] = assigned_ref
         if not reused:
             plan.subjects[path] = SubjectShell(
-                identity=ArtifactIdentity(kind="Subject", name=ref),
+                identity=ArtifactIdentity(kind="Subject", name=assigned_ref),
                 subject_kind=kind,
                 subject_id=subject_id,
             )

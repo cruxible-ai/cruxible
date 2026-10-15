@@ -1066,3 +1066,75 @@ def test_two_labels_for_one_pending_key_share_slots(instance: PlaybillInstance) 
     assert accepted.status == "accepted", accepted
     assert len(accepted.subjects_added) == 1
     assert all(item.subject == f"{DECISION}/same" for item in accepted.changes)
+
+
+@pytest.mark.parametrize("mode", ["minted", "further_existing", "further_batch"])
+def test_dry_run_keeps_every_pending_subject_outcome_unassigned(
+    instance: PlaybillInstance, mode: str
+) -> None:
+    kind = TICKET if mode == "minted" else NOTE
+    accept(
+        instance,
+        change_set(
+            ClaimTypeInput(kind="claim_type", claim_type=_field(kind, "body")),
+            ClaimTypeInput(
+                kind="claim_type",
+                claim_type=identity_claim_type(
+                    "peer",
+                    canonical_form=None,
+                    object_kind="subject",
+                    object_kinds=(kind,),
+                    predicate=f"{DECISION}.peer",
+                    subject_kinds=(DECISION,),
+                ),
+            ),
+        ),
+    )
+    root = write(instance, _write_create("root", "root"))
+    assert root.status == "accepted", root
+    if mode == "further_existing":
+        first = write(instance, _write_create("first", "same", NOTE))
+        assert first.status == "accepted", first
+    head = instance.accepted_coordinate()
+    label = "ticket" if mode == "minted" else "further"
+    creation = (
+        _write_create(label, kind=kind)
+        if mode == "minted"
+        else _write_create(label, "same", kind, create_new=True)
+    )
+    changes = [
+        creation,
+        {"op": "set", "subject": {"created": label}, "field": "body", "value": "Body"},
+        {
+            "op": "add",
+            "subject": {"created": label},
+            "field": "semantic.alias",
+            "value": "draft alias",
+        },
+    ]
+    if mode == "minted":
+        changes.append(_write_title(label, "Ticket"))
+    pending_count = len(changes)
+    changes.append(
+        {
+            "op": "set",
+            "subject": root.changes[0].subject,
+            "field": "peer",
+            "value": {"created": label},
+        }
+    )
+    if mode == "further_batch":
+        changes.append(_write_create("first", "same", NOTE))
+    preview = write(instance, *changes, dry_run=True)
+    assert preview.status == "would_accept", preview
+    assert all(item.subject is None for item in preview.changes[:pending_count]), preview
+    assert preview.changes[pending_count].after is None
+    assert preview.subjects_added == ((f"{NOTE}/same",) if mode == "further_batch" else ())
+    assert f"<{label}>" not in preview.model_dump_json()
+    assert instance.accepted_coordinate() == head
+    accepted = write(instance, *changes)
+    assert accepted.status == "accepted", accepted
+    address = accepted.changes[0].subject
+    assert address is not None
+    assert all(item.subject == address for item in accepted.changes[:pending_count])
+    assert accepted.changes[pending_count].after == address

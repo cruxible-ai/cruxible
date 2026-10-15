@@ -2543,6 +2543,11 @@ makes a further holder of a `hint` kind's key. `w.<kind>["id"]` never creates:
 a missing id raises `AbsentSubject`. A kind no SubjectKind declares has no
 `define()`.
 
+Creation bindings follow the complete batch's deterministic assignment, including
+keys with the same readable rendering. A dry run leaves `subject=None` on every
+change about a minted or further-holder Subject until submission assigns its id;
+`subjects_added` omits those Subjects.
+
 ```python
 w = cx.world()
 requests = w.pypi.release.define(package="requests", version="2.32.4")
