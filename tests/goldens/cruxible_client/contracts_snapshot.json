@@ -209,6 +209,7 @@
         "documents",
         "procedures",
         "claim_types",
+        "subject_kinds",
         "queries",
         "interfaces",
         "runs",
@@ -35009,6 +35010,7 @@
                   "documents",
                   "procedures",
                   "claim_types",
+                  "subject_kinds",
                   "queries",
                   "interfaces",
                   "runs",
@@ -35029,6 +35031,29 @@
             ],
             "default": null,
             "title": "Section"
+          }
+        },
+        "subject_kinds": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "subject_kinds",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientSubjectKind"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subject Kinds"
           }
         },
         "tag": {
@@ -36304,6 +36329,54 @@
             "title": "OrientQuery",
             "type": "object"
           },
+          "OrientSubjectKind": {
+            "additionalProperties": false,
+            "description": "One live SubjectKind: how core names a new Subject of the kind.\n\n``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``\nor ``hint``) or ``minted`` (core mints the id). A kind with no live\nSubjectKind has no row: no new Subject of it can be created.",
+            "properties": {
+              "keys": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Keys",
+                "type": "array"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "rule": {
+                "enum": [
+                  "keys",
+                  "minted"
+                ],
+                "title": "Rule",
+                "type": "string"
+              },
+              "uniqueness": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "unique",
+                      "hint"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Uniqueness"
+              }
+            },
+            "required": [
+              "kind",
+              "rule"
+            ],
+            "title": "OrientSubjectKind",
+            "type": "object"
+          },
           "OrientYou": {
             "additionalProperties": false,
             "description": "The caller as the daemon resolved it, and whether it can author.",
@@ -36723,7 +36796,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``queries``, ``interfaces``, or an operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), the principal registry (``principals``)\n  or the governed policies in force (``policies``), paged. The default map counts the\n  operational families under ``artifacts`` and never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), the principal registry (``principals``)\n  or the governed policies in force (``policies``), paged. The default map counts the\n  operational families under ``artifacts`` and never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
           "accepted_at": {
             "format": "date-time",
@@ -37051,6 +37124,7 @@
                   "documents",
                   "procedures",
                   "claim_types",
+                  "subject_kinds",
                   "queries",
                   "interfaces",
                   "runs",
@@ -37071,6 +37145,21 @@
             ],
             "default": null,
             "title": "Section"
+          },
+          "subject_kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientSubjectKind"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subject Kinds"
           },
           "tag": {
             "const": "playbill-orient-v1",
