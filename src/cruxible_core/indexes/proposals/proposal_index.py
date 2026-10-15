@@ -237,7 +237,9 @@ class ProposalIndex:
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             self._connection.execute(statement)
-                    after = commit_working_write(self._connection, self._file_stamp, before)
+                    after = commit_working_write(
+                        self._connection, self._file_stamp, before, snapshots=self._snapshots
+                    )
                     self._on_commit(before, after)
                     self._connection.rollback()
                 except BaseException:
@@ -579,7 +581,9 @@ class ProposalIndex:
         marker: dict[str, Any],
         before: tuple[int, ...] | None,
     ) -> None:
-        after = commit_working_write(connection, self._file_stamp, before)
+        after = commit_working_write(
+            connection, self._file_stamp, before, snapshots=self._snapshots
+        )
         self._on_commit(before, after)
         marker.update(clean=True, inventory=self._inventory(evidence), database_stamp=after)
         self._write_marker(evidence.root, marker)
@@ -699,7 +703,9 @@ class ProposalIndex:
                     marker = self._sync(evidence, writer, check_review_context=review_context)
                     # A clean checkpoint needs no durable marker rewrite on a read.
                     if marker.get("clean") is True:
-                        commit_working_write(writer, self._file_stamp, before)
+                        commit_working_write(
+                            writer, self._file_stamp, before, snapshots=self._snapshots
+                        )
                     else:
                         self._finish(evidence, writer, marker, before)
                 except BaseException:

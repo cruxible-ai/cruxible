@@ -1008,6 +1008,8 @@ def commit_working_write(
     connection: sqlite3.Connection,
     file_stamp: Callable[[], tuple[int, ...] | None],
     before: tuple[int, ...] | None,
+    *,
+    snapshots: SnapshotPool | None = None,
 ) -> tuple[int, ...]:
     """Commit and retain writer ownership for publishing a proven physical stamp.
 
@@ -1015,6 +1017,8 @@ def commit_working_write(
     same connection's data_version detects another writer winning that gap.
     The caller must release the reacquired transaction after publishing its
     checkpoint and pinning any reader snapshot, before yielding to user code.
+    The owner passes its snapshot pool, which learns the commit's stamps: pooled
+    readers may follow this change, which went through SQLite, and no other.
     """
     version = connection.execute("PRAGMA data_version").fetchone()
     connection.commit()
@@ -1027,6 +1031,8 @@ def commit_working_write(
         or before[:2] != after[:2]
     ):
         raise sqlite3.DatabaseError("working database changed across commit ownership")
+    if snapshots is not None:
+        snapshots.advance(before, after)
     return after
 
 
@@ -1496,7 +1502,9 @@ class AcceptedHistoryIndex:
                     elif ready is None and self._chain is not None:
                         ready = self._reverified_after_drift(writer)
                     self._sync(writer, recovered, load_envelopes, ready)
-                    published_stamp = commit_working_write(writer, self._file_stamp, before_commit)
+                    published_stamp = commit_working_write(
+                        writer, self._file_stamp, before_commit, snapshots=self._snapshots
+                    )
                     if published_stamp != before_commit and hasattr(self, "_proposals"):
                         self._proposals.database_committed(before_commit, published_stamp)
                     elif published_stamp != before_commit:

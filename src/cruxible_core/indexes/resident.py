@@ -8,17 +8,22 @@ setup once, when it opens it. Each operation still ends its own transaction, so
 between operations a resident connection holds no lock and no snapshot, and
 other connections (other processes, tests) see and make changes as before.
 
-One ``lstat`` per operation proves the connection still has the file the path
-names open: a deleted or replaced file is reopened (and set up again), and a
-connection inherited across a fork is never used by the child. The oldest idle
-connection is closed past the capacity; one in use never is.
+Reuse is valid only within the owning process, and only while the file holds
+what this connection last left in it. After each operation the file's content
+stamp is recorded: its device, inode, size, modification and change times, and
+the change counter and version fields of its SQLite header (read through a
+descriptor held on the same inode, so no open per operation). The next operation
+compares one ``lstat`` and one ``pread`` against it. Any unannounced drift (a
+file deleted, replaced, or restored in place over the same inode, or a commit by
+another connection) reopens the connection and runs its setup again before
+SQLite's cached pages could be used; nothing is ever scanned to decide. A
+connection inherited across a fork is never used by the child.
 
+The oldest idle connection is closed past the capacity; one in use never is.
 Each owner passes the lock that serializes its operations; ``transaction`` holds
-it, so a connection is used by one thread at a time.
-
-Tests that count SQL work through a wrapped ``sqlite3.connect`` call
-``close_idle_connections`` first, so the next operation connects again, through
-the wrapper.
+it, so a connection is used by one thread at a time. Tests that count SQL work
+through a wrapped ``sqlite3.connect`` call ``close_idle_connections`` first, so
+the next operation connects again, through the wrapper.
 """
 
 from __future__ import annotations
@@ -34,25 +39,57 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+#: The SQLite header fields that move with the file's content: the file change
+#: counter (bytes 24-27) and the version-valid-for number (92-95).
+_HEADER_BYTES = 100
+
+#: A file's content stamp: its stat identity and times, and its header fields.
+ContentStamp = tuple[int, int, int, int, int, bytes]
+
 
 @dataclass
 class _Resident:
     connection: sqlite3.Connection
-    #: The file the connection opened: (device, inode).
-    identity: tuple[int, int]
+    #: A read-only descriptor on the inode the connection opened (for the header).
+    descriptor: int
     pid: int
+    #: The content stamp after this process's last operation on the file.
+    stamp: ContentStamp | None
     #: Nesting depth of ``transaction`` blocks using it right now.
     depth: int = 0
 
 
-def _identity(path: Path, not_regular: Callable[[], BaseException]) -> tuple[int, int] | None:
+def _content_stamp(path: Path, descriptor: int) -> ContentStamp | None:
+    """The file's stamp now, or None when the path no longer names the held inode."""
+
     try:
         status = os.lstat(path)
     except FileNotFoundError:
         return None
+    held = os.fstat(descriptor)
+    if (status.st_dev, status.st_ino) != (held.st_dev, held.st_ino):
+        return None
+    header = os.pread(descriptor, _HEADER_BYTES, 0)
+    return (
+        status.st_dev,
+        status.st_ino,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+        header[24:28] + header[92:96],
+    )
+
+
+def _regular(path: Path, not_regular: Callable[[], BaseException]) -> bool:
+    """Whether the path names a regular file now; refuses anything else that exists."""
+
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return False
     if not stat.S_ISREG(status.st_mode):
         raise not_regular()
-    return (status.st_dev, status.st_ino)
+    return True
 
 
 #: Every owner in this process, for ``close_idle_connections``.
@@ -71,6 +108,30 @@ class ResidentConnections:
     def _close(self, entry: _Resident) -> None:
         if entry.pid == os.getpid():
             entry.connection.close()
+            os.close(entry.descriptor)
+
+    def _open(
+        self,
+        path: Path,
+        open_connection: Callable[[], sqlite3.Connection],
+        not_regular: Callable[[], BaseException],
+    ) -> _Resident:
+        connection = open_connection()
+        try:
+            if not _regular(path, not_regular):
+                raise sqlite3.DatabaseError("index file vanished while it was opened")
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except BaseException:
+            connection.close()
+            raise
+        # The stamp is taken after the setup committed: what the next operation
+        # must find unchanged.
+        return _Resident(
+            connection=connection,
+            descriptor=descriptor,
+            pid=os.getpid(),
+            stamp=_content_stamp(path, descriptor),
+        )
 
     def _resident(
         self,
@@ -82,9 +143,12 @@ class ResidentConnections:
         entry = self._entries.get(key)
         if entry is not None and entry.depth > 0:
             return entry
-        current = _identity(path, not_regular)
+        regular = _regular(path, not_regular)
         if entry is not None and (
-            entry.pid != os.getpid() or current is None or entry.identity != current
+            entry.pid != os.getpid()
+            or not regular
+            or entry.stamp is None
+            or _content_stamp(path, entry.descriptor) != entry.stamp
         ):
             del self._entries[key]
             self._close(entry)
@@ -92,15 +156,7 @@ class ResidentConnections:
         if entry is not None:
             self._entries.move_to_end(key)
             return entry
-        connection = open_connection()
-        try:
-            opened = _identity(path, not_regular)
-            if opened is None or (current is not None and opened != current):
-                raise sqlite3.DatabaseError("index file changed while it was opened")
-        except BaseException:
-            connection.close()
-            raise
-        entry = _Resident(connection=connection, identity=opened, pid=os.getpid())
+        entry = self._open(path, open_connection, not_regular)
         self._entries[key] = entry
         idle = [name for name, item in self._entries.items() if item.depth == 0 and name != key]
         for old in idle[: max(0, len(self._entries) - self._capacity)]:
@@ -117,9 +173,10 @@ class ResidentConnections:
     ) -> Iterator[tuple[sqlite3.Connection, bool]]:
         """The resident connection and whether this block is the outermost one using it.
 
-        The outermost block commits when it exits and rolls back when it raises;
-        a nested block shares its transaction. ``open_connection`` connects and
-        runs the one-time setup. The owner's lock is held throughout.
+        The outermost block commits when it exits and rolls back when it raises,
+        then records the file's content stamp; a nested block shares its
+        transaction. ``open_connection`` connects and runs the one-time setup.
+        The owner's lock is held throughout.
         """
 
         with self._lock:
@@ -136,6 +193,8 @@ class ResidentConnections:
                 raise
             finally:
                 entry.depth -= 1
+                if outermost:
+                    entry.stamp = _content_stamp(path, entry.descriptor)
 
     def close_idle(self) -> None:
         """Close every idle resident connection (shutdown and tests)."""
@@ -159,4 +218,4 @@ def close_idle_connections() -> None:
     close_idle_snapshots()
 
 
-__all__ = ["ResidentConnections", "close_idle_connections"]
+__all__ = ["ContentStamp", "ResidentConnections", "close_idle_connections"]

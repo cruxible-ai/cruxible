@@ -12,6 +12,7 @@ import os
 import sqlite3
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,7 +21,7 @@ from cruxible_core.indexes.acquisition import (
     WorkingDatabaseChangedError,
     open_working_snapshot,
 )
-from cruxible_core.indexes.history.history_index import working_file_stamp
+from cruxible_core.indexes.history.history_index import commit_working_write, working_file_stamp
 from cruxible_core.indexes.resident import ResidentConnections, close_idle_connections
 
 
@@ -140,6 +141,56 @@ def test_a_forked_child_never_uses_its_parents_connection(
     assert opened == [path, path]
 
 
+@pytest.mark.parametrize("keep_mtime", [False, True])
+def test_a_resident_connection_never_serves_cached_rows_after_an_in_place_restore(
+    tmp_path: Path, keep_mtime: bool
+) -> None:
+    owner, opened = _owner()
+    path = tmp_path / "index.sqlite3"
+    original = _restorable(path, "before", wal=False)
+    backup = _restorable(tmp_path / "backup.sqlite3", "after!", wal=False)
+    assert original[24:28] == backup[24:28] and len(original) == len(backup)
+
+    def read() -> object:
+        with owner.transaction(path, _opener(path, opened), not_regular=_Refused) as (c, _):
+            return c.execute("SELECT v FROM t").fetchone()
+
+    assert read() == ("before",)
+    times = path.stat()
+    path.write_bytes(backup)  # a restore copied over the same inode
+    if keep_mtime:
+        os.utime(path, ns=(times.st_atime_ns, times.st_mtime_ns))
+    assert path.stat().st_ino == times.st_ino and _fresh(path) == ("after!",)
+    assert read() == ("after!",)
+    assert opened == [path, path]
+
+
+def test_a_capture_envelope_index_sees_an_in_place_restore(tmp_path: Path) -> None:
+    from cruxible_core.storage.capture_envelope_index import _SCHEMA, CaptureEnvelopeIndex
+
+    root = tmp_path / "cas"
+    root.mkdir()
+    path = root / "capture-envelopes.sqlite3"
+
+    def index_file(target: Path, digest: str) -> bytes:
+        with sqlite3.connect(target) as connection:
+            connection.executescript(_SCHEMA)
+            connection.execute("INSERT INTO backfill_complete VALUES (1)")
+            connection.execute("INSERT INTO envelopes VALUES ('contract',?)", (digest,))
+        connection.close()
+        return target.read_bytes()
+
+    before, after = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+    original = index_file(path, before)
+    backup = index_file(tmp_path / "backup.sqlite3", after)
+    assert original[24:28] == backup[24:28]
+    index = CaptureEnvelopeIndex(SimpleNamespace(root=root))  # type: ignore[arg-type]
+    assert index.captures(("contract",), limit=10) == ((before,), True)
+    path.write_bytes(backup)
+    assert index.captures(("contract",), limit=10) == ((after,), True)
+    close_idle_connections()
+
+
 def test_closing_idle_connections_makes_the_next_operation_connect_again(tmp_path: Path) -> None:
     owner, opened = _owner()
     path = tmp_path / "index.sqlite3"
@@ -169,26 +220,101 @@ def _snapshot(path: Path, pool: SnapshotPool) -> sqlite3.Connection:
     )
 
 
-def test_a_released_snapshot_connection_serves_the_next_snapshot_at_a_new_stamp(
-    tmp_path: Path,
-) -> None:
+def _owner_commit(writer: sqlite3.Connection, path: Path, pool: SnapshotPool, sql: str) -> None:
+    """A commit the way an owner makes one: under the writer lock, announced to its pool."""
+
+    writer.execute("BEGIN IMMEDIATE")
+    before = working_file_stamp(path)
+    writer.execute(sql)
+    commit_working_write(writer, lambda: working_file_stamp(path), before, snapshots=pool)
+    writer.rollback()
+
+
+def test_a_released_snapshot_connection_follows_its_owners_commits(tmp_path: Path) -> None:
     path = tmp_path / "working.sqlite3"
     writer = _wal_database(path, 2)
     pool = SnapshotPool()
     first = _snapshot(path, pool)
     assert first.execute("SELECT count(*) FROM t").fetchone()[0] == 2
     pool.release(first)
-    writer.execute("INSERT INTO t VALUES (99)")
-    writer.commit()
+    _owner_commit(writer, path, pool, "INSERT INTO t VALUES (99)")
+    _owner_commit(writer, path, pool, "INSERT INTO t VALUES (100)")
     second = _snapshot(path, pool)
-    # The same connection, in a new snapshot that sees the new row.
+    # The same connection, in a new snapshot that sees the announced rows.
     assert second is first
-    assert second.execute("SELECT count(*) FROM t").fetchone()[0] == 3
+    assert second.execute("SELECT count(*) FROM t").fetchone()[0] == 4
     with pytest.raises(sqlite3.OperationalError):
         second.execute("INSERT INTO t VALUES (1)")  # still read-only
     pool.release(second)
     pool.close()
     writer.close()
+
+
+def test_an_unannounced_commit_closes_the_idle_connection_instead_of_reusing_it(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "working.sqlite3"
+    writer = _wal_database(path, 2)
+    pool = SnapshotPool()
+    first = _snapshot(path, pool)
+    pool.release(first)
+    writer.execute("INSERT INTO t VALUES (99)")  # another writer: the pool was not told
+    writer.commit()
+    second = _snapshot(path, pool)
+    assert second is not first
+    assert second.execute("SELECT count(*) FROM t").fetchone()[0] == 3
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        first.execute("SELECT 1")
+    pool.release(second)
+    pool.close()
+    writer.close()
+
+
+def _restorable(path: Path, value: str, *, wal: bool) -> bytes:
+    """A one-row database whose header (change counter included) any other one matches."""
+
+    with sqlite3.connect(path) as connection:
+        if wal:
+            connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("CREATE TABLE t (v TEXT)")
+        connection.execute("INSERT INTO t VALUES (?)", (value,))
+    connection.close()
+    return path.read_bytes()
+
+
+def _fresh(path: Path) -> object:
+    oracle = sqlite3.connect(path)
+    try:
+        return oracle.execute("SELECT v FROM t").fetchone()
+    finally:
+        oracle.close()
+
+
+@pytest.mark.parametrize("wal", [False, True])
+@pytest.mark.parametrize("keep_mtime", [False, True])
+def test_a_pooled_reader_never_serves_cached_rows_after_an_in_place_restore(
+    tmp_path: Path, wal: bool, keep_mtime: bool
+) -> None:
+    path = tmp_path / "working.sqlite3"
+    original = _restorable(path, "before", wal=wal)
+    backup = _restorable(tmp_path / "backup.sqlite3", "after!", wal=wal)
+    assert original[24:28] == backup[24:28] and len(original) == len(backup)
+    pool = SnapshotPool()
+    first = _snapshot(path, pool)
+    assert first.execute("SELECT v FROM t").fetchone() == ("before",)
+    pool.release(first)
+    inode, times = path.stat().st_ino, path.stat()
+    path.write_bytes(backup)  # a restore copied over the same inode
+    if keep_mtime:
+        os.utime(path, ns=(times.st_atime_ns, times.st_mtime_ns))  # as `cp -p` would
+    assert path.stat().st_ino == inode and _fresh(path) == ("after!",)
+    second = _snapshot(path, pool)
+    try:
+        assert second is not first
+        assert second.execute("SELECT v FROM t").fetchone() == ("after!",)
+    finally:
+        pool.release(second)
+        pool.close()
 
 
 def test_a_pooled_connection_is_never_reused_for_a_replaced_file(tmp_path: Path) -> None:

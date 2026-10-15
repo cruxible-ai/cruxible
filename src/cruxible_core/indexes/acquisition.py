@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import time
 import weakref
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -85,16 +86,28 @@ def _snapshot_identity(stamp: tuple[int, ...]) -> tuple[int, ...]:
     return (*stamp[:2], *stamp[5:7])
 
 
+#: Known commits a pool remembers, oldest dropped first.
+_KNOWN_COMMITS = 256
+
+
 class SnapshotPool:
     """Idle read-only connections to one working database, reused for later WAL snapshots.
 
-    A pooled snapshot is the same proof as a fresh one. Its connection was opened
-    by pathname under ``guard_database_path`` while the stamp it was acquired at
-    named exactly the database (and WAL) files it opened; it is handed out again
-    only for a stamp naming those same files (device and inode), and the caller's
-    expected stamp is checked before and after the new snapshot is pinned, as on
-    a fresh connection. A file replaced since is never read through an old
-    connection: its idle connections are closed instead.
+    A pooled snapshot is the same proof as a fresh one, and reuse is valid only
+    while the file holds what SQLite's cache in that connection could have seen:
+
+    - the connection was opened by pathname under ``guard_database_path`` at a
+      stamp naming exactly the database (and WAL) files it opened;
+    - it is handed out again only for the stamp it was last pinned at, or for a
+      stamp this pool was told its owner's own committed writes produced from
+      it (``advance``: the stamp before and after each owner commit, sampled
+      under SQLite's writer lock). Every such change went through SQLite, so
+      the connection's cache follows it. Any other movement of the stamp (a
+      restore copied over the same inode, another process's writer, a raw
+      edit) is unannounced drift: idle connections that cannot reach the
+      expected stamp through announced commits are closed, never read;
+    - the caller's expected stamp is checked before and after the new snapshot
+      is pinned, as on a fresh connection.
 
     Released connections end their read transaction, so an idle one pins no WAL
     frames and holds no lock a writer or a checkpoint waits on. The owner closes
@@ -104,10 +117,34 @@ class SnapshotPool:
     def __init__(self, capacity: int = 4) -> None:
         self._lock = threading.Lock()
         self._idle: list[tuple[sqlite3.Connection, tuple[int, ...]]] = []
+        #: Checked-out connections, by id: the stamp each was pinned at.
         self._out: dict[int, tuple[int, ...]] = {}
+        #: Stamp before an owner commit -> stamp after it.
+        self._known: OrderedDict[tuple[int, ...], tuple[int, ...]] = OrderedDict()
         self._capacity = capacity
         self._closed = False
         _POOLS.add(self)
+
+    def advance(self, before: tuple[int, ...] | None, after: tuple[int, ...]) -> None:
+        """Announce that the owner's own commit moved the file from ``before`` to ``after``."""
+
+        if before is None or before == after:
+            return
+        with self._lock:
+            self._known[before] = after
+            self._known.move_to_end(before)
+            while len(self._known) > _KNOWN_COMMITS:
+                self._known.popitem(last=False)
+
+    def _reaches(self, pinned: tuple[int, ...], expected: tuple[int, ...]) -> bool:
+        stamp: tuple[int, ...] | None = pinned
+        for _step in range(_KNOWN_COMMITS + 1):
+            if stamp == expected:
+                return True
+            if stamp is None:
+                return False
+            stamp = self._known.get(stamp)
+        return False
 
     def _take(self, stamp: tuple[int, ...]) -> sqlite3.Connection | None:
         identity = _snapshot_identity(stamp)
@@ -115,10 +152,10 @@ class SnapshotPool:
         found = None
         with self._lock:
             while self._idle and found is None:
-                connection, opened = self._idle.pop()
-                if opened == identity:
+                connection, pinned = self._idle.pop()
+                if _snapshot_identity(pinned) == identity and self._reaches(pinned, stamp):
                     found = connection
-                    self._out[id(connection)] = opened
+                    self._out[id(connection)] = stamp
                 else:
                     stale.append(connection)
         for connection in stale:
@@ -127,23 +164,23 @@ class SnapshotPool:
 
     def _adopt(self, connection: sqlite3.Connection, stamp: tuple[int, ...]) -> None:
         with self._lock:
-            self._out[id(connection)] = _snapshot_identity(stamp)
+            self._out[id(connection)] = stamp
 
     def release(self, connection: sqlite3.Connection) -> None:
         """End the connection's snapshot; keep it for the next one, or close it."""
 
         with self._lock:
-            opened = self._out.pop(id(connection), None)
-        if opened is not None:
+            pinned = self._out.pop(id(connection), None)
+        if pinned is not None:
             try:
                 connection.rollback()
                 connection.row_factory = None
             except sqlite3.Error:
-                opened = None
-        if opened is not None:
+                pinned = None
+        if pinned is not None:
             with self._lock:
                 if not self._closed and len(self._idle) < self._capacity:
-                    self._idle.append((connection, opened))
+                    self._idle.append((connection, pinned))
                     return
         connection.close()
 
@@ -159,7 +196,7 @@ class SnapshotPool:
 
         with self._lock:
             idle, self._idle = self._idle, []
-        for connection, _opened in idle:
+        for connection, _pinned in idle:
             connection.close()
 
     def close(self) -> None:
@@ -201,10 +238,8 @@ def _pin_pooled_snapshot(
             raise WorkingDatabaseChangedError(
                 "working database changed during snapshot acquisition"
             )
-    except WorkingDatabaseChangedError:
-        pool.release(connection)
-        raise
     except BaseException:
+        # Its cache may now hold pages of a state no stamp vouches for.
         pool.discard(connection)
         raise
     return connection
