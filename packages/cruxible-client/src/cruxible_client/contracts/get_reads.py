@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -542,6 +542,11 @@ class GetEvidence(_StrictGetModel):
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
 
 
+#: A change-set reason longer than this is cut, as a summary value is; the
+#: proposal card (``get <proposal>``) reads its whole rationale.
+GET_REASON_MAX_CHARS = 500
+
+
 class GetProposedReason(_StrictGetModel):
     """Why this revision was proposed, in its own Procedure item's words.
 
@@ -550,12 +555,32 @@ class GetProposedReason(_StrictGetModel):
     evidence.
     """
 
+    kind: Literal["procedure_item"] = "procedure_item"
     reason: str
     truncated: bool = Field(default=False, exclude_if=lambda value: value is False)
     proposal: str
     procedure: str
     run: str
     terminal: str
+
+
+class GetChangeSetReason(_StrictGetModel):
+    """Why this revision was proposed: the rationale of the change set that accepted it.
+
+    A write's ``because`` (with any per-retire note), or an authored change
+    set's rationale, read from the exact admission the accepted generation
+    published. Provenance, not evidence. Over ``GET_REASON_MAX_CHARS`` it is
+    cut (``truncated``); ``get <proposal>`` reads it whole.
+    """
+
+    kind: Literal["change_set"] = "change_set"
+    text: str
+    truncated: bool = Field(default=False, exclude_if=lambda value: value is False)
+    proposal: str
+
+
+GetRevisionReason = Annotated[GetChangeSetReason | GetProposedReason, Field(discriminator="kind")]
+"""Why one accepted revision was proposed: its Procedure item's reason, else its change set's."""
 
 
 class GetRevision(_StrictGetModel):
@@ -657,6 +682,7 @@ __all__ = [
     "GET_BATCH_MAX_REFS",
     "GET_BODY_DEFAULT_MAX_BYTES",
     "GET_BODY_RANGE_MAX_BYTES",
+    "GET_REASON_MAX_CHARS",
     "GET_DETAILS_BY_KIND",
     "GET_HISTORY_DEFAULT_LIMIT",
     "GET_HISTORY_MAX_LIMIT",
@@ -678,7 +704,9 @@ __all__ = [
     "GetContender",
     "GetCoordinate",
     "GetDetail",
+    "GetChangeSetReason",
     "GetProposedReason",
+    "GetRevisionReason",
     "GetDocumentCard",
     "GetEvidence",
     "GetHistory",

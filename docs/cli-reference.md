@@ -3611,7 +3611,7 @@ audit path.
 | `current/<kind>/<id>.yaml` | One file per Subject, values first (below). |
 | `current/<kind>/<id>.<field>.txt` | A text value too long to inline (over 2 KiB or 40 lines), whole; never truncated. |
 | `current/<kind>/INDEX` | One tab-separated line per Subject of the kind: ref, a title-like value, `field=value` for each state-like field. |
-| `changes/<seq>.json` | The accepted change that introduced a current Claim revision: time, actor, the rationale its proposal recorded, and the refs it changed. |
+| `changes/<seq>.json` | The accepted change that introduced a current Claim revision: time, actor, the rationale of the admission that accepted it (the one `get` shows), and the refs it changed. |
 | `sources/INDEX` | Written by the client from `sources/LEDGER` and its own source catalog, outside the daemon manifest: one tab-separated line per evidence source (self-source Captures excluded; a Document is a source, cited or not, on the line of its name): source, CaptureContract(s), where it lives (the workspace path the catalog binds it to, `(missing)` when that file is gone; otherwise the ledger locator), citing-Claim count, the generation it last changed. |
 | `sources/LEDGER` | The same lines from accepted state alone, which holds no workspace paths: the locator is the Document of the source's name (`Document:<id>`); otherwise every distinct `coordinate/selector` type pair its Captures were taken at, sorted and comma-separated (a foreign source has none); or `-`. |
 | `projections/INDEX` | Written by the client from its own workspace bindings, outside the daemon manifest: one line per workspace file bound to accepted state (Document body, evidence source, rendered block), its role, bound ref and the generation that ref last changed. A bound file that does not exist is a `workspace_binding_missing` row in `next`, not a line here. |
@@ -3665,10 +3665,11 @@ moved, so a floor at generation B lacks exactly the files stamped after B plus
 the paths dropped since. `orient` reports `floor: {at, generations_behind}`
 from the manifest alone.
 
-The manifest also names the review notes the change rationale was read from
-(`notes_digest`, the digest of every rationale `changes/` shows); a rationale
-revised after acceptance changes it, and a refresh then replaces the floor
-whole.
+A change's rationale is the one `get` shows for it (`--detail evidence`, and
+each revision's `reason` under `--detail history`): the exact admission that
+accepted the change's candidate, by its own actor and never withdrawn; with
+none or several, the change shows none. The manifest binds every rationale
+`changes/` shows (`notes_digest`).
 
 The daemon keeps a rebuildable floor index on each instance and advances it by
 the ledger diff: a generation restamps and re-renders only the files its

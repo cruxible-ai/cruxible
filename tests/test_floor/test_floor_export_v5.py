@@ -5,9 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import ProposalAdmissionRecord
 from cruxible_client.contracts.write import WriteRequest
 from cruxible_core.proposals.proposal_notes import admission_bytes
@@ -85,7 +82,13 @@ def test_floor_changes_reverify_no_change_set_record(tmp_path: Path, monkeypatch
     assert changes and all(change["changed"] for change in changes)
 
 
-def test_change_rationale_reads_one_pinned_note_by_path(tmp_path: Path, monkeypatch) -> None:
+def test_change_rationale_is_the_one_get_shows(tmp_path: Path, monkeypatch) -> None:
+    """The floor's changes/ file and get name one reason: the accepting admission's."""
+
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
     instance, _ = seed_write_surface(tmp_path)
     request = WriteRequest.model_validate(
         {
@@ -95,7 +98,8 @@ def test_change_rationale_reads_one_pinned_note_by_path(tmp_path: Path, monkeypa
             ],
         }
     )
-    assert service_playbill_write(instance, request=request, caller=caller()).status == "accepted"
+    written = service_playbill_write(instance, request=request, caller=caller())
+    assert written.status == "accepted"
     notes_oid = review_snapshot_oid(instance)
     assert notes_oid is not None
     with instance.accepted_history_reader() as history:
@@ -109,33 +113,29 @@ def test_change_rationale_reads_one_pinned_note_by_path(tmp_path: Path, monkeypa
         if path.startswith("changes/") and b"checked" in body
     )
     assert change["rationale"] == ["The writer checked it."]
+    (written_change,) = written.changes
+    evidence = service_playbill_get(
+        instance,
+        request=GetRequest(ref=str(written_change.claim), detail="evidence"),
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+    ).evidence
+    assert evidence is not None and [evidence.rationale] == change["rationale"]
+    # A note revised after acceptance moves nothing: the admission is the source.
     notes = instance._ledger.read_tree(notes_oid)
     content = next(body for body in notes.values() if b"The writer checked it." in body)
     lines = content.splitlines(keepends=True)
     admission = ProposalAdmissionRecord.model_validate_json(lines[0])
     revised = admission.model_copy(update={"rationale": "Later review text."})
-    revised_pair = admission_bytes(revised) + lines[1]
-    instance._ledger.write_proposal_note("evaluation", admission.candidate_commit_oid, revised_pair)
+    instance._ledger.write_proposal_note(
+        "evaluation", admission.candidate_commit_oid, admission_bytes(revised) + lines[1]
+    )
     assert review_snapshot_oid(instance) != notes_oid
-    # The pinned notes commit, not the moving ref, answers.
-    assert change_rationales(instance, generations, notes_oid) == expected
+    assert change_rationales(instance, generations, review_snapshot_oid(instance)) == expected
 
-    # The notes tree is never read whole: only each accepted candidate's note.
+    # The notes are never read for a rationale, whole or by path.
     def no_tree(_oid):
-        raise AssertionError("floor read the whole notes tree")
+        raise AssertionError("floor read the notes tree")
 
     monkeypatch.setattr(instance._ledger, "read_tree", no_tree)
+    monkeypatch.setattr(instance, "read_proposal_notes", no_tree)
     assert change_rationales(instance, generations, notes_oid) == expected
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            instance, "read_proposal_notes", lambda pairs, **_: {pair: lines[0] for pair in pairs}
-        )
-        with pytest.raises(ProposalIntegrityError, match="incomplete record pair"):
-            change_rationales(instance, generations, notes_oid)
-        patch.setattr(
-            instance,
-            "read_proposal_notes",
-            lambda pairs, **_: {pair: b" " + lines[0] + lines[1] for pair in pairs},
-        )
-        with pytest.raises(ProposalIntegrityError, match="not a canonical proposal pair"):
-            change_rationales(instance, generations, notes_oid)

@@ -111,9 +111,11 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.triggers import Trigger
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import SUBJECT_KIND_PATTERN, SUBJECT_REF_TEXT_PATTERN
+from cruxible_core.indexes.history.history_index import AcceptedGenerationLocation
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.change_reasons import ChangeReasons
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.discovery import (
     AcceptedProviderInterface,
@@ -1780,86 +1782,14 @@ def _proposal_card(
 # -- evidence ------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _AcceptingProposal:
-    """The proposal that accepted a member's latest revision, and its item's own reason."""
-
-    rationale: str | None
-    reason: GetProposedReason | None
-
-
-def _accepting_proposal(
+def _latest_generation(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, path: str
-) -> _AcceptingProposal | None:
-    """Find the exact admission that accepted ``path``'s latest revision, then its item reason.
-
-    The accepted generation's retained change-set record names the candidate
-    and the admission's actor binding (actor and source compilation digest). An
-    admission is the accepting one only when it matches all three and was not
-    withdrawn or rejected; a candidate digest alone names the semantic change,
-    which an unrelated admission can share. No match, or more than one, and the
-    revision has no attributed proposal: nothing is picked by id order.
-
-    Work: one history member lookup, one candidate locator row per admission
-    sharing the candidate, one admission each, then one reason file. The
-    accepted generation's actor binding is read from its retained change-set
-    record's verified facts: the record is parsed whole once per instance, and
-    a later read of any revision it accepted reuses its small facts without
-    copying or re-parsing it.
-    """
+) -> AcceptedGenerationLocation | None:
+    """The accepted generation of ``path``'s latest revision at ``coordinate``: one lookup."""
 
     with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(coordinate)) as h:
         latest = h.latest_member(path)
-        if latest is None:
-            return None
-        generation = h.generation(latest.sequence)
-        if generation.source_record_path is None or generation.candidate_digest is None:
-            return None
-        facts = h.read_generation_facts(latest.sequence, instance.retained_record_reader())
-    evidence = instance.proposal_evidence()
-    if evidence.index is None:
-        return None
-    matches = []
-    for row in evidence.index.rows(evidence, "candidate_digest=?", (facts.candidate_digest,)):
-        if row["withdrawal_path"] is not None:
-            continue  # withdrawn or rejected: never the admission that was accepted
-        admission = evidence.read_admission(row["proposal_id"])
-        if (
-            admission.actor_id == facts.actor_id
-            and admission.source_compilation_digest == facts.source_compilation_digest
-        ):
-            matches.append(admission)
-    if len(matches) != 1:
-        return None
-    (admission,) = matches
-    operation = evidence.item_reason_operation(admission)
-    item = None if operation is None else evidence.read_item_reason(operation, path)
-    return _AcceptingProposal(
-        rationale=admission.rationale,
-        reason=(
-            None
-            if item is None
-            else GetProposedReason(
-                reason=item.reason,
-                truncated=item.truncated,
-                proposal=admission.proposal_id,
-                procedure=item.procedure,
-                run=item.run_id,
-                terminal=item.terminal,
-            )
-        ),
-    )
-
-
-def _claim_rationale(
-    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, claim_id: str
-) -> str | None:
-    """Why this Claim revision was proposed: its own item's reason, else the change set's."""
-
-    accepting = _accepting_proposal(instance, coordinate, claim_path(claim_id))
-    if accepting is None:
-        return None
-    return accepting.reason.reason if accepting.reason is not None else accepting.rationale
+        return None if latest is None else h.generation(latest.sequence)
 
 
 def _claim_evidence(
@@ -1921,6 +1851,16 @@ def _claim_evidence(
         attestations=attestations,
         rationale=_claim_rationale(instance, coordinate, _name(resolved.identity)),
     )
+
+
+def _claim_rationale(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, claim_id: str
+) -> str | None:
+    """Why this Claim revision was proposed, whole: the shared resolver's text."""
+
+    path = claim_path(claim_id)
+    generation = _latest_generation(instance, coordinate, path)
+    return None if generation is None else ChangeReasons(instance).rationale(generation, path)
 
 
 # -- history -------------------------------------------------------------------------
@@ -2526,9 +2466,12 @@ def service_playbill_get(
             if resolved.kind == "claim"
             else resolved.path or f"subjects/{_name(resolved.identity)}.json"
         )
-        accepting = _accepting_proposal(instance, coordinate, member)
-        if accepting is not None and accepting.reason is not None:
-            fields["reason"] = accepting.reason
+        accepted_at = _latest_generation(instance, coordinate, member)
+        reason = (
+            None if accepted_at is None else ChangeReasons(instance).reason(accepted_at, member)
+        )
+        if isinstance(reason, GetProposedReason):
+            fields["reason"] = reason
     elif request.detail == "history":
         fields["history"], fields["truncated"], fields["next_cursor"] = _history(
             instance,
