@@ -189,6 +189,8 @@ def _reinstantiated(
     Blueprint is gone or a slot's new build does not fit it.
     """
 
+    if not path.startswith("procedures/"):
+        return None
     procedure = parse_procedure(tree[path], path=path)
     origin = procedure.blueprint
     if origin is None:
@@ -337,7 +339,9 @@ def settle_changes(
             )
             continue
         try:
-            reinstantiated = _reinstantiated(tree, writes, mover.path, moves)
+            reinstantiated = (
+                None if mover.path in writes else _reinstantiated(tree, writes, mover.path, moves)
+            )
             if reinstantiated is None:
                 # Try the move alone, so a contract change refuses this one
                 # definition (it stays on its build) rather than the change.
@@ -394,7 +398,7 @@ def settle_changes(
         union[mover.path] = ClaimTypeMigrationInventoryItemV1(
             identity=mover.identity,
             path=mover.path,
-            artifact_kind="procedure",
+            artifact_kind=state.artifact_kind,
             current_artifact_digest=state.artifact_digest,
             triggering_identity=ArtifactIdentity(kind="Provider", name=mover.from_build),
             dependency_edge_role="provider",
@@ -459,7 +463,7 @@ def settle_changes(
     except (ClaimTypeMigrationError, ProviderBuildMoveRefused) as error:
         settled.refused.append(str(error))
         return settled
-    final = {**carried, **changed, **writes}
+    final = {**writes, **changed, **carried}
     replacements: dict[str, str] = {}
     for path, content in final.items():
         before = tree.get(path)

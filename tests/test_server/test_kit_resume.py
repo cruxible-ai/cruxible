@@ -28,8 +28,6 @@ from tests.test_server.test_kit_providers import (
     _tree,
 )
 
-_PROVIDER = "providers/kit-call.json"
-
 
 def _open_worlds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, independent: bool
@@ -120,12 +118,16 @@ def test_a_recorded_resume_lands_blocks_or_closes_against_the_head_it_runs_on(
         touched: list[bool] = []
         with monkeypatch.context() as patched:
             patched.setattr(kit_resume, "retained_records", lambda *a, **k: touched.append(True))
-            kit_resume.resume_kits_after_activation(instance, (_PROVIDER,))
+            kit_resume.resume_kits_after_activation(
+                instance, (f"providers/{release.manifest.providers[0].build}.json",)
+            )
         assert touched == []
 
         # The principal who ran kit add can no longer author: blocked, and next says so.
         record(actor="nobody")
-        kit_resume.resume_kits_after_activation(instance, (_PROVIDER,))
+        kit_resume.resume_kits_after_activation(
+            instance, (f"providers/{release.manifest.providers[0].build}.json",)
+        )
         (blocked,) = _resumes(consumer)
         assert blocked.state == "blocked"
         assert (blocked.detail or "").startswith("actor_no_longer_authoring")
@@ -140,7 +142,9 @@ def test_a_recorded_resume_lands_blocks_or_closes_against_the_head_it_runs_on(
 
         # The kit is already in place (as after a manual kit add): unchanged, row gone.
         record()
-        kit_resume.resume_kits_after_activation(instance, (_PROVIDER,))
+        kit_resume.resume_kits_after_activation(
+            instance, (f"providers/{release.manifest.providers[0].build}.json",)
+        )
         assert _resumes(consumer) == ()
 
         # A manual commit kit add of the same kit replaces the record.
@@ -152,7 +156,9 @@ def test_a_recorded_resume_lands_blocks_or_closes_against_the_head_it_runs_on(
         # blocked, with a neutral next row naming kit add at the recorded source.
         older_staged = stage_kit_providers(_client(consumer.http), consumer.instance_id, older)
         record(add=KitAddRequest(bundle=older_staged, source="test"))
-        kit_resume.resume_kits_after_activation(instance, (_PROVIDER,))
+        kit_resume.resume_kits_after_activation(
+            instance, (f"providers/{release.manifest.providers[0].build}.json",)
+        )
         (conflicted,) = _resumes(consumer)
         assert conflicted.state == "blocked" and "older than installed" in (conflicted.detail or "")
         page = consumer.pb.next(expiring_within=Duration.days(count=7))

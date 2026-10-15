@@ -109,10 +109,8 @@ def test_the_same_wheel_and_lock_reproduce_identical_definitions_on_fresh_instan
     # The Provider digest is per environment: its local_env pins one
     # materialization keyed by this platform, machine and Python, over the full
     # PEP 508 marker set. The implementation digest is the portable part.
-    provider = parse_provider(
-        seen[0]["providers/cruxible-provider-noop.json"],
-        path="providers/cruxible-provider-noop.json",
-    )
+    provider_path = next(p for p in seen[0] if p.startswith("providers/cruxible-provider-noop/"))
+    provider = parse_provider(seen[0][provider_path], path=provider_path)
     assert isinstance(provider, Provider)
     local_env = provider.runtime_artifact.local_env
     assert local_env is not None
@@ -245,12 +243,13 @@ def _graph(world: Any, *, provider: str | None) -> tuple[dict[str, Any], tuple[A
         (row,) = (
             item
             for item in interface["providers"]
-            if item["provider_identity"] == f"Provider:{provider}"
+            if item["provider_identity"].partition(":")[2].partition("/")[0] == provider
+            and item.get("newest", True)
         )
         node["provider"] = {
             "kind": "accepted",
             "role": "provider",
-            "target": f"Provider:{provider}",
+            "target": row["provider_identity"],
         }
         node["implementation_digest"] = row["implementation_digest"]
     example = procedure_example()
@@ -387,7 +386,9 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         assert [item.path for item in manifest.artifacts] == [
             f"blueprints/{BLUEPRINT}.json",
             f"procedures/{PROCEDURE}.json",
-            f"provider-interfaces/{INTERFACE}.json",
+            next(
+                p for p in release.contents() if p.startswith(f"provider-interfaces/{INTERFACE}/")
+            ),
             f"source-acquisition-policies/{POLICY}.json",
         ]
         (provider,) = manifest.providers
@@ -417,13 +418,16 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         assert added.status == "accepted", added
         assert [step.action for step in added.providers] == ["install"]
         tree = _tree(consumer)
-        interface_path = f"provider-interfaces/{INTERFACE}.json"
+        interface_path = next(
+            p for p in release.contents() if p.startswith(f"provider-interfaces/{INTERFACE}/")
+        )
         assert tree[interface_path] == release.contents()[interface_path]
         procedure = parse_procedure(
             tree[f"procedures/{PROCEDURE}.json"], path=f"procedures/{PROCEDURE}.json"
         )
         (provider_pin,) = (pin for pin in procedure.pins if pin.role == "provider")
-        here = parse_provider(tree["providers/kit-call.json"], path="providers/kit-call.json")
+        held_path = next(p for p in tree if p.startswith("providers/kit-call/"))
+        here = parse_provider(tree[held_path], path=held_path)
         assert provider_pin.artifact_digest == provider_digest(here).tagged
         released = parse_procedure(
             release.contents()[f"procedures/{PROCEDURE}.json"], path=f"procedures/{PROCEDURE}.json"

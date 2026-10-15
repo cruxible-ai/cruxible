@@ -874,9 +874,8 @@ def _settle_dropped(
             dependent_paths |= _live_dependents(after, consumer, consumer_path)
         dependent_paths.discard(path)
         dependents = len(dependent_paths)
-        if consumers:
-            # Counted here in full; the pin-closure recount must not shrink it.
-            diff.semantic_counts[identity] = dependents
+        # Counted against the post-diff tree, including semantic consumers.
+        diff.semantic_counts[identity] = dependents
         named_retire = identity in retire_dependents
         if identity in keep or (
             not named_retire
@@ -985,7 +984,7 @@ def _kit_movers(
             for identity, path in live_procedure_pinners(
                 connection, row.identity, row.artifact_digest
             ):
-                if path in writes:
+                if path in writes and _artifact_state(path, writes[path]).lifecycle.state != "live":
                     continue
                 kind, _, name = identity.partition(":")
                 found.append(
@@ -1135,6 +1134,8 @@ def _submit(
     installed_version: str | None = None,
     provenance: KitProvenance | None = None,
     providers: tuple[KitProviderStep, ...] = (),
+    repins: tuple[ProviderRepinV1, ...] = (),
+    stops: tuple[StoppedAutomationV1, ...] = (),
 ) -> KitChangeResult:
     assert mode.head is not None
     base = mode.head
@@ -1143,6 +1144,8 @@ def _submit(
         "installed_version": installed_version,
         "provenance": provenance,
         "providers": providers,
+        "repins": repins,
+        "stops": stops,
     }
     body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
     shell = DocumentShell(
@@ -1829,16 +1832,51 @@ def _add_kit(
             )
             writes: dict[str, bytes] = dict(diff.writes)
         else:
+            moves = _kit_moves(tree, movers)
+            for mover in movers:
+                if (
+                    mover.identity.qualified not in request.keep_build
+                    or mover.path not in diff.writes
+                ):
+                    continue
+                try:
+                    backward = build_move(tree, mover.to_build, mover.from_build)
+                    payload = move_references(
+                        mover.path,
+                        json.loads(diff.writes[mover.path]),
+                        {},
+                        {backward.source.target.qualified: backward},
+                    )
+                    content, _digest = _render(mover.path, payload)
+                    if _without_lifecycle(payload) == _without_lifecycle(
+                        json.loads(tree[mover.path])
+                    ):
+                        diff.writes.pop(mover.path)
+                        _digest = _artifact_state(mover.path, tree[mover.path]).artifact_digest
+                    else:
+                        diff.writes[mover.path] = content
+                    release_digest = _artifact_state(
+                        mover.path, contents[mover.path]
+                    ).artifact_digest
+                    diff.installed[release_digest] = _digest
+                    diff.content[mover.path] = kit_content_digest(payload)
+                except ProviderBuildMoveRefused as exc:
+                    blocked.append(f"{mover.identity.qualified}: cannot keep its build: {exc}")
             settled = _settle_dependents(
                 tree,
                 diff,
                 retire_with=retire_with,
                 connection=connection,
                 movers=movers,
-                moves=_kit_moves(tree, movers),
+                moves=moves,
                 keep_build=frozenset(request.keep_build),
             )
             blocked.extend(settled.refused)
+            blocked.extend(
+                f"{item.identity} cannot move to {item.to_build}: {item.reason}"
+                for item in settled.repins
+                if item.action == "refused"
+            )
             writes = settled.writes if not settled.refused else dict(diff.writes)
             repins = tuple(settled.repins)
             stops = tuple(settled.stops)
@@ -1855,6 +1893,12 @@ def _add_kit(
             coordinate=mode.coordinate,
             **described,  # type: ignore[arg-type]
         )
+
+    for artifact in manifest.artifacts:
+        if artifact.path in writes:
+            state = _artifact_state(artifact.path, writes[artifact.path])
+            diff.installed[artifact.artifact_digest] = state.artifact_digest
+            diff.content[artifact.path] = kit_content_digest(json.loads(writes[artifact.path]))
 
     def entries(paths: set[str]) -> tuple[KitInstalledArtifact, ...]:
         return tuple(
