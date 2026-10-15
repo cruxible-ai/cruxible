@@ -459,3 +459,44 @@ def test_a_closed_pool_keeps_nothing(tmp_path: Path) -> None:
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connection.execute("SELECT 1")
     writer.close()
+
+
+# -- leases: a reader kept past its read refuses -------------------------------------
+
+
+@pytest.mark.parametrize("path", ["clean", "synchronized"])
+def test_a_proposal_reader_kept_past_its_read_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    from tests.core_support._knowledge_loop_support import seed_claims
+
+    instance, _ = seed_claims(tmp_path)
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    assert index is not None
+    if path == "synchronized":
+        monkeypatch.setattr(type(index), "_clean_snapshot", lambda self, *a, **k: None)
+    with index.read(evidence) as held:
+        rows = held.execute("SELECT 1 UNION ALL SELECT 2")
+        assert rows.fetchone() is not None
+    with index.read(evidence) as current:
+        assert tuple(current.execute("SELECT 1").fetchone()) == (1,)
+        # Neither the kept handle nor its cursor reaches the connection now leased here.
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            held.execute("SELECT 1")
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            rows.fetchone()
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            held.rollback()
+
+
+def test_a_history_reader_kept_past_its_read_refuses(tmp_path: Path) -> None:
+    from tests.core_support._knowledge_loop_support import seed_claims
+
+    instance, _ = seed_claims(tmp_path)
+    with instance.accepted_history_reader() as held:
+        assert held.generation(0).git_oid
+    with instance.accepted_history_reader() as current:
+        assert current.generation(0).git_oid
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            held.generation(0)

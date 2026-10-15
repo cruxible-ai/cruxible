@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.primitives import canonical_json, new_id
@@ -31,6 +31,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalWithdrawalRecord,
 )
 from cruxible_core.indexes.acquisition import (
+    SnapshotLease,
     SnapshotPool,
     WorkingDatabaseChangedError,
     open_working_snapshot,
@@ -684,10 +685,11 @@ class ProposalIndex:
         except sqlite3.DatabaseError as exc:
             raise ProposalIntegrityError("proposal index requires reconstruction") from exc
         if reader is not None:
+            lease = SnapshotLease(reader)
             try:
-                yield reader
+                yield cast(sqlite3.Connection, lease)
             finally:
-                self._snapshots.release(reader)
+                self._snapshots.release(lease.revoke())
             return
         if history_reads_detached():
             with self._detached_snapshot(evidence) as detached:
@@ -731,7 +733,11 @@ class ProposalIndex:
                         "proposal index changed during snapshot acquisition"
                     )
                 writer.rollback()
-            yield reader
+            lease = SnapshotLease(reader)
+            try:
+                yield cast(sqlite3.Connection, lease)
+            finally:
+                lease.revoke()
         except sqlite3.DatabaseError as exc:
             raise ProposalIntegrityError("proposal index requires reconstruction") from exc
         finally:

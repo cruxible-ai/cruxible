@@ -262,6 +262,78 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
+_CLOSED = "Cannot operate on a closed database."
+
+
+class SnapshotLease:
+    """A pooled snapshot connection as one read sees it: refused once the read ends.
+
+    The pool hands the connection to later reads, so a handle (or a cursor
+    from it) kept past its read must refuse, as a closed connection did, and
+    never run against another read's snapshot. Attribute access is delegated
+    while the lease is live.
+    """
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        object.__setattr__(self, "_connection", connection)
+
+    def _live(self) -> sqlite3.Connection:
+        connection: sqlite3.Connection | None = object.__getattribute__(self, "_connection")
+        if connection is None:
+            raise sqlite3.ProgrammingError(_CLOSED)
+        return connection
+
+    def execute(self, sql: str, parameters: object = (), /) -> _LeasedCursor:
+        return _LeasedCursor(self, self._live().execute(sql, parameters))  # type: ignore[arg-type]
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._live(), name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        setattr(self._live(), name, value)
+
+    def revoke(self) -> sqlite3.Connection:
+        """End the lease; the caller releases the returned connection to the pool."""
+
+        connection = self._live()
+        object.__setattr__(self, "_connection", None)
+        return connection
+
+
+class _LeasedCursor:
+    """A cursor that refuses once its lease ends."""
+
+    __slots__ = ("_lease", "_cursor")
+
+    def __init__(self, lease: SnapshotLease, cursor: sqlite3.Cursor) -> None:
+        self._lease, self._cursor = lease, cursor
+
+    def _live(self) -> sqlite3.Cursor:
+        self._lease._live()
+        return self._cursor
+
+    def __iter__(self) -> Iterator[object]:
+        while True:
+            row = self._live().fetchone()
+            if row is None:
+                return
+            yield row
+
+    def fetchone(self) -> object:
+        return self._live().fetchone()
+
+    def fetchall(self) -> list[object]:
+        return self._live().fetchall()
+
+    def fetchmany(self, size: int = 1) -> list[object]:
+        return self._live().fetchmany(size)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._live(), name)
+
+
 def _pin_pooled_snapshot(
     pool: SnapshotPool,
     *,
