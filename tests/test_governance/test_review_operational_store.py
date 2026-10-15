@@ -473,6 +473,42 @@ def test_a_generation_window_read_does_not_grow_with_history_outside_the_window(
     assert window_sizes == [1, 2]
 
 
+def test_has_events_answers_from_the_index_without_loading_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.curation.review_operational import reset_review_operational_replays
+
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    store = instance.review_operational_store()
+    assert store.has_events(family="block_observation") is False
+    _curation_append(store, coordinate, "one", "one-0")
+    assert store.has_events(family="block_observation") is False
+    for index in range(20):
+        _observed(store, coordinate, "block", f"old-{index}", 0)
+    assert store.has_events(family="block_observation") is True
+    assert store.has_events(family="curation") is True
+    loaded: list[int] = []
+    load_event = ReviewOperationalStore._load_event
+
+    def counted(self, directory, family, partition_id, sequence, previous):  # type: ignore[no-untyped-def]
+        loaded.append(sequence)
+        return load_event(self, directory, family, partition_id, sequence, previous)
+
+    monkeypatch.setattr(ReviewOperationalStore, "_load_event", counted)
+    # Nothing moved: the answer loads no event, however long the history.
+    assert store.has_events(family="block_observation") is True
+    assert store.has_events(family="curation") is True
+    assert loaded == []
+    store.remove_partitions(family="block_observation", partition_ids=("block",))
+    assert store.has_events(family="block_observation") is False
+    assert loaded == []
+    monkeypatch.undo()
+    reset_review_operational_replays()
+    assert store.has_events(family="block_observation") is False
+    assert store.has_events(family="curation") is True
+
+
 def test_a_replaced_touch_log_makes_the_next_reader_list_the_store_again(
     tmp_path: Path,
 ) -> None:

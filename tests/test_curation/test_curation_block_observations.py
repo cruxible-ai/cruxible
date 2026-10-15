@@ -394,3 +394,50 @@ def test_block_churn_never_parses_or_evaluates_observations_outside_its_window(
     assert coverage.evaluated_fact_count == 3
     assert len(detected) == 1
     assert detected[0].subject == document_identity
+
+
+def test_the_no_observations_check_loads_no_event_and_never_reads_the_family(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.discovery.curation import _inactive_detectors
+
+    instance = _instance_with_document(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    churn = "playbill.curation.block_churn.v1"
+    assert churn in {item.pattern_kind for item in _inactive_detectors(instance, None)}
+    marker = _marker(coordinate)
+    observation = build_block_observation(
+        document_identity=ArtifactIdentity(kind="document", name="runbook"),
+        source=_page(coordinate),
+        marker=marker,
+        scan_coordinate=coordinate,
+        scan_generation=0,
+        actor_context=_actor(),
+    )
+    instance.review_operational_store().append(
+        family="block_observation",
+        partition_id="document:runbook/docs.runbook/status",
+        event_id=observation.event_id,
+        payload=observation,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+    )
+    assert churn not in {item.pattern_kind for item in _inactive_detectors(instance, None)}
+    loaded: list[int] = []
+    load_event = ReviewOperationalStore._load_event
+    whole_family = ReviewOperationalStore.events
+
+    def _counting_load(self, directory, family, partition_id, sequence, previous):  # type: ignore[no-untyped-def]
+        loaded.append(sequence)
+        return load_event(self, directory, family, partition_id, sequence, previous)
+
+    def _whole(self: ReviewOperationalStore, **kwargs: object):  # type: ignore[no-untyped-def]
+        assert kwargs.get("family") != "block_observation", "read the whole observation family"
+        return whole_family(self, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ReviewOperationalStore, "_load_event", _counting_load)
+    monkeypatch.setattr(ReviewOperationalStore, "events", _whole)
+    assert churn not in {item.pattern_kind for item in _inactive_detectors(instance, None)}
+    assert loaded == []

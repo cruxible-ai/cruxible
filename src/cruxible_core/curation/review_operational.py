@@ -1244,6 +1244,28 @@ class ReviewOperationalStore:
                 loaded.extend(self._family_events(replay, current))
             return tuple(loaded)
 
+    def _read_unread(self, replay: _StoreReplay, family: ReviewOperationalFamily) -> None:
+        """Bring the generation index up to date: only partitions touched since the last read."""
+
+        for name in sorted(replay.unread.get(family, ())):
+            held = self._replayed(replay, family, name)
+            if held is not None and not held.events:
+                raise ReviewOperationalStoreError("operational partition is empty")
+
+    def has_events(self, *, family: ReviewOperationalFamily) -> bool:
+        """Whether ``family`` holds any verified event.
+
+        Reads only the partitions touched since the last read, then answers
+        from the generation index: no history is visited.
+        """
+        with self._locked():
+            if not self.root.exists() and not self.root.is_symlink():
+                return False
+            replay = self._sync()
+            self._manifest(replay)
+            self._read_unread(replay, family)
+            return bool(replay.generation_index.get(family))
+
     def events_in_generation_window(
         self, *, family: ReviewOperationalFamily, lower: int, upper: int
     ) -> tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...]:
@@ -1259,10 +1281,7 @@ class ReviewOperationalStore:
                 return ()
             replay = self._sync()
             self._manifest(replay)
-            for name in sorted(replay.unread.get(family, ())):
-                held = self._replayed(replay, family, name)
-                if held is not None and not held.events:
-                    raise ReviewOperationalStoreError("operational partition is empty")
+            self._read_unread(replay, family)
             index = replay.generation_index.get(family, {})
             if upper < lower:
                 return ()
