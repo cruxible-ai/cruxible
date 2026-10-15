@@ -29,13 +29,19 @@ Counted on the measuring thread only:
   ``dependency_proof_order`` (a digest's own encode included), and of
   ``composed_canonical_bytes``, which joins parts already encoded;
 - ``encoded_bytes``: the bytes the encoders returned (a composition's are its
-  parts', so they are not counted again).
+  parts', so they are not counted again);
+- ``sql_connects``: SQLite connections opened to databases under the world's
+  root (a resident index connection opened once per process is not per item);
+- ``sql_statements``: statements SQLite ran on those connections (one per
+  execution, so ``executemany`` counts every row, and each trigger firing
+  counts once), whenever the connection was opened.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+import sqlite3
 import sys
 import threading
 import types
@@ -63,6 +69,7 @@ from tests.test_procedures.test_procedure_proposal_delivery import (
     SUBJECT_KIND,
     item_template,
 )
+from tests.test_scale._counters import _database_path, _prefixes, _under
 
 N = 12
 #: Ceilings per settled item, a little over what this build measures. A 400-item
@@ -72,11 +79,27 @@ N = 12
 #: reference sort key and compositions, which canonical_bytes used to do). The brief's
 #: targets (15, 40 and 40 KB) are not met yet; lower these as later stages close
 #: the gap. ``CRUXIBLE_PER_ITEM_REPORT=<path>`` writes the measurements.
-PER_ITEM = {"sha256": 40, "encodes": 140, "encoded_bytes": 100 * 1024}
+#: SQL: a settle opens no connection per item (journal, history and envelope
+#: indexes keep one per process; snapshot readers are pooled), and runs 43
+#: statements per item here (a 400-item settle ran 155 per item, 5.3 connects,
+#: before resident index connections and one-statement-per-table writes).
+PER_ITEM = {
+    "sha256": 40,
+    "encodes": 140,
+    "encoded_bytes": 100 * 1024,
+    "sql_connects": 0.25,
+    "sql_statements": 48,
+}
 #: A small settle after a large one: at most this times one after a small one...
 LARGE_PARENT_RATIO = 1.25
 #: ...plus this, for ids, paths and shard directories one item longer or deeper.
-FLAT_SLACK = {"sha256": 16, "encodes": 16, "encoded_bytes": 8 * 1024}
+FLAT_SLACK = {
+    "sha256": 16,
+    "encodes": 16,
+    "encoded_bytes": 8 * 1024,
+    "sql_connects": 2,
+    "sql_statements": 16,
+}
 
 _FAN_OUT = {"items": f"$steps.{fixtures.SOURCE_ALIAS}.content.json.proposals"}
 
@@ -122,6 +145,41 @@ def _hashing(original: Callable[..., Any]) -> Callable[..., Any]:
         return original(*args, **kwargs)
 
     return counted
+
+
+def _statement(_sql: str) -> None:
+    if _COUNTS.measuring():
+        _COUNTS.counts["sql_statements"] += 1
+
+
+@contextmanager
+def _sql_traced(root: Path) -> Iterator[None]:
+    """Trace every SQLite connection opened under ``root`` until the block exits.
+
+    Connections outlive a measured window (resident index connections, pooled
+    snapshot readers), so each is traced from the moment it opens; only the
+    measuring thread's statements and connects inside a window count.
+    """
+
+    prefixes = _prefixes(root)
+    original = sqlite3.connect
+
+    def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        connection = original(*args, **kwargs)
+        database = _database_path(
+            args[0] if args else kwargs.get("database"), uri=bool(kwargs.get("uri"))
+        )
+        if database is not None and _under(database, prefixes):
+            if _COUNTS.measuring():
+                _COUNTS.counts["sql_connects"] += 1
+            connection.set_trace_callback(_statement)
+        return connection
+
+    sqlite3.connect = connect  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        sqlite3.connect = original  # type: ignore[assignment]
 
 
 @contextmanager
@@ -246,16 +304,17 @@ def test_a_settles_work_per_item_stays_at_its_floor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _roomy_selection_budget(monkeypatch)
-    instance, root, line = settle_support.settle_world(tmp_path, candidate_templates=_FAN_OUT)
-    _create_subjects(instance, settle_support.OWNERS[instance.root], 5 * N)
-    world = (instance, root, line)
-    _settle(world, 0, N, 0)
-    _forget_parsed_receipts()
-    small = _settle(world, N, N, 1)
-    _forget_parsed_receipts()
-    large = _settle(world, 2 * N, 2 * N, 2)
-    _forget_parsed_receipts()
-    after_large = _settle(world, 4 * N, N, 3)
+    with _sql_traced(tmp_path):
+        instance, root, line = settle_support.settle_world(tmp_path, candidate_templates=_FAN_OUT)
+        _create_subjects(instance, settle_support.OWNERS[instance.root], 5 * N)
+        world = (instance, root, line)
+        _settle(world, 0, N, 0)
+        _forget_parsed_receipts()
+        small = _settle(world, N, N, 1)
+        _forget_parsed_receipts()
+        large = _settle(world, 2 * N, 2 * N, 2)
+        _forget_parsed_receipts()
+        after_large = _settle(world, 4 * N, N, 3)
 
     slope = {name: (large[name] - small[name]) / N for name in PER_ITEM}
     report = (
