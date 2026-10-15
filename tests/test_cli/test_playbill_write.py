@@ -222,6 +222,19 @@ def test_retire_takes_a_claim_id_or_a_subject_and_field(served: _ServiceClient) 
     assert title["changes"][0]["claim"] in by_slot.output
 
 
+def test_retire_names_one_value_of_a_many_valued_field(served: _ServiceClient) -> None:
+    _run("add", WI1, "governs", f"{KIND}/wi-2", "--because", "Linked.")
+    _run("add", WI1, "governs", f"{KIND}/wi-3", "--because", "Linked.")
+    by_value = _run("retire", WI1, "governs", f"{KIND}/wi-2", "--because", "Unlinked.")
+    assert by_value.exit_code == 0, by_value.output
+    assert "retire project.work_item/wi-1 governs: project.work_item/wi-2" in by_value.output
+    request = served.requests[-1]
+    assert isinstance(request, RetireRequest)
+    assert request.target.value == f"{KIND}/wi-2"  # type: ignore[union-attr]
+    missing = _run("retire", WI1, "governs", f"{KIND}/wi-2", "--because", "Again.")
+    assert missing.exit_code == 1 and "cruxible.write.value_not_present" in missing.output
+
+
 def test_write_applies_a_file_of_changes_and_prints_its_schema(
     served: _ServiceClient, tmp_path: Path
 ) -> None:

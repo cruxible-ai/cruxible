@@ -636,11 +636,17 @@ class _Planner:
         )
 
     def expected_keys(
-        self, info: PredicateInfo, expect: ExpectedValue, *, index: int, field_name: str
+        self,
+        info: PredicateInfo,
+        expect: ExpectedValue,
+        *,
+        index: int,
+        field_name: str,
+        path: str | None = None,
     ) -> dict[str, object]:
         """The values ``expect`` names, checked like values and keyed for comparison."""
 
-        path = f"changes[{index}].expect"
+        path = path or f"changes[{index}].expect"
         items = expect if isinstance(expect, tuple) else (expect,)
         found: dict[str, object] = {}
         for item in items:
@@ -673,13 +679,19 @@ class _Planner:
         return found
 
     def expected_subject(self, ref: str, *, index: int, path: str) -> str:
-        """An expected Subject value as the Subject it names, through its alias."""
+        """An expected Subject value as the Subject it names, through its alias or key.
+
+        Resolved as ``subject_value`` resolves a written value, so a reference that
+        names a Subject by its key spelling matches the id the Claim stores.
+        """
 
         kind, _, subject_id = ref.partition("/")
         if not kind or not subject_id:
             return ref
         resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
-        return resolved.ref if resolved.via == "alias" and resolved.ref is not None else ref
+        return (
+            resolved.ref if resolved.via in {"alias", "key"} and resolved.ref is not None else ref
+        )
 
     def check_expected(
         self,
@@ -1769,13 +1781,32 @@ class _Planner:
                     repair=f"Read it first: {_render_get(self.request.surface, owner)}",
                     field_path=prefix,
                 )
+            if target.value is not None:
+                # One value of the field, named as it reads: the live Claim
+                # holding it, whether the field holds one value or many.
+                (wanted,) = self.expected_keys(
+                    info, target.value, index=index, field_name=name, path=f"{prefix}.value"
+                )
+                named = [item for item in live if _value_key(item.value) == wanted]
+                if not named:
+                    held = [summary_value(item.value) for item in live]
+                    raise _refuse(
+                        "cruxible.write.value_not_present",
+                        f"{owner} {name} does not hold {_brief_shown(target.value)}; "
+                        f"it holds {_brief_shown(held[0] if len(held) == 1 else held)}",
+                        change=index,
+                        candidates=tuple(item.claim_id for item in live),
+                        repair="Name one of the values it holds, or retire a listed Claim by ID",
+                        field_path=f"{prefix}.value",
+                    )
+                live = tuple(named)
             if len(live) > 1:
                 raise _refuse(
                     "cruxible.write.slot_ambiguous",
                     f"{owner} {name} holds {len(live)} values; name the one to retire",
                     change=index,
                     candidates=tuple(item.claim_id for item in live),
-                    repair="Retire one of the listed Claims by ID",
+                    repair="Name the value to retire, or retire one of the listed Claims by ID",
                     field_path=prefix,
                 )
             return live[0].claim_id, owner, name, info.predicate, live[0].value

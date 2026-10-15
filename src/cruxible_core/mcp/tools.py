@@ -1087,8 +1087,8 @@ def register_tools(
             str | SlotRef,
             Field(
                 description=(
-                    'A Claim ID (CLM-…), or {"subject": "kind/id", "field": "…"} for the '
-                    "one live value of a field."
+                    'A Claim ID (CLM-…), or {"subject", "field"} for a one-value field, '
+                    '+"value" to name one of several.'
                 )
             ),
         ],

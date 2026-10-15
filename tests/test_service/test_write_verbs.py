@@ -1438,6 +1438,64 @@ def test_retire_names_the_values_of_an_ambiguous_many_valued_slot(
     assert refusal.code == "cruxible.write.slot_ambiguous" and len(refusal.candidates) == 2
 
 
+def test_retire_by_value_names_one_of_several_values_and_refuses_one_not_held(
+    instance: PlaybillInstance,
+) -> None:
+    _write(instance, _add(WI1, "governs", WI2), _add(WI1, "governs", WI3))
+    retired = _write(
+        instance,
+        {"op": "retire", "target": {"subject": WI1, "field": "governs", "value": WI2}},
+    )
+    assert retired.status == "accepted", retired
+    assert retired.changes[0].before == WI2
+    assert _values(instance, WI1, "governs") == [WI3]
+
+    # A value the field does not hold names nothing: refused with what it holds.
+    missing = _refusal(
+        _write(
+            instance,
+            {"op": "retire", "target": {"subject": WI1, "field": "governs", "value": WI2}},
+        )
+    )
+    assert missing.code == "cruxible.write.value_not_present"
+    assert len(missing.candidates) == 1
+
+    # On a single-value field, a named value must be the one it holds.
+    _write(instance, _set(WI1, "status", "ready"))
+    wrong = _refusal(
+        _write(
+            instance,
+            {"op": "retire", "target": {"subject": WI1, "field": "status", "value": "blocked"}},
+        )
+    )
+    assert wrong.code == "cruxible.write.value_not_present"
+    right = _write(
+        instance,
+        {"op": "retire", "target": {"subject": WI1, "field": "status", "value": "ready"}},
+    )
+    assert right.status == "accepted" and _values(instance, WI1, "status") == []
+
+
+def test_retire_by_value_and_expect_resolve_a_subject_key_spelling(
+    instance: PlaybillInstance,
+) -> None:
+    # The key's canonical form reads WI-2 as wi-2: add stores the resolved id,
+    # so naming the value the same way must find it again (review-qs2 F-002).
+    spelled = f"{KIND}/WI-2"
+    _write(instance, _add(WI1, "governs", spelled), _add(WI1, "governs", WI3))
+    assert _values(instance, WI1, "governs") == [WI2, WI3]
+    held = _write(
+        instance,
+        {
+            "op": "retire",
+            "target": {"subject": WI1, "field": "governs", "value": spelled},
+            "expect": [spelled, WI3],
+        },
+    )
+    assert held.status == "accepted", held
+    assert _values(instance, WI1, "governs") == [WI3]
+
+
 def test_one_write_may_retire_one_contender_and_replace_the_other(
     instance: PlaybillInstance,
 ) -> None:

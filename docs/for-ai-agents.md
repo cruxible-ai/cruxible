@@ -56,6 +56,60 @@ cx = Cruxible.connect()          # remembered context, or connect(target=..., in
 print(cx.world().describe())     # the verbs and the vocabulary
 ~~~
 
+## A propose-only agent
+
+A propose-only agent writes and proposes but cannot approve or accept. That
+limit is a credential tier (`governed_write`), so it needs a daemon with auth.
+Start one with its own state root:
+
+~~~bash
+cruxible server start --auth --state-root ~/.cruxible-team \
+  --socket ~/.cruxible-team/run/daemon.sock
+~~~
+
+The daemon never prints its bootstrap secret; it writes it owner-only to
+`<state-root>/daemon/bootstrap-secret`. In another shell, in a new repository,
+allocate a host with the secret, claim the host's one-time admin credential,
+and initialize with it:
+
+~~~bash
+mkdir team && cd team && git init
+export CRUXIBLE_SERVER_SOCKET=~/.cruxible-team/run/daemon.sock
+SECRET_FILE=~/.cruxible-team/daemon/bootstrap-secret
+CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$SECRET_FILE")" cruxible host create
+cruxible credential claim-bootstrap --secret-file "$SECRET_FILE"
+CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed> cruxible init
+~~~
+
+`init` makes you the owner and mints your own credential into your settings,
+which the CLI and the SDK remember. Add the agent in one command: it registers
+the agent's key and mints its `governed_write` credential into the agent's own
+settings file:
+
+~~~bash
+cruxible principal add agent-b --key-dir ~/agents/agent-b
+~~~
+
+Hand the agent `~/agents/agent-b/cruxible.env`: a shell or an MCP server loads
+it (`set -a; . ~/agents/agent-b/cruxible.env; set +a`). On this machine the CLI
+can switch to it. With the [quickstart](quickstart.md) kit installed:
+
+~~~bash
+cruxible context use --principal agent-b
+cruxible whoami                                   # agent-b, governed_write
+cruxible set app.service/search owner grace --because "Grace took over search."
+# awaiting approval ... proposal: sha256:…
+cruxible proposal activate PROPOSAL_ID            # refused: needs graph_write
+cruxible context use --principal YOUR_ID
+cruxible proposal approve PROPOSAL_ID --yes      # approving activates it
+~~~
+
+You review and approve what the agent proposes under your own settings;
+approving activates it. With auth off, the same `principal add` registers the agent and
+writes its settings without a credential, but every process of your OS user is
+equally trusted, so nothing stops a process from loading your settings
+instead: the principal ID is a claim, not a boundary.
+
 ## Operating rules
 
 1. Treat accepted coordinates as state and proposals as provisional. A

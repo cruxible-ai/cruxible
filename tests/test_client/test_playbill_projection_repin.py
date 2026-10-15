@@ -572,13 +572,26 @@ def test_rendered_bodies_are_tables_lists_or_a_no_rows_line() -> None:
         (_row("Subject:a/1", status="ready", note="x | y"), _row("Subject:a/2", status=None))
     )
     assert table == (
-        b"| subject | status | note |\n"
-        b"|---|---|---|\n"
-        b"| Subject:a/1 | ready | x \\| y |\n"
-        b"| Subject:a/2 |  |  |\n"
+        b"| subject | status | note |\n|---|---|---|\n| a/1 | ready | x \\| y |\n| a/2 |  |  |\n"
     )
-    assert render_query_block_body((_row("Subject:a/1"),)) == b"- Subject:a/1\n"
+    assert render_query_block_body((_row("Subject:a/1"),)) == b"- a/1\n"
     assert render_query_block_body(()) == b"_No rows._\n"
+    # Values read as written: lists comma-separated, objects as key: value pairs.
+    spelled = render_query_block_body(
+        (_row("Subject:a/1", ids=["GHSA-1", "GHSA-2"], meta={"b": 2, "a": True}),)
+    )
+    assert spelled == (
+        b"| subject | ids | meta |\n|---|---|---|\n| a/1 | GHSA-1, GHSA-2 | a: true, b: 2 |\n"
+    )
+
+
+def test_a_block_rendered_in_the_earlier_form_still_reads_as_a_rendering() -> None:
+    from cruxible_client.authoring.blocks import _render_query_block_body_v1
+
+    rows = (_row("Subject:a/1", ids=["GHSA-1"]),)
+    assert _render_query_block_body_v1(rows) == (
+        b'| subject | ids |\n|---|---|\n| Subject:a/1 | ["GHSA-1"] |\n'
+    )
 
 
 def test_render_writes_the_body_from_the_one_query_backing(tmp_path: Path) -> None:

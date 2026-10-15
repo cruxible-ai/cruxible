@@ -515,8 +515,9 @@ retire(
 ) -> WriteOutcome
 ```
 
-Ends one live Claim, named by Claim ID or by `SlotRef(subject=..., field=...)`
-for a field that holds one value. The Claims that depend on it retire with it,
+Ends one live Claim, named by Claim ID, by `SlotRef(subject=..., field=...)`
+for a field that holds one value, or by `SlotRef(subject=..., field=...,
+value=...)` for one of several. The Claims that depend on it retire with it,
 in one change set.
 
 **Conditions and effects:** As `Cruxible.set`.

@@ -545,6 +545,101 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
     assert playbill.coordinate.git_oid == head.git_oid
 
 
+def _connect_capturing(
+    monkeypatch: pytest.MonkeyPatch, context_path: Path, workspace: Path
+) -> dict[str, object]:
+    connection: dict[str, object] = {}
+    head = contracts.AcceptedCoordinate(
+        git_oid="a" * 40,
+        semantic_root="sha256:" + "1" * 64,
+        generation_root="sha256:" + "2" * 64,
+        compiler_digest="sha256:" + "3" * 64,
+    )
+
+    class StubClient:
+        def __init__(self, **values: object) -> None:
+            connection.update(values)
+
+        def _version_info(self) -> tuple[str, str]:
+            return AUTHORING_SDK_VERSION, SDK_CONTRACT_SNAPSHOT_DIGEST
+
+        def whoami(self, instance_id: str) -> object:
+            from types import SimpleNamespace
+
+            return SimpleNamespace(coordinate=head)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", StubClient)
+    Cruxible.connect(context=context_path, workspace=workspace)
+    return connection
+
+
+def test_sdk_connect_acts_as_the_principal_init_remembered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # `cruxible init` remembers the owner's settings file; the SDK acts as that
+    # principal exactly as the CLI does, unless the process names its own.
+    _clear_target_env(monkeypatch)
+    for name in ("CRUXIBLE_PRINCIPAL_ID", "CRUXIBLE_PRINCIPAL_KEY", "CRUXIBLE_SERVER_BEARER_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    socket = (tmp_path / "d.sock").resolve()
+    settings = tmp_path / "keys" / "cruxible.env"
+    settings.parent.mkdir()
+    settings.write_text(
+        f"export CRUXIBLE_SERVER_SOCKET={socket}\n"
+        "export CRUXIBLE_INSTANCE_ID=inst_a\n"
+        "export CRUXIBLE_PRINCIPAL_ID=ada\n"
+        f"export CRUXIBLE_PRINCIPAL_KEY={tmp_path / 'keys' / 'key.pem'}\n"
+        "export CRUXIBLE_SERVER_BEARER_TOKEN=tok-ada\n",
+        encoding="utf-8",
+    )
+    context_path = tmp_path / "context.json"
+    context_path.write_text(
+        json.dumps(
+            {
+                "server_socket": str(socket),
+                "instance_id": "inst_a",
+                "principals": {
+                    f"inst_a@unix://{socket}": {"active": "ada", "settings": {"ada": str(settings)}}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    connection = _connect_capturing(monkeypatch, context_path, workspace)
+    assert connection["principal_id"] == "ada"
+    assert connection["token"] == "tok-ada"
+
+    # A process that names its own principal keeps it, and is offered no token.
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_ID", "grace")
+    connection = _connect_capturing(monkeypatch, context_path, workspace)
+    assert connection["principal_id"] == "grace"
+    assert connection["token"] is None
+
+    # A process holding only its own key (an agent's) is never given the remembered
+    # owner's identity or token, and no principal is inferred from the key.
+    monkeypatch.delenv("CRUXIBLE_PRINCIPAL_ID")
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY", str(tmp_path / "agent" / "agent.pem"))
+    connection = _connect_capturing(monkeypatch, context_path, workspace)
+    assert connection["principal_id"] is None
+    assert connection["token"] is None
+    monkeypatch.delenv("CRUXIBLE_PRINCIPAL_KEY")
+
+    # A settings file written for another endpoint is never offered here.
+    settings.write_text(
+        settings.read_text(encoding="utf-8").replace(str(socket), str(tmp_path / "other.sock")),
+        encoding="utf-8",
+    )
+    connection = _connect_capturing(monkeypatch, context_path, workspace)
+    assert connection["principal_id"] is None
+    assert connection["token"] is None
+
+
 def test_context_connect_through_a_symlinked_socket_dir_keeps_the_instance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

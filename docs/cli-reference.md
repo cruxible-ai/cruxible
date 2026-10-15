@@ -3289,7 +3289,7 @@ cruxible add SUBJECT FIELD VALUE --because TEXT
   [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
   [--role ROLE] [--expect-absent]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
-cruxible retire TARGET [FIELD] --because TEXT
+cruxible retire TARGET [FIELD [VALUE]] --because TEXT
   [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--dry-run] [--no-accept]
   [--at GIT_OID] [--json]
 cruxible write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
@@ -3349,7 +3349,10 @@ of content it already cites the same way it is answered as done (already live);
 on new evidence (other `--because` words, another Capture) that Claim's evidence
 is refreshed, never a second Claim written; `--expect-absent` refuses it
 instead (`cruxible.write.value_already_present`). `retire` ends one live
-Claim, named by ID or by SUBJECT FIELD when that field holds one value; the
+Claim, named by ID, by SUBJECT FIELD when that field holds one value, or by
+SUBJECT FIELD VALUE for one of several (`cruxible retire app.service/payments
+depends_on pypi.release/requests-2.32.4`; in a `write` file, a target
+`{"subject", "field", "value"}`); the
 Claims that depend on it retire with it; `--expect` compares the field's values
 as on `set`. `write` applies a
 FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
@@ -3936,8 +3939,9 @@ incomplete projections without treating modified records as accepted evidence.
 structured read. A Procedure's proposal also prints one page of its items'
 reasons, each under the Claim or Subject path it explains (50 by default,
 `--item-reasons-limit` up to 500); `--item-reasons-after` with the printed
-cursor reads the next page. `proposal approve` still renders the whole candidate before
-asking for a signature, because that rendering is what the signature covers.
+cursor reads the next page. `proposal approve` shows the reason and change summary before
+asking for a signature; `--full` renders every member's artifact and semantic
+delta. The signature covers the exact candidate digest.
 
 A reviewer without a workspace attachment clones the ledger mirror instead and
 runs the same diff against `origin/main`; see [ledger](#ledger) for what the mirror carries and how to get its URL.
@@ -3991,7 +3995,7 @@ A propose-only agent is a principal whose credential is `governed_write`: it
 can author and propose, and the tier refuses approvals and activation. That
 limit needs daemon auth; with auth off every process of the OS user is equally
 trusted and could load another principal's settings. See the
-[quickstart](quickstart.md#add-a-propose-only-agent) for the worked example.
+[For AI agents](for-ai-agents.md#a-propose-only-agent) for the worked example.
 
 ## sources
 

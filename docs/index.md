@@ -9,8 +9,9 @@ from. No LLM runs inside Cruxible.
 
 ## Start here
 
-- [Quickstart](quickstart.md): start a daemon, define vocabulary, write and
-  read values, cite a file, review a change, render a table into a page.
+- [Quickstart](quickstart.md): record typed state, review a change from the
+  outside world, see a page flagged out of date, and ask what the change
+  reaches and what was true before.
 - [Concepts](concepts.md): the model behind the commands.
 - [Modeling state](modeling-state.md): what to make typed state and what to
   keep as prose, and how to shape Subjects, ClaimTypes and Procedures.

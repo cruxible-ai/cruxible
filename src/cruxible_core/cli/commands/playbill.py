@@ -215,6 +215,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from cruxible_core.service.proposals.review import (
     ProposalReview,
+    render_playbill_approval_summary,
     render_playbill_proposal_review,
     render_playbill_proposal_review_pointer,
 )
@@ -2386,6 +2387,11 @@ def review_proposal(
     is_flag=True,
     help="Sign only: leave activating a candidate this approval completes to someone else.",
 )
+@click.option(
+    "--full",
+    is_flag=True,
+    help="Render every member's artifact and semantic delta, not the change summary.",
+)
 @json_option
 @handle_errors
 def approve_proposal(
@@ -2394,6 +2400,7 @@ def approve_proposal(
     private_key_path: str,
     yes: bool,
     hold: bool,
+    full: bool,
     output_json: bool,
 ) -> None:
     """Sign one reviewed candidate; the approval that completes it activates it.
@@ -2428,7 +2435,8 @@ def approve_proposal(
     )
     review = ProposalReview.model_validate(challenge.review.model_dump(mode="json"))
     if not output_json:
-        click.echo(render_playbill_proposal_review(review), nl=False)
+        render = render_playbill_proposal_review if full else render_playbill_approval_summary
+        click.echo(render(review), nl=False)
     if not yes and not click.confirm("Sign this exact candidate?"):
         raise click.Abort()
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
@@ -2529,7 +2537,17 @@ def activate_proposal(proposal_id: str, output_brief: bool, output_json: bool) -
             next_command="cruxible next --brief",
         )
         return
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    if result.status == "accepted" and result.accepted_coordinate is not None:
+        click.echo(f"accepted ({result.accepted_coordinate.git_oid[:12]}) by {result.activated_by}")
+        click.echo("next: cruxible next")
+    else:
+        click.echo(
+            f"not accepted ({result.status}): accepted state moved after this proposal was checked"
+        )
+        click.echo(f"next: cruxible proposal readmit {result.proposal_id}")
 
 
 @playbill_group.command("whoami")
@@ -4687,6 +4705,7 @@ def add_value(
 @playbill_group.command("retire")
 @click.argument("target")
 @click.argument("field", required=False)
+@click.argument("value", required=False)
 @click.option("--because", required=True, help="Why it ends.")
 @click.option(
     "--reason",
@@ -4701,6 +4720,7 @@ def add_value(
 def retire(
     target: str,
     field: str | None,
+    value: str | None,
     because: str,
     reason: str,
     expect: tuple[str, ...],
@@ -4709,15 +4729,23 @@ def retire(
     at_oid: str | None,
     output_json: bool,
 ) -> None:
-    """Retire one live Claim: TARGET is a Claim ID, or a Subject (kind/id) and its FIELD.
+    """Retire one live Claim: a Claim ID, or a Subject (kind/id), its FIELD and VALUE.
 
+    VALUE names which value to retire; it may be left out when FIELD holds one.
     Claims that depend on it retire with it, in the same change set.
     """
 
+    if value is not None and field is None:
+        raise click.UsageError("VALUE needs FIELD: cruxible retire SUBJECT FIELD VALUE")
+    slot: dict[str, object] | None = None
+    if field is not None:
+        slot = {"subject": target, "field": field}
+        if value is not None:
+            slot["value"] = value
     request = _write_request(
         RetireRequest,
         {
-            "target": target if field is None else {"subject": target, "field": field},
+            "target": target if slot is None else slot,
             "because": because,
             "reason": reason,
             "expect": _expect_option_value(expect),
