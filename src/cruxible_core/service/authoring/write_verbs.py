@@ -679,13 +679,19 @@ class _Planner:
         return found
 
     def expected_subject(self, ref: str, *, index: int, path: str) -> str:
-        """An expected Subject value as the Subject it names, through its alias."""
+        """An expected Subject value as the Subject it names, through its alias or key.
+
+        Resolved as ``subject_value`` resolves a written value, so a reference that
+        names a Subject by its key spelling matches the id the Claim stores.
+        """
 
         kind, _, subject_id = ref.partition("/")
         if not kind or not subject_id:
             return ref
         resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
-        return resolved.ref if resolved.via == "alias" and resolved.ref is not None else ref
+        return (
+            resolved.ref if resolved.via in {"alias", "key"} and resolved.ref is not None else ref
+        )
 
     def check_expected(
         self,

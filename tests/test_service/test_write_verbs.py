@@ -1476,6 +1476,26 @@ def test_retire_by_value_names_one_of_several_values_and_refuses_one_not_held(
     assert right.status == "accepted" and _values(instance, WI1, "status") == []
 
 
+def test_retire_by_value_and_expect_resolve_a_subject_key_spelling(
+    instance: PlaybillInstance,
+) -> None:
+    # The key's canonical form reads WI-2 as wi-2: add stores the resolved id,
+    # so naming the value the same way must find it again (review-qs2 F-002).
+    spelled = f"{KIND}/WI-2"
+    _write(instance, _add(WI1, "governs", spelled), _add(WI1, "governs", WI3))
+    assert _values(instance, WI1, "governs") == [WI2, WI3]
+    held = _write(
+        instance,
+        {
+            "op": "retire",
+            "target": {"subject": WI1, "field": "governs", "value": spelled},
+            "expect": [spelled, WI3],
+        },
+    )
+    assert held.status == "accepted", held
+    assert _values(instance, WI1, "governs") == [WI3]
+
+
 def test_one_write_may_retire_one_contender_and_replace_the_other(
     instance: PlaybillInstance,
 ) -> None:
