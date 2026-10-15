@@ -1050,6 +1050,7 @@ def _claim_card(
         for item in slot
         if item.claim_id != name
     }
+    flags = verdict_flags(verdict, status, held=claim.identity.qualified in held)
     return GetClaimCard(
         claim=name,
         subject=_subject_ref(subject_path),
@@ -1075,7 +1076,7 @@ def _claim_card(
             for item in slot
             if item.claim_id != name
         ),
-        flags=verdict_flags(verdict, status, held=claim.identity.qualified in held),
+        flags=flags,
         next=(
             _render_get(surface, name, "evidence"),
             *(
@@ -1083,7 +1084,11 @@ def _claim_card(
                 for item, (value, _digest) in contender_values.items()
                 if _value_was_cut(summary_value(value), surface=surface)
             ),
-            _render_get(surface, name, "why"),
+            # ``why`` is a deep admission/verdict explanation: worth suggesting
+            # only when something about this Claim is actually notable (stale,
+            # contested, contradicted, uncovered or held), not on every
+            # ordinary supported read.
+            *((_render_get(surface, name, "why"),) if flags else ()),
             _render_get(surface, _subject_ref(subject_path)),
         ),
     )
@@ -1181,6 +1186,7 @@ def _subject_card(
                 flags=tuple(ordered_flags(marks)),
             )
         )
+    any_claim_flagged = any(entry.flags for entry in entries)
     return GetSubjectCard(
         subject=subject,
         kind=kind,
@@ -1189,7 +1195,9 @@ def _subject_card(
         incoming_count=incoming,
         next=(
             *dict.fromkeys(evidence_steps),
-            _render_get(surface, subject, "why"),
+            # See the matching note in _claim_card: suggest ``why`` only when
+            # some claim here is actually notable.
+            *((_render_get(surface, subject, "why"),) if any_claim_flagged else ()),
             _render_get(surface, subject, "history"),
         ),
     )

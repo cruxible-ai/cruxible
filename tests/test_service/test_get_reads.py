@@ -123,6 +123,12 @@ def test_every_claim_reference_form_reads_the_same_values_first_card(world: dict
     assert (card.verdict, card.status, card.revision) == ("supported", "accepted", 1)
     assert card.accepted is not None and card.contenders == () and card.flags == ()
     assert card.next[0] == f'cruxible_get(ref="{claim}", detail="evidence")'
+    # An ordinary supported Claim has nothing notable for `why` to explain:
+    # it is not offered as a next step.
+    assert not any('detail="why"' in step for step in card.next)
+    subject = _get(instance, _SUBJECT).card
+    assert isinstance(subject, GetSubjectCard)
+    assert not any('detail="why"' in step for step in subject.next)
 
 
 def test_next_steps_are_rendered_for_the_callers_surface(world: dict[str, Any]) -> None:
@@ -560,6 +566,10 @@ def test_a_contested_slot_shows_every_live_value_with_the_contested_flag(
     assert isinstance(claim, GetClaimCard)
     assert "contested" in claim.flags
     assert [item.value for item in claim.contenders] == ["blocked"]
+    # Contested is exactly the kind of notable state `why` explains: offered
+    # here, where the plain-supported card above withholds it.
+    assert any('detail="why"' in step for step in claim.next)
+    assert any('detail="why"' in step for step in subject.next)
 
     # A cut contender in a multi-value Subject row must point to that Claim,
     # not the Subject (which has no evidence detail) or the short winning Claim.

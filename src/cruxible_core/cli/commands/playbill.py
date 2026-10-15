@@ -4974,6 +4974,64 @@ def _public_name(name: str) -> str:
     return name
 
 
+_WHY_SUMMARY_MAX_ITEMS = 5
+
+
+def _why_scalar_text(value: object) -> str:
+    text = str(value)
+    return _public_name(text) if "playbill." in text else text
+
+
+def _why_summary_lines(value: Any, *, key: str | None = None, depth: int = 0) -> list[str]:
+    """``get --detail why`` as a readable, bounded summary; ``--json`` keeps the whole payload.
+
+    The served explanation is a deeply nested typed envelope (law evidence,
+    verdict detail, admission accounts, source handles, ...); printed as raw
+    JSON it runs to hundreds of lines. This walks it generically -- every key
+    still appears, nothing is renamed -- but bounds each list to a handful of
+    items so the common case is a short, readable summary instead of a dump.
+    """
+
+    indent = "  " * depth
+    if isinstance(value, Mapping):
+        items = [(k, v) for k, v in value.items() if k != "tag" and v not in (None, [], {}, ())]
+        if not items:
+            return []
+        lines = [] if key is None else [f"{indent}{key}:"]
+        for item_key, item_value in items:
+            lines.extend(_why_summary_lines(item_value, key=item_key, depth=depth + 1))
+        return lines
+    if isinstance(value, list | tuple):
+        if not value:
+            return []
+        shown = value[:_WHY_SUMMARY_MAX_ITEMS]
+        overflow = len(value) - len(shown)
+        if all(isinstance(item, Mapping) for item in shown):
+            header = [] if key is None else [f"{indent}{key} ({len(value)}):"]
+            lines = list(header)
+            flat = all(
+                not isinstance(v, Mapping | list | tuple) for item in shown for v in item.values()
+            )
+            for item in shown:
+                if flat:
+                    # Every field is a scalar: one joined line per item, as
+                    # get's other card rendering already does.
+                    lines.append(
+                        f"{indent}  " + "  ".join(_why_scalar_text(v) for v in item.values())
+                    )
+                else:
+                    lines.extend(_why_summary_lines(item, depth=depth + 1))
+            if overflow:
+                lines.append(f"{indent}  ... and {overflow} more")
+            return lines
+        rendered = ", ".join(_why_scalar_text(item) for item in shown)
+        if overflow:
+            rendered += f", ... and {overflow} more"
+        return [f"{indent}{key}: {rendered}" if key is not None else f"{indent}{rendered}"]
+    text = _why_scalar_text(value)
+    return [f"{indent}{key}: {text}" if key is not None else f"{indent}{text}"]
+
+
 def _emit_get_text(result: Any) -> None:
     """Values first, per kind; ``--json`` carries the whole structured result."""
 
@@ -5082,7 +5140,8 @@ def _emit_get_text(result: Any) -> None:
             )
         return
     if result.why is not None:
-        _emit_json(result.why)
+        for line in _why_summary_lines(result.why) or ["(nothing to explain)"]:
+            click.echo(line)
         if getattr(result, "reason", None) is not None:
             _echo_proposed_reason(result.reason)
         return
@@ -7377,9 +7436,7 @@ def _orient_predicate_line(item: Mapping[str, Any]) -> str:
     if item.get("stale_after"):
         parts.append(f"stale_after={item['stale_after']}")
     if item.get("evidence") is not None:
-        parts.append(
-            "evidence=" + (",".join(map(_public_name, item["evidence"])) or "(none)")
-        )
+        parts.append("evidence=" + (",".join(map(_public_name, item["evidence"])) or "(none)"))
     return "  ".join(parts)
 
 
