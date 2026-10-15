@@ -197,7 +197,7 @@ def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generat
     assert world.sec.vuln.affects_package.object_kind is ClaimObjectKind.SUBJECT
 
     draft = playbill.changes(rationale="Name the package this advisory affects.")
-    package = draft.subject(world.sec.package.define("click"))
+    package = draft.subject(playbill.new_subject("sec.package", key="click"))
     assert isinstance(package, PendingSubjectRef)
     draft.claim(
         subject=vulnerability,
@@ -366,13 +366,20 @@ def test_the_cli_leaf_writes_a_vocabulary_stub_the_daemon_renders_identically(
     # Floor delivery renders it from the ClaimTypes its floor index holds, with
     # no client; the bytes are the ones `cruxible stub` wrote.
     from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from cruxible_core.service.discovery.orient import accepted_subject_kinds
     from cruxible_core.service.floor.floor_index import advance_floor_index
 
-    held = advance_floor_index(get_playbill_manager().get(instance_id)).inputs.types
+    instance = get_playbill_manager().get(instance_id)
+    held = advance_floor_index(instance).inputs.types
+    # ... and the SubjectKinds of the head's projection, which type define().
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        kinds = accepted_subject_kinds(projection.typed.connection)
+    assert kinds, "the vocabulary declares SubjectKinds, so the parity covers define()"
     assert (
         render_vocabulary_stub(
             (claim_type.model_dump(mode="json") for claim_type in held.values()),
             coordinate=playbill.coordinate,
+            subject_kinds=kinds,
         )
         == rendered
     )

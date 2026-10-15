@@ -46,6 +46,7 @@ OrientSection: TypeAlias = Literal[
     "documents",
     "procedures",
     "claim_types",
+    "subject_kinds",
     "queries",
     "interfaces",
     "runs",
@@ -135,6 +136,20 @@ class OrientPredicate(_StrictOrientModel):
     revision_evidence: RevisionEvidence | None = Field(default=None, exclude_if=_is_none)
     stale_after: str | None = Field(default=None, exclude_if=_is_none)
     live_claims: int | None = Field(default=None, ge=0, exclude_if=_is_none)
+
+
+class OrientSubjectKind(_StrictOrientModel):
+    """One live SubjectKind: how core names a new Subject of the kind.
+
+    ``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``
+    or ``hint``) or ``minted`` (core mints the id). A kind with no live
+    SubjectKind has no row: no new Subject of it can be created.
+    """
+
+    kind: str
+    rule: Literal["keys", "minted"]
+    keys: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
+    uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_is_none)
 
 
 #: A kind no accepted SubjectKind declares: its Subjects are grandfathered.
@@ -327,7 +342,8 @@ class OrientResult(_StrictOrientModel):
       ``artifacts``, ``queries`` and ``attention``;
     - ``kind``: ``kind_detail``;
     - ``section``: that section's rows (``documents``, ``procedures``,
-      ``claim_types``, ``queries``, ``interfaces``, or an operational family:
+      ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an
+      operational family:
       ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
       ``predictions``, ``mandates``), the principal registry (``principals``)
       or the governed policies in force (``policies``), paged. The default map counts the
@@ -353,6 +369,7 @@ class OrientResult(_StrictOrientModel):
     documents: tuple[OrientDocument, ...] | None = Field(default=None, exclude_if=_is_none)
     procedures: tuple[OrientProcedure, ...] | None = Field(default=None, exclude_if=_is_none)
     claim_types: tuple[OrientPredicate, ...] | None = Field(default=None, exclude_if=_is_none)
+    subject_kinds: tuple[OrientSubjectKind, ...] | None = Field(default=None, exclude_if=_is_none)
     queries: tuple[OrientQuery, ...] | None = Field(default=None, exclude_if=_is_none)
     interfaces: tuple[OrientInterface, ...] | None = Field(default=None, exclude_if=_is_none)
     # Procedure runs, newest admission first (section "runs"), or only the runs
@@ -406,6 +423,7 @@ __all__ = [
     "OrientQuery",
     "OrientResult",
     "OrientSection",
+    "OrientSubjectKind",
     "OrientSurface",
     "OrientYou",
 ]

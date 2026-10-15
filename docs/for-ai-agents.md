@@ -222,7 +222,7 @@ the value verbs do not express.
 
 ~~~python
 draft = cx.changes(rationale="Name the package this advisory affects.")
-package = draft.subject(w.sec.package.define("click"))       # a ref, usable in this set
+package = draft.subject(cx.new_subject("sec.package", key="click"))  # a ref, usable in this set
 draft.claim(
     subject=w.sec.vulnerability["cve-2026-69247"],
     predicate=w.sec.vuln.affects_package,

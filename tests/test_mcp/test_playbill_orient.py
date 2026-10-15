@@ -83,6 +83,7 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
         "documents",
         "procedures",
         "claim_types",
+        "subject_kinds",
         "queries",
         "interfaces",
         "runs",

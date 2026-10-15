@@ -2,10 +2,12 @@
 
 A world is discovered at runtime, so an editor and a model both see `Any` where
 the instance's own vocabulary is. This writes that vocabulary down as types: the
-kinds it nests, every predicate, and each enum member a literal schema names.
+kinds it nests, every predicate, each enum member a literal schema names, and --
+from each kind's SubjectKind -- the key ``define()`` takes for a new Subject.
 Subjects are typed by kind (``world.<kind>["<id>"]``, iteration, ``in``), never
 one attribute per Subject, so the stub depends on the vocabulary alone: its size
-and its bytes move only when a ClaimType does, not with the instance's data.
+and its bytes move only when a ClaimType or a SubjectKind does, not with the
+instance's data.
 
 The stub's classes are CLOSED. They carry the concrete surface of the runtime
 objects but do not inherit the `__getattr__` those objects use to resolve a name
@@ -18,7 +20,7 @@ The stub is a read, not a pin. Its header names the digest of the vocabulary it
 types, and it is byte-identical for the same vocabulary, so a regenerated stub
 shows the vocabulary movement as an ordinary diff. With floor delivery on, the
 daemon keeps ``.cruxible/world.pyi`` current itself: it re-renders the stub only
-when an accepted generation changed the vocabulary.
+when an accepted generation changed a ClaimType or a SubjectKind.
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ from cruxible_client.contracts.workspace_layout import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.world import World, _Node
+    from cruxible_client.contracts.orient import OrientSubjectKind
     from cruxible_client.transport.http import CruxibleClient
 
 STUB_HEADER_TAG = "playbill-world-stub-v2"
@@ -60,8 +63,12 @@ _WORLD_MEMBERS = frozenset(
         "prefetch",
         "stub",
         "unstructured_predicates",
+        "write",
     }
 )
+#: ``define()`` keywords that are not fields: a field leaf spelled like one is
+#: set with ``draft.set(...)`` instead.
+_DEFINE_OPTIONS = frozenset({"create_new", "expect_new"})
 
 _STUB_IMPORTS = (
     "from collections.abc import Sequence",
@@ -70,7 +77,7 @@ _STUB_IMPORTS = (
     "from typing import Literal",
     "",
     "from cruxible_client.authoring.compact_query import QueryResult",
-    "from cruxible_client.authoring.sdk import ClaimView, SubjectDraft",
+    "from cruxible_client.authoring.sdk import ClaimView",
     "from cruxible_client.authoring.sdk_types import (",
     "    Cardinality,",
     "    ClaimObjectKind,",
@@ -80,7 +87,14 @@ _STUB_IMPORTS = (
     "    ReferentSensitivity,",
     "    SubjectRef,",
     ")",
-    "from cruxible_client.authoring.world import KindNamespace, Names, WorldClaimType",
+    "from cruxible_client.authoring.world import (",
+    "    KindNamespace,",
+    "    Names,",
+    "    WorldClaimType,",
+    "    WorldNewSubject,",
+    "    WorldSubjectEdit,",
+    "    WorldWritable,",
+    ")",
     "from cruxible_client.contracts.claim_types import ClaimTypeMemberDescription",
     "from cruxible_client.contracts.compact_query import QueryRequest",
     "from cruxible_client.contracts.projection import AcceptedCoordinate",
@@ -133,6 +147,18 @@ def _subject_class_name(path: str) -> str:
     """Return the class the Subjects of one accepted kind are typed as."""
 
     return "_S_" + _encoded(path)
+
+
+def _new_class_name(path: str) -> str:
+    """Return the class a new Subject's draft of one accepted kind is typed as."""
+
+    return "_N_" + _encoded(path)
+
+
+def _edit_class_name(path: str) -> str:
+    """Return the class an edit of one accepted kind's Subject is typed as."""
+
+    return "_E_" + _encoded(path)
 
 
 def _sorted(values: Iterable[str]) -> list[str]:
@@ -260,6 +286,7 @@ def _subject_block(world: World, node: _Node) -> list[str]:
         if doc:
             body.declare_lines(doc)
     _write_members(world, node.path, body)
+    body.declare(f"def edit(self) -> {_edit_class_name(node.path)}: ...")
     for leaf, predicates in sorted(world._leaf_map(node.path).items()):
         if leaf in reachable or len(predicates) != 1:
             continue
@@ -276,7 +303,7 @@ def _write_annotation(claim_type: WorldClaimType) -> str:
 
     object_kind = claim_type.object_kind.value
     if object_kind == "subject":
-        return "str | SubjectRef"
+        return "str | SubjectRef | WorldNewSubject"
     if object_kind == "exact_content":
         return "str"
     if claim_type.members:
@@ -287,18 +314,27 @@ def _write_annotation(claim_type: WorldClaimType) -> str:
     )
 
 
-def _write_members(world: World, kind: str, body: _Body) -> None:
-    """Type ``set`` over single-value leaves and ``add`` over many-valued ones."""
+def _field_parameters(
+    world: World, kind: str, *, skip: frozenset[str] = frozenset()
+) -> dict[str, list[str]]:
+    """Each write keyword of a kind, as a parameter line, by the cardinality it holds."""
 
     by_cardinality: dict[str, list[str]] = {"one": [], "many": []}
     for leaf, predicates in sorted(world._leaf_map(kind).items()):
         spelled = keyword_name(leaf)
-        if len(predicates) != 1 or spelled is None:
+        if len(predicates) != 1 or spelled is None or predicates[0] in skip:
             continue
         claim_type = world.claim_type(predicates[0])
         by_cardinality[claim_type.cardinality.value].append(
             f"    {spelled}: {_write_annotation(claim_type)} = ...,"
         )
+    return by_cardinality
+
+
+def _write_members(world: World, kind: str, body: _Body) -> None:
+    """Type ``set`` over single-value leaves and ``add`` over many-valued ones."""
+
+    by_cardinality = _field_parameters(world, kind)
     common = [
         "    because: str,",
         "    evidence: Evidence | None = ...,",
@@ -338,6 +374,116 @@ def _write_members(world: World, kind: str, body: _Body) -> None:
     )
 
 
+_SEND_MEMBER = [
+    "def write(",
+    "    self, *, because: str, dry_run: bool = ..., accept: WriteAccept = ...",
+    ") -> WriteOutcome: ...",
+]
+
+
+def _edit_block(world: World, node: _Node) -> list[str]:
+    """Type ``subject.edit()``: the same changes as ``set``/``add``/``retire``, sent later."""
+
+    edit = _edit_class_name(node.path)
+    lines = [f"class {edit}(WorldSubjectEdit):"]
+    lines.append(f'    """Changes to one Subject of accepted kind {node.path}, sent by write()."""')
+    lines.append("")
+    body = _Body()
+    by_cardinality = _field_parameters(world, node.path)
+    common = ["    evidence: Evidence | None = ...,", "    role: WriteRole | None = ...,"]
+    # ``address`` is the runtime edit's own.
+    body.declare_lines(
+        ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
+        + ["    contend: bool = ...,", *by_cardinality["one"], f") -> {edit}: ..."]
+    )
+    body.declare_lines(
+        ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
+        + ["    expect_absent: bool = ...,", *by_cardinality["many"], f") -> {edit}: ..."]
+    )
+    body.declare_lines(
+        [
+            "def retire(",
+            "    self, field: str | ClaimTypeRef, /, *, reason: WriteRetireReason = ...",
+            f") -> {edit}: ...",
+        ]
+    )
+    body.declare_lines(_SEND_MEMBER)
+    lines.extend(body.rendered())
+    return lines
+
+
+def _new_block(world: World, node: _Node) -> list[str]:
+    """Type a new Subject's draft: ``define()`` returns it; ``set``/``add`` extend it."""
+
+    draft = _new_class_name(node.path)
+    lines = [f"class {draft}(WorldNewSubject):"]
+    lines.append(f'    """A new Subject of accepted kind {node.path}, drafted by define()."""')
+    lines.append("")
+    body = _Body()
+    # The key is the creation's to write: a draft takes every other field.
+    keys = frozenset(() if node.identity is None else node.identity.keys)
+    by_cardinality = _field_parameters(world, node.path, skip=keys)
+    common = ["    evidence: Evidence | None = ...,", "    role: WriteRole | None = ...,"]
+    # ``subject_kind`` and ``address`` are the runtime draft's own.
+    body.declare_lines(
+        ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
+        + [*by_cardinality["one"], f") -> {draft}: ..."]
+    )
+    body.declare_lines(
+        ["def add(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
+        + [*by_cardinality["many"], f") -> {draft}: ..."]
+    )
+    body.declare_lines(_SEND_MEMBER)
+    lines.extend(body.rendered())
+    return lines
+
+
+def _define_member(world: World, node: _Node, body: _Body) -> None:
+    """Type ``define()`` by the kind's SubjectKind: its key, then every field as a keyword.
+
+    A kind no live SubjectKind declares has no ``define()``: no new Subject of
+    it can be created until one is authored.
+    """
+
+    identity = node.identity
+    if identity is None:
+        body.note(
+            f"no live SubjectKind declares {node.path}, so it has no define(); "
+            "`cruxible authoring example subject-kind` prints one"
+        )
+        return
+    keys = set(identity.keys)
+    fields = _field_parameters(world, node.path, skip=frozenset(keys))
+    parameters = [
+        line
+        for line in (*fields["one"], *fields["many"])
+        if line.strip().split(":", 1)[0] not in _DEFINE_OPTIONS
+    ]
+    key_lines: list[str] = []
+    for word, predicate in identity.key_words().items():
+        key_node = world._node_at(predicate)
+        annotation = (
+            _write_annotation(world.claim_type(predicate))
+            if key_node is not None and key_node.structure is not None
+            else "str | int | bool"
+        )
+        key_lines.append(f"    {word}: {annotation},")
+    options = [] if identity.rule == "minted" else ["    expect_new: bool = ...,"]
+    if identity.rule == "keys" and not identity.unique:
+        options.insert(0, "    create_new: bool = ...,")
+    # One key is positional or by its leaf; a composite key's parts are keywords.
+    positional = key_lines if len(identity.keys) == 1 else []
+    keywords = [
+        *([] if positional else key_lines),
+        *options,
+        *sorted(parameters),
+    ]
+    body.declare_lines(
+        ["def define(", "    self,", *positional, *(["    *,", *keywords] if keywords else [])]
+        + [f") -> {_new_class_name(node.path)}: ..."]
+    )
+
+
 def _namespace_block(world: World, node: _Node, *, class_name: str) -> list[str]:
     lines = [f"class {class_name}:"]
     lines.append(f'    """{node.path}"""')
@@ -347,7 +493,7 @@ def _namespace_block(world: World, node: _Node, *, class_name: str) -> list[str]
         subject = _subject_class_name(node.path)
         body.declare("subject_kind: str")
         body.declare("subject_ids: tuple[str, ...]")
-        body.declare("def define(self, subject_id: str) -> SubjectDraft: ...")
+        _define_member(world, node, body)
         body.declare(f"def __getitem__(self, subject_id: str) -> {subject}: ...")
         body.declare("def __contains__(self, subject_id: object) -> bool: ...")
         body.declare(f"def __iter__(self) -> Iterator[{subject}]: ...")
@@ -535,6 +681,9 @@ def _blocks(world: World, node: _Node) -> list[list[str]]:
         return blocks
     if node.subject_kind:
         blocks.append(_subject_block(world, node))
+        blocks.append(_edit_block(world, node))
+        if node.identity is not None:
+            blocks.append(_new_block(world, node))
         blocks.append(_query_block(world, node))
     if node.structure is not None:
         if node.subject_kind:
@@ -569,6 +718,17 @@ def render_world_stub(world: World) -> str:
         "predicates: Sequence[str | ClaimTypeRef] = (), page_size: int = 128, "
         "max_claims: int = 4096) -> tuple[ClaimView, ...]: ..."
     )
+    body.declare_lines(
+        [
+            "def write(",
+            "    self,",
+            "    *items: WorldWritable,",
+            "    because: str,",
+            "    dry_run: bool = ...,",
+            "    accept: WriteAccept = ...,",
+            ") -> WriteOutcome: ...",
+        ]
+    )
     _children(world._root, body, reserved=_WORLD_MEMBERS)
     lines.extend(body.rendered())
     lines.append("")
@@ -578,9 +738,10 @@ def render_world_stub(world: World) -> str:
         f"# {STUB_HEADER_TAG}: generated by `cruxible stub` (floor delivery keeps",
         f"# {WORLD_STUB_PATH} current).",
         f"# Vocabulary digest: {digest}",
-        "# The stub types the accepted vocabulary -- kinds, predicates, enum members --",
-        "# and nothing else: it changes exactly when a ClaimType does. Subjects are",
-        '# typed by kind (world.<kind>["<id>"]), never one attribute per Subject.',
+        "# The stub types the accepted vocabulary -- kinds, predicates, enum members,",
+        "# the keys define() takes -- and nothing else: it changes exactly when a",
+        "# ClaimType or a SubjectKind does. Subjects are typed by kind",
+        '# (world.<kind>["<id>"]), never one attribute per Subject.',
         "#",
         "# These classes are closed: a name the vocabulary did not accept is a type",
         "# error, not `Any`. Bind the runtime object to them once --",
@@ -633,17 +794,22 @@ def render_vocabulary_stub(
     claim_type_envelopes: Iterable[Mapping[str, object]],
     *,
     coordinate: AcceptedCoordinate,
+    subject_kinds: Iterable[OrientSubjectKind] = (),
 ) -> str:
-    """Render the stub from accepted ClaimType envelopes alone, with no session.
+    """Render the stub from accepted ClaimType envelopes and SubjectKinds, with no session.
 
     The daemon's floor delivery calls this with the ClaimTypes its floor index
-    already holds; it renders the same bytes `cruxible stub` does for the same
-    vocabulary. ``coordinate`` only stamps the transient World; the stub does
-    not carry it.
+    already holds and the live SubjectKinds of its projection; it renders the
+    same bytes `cruxible stub` does for the same vocabulary. ``coordinate`` only
+    stamps the transient World; the stub does not carry it.
     """
 
     return render_world_stub(
-        vocabulary_world(coordinate=coordinate, claim_type_envelopes=tuple(claim_type_envelopes))
+        vocabulary_world(
+            coordinate=coordinate,
+            claim_type_envelopes=tuple(claim_type_envelopes),
+            subject_kinds=tuple(subject_kinds),
+        )
     )
 
 

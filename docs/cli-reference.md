@@ -3475,7 +3475,9 @@ horizon and live Claim count, the predicates of other kinds that point at it
 PREDICATE:alias`), plus up to five sample Subject IDs. A kind that
 does not exist is refused as `cruxible.orient.kind_not_found` with the nearest
 kinds. `--section` pages one artifact family as compact rows; follow
-`next_cursor` with `--cursor` while `truncated` is true. `--section runs` lists
+`next_cursor` with `--cursor` while `truncated` is true. `--section
+subject_kinds` lists each live SubjectKind and how a new Subject of the kind is
+named (`keys: <key ClaimTypes> (unique|hint)` or `minted`). `--section runs` lists
 Procedure runs, newest admission first, each with its Procedure, status,
 admission time, Line and finished-node count, and `--section running` lists
 only the runs still running. Both page by the admission's immutable position,

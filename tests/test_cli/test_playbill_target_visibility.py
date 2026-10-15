@@ -752,7 +752,7 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
     }
 
     class StubClient:
-        """The world stub reads the head, the ClaimType section and one proof batch."""
+        """The world stub reads the head, the ClaimType and SubjectKind sections, one batch."""
 
         def head(self, instance_id: str, **_values: object) -> contracts.Head:
             assert instance_id == "inst_read"
@@ -765,10 +765,12 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
         def orient(self, instance_id: str, **values: object) -> object:
             from types import SimpleNamespace
 
-            assert instance_id == "inst_read" and values["section"] == "claim_types"
+            assert instance_id == "inst_read"
+            assert values["section"] in {"claim_types", "subject_kinds"}
             return SimpleNamespace(
                 coordinate=coordinate,
                 claim_types=(SimpleNamespace(predicate="sec.vuln.severity"),),
+                subject_kinds=(),
                 truncated=False,
                 next_cursor=None,
             )

@@ -1801,7 +1801,7 @@ class SubjectCreationDraft(_IntentDraft):
 
 @dataclass(frozen=True)
 class SubjectDraft(_IntentDraft):
-    """One Subject definition drafted by ``cx.subject(...)`` or ``w.<kind>.define(id)``.
+    """One Subject definition (a shell succession) drafted by ``cx.subject(...)``.
 
     Next: ``draft.submit()``, or ``cx.changes(rationale=...).subject(draft)`` with other
     members.
@@ -2968,7 +2968,9 @@ class Cruxible:
         A live client's vocabulary listing selects current head. An explicitly
         pinned context uses its coordinate. The returned World owns a separate
         pinned context and remains readable when the live client moves, without
-        fetching an orientation page. No Subject is read here. The first Subject access of any kind
+        fetching an orientation page. It also lists the live SubjectKinds, which
+        say how ``w.<kind>.define(...)`` names a new Subject. No Subject is read
+        here. The first Subject access of any kind
         reads every Subject of every kind in one list, because the served verb
         takes neither a kind filter nor a cursor; a world with a thousand
         Subjects therefore costs the vocabulary at `world()` and that one list
@@ -2978,6 +2980,7 @@ class Cruxible:
         """
 
         from cruxible_client.authoring.world import build_world
+        from cruxible_client.contracts.orient import OrientSubjectKind
 
         requested = self._read_at()
         names: list[str] = []
@@ -2999,6 +3002,25 @@ class Cruxible:
             cursor = page.next_cursor
         assert coordinate is not None
         self._observe_read(coordinate, expected=requested)
+        # How each kind names a new Subject: one paged listing of the live
+        # SubjectKinds at the same coordinate, O(kinds).
+        subject_kinds: list[OrientSubjectKind] = []
+        cursor = None
+        while True:
+            page = self._client.orient(
+                self._instance_id,
+                section="subject_kinds",
+                limit=api.ORIENT_MAX_LIMIT,
+                cursor=cursor,
+                at=_api_coordinate(coordinate),
+                surface="sdk",
+            )
+            if _coordinate(page.coordinate.model_dump(mode="json")) != coordinate:
+                raise ValueError("the SubjectKind read returned a different accepted coordinate")
+            subject_kinds.extend(page.subject_kinds or ())
+            if not page.truncated or page.next_cursor is None:
+                break
+            cursor = page.next_cursor
         envelopes: list[Mapping[str, object]] = []
         for start in range(0, len(names), GET_BATCH_MAX_REFS):
             batch = self._client.get_batch(
@@ -3019,6 +3041,7 @@ class Cruxible:
             self.at(coordinate),
             coordinate=coordinate,
             claim_type_envelopes=tuple(envelopes),
+            subject_kinds=tuple(subject_kinds),
         )
 
     @overload

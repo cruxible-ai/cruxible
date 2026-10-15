@@ -124,6 +124,23 @@ class _WorldClient:
         self.subject_pages: Any = None
         self.head_reads: list[Any] = []
         self.batch_requests: list[Any] = []
+        self.write_requests: list[Any] = []
+        # How each kind names a new Subject, as the subject_kinds section lists them.
+        self.subject_kinds: list[dict[str, Any]] = [
+            {
+                "kind": "dev.batch",
+                "rule": "keys",
+                "keys": ("dev.batch.repo", "dev.batch.number"),
+                "uniqueness": "hint",
+            },
+            {
+                "kind": "sec.package",
+                "rule": "keys",
+                "keys": ("sec.package.name",),
+                "uniqueness": "unique",
+            },
+            {"kind": "sec.vulnerability", "rule": "minted"},
+        ]
 
     def _claim_type_view(
         self, _instance_id: str, predicate: str, *, at: Any = None
@@ -226,8 +243,20 @@ class _WorldClient:
     def orient(
         self, instance_id: str, *, section: Any = None, at: Any = None, **_values: Any
     ) -> api.OrientResult:
-        from cruxible_client.contracts.orient import OrientPredicate
+        from cruxible_client.contracts.orient import OrientPredicate, OrientSubjectKind
 
+        if section == "subject_kinds":
+            return api.OrientResult(
+                instance=instance_id,
+                coordinate=_projection(at or self.coordinate),
+                generation=1,
+                accepted_at=datetime(2026, 9, 7, tzinfo=UTC),
+                evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
+                section="subject_kinds",
+                subject_kinds=tuple(
+                    OrientSubjectKind.model_validate(row) for row in self.subject_kinds
+                ),
+            )
         assert section == "claim_types"
         listing = self._claim_type_list(instance_id, at=at)
         self._listing = listing
@@ -343,6 +372,27 @@ class _WorldClient:
     def _page(self, identities: list[str], start: int) -> tuple[list[str], bool, str | None]:
         return identities[start:], False, None
 
+    def write(self, instance_id: str, *, request: Any) -> Any:
+        """Accept every write, naming each create's Subject after its label."""
+
+        from cruxible_client.contracts.get_reads import GetCoordinate
+        from cruxible_client.contracts.write import ChangeOutcome, CreateChange, WriteOutcome
+
+        self.write_requests.append(request)
+        return WriteOutcome(
+            status="accepted",
+            changes=tuple(
+                ChangeOutcome(
+                    op="create", subject=f"{change.subject_kind}/{change.label}", resolved="created"
+                )
+                if isinstance(change, CreateChange)
+                else ChangeOutcome(op=change.op)
+                for change in request.changes
+            ),
+            coordinate=GetCoordinate(git_oid="c" * 12, generation=2),
+            base=GetCoordinate(git_oid="a" * 12, generation=1),
+        )
+
     def close(self) -> None:
         return None
 
@@ -418,10 +468,123 @@ def test_an_absent_subject_names_its_kind_id_and_coordinate(
     assert absent.value.subject_kind == "sec.vulnerability"
     assert absent.value.subject_id == "cve-2026-00000"
     assert absent.value.coordinate == world.coordinate
-    assert "sec.vulnerability.define('cve-2026-00000')" in str(absent.value)
+    assert "w.write(w.sec.vulnerability.define(<key>, ...), because=...)" in str(absent.value)
+    assert "cx.query('sec.vulnerability', ...)" in str(absent.value)
 
     with pytest.raises(AbsentSubject):
         world.sec.vulnerability.absent_one
+
+
+def test_define_reads_each_kind_s_identity_rule_and_the_stub_types_it(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    """One key positionally or by its leaf, a composite key by its parts, a minted kind none."""
+
+    from cruxible_client.contracts.subject_kinds import SubjectKeyPart
+
+    playbill, _client = connection
+    world = playbill.world()
+
+    click = world.sec.package.define("click")
+    assert (click.subject_kind, click.address) == ("sec.package", None)
+    assert click._key == world.sec.package.define(name="click")._key == "click"
+    batch = world.dev.batch.define(repo="core", number=7, create_new=True)
+    assert batch._key == (
+        SubjectKeyPart(predicate="dev.batch.repo", value="core"),
+        SubjectKeyPart(predicate="dev.batch.number", value=7),
+    )
+    minted = world.sec.vulnerability.define(severity=world.sec.vuln.severity.high)
+    assert minted._key is None and [item.field for item in minted._changes] == [SEVERITY]
+    with pytest.raises(TypeError, match="minted"):
+        world.sec.vulnerability.define("cve-1")
+    with pytest.raises(TypeError, match="each part by keyword"):
+        world.dev.batch.define("core")
+    with pytest.raises(TypeError, match="needs the key of dev.batch: dev.batch.number"):
+        world.dev.batch.define(repo="core")
+    with pytest.raises(TypeError, match="keys are unique"):
+        world.sec.package.define("click", create_new=True)
+    with pytest.raises(AttributeError, match="no accepted predicate 'nonsense'"):
+        world.sec.package.define("click", nonsense=1)
+
+    stub = world.stub()
+    ast.parse(stub)
+    assert (
+        "    def define(\n"
+        "        self,\n"
+        "        name: str | int | bool,\n"
+        "        *,\n"
+        "        expect_new: bool = ...,\n"
+        "    ) -> _N_sec__package: ...\n"
+    ) in stub
+    assert (
+        "        *,\n"
+        "        repo: str | int | bool,\n"
+        "        number: str | int | bool,\n"
+        "        create_new: bool = ...,\n"
+        "        expect_new: bool = ...,\n"
+    ) in stub
+    assert "class _N_sec__vulnerability(WorldNewSubject):" in stub
+    assert "    def edit(self) -> _E_sec__vulnerability: ..." in stub
+    assert "    *items: WorldWritable," in stub
+
+
+def test_a_kind_no_subject_kind_declares_has_no_define(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _WorldClient()
+    client.subject_kinds = [row for row in client.subject_kinds if row["kind"] != "dev.batch"]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_world",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    world = playbill.world()
+
+    with pytest.raises(WorldStructureError, match="no accepted SubjectKind declares dev.batch"):
+        world.dev.batch.define(repo="core", number=7)
+    stub = world.stub()
+    assert "class _N_dev__batch" not in stub
+    assert "no live SubjectKind declares dev.batch, so it has no define()" in stub
+
+
+def test_drafts_are_frozen_and_one_write_sends_each_create_first_by_its_label(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    from cruxible_client.contracts.write import CreateChange, CreatedSubject
+
+    playbill, client = connection
+    world = playbill.world()
+    click = world.sec.package.define("click")
+    advisory = world.sec.vulnerability.define(severity=world.sec.vuln.severity.high)
+    linked = advisory.set(affects_package=click)
+    # Frozen: deriving a draft leaves the one it came from as it was.
+    assert len(advisory._changes) == 1 and len(linked._changes) == 2
+    edit = world.sec.vulnerability["cve-2026-69247"].edit().set(affects_package=click)
+
+    outcome = world.write(linked, edit, because="The advisory names the package.")
+
+    (request,) = client.write_requests
+    assert [change.op for change in request.changes] == ["create", "create", "set", "set", "set"]
+    first, second = request.changes[:2]
+    assert isinstance(first, CreateChange) and isinstance(second, CreateChange)
+    assert (first.label, first.subject_kind, first.key) == ("new-1", "sec.vulnerability", None)
+    assert (second.label, second.subject_kind, second.key) == ("new-2", "sec.package", "click")
+    affects = request.changes[3]
+    assert affects.subject == CreatedSubject(created="new-1")
+    assert affects.value == CreatedSubject(created="new-2")
+    assert request.changes[4].subject == "sec.vulnerability/cve-2026-69247"
+    assert request.changes[4].value == CreatedSubject(created="new-2")
+    assert outcome.status == "accepted"
+    # Every draft of one Subject names the id the outcome reports.
+    assert click.address == "sec.package/new-2"
+    assert advisory.address == linked.address == "sec.vulnerability/new-1"
+
+    with pytest.raises(WorldStructureError, match="another World"):
+        playbill.world().write(click, because="Elsewhere.")
+    with pytest.raises(TypeError, match="at least one field"):
+        click.set()
+    with pytest.raises(TypeError, match="drafts and edits"):
+        world.write("sec.package/click", because="Not a draft.")  # type: ignore[arg-type]
 
 
 def test_a_predicate_is_a_claim_type_ref_carrying_its_own_structure(
@@ -646,7 +809,7 @@ def test_a_same_set_definition_returns_refs_usable_in_the_same_set(
     world = playbill.world()
     draft = playbill.changes(rationale="Name the package this advisory affects.")
 
-    package = draft.subject(world.sec.package.define("click"))
+    package = draft.subject(playbill.new_subject("sec.package", key="click"))
     assert isinstance(package, PendingSubjectRef)
     # A creation-member reference: core resolves it to the path it assigns; no
     # address is predicted from the key (E-b review F-002).
@@ -1344,9 +1507,7 @@ def test_a_kind_a_predicate_shadows_stays_reachable_as_a_kind(
     assert isinstance(package, WorldClaimType)
     assert isinstance(package.as_kind, KindNamespace)
     assert package.as_kind.subject_kind == "sec.package"
-    assert package.as_kind.define("click").member_identity.startswith(
-        "SubjectCreation:sec.package@"
-    )
+    assert package.as_kind.define("click").subject_kind == "sec.package"
     assert package["cryptography"].address == "sec.package/cryptography"
     assert world.kind("sec.package").subject_ids == ("cryptography",)
 

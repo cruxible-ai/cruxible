@@ -7525,6 +7525,14 @@ def _render_orient(result: Mapping[str, Any]) -> str:
                 lines.append(f"  {row['description']}")
             lines.append(f"  in:  {', '.join(row.get('input', ())) or '-'}")
             lines.append(f"  out: {', '.join(row.get('output', ())) or '-'}")
+    if section == "subject_kinds":
+        for row in result["subject_kinds"]:
+            rule = (
+                "minted"
+                if row["rule"] == "minted"
+                else f"keys: {', '.join(row.get('keys', ()))} ({row.get('uniqueness')})"
+            )
+            lines.append(f"{row['kind']}  {rule}")
     if section == "claim_types":
         for row in result["claim_types"]:
             lines.append(

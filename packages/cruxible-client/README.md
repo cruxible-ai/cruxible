@@ -2363,7 +2363,9 @@ Python keyword and member collisions.
 | `world.claim_type("security.asset.status")` | WorldClaimType |
 | `claim_type("active")` or `claim_type.active` | Predicate-bound LiteralValue, validated locally |
 | `claim_type.as_kind` | KindNamespace when a predicate name is also a Subject kind |
-| `kind.define("new-id")` | SubjectDraft; does not accept or publish it |
+| `kind.define(<key>, <field>=...)` | WorldNewSubject: a frozen draft of a new Subject by its key (as the kind's SubjectKind names it: one value, each composite part by leaf, or none when minted); `.set`/`.add` return a new draft; nothing is sent until `world.write(...)` or `draft.write(...)` |
+| `subject.edit().set(...)` | WorldSubjectEdit: `set`/`add`/`retire` changes to an accepted Subject, sent later |
+| `world.write(*drafts, *edits, because=...)` | One change set: each draft is a `create` change, named by a label from the others, in any order; after acceptance `draft.address` is the id core assigned |
 | `kind.where(state="open", count__gt=3)` | CompactQuery; `.select(...)`, `.order_by(...)`, `.limit(n)`, `.run()` or iterate every page |
 | `world.stub()` | Generated type-stub source for this vocabulary |
 
@@ -2527,6 +2529,31 @@ names are checked against the World before the wire. A World's writes are
 checked from its coordinate advanced past its own accepted writes, so its
 references stay valid after them; only a field someone else moved refuses. The
 generated stub types `set` and `add` per kind, enum members as `Literal`s.
+`subject.edit()` returns the same changes unsent, for `world.write(...)` beside
+new Subjects' drafts.
+
+New Subjects come from `world.<kind>.define(...)`, typed per kind by its
+SubjectKind: a one-key kind takes its key positionally or by its leaf, a
+composite kind each key part by its leaf, a minted kind none; every other
+keyword is a field (set when it holds one value, added when it holds many).
+A key one live Subject already holds lands on that Subject and creates nothing
+(the outcome's `resolved: existing`, so a seed run twice answers as done);
+`expect_new=True` refuses `cruxible.write.subject_exists`, and `create_new=True`
+makes a further holder of a `hint` kind's key. `w.<kind>["id"]` never creates:
+a missing id raises `AbsentSubject`. A kind no SubjectKind declares has no
+`define()`.
+
+```python
+w = cx.world()
+requests = w.pypi.release.define(package="requests", version="2.32.4")
+outcome = w.write(
+    requests,
+    w.app.service.define("payments", owner="ada").add(depends_on=requests),
+    w.app.service["billing"].edit().set(owner="grace"),
+    because="Pins from each service's requirements.txt.",
+)
+requests.address    # the id core assigned, once accepted
+```
 
 <a id="api-worldsubject-subject-kind"></a>
 
@@ -7637,10 +7664,10 @@ than after a proposal.
 #### `build_world`
 
 ```text
-build_world(cx: 'Cruxible', *, coordinate: 'AcceptedCoordinate', claim_type_envelopes: 'Sequence[Mapping[str, object]]') -> 'World'
+build_world(cx: 'Cruxible', *, coordinate: 'AcceptedCoordinate', claim_type_envelopes: 'Sequence[Mapping[str, object]]', subject_kinds: 'Sequence[OrientSubjectKind]' = ()) -> 'World'
 ```
 
-Assemble one world from the accepted ClaimType vocabulary.
+Assemble one world from the accepted ClaimType vocabulary and its SubjectKinds.
 
 Subject kinds come from the vocabulary rather than from the Subjects
 themselves, which is what lets `cx.world()` name every kind without reading
