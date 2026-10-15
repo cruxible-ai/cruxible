@@ -75,6 +75,7 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
     QueryBudgets,
+    QueryClaimFieldRef,
     QueryClaimPresenceFilter,
     QueryClaimValueRef,
     QueryComparisonFilter,
@@ -1939,6 +1940,17 @@ def _field_column(vocabulary: QueryVocabulary, name: str, ref: QueryValueRef) ->
                 cardinality=info.cardinality,
             )
         return QueryColumn(name=name, predicate=ref.predicate, type="json")
+    if isinstance(ref, QueryClaimFieldRef):
+        # A Claim's role or verdict: a string from its closed value set, a list
+        # of them for a many-valued predicate.
+        info = vocabulary.predicates.get(ref.predicate)
+        return QueryColumn(
+            name=name,
+            predicate=ref.predicate,
+            type="string",
+            members=ref.vocabulary,
+            cardinality="one" if info is None else info.cardinality,
+        )
     if isinstance(ref, QuerySubjectFieldRef):
         return QueryColumn(name=name, type="string")
     if isinstance(ref, QueryEvaluationTimeRef):

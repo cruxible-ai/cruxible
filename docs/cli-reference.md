@@ -1953,6 +1953,29 @@ base or sibling definitions; explicit pins remain assertions. SDK `vocabulary=`
 accepts World ClaimType references and retains their stale-reference checks.
 Use `cx.query(name=NAME, receipt="full")` to read the accepted result and receipt.
 
+A QueryDefinition reads a Claim's own role and verdict as well as its value:
+`{"kind": "claim_field", "binding": B, "predicate": P, "field": "role"}` (or
+`"field": "verdict"`) is a value reference like `claim_value`, usable as a
+projection field, in a `where` comparison or membership, and as an ordering key,
+and a state tap's rows carry it like any other projected field. `role` is the
+statement's role (`derivation`, `environment_binding`, `normative`,
+`observation`); `verdict` is the evidence-relative verdict the evaluation
+admitted the Claim under, in the `visible_verdicts` vocabulary (`contradicted`,
+`stale`, `supported`, `uncovered`, `unresolved`), the same one the row's
+`read_claims` record. Both read the Claims the predicate's `claim_value` reads
+and nothing else: a conflicted one-cardinality value is a conflicted field, and
+a many-valued predicate reads the distinct values of its Claims as a list. They
+compare and order as `value_type: string`; a literal outside the field's value
+set is refused when the definition is declared, and a parameter outside it
+refuses the run with `cruxible.query.value_type_mismatch`. At a past coordinate
+(`--at`) the verdict is the one that coordinate's accepted evidence gives at the
+evaluation time, as every Claim the query reads there is judged. To show which
+statuses are an analyst's judgment, project
+`{"kind": "claim_field", "binding": "assessment", "predicate":
+"security.assessment.status", "field": "role"}`, or filter on it
+(`{"kind": "comparison", "left": <that ref>, "operator": "eq", "right":
+{"kind": "literal", "value": "normative"}, "value_type": "string"}`).
+
 `authoring example query-claims-by-type` provides a Claim query without
 placeholder digests. `authoring example query-ontology` and `authoring example query-procedures`
 provide artifact queries; MCP's authoring-example and authoring-compile tools use

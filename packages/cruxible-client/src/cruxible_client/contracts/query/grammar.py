@@ -2,9 +2,10 @@
 
 The grammar is Subject/Claim addressed: entry rows are Subjects of declared
 Subject kinds, edges are relation-Claim predicates, and every compared value is
-a Claim object read under the owning QueryDefinition's verdict policy. It
-declares meaning only. The evaluator that consumes these declarations lands in
-the PC-F query-engine slice; nothing here reads accepted state.
+a Claim object -- or a Claim's role or verdict -- read under the owning
+QueryDefinition's verdict policy. It declares meaning only. The evaluator that
+consumes these declarations lands in the PC-F query-engine slice; nothing here
+reads accepted state.
 """
 
 from __future__ import annotations
@@ -12,11 +13,13 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
+from cruxible_client.contracts.claim_type_structure import ClaimRole
+from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdictV1
 
 _BINDING_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _PARAMETER_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -35,6 +38,16 @@ QueryValueType = Literal[
 QueryComparisonOperator = Literal["eq", "ne", "gt", "gte", "lt", "lte"]
 QueryTraversalDirection = Literal["forward", "reverse"]
 QuerySubjectField = Literal["subject_id", "subject_kind"]
+#: A field of the Claim itself, beside its object: the statement's ``role`` and
+#: the evidence-relative ``verdict`` the evaluation read it under.
+QueryClaimField = Literal["role", "verdict"]
+#: The closed value set each Claim field reads, in canonical byte order: the
+#: ClaimRole vocabulary and the verdict vocabulary a policy's
+#: ``visible_verdicts`` is written in.
+QUERY_CLAIM_FIELD_VALUES: dict[QueryClaimField, tuple[str, ...]] = {
+    "role": tuple(sorted(get_args(ClaimRole))),
+    "verdict": tuple(sorted(get_args(EvidenceRelativeClaimVerdictV1))),
+}
 
 
 class _StrictQueryModel(BaseModel):
@@ -169,6 +182,48 @@ class QueryClaimValueRef(_StrictQueryModel):
         )
 
 
+class QueryClaimFieldRef(_StrictQueryModel):
+    """A field of the bound Subject's Claim for one exact predicate: its role or verdict.
+
+    It reads the same Claims a ``claim_value`` reference of the predicate reads,
+    under the same evaluation policy. ``role`` is the statement's ClaimRole;
+    ``verdict`` is the evidence-relative verdict the evaluation admitted the
+    Claim under (the vocabulary of ``visible_verdicts``), exactly the one the
+    row's ``read_claims`` record. A conflicted one-cardinality value is a
+    conflicted field; a many-valued predicate reads its Claims' distinct values
+    as a list. Compared values are strings from the field's closed value set.
+    """
+
+    tag: Literal["playbill-query-claim-field-ref-v1"] = "playbill-query-claim-field-ref-v1"
+    kind: Literal["claim_field"] = "claim_field"
+    binding: str
+    predicate: str
+    field: QueryClaimField
+
+    @field_validator("binding")
+    @classmethod
+    def _binding(cls, value: str) -> str:
+        return binding_name(value)
+
+    @field_validator("predicate")
+    @classmethod
+    def _predicate(cls, value: str) -> str:
+        return predicate_name(value)
+
+    @property
+    def vocabulary(self) -> tuple[str, ...]:
+        """The closed value set this field reads."""
+
+        return QUERY_CLAIM_FIELD_VALUES[self.field]
+
+    @property
+    def references(self) -> QueryReferenceInventory:
+        return QueryReferenceInventory(
+            bindings=frozenset({self.binding}),
+            predicates=frozenset({self.predicate}),
+        )
+
+
 class QuerySubjectFieldRef(_StrictQueryModel):
     """A bound Subject's own stable identity, never a Claim-carried property."""
 
@@ -202,10 +257,35 @@ QueryValueRef = Annotated[
     QueryLiteralRef
     | QueryParameterRef
     | QueryClaimValueRef
+    | QueryClaimFieldRef
     | QuerySubjectFieldRef
     | QueryEvaluationTimeRef,
     Field(discriminator="kind"),
 ]
+
+
+def validate_claim_field_operands(
+    operands: tuple[QueryValueRef, ...], value_type: QueryValueType, *, label: str
+) -> None:
+    """Refuse a Claim role or verdict compared other than as a member of its value set.
+
+    A Claim field reads a string from a closed value set, so it compares as a
+    ``string``, and a literal it is compared with must be one of those values:
+    a misspelt role or verdict is refused when the definition is declared,
+    never left to match nothing at run time.
+    """
+
+    fields = [item for item in operands if isinstance(item, QueryClaimFieldRef)]
+    if not fields:
+        return
+    if value_type != "string":
+        raise ValueError(f"{label}: a Claim role or verdict compares as value_type string")
+    for field in fields:
+        for item in operands:
+            if isinstance(item, QueryLiteralRef) and item.value not in field.vocabulary:
+                raise ValueError(
+                    f"{label}: a Claim {field.field} is one of {', '.join(field.vocabulary)}"
+                )
 
 
 class QueryComparisonFilter(_StrictQueryModel):
@@ -217,6 +297,13 @@ class QueryComparisonFilter(_StrictQueryModel):
     operator: QueryComparisonOperator
     right: QueryValueRef
     value_type: QueryValueType
+
+    @model_validator(mode="after")
+    def _claim_fields(self) -> "QueryComparisonFilter":
+        validate_claim_field_operands(
+            (self.left, self.right), self.value_type, label="query comparison"
+        )
+        return self
 
     @property
     def references(self) -> QueryReferenceInventory:
@@ -242,6 +329,13 @@ class QueryMembershipFilter(_StrictQueryModel):
         if encoded != tuple(sorted(set(encoded))):
             raise ValueError("query membership values must be sorted by canonical bytes and unique")
         return value
+
+    @model_validator(mode="after")
+    def _claim_fields(self) -> "QueryMembershipFilter":
+        validate_claim_field_operands(
+            (self.left, *self.values), self.value_type, label="query membership"
+        )
+        return self
 
     @property
     def references(self) -> QueryReferenceInventory:
@@ -509,6 +603,11 @@ class QueryOrdering(_StrictQueryModel):
     direction: Literal["ascending", "descending"] = "ascending"
     value_type: QueryValueType
 
+    @model_validator(mode="after")
+    def _claim_fields(self) -> "QueryOrdering":
+        validate_claim_field_operands((self.key,), self.value_type, label="query ordering")
+        return self
+
     @property
     def references(self) -> QueryReferenceInventory:
         return self.key.references
@@ -650,6 +749,9 @@ class QueryBudgets(_StrictQueryModel):
 
 __all__ = [
     "QueryBudgets",
+    "QUERY_CLAIM_FIELD_VALUES",
+    "QueryClaimField",
+    "QueryClaimFieldRef",
     "QueryClaimPresenceFilter",
     "QueryClaimValueRef",
     "QueryComparisonFilter",
@@ -680,6 +782,7 @@ __all__ = [
     "binding_name",
     "byte_sorted",
     "sorted_unique",
+    "validate_claim_field_operands",
     "validate_ordering_keys",
     "predicate_name",
     "subject_kind_name",
