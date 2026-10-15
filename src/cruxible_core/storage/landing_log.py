@@ -86,7 +86,7 @@ _HEX = frozenset("0123456789abcdef")
 
 #: How many times one create answered ENOENT is retried: each retry follows a
 #: concurrent writer's create (or unlink) of the very name, so it soon settles.
-_CREATE_RETRIES = 64
+CREATE_RETRIES = 64
 
 
 def _hex(name: str, length: int) -> bool:
@@ -102,13 +102,24 @@ def _open_creating(name: str, flags: int, *, dir_fd: int) -> int:
     the directory itself is gone.
     """
 
-    for _attempt in range(_CREATE_RETRIES):
+    for _attempt in range(CREATE_RETRIES):
         try:
             return os.open(name, flags | os.O_CREAT, 0o600, dir_fd=dir_fd)
         except FileNotFoundError:
-            if not os.fstat(dir_fd).st_nlink:
+            if not parent_linked(dir_fd):
                 raise
     return os.open(name, flags | os.O_CREAT, 0o600, dir_fd=dir_fd)
+
+
+def parent_linked(dir_fd: int) -> bool:
+    """Whether a held directory is still linked: an ENOENT under it is then transient.
+
+    A create relative to it answered ENOENT while it is linked lost a race with
+    a concurrent create (or removal) of the same name, and is retried; once the
+    directory itself is gone, the ENOENT stands.
+    """
+
+    return os.fstat(dir_fd).st_nlink > 0
 
 
 class _Presence:
@@ -501,11 +512,24 @@ class LandingLog:
         except FileNotFoundError:
             if not create:
                 return None
-        try:
-            os.mkdir(PENDING_NAME, 0o700, dir_fd=self._directory)
-        except FileExistsError:
-            pass
-        return os.open(PENDING_NAME, flags, dir_fd=self._directory)
+        attempt = 0
+        while True:
+            attempt += 1
+            # ENOENT while the held directory is linked: a concurrent create of
+            # the name (or its removal) won the race; take the name again.
+            try:
+                os.mkdir(PENDING_NAME, 0o700, dir_fd=self._directory)
+            except FileExistsError:
+                pass
+            except FileNotFoundError:
+                if attempt > CREATE_RETRIES or not parent_linked(self._directory):
+                    raise
+                continue
+            try:
+                return os.open(PENDING_NAME, flags, dir_fd=self._directory)
+            except FileNotFoundError:
+                if attempt > CREATE_RETRIES or not parent_linked(self._directory):
+                    raise
 
     @staticmethod
     def _marker(digest: str) -> str:
@@ -619,6 +643,7 @@ class LandingLog:
 
 
 __all__ = [
+    "CREATE_RETRIES",
     "LOG_NAME",
     "PENDING_NAME",
     "SEED_NAME",
@@ -628,4 +653,5 @@ __all__ = [
     "LandingHead",
     "LandingKind",
     "LandingLog",
+    "parent_linked",
 ]

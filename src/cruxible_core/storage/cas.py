@@ -27,7 +27,13 @@ from cruxible_client.contracts.cas_contracts import (
 )
 from cruxible_client.contracts.errors import CasError
 from cruxible_core.storage.capture_envelope_index import ENVELOPE_HEAD, CaptureEnvelopeIndex
-from cruxible_core.storage.landing_log import BodyState, LandingLog, damage_seen
+from cruxible_core.storage.landing_log import (
+    CREATE_RETRIES,
+    BodyState,
+    LandingLog,
+    damage_seen,
+    parent_linked,
+)
 
 # Objects already hashed against their address, with the file identity observed
 # when they were: (device, inode, size, mtime, ctime). Bytes are reused without
@@ -185,18 +191,32 @@ class ContentAddressedBodyStore:
                 return None
         except OSError as exc:
             raise CasError("CAS shard directory is not trustworthy") from exc
-        try:
-            os.mkdir(shard, 0o700, dir_fd=self._root_fd)
-        except FileExistsError:
-            pass
-        except OSError as exc:
-            raise CasError("CAS shard directory could not be created") from exc
-        try:
-            descriptor = os.open(shard, flags, dir_fd=self._root_fd)
-        except OSError as exc:
-            raise CasError("CAS shard directory is not trustworthy") from exc
-        os.fsync(self._root_fd)
-        return descriptor
+        attempt = 0
+        while True:
+            attempt += 1
+            # ENOENT while the held directory is linked: a concurrent create of
+            # the shard won the race (``landing_log.parent_linked``); take it again.
+            retry = attempt <= CREATE_RETRIES
+            try:
+                os.mkdir(shard, 0o700, dir_fd=self._root_fd)
+            except FileExistsError:
+                pass
+            except FileNotFoundError as exc:
+                if retry and parent_linked(self._root_fd):
+                    continue
+                raise CasError("CAS shard directory could not be created") from exc
+            except OSError as exc:
+                raise CasError("CAS shard directory could not be created") from exc
+            try:
+                descriptor = os.open(shard, flags, dir_fd=self._root_fd)
+            except FileNotFoundError as exc:
+                if retry and parent_linked(self._root_fd):
+                    continue
+                raise CasError("CAS shard directory is not trustworthy") from exc
+            except OSError as exc:
+                raise CasError("CAS shard directory is not trustworthy") from exc
+            os.fsync(self._root_fd)
+            return descriptor
 
     def _object_status(self, digest: str) -> os.stat_result | None:
         shard, name = self._names(digest)

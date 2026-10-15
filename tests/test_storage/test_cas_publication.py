@@ -183,3 +183,83 @@ def test_concurrent_stores_of_one_new_body_both_land(tmp_path: Path, stores: str
         assert outcome == {0: digest, 1: digest}
         assert first.read(digest, access=READ) == content
     assert not first.landings.unfinished()
+
+
+def _directory_target(store: ContentAddressedBodyStore, digest: str, site: str) -> str:
+    return digest.removeprefix("sha256:")[:2] if site == "shard" else landing_log.PENDING_NAME
+
+
+@pytest.mark.parametrize("site", ["shard", "pending"])
+@pytest.mark.parametrize("step", ["mkdir", "open"])
+def test_a_directory_create_answered_enoent_by_a_concurrent_create_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site: str, step: str
+) -> None:
+    """The shard and pending-marker directories are created relative to a held
+    directory too: an ENOENT while it is still linked lost a race with a
+    concurrent creator, so the create is taken again and the store lands."""
+
+    root = tmp_path / "cas"
+    root.mkdir()
+    store = ContentAddressedBodyStore(root)
+    content = f"directory raced by a concurrent create at {site} {step}\n".encode()
+    digest = store.digest_bytes(content).tagged
+    target = _directory_target(store, digest, site)
+    real_mkdir, real_open = os.mkdir, os.open
+    answered: list[str] = []
+
+    def raced_mkdir(path, mode=0o777, *, dir_fd=None):  # type: ignore[no-untyped-def]
+        if step == "mkdir" and path == target and dir_fd is not None and not answered:
+            # The concurrent winner installs the directory; this create is told ENOENT.
+            real_mkdir(path, mode, dir_fd=dir_fd)
+            answered.append(path)
+            raise FileNotFoundError(2, "No such file or directory", path)
+        return real_mkdir(path, mode, dir_fd=dir_fd)
+
+    def raced_open(path, flags, mode=0o777, *, dir_fd=None):  # type: ignore[no-untyped-def]
+        if (
+            step == "open"
+            and path == target
+            and dir_fd is not None
+            and not answered
+            and os.path.isdir(os.path.join(store._algorithm_root, target))
+        ):
+            answered.append(path)
+            raise FileNotFoundError(2, "No such file or directory", path)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", raced_mkdir)
+    monkeypatch.setattr(os, "open", raced_open)
+    assert store.store(content).digest == digest
+    assert answered == [target]
+    assert store.read(digest, access=READ) == content
+    assert not store.landings.unfinished()
+
+
+@pytest.mark.parametrize("site", ["shard", "pending"])
+@pytest.mark.parametrize("parent", ["gone", "never settles"])
+def test_a_directory_create_still_refuses_when_its_enoent_stands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site: str, parent: str
+) -> None:
+    root = tmp_path / "cas"
+    root.mkdir()
+    store = ContentAddressedBodyStore(root)
+    content = f"directory create that cannot land {site} {parent}\n".encode()
+    digest = store.digest_bytes(content).tagged
+    target = _directory_target(store, digest, site)
+    real_mkdir = os.mkdir
+    attempts: list[str] = []
+
+    def missing_mkdir(path, mode=0o777, *, dir_fd=None):  # type: ignore[no-untyped-def]
+        if path == target and dir_fd is not None:
+            attempts.append(path)
+            raise FileNotFoundError(2, "No such file or directory", path)
+        return real_mkdir(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", missing_mkdir)
+    if parent == "gone":
+        monkeypatch.setattr(cas, "parent_linked", lambda _fd: False)
+        monkeypatch.setattr(landing_log, "parent_linked", lambda _fd: False)
+    expected: type[BaseException] = cas.CasError if site == "shard" else FileNotFoundError
+    with pytest.raises(expected):
+        store.store(content)
+    assert len(attempts) == (1 if parent == "gone" else landing_log.CREATE_RETRIES + 1)
