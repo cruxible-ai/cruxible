@@ -43,7 +43,11 @@ from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
 from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.derived.memo import memo_get, memo_put
-from cruxible_core.indexes.acquisition import WorkingDatabaseChangedError, open_working_snapshot
+from cruxible_core.indexes.acquisition import (
+    SnapshotPool,
+    WorkingDatabaseChangedError,
+    open_working_snapshot,
+)
 from cruxible_core.ledger.recovery import RecoveredInstanceState
 from cruxible_core.proposals.settlement import (
     ChangeSetRecord,
@@ -459,6 +463,16 @@ class RetainedRecordReader:
         )
 
 
+class _ReleasedSnapshot:
+    """What a reader holds once its read ends: its pooled connection serves other reads."""
+
+    def execute(self, *_args: object, **_kwargs: object) -> sqlite3.Cursor:
+        raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+
+
+_RELEASED = _ReleasedSnapshot()
+
+
 class HistoryReader:
     """A transaction-scoped reader. Locations identify retained bytes, not liveness."""
 
@@ -472,6 +486,11 @@ class HistoryReader:
         self._connection = connection
         self._sequence = sequence
         self._record_readers: dict[Callable[[str, str], bytes | None], RetainedRecordReader] = {}
+
+    def _release(self) -> None:
+        """End this reader with its read: a reader kept past it refuses, as a closed one did."""
+
+        self._connection = cast(sqlite3.Connection, _RELEASED)
 
     @property
     def sequence(self) -> int:
@@ -1041,11 +1060,18 @@ def working_file_stamp(path: Path) -> tuple[int, ...] | None:
 
 
 def _close_working_database(
-    path: Path, lock: threading.RLock, connections: list[sqlite3.Connection], proof: dict[str, Any]
+    path: Path,
+    lock: threading.RLock,
+    connections: list[sqlite3.Connection],
+    proof: dict[str, Any],
+    snapshots: SnapshotPool,
 ) -> None:
     from cruxible_core.indexes.proposals.proposal_index import close_working_database
 
     with lock:
+        # Idle snapshot readers close first: the shutdown checkpoint runs on the
+        # writer alone, exactly as before readers were pooled.
+        snapshots.close()
         close_working_database(path, connections, proof)
 
 
@@ -1112,6 +1138,9 @@ class AcceptedHistoryIndex:
         )
         self._lock = threading.RLock()
         self._connections: list[sqlite3.Connection] = []
+        # Read-only snapshot connections, shared with the proposal component: a
+        # read reuses an idle one instead of connecting (see SnapshotPool).
+        self._snapshots = SnapshotPool()
         self._proposal_close_state: dict[str, Any] = {}
         self._finalizer = weakref.finalize(
             self,
@@ -1120,6 +1149,7 @@ class AcceptedHistoryIndex:
             self._lock,
             self._connections,
             self._proposal_close_state,
+            self._snapshots,
         )
         self._ready: tuple[int, str, str, str, int] | None = None
         self._stamp: tuple[int, ...] | None = None
@@ -1161,6 +1191,7 @@ class AcceptedHistoryIndex:
                     connections=self._connections,
                     shutdown_proof=self._proposal_close_state,
                     history_commits=self._unannounced_commits,
+                    snapshots=self._snapshots,
                 )
             return self._proposals
 
@@ -1361,7 +1392,7 @@ class AcceptedHistoryIndex:
             return None
         try:
             connection = open_working_snapshot(
-                self.path, expected_stamp=stamp, file_stamp=self._file_stamp
+                self.path, expected_stamp=stamp, file_stamp=self._file_stamp, pool=self._snapshots
             )
         except WorkingDatabaseChangedError:
             # A writer moved the file since the checks above; take the locked path.
@@ -1381,11 +1412,11 @@ class AcceptedHistoryIndex:
                 )
                 or self._file_stamp() != stamp
             ):
-                connection.close()
+                self._snapshots.release(connection)
                 return None
             return connection, stamp
         except BaseException:
-            connection.close()
+            self._snapshots.discard(connection)
             raise
 
     @contextmanager
@@ -1403,10 +1434,12 @@ class AcceptedHistoryIndex:
             raise ProjectionIntegrityError("accepted history index could not be read") from exc
         if clean is not None:
             clean_connection, clean_stamp = clean
+            readers: list[HistoryReader] = []
             try:
                 reader = HistoryReader(
                     clean_connection, recovered.head.sequence, self._canonical_records
                 )
+                readers.append(reader)
                 reader.resolve(
                     AcceptedCoordinate(
                         git_oid=recovered.head.oid,
@@ -1419,13 +1452,16 @@ class AcceptedHistoryIndex:
                     reader = HistoryReader(
                         clean_connection, reader.resolve(at).sequence, self._canonical_records
                     )
+                    readers.append(reader)
                 yield reader
                 current_stamp = self._file_stamp()
                 if current_stamp is None or clean_stamp[:2] != current_stamp[:2]:
                     self.invalidate()
                     raise ProjectionIntegrityError("history index file was replaced during read")
             finally:
-                clean_connection.close()
+                for held in readers:
+                    held._release()
+                self._snapshots.release(clean_connection)
             return
         if _DETACHED_READS.get():
             try:
@@ -1437,6 +1473,7 @@ class AcceptedHistoryIndex:
                 ) from exc
             return
         connection: sqlite3.Connection | None = None
+        locked_readers: list[HistoryReader] = []
         try:
             # Serialize only synchronization and snapshot acquisition. Neither
             # this lock nor the writer transaction survives into caller code.
@@ -1482,9 +1519,13 @@ class AcceptedHistoryIndex:
                 self._record_verified_through(writer, self._ready)
                 self._trust_record = True
                 connection = open_working_snapshot(
-                    self.path, expected_stamp=published_stamp, file_stamp=self._file_stamp
+                    self.path,
+                    expected_stamp=published_stamp,
+                    file_stamp=self._file_stamp,
+                    pool=self._snapshots,
                 )
                 reader = HistoryReader(connection, recovered.head.sequence, self._canonical_records)
+                locked_readers.append(reader)
                 # BEGIN alone does not establish a snapshot. Pin it before
                 # releasing the acquisition lock, including for an empty caller.
                 reader.resolve(
@@ -1507,6 +1548,7 @@ class AcceptedHistoryIndex:
                     reader = HistoryReader(
                         connection, reader.resolve(at).sequence, self._canonical_records
                     )
+                    locked_readers.append(reader)
                 writer.rollback()
             yield reader
             current_stamp = self._file_stamp()
@@ -1526,8 +1568,10 @@ class AcceptedHistoryIndex:
             with self._lock:
                 if self._writer is not None and self._writer.in_transaction:
                     self._writer.rollback()
+            for held in locked_readers:
+                held._release()
             if connection is not None:
-                connection.close()
+                self._snapshots.release(connection)
 
     @contextmanager
     def _detached_read(

@@ -28,6 +28,7 @@ from cruxible_core.evidence import claim_attestation_store as attestation_store
 from cruxible_core.evidence.claim_attestation_store import ClaimAttestationEvidenceStore
 from cruxible_core.exhaust import LocalJournalBackend
 from cruxible_core.exhaust.records import JournalStreamIdentityV1
+from cruxible_core.indexes.resident import close_idle_connections
 from tests.test_claims.test_claim_attestation_store import NOW, _account, _attestation
 
 SMALL, LARGE = 20, 200
@@ -39,6 +40,8 @@ def _vm_steps() -> Iterator[Counter[str]]:
 
     steps: Counter[str] = Counter()
     original = sqlite3.connect
+    # Index connections are resident: close them so the window reconnects, counted.
+    close_idle_connections()
 
     def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
         connection = original(*args, **kwargs)

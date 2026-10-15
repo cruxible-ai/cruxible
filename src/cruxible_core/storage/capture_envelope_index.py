@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.errors import CasError
+from cruxible_core.indexes.resident import ResidentConnections
 
 if TYPE_CHECKING:
     from cruxible_core.storage.cas import ContentAddressedBodyStore
@@ -36,7 +37,9 @@ CREATE TABLE IF NOT EXISTS envelopes (
 CREATE TABLE IF NOT EXISTS backfilled (shard TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS backfill_complete (singleton INTEGER PRIMARY KEY);
 """
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()
+#: One connection per index file per process, its schema created once, used under ``_LOCK``.
+_RESIDENT = ResidentConnections(lock=_LOCK)
 
 
 def envelope_contract(head: bytes) -> str | None:
@@ -60,18 +63,25 @@ class CaptureEnvelopeIndex:
         self._store = store
         self.path = store.root / "capture-envelopes.sqlite3"
 
+    def _open(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=30, check_same_thread=False)
+        try:
+            connection.executescript(_SCHEMA)
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
-        with _LOCK:
-            if self.path.is_symlink():
-                raise CasError("the Capture envelope index must be a regular file")
-            connection = sqlite3.connect(self.path, timeout=30)
-            try:
-                connection.executescript(_SCHEMA)
-                yield connection
-                connection.commit()
-            finally:
-                connection.close()
+        """This process's resident connection to the index, in one transaction per call."""
+
+        with _RESIDENT.transaction(
+            self.path,
+            self._open,
+            not_regular=lambda: CasError("the Capture envelope index must be a regular file"),
+        ) as (connection, _outermost):
+            yield connection
 
     def note(self, digest: str, content: bytes) -> None:
         """Record a stored object that opens as an envelope; called before it is written."""

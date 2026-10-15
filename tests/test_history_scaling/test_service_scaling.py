@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 from cruxible_core.exhaust.backends import LocalJournalBackend
+from cruxible_core.indexes.resident import close_idle_connections
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import ContentAddressedBodyStore
 from tests.core_support._subject_kind_support import fixture_claim_paths
@@ -85,6 +86,9 @@ def _counted(
         connection.set_progress_handler(tick, 1)
         return connection
 
+    # Index connections and snapshot readers are resident: close the idle ones so
+    # the window reconnects, counted.
+    close_idle_connections()
     with monkeypatch.context() as patch:
         patch.setattr(LocalJournalBackend, "_read_frames", staticmethod(counted_frames))
         patch.setattr(LocalJournalBackend, "partition_ids", counted_partition_ids)

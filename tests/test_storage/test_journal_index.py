@@ -218,8 +218,14 @@ def _plans(monkeypatch, run) -> list[tuple[str, list[str]]]:  # type: ignore[no-
             statements.append((sql, tuple(parameters)))
             return super().execute(sql, parameters)
 
+    from cruxible_core.indexes.resident import close_idle_connections
+
     original = sqlite3.connect
-    monkeypatch.setattr(sqlite3, "connect", lambda path: original(path, factory=Recording))
+    # The index connection is resident: close it so the run reconnects, recorded.
+    close_idle_connections()
+    monkeypatch.setattr(
+        sqlite3, "connect", lambda path, **kwargs: original(path, factory=Recording, **kwargs)
+    )
     run()
     monkeypatch.setattr(sqlite3, "connect", original)
     raw = original(":memory:")

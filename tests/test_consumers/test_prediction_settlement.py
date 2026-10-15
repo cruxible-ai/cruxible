@@ -572,6 +572,10 @@ def _steps(monkeypatch: pytest.MonkeyPatch, call) -> int:  # type: ignore[no-unt
         connection.set_progress_handler(tick, 1)
         return connection
 
+    from cruxible_core.indexes.resident import close_idle_connections
+
+    # Index connections are resident: close them so the call reconnects, counted.
+    close_idle_connections()
     with monkeypatch.context() as patch:
         patch.setattr(sqlite3, "connect", counted)
         call()

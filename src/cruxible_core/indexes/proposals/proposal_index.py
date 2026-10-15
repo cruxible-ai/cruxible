@@ -30,7 +30,11 @@ from cruxible_client.contracts.proposal_models import (
     ProposalEvaluationRecord,
     ProposalWithdrawalRecord,
 )
-from cruxible_core.indexes.acquisition import WorkingDatabaseChangedError, open_working_snapshot
+from cruxible_core.indexes.acquisition import (
+    SnapshotPool,
+    WorkingDatabaseChangedError,
+    open_working_snapshot,
+)
 from cruxible_core.indexes.history.history_index import (
     commit_working_write,
     history_reads_detached,
@@ -185,8 +189,10 @@ class ProposalIndex:
         connections: list[sqlite3.Connection],
         shutdown_proof: dict[str, Any],
         history_commits: list[tuple[tuple[int, ...] | None, tuple[int, ...]]] | None = None,
+        snapshots: SnapshotPool | None = None,
     ) -> None:
         self.path, self._lock = path, lock
+        self._snapshots = snapshots if snapshots is not None else SnapshotPool()
         self._history_commits = history_commits if history_commits is not None else []
         self._file_stamp, self._on_commit = file_stamp, on_commit
         self._connections, self._shutdown_proof = connections, shutdown_proof
@@ -634,7 +640,7 @@ class ProposalIndex:
             return None
         try:
             connection = open_working_snapshot(
-                self.path, expected_stamp=stamp, file_stamp=self._file_stamp
+                self.path, expected_stamp=stamp, file_stamp=self._file_stamp, pool=self._snapshots
             )
         except WorkingDatabaseChangedError:
             # A writer moved the file since the checks above; take the locked path.
@@ -643,7 +649,7 @@ class ProposalIndex:
             schema = _schema_rows(connection)
             if schema == _PRE_ACCEPTANCE_SCHEMA:
                 # The writer migrates it; a snapshot cannot.
-                connection.close()
+                self._snapshots.release(connection)
                 return None
             if schema != _EXPECTED_SCHEMA:
                 raise ProposalIntegrityError("proposal index schema differs; rebuild required")
@@ -656,13 +662,13 @@ class ProposalIndex:
                 or self._inventory(evidence) != marker["inventory"]
                 or self._file_stamp() != stamp
             ):
-                connection.close()
+                self._snapshots.release(connection)
                 return None
             self._seed_clean_stamp(evidence.root, marker, stamp)
             connection.row_factory = sqlite3.Row
             return connection
         except BaseException:
-            connection.close()
+            self._snapshots.discard(connection)
             raise
 
     @contextmanager
@@ -677,7 +683,7 @@ class ProposalIndex:
             try:
                 yield reader
             finally:
-                reader.close()
+                self._snapshots.release(reader)
             return
         if history_reads_detached():
             with self._detached_snapshot(evidence) as detached:
@@ -701,7 +707,10 @@ class ProposalIndex:
                     raise
                 assert self._stamp is not None
                 reader = open_working_snapshot(
-                    self.path, expected_stamp=self._stamp, file_stamp=self._file_stamp
+                    self.path,
+                    expected_stamp=self._stamp,
+                    file_stamp=self._file_stamp,
+                    pool=self._snapshots,
                 )
                 reader.row_factory = sqlite3.Row
                 reader.execute("PRAGMA foreign_keys=ON")
@@ -724,7 +733,7 @@ class ProposalIndex:
                 if self._connection is not None and self._connection.in_transaction:
                     self._connection.rollback()
             if reader is not None:
-                reader.close()
+                self._snapshots.release(reader)
 
     @contextmanager
     def _detached_snapshot(self, evidence: ProposalEvidenceStore) -> Iterator[sqlite3.Connection]:

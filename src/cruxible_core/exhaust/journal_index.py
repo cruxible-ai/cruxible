@@ -31,6 +31,7 @@ from cruxible_core.exhaust.records import (
     journal_stream_key,
     journal_stream_strings,
 )
+from cruxible_core.indexes.resident import ResidentConnections
 
 if TYPE_CHECKING:
     from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -230,47 +231,67 @@ class RunLocator:
         return (self.index_identity, self.row_id)
 
 
+#: This process's resident connection to each journal index file (setup once per
+#: open; see ``indexes.resident``), used under ``_LOCK``.
+_RESIDENT = ResidentConnections(lock=_LOCK)
+
+
 class JournalIndex:
     def __init__(self, backend: LocalJournalBackend) -> None:
         self.backend = backend
         self.path = backend.root / "event-index.sqlite3"
         self.dirty = backend.root / "index-dirty"
 
+    def _open(self) -> sqlite3.Connection:
+        """Connect, migrate and initialize the index file once for this process."""
+
+        conn = sqlite3.connect(self.path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+                _rebuild_schema(conn)
+            conn.execute("INSERT OR IGNORE INTO index_identity VALUES(1,?)", (uuid4().hex,))
+            if not conn.execute("SELECT 1 FROM initialized").fetchone():
+                for identity in self.backend._streams_root.glob("*/*/identity.json"):
+                    raw = json.loads(identity.read_bytes())
+                    self._sync(
+                        conn,
+                        JournalStreamIdentityV1.model_validate(raw["stream"]),
+                        raw["partition_id"],
+                    )
+                conn.execute("INSERT INTO initialized VALUES (1)")
+            conn.commit()
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
-        with _LOCK:
-            if self.path.is_symlink():
-                raise JournalIntegrityError("journal index must be a regular file")
-            conn = sqlite3.connect(self.path)
-            conn.row_factory = sqlite3.Row
-            try:
-                conn.execute("PRAGMA foreign_keys=ON")
-                if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
-                    _rebuild_schema(conn)
-                conn.execute("INSERT OR IGNORE INTO index_identity VALUES(1,?)", (uuid4().hex,))
-                if not conn.execute("SELECT 1 FROM initialized").fetchone():
-                    for identity in self.backend._streams_root.glob("*/*/identity.json"):
-                        raw = json.loads(identity.read_bytes())
-                        self._sync(
-                            conn,
-                            JournalStreamIdentityV1.model_validate(raw["stream"]),
-                            raw["partition_id"],
-                        )
-                    conn.execute("INSERT INTO initialized VALUES (1)")
-                if self.dirty.exists():
-                    for marker in self.dirty.iterdir():
-                        raw = json.loads(marker.read_bytes())
-                        self._sync(
-                            conn,
-                            JournalStreamIdentityV1.model_validate(raw["stream"]),
-                            raw["partition_id"],
-                        )
-                        conn.commit()
-                        marker.unlink()
-                yield conn
-                conn.commit()
-            finally:
-                conn.close()
+        """This process's resident index connection, in one transaction per operation.
+
+        The operation's writes commit when the block exits and roll back when it
+        raises; a nested block shares the outer block's transaction. Dirty
+        partitions are caught up first, as on every open before.
+        """
+
+        with _RESIDENT.transaction(
+            self.path,
+            self._open,
+            not_regular=lambda: JournalIntegrityError("journal index must be a regular file"),
+        ) as (conn, outermost):
+            if outermost and self.dirty.exists():
+                for marker in self.dirty.iterdir():
+                    raw = json.loads(marker.read_bytes())
+                    self._sync(
+                        conn,
+                        JournalStreamIdentityV1.model_validate(raw["stream"]),
+                        raw["partition_id"],
+                    )
+                    conn.commit()
+                    marker.unlink()
+            yield conn
 
     def mark_dirty(self, stream: JournalStreamIdentityV1, partition_id: str) -> None:
         from cruxible_core.exhaust.backends import _atomic_write, _fsync_directory

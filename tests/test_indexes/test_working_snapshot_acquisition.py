@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 from cruxible_core.indexes.acquisition import ACQUISITION_ATTEMPTS, DatabasePathChangedError
+from cruxible_core.indexes.resident import close_idle_connections
 from tests.core_support._knowledge_loop_support import seed_claims
 
 
@@ -72,6 +73,10 @@ def test_restored_directory_swap_never_serves_forged_snapshot(
             os.rename(saved, original_directory)
         return connection
 
+    # A pooled reader is never reopened by name, so drain the pool: the attack
+    # targets the pathname acquisition (pooled reuse is tested in
+    # test_snapshot_pool.py).
+    close_idle_connections()
     with monkeypatch.context() as patch:
         patch.setattr(sqlite3, "connect", intercepted)
         if repeat_attack:

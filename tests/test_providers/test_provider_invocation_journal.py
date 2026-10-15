@@ -57,6 +57,7 @@ from cruxible_client.contracts.provider_interfaces import (
 from cruxible_client.contracts.providers import AcceptedProvider
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
+from cruxible_core.indexes.resident import close_idle_connections
 from cruxible_core.procedures.execution import (
     PreparedProcedureRunV9,
     ProcedureExecutor,
@@ -768,6 +769,8 @@ def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
     for size, partition in ((10, "unrelated-a"), (100, "unrelated-b")):
         unrelated_history(size, partition)
         work.update(frames=0, all_records=0, cas_reads=0, vm=0)
+        # The index connection is resident: close it so recovery reconnects, counted.
+        close_idle_connections()
         with monkeypatch.context() as patch:
             patch.setattr(sqlite3, "connect", counted_connect)
             patch.setattr(LocalJournalBackend, "_read_frames", staticmethod(counted_frames))
