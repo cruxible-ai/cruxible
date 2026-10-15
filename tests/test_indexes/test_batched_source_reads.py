@@ -116,6 +116,9 @@ def test_floor_reuses_query_claims_instead_of_materializing_another_list(instanc
 
 def test_record_reuse_keeps_fresh_source_checks_and_detached_models(instance, monkeypatch):
     instance._accepted_history_index._canonical_records.clear()
+    # Change-set records parse once per exact content, process-wide (content_memo):
+    # clear that memo too so this test's first read is a guaranteed, countable parse.
+    settlement._CHANGE_SET_PARSES.clear()
     rendered = []
     original = settlement.render_change_set
 
@@ -139,7 +142,10 @@ def test_record_reuse_keeps_fresh_source_checks_and_detached_models(instance, mo
         # Reusing the generation must still check each member's locator.
         with pytest.raises(ProjectionIntegrityError):
             history.read_member_record(replace(location, artifact_digest="wrong"), load)
-        record.law_evidence[0].result.clear()
+        # The resident record is the one sealed, shared record: mutating it in
+        # place is refused outright, so a later read cannot see a corrupted one.
+        with pytest.raises(TypeError, match="sealed artifact"):
+            record.law_evidence[0].result.clear()
     with instance.accepted_history_reader() as history:
         assert history.read_member_record(location, load) == expected
     assert len(reads) == 2
