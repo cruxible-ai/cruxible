@@ -179,9 +179,10 @@ def test_slot_reads_and_projection_binds_stay_flat_and_staged_claims_are_indexed
     )
     # A reused bind re-verifies its coordinate once per epoch, not once per lookup.
     assert large["coordinate_verifications"] <= small["coordinate_verifications"], (small, large)
-    # Each staged Claim is indexed a bounded number of times: linear, not n^2/2.
+    # Each staged Claim is indexed a bounded number of times: linear, not n^2/2
+    # (re-deciding every staged edit per lookup was ~n^2/2 facts at n items).
     assert small["claim_facts"] > 0, small
-    assert large["claim_facts"] * SMALL <= small["claim_facts"] * LARGE, (small, large)
+    assert large["claim_facts"] <= 2 * LARGE, (small, large)
 
 
 # --- L4: activation takes the submission in hand ---------------------------------------

@@ -135,6 +135,9 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     # The accepted record's own C_s instant, carried as a verified fact.
     ("GenerationRecordFacts", "timestamp"): "ASSERTION TIME",
     ("_MemberContext", "timestamp"): "ASSERTION TIME",
+    # The candidate timestamp an admission evaluation or settle condition ran at.
+    ("AdmittedEvaluation", "timestamp"): "ASSERTION TIME",
+    ("DelegatedAuthorityVerdict", "timestamp"): "ASSERTION TIME",
     ("AuditClaimFactorsV1", "first_accepted_generation"): "SETTLEMENT ORDER",
     ("AuditClaimFactorsV1", "last_independent_verification_generation"): "SETTLEMENT ORDER",
     ("AuditCursor", "evaluation_time"): "EVALUATION INSTANT",
