@@ -352,6 +352,7 @@ from cruxible_core.proposals.historical_reuse import (
 from cruxible_core.proposals.prepared_evaluation import (
     PreparedEvaluationAdapter,
     PreparedEvaluationScope,
+    SettlementHandoff,
 )
 from cruxible_core.proposals.proposal_message import proposal_commit_message
 from cruxible_core.proposals.proposal_notes import proposal_admission_id
@@ -5583,6 +5584,7 @@ class ProposalService:
         readmits: ProposalReadmissionLink | None = None,
         confirm_head: Callable[[str], None] | None = None,
         procedure_operation: str | None = None,
+        handoff: SettlementHandoff | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -5630,6 +5632,10 @@ class ProposalService:
         is verified to still be main, before the first ref moves: a caller
         pinned to the head its preview saw (R12 ``at``) refuses there, so a
         head accepted after the caller's own check is never admitted against.
+
+        `handoff`, when given, receives the durable submission (its records,
+        evaluated tree and coordinate) for the caller's own activation in the
+        same request; nothing else ever reads it.
         """
         self._require_writable()
         evaluated = self._evaluate_admission(
@@ -5809,12 +5815,15 @@ class ProposalService:
                     workspace_path=None,
                     failure_code="unexpected_failure",
                 )
-        return ProposalResult(
+        result = ProposalResult(
             admission=admission,
             evaluation=evaluation,
             candidate=outcome.candidate,
             workspace_advertisement=advertisement,
         )
+        if handoff is not None and outcome.candidate is not None:
+            handoff.submitted(result=result, tree=outcome.tree, current=current)
+        return result
 
 
 __all__ = [

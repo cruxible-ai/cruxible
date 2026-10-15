@@ -32,6 +32,7 @@ from cruxible_core.procedures.egress import (
     require_procedure_mandate_at_head,
     served_capped_by,
 )
+from cruxible_core.proposals.prepared_evaluation import SettlementHandoff
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -180,12 +181,14 @@ class ProposalTerminalAdapter:
         changed_paths: tuple[str, ...] | None = None,
         delegation: ProcedureDelegation | None = None,
         settle_submission: ProposalSettleSubmission | None = None,
+        handoff: SettlementHandoff | None = None,
     ) -> ProposalResult:
         """Submit the lowered candidate once, under the exact mandate, and return the result.
 
         A settle terminal passes how it submits -- under its bound mandate's
         delegated authority, or as that mandate's declared fallback -- and the
-        admission retains it; a proposal terminal passes none.
+        admission retains it; a proposal terminal passes none. A settle that
+        activates in the same request passes its own ``handoff``.
         """
         if (settle_submission is not None) != (request.kind == "settle_change_set"):
             raise EffectfulTerminalError("exactly a settle terminal names its submission mode")
@@ -262,6 +265,7 @@ class ProposalTerminalAdapter:
                         admission_binding_digest=request.admission_binding_digest,
                         node_id=request.node_id,
                     ),
+                    handoff=handoff,
                 )
                 break
             except ProposalHeadMovedError:

@@ -30,6 +30,7 @@ from cruxible_client.contracts.proposal_models import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
     ProposalReceiveLimits,
+    ProposalResult,
 )
 from cruxible_core.derived.derived_state import (
     DerivedState,
@@ -306,6 +307,57 @@ class PreparedEvaluationScope:
         self._observations.clear()
         self._outcome = None
         self.submission_tree = None
+
+
+@dataclass(frozen=True)
+class SubmittedProposal:
+    """What one request's own submission holds in memory once it is durable."""
+
+    #: The admission, evaluation and candidate records exactly as submit wrote them.
+    result: ProposalResult
+    #: The evaluated tree submit committed as the proposal's tree.
+    tree: SnapshotTree
+    #: The accepted coordinate the submission evaluated at and published against.
+    current: AcceptedProjectionCoordinate
+
+
+class SettlementHandoff:
+    """One request's own submission, held for that same request's activation.
+
+    The caller that will activate (a settle terminal, a write) creates it and
+    passes it explicitly to the submission and then to the activation; it is
+    never stored on the instance, so an activation requested separately (a
+    ``proposal activate``, an approval) never sees one. Single use: the first
+    activation that takes it consumes it, whatever proposal it names.
+    """
+
+    def __init__(self) -> None:
+        self._submitted: SubmittedProposal | None = None
+        self._taken = False
+
+    def submitted(
+        self,
+        *,
+        result: ProposalResult,
+        tree: Mapping[str, bytes],
+        current: AcceptedProjectionCoordinate,
+    ) -> None:
+        """Hold a durable submission; only a tree that stays immutable is held."""
+        if self._taken or self._submitted is not None or result.candidate is None:
+            return
+        if not isinstance(tree, SnapshotTree):
+            return
+        self._submitted = SubmittedProposal(result=result, tree=tree, current=current)
+
+    def take(self, proposal_id: str) -> SubmittedProposal | None:
+        """The submission of ``proposal_id``, once; None for any other proposal."""
+        if self._taken:
+            return None
+        self._taken = True
+        submitted, self._submitted = self._submitted, None
+        if submitted is None or submitted.result.admission.proposal_id != proposal_id:
+            return None
+        return submitted
 
 
 class PreparedEvaluationAdapter:

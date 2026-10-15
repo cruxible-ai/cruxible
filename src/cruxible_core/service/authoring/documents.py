@@ -47,6 +47,7 @@ from cruxible_client.contracts.workspace_advertisement import (
 from cruxible_core.documents.projection_documents import DocumentProjectionView
 from cruxible_core.errors import PermissionDeniedError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.proposals.prepared_evaluation import SettlementHandoff, SubmittedProposal
 from cruxible_core.proposals.proposals import (
     ProposalAdmissionRequest,
     ProposalPreview,
@@ -634,12 +635,19 @@ def service_activate_playbill_proposal(
     proposal_id: str,
     activated_by: str,
     mandate_digest: str | None = None,
+    handoff: SettlementHandoff | None = None,
 ) -> ActivationReceipt:
     """Settle, prebuild, and atomically activate one admitted candidate.
 
     ``mandate_digest`` is passed only by the settle terminal for a candidate it
     submitted under that mandate: delegated authority then stands in for
     candidate approvals, and publication re-verifies it from the parent state.
+
+    ``handoff`` is passed only by the request that submitted the proposal (a
+    settle terminal, a write) and still holds its submission in memory: the
+    records and tree are then taken from it instead of read back, once the
+    stored evaluation is shown to be the one in hand. Any other activation
+    reads everything from what is stored.
     """
 
     proposal_id = instance.proposal_evidence().resolve_proposal_id(proposal_id)
@@ -650,20 +658,30 @@ def service_activate_playbill_proposal(
             f"{ProposalActivationRequestInvalid.error_code}: proposal_id must be a "
             "canonical sha256 digest"
         ) from exc
-    proposal, candidate = _candidate_for_proposal(instance, proposal_id)
-    evaluation = proposal.evaluation
-    if evaluation.evaluated_tree_oid is None:
-        raise ProposalIntegrityError("candidate evaluation is missing its exact tree")
-    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+    submitted = None if handoff is None else handoff.take(proposal_id)
+    if submitted is not None:
+        proposal, candidate, base = _submitted_for_activation(instance, submitted)
+        evaluation = proposal.evaluation
+        assert evaluation.evaluated_tree_oid is not None  # a candidate verdict names its tree
+        candidate_tree: Mapping[str, bytes] = submitted.tree
+    else:
+        proposal, candidate = _candidate_for_proposal(instance, proposal_id)
+        evaluation = proposal.evaluation
+        if evaluation.evaluated_tree_oid is None:
+            raise ProposalIntegrityError("candidate evaluation is missing its exact tree")
+        from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
 
-    # Settlement would refuse a moved head as an integrity failure; a proposal
-    # that is merely stale gets the repair its author can run.
-    if (
-        service_playbill_proposal_status(instance, proposal_id=proposal_id).terminal_reason
-        == "stale"
-    ):
-        raise ProposalStale(proposal_id)
-    base = instance.coordinate_for_oid(evaluation.evaluated_base_oid)
+        # Settlement would refuse a moved head as an integrity failure; a proposal
+        # that is merely stale gets the repair its author can run.
+        if (
+            service_playbill_proposal_status(instance, proposal_id=proposal_id).terminal_reason
+            == "stale"
+        ):
+            raise ProposalStale(proposal_id)
+        base = instance.coordinate_for_oid(evaluation.evaluated_base_oid)
+        candidate_tree = instance.proposal_tree(
+            evaluation.evaluated_tree_oid, base_oid=base.git_oid, proposal_id=proposal_id
+        )
     if candidate.candidate.parent_semantic_root != base.semantic_root:
         raise SettlementIntegrityError("candidate parent root differs from evaluated base")
     approvals = (
@@ -674,9 +692,7 @@ def service_activate_playbill_proposal(
     _reconcile_proposal_notes(instance, proposal=proposal, candidate=candidate)
     activation = instance.settle_and_activate(
         base=base,
-        candidate_tree=instance.proposal_tree(
-            evaluation.evaluated_tree_oid, base_oid=base.git_oid, proposal_id=proposal_id
-        ),
+        candidate_tree=candidate_tree,
         candidate_tree_oid=evaluation.evaluated_tree_oid,
         candidate=candidate,
         approvals=approvals,
@@ -719,6 +735,39 @@ def service_activate_playbill_proposal(
         ),
         workspace_advertisement=advertisement,
     )
+
+
+def _submitted_for_activation(
+    instance: PlaybillInstance, submitted: SubmittedProposal
+) -> tuple[ProposalResult, CandidateRecordAnyVersion, AcceptedProjectionCoordinate]:
+    """The activation inputs of this request's own submission, without reading them back.
+
+    What a read-back would establish is checked on the stored records it can
+    see cheaply: the proposal is not withdrawn or rejected, its stored
+    evaluation (which names the candidate digest and the evaluated tree) is
+    exactly the one in hand, and it is not stale against the current head.
+    """
+
+    proposal = submitted.result
+    proposal_id = proposal.admission.proposal_id
+    candidate = proposal.candidate
+    if candidate is None:
+        raise ProposalIntegrityError("a submission handed to activation has no candidate")
+    evidence = instance.proposal_evidence()
+    evidence.refuse_closed(proposal_id)
+    if evidence.read_evaluation(proposal_id) != proposal.evaluation:
+        raise ProposalIntegrityError(
+            "the stored proposal evaluation differs from the submission that wrote it"
+        )
+    if proposal.evaluation.candidate_digest != candidate.candidate_digest:
+        raise ProposalIntegrityError("the submission's evaluation names another candidate")
+    base = submitted.current
+    if proposal.evaluation.evaluated_base_oid != base.git_oid:
+        raise ProposalIntegrityError("the submission evaluated at another base")
+    if instance.accepted_coordinate().semantic_root != candidate.candidate.parent_semantic_root:
+        # The list would call it stale: accepted state moved past its parent.
+        raise ProposalStale(proposal_id)
+    return proposal, candidate, base
 
 
 def _resume_waiting_kits(instance: PlaybillInstance, candidate: CandidateRecordAnyVersion) -> None:

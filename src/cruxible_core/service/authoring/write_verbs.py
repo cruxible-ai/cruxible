@@ -170,6 +170,7 @@ from cruxible_core.indexes.subject_identity import (
     undeclared_kind_repair,
 )
 from cruxible_core.indexes.typed_state import LIVE_SLOT_CLAIM_DIGESTS_SQL, LIVE_SLOT_CLAIMS_SQL
+from cruxible_core.proposals.prepared_evaluation import SettlementHandoff
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.phase_timing import timed_operation, timed_phase
@@ -2588,7 +2589,10 @@ def _service_write(
         canonical_timestamp=timestamp,
         reference_expectations=lowered.expectations or None,
     )
-    submitted = coordinator.submit(view.intent.intent_id, actor=caller.actor)
+    # This write activates what it admits, in this request: its submission is
+    # handed to that activation instead of read back.
+    handoff = SettlementHandoff()
+    submitted = coordinator.submit(view.intent.intent_id, actor=caller.actor, settlement=handoff)
     intent = submitted.intent
     changes = _change_outcomes(plan, lowered, intent)
     status = submitted.status
@@ -2636,7 +2640,10 @@ def _service_write(
 
         try:
             receipt = service_activate_playbill_proposal(
-                instance, proposal_id=proposal_id, activated_by=caller.actor.actor_id
+                instance,
+                proposal_id=proposal_id,
+                activated_by=caller.actor.actor_id,
+                handoff=handoff,
             )
         except (SettlementIntegrityError, ProposalStale):
             # Activation refuses a candidate evaluated at any head but the

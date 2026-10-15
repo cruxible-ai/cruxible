@@ -166,6 +166,7 @@ from cruxible_core.proposals.delegated_authority import (
     claim_types_outside_scope,
     delegated_authority_issues,
 )
+from cruxible_core.proposals.prepared_evaluation import SettlementHandoff
 from cruxible_core.proposals.proposals import ProposalService
 from cruxible_core.runtime.phase_timing import timed_operation
 
@@ -2237,6 +2238,9 @@ class ProposalTerminalEgressSink:
                 )
             mandate = found
         result = existing
+        # Only a submission this request makes itself hands its records to the
+        # activation below; a recovered one is activated from what is stored.
+        handoff = SettlementHandoff() if existing is None else None
         if result is None:
             if request.capped_by is not None:
                 submission = ProposalSettleSubmission(
@@ -2290,6 +2294,7 @@ class ProposalTerminalEgressSink:
                 changed_paths=prepared.prepared.target_paths,
                 delegation=self.delegation,
                 settle_submission=submission,
+                handoff=handoff,
             )
         settle = result.admission.settle_submission
         assert settle is not None  # submitted above, or verified by recover_existing
@@ -2322,7 +2327,9 @@ class ProposalTerminalEgressSink:
             )
         accepted_oid = self._accepted_oid(result.candidate.candidate_digest, digest=digest)
         if accepted_oid is None:
-            accepted_oid = self._activate(result, request=request, mandate=mandate, digest=digest)
+            accepted_oid = self._activate(
+                result, request=request, mandate=mandate, digest=digest, handoff=handoff
+            )
         return settle_terminal_receipt(
             request,
             result=result,
@@ -2360,6 +2367,7 @@ class ProposalTerminalEgressSink:
         request: TerminalEgressRequestV2,
         mandate: ProcedureMandate,
         digest: str,
+        handoff: SettlementHandoff | None = None,
     ) -> str:
         from cruxible_client.contracts.errors import ProposalStale, SettlementIntegrityError
         from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
@@ -2377,6 +2385,7 @@ class ProposalTerminalEgressSink:
                 proposal_id=result.admission.proposal_id,
                 activated_by=request.actor_context.actor_id,
                 mandate_digest=digest,
+                handoff=handoff,
             )
         except ProposalStale:
             # Accepted state moved past the candidate before it published.

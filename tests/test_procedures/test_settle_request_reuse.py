@@ -176,3 +176,78 @@ def test_slot_reads_and_projection_binds_stay_flat_and_staged_claims_are_indexed
     # Each staged Claim is indexed a bounded number of times: linear, not n^2/2.
     assert small["claim_facts"] > 0, small
     assert large["claim_facts"] * SMALL <= small["claim_facts"] * LARGE, (small, large)
+
+
+# --- L4: activation takes the submission in hand ---------------------------------------
+
+
+def _activation_reads() -> Any:
+    """Count candidate, inspect and proposal-tree read-backs activation makes before settling."""
+
+    from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+    from cruxible_core.runtime.instance import PlaybillInstance
+    from cruxible_core.service.authoring import documents
+
+    @contextmanager
+    def measure() -> Iterator[Counter[str]]:
+        counter: Counter[str] = Counter()
+        # True from activation's start until it hands over to settlement.
+        reading = [False]
+
+        def activation(original: Any) -> Any:
+            def counted(*args: Any, **kwargs: Any) -> Any:
+                counter["activations"] += 1
+                counter["handed_off"] += kwargs.get("handoff") is not None
+                reading[0] = True
+                try:
+                    return original(*args, **kwargs)
+                finally:
+                    reading[0] = False
+
+            return counted
+
+        def settling(original: Any) -> Any:
+            def counted(*args: Any, **kwargs: Any) -> Any:
+                reading[0] = False
+                return original(*args, **kwargs)
+
+            return counted
+
+        def read(name: str) -> Callable[[Any], Any]:
+            def wrap(original: Any) -> Any:
+                def counted(*args: Any, **kwargs: Any) -> Any:
+                    if reading[0]:
+                        counter[name] += 1
+                    return original(*args, **kwargs)
+
+                return counted
+
+            return wrap
+
+        with (
+            _patched(documents, "service_activate_playbill_proposal", activation),
+            _patched(ProposalEvidenceStore, "read_candidate", read("read_candidate")),
+            _patched(documents, "service_inspect_playbill_proposal", read("inspect")),
+            _patched(PlaybillInstance, "proposal_tree", read("proposal_tree")),
+            _patched(PlaybillInstance, "settle_and_activate", settling),
+        ):
+            yield counter
+
+    return measure
+
+
+def test_a_settle_activates_from_its_own_submission_without_reading_it_back(
+    tmp_path: Path,
+) -> None:
+    """No candidate re-read, inspect or proposal-tree read-back at any batch size.
+
+    Before, activation re-read the candidate twice (status, inspect) and read
+    the proposal tree back from Git, every item's candidate member re-validated.
+    """
+
+    small, large = _two_batches(tmp_path, _activation_reads())
+    for counts in (small, large):
+        assert counts["activations"] == 1 and counts["handed_off"] == 1, counts
+        assert counts["read_candidate"] == 0, counts
+        assert counts["inspect"] == 0, counts
+        assert counts["proposal_tree"] == 0, counts
