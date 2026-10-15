@@ -642,10 +642,11 @@ GROWS: dict[str, dict[str, str]] = {
         "file_opens": _FLAG_BODY_STATS,
     },
     "read.query.named": {
+        # Its digests no longer grow after the encode-once batch (measured XPASS).
         **_grows(
             _NAMED_FACTS,
             "claim_parses",
-            *_DIGESTS,
+            "canonical_encodes",
             "file_opens",
             "sql_statements",
             "git_blob_reads",
@@ -653,7 +654,10 @@ GROWS: dict[str, dict[str, str]] = {
         "sql_vm_steps": _NAMED_FACTS + _BLOB_READS + ", and " + _LAW_HEAD,
     },
     "read.next.workspace_sources": {"canonical_digests": _CITATIONS},
-    "read.coverage.workspace_sources": _grows(_COVERAGE, *_DIGESTS, "file_opens", "cas_body_reads"),
+    # Its encodes no longer grow after the encode-once batch (measured XPASS).
+    "read.coverage.workspace_sources": _grows(
+        _COVERAGE, "canonical_digests", "file_opens", "cas_body_reads"
+    ),
     "read.audit.first_page": {
         **_grows(
             _AUDIT,
@@ -667,7 +671,9 @@ GROWS: dict[str, dict[str, str]] = {
         "sql_vm_steps": (_AUDIT + "; in SQL, " + _LAW_HEAD + ", and repeatedly " + _ACQUIRE),
     },
     "procedure.settle": {
-        **_grows(_SETTLE, "claim_parses", *_DIGESTS, "file_opens", "git_blob_reads"),
+        # Its encodes and digests no longer grow after the encode-once batch
+        # (measured XPASS).
+        **_grows(_SETTLE, "claim_parses", "file_opens", "git_blob_reads"),
         **_grows(
             "settle's SQL work grows on the merged tree after perf B (statements 3,011 -> 4,523 at "
             "10x); attribution owed by dev.roadmap_item/settle-cost-after-batch-a",

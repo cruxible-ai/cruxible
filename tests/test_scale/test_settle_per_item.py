@@ -67,10 +67,12 @@ from tests.test_procedures.test_procedure_proposal_delivery import (
 N = 12
 #: Ceilings per settled item, a little over what this build measures. A 400-item
 #: settle measured 108 SHA-256, 200 encodes and 284 KB encoded per item before the
-#: encode-once batch (encodes then counted canonical_bytes alone). The brief's
+#: encode-once batch (encodes then counted canonical_bytes alone); this test's
+#: slope after it was 34.5, 122 and 84 KB (encodes now also counting the proof
+#: reference sort key and compositions, which canonical_bytes used to do). The brief's
 #: targets (15, 40 and 40 KB) are not met yet; lower these as later stages close
 #: the gap. ``CRUXIBLE_PER_ITEM_REPORT=<path>`` writes the measurements.
-PER_ITEM = {"sha256": 45, "encodes": 130, "encoded_bytes": 80 * 1024}
+PER_ITEM = {"sha256": 40, "encodes": 140, "encoded_bytes": 100 * 1024}
 #: A small settle after a large one: at most this times one after a small one...
 LARGE_PARENT_RATIO = 1.25
 #: ...plus this, for ids, paths and shard directories one item longer or deeper.
