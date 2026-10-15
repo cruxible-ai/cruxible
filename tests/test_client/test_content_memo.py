@@ -545,3 +545,61 @@ def test_the_direct_encoder_writes_exactly_the_normalizing_encoders_bytes():
     for item in [*fixed, *(value() for _ in range(5000))]:
         assert outcome(canonical.canonical_bytes, item) == outcome(normalizing, item)
         assert outcome(canonical.pretty_canonical_bytes, item) == outcome(normalizing_pretty, item)
+
+
+@pytest.mark.parametrize("shape", ["lists", "dicts", "mixed"])
+def test_deeply_nested_values_encode_and_refuse_exactly_as_the_normalizing_encoder(shape):
+    """The direct encoder's readiness check (and ``canonical_equal``'s identity
+    check) take no more stack than ``normalize_canonical``: a value the
+    normalizing encoder accepts, however deep, gets its exact bytes, and one too
+    deep for it still raises RecursionError."""
+
+    import sys
+
+    from cruxible_client.contracts import canonical
+    from cruxible_client.contracts.primitives import canonical_json, pretty_json
+
+    def nested(depth: int) -> object:
+        value: object = 1
+        for level in range(depth):
+            if shape == "lists" or (shape == "mixed" and level % 2):
+                value = [value]
+            else:
+                value = {"k": value}
+        return value
+
+    def outcome(encode, value):  # type: ignore[no-untyped-def]
+        try:
+            return encode(value)
+        except RecursionError:
+            return RecursionError
+
+    encoders = (
+        (
+            canonical.canonical_bytes,
+            lambda value: canonical_json(canonical.normalize_canonical(value)).encode("utf-8"),
+        ),
+        (
+            canonical.pretty_canonical_bytes,
+            lambda value: pretty_json(canonical.normalize_canonical(value)).encode("utf-8") + b"\n",
+        ),
+    )
+    limit = sys.getrecursionlimit()
+    accepted = 0
+    # 600 is the reviewer's case. The original's frames per level differ by
+    # Python version, so only depths it accepts, or that no version can reach,
+    # are pinned.
+    for depth in (limit // 4, 600, 2 * limit):
+        value = nested(depth)
+        for encode, original in encoders:
+            expected = outcome(original, value)
+            if expected is RecursionError:
+                if depth >= 2 * limit:
+                    assert outcome(encode, value) is RecursionError
+                continue
+            accepted += 1
+            assert outcome(encode, value) == expected
+        if outcome(encoders[0][1], value) is not RecursionError:
+            assert canonical.canonical_equal(value, nested(depth)) is True
+            assert canonical.canonical_equal(value, nested(depth - 1)) is False
+    assert accepted >= 2

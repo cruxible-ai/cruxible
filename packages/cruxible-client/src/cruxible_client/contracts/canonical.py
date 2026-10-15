@@ -113,6 +113,19 @@ def _canonical_string(value: str) -> bool:
 
 
 def _canonical_ready(value: object) -> bool:
+    """Whether ``value`` takes the direct encoder (``_ready``), never deeper than the original.
+
+    A value too deeply nested to check is left to the normalizing path, which
+    accepts it, or refuses it, exactly as before.
+    """
+
+    try:
+        return _ready(value)
+    except RecursionError:
+        return False
+
+
+def _ready(value: object) -> bool:
     """Whether ``value`` is already in the closed canonical value set, exactly.
 
     Exact ``str`` (NFC, no surrogate), ``int``, ``bool`` and ``None``, and exact
@@ -122,6 +135,9 @@ def _canonical_ready(value: object) -> bool:
     sorting by UTF-8 -- so the stdlib encoder writes the canonical bytes
     directly. Anything else (a float, bytes, a tuple, a subclass, a non-NFC or
     surrogate string) takes the normalizing path and refuses exactly as before.
+
+    One frame per nesting level, as ``normalize_canonical`` takes: plain loops,
+    never a generator frame per container.
     """
 
     kind = type(value)
@@ -131,11 +147,14 @@ def _canonical_ready(value: object) -> bool:
         return True
     if kind is dict or kind is FrozenDict:
         for key, item in cast(dict[object, object], value).items():
-            if type(key) is not str or not _canonical_string(key) or not _canonical_ready(item):
+            if type(key) is not str or not _canonical_string(key) or not _ready(item):
                 return False
         return True
     if kind is list or kind is FrozenList:
-        return all(_canonical_ready(item) for item in cast(list[object], value))
+        for item in cast(list[object], value):
+            if not _ready(item):
+                return False
+        return True
     return False
 
 
@@ -306,7 +325,7 @@ def _identical(left: object, right: object) -> bool:
 
     Strings must be ASCII, integers and bools compare only with their own kind
     (``1 == True`` in Python, never in JSON), and dicts and lists only with
-    dicts and lists (sealed ones included).
+    dicts and lists (sealed ones included). One frame per nesting level.
     """
 
     kind = type(left)
@@ -321,18 +340,28 @@ def _identical(left: object, right: object) -> bool:
             return False
         mine = cast(dict[object, object], left)
         theirs = cast(dict[object, object], right)
-        return len(mine) == len(theirs) and all(
-            type(key) is str and key.isascii() and key in theirs and _identical(item, theirs[key])
-            for key, item in mine.items()
-        )
+        if len(mine) != len(theirs):
+            return False
+        for key, item in mine.items():
+            if not (
+                type(key) is str
+                and key.isascii()
+                and key in theirs
+                and _identical(item, theirs[key])
+            ):
+                return False
+        return True
     if kind in _LISTS:
         if type(right) not in _LISTS:
             return False
         mine_items = cast(list[object], left)
         their_items = cast(list[object], right)
-        return len(mine_items) == len(their_items) and all(
-            _identical(item, other) for item, other in zip(mine_items, their_items)
-        )
+        if len(mine_items) != len(their_items):
+            return False
+        for item, other in zip(mine_items, their_items):
+            if not _identical(item, other):
+                return False
+        return True
     return False
 
 
@@ -345,11 +374,14 @@ def canonical_equal(left: object, right: object) -> bool:
     surrogate), so they are decided without encoding. Anything else --
     different values that might still share an encoding, or values holding
     other types -- is encoded and compared, refusing exactly as
-    ``canonical_bytes`` does.
+    ``canonical_bytes`` does, as do values too deeply nested to compare.
     """
 
-    if _identical(left, right):
-        return True
+    try:
+        if _identical(left, right):
+            return True
+    except RecursionError:
+        pass
     return canonical_bytes(left) == canonical_bytes(right)
 
 
