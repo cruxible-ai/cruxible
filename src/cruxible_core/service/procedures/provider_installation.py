@@ -53,7 +53,7 @@ from cruxible_client.contracts.repairs import (
     HandEditRepair,
     RepairOperation,
 )
-from cruxible_core.compiler.compiler import current_compiler_coordinate
+from cruxible_core.compiler.compiler import PROVIDER_BUILDS_COMPILER
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError, RequestRefusedError
 from cruxible_core.governance.seed_artifacts.workspace_file import (
@@ -409,7 +409,8 @@ def _interface_bindings(
         current = parse_provider_interface(current_bytes, path=path)
         if current.lifecycle.state != "live":
             raise ProposalIntegrityError("install cannot silently restore a retired interface")
-        result.append((desired, True))
+        assert isinstance(current, ProviderInterfaceContract)
+        result.append((current, True))
     return tuple(result)
 
 
@@ -669,9 +670,9 @@ def service_install_provider(
 
     instance.require_writable()
     enforce_customer_code_execution_supported()
-    if instance.accepted_coordinate().compiler != current_compiler_coordinate():
+    if instance.accepted_coordinate().compiler != PROVIDER_BUILDS_COMPILER:
         raise ConfigError(
-            "provider installation requires the current compiler; "
+            "provider installation requires the provider-builds compiler; "
             "run cruxible compiler upgrade first"
         )
     source: str | dict[str, str] | None = None

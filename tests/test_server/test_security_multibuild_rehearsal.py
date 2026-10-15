@@ -53,7 +53,7 @@ def test_real_security_101_to_102_is_one_kit_add() -> None:
     home, state, workspace = (root / name for name in ("home", "state", "workspace"))
     for path in (home, state, workspace):
         path.mkdir()
-    socket_dir = Path(tempfile.mkdtemp(prefix="mb-", dir="/tmp"))
+    socket_dir = Path(tempfile.mkdtemp(prefix="mb-", dir=os.environ.get("TMPDIR")))
     socket_dir.chmod(0o700)
     env.update(
         HOME=str(home),
@@ -115,6 +115,57 @@ def test_real_security_101_to_102_is_one_kit_add() -> None:
                 env[key.removeprefix("export ").strip()] = value.strip().strip("'\"")
         first = json.loads(cx("kit", "add", str(releases[0]), "--commit", "--json"))
         assert first["status"] == "accepted", first
+        because = "Analyst review: only packaged templates are compiled."
+        subject = {
+            "subject_kind": "security.assessment",
+            "key": {"release_id": "app--1.0.0", "cve_id": "CVE-2024-56201"},
+        }
+
+        def claim(predicate: str, value: str) -> dict:
+            return {
+                "kind": "claim",
+                "subject": subject,
+                "predicate": predicate,
+                "object": {"kind": "literal", "value": value},
+                "role": "normative",
+                "rationale": because,
+                "source": {"kind": "self_source", "body": because + "\n"},
+            }
+
+        payload = root / "v101-operator.json"
+        payload.write_text(
+            json.dumps(
+                {
+                    "kind": "change_set",
+                    "rationale": "Exercise the 1.0.1 operator state during upgrade.",
+                    "members": [
+                        {
+                            "kind": "subject",
+                            "subject_kind": subject["subject_kind"],
+                            "key": subject["key"],
+                            "rationale": because,
+                        },
+                        claim("security.assessment.status", "not_affected"),
+                        claim(
+                            "security.assessment.justification",
+                            "vulnerable_code_not_in_execute_path",
+                        ),
+                        claim(
+                            "security.assessment.judgment",
+                            "The filename never reaches the template compiler.",
+                        ),
+                        {
+                            "kind": "blueprint_instance",
+                            "name": "user.osv-applicability",
+                            "blueprint": "security.osv-applicability",
+                            "bindings": {"osv": "security-sources-provider"},
+                            "acquisition_policy": "security.acquisition",
+                        },
+                    ],
+                }
+            )
+        )
+        cx("authoring", "submit", str(payload), "--and-activate", "--json")
         preview = json.loads(
             cx(
                 "kit",
@@ -140,6 +191,16 @@ def test_real_security_101_to_102_is_one_kit_add() -> None:
             )
         )
         assert upgraded["status"] == "accepted", upgraded
+        assert any(
+            item["identity"] == "Procedure:user.osv-applicability" and item["action"] == "successor"
+            for item in upgraded["repins"]
+        )
+        dropped = next(
+            item
+            for item in upgraded["plan"]
+            if item["identity"] == "ClaimType:security.assessment.judgment"
+        )
+        assert dropped["action"] == "retire" and dropped["dependent_count"] == 1, dropped
         status = json.loads(cx("kit", "status", "--offline", "--json"))
         assert (
             next(kit for kit in status["kits"] if kit["kit_id"] == "security")["version"] == "1.0.2"

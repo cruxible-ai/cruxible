@@ -322,7 +322,8 @@ def test_a_fresh_consumer_installs_the_default_provider_by_name(
         _install(consumer, alternative)
         assert _tree(consumer)[INTERFACE_PATH] == tree[INTERFACE_PATH]
         assert sorted(
-            item["provider_identity"] for item in _web_fetch_entry(consumer)["providers"]
+            item["provider_identity"].partition("/")[0]
+            for item in _web_fetch_entry(consumer)["providers"]
         ) == ["Provider:fetch-alt", "Provider:fetch-default"]
         _instantiate_and_refuse(consumer)
     finally:

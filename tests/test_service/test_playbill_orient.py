@@ -491,6 +491,7 @@ def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
         render_provider_interface,
     )
     from cruxible_client.contracts.providers import render_provider
+    from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER
     from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
     from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
     from tests.core_support._p2b1_support import (
@@ -500,7 +501,13 @@ def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
     )
     from tests.core_support._support import initialize_local
 
-    instance, owner = initialize_local(tmp_path)
+    # This world exercises retained single-path Providers registered before builds.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(
+            "cruxible_core.runtime.instance.current_compiler_coordinate",
+            lambda: SUBJECT_IDENTITY_COMPILER,
+        )
+        instance, owner = initialize_local(tmp_path)
     demo, provider = accepted_interface(), accepted_provider()
     # The description is the interface definition's own: a registration's
     # bucket vocabulary is inert historical data and describes nothing served.

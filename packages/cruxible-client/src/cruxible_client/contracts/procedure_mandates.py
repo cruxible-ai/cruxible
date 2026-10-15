@@ -717,15 +717,13 @@ def mandate_change_is_narrowing(new: ProcedureMandateAny, old: ProcedureMandateA
     the predicate itself -- is widening.
     """
 
-    # Retirement removes all authority, including when a stopped mandate's pin
-    # is settled to the Procedure successor in the same change set.
-    if new.lifecycle.state == "retired":
-        return True
     if new.procedure != old.procedure:
         return False
     # Reviving a retired mandate restores revoked authority: that is widening.
-    if old.lifecycle.state == "retired":
+    if old.lifecycle.state == "retired" and new.lifecycle.state != "retired":
         return False
+    if new.lifecycle.state == "retired":
+        return True
     if _GRANT_ORDER[mandate_grant(new)] > _GRANT_ORDER[mandate_grant(old)]:
         return False
     if not _ceiling_within(_resources(new), _resources(old)):

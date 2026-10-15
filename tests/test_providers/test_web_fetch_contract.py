@@ -28,7 +28,6 @@ from cruxible_core.providers.web_fetch import (
     WEB_FETCH_INTERFACE_DIGEST,
     WEB_FETCH_INTERFACE_DIGESTS,
     WEB_FETCH_INTERFACE_V2_DIGEST,
-    core_owned_interface_registration,
     web_fetch_interface_registration,
 )
 from tests.support.provider_checkout import provider_checkout_path
@@ -67,9 +66,6 @@ def test_core_owns_one_registration_per_web_fetch_definition() -> None:
     ) == v3.model_dump(exclude={"identity", "interface_bytes_hex", "interface_digest"})
     assert not hasattr(v3, "classifier_code")
     assert not hasattr(v3, "conformance_proofs")
-    assert core_owned_interface_registration(WEB_FETCH_INTERFACE_DIGEST) == v3
-    assert core_owned_interface_registration(WEB_FETCH_INTERFACE_V2_DIGEST) == v2
-    assert core_owned_interface_registration("sha256:" + "0" * 64) is None
     for name, registration in (("v2", v2), ("v3", v3)):
         path = provider_interface_path(registration.identity.name)
         law = evaluate_provider_interface_law(registration, path=path, predecessor=None)

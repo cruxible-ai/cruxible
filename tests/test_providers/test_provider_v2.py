@@ -147,7 +147,7 @@ def test_provider_v1_to_v2_succession_and_effect_parity() -> None:
             path=predecessor.path,
             predecessor=predecessor,
             interface_registrations={
-                registration.registration.interface_id: registration,
+                registration.registration.identity.qualified: registration,
             },
         ).verdict
         == "accepted"
@@ -165,7 +165,7 @@ def test_provider_v1_to_v2_succession_and_effect_parity() -> None:
         path=predecessor.path,
         predecessor=predecessor,
         interface_registrations={
-            mutation_registration.registration.interface_id: mutation_registration,
+            mutation_registration.registration.identity.qualified: mutation_registration,
         },
     )
     assert refused.diagnostics[0].code == "cruxible.provider.effect_declaration_mismatch"

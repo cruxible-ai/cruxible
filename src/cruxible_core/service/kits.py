@@ -406,7 +406,8 @@ def _bundled_provider_pins(
         if package.provider.build != pin.target.name:
             raise RequestRefusedError(
                 "cruxible.kit.provider_build_differs",
-                f"{path} pins {pin.target.qualified}, another build than the bundled "
+                f"{path} pins {pin.target.qualified}, another wheel and lock build "
+                "than the bundled "
                 f"{package.provider.package} {package.provider.version} "
                 f"({package.provider.build}); move it to the bundled build "
                 f"(provider move {name}) or bundle the build it pins",

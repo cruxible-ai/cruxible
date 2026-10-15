@@ -1003,6 +1003,9 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             }
         ).model_dump(mode="python")
     )
+    from tests.support.provider_builds import as_build
+
+    provider = as_build(provider)
     accepted_provider = AcceptedProvider(
         path=provider_path(provider.identity.name),
         provider=provider,

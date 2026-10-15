@@ -189,7 +189,9 @@ def accepted_provider_interfaces(
             "SELECT identity,path,artifact_digest,interface_id FROM main.provider_interfaces "
             "WHERE lifecycle='live' ORDER BY path"
         ).fetchall()
-        typed.prefetch_members(tuple(row[0] for row in (*provider_rows, *interface_rows)))
+        typed.prefetch_members(
+            tuple(row[0] for row in provider_rows) + tuple(row[1] for row in interface_rows)
+        )
         providers = [
             provider
             for (path, *_rest) in provider_rows

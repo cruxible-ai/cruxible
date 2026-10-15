@@ -568,22 +568,18 @@ def test_a_carried_interface_must_be_what_a_bundled_wheel_registers(
         with pytest.raises(RequestRefusedError) as unbundled:
             _build(publisher)
         assert unbundled.value.error_code == "cruxible.kit.interface_not_bundled"
-        # This build's classifier differs, so it registers other interface bytes.
+        # A code-only change shares the same contract registration.
         other = _package(tmp_path / "other", provider_checkout, name="kit-call", increment=2)
-        with pytest.raises(RequestRefusedError) as differs:
-            _build(publisher, other)
-        assert differs.value.error_code == "cruxible.kit.interface_differs"
-
-        # A consumer holding another build of a bundled provider is refused,
-        # never silently replaced.
-        release = _build(publisher, installed)
+        compatible = _build(publisher, other)
+        original = _build(publisher, installed)
+        assert compatible.contents() == original.contents()
+        # Another build already installed on the consumer remains beside the kit build.
         _install(consumer, other)
-        refused = _add(consumer, release, dry_run=False)
-        assert refused.status == "blocked", refused
-        (step,) = refused.providers
-        assert step.action == "blocked" and "another build" in (step.detail or "")
-        (status,) = playbill_api.playbill_kit_status(consumer.instance_id).kits or (None,)
-        assert status is None
+        added = _add(consumer, original, dry_run=False)
+        assert added.status == "accepted", added
+        (step,) = added.providers
+        assert step.action == "install"
+        assert len([p for p in _tree(consumer) if p.startswith("providers/kit-call/")]) == 2
     finally:
         for _ in opened:
             pass

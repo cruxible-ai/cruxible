@@ -151,3 +151,53 @@ def test_newest_means_last_registered_even_for_a_lower_version_and_excludes_reti
         resolve_provider_build(
             rows[2].identity, rows=rows, sequences=sequences, coordinate=coordinate
         )
+
+
+def test_legacy_bytes_project_unchanged_under_the_build_compiler() -> None:
+    from cruxible_core.compiler.compiler import (
+        PROVIDER_BUILDS_COMPILER,
+        SUBJECT_IDENTITY_COMPILER,
+        artifact_kinds_for_compiler,
+        projection_registry_for_compiler,
+    )
+    from cruxible_core.compiler.projection_artifacts import parse_projection_tree
+
+    legacy = provider_v2()
+    interface = accepted_interface()
+    tree = {
+        provider_path(legacy.identity.name): render_provider(legacy),
+        interface.path: render_provider_interface(interface.registration),
+    }
+    projections = [
+        parse_projection_tree(
+            tree,
+            registry=projection_registry_for_compiler(compiler),
+            artifact_kinds=artifact_kinds_for_compiler(compiler),
+        )
+        for compiler in (SUBJECT_IDENTITY_COMPILER, PROVIDER_BUILDS_COMPILER)
+    ]
+    assert projections[0].envelopes == projections[1].envelopes
+
+
+def test_new_single_path_provider_is_closed_at_the_build_compiler(tmp_path) -> None:
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    head = instance.accepted_coordinate()
+    tree = instance.immutable_tree_at(head.git_oid).fork()
+    legacy = provider_v2()
+    interface = accepted_interface()
+    tree[provider_path(legacy.identity.name)] = render_provider(legacy)
+    tree[interface.path] = render_provider_interface(interface.registration)
+    result = instance.proposal_service().preview(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/single-path", proposed_base_oid=head.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp="2026-10-15T00:00:00.000000Z",
+    )
+    assert "cruxible.provider.single_path_closed" in {
+        item.code for item in result.evaluation.diagnostics
+    }

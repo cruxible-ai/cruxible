@@ -117,7 +117,8 @@ def _run_call(
     provider = next(
         item
         for item in interface["providers"]
-        if provider_identity in (None, item["provider_identity"])
+        if provider_identity is None
+        or item["provider_identity"].partition("/")[0] == provider_identity
     )
 
     def carried(name, role):
@@ -319,9 +320,14 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     result2 = install_provider_wheel(
         client, instance_id, wheel=updated, lock=lock, dependency_wheels=(runtime,)
     )
-    assert result2.status == "blocked"
-    assert "incomplete_closure" in result2.detail
-    assert result2.installed and not result2.registered
+    assert result2.status == "ready", result2
+    assert result2.installed and result2.registered
+    assert result2.build != result.build
+    # The already authored Procedure still runs its exact original build.
+    from cruxible_client import Cruxible
+
+    pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
+    assert pb.accepted_procedure("installed-package-call").run().result.model_dump() == {"n": 3}
     assert result2.installation_id != result.installation_id
     assert old.items() <= operator.deployments.items()
     assert len(operator.deployments) == 3
@@ -361,7 +367,7 @@ def test_another_implementation_binds_the_live_registration(
     assert {key: value for key, value in after.items() if key != "providers"} == {
         key: value for key, value in before.items() if key != "providers"
     }
-    assert sorted(item["provider_identity"] for item in after["providers"]) == [
+    assert sorted(item["provider_identity"].partition("/")[0] for item in after["providers"]) == [
         "Provider:local-call",
         "Provider:other-call",
     ]
@@ -406,7 +412,7 @@ def test_a_package_binding_a_live_registration_needs_no_bucket_proof(
     )
     assert second.status == "ready" and second.registered, second
     entry = interface_entry(client, instance_id, "local.increment")
-    assert sorted(item["provider_identity"] for item in entry["providers"]) == [
+    assert sorted(item["provider_identity"].partition("/")[0] for item in entry["providers"]) == [
         "Provider:local-call",
         "Provider:renamed-call",
     ]
@@ -475,7 +481,7 @@ def test_a_package_whose_bucket_metadata_never_matched_installs_binds_and_runs(
     )
     assert second.status == "ready" and second.registered, second
     entry = interface_entry(client, instance_id, "local.increment")
-    assert sorted(item["provider_identity"] for item in entry["providers"]) == [
+    assert sorted(item["provider_identity"].partition("/")[0] for item in entry["providers"]) == [
         "Provider:inert-call",
         "Provider:unshipped-fixture-call",
     ]

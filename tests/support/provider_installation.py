@@ -263,7 +263,6 @@ def build_web_fetch_alternative(
 
     from cruxible_core.providers.web_fetch import (
         WEB_FETCH_INTERFACE_DEFINITION,
-        web_fetch_interface_registration,
     )
 
     # The lock is the workspace package's, renamed: the same version and runtime.
@@ -317,8 +316,16 @@ class Fetch:
     definition = dict(WEB_FETCH_INTERFACE_DEFINITION)
     digest = domain_digest("cruxible.interface.stub.v1", definition)
     resource("contract.json", definition)
-    # Core's vocabulary, read off its registration's inert bytes.
-    vocabulary = dict(web_fetch_interface_registration().vocabulary_document)
+    # Historical package metadata, independent of the new contract-only registration.
+    from importlib.resources import files
+
+    from cruxible_client.contracts.provider_interfaces import parse_provider_interface
+
+    content = (
+        files("cruxible_core.providers").joinpath("web-fetch-registration-v3.json").read_bytes()
+    )
+    legacy = parse_provider_interface(content, path="provider-interfaces/web.fetch.json")
+    vocabulary = dict(legacy.vocabulary_document)
     vocabulary["status"] = "draft"
     resource("vocabulary.json", vocabulary)
     claimed = {fixture_id for _selector, fixture_id in claims}
