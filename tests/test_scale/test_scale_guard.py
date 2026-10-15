@@ -632,12 +632,12 @@ GROWS: dict[str, dict[str, str]] = {
         ),
     },
     "read.query.where": {
-        **_grows(
-            "new: a kind query reads and digests every Subject of the kind before its where "
+        # Its digests no longer grow: each Subject shell is parsed once per content
+        # and sealed, so its digest is taken once per process (content_memo).
+        "git_blob_reads": (
+            "new: a kind query reads every Subject of the kind before its where "
             "filters (service/discovery/query.py:362 _reachable_subject_paths, :542-549 via "
-            "compact_query.py:1286 live_facts)",
-            *_DIGESTS,
-            "git_blob_reads",
+            "compact_query.py:1286 live_facts)"
         ),
         "file_opens": _FLAG_BODY_STATS,
     },

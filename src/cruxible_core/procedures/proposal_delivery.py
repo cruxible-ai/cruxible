@@ -71,6 +71,7 @@ from cruxible_client.contracts.claims import (
     claim_path,
     parse_claim,
 )
+from cruxible_client.contracts.content_memo import seal
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
     ProcedureMandateAny,
@@ -456,6 +457,9 @@ def _claim_members(
             if refreshed is not None:
                 member = member.model_copy(update={"revises": refreshed})
                 claim_id = refreshed
+        # The member is final here: seal it so its identity and its statement's
+        # digests are taken once however many laws ask (copies are never sealed).
+        seal(member)
         identity = authoring_member_identity(member)
         if identity in identity_to_item:
             raise ProposalDeliveryRefused(

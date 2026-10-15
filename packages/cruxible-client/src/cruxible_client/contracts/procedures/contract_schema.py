@@ -31,7 +31,7 @@ PropertyType = Literal[
 class PropertySchema(BaseModel):
     """One owner-carried Contract field, byte-compatible with the deferred family."""
 
-    model_config = ConfigDict(json_schema_mode_override="validation")
+    model_config = ConfigDict(frozen=True, json_schema_mode_override="validation")
 
     type: PropertyType = "string"
     primary_key: bool = False
@@ -54,7 +54,9 @@ class PropertySchema(BaseModel):
             required_optional = not self.required
             if "optional" in self.model_fields_set and self.optional != required_optional:
                 raise ValueError("required and optional are conflicting aliases")
-            self.optional = required_optional
+            # ``required`` is a construction-time alias, resolved before anyone sees
+            # the (frozen) schema.
+            object.__setattr__(self, "optional", required_optional)
         if self.primary_key and self.optional:
             raise ValueError("primary_key properties may not be optional")
         if self.type == "list" and self.item_fields is None:
@@ -98,7 +100,7 @@ class PropertySchema(BaseModel):
 class ContractSchema(BaseModel):
     """Typed input or output schema carried inside one Procedure-v2 envelope."""
 
-    model_config = ConfigDict(json_schema_mode_override="validation")
+    model_config = ConfigDict(frozen=True, json_schema_mode_override="validation")
 
     description: str | None = None
     fields: dict[str, PropertySchema]

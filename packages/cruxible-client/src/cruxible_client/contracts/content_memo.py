@@ -1,42 +1,320 @@
-"""Bounded per-process memos for pure parses of immutable artifacts, keyed by content.
+"""Bounded per-process memos for pure parses and digests of immutable artifacts.
 
 A governed artifact's parse is a pure function of its path, its codec and its
-exact bytes. Within one write or one Line run the same few ClaimTypes,
-CaptureContracts, Subjects and Claims are parsed dozens of times by different
-laws and indexes. These memos make each of those a lookup:
+exact bytes, and each of its digests is a pure function of the parsed value.
+Within one write or one Line run the same few ClaimTypes, CaptureContracts,
+Providers, Subjects and Claims are parsed and digested dozens of times by
+different laws and indexes. These memos make each of those a lookup:
 
 - ``ParseMemo`` keys a parse by ``(path, codec, bytes)``: the content itself,
-  never a caller's object. It keeps the parsed value pickled and hands every
-  caller its own detached copy, so nothing a caller does to a returned model
-  (frozen models are frozen only shallowly) can reach a later parse. A refused
-  parse is never remembered, so it refuses again exactly as before.
+  never a caller's object. A parsed value whose whole model tree is sealable
+  (see ``seal``) is sealed once, and that one immutable value is handed to
+  every caller. Any other value is kept pickled and every caller gets its own
+  detached copy. A refused parse is never remembered, so it refuses again
+  exactly as before.
+- ``seal`` makes a model tree deeply immutable and remembers which objects it
+  sealed. Pydantic's ``frozen`` is shallow: a frozen model's dict and list
+  fields can still change in place. Sealing replaces every such container, at
+  every depth, with a ``FrozenDict`` or ``FrozenList`` that refuses in-place
+  change, and it seals nothing when any model in the tree is not frozen,
+  carries extra or private state, or holds a value whose immutability it
+  cannot prove. A sealed object therefore cannot change, so nothing derived
+  from it can go stale.
+- ``sealed_memo`` remembers one pure derivation (a digest) per sealed object.
+  The lookup is the object's identity checked against a weak reference: one
+  dict probe, never a re-canonicalization. Every object that is not sealed --
+  built in code, ``model_copy``'d, deep-copied, unpickled -- is derived afresh
+  on every call. Copies are never sealed, and a copy's containers are plain
+  mutable ones again.
 - ``ValueMemo`` keys a pure function by a key made of immutable values only
   (strings, numbers, tuples of them), never by a model a caller holds.
 
-Digests of parsed models are not memoized here: a model's nested containers
-can change under its identity, and keying by its serialization costs what the
-digest does. All memos are bounded and least-recently-used, and safe to share
-across threads: every access is one short critical section.
+Every memo is bounded: parses by entries and bytes (least-recently-used), and a
+sealed object's derivations live exactly as long as the object (a weak
+reference drops them). All are safe to share across threads: every access is
+one short critical section or one atomic dict operation.
 """
 
 from __future__ import annotations
 
+import datetime
+import decimal
+import functools
 import pickle
 import threading
+import uuid
+import weakref
 from collections import OrderedDict
 from collections.abc import Callable
-from typing import Any, Generic, TypeVar
+from copy import deepcopy
+from enum import Enum
+from typing import Any, Generic, NoReturn, TypeVar
+
+from pydantic import BaseModel
 
 _V = TypeVar("_V")
+_A = TypeVar("_A")
 
 _MISSING = object()
+
+
+def _refuse(*_args: object, **_kwargs: object) -> NoReturn:
+    raise TypeError("a sealed artifact cannot change in place; copy it first")
+
+
+class FrozenDict(dict[Any, Any]):
+    """A dict inside a sealed artifact: reads as a dict, refuses in-place change.
+
+    Every copy (``copy``, ``deepcopy``, ``dict.copy``, pickling) is a plain,
+    mutable ``dict`` again.
+    """
+
+    __slots__ = ()
+
+    __setitem__ = _refuse
+    __delitem__ = _refuse
+    __ior__ = _refuse
+    clear = _refuse
+    pop = _refuse
+    popitem = _refuse
+    setdefault = _refuse
+    update = _refuse
+
+    def __copy__(self) -> dict[Any, Any]:
+        return dict(self)
+
+    def __deepcopy__(self, memo: dict[int, object]) -> dict[Any, Any]:
+        result: dict[Any, Any] = {}
+        memo[id(self)] = result
+        for key, value in self.items():
+            result[deepcopy(key, memo)] = deepcopy(value, memo)
+        return result
+
+    def __reduce__(self) -> tuple[type[dict[Any, Any]], tuple[dict[Any, Any]]]:
+        return (dict, (dict(self),))
+
+
+class FrozenList(list[Any]):
+    """A list inside a sealed artifact: reads as a list, refuses in-place change.
+
+    Every copy (``copy``, ``deepcopy``, ``list.copy``, pickling) is a plain,
+    mutable ``list`` again.
+    """
+
+    __slots__ = ()
+
+    __setitem__ = _refuse
+    __delitem__ = _refuse
+    __iadd__ = _refuse
+    __imul__ = _refuse
+    append = _refuse
+    clear = _refuse
+    extend = _refuse
+    insert = _refuse
+    pop = _refuse
+    remove = _refuse
+    reverse = _refuse
+    sort = _refuse
+
+    def __copy__(self) -> list[Any]:
+        return list(self)
+
+    def __deepcopy__(self, memo: dict[int, object]) -> list[Any]:
+        result: list[Any] = []
+        memo[id(self)] = result
+        result.extend(deepcopy(value, memo) for value in self)
+        return result
+
+    def __reduce__(self) -> tuple[type[list[Any]], tuple[list[Any]]]:
+        return (list, (list(self),))
+
+
+# Value types whose instances cannot change (an Enum member is a singleton).
+_IMMUTABLE_LEAVES: tuple[type, ...] = (
+    str,
+    int,
+    float,
+    bytes,
+    datetime.date,
+    datetime.time,
+    datetime.timedelta,
+    datetime.tzinfo,
+    decimal.Decimal,
+    uuid.UUID,
+    Enum,
+)
+
+
+class _Unsealable(Exception):
+    """A value in the tree cannot be proven immutable; nothing is sealed."""
+
+
+class _Sealing:
+    """One sealing pass: builds frozen containers aside, then commits all at once."""
+
+    def __init__(self) -> None:
+        self.models: dict[int, BaseModel] = {}
+        self.assignments: list[tuple[BaseModel, str, object]] = []
+
+    def value(self, value: object) -> object:
+        kind = type(value)
+        if kind is str or kind is int or kind is bool or value is None:
+            return value
+        if isinstance(value, BaseModel):
+            self.model(value)
+            return value
+        if kind is dict or kind is FrozenDict:
+            items: dict[Any, Any] = value  # type: ignore[assignment]
+            return FrozenDict({self.key(key): self.value(item) for key, item in items.items()})
+        if kind is list or kind is FrozenList:
+            members: list[Any] = value  # type: ignore[assignment]
+            return FrozenList(self.value(item) for item in members)
+        if kind is tuple:
+            original: tuple[Any, ...] = value  # type: ignore[assignment]
+            frozen = tuple(self.value(item) for item in original)
+            if all(new is old for new, old in zip(frozen, original, strict=True)):
+                return original
+            return frozen
+        if kind is frozenset:
+            elements: frozenset[Any] = value  # type: ignore[assignment]
+            for element in elements:
+                if self.value(element) is not element:
+                    raise _Unsealable(f"a frozenset holds a mutable {type(element).__name__}")
+            return value
+        if isinstance(value, _IMMUTABLE_LEAVES):
+            return value
+        raise _Unsealable(f"cannot prove a {kind.__name__} immutable")
+
+    def key(self, key: object) -> object:
+        if self.value(key) is not key:
+            raise _Unsealable("a mapping key is mutable")
+        return key
+
+    def model(self, model: BaseModel) -> None:
+        if id(model) in self.models or _sealed_entry(model) is not None:
+            return
+        cls = type(model)
+        if cls.model_config.get("frozen") is not True:
+            raise _Unsealable(f"{cls.__name__} is not a frozen model")
+        if model.__pydantic_extra__ or model.__pydantic_private__:
+            raise _Unsealable(f"{cls.__name__} carries extra or private state")
+        self.models[id(model)] = model
+        state = model.__dict__
+        for name in cls.model_fields:
+            if name not in state:
+                continue
+            current = state[name]
+            frozen = self.value(current)
+            if frozen is not current:
+                self.assignments.append((model, name, frozen))
+
+    def commit(self) -> None:
+        for model, name, frozen in self.assignments:
+            # The one sanctioned write: the sealing pass, before the value is handed out.
+            model.__dict__[name] = frozen
+        for model in self.models.values():
+            _register(model)
+
+
+class _Seal:
+    __slots__ = ("ref", "derived")
+
+    def __init__(self, ref: weakref.ref[BaseModel]) -> None:
+        self.ref = ref
+        self.derived: dict[str, object] = {}
+
+
+_SEALED: dict[int, _Seal] = {}
+
+
+def _forget(key: int, ref: weakref.ref[BaseModel]) -> None:
+    entry = _SEALED.get(key)
+    if entry is not None and entry.ref is ref:
+        _SEALED.pop(key, None)
+
+
+def _register(model: BaseModel) -> None:
+    key = id(model)
+    _SEALED[key] = _Seal(weakref.ref(model, functools.partial(_forget, key)))
+
+
+def _sealed_entry(value: object) -> _Seal | None:
+    entry = _SEALED.get(id(value))
+    if entry is None or entry.ref() is not value:
+        return None
+    return entry
+
+
+def seal(value: object) -> bool:
+    """Make ``value``'s whole model tree deeply immutable, or change nothing.
+
+    Returns whether ``value`` is now sealed. Sealing is all-or-nothing: if any
+    model in the tree is not frozen, carries extra or private state, or holds a
+    value whose immutability cannot be proven, nothing changes and nothing is
+    sealed. Only the owner of a freshly built value seals it, before handing it
+    out: sealing swaps the tree's dict and list containers for ones that refuse
+    in-place change.
+    """
+
+    if not isinstance(value, BaseModel):
+        return False
+    if _sealed_entry(value) is not None:
+        return True
+    sealing = _Sealing()
+    try:
+        sealing.model(value)
+    except _Unsealable:
+        return False
+    sealing.commit()
+    return True
+
+
+def is_sealed(value: object) -> bool:
+    """Whether ``value`` is an object ``seal`` sealed (its copies never are)."""
+
+    return _sealed_entry(value) is not None
+
+
+def sealed_memo(derive: Callable[[_A], _V]) -> Callable[[_A], _V]:
+    """Remember ``derive(value)`` once per sealed ``value``; derive afresh otherwise.
+
+    ``derive`` must be a pure function of the value's content and return an
+    immutable result (a frozen digest value, a string, a tuple of them): every
+    caller receives the one remembered result.
+    """
+
+    name = f"{derive.__module__}.{derive.__qualname__}"
+
+    @functools.wraps(derive)
+    def memoized(value: _A) -> _V:
+        entry = _sealed_entry(value)
+        if entry is None:
+            return derive(value)
+        found = entry.derived.get(name, _MISSING)
+        if found is _MISSING:
+            found = derive(value)
+            entry.derived[name] = found
+        return found  # type: ignore[return-value]
+
+    return memoized
+
+
+class _Shared:
+    """A sealed parse: the one immutable value every caller receives."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: object) -> None:
+        self.value = value
 
 
 class ParseMemo(Generic[_V]):
     """``(path, codec, exact bytes) -> parsed artifact``, bounded by entries and bytes."""
 
     def __init__(self, *, capacity: int, max_bytes: int) -> None:
-        self._entries: OrderedDict[tuple[str, object, bytes], bytes] = OrderedDict()
+        self._entries: OrderedDict[tuple[str, object, bytes], tuple[_Shared | bytes, int]] = (
+            OrderedDict()
+        )
         self._capacity = capacity
         self._max_bytes = max_bytes
         self._bytes = 0
@@ -55,24 +333,29 @@ class ParseMemo(Generic[_V]):
             if found is not None:
                 self._entries.move_to_end(key)
         if found is not None:
-            return pickle.loads(found)  # type: ignore[no-any-return]
+            stored = found[0]
+            if isinstance(stored, _Shared):
+                return stored.value  # type: ignore[return-value]
+            return pickle.loads(stored)  # type: ignore[no-any-return]
         value = parse()
         try:
-            frozen = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+            pickled = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
         except (pickle.PicklingError, TypeError, AttributeError):
             return value
-        weight = len(content) + len(path) + len(frozen)
+        # The pickled size weighs either form of the entry.
+        weight = len(content) + len(path) + len(pickled)
         if weight * 16 > self._max_bytes:
             return value
+        stored_value: _Shared | bytes = _Shared(value) if seal(value) else pickled
         with self._lock:
             if key not in self._entries:
-                self._entries[key] = frozen
+                self._entries[key] = (stored_value, weight)
                 self._bytes += weight
             while self._entries and (
                 len(self._entries) > self._capacity or self._bytes > self._max_bytes
             ):
-                (old_path, _codec, old_content), old = self._entries.popitem(last=False)
-                self._bytes -= len(old_content) + len(old_path) + len(old)
+                _old_key, (_old_value, old_weight) = self._entries.popitem(last=False)
+                self._bytes -= old_weight
         return value
 
     def clear(self) -> None:
@@ -112,4 +395,12 @@ class ValueMemo(Generic[_V]):
             self._entries.clear()
 
 
-__all__ = ["ParseMemo", "ValueMemo"]
+__all__ = [
+    "FrozenDict",
+    "FrozenList",
+    "ParseMemo",
+    "ValueMemo",
+    "is_sealed",
+    "seal",
+    "sealed_memo",
+]

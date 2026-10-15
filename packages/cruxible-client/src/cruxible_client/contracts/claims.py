@@ -78,7 +78,7 @@ from cruxible_client.contracts.claim_verdicts import (
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
 )
-from cruxible_client.contracts.content_memo import ParseMemo
+from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.declared_blocks import (
     ProjectionWindow,
     projection_window_intersecting,
@@ -739,6 +739,7 @@ def _parse_claim(
     return claim
 
 
+@sealed_memo
 def claim_statement_digest(statement: ClaimStatement) -> Sha256Value:
     payload = statement.model_dump(mode="json")
     payload.pop("tag")
@@ -758,6 +759,7 @@ def claim_referent_context_digest(context: ClaimReferentContext) -> Sha256Value:
     )
 
 
+@sealed_memo
 def claim_artifact_digest(claim: ClaimArtifactAny) -> ArtifactDigest:
     payload: dict[str, CanonicalValue] = {
         "artifact_format": claim.artifact_format,

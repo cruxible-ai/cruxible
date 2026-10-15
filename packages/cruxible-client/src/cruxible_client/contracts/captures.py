@@ -45,7 +45,7 @@ from cruxible_client.contracts.cas_contracts import (
     BodyAccessContext,
     CasObjectMetadata,
 )
-from cruxible_client.contracts.content_memo import ParseMemo
+from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import CasError, FormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
@@ -620,6 +620,7 @@ def _parse_capture_contract(
     return contract
 
 
+@sealed_memo
 def capture_contract_digest(contract: CaptureContract) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
