@@ -124,6 +124,7 @@ def require_union_discriminators(model: type[BaseModel], data: object) -> None:
         slots = _UNION_SLOTS[model] = _union_slots(model)
     for name, many, discriminator, tags in slots:
         value = data.get(name)
+        items: list[tuple[int | None, object]]
         if many:
             items = list(enumerate(value)) if isinstance(value, list | tuple) else []
         else:
