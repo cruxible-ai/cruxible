@@ -90,6 +90,7 @@ from cruxible_core.compiler.projection_tree import TreeReadLimits, read_register
 from cruxible_core.curation.review_operational import ReviewOperationalStore
 from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.derived.derived_state import (
+    ClaimPredicateKey,
     DerivedState,
     IndexDefinition,
     SnapshotTree,
@@ -173,7 +174,10 @@ from cruxible_core.ledger.recovery import (
     recover_instance,
 )
 from cruxible_core.ledger.witness import WitnessSink
-from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationAdapter
+from cruxible_core.proposals.prepared_evaluation import (
+    AdmittedEvaluation,
+    PreparedEvaluationAdapter,
+)
 from cruxible_core.proposals.proposal_evidence import (
     ProposalEvidenceStore,
     SettledCandidate,
@@ -383,7 +387,9 @@ class PlaybillInstance:
         self.claim_law_memo: BoundedCache[bytes] = self.derived.memo(
             "claim-law-evidence", max_entries=65536, max_bytes=64 * 1024 * 1024
         )
-        self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
+        self.prepared_evaluations = PreparedEvaluationAdapter(
+            self.derived, fact_inputs=self.query_fact_inputs
+        )
         for name, namespace, adapter, source in (
             ("accepted-artifacts", "accepted", self.derived, "verified-ledger-tree-v1"),
         ):
@@ -475,6 +481,18 @@ class PlaybillInstance:
             subject_kinds=subject_kinds,
         )
 
+    def query_fact_inputs(self) -> str | None:
+        """The writer-owned fingerprint of every mutable input accepted query facts read.
+
+        At one accepted coordinate a facts build varies only with the body store
+        and the re-observation journal; this names both (``verdict_input_fingerprint``).
+        A build observed under one value is replayable only while it holds.
+        """
+
+        from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
+
+        return verdict_input_fingerprint(self)
+
     def _request_query_facts(
         self,
         pool: ProjectionPool,
@@ -486,19 +504,19 @@ class PlaybillInstance:
         """Facts remembered for this request while their mutable inputs hold.
 
         At one accepted coordinate a fact row varies only with the body store
-        and the re-observation journal: the verdict input fingerprint covers
-        every evidence body landing or erase and every re-observation, and the
-        file identity of each body-store object the build consulted covers a
-        rewrite. Both are checked before reuse, so a reused build answers
-        exactly as a fresh one would.
+        and the re-observation journal. The verdict input fingerprint names
+        both by writer-owned positions: the landing log's (every evidence body
+        landing, erase and damage record) and the re-observation journal's.
+        A remembered build is served while that fingerprint is unchanged, in
+        bounded work: no consulted body is enumerated or stat'ed (presence
+        comes from the landing index; out-of-band corruption is found by
+        damage records and direct byte verification, never by per-read file
+        checks). A build that consulted an external reader is never remembered.
         """
 
         from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
         from cruxible_core.service.discovery.query import build_accepted_query_facts
-        from cruxible_core.service.evidence.evidence import (
-            UNKNOWN_BODIES,
-            body_fingerprints_hold,
-        )
+        from cruxible_core.service.evidence.evidence import UNKNOWN_BODIES
 
         memo = pool.values()
         fingerprint = verdict_input_fingerprint(self)
@@ -518,8 +536,8 @@ class PlaybillInstance:
         )
         held = memo.get(key)
         if held is not None:
-            kept, seen, bodies = held
-            if seen == fingerprint and body_fingerprints_hold(self, bodies):
+            kept, seen = held
+            if seen == fingerprint:
                 return cast("ClaimQueryFactsV1", kept)
         consulted: dict[str, Any] = {}
         facts = build_accepted_query_facts(
@@ -530,7 +548,7 @@ class PlaybillInstance:
             consulted_bodies=consulted,
         )
         if UNKNOWN_BODIES not in consulted and verdict_input_fingerprint(self) == fingerprint:
-            memo[key] = (facts, fingerprint, tuple(consulted.items()))
+            memo[key] = (facts, fingerprint)
         else:
             memo.pop(key, None)
         return facts
@@ -2373,12 +2391,55 @@ class PlaybillInstance:
         tree = self.derived.accepted_tree(binding, load, advance)
         # Loaded or advanced from exactly this commit's tree, so its rows are that tree.
         tree._commit_oid = oid
-        tree._accepted_reader = (
-            None
-            if coordinate.git_oid == self._verified_genesis.oid
-            else lambda: self.bind_accepted_projection(coordinate)
-        )
+        if coordinate.git_oid == self._verified_genesis.oid:
+            tree._accepted_reader = None
+            tree._accepted_claim_items = None
+        else:
+            tree._accepted_reader = lambda: self.bind_accepted_projection(coordinate)
+            tree._accepted_claim_items = lambda statement: self._accepted_claim_items(
+                coordinate, statement
+            )
         return tree
+
+    def _accepted_claim_items(
+        self, coordinate: AcceptedProjectionCoordinate, statement: ClaimPredicateKey
+    ) -> tuple[tuple[str, bytes], ...]:
+        """The live Claims of one statement at an accepted coordinate, once per request.
+
+        Accepted state at a coordinate is immutable, so inside ``projection_scope``
+        the answer is remembered for the rest of the request: a settle asks for
+        each item's slot in delivery, in its many-valued fill and in lowering.
+        """
+
+        from cruxible_core.indexes.evaluated_state import EvaluationRows
+
+        pool = _PROJECTION_POOL.get()
+        memo = None if pool is None else pool.values()
+        subject = statement.subject
+        key = (
+            "accepted-claim-items",
+            id(self),
+            coordinate.git_oid,
+            coordinate.semantic_root,
+            coordinate.generation_root,
+            coordinate.compiler.rule_digest,
+            subject.artifact_path,
+            subject.selector.scheme,
+            subject.selector.value,
+            statement.predicate,
+        )
+        if memo is not None:
+            held = memo.get(key)
+            if held is not None:
+                return cast("tuple[tuple[str, bytes], ...]", held)
+        rows = EvaluationRows(self.bind_accepted_projection(coordinate))
+        try:
+            answer = rows.claim_items(statement)
+        finally:
+            rows.close()
+        if memo is not None:
+            memo[key] = answer
+        return answer
 
     def tree_at(self, oid: str) -> dict[str, bytes]:
         """Explicitly materialize an owned tree after proving accepted membership."""
@@ -2528,17 +2589,25 @@ class PlaybillInstance:
         )
         reused = pool.take(key)
         if reused is not None:
-            try:
-                # Still one accepted generation: refused exactly as a fresh bind is.
-                self.resolve_accepted_coordinate(
-                    git_oid=coordinate.git_oid,
-                    semantic_root=coordinate.semantic_root,
-                    generation_root=coordinate.generation_root,
-                    compiler_digest=coordinate.compiler.rule_digest,
-                )
-            except BaseException:
-                reused.close()
-                raise
+            # Still one accepted generation: refused exactly as a fresh bind is.
+            # Within one recovered epoch the answer cannot change, so a request
+            # re-verifies a reused coordinate once per epoch, not once per lookup.
+            memo = pool.values()
+            verified = ("verified-coordinate", *key)
+            recovered = self._recovered
+            if memo is None or memo.get(verified) is not recovered:
+                try:
+                    self.resolve_accepted_coordinate(
+                        git_oid=coordinate.git_oid,
+                        semantic_root=coordinate.semantic_root,
+                        generation_root=coordinate.generation_root,
+                        compiler_digest=coordinate.compiler.rule_digest,
+                    )
+                except BaseException:
+                    reused.close()
+                    raise
+                if memo is not None:
+                    memo[verified] = recovered
             return reused
         return pool.adopt(key, self._bind_accepted_projection(coordinate), owner=self)
 
@@ -2865,11 +2934,15 @@ class PlaybillInstance:
         sequence: int,
         candidate_tree_oid: str | None = None,
         mandate_digest: str | None = None,
+        admitted: AdmittedEvaluation | None = None,
     ) -> VerifiedGenerationBundle:
         """Construct one verified generation without exposing the Git ledger to surfaces.
 
         ``mandate_digest`` names the settle ProcedureMandate whose delegated
         authority replaces candidate approval; only the settle terminal passes it.
+        ``admitted`` is the same request's own admission evaluation (see
+        ``settlement.prepare_generation``); only an activation handed its
+        submission passes it.
         """
 
         self.require_writable()
@@ -2904,6 +2977,7 @@ class PlaybillInstance:
             historical_artifact_provider=self.accepted_artifact_version,
             principal_registry_provider=self.accepted_principal_registry,
             subject_assignment_authority=self.subject_assignment_authority(),
+            admitted=admitted,
         )
 
     def settle_and_activate(
@@ -2917,6 +2991,7 @@ class PlaybillInstance:
         proposal_actor_id: str,
         candidate_tree_oid: str | None = None,
         mandate_digest: str | None = None,
+        admitted: AdmittedEvaluation | None = None,
     ) -> ActivationResult:
         """Publish one owned preparation and install its verified successor state.
 
@@ -2936,6 +3011,7 @@ class PlaybillInstance:
                 sequence=previous.head.sequence + 1,
                 candidate_tree_oid=candidate_tree_oid,
                 mandate_digest=mandate_digest,
+                admitted=admitted,
             )
             successor = (
                 prepared_generation_for_handoff(

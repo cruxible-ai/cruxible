@@ -10,9 +10,9 @@ so a recorded settlement reproduces from the parent state and the record alone.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from cruxible_client.contracts.claims import ClaimFormatError, SubjectClaimObject, parse_claim
 from cruxible_client.contracts.errors import CruxibleError
@@ -34,7 +34,15 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import parse_subject
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.proposals.prepared_evaluation import (
+    FactInputs,
+    FactsObservation,
+    facts_replay,
+)
 from cruxible_core.query.backends import ClaimQueryFactsV1
+
+if TYPE_CHECKING:
+    from cruxible_core.proposals.proposals import ClaimQueryFactsProvider
 
 MANDATE_PREFIX = "procedure-mandates/"
 CLAIM_PREFIX = "claims/"
@@ -247,6 +255,85 @@ def settle_targets(
             )
         )
     return tuple(targets), tuple(issues)
+
+
+@dataclass(frozen=True)
+class DelegatedAuthorityVerdict:
+    """One settle condition check, carried to an evaluation that would repeat it.
+
+    The check reads the parent state (named by its coordinate), the evaluation
+    timestamp, the change set's scope and the candidate bytes at those paths --
+    any other path it reads is unchanged, so the parent holds it -- and the
+    accepted query facts its condition query consumed. Those facts are not
+    fixed by the coordinate: a cited Capture's replay availability moves with
+    the body store, and a lineage's freshness with the re-observation journal.
+    Each build is carried with the writer-owned fingerprint of those inputs it
+    was made on (``FactsObservation``). An evaluation with exactly the same
+    tree inputs whose fact builds still stand reuses the issues instead of
+    evaluating the condition again; anything else re-checks.
+    """
+
+    mandate_digest: str
+    current: AcceptedProjectionCoordinate
+    timestamp: str
+    scope: tuple[str, ...]
+    members: tuple[bytes | None, ...]
+    facts: tuple[FactsObservation, ...]
+    fact_inputs: FactInputs = field(compare=False)
+    issues: tuple[tuple[str, str], ...]
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        mandate_digest: str,
+        current: AcceptedProjectionCoordinate,
+        timestamp: str,
+        scope: tuple[str, ...],
+        candidate_tree: Mapping[str, bytes],
+        facts: tuple[FactsObservation, ...],
+        fact_inputs: FactInputs,
+        issues: tuple[tuple[str, str], ...],
+    ) -> DelegatedAuthorityVerdict:
+        return cls(
+            mandate_digest=mandate_digest,
+            current=current,
+            timestamp=timestamp,
+            scope=scope,
+            members=tuple(candidate_tree.get(path) for path in scope),
+            facts=facts,
+            fact_inputs=fact_inputs,
+            issues=issues,
+        )
+
+    def answers(
+        self,
+        *,
+        mandate_digest: str,
+        current: AcceptedProjectionCoordinate,
+        timestamp: str,
+        scope: tuple[str, ...],
+        candidate_tree: Mapping[str, bytes],
+        facts: ClaimQueryFactsProvider | None,
+    ) -> bool:
+        """Whether this check was made on exactly these inputs, and its facts still stand.
+
+        ``facts`` is the evaluation's own provider: replaying the check's
+        fact builds through it makes them the evaluation's observations too,
+        so a later reuse of the evaluation replays them again.
+        """
+        return (
+            mandate_digest == self.mandate_digest
+            and timestamp == self.timestamp
+            and scope == self.scope
+            and current == self.current
+            and all(
+                candidate_tree.get(path) == content
+                for path, content in zip(scope, self.members, strict=True)
+            )
+            and all(fact.coordinate == current for fact in self.facts)
+            and facts_replay(self.facts, query_facts_provider=facts, inputs=self.fact_inputs)
+        )
 
 
 def delegated_authority_issues(

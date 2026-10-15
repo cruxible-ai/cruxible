@@ -14,7 +14,7 @@ from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from cruxible_client.contracts.candidates import DependencyProofReference
 from cruxible_client.contracts.canonical import canonical_bytes, file_digest, is_candidate_card_path
@@ -36,6 +36,9 @@ if TYPE_CHECKING:
     from cruxible_core.derived.derived_state import ClaimPredicateKey
 
 T = TypeVar("T")
+
+_UNRESOLVED = object()
+_ABSENT = object()
 
 
 class SelectedRows(Mapping[str, T], Generic[T]):
@@ -114,6 +117,10 @@ class EvaluationRows:
         self.changed: Mapping[str, bytes | None] = {}
         self.children: list[EvaluationRows] = []
         self.binding = canonical_bytes(projection.accepted.model_dump(mode="json"))
+        # Every row this selection reads is fixed for its lifetime (an overlay's
+        # changed rows are written when it is created), so one evaluation reads,
+        # parses and builds each resolved row once, however many members consult it.
+        self._resolved: dict[tuple[object, ...], Any] = {}
         self.states = SelectedRows(
             self.state, lambda: self.keys("artifact_lookup", "path", "1"), owner=self
         )
@@ -156,12 +163,28 @@ class EvaluationRows:
             return value
         return bytes(self.reader.member_bytes(path))
 
+    def _memo(self, key: tuple[object, ...], compute: Callable[[], T]) -> T:
+        """One evaluation's answer for ``key``: computed once, an absent row included."""
+        held = self._resolved.get(key, _UNRESOLVED)
+        if held is _UNRESOLVED:
+            try:
+                held = compute()
+            except KeyError:
+                held = _ABSENT
+            self._resolved[key] = held
+        if held is _ABSENT:
+            raise KeyError(key[-1])
+        return cast(T, held)
+
     def identity_path(self, identity: str) -> str:
-        return str(
-            self.one(
-                f"SELECT path FROM {self.table('artifact_lookup')} WHERE identity=?",
-                identity,
-            )[0]
+        return self._memo(
+            ("identity_path", identity),
+            lambda: str(
+                self.one(
+                    f"SELECT path FROM {self.table('artifact_lookup')} WHERE identity=?",
+                    identity,
+                )[0]
+            ),
         )
 
     def source(self, identity: str) -> Any:
@@ -180,6 +203,9 @@ class EvaluationRows:
         return select_claim_type_names(self.connection, names, table=self.table("claim_type_names"))
 
     def state(self, path: str) -> ArtifactDependencyStateV1:
+        return self._memo(("state", path), lambda: self._state(path))
+
+    def _state(self, path: str) -> ArtifactDependencyStateV1:
         row = self.one(
             f"SELECT kind,format_tag,artifact_digest FROM {self.table('artifact_lookup')} WHERE path=?",
             path,
@@ -338,11 +364,29 @@ class EvaluationRows:
         table = self.table(OWNER_BY_KIND[kind].table)
         key = "path" if path_key else "identity"
 
-        def get(value: str) -> T:
+        def read(value: str) -> T:
             row = self.one(f"SELECT path,artifact_digest FROM {table} WHERE {key}=?", value)
             return convert(row[0], self.source_bytes(row[0]), row[1])
 
+        # Keyed by the converter too: one row may be read as two different models.
+        def get(value: str) -> T:
+            return self._memo(("artifact", table, key, convert, value), lambda: read(value))
+
+        def listed() -> tuple[str, ...]:
+            return self._memo(
+                ("artifact_keys", table, key),
+                lambda: tuple(
+                    row[0]
+                    for row in self.connection.execute(f"SELECT {key} FROM {table} ORDER BY {key}")
+                ),
+            )
+
         def prefetch(values: tuple[str, ...]) -> None:
+            values = tuple(
+                value
+                for value in values
+                if ("artifact", table, key, convert, value) not in self._resolved
+            )
             paths: list[str] = []
             for start in range(0, len(values), 500):
                 selected = values[start : start + 500]
@@ -357,14 +401,7 @@ class EvaluationRows:
                 )
             self.reader.prefetch_members(tuple(p for p in paths if p not in self.changed))
 
-        return SelectedRows(
-            get,
-            lambda: (
-                row[0]
-                for row in self.connection.execute(f"SELECT {key} FROM {table} ORDER BY {key}")
-            ),
-            prefetch=prefetch,
-        )
+        return SelectedRows(get, listed, prefetch=prefetch)
 
     def overlay(self, edits: Mapping[str, bytes | None]) -> EvaluationRows:
         """Create a bound changed-row selection; exact source identity suppresses edges."""

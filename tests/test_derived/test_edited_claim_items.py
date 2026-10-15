@@ -74,6 +74,46 @@ def test_edited_claim_items_match_the_cold_oracle(tmp_path: Path, monkeypatch) -
     assert overlays == []  # no overlay is built for a Claim lookup
 
 
+def test_claims_staged_one_by_one_through_forks_match_the_cold_oracle_at_every_step(
+    tmp_path: Path,
+) -> None:
+    """The slot index a fork carries stays exact as Claims are staged, revised and deleted.
+
+    Each step forks the previous step's snapshot (as lowering does per member),
+    so every lookup reads an index carried forward plus what was staged since.
+    """
+
+    fixture = build_fixture(tmp_path, PROFILE)
+    instance = PlaybillInstance.open(fixture.managed_root, trust_root=fixture.instance.trust_root)
+    head = instance.immutable_tree_at(instance.accepted_history()[-1].oid)
+    other = build_fixture(tmp_path / "other", replace(PROFILE, seed="edited-claims-other"))
+    other_instance = PlaybillInstance.open(other.managed_root, trust_root=other.instance.trust_root)
+    other_tree = other_instance.tree_at(other_instance.accepted_history()[-1].oid)
+    additions = sorted(
+        (path, content)
+        for path, content in other_tree.items()
+        if path.startswith("claims/") and path not in head
+    )
+    claim_paths = fixture_claim_paths(head)
+    statements = {
+        parse_claim(content, path=path).statement
+        for path, content in (*((p, head[p]) for p in claim_paths), *additions)
+    }
+    rng = random.Random(5)
+    tree = head.fork()
+    for step, (path, content) in enumerate(additions):
+        tree[path] = content
+        if step % 3 == 1 and claim_paths:
+            del tree[rng.choice([p for p in claim_paths if p in tree] or [path])]
+        if step % 4 == 2:
+            tree[path] = head.get(path, content)  # restaged with the same bytes
+        sealed = tree.snapshot()
+        cold = SnapshotTree(dict(sealed.items()))
+        for statement in statements:
+            assert sealed.claim_items(statement) == cold.claim_items(statement), (step, path)
+        tree = sealed.fork()
+
+
 def test_the_claim_match_memo_is_bounded_by_the_bytes_it_keeps(monkeypatch) -> None:
     from cruxible_core.derived import derived_state
 
@@ -92,11 +132,8 @@ def test_the_claim_match_memo_is_bounded_by_the_bytes_it_keeps(monkeypatch) -> N
             },
         )(),
     )
-    statement = type("S", (), {"subject": "s", "predicate": "p"})()
     for index in range(200):
-        derived_state._claim_matches(
-            f"claims/{index}.json", bytes(2048) + bytes([index]), statement
-        )
+        derived_state._claim_facts(f"claims/{index}.json", bytes(2048) + bytes([index]))
     kept = sum(len(p) + len(c) for p, c in derived_state._CLAIM_MATCH_FACTS)
     assert kept <= 64 * 1024
     assert kept == derived_state._claim_match_bytes

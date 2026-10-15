@@ -73,7 +73,10 @@ from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
 from cruxible_core.indexes.history.history_index import detached_history_reads
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.candidate_cards import is_candidate_card_path
-from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
+from cruxible_core.proposals.prepared_evaluation import (
+    PreparedEvaluationScope,
+    SettlementHandoff,
+)
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -852,7 +855,13 @@ class AuthoringIntentCoordinator:
         intent_id: str,
         *,
         actor: AuthenticatedActor,
+        settlement: SettlementHandoff | None = None,
     ) -> AuthoringSubmitResult:
+        """Preflight and admit one intent.
+
+        A caller that activates the admitted proposal in the same request (a
+        write) passes its own ``settlement`` handoff, which receives the submission.
+        """
         self.instance.require_writable()
         # One Capture verification context for the whole submit: lowering, the
         # preflight laws, admission and any settlement it reaches.
@@ -1024,6 +1033,7 @@ class AuthoringIntentCoordinator:
                         computed.evaluation.candidate.candidate_digest,
                     ),
                     authorize=at_certificate if pins_slots else None,
+                    handoff=settlement,
                 )
             except ProposalHeadMovedError:
                 return moved_on()

@@ -1036,6 +1036,10 @@ def test_a_settle_builds_its_condition_facts_once_over_the_condition_kinds(
 ) -> None:
     """Delivery, admission and activation share one facts build per request (perf B7).
 
+    Admission now takes delivery's condition check and settlement the admission
+    evaluation (perf E), so only delivery reads the facts; the facts must still
+    be built over the condition kinds alone and answer as a fresh build does.
+
     Each condition read asks for the condition query's entry Subject kinds, not
     every Subject, and every target's condition result equals the one an
     unscoped, freshly built facts projection gives.
@@ -1079,7 +1083,7 @@ def test_a_settle_builds_its_condition_facts_once_over_the_condition_kinds(
     state = run_settle(instance, root, line)
     assert state.status == "succeeded", state.terminal
     assert _egress(state).settle_outcome == "settled"
-    assert len(asked) >= 2 and all(item == kinds for item in asked), asked
+    assert asked and all(item == kinds for item in asked), asked
     assert len(builds) == 1, builds
     assert compared and set(compared) == {"completed"}
 
@@ -1127,9 +1131,15 @@ def test_every_settle_mandate_lookup_reads_its_one_path_never_the_tree(
     state = run_settle(instance, root, line)
     assert state.status == "succeeded", state.terminal
     assert _egress(state).settle_outcome == "settled"
-    # The delivery precheck (by name) and the proposal evaluations (by digest).
-    assert len(walked) >= 3 and any(name is None for name, _ in walked), walked
-    assert all(listed == 0 for _name, listed in walked), walked
+    # The delivery precheck reads the mandate by name; admission takes its
+    # check and settlement admission's evaluation (perf E), so in this request
+    # no evaluation looks it up again.
+    assert walked and all(listed == 0 for _name, listed in walked), walked
+    # A digest lookup, as an evaluation from stored records makes, lists no path either.
+    head = instance.accepted_coordinate()
+    tree = CountingTree(instance.immutable_tree_at(head.git_oid))
+    assert lookup(tree, _egress(state).procedure_mandate_digest, name=None) is not None
+    assert tree.listed == 0
 
 
 @pytest.mark.parametrize(

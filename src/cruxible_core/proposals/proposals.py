@@ -352,6 +352,7 @@ from cruxible_core.proposals.historical_reuse import (
 from cruxible_core.proposals.prepared_evaluation import (
     PreparedEvaluationAdapter,
     PreparedEvaluationScope,
+    SettlementHandoff,
 )
 from cruxible_core.proposals.proposal_message import proposal_commit_message
 from cruxible_core.proposals.proposal_notes import proposal_admission_id
@@ -365,6 +366,7 @@ from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 if TYPE_CHECKING:
     from cruxible_core.evidence.attestation_verification import CaptureContractVersions
+    from cruxible_core.proposals.delegated_authority import DelegatedAuthorityVerdict
 
 _DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.json$")
 _APPROVAL_POLICY_PATH_RE = re.compile(r"^governance/approval-policy\.json$")
@@ -4299,6 +4301,7 @@ def _evaluate_scoped_members(
     delegated_mandate_digest: str | None = None,
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
+    settle_condition: DelegatedAuthorityVerdict | None = None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -4697,18 +4700,33 @@ def _evaluate_scoped_members(
         # parent state, it covers every member and its condition holds for each.
         from cruxible_core.proposals.delegated_authority import delegated_authority_issues
 
-        issues = delegated_authority_issues(
-            mandate_digest=delegated_mandate_digest,
-            scope=scope,
-            current_tree=current_tree,
-            candidate_tree=candidate_tree,
-            current=current,
-            timestamp=timestamp,
-            facts=None
-            if query_facts_provider is None
-            else lambda predicates, subject_kinds: query_facts_provider(
-                current, predicates=predicates, subject_kinds=subject_kinds
-            ),
+        # The settle terminal checked this same condition at this head just
+        # before submitting; on exactly those inputs, while every fact build it
+        # consumed still stands, its answer stands.
+        issues = (
+            settle_condition.issues
+            if settle_condition is not None
+            and settle_condition.answers(
+                mandate_digest=delegated_mandate_digest,
+                current=current,
+                timestamp=timestamp,
+                scope=scope,
+                candidate_tree=candidate_tree,
+                facts=query_facts_provider,
+            )
+            else delegated_authority_issues(
+                mandate_digest=delegated_mandate_digest,
+                scope=scope,
+                current_tree=current_tree,
+                candidate_tree=candidate_tree,
+                current=current,
+                timestamp=timestamp,
+                facts=None
+                if query_facts_provider is None
+                else lambda predicates, subject_kinds: query_facts_provider(
+                    current, predicates=predicates, subject_kinds=subject_kinds
+                ),
+            )
         )
         if issues:
             return CandidateEvaluation(
@@ -5048,6 +5066,7 @@ def evaluate_proposal_tree(
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
     base_changes: frozenset[str] | None = None,
+    settle_condition: DelegatedAuthorityVerdict | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -5070,6 +5089,11 @@ def evaluate_proposal_tree(
     Otherwise the state is built from scratch. All paths reach the same candidate:
     the carried state is a cache of derivations, never a source of them. Laws,
     bodies, approvals and current-coordinate query facts are never cached here.
+
+    `settle_condition` is a settle terminal's own check of its mandate's
+    condition, made at this head just before it submitted; it is used only
+    when its inputs are exactly this evaluation's and the fact builds it
+    consumed replay unchanged through `query_facts_provider`.
 
     `replaying_accepted` is only for recovery, re-deriving a generation main
     already holds: Captures it cites were admitted when it was accepted, so they
@@ -5216,6 +5240,7 @@ def evaluate_proposal_tree(
             principal_registry_provider=principal_registry_provider,
             delegated_mandate_digest=delegated_mandate_digest,
             subject_assignment_authority=subject_assignment_authority,
+            settle_condition=settle_condition,
         )
 
 
@@ -5225,6 +5250,9 @@ class _AdmissionEvaluation:
     validated_tree: Mapping[str, bytes]
     is_rebase: bool
     outcome: CandidateEvaluation
+    #: The scope whose observations back ``outcome``, for a same-request settlement.
+    observer: PreparedEvaluationScope | None = None
+    delegated_mandate_digest: str | None = None
 
 
 class ProposalHeadMovedError(ProposalAdmissionError):
@@ -5363,6 +5391,7 @@ class ProposalService:
         settle_submission: ProposalSettleSubmission | None,
         expected_candidate: tuple[str, str] | None,
         readmits: ProposalReadmissionLink | None,
+        settlement: SettlementHandoff | None = None,
     ) -> _AdmissionEvaluation:
         """Everything a submission does before its first write: one shared path.
 
@@ -5454,13 +5483,17 @@ class ProposalService:
         )
         if delegated_mandate_digest is not None:
             outcome = None
+        # What backs the outcome, for a settlement in this same request: the
+        # preflight scope it was taken from, or a fresh observer of this one.
+        observer = prepared if outcome is not None else None
         if outcome is None:
+            observer = None if settlement is None else settlement.observer()
             outcome = evaluate_proposal_tree(
                 base_tree=base_tree,
                 current_tree=current_tree,
                 proposed_tree=validated_tree,
                 current=current,
-                bodies=self.bodies,
+                bodies=self.bodies if observer is None else observer.bodies(self.bodies),
                 timestamp=timestamp,
                 rebased=is_rebase,
                 base_changes=(
@@ -5470,9 +5503,21 @@ class ProposalService:
                 ),
                 actor_id=actor.actor_id,
                 claim_type_expansions=request.claim_type_expansions,
-                promotion_verifier=self.promotion_verifier,
-                producer_receipt_resolver=self.producer_receipt_resolver,
-                query_facts_provider=self.query_facts_provider,
+                promotion_verifier=(
+                    self.promotion_verifier
+                    if observer is None
+                    else observer.promotion(self.promotion_verifier)
+                ),
+                producer_receipt_resolver=(
+                    self.producer_receipt_resolver
+                    if observer is None
+                    else observer.receipts(self.producer_receipt_resolver)
+                ),
+                query_facts_provider=(
+                    self.query_facts_provider
+                    if observer is None
+                    else observer.facts(self.query_facts_provider)
+                ),
                 tree_state_provider=self.tree_state_provider,
                 principal_registry_provider=self.principal_registry_provider,
                 retained_tree=self._accepted_tree_provider,
@@ -5482,6 +5527,7 @@ class ProposalService:
                 historical_artifact_provider=self.historical_artifact_provider,
                 subject_assignment_authority=self.subject_assignment_authority,
                 delegated_mandate_digest=delegated_mandate_digest,
+                settle_condition=None if settlement is None else settlement.settle_condition,
             )
         _require_executed_derivations(
             outcome, current_tree=current_tree, authorized=authorized_derivations
@@ -5502,6 +5548,8 @@ class ProposalService:
             validated_tree=validated_tree,
             is_rebase=is_rebase,
             outcome=outcome,
+            observer=observer,
+            delegated_mandate_digest=delegated_mandate_digest,
         )
 
     def _stale_base_tree(self, oid: str) -> Mapping[str, bytes]:
@@ -5583,6 +5631,7 @@ class ProposalService:
         readmits: ProposalReadmissionLink | None = None,
         confirm_head: Callable[[str], None] | None = None,
         procedure_operation: str | None = None,
+        handoff: SettlementHandoff | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -5630,6 +5679,10 @@ class ProposalService:
         is verified to still be main, before the first ref moves: a caller
         pinned to the head its preview saw (R12 ``at``) refuses there, so a
         head accepted after the caller's own check is never admitted against.
+
+        `handoff`, when given, receives the durable submission (its records,
+        evaluated tree and coordinate) for the caller's own activation in the
+        same request; nothing else ever reads it.
         """
         self._require_writable()
         evaluated = self._evaluate_admission(
@@ -5642,6 +5695,7 @@ class ProposalService:
             settle_submission=settle_submission,
             expected_candidate=expected_candidate,
             readmits=readmits,
+            settlement=handoff,
         )
         refuse_write_while_previewing("proposal submission")
         current = evaluated.current
@@ -5809,12 +5863,29 @@ class ProposalService:
                     workspace_path=None,
                     failure_code="unexpected_failure",
                 )
-        return ProposalResult(
+        result = ProposalResult(
             admission=admission,
             evaluation=evaluation,
             candidate=outcome.candidate,
             workspace_advertisement=advertisement,
         )
+        if handoff is not None and outcome.candidate is not None:
+            handoff.submitted(
+                result=result,
+                tree=outcome.tree,
+                current=current,
+                evaluation=None
+                if evaluated.observer is None
+                else evaluated.observer.admitted(
+                    outcome,
+                    current=current,
+                    actor_id=actor.actor_id,
+                    timestamp=timestamp,
+                    mandate_digest=evaluated.delegated_mandate_digest,
+                    claim_type_expansions=request.claim_type_expansions,
+                ),
+            )
+        return result
 
 
 __all__ = [

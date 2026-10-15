@@ -32,8 +32,9 @@ import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import ValidationError
 
@@ -163,8 +164,14 @@ from cruxible_core.procedures.terminal_services import (
     settle_terminal_receipt,
 )
 from cruxible_core.proposals.delegated_authority import (
+    DelegatedAuthorityVerdict,
     claim_types_outside_scope,
     delegated_authority_issues,
+)
+from cruxible_core.proposals.prepared_evaluation import (
+    FactsObservation,
+    SettlementHandoff,
+    observed_facts_build,
 )
 from cruxible_core.proposals.proposals import ProposalService
 from cruxible_core.runtime.phase_timing import timed_operation
@@ -173,6 +180,7 @@ if TYPE_CHECKING:
     from cruxible_core.derived.derived_state import ClaimPredicateKey, SnapshotTree
     from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
     from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
+    from cruxible_core.query.backends import ClaimQueryFactsV1
     from cruxible_core.runtime.instance import PlaybillInstance
 
 PROPOSAL_CLAIM_ID_DOMAIN = "playbill-procedure-proposal-claim-id-v1"
@@ -2237,6 +2245,15 @@ class ProposalTerminalEgressSink:
                 )
             mandate = found
         result = existing
+        # Only a submission this request makes itself hands its records to the
+        # activation below; a recovered one is activated from what is stored.
+        # This run's own journal receipts are stable within the request (maintainer
+        # ruling settle-reuses-first-evaluation-1015).
+        handoff = (
+            SettlementHandoff(self.instance.prepared_evaluations, stable_run=request.run_id)
+            if existing is None
+            else None
+        )
         if result is None:
             if request.capped_by is not None:
                 submission = ProposalSettleSubmission(
@@ -2254,18 +2271,50 @@ class ProposalTerminalEgressSink:
             else:
                 assert mandate is not None and mandate.condition is not None  # checked above
                 head = self.instance.accepted_coordinate()
+                timestamp = canonical_candidate_timestamp(request.evaluation_time)
+                # Each facts build the condition consumes, bound to the mutable
+                # inputs (bodies, re-observations) it was built on; None for one
+                # no binding names.
+                consumed: list[FactsObservation | None] = []
+
+                def condition_facts(
+                    predicates: tuple[str, ...], subject_kinds: tuple[str, ...]
+                ) -> ClaimQueryFactsV1:
+                    value, observation = observed_facts_build(
+                        partial(self.instance._accepted_query_facts, self.instance),
+                        head,
+                        predicates=predicates,
+                        subject_kinds=subject_kinds,
+                        inputs=self.instance.query_fact_inputs,
+                    )
+                    consumed.append(observation)
+                    return cast("ClaimQueryFactsV1", value)
+
                 issues = delegated_authority_issues(
                     mandate_digest=digest,
                     scope=request.target_paths,
                     current_tree=self.instance.immutable_tree_at(head.git_oid),
                     candidate_tree=prepared.candidate_tree,
                     current=head,
-                    timestamp=canonical_candidate_timestamp(request.evaluation_time),
-                    facts=lambda predicates, subject_kinds: self.instance._accepted_query_facts(
-                        self.instance, head, predicates=predicates, subject_kinds=subject_kinds
-                    ),
+                    timestamp=timestamp,
+                    facts=condition_facts,
                     mandate_name=mandate.identity.name,
                 )
+                bound = tuple(item for item in consumed if item is not None)
+                if handoff is not None and len(bound) == len(consumed):
+                    # Admission evaluates this condition again at the same head;
+                    # on exactly these inputs, while these fact builds stand, it
+                    # takes this answer.
+                    handoff.settle_condition = DelegatedAuthorityVerdict.of(
+                        mandate_digest=digest,
+                        current=head,
+                        timestamp=timestamp,
+                        scope=request.target_paths,
+                        candidate_tree=prepared.candidate_tree,
+                        facts=bound,
+                        fact_inputs=self.instance.query_fact_inputs,
+                        issues=issues,
+                    )
                 codes = sorted({code for code, _message in issues})
                 if issues and mandate.condition.fallback == "refuse":
                     raise ProposalDeliveryRefused(
@@ -2290,6 +2339,7 @@ class ProposalTerminalEgressSink:
                 changed_paths=prepared.prepared.target_paths,
                 delegation=self.delegation,
                 settle_submission=submission,
+                handoff=handoff,
             )
         settle = result.admission.settle_submission
         assert settle is not None  # submitted above, or verified by recover_existing
@@ -2322,7 +2372,9 @@ class ProposalTerminalEgressSink:
             )
         accepted_oid = self._accepted_oid(result.candidate.candidate_digest, digest=digest)
         if accepted_oid is None:
-            accepted_oid = self._activate(result, request=request, mandate=mandate, digest=digest)
+            accepted_oid = self._activate(
+                result, request=request, mandate=mandate, digest=digest, handoff=handoff
+            )
         return settle_terminal_receipt(
             request,
             result=result,
@@ -2360,6 +2412,7 @@ class ProposalTerminalEgressSink:
         request: TerminalEgressRequestV2,
         mandate: ProcedureMandate,
         digest: str,
+        handoff: SettlementHandoff | None = None,
     ) -> str:
         from cruxible_client.contracts.errors import ProposalStale, SettlementIntegrityError
         from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
@@ -2377,6 +2430,7 @@ class ProposalTerminalEgressSink:
                 proposal_id=result.admission.proposal_id,
                 activated_by=request.actor_context.actor_id,
                 mandate_digest=digest,
+                handoff=handoff,
             )
         except ProposalStale:
             # Accepted state moved past the candidate before it published.
