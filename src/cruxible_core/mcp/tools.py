@@ -1033,10 +1033,8 @@ def register_tools(
             McpEvidence | None,
             Field(
                 description=(
-                    'Default {"kind": "self", "self": because}. Or {"kind": "capture", '
-                    '"capture": "CAP-<12 hex>" or "sha256:…"}, {"kind": "contract", "contract": '
-                    '"<CaptureContract>"} (its newest Capture about the Subject), or '
-                    '{"kind": "file", "file": "PATH#ANCHOR"}.'
+                    "Default: self evidence from because; otherwise cite a Capture, "
+                    "CaptureContract or workspace file."
                 )
             ),
         ] = None,
@@ -1152,10 +1150,8 @@ def register_tools(
             Field(
                 min_length=1,
                 description=(
-                    'Each {"op": "set"|"add", "subject", "field", "value"}, '
-                    '{"op": "retire", "target"} or {"op": "create", "label", "subject_kind", '
-                    '"key"}; add puts one more value in a many-valued field; other changes '
-                    'name a created Subject {"created": label}.'
+                    'Refer to a create\'s Subject as {"created": label} in subject or value, '
+                    "in any order."
                 ),
             ),
         ],

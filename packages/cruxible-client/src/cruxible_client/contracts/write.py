@@ -77,9 +77,7 @@ SubjectRef = Annotated[
     BeforeValidator(subject_reference),
     Field(
         pattern=SUBJECT_REF_PATTERN,
-        description=(
-            "kind/id or kind/<alias or single key value>; an optional '@' prefix is ignored."
-        ),
+        description="kind/id, kind/alias or kind/key; optional '@' prefix.",
     ),
 ]
 ClaimId = Annotated[
@@ -103,8 +101,8 @@ ExpectedValue = ClaimValue | tuple[ClaimValue, ...]
 value of the field as a list (``[]`` when it must hold none)."""
 
 _EXPECT_DESCRIPTION = (
-    "Compare-and-set: the value read, all live values as a list for many-valued fields, "
-    "or [] for none; refuses slot_changed on mismatch."
+    "Compare-and-set: value read, list of all live values for many-valued fields, "
+    "[] for none; mismatch: slot_changed."
 )
 
 WriteRole = Literal["normative", "observation", "environment_binding"]
@@ -153,23 +151,23 @@ def capture_handle(digest: str, *, length: int = 12) -> str:
 
 
 class CaptureEvidence(_StrictWriteModel):
-    """Cite a verified Capture by digest or unique digest-prefix handle."""
+    """Cite a verified Capture."""
 
     kind: Literal["capture"] = "capture"
     capture: str = Field(
         pattern=CAPTURE_REF_PATTERN,
-        description="sha256:<64 hex>, or the handle CAP-<12+ hex> of a verified Capture.",
+        description="sha256:<64 hex> or unique CAP-<12+ hex> handle.",
     )
 
 
 class ContractEvidence(_StrictWriteModel):
-    """Use the newest verified exact-bytes Capture under this contract about the Subject."""
+    """Use this contract's newest verified exact-bytes Capture about the Subject."""
 
     kind: Literal["contract"] = "contract"
     contract: str = Field(
         min_length=1,
         max_length=512,
-        description="A CaptureContract by name, as admitted_contracts names it.",
+        description="CaptureContract name from admitted_contracts.",
     )
 
 
@@ -225,7 +223,7 @@ SubjectTarget: TypeAlias = SubjectRef | CreatedSubject
 
 
 class CreateChange(_StrictWriteModel):
-    """Create by key or reuse its sole live holder; ambiguous keys refuse. Core assigns the id."""
+    """Create or reuse the key's sole live holder; ambiguity refuses. Core assigns the id."""
 
     op: Literal["create"] = "create"
     label: NewSubjectLabel
@@ -235,26 +233,25 @@ class CreateChange(_StrictWriteModel):
     key: SubjectKeyValue | tuple[SubjectKeyPart, ...] | None = Field(
         default=None,
         description=(
-            "A one-key kind's key value; or each part of a composite key as "
-            '{"predicate", "value"}; none for a minted kind.'
+            'Single key value or composite parts {"predicate", "value"}; none for minted kinds.'
         ),
     )
     create_new: bool = Field(
         default=False,
-        description="A hint kind only: make a further holder of a key a live Subject holds.",
+        description="Hint kinds only: create another live holder of the key.",
     )
     expect_new: bool = Field(
         default=False,
-        description="Refuse cruxible.write.subject_exists when a live Subject holds the key.",
+        description="Refuse cruxible.write.subject_exists if the key has a live holder.",
     )
 
 
 class SlotRef(_StrictWriteModel):
-    """One field of one Subject, or with ``value`` one of the values it holds."""
+    """A Subject's field; include value to select one of several live values."""
 
     subject: SubjectRef | None = Field(
         default=None,
-        description="The Subject as kind/id; default: the write's own subject.",
+        description="Default: the write's subject.",
     )
     field: FieldName
     value: ClaimValue | None = None
@@ -282,7 +279,7 @@ class SetChange(_StrictWriteModel):
 
 
 class AddChange(_StrictWriteModel):
-    """Add one more value to a many-valued field, beside the values already there."""
+    """Add a value to a many-valued field."""
 
     op: Literal["add"] = "add"
     subject: SubjectTarget | None = Field(
@@ -307,20 +304,20 @@ class AddChange(_StrictWriteModel):
 
 
 class RetireChange(_StrictWriteModel):
-    """End one live Claim, named by ID or by its Subject and single-value field."""
+    """End a live Claim by ID or slot; include value for a many-valued field."""
 
     op: Literal["retire"] = "retire"
     target: ClaimId | SlotRef
     because: str | None = Field(
         default=None,
         min_length=1,
-        description="Why this one ends, when it differs from the write's `because`.",
+        description="Override the write's because for this retirement.",
     )
     reason: WriteRetireReason = Field(
         default="was-rescinded",
         description=(
-            "was-rescinded: withdrawn by its author; was-wrong: it was false; "
-            "superseded: it stood, but the shape it was stated in no longer does."
+            "was-rescinded: author withdrew it; was-wrong: false; "
+            "superseded: valid then, obsolete form now."
         ),
     )
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
