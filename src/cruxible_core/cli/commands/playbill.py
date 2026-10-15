@@ -2017,7 +2017,10 @@ def add_kit(
     this instance holds differently takes the release's version (the preview
     says what that does: overwrites your edit, re-adds a retired definition,
     takes over one defined outside the kit) unless --keep or --keep-local-edits
-    keeps yours; replaced definitions' dependents are carried along. The change
+    keeps yours. Every Procedure on a shipped provider moves to its exact build;
+    --keep-build Procedure:NAME keeps its current build. The preview names each
+    re-pin and the Lines, Triggers and Mandates it stops by retiring them.
+    Replaced definitions' other dependents are carried along. The change
     lands at once when the approval policy requires no approval, otherwise it
     stops at proposed. A kit that bundles provider packages installs the missing
     ones first (admin permission, the transfer install; registry dependencies

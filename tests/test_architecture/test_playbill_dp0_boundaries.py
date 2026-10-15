@@ -430,6 +430,8 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "reject_proposal",
         "list_provider_packages",
         "install_provider",
+        "move_provider",
+        "retire_provider",
         "build_kit",
         "kit_status",
         "add_kit",

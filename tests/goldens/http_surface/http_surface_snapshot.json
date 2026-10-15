@@ -252,6 +252,12 @@
   "/api/v1/{instance_id}/providers/install": {
     "POST": "ProviderInstallResult"
   },
+  "/api/v1/{instance_id}/providers/move": {
+    "POST": "ProviderMoveResult"
+  },
+  "/api/v1/{instance_id}/providers/retire": {
+    "POST": "ProviderRetireResult"
+  },
   "/api/v1/{instance_id}/query": {
     "POST": "QueryResultRecord"
   },
