@@ -223,6 +223,7 @@ from cruxible_client.contracts.predictions import (
     ResolutionContractInput,
     TerminalSettlementEvidence,
 )
+from cruxible_client.contracts.principals import PRINCIPAL_KEY_ENV
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_artifact_digest,
@@ -2196,7 +2197,8 @@ class Cruxible:
         or ``unix:<socket>``; ``instance`` the instance ID; ``token`` the bearer credential
         (default ``CRUXIBLE_SERVER_BEARER_TOKEN``); ``principal_id`` the principal of an
         auth-off daemon (default ``CRUXIBLE_PRINCIPAL_ID``). With neither a principal nor a
-        token named, it acts as the principal the context remembers for this instance
+        token (nor a ``CRUXIBLE_PRINCIPAL_KEY``) named, it acts as the principal the context
+        remembers for this instance
         (`cruxible init`, `cruxible context use --principal`), with that principal's token.
         ``at`` pins every read to one accepted coordinate; without it the
         connection is live and reads current head. One identity read names the head; nothing
@@ -2247,10 +2249,16 @@ class Cruxible:
         )
         if principal_id is None:
             principal_id = configured_principal_id()
-        if principal_id is None and raw_token is None:
+        if (
+            principal_id is None
+            and raw_token is None
+            and not (os.environ.get(PRINCIPAL_KEY_ENV) or "").strip()
+        ):
             # As the CLI does: act as the principal `cruxible init` (or `context
             # use --principal`) remembered for this instance on this endpoint,
-            # unless the process names its own identity or credential.
+            # unless the process names its own identity, key or credential. A
+            # process holding its own key is never given another principal's
+            # identity or token, and its principal is never inferred from the key.
             settings = remembered_principal_settings(
                 remembered,
                 instance_id=resolved.instance_id,

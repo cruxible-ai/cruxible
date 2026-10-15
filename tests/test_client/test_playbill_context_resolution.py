@@ -621,8 +621,16 @@ def test_sdk_connect_acts_as_the_principal_init_remembered(
     assert connection["principal_id"] == "grace"
     assert connection["token"] is None
 
-    # A settings file written for another endpoint is never offered here.
+    # A process holding only its own key (an agent's) is never given the remembered
+    # owner's identity or token, and no principal is inferred from the key.
     monkeypatch.delenv("CRUXIBLE_PRINCIPAL_ID")
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY", str(tmp_path / "agent" / "agent.pem"))
+    connection = _connect_capturing(monkeypatch, context_path, workspace)
+    assert connection["principal_id"] is None
+    assert connection["token"] is None
+    monkeypatch.delenv("CRUXIBLE_PRINCIPAL_KEY")
+
+    # A settings file written for another endpoint is never offered here.
     settings.write_text(
         settings.read_text(encoding="utf-8").replace(str(socket), str(tmp_path / "other.sock")),
         encoding="utf-8",
