@@ -27,6 +27,7 @@ from cruxible_core.indexes.logical_digest import (
     stored_table_sums,
 )
 from cruxible_core.indexes.projection import PROJECTION_STORAGE_SCHEMA_VERSION, AssemblerRequest
+from cruxible_core.indexes.sql_batch import execute_in, insert_rows, select_in
 from cruxible_core.indexes.typed_state import (
     OWNER_CODECS,
     insert_owners,
@@ -350,16 +351,15 @@ def row_counts(connection: sqlite3.Connection) -> dict[str, int]:
 def insert_members(
     connection: sqlite3.Connection, blobs: Mapping[str, bytes], object_format: str
 ) -> None:
+    rows = []
     for path, content in sorted(blobs.items()):
         if is_candidate_card_path(path):
             continue
         digest = hashlib.new(
             object_format, b"blob " + str(len(content)).encode("ascii") + b"\0" + content
         ).hexdigest()
-        connection.execute(
-            "INSERT INTO members VALUES (?,?,?,?)",
-            (path, digest, file_digest(content).tagged, len(content)),
-        )
+        rows.append((path, digest, file_digest(content).tagged, len(content)))
+    insert_rows(connection, "members", rows)
 
 
 def replace_rows(
@@ -387,35 +387,50 @@ def replace_rows(
             key_subjects.add(path)
         elif path.startswith("subject-kinds/"):
             key_kinds.add(path.removeprefix("subject-kinds/").removesuffix(".json"))
-        elif path.startswith("claims/"):
-            key_subjects.update(
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT subject_path FROM claims WHERE path=?", (path,)
-                )
+    key_subjects.update(
+        str(row[0])
+        for row in select_in(
+            connection,
+            "SELECT subject_path FROM claims WHERE path IN ({})",
+            [path for path in changed if path.startswith("claims/")],
+        )
+    )
+    # Every replaced path's rows go in one statement per table (children before
+    # their parents, as the per-path loop deleted them): the same rows, whatever
+    # the number of paths.
+    replaced = sorted(
+        (str(path), str(identity), str(kind))
+        for path, identity, kind in select_in(
+            connection, "SELECT path,identity,kind FROM artifact_lookup WHERE path IN ({})", changed
+        )
+    )
+    owners: list[tuple[str, str]] = [
+        ("Claim", identity) for _path, identity, kind in replaced if kind == "claim"
+    ]
+    attested = [identity for _path, identity, kind in replaced if kind == "attestation"]
+    if attested:
+        keys = dict(
+            select_in(
+                connection,
+                "SELECT identity,envelope_digest FROM attestations WHERE identity IN ({})",
+                attested,
             )
-    for path in changed:
-        for identity, kind in connection.execute(
-            "SELECT identity,kind FROM artifact_lookup WHERE path=?", (path,)
-        ).fetchall():
-            if kind == "claim":
-                remove_owner_citations(connection, (("Claim", identity),))
-            if kind == "attestation":
-                key = connection.execute(
-                    "SELECT envelope_digest FROM attestations WHERE identity=?", (identity,)
-                ).fetchone()[0]
-                remove_owner_citations(connection, (("attestation", key),))
-            connection.execute("DELETE FROM pins WHERE source_identity=?", (identity,))
-            connection.execute("DELETE FROM claim_type_names WHERE source_identity=?", (identity,))
-            connection.execute("DELETE FROM vocabulary_terms WHERE source_identity=?", (identity,))
-            if kind == "exhaust-promotion":
-                connection.execute(
-                    "DELETE FROM promotion_subjects WHERE promotion_identity=?", (identity,)
-                )
-        for owner in OWNER_CODECS:
-            connection.execute(f"DELETE FROM {owner.table} WHERE path=?", (path,))
-        connection.execute("DELETE FROM principals WHERE path=?", (path,))
-        connection.execute("DELETE FROM members WHERE path=?", (path,))
+        )
+        owners.extend(("attestation", keys[identity]) for identity in attested)
+    if owners:
+        remove_owner_citations(connection, owners)
+    identities = [identity for _path, identity, _kind in replaced]
+    for table in ("pins", "claim_type_names", "vocabulary_terms"):
+        execute_in(connection, f"DELETE FROM {table} WHERE source_identity IN ({{}})", identities)
+    execute_in(
+        connection,
+        "DELETE FROM promotion_subjects WHERE promotion_identity IN ({})",
+        [identity for _path, identity, kind in replaced if kind == "exhaust-promotion"],
+    )
+    for owner in OWNER_CODECS:
+        execute_in(connection, f"DELETE FROM {owner.table} WHERE path IN ({{}})", changed)
+    execute_in(connection, "DELETE FROM principals WHERE path IN ({})", changed)
+    execute_in(connection, "DELETE FROM members WHERE path IN ({})", changed)
     insert_members(connection, sources, request.git_object_format)
     insert_owners(
         connection, parsed=parsed, blobs=sources, codec=codec, resolve_digest=resolve_digest
@@ -428,13 +443,14 @@ def replace_rows(
                 key_subjects.add(row.path)
             elif row.kind == "subject-kind":
                 key_kinds.add(row.identity.removeprefix("SubjectKind:"))
-            elif row.kind == "claim":
-                key_subjects.update(
-                    str(found[0])
-                    for found in connection.execute(
-                        "SELECT subject_path FROM claims WHERE identity=?", (row.identity,)
-                    )
-                )
+        key_subjects.update(
+            str(found[0])
+            for found in select_in(
+                connection,
+                "SELECT subject_path FROM claims WHERE identity IN ({})",
+                [row.identity for row in parsed.envelopes if row.kind == "claim"],
+            )
+        )
         refresh_subject_keys(connection, subjects=key_subjects, kinds=key_kinds)
     if bodies is not None:
         populate_citations(
@@ -604,7 +620,7 @@ def update(
             ),
         )
         connection.commit()
-        recorder.close()
+        # The recorder's TEMP log and triggers go with the connection below.
         verify_schema(connection)
         return _row_counts_from_sums(connection, sums)
     finally:

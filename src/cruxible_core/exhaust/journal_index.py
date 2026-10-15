@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 from collections.abc import Iterable, Iterator
@@ -31,6 +32,7 @@ from cruxible_core.exhaust.records import (
     journal_stream_key,
     journal_stream_strings,
 )
+from cruxible_core.indexes.resident import ResidentConnections
 
 if TYPE_CHECKING:
     from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -41,7 +43,7 @@ _R = TypeVar("_R")
 #: Bumped whenever a table or index changes shape: an index file written under
 #: another version is dropped and rebuilt from the retained journal, which is
 #: the authority (this file is a disposable cache).
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 _TABLES = (
     "capture_selectors",
     "capture_progress",
@@ -95,10 +97,6 @@ CREATE TABLE IF NOT EXISTS invocation_pending (
  record_id INTEGER PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
  stream TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS invocation_pending_stream ON invocation_pending(stream, record_id);
-CREATE TRIGGER IF NOT EXISTS records_invocation_started AFTER INSERT ON records
- WHEN new.event_kind='provider_invocation_started' BEGIN
- INSERT INTO invocation_pending VALUES(new.id, new.stream);
-END;
 -- Admissions whose run has no attempt_finalized record yet, keyed by the
 -- admission row: running runs are read without visiting finished ones.
 CREATE TABLE IF NOT EXISTS open_runs (
@@ -113,20 +111,26 @@ CREATE TABLE IF NOT EXISTS run_tallies (
  stream TEXT NOT NULL, partition_id TEXT NOT NULL, admitted INTEGER NOT NULL,
  PRIMARY KEY(stream, partition_id));
 -- Triggers keep both current on every insert and delete of an indexed record,
--- including a partition rebuilt after replacement.
-CREATE TRIGGER IF NOT EXISTS records_admitted AFTER INSERT ON records
- WHEN new.event_kind='admission_bound' AND new.run_id IS NOT NULL BEGIN
- INSERT INTO run_tallies VALUES(new.stream,new.partition_id,1)
+-- including a partition rebuilt after replacement. One trigger per event serves
+-- every kind (each statement guarded by its kind), so an insert runs one
+-- trigger program, not one per kind it might be.
+CREATE TRIGGER IF NOT EXISTS records_inserted AFTER INSERT ON records
+ WHEN new.event_kind IN ('provider_invocation_started','admission_bound','attempt_finalized')
+ BEGIN
+ INSERT INTO invocation_pending SELECT new.id, new.stream
+  WHERE new.event_kind='provider_invocation_started';
+ INSERT INTO run_tallies SELECT new.stream,new.partition_id,1
+  WHERE new.event_kind='admission_bound' AND new.run_id IS NOT NULL
   ON CONFLICT(stream,partition_id) DO UPDATE SET admitted=admitted+1;
- INSERT INTO run_tallies VALUES(new.stream,'',1)
+ INSERT INTO run_tallies SELECT new.stream,'',1
+  WHERE new.event_kind='admission_bound' AND new.run_id IS NOT NULL
   ON CONFLICT(stream,partition_id) DO UPDATE SET admitted=admitted+1;
  INSERT INTO open_runs SELECT new.id,new.stream,new.partition_id,new.run_id
-  WHERE NOT EXISTS(SELECT 1 FROM records f WHERE f.stream=new.stream
+  WHERE new.event_kind='admission_bound' AND new.run_id IS NOT NULL
+  AND NOT EXISTS(SELECT 1 FROM records f WHERE f.stream=new.stream
   AND f.run_id=new.run_id AND f.event_kind='attempt_finalized');
-END;
-CREATE TRIGGER IF NOT EXISTS records_finalized AFTER INSERT ON records
- WHEN new.event_kind='attempt_finalized' AND new.run_id IS NOT NULL BEGIN
- DELETE FROM open_runs WHERE stream=new.stream AND run_id=new.run_id;
+ DELETE FROM open_runs WHERE new.event_kind='attempt_finalized' AND new.run_id IS NOT NULL
+  AND stream=new.stream AND run_id=new.run_id;
 END;
 CREATE TRIGGER IF NOT EXISTS records_unadmitted AFTER DELETE ON records
  WHEN old.event_kind='admission_bound' AND old.run_id IS NOT NULL BEGIN
@@ -230,47 +234,77 @@ class RunLocator:
         return (self.index_identity, self.row_id)
 
 
+#: This process's resident connection to each journal index file (setup once per
+#: open; see ``indexes.resident``), used under ``_LOCK``.
+_RESIDENT = ResidentConnections(lock=lambda: _LOCK)
+
+
+def _after_fork_in_child() -> None:
+    # A lock held by another thread at fork time is never released in the child.
+    global _LOCK
+    _LOCK = threading.RLock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
+
+
 class JournalIndex:
     def __init__(self, backend: LocalJournalBackend) -> None:
         self.backend = backend
         self.path = backend.root / "event-index.sqlite3"
         self.dirty = backend.root / "index-dirty"
 
+    def _open(self) -> sqlite3.Connection:
+        """Connect, migrate and initialize the index file once for this process."""
+
+        conn = sqlite3.connect(self.path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+                _rebuild_schema(conn)
+            conn.execute("INSERT OR IGNORE INTO index_identity VALUES(1,?)", (uuid4().hex,))
+            if not conn.execute("SELECT 1 FROM initialized").fetchone():
+                for identity in self.backend._streams_root.glob("*/*/identity.json"):
+                    raw = json.loads(identity.read_bytes())
+                    self._sync(
+                        conn,
+                        JournalStreamIdentityV1.model_validate(raw["stream"]),
+                        raw["partition_id"],
+                    )
+                conn.execute("INSERT INTO initialized VALUES (1)")
+            conn.commit()
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
-        with _LOCK:
-            if self.path.is_symlink():
-                raise JournalIntegrityError("journal index must be a regular file")
-            conn = sqlite3.connect(self.path)
-            conn.row_factory = sqlite3.Row
-            try:
-                conn.execute("PRAGMA foreign_keys=ON")
-                if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
-                    _rebuild_schema(conn)
-                conn.execute("INSERT OR IGNORE INTO index_identity VALUES(1,?)", (uuid4().hex,))
-                if not conn.execute("SELECT 1 FROM initialized").fetchone():
-                    for identity in self.backend._streams_root.glob("*/*/identity.json"):
-                        raw = json.loads(identity.read_bytes())
-                        self._sync(
-                            conn,
-                            JournalStreamIdentityV1.model_validate(raw["stream"]),
-                            raw["partition_id"],
-                        )
-                    conn.execute("INSERT INTO initialized VALUES (1)")
-                if self.dirty.exists():
-                    for marker in self.dirty.iterdir():
-                        raw = json.loads(marker.read_bytes())
-                        self._sync(
-                            conn,
-                            JournalStreamIdentityV1.model_validate(raw["stream"]),
-                            raw["partition_id"],
-                        )
-                        conn.commit()
-                        marker.unlink()
-                yield conn
-                conn.commit()
-            finally:
-                conn.close()
+        """This process's resident index connection, in one transaction per operation.
+
+        The operation's writes commit when the block exits and roll back when it
+        raises; a nested block shares the outer block's transaction. Dirty
+        partitions are caught up first, as on every open before.
+        """
+
+        with _RESIDENT.transaction(
+            self.path,
+            self._open,
+            not_regular=lambda: JournalIntegrityError("journal index must be a regular file"),
+        ) as (conn, outermost):
+            if outermost and self.dirty.exists():
+                for marker in self.dirty.iterdir():
+                    raw = json.loads(marker.read_bytes())
+                    self._sync(
+                        conn,
+                        JournalStreamIdentityV1.model_validate(raw["stream"]),
+                        raw["partition_id"],
+                    )
+                    conn.commit()
+                    marker.unlink()
+            yield conn
 
     def mark_dirty(self, stream: JournalStreamIdentityV1, partition_id: str) -> None:
         from cruxible_core.exhaust.backends import _atomic_write, _fsync_directory

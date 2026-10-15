@@ -79,6 +79,7 @@ from cruxible_client.contracts.refusal_receipts import (
 from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGESTS
 from cruxible_core.indexes.history.history_index import history_reads_detached
 from cruxible_core.indexes.proposals.proposal_index import _micros
+from cruxible_core.indexes.sql_batch import insert_rows, select_in
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.storage.preview_fence import is_previewing
 
@@ -1114,9 +1115,7 @@ class RefusalIndex:
         if writable:
             connection.execute("BEGIN IMMEDIATE")
         try:
-            connection.executemany(
-                "INSERT OR REPLACE INTO proposal_claim_keys VALUES (?,?,?,?,?)", rows
-            )
+            insert_rows(connection, "proposal_claim_keys", rows, verb="INSERT OR REPLACE")
             connection.execute("INSERT OR REPLACE INTO proposals_keyed VALUES (?)", (proposal_id,))
             if writable:
                 connection.execute("COMMIT")
@@ -1176,15 +1175,26 @@ class RefusalIndex:
         admitted_us = _micros(evidence.read_admission(proposal_id).admitted_at)
         found: dict[str, tuple[PriorRefusalReceipt, ...]] = {}
         with self.current(instance) as connection:
-            for path, match_key in self._proposal_keys(connection, instance, proposal_id):
+            keys = self._proposal_keys(connection, instance, proposal_id)
+            # Every key's earlier refusals in one statement (per chunk), each key's
+            # rows in the order a per-key probe read them.
+            by_key: dict[str, list[tuple[object, ...]]] = {}
+            for *row, match_key in sorted(
+                select_in(
+                    connection,
+                    "SELECT kind,source_id,claim_id,proposal_id,decided_by,decided_at,"
+                    "reason_code,rationale,producer,decided_at_us,match_key FROM refusals "
+                    "WHERE decided_at_us<? AND match_key IN ({})",
+                    [match_key for _path, match_key in keys],
+                    prefix=(admitted_us,),
+                ),
+                key=lambda found_row: (found_row[9], found_row[0], found_row[1]),
+            ):
+                by_key.setdefault(str(match_key), []).append(tuple(row[:9]))
+            for path, match_key in keys:
                 self.key_probes += 1
                 receipts: list[PriorRefusalReceipt] = []
-                for row in connection.execute(
-                    "SELECT kind,source_id,claim_id,proposal_id,decided_by,decided_at,"
-                    "reason_code,rationale,producer FROM refusals WHERE match_key=? "
-                    "AND decided_at_us<? ORDER BY decided_at_us,kind,source_id",
-                    (match_key, admitted_us),
-                ):
+                for row in by_key.get(match_key, ()):
                     self.rows_read += 1
                     receipt = _receipt(evidence, row, proposal_id=proposal_id)
                     if receipt is not None:

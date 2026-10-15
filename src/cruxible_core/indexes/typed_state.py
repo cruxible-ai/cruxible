@@ -76,6 +76,7 @@ from cruxible_core.compiler.projection_artifacts import (
     ParsedProjectionTree,
 )
 from cruxible_core.exhaust.promotions import parse_exhaust_promotion
+from cruxible_core.indexes.sql_batch import insert_rows, select_in
 
 SQLValue = str | int | None
 
@@ -791,18 +792,36 @@ def insert_owners(
     codec: ArtifactCodec,
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
 ) -> None:
-    """Insert validated changed owners after removing both old and new paths."""
+    """Insert validated changed owners after removing both old and new paths.
+
+    Rows are written one statement per table (and chunk), in the order the
+    per-row statements wrote them within each table. No owner table references
+    another, so grouping them by table changes no constraint outcome.
+    """
     sources: dict[str, Any] = {}
+    owned = []
     for row in parsed.envelopes:
         if row.identity in SINGLETONS:
             if row.kind != SINGLETONS[row.identity][0]:
                 raise ProjectionIntegrityError("artifact uses a reserved singleton identity")
             continue
+        owned.append(row)
+    # Each owner's identity and path must be new: to the database and, as each
+    # was checked after the ones before it were written, to the batch itself.
+    identities = [row.identity for row in owned]
+    paths = [row.path for row in owned]
+    if (
+        len(set(identities)) != len(identities)
+        or len(set(paths)) != len(paths)
+        or select_in(connection, "SELECT 1 FROM artifact_lookup WHERE identity IN ({})", identities)
+        or select_in(connection, "SELECT 1 FROM artifact_lookup WHERE path IN ({})", paths)
+    ):
+        raise ProjectionIntegrityError("cross-kind artifact identity/path collision")
+    tables: dict[tuple[str, tuple[str, ...]], list[tuple[SQLValue, ...]]] = {}
+    names: list[tuple[Any, ...]] = []
+    terms: list[tuple[Any, ...]] = []
+    for row in owned:
         owner = OWNER_BY_KIND[row.kind]
-        if connection.execute(
-            "SELECT 1 FROM artifact_lookup WHERE identity=? OR path=?", (row.identity, row.path)
-        ).fetchone():
-            raise ProjectionIntegrityError("cross-kind artifact identity/path collision")
         source = owner.parse(blobs[row.path], path=row.path, codec=codec)
         sources[row.identity] = source
         values: dict[str, SQLValue] = {
@@ -818,24 +837,19 @@ def insert_owners(
                 source.lifecycle.status if row.kind == "document" else source.lifecycle.state
             )
         values.update(owner_values(owner, source))
-        columns = tuple(values)
-        connection.execute(
-            f"INSERT INTO {owner.table} ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
-            tuple(values.values()),
-        )
+        tables.setdefault((owner.table, tuple(values)), []).append(tuple(values.values()))
         if isinstance(source, ClaimType):
-            connection.executemany(
-                "INSERT INTO claim_type_names VALUES (?,?,?,?)", claim_type_names(source)
-            )
-        connection.executemany(
-            "INSERT INTO vocabulary_terms VALUES (?,?,?,?,?)",
-            vocabulary_terms(source, path=row.path),
-        )
+            names.extend(claim_type_names(source))
+        terms.extend(vocabulary_terms(source, path=row.path))
+    for (table, columns), rows in tables.items():
+        insert_rows(connection, f"{table} ({','.join(columns)})", rows)
+    insert_rows(connection, "claim_type_names", names)
+    insert_rows(connection, "vocabulary_terms", terms)
+    principals = []
     for path, content in blobs.items():
         if path.startswith("principals/"):
             principal = PrincipalRecord.model_validate_json(content)
-            connection.execute(
-                "INSERT INTO principals VALUES (?,?,?,?,?,?,?)",
+            principals.append(
                 (
                     principal.principal_id,
                     path,
@@ -844,13 +858,14 @@ def insert_owners(
                     principal.public_key,
                     principal.kind,
                     principal.status,
-                ),
+                )
             )
+    insert_rows(connection, "principals", principals)
+    pins: list[tuple[SQLValue, ...]] = []
     ordinal: dict[str, int] = {}
     for pin in parsed.pins:
         index = ordinal.get(pin.source_identity, 0)
-        connection.execute(
-            "INSERT INTO pins VALUES (?,?,?,?,?,?,?)",
+        pins.append(
             (
                 pin.source_identity,
                 "required_pin",
@@ -859,28 +874,34 @@ def insert_owners(
                 pin.target_digest,
                 "resolved",
                 pin.role,
-            ),
+            )
         )
         ordinal[pin.source_identity] = index + 1
+    insert_rows(connection, "pins", pins)
+    consumed: list[tuple[SQLValue, ...]] = []
     for row in parsed.envelopes:
         if row.kind != "claim":
             continue
         for index, digest in enumerate(sources[row.identity].backing.input_claim_digests):
-            identities = set(resolve_digest(digest) if resolve_digest else ())
-            identities.update(
+            identities_of = set(resolve_digest(digest) if resolve_digest else ())
+            identities_of.update(
                 item[0]
                 for item in connection.execute(
                     "SELECT identity FROM claims WHERE artifact_digest=?", (digest,)
                 )
             )
             status = (
-                "resolved" if len(identities) == 1 else "ambiguous" if identities else "unresolved"
+                "resolved"
+                if len(identities_of) == 1
+                else "ambiguous"
+                if identities_of
+                else "unresolved"
             )
-            identity = next(iter(identities)) if len(identities) == 1 else None
-            connection.execute(
-                "INSERT INTO pins VALUES (?,?,?,?,?,?,?)",
-                (row.identity, "consumed_claim_input", index, identity, digest, status, None),
+            identity = next(iter(identities_of)) if len(identities_of) == 1 else None
+            consumed.append(
+                (row.identity, "consumed_claim_input", index, identity, digest, status, None)
             )
+    insert_rows(connection, "pins", consumed)
 
 
 def principal_registry(

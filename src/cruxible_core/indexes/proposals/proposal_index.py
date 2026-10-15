@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.primitives import canonical_json, new_id
@@ -30,7 +30,12 @@ from cruxible_client.contracts.proposal_models import (
     ProposalEvaluationRecord,
     ProposalWithdrawalRecord,
 )
-from cruxible_core.indexes.acquisition import WorkingDatabaseChangedError, open_working_snapshot
+from cruxible_core.indexes.acquisition import (
+    SnapshotLease,
+    SnapshotPool,
+    WorkingDatabaseChangedError,
+    open_working_snapshot,
+)
 from cruxible_core.indexes.history.history_index import (
     commit_working_write,
     history_reads_detached,
@@ -185,8 +190,10 @@ class ProposalIndex:
         connections: list[sqlite3.Connection],
         shutdown_proof: dict[str, Any],
         history_commits: list[tuple[tuple[int, ...] | None, tuple[int, ...]]] | None = None,
+        snapshots: SnapshotPool | None = None,
     ) -> None:
         self.path, self._lock = path, lock
+        self._snapshots = snapshots if snapshots is not None else SnapshotPool()
         self._history_commits = history_commits if history_commits is not None else []
         self._file_stamp, self._on_commit = file_stamp, on_commit
         self._connections, self._shutdown_proof = connections, shutdown_proof
@@ -231,7 +238,9 @@ class ProposalIndex:
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             self._connection.execute(statement)
-                    after = commit_working_write(self._connection, self._file_stamp, before)
+                    after = commit_working_write(
+                        self._connection, self._file_stamp, before, snapshots=self._snapshots
+                    )
                     self._on_commit(before, after)
                     self._connection.rollback()
                 except BaseException:
@@ -573,7 +582,9 @@ class ProposalIndex:
         marker: dict[str, Any],
         before: tuple[int, ...] | None,
     ) -> None:
-        after = commit_working_write(connection, self._file_stamp, before)
+        after = commit_working_write(
+            connection, self._file_stamp, before, snapshots=self._snapshots
+        )
         self._on_commit(before, after)
         marker.update(clean=True, inventory=self._inventory(evidence), database_stamp=after)
         self._write_marker(evidence.root, marker)
@@ -634,7 +645,7 @@ class ProposalIndex:
             return None
         try:
             connection = open_working_snapshot(
-                self.path, expected_stamp=stamp, file_stamp=self._file_stamp
+                self.path, expected_stamp=stamp, file_stamp=self._file_stamp, pool=self._snapshots
             )
         except WorkingDatabaseChangedError:
             # A writer moved the file since the checks above; take the locked path.
@@ -643,7 +654,7 @@ class ProposalIndex:
             schema = _schema_rows(connection)
             if schema == _PRE_ACCEPTANCE_SCHEMA:
                 # The writer migrates it; a snapshot cannot.
-                connection.close()
+                self._snapshots.release(connection)
                 return None
             if schema != _EXPECTED_SCHEMA:
                 raise ProposalIntegrityError("proposal index schema differs; rebuild required")
@@ -656,13 +667,13 @@ class ProposalIndex:
                 or self._inventory(evidence) != marker["inventory"]
                 or self._file_stamp() != stamp
             ):
-                connection.close()
+                self._snapshots.release(connection)
                 return None
             self._seed_clean_stamp(evidence.root, marker, stamp)
             connection.row_factory = sqlite3.Row
             return connection
         except BaseException:
-            connection.close()
+            self._snapshots.discard(connection)
             raise
 
     @contextmanager
@@ -674,10 +685,11 @@ class ProposalIndex:
         except sqlite3.DatabaseError as exc:
             raise ProposalIntegrityError("proposal index requires reconstruction") from exc
         if reader is not None:
+            lease = SnapshotLease(reader)
             try:
-                yield reader
+                yield cast(sqlite3.Connection, lease)
             finally:
-                reader.close()
+                self._snapshots.release(lease.revoke())
             return
         if history_reads_detached():
             with self._detached_snapshot(evidence) as detached:
@@ -693,7 +705,9 @@ class ProposalIndex:
                     marker = self._sync(evidence, writer, check_review_context=review_context)
                     # A clean checkpoint needs no durable marker rewrite on a read.
                     if marker.get("clean") is True:
-                        commit_working_write(writer, self._file_stamp, before)
+                        commit_working_write(
+                            writer, self._file_stamp, before, snapshots=self._snapshots
+                        )
                     else:
                         self._finish(evidence, writer, marker, before)
                 except BaseException:
@@ -701,7 +715,10 @@ class ProposalIndex:
                     raise
                 assert self._stamp is not None
                 reader = open_working_snapshot(
-                    self.path, expected_stamp=self._stamp, file_stamp=self._file_stamp
+                    self.path,
+                    expected_stamp=self._stamp,
+                    file_stamp=self._file_stamp,
+                    pool=self._snapshots,
                 )
                 reader.row_factory = sqlite3.Row
                 reader.execute("PRAGMA foreign_keys=ON")
@@ -716,7 +733,11 @@ class ProposalIndex:
                         "proposal index changed during snapshot acquisition"
                     )
                 writer.rollback()
-            yield reader
+            lease = SnapshotLease(reader)
+            try:
+                yield cast(sqlite3.Connection, lease)
+            finally:
+                lease.revoke()
         except sqlite3.DatabaseError as exc:
             raise ProposalIntegrityError("proposal index requires reconstruction") from exc
         finally:
@@ -724,7 +745,7 @@ class ProposalIndex:
                 if self._connection is not None and self._connection.in_transaction:
                     self._connection.rollback()
             if reader is not None:
-                reader.close()
+                self._snapshots.release(reader)
 
     @contextmanager
     def _detached_snapshot(self, evidence: ProposalEvidenceStore) -> Iterator[sqlite3.Connection]:

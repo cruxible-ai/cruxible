@@ -35,6 +35,7 @@ from cruxible_client.contracts.subject_kinds import (
     live_subject_kind,
     ordered_key_parts,
 )
+from cruxible_core.indexes.sql_batch import execute_in, insert_rows, select_in
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.types import CompilerCoordinate
@@ -267,26 +268,27 @@ def refresh_subject_keys(
                     "SELECT subject_path FROM subject_keys WHERE kind=?", (kind,)
                 )
             )
-        connection.executemany(
-            "DELETE FROM subject_keys WHERE subject_path=?", ((path,) for path in targets)
+        execute_in(
+            connection, "DELETE FROM subject_keys WHERE subject_path IN ({})", sorted(targets)
         )
+    keyed_targets = sorted(path for path in targets if keyed.get(subject_kind_of(path)[0]))
+    live = {
+        str(row[0])
+        for row in select_in(
+            connection,
+            "SELECT path FROM subjects WHERE lifecycle='live' AND path IN ({})",
+            keyed_targets,
+        )
+    }
     rows: list[tuple[str, str, str]] = []
-    for path in sorted(targets):
+    for path in keyed_targets:
+        if path not in live:
+            continue
         kind = subject_kind_of(path)[0]
-        keys = keyed.get(kind)
-        if not keys:
-            continue
-        if (
-            connection.execute(
-                "SELECT 1 FROM subjects WHERE path=? AND lifecycle='live'", (path,)
-            ).fetchone()
-            is None
-        ):
-            continue
-        key = subject_key_of(connection, path, keys)
+        key = subject_key_of(connection, path, keyed[kind])
         if key is not None:
             rows.append((path, kind, key_encoding(key)))
-    connection.executemany("INSERT INTO subject_keys VALUES (?,?,?)", rows)
+    insert_rows(connection, "subject_keys", rows)
 
 
 def live_key_claims(
