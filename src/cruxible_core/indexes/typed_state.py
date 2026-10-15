@@ -295,6 +295,7 @@ OWNER_CODECS = (
             ("provider_name", "TEXT NOT NULL"),
             ("build_key", "TEXT"),
             ("distribution_version", "TEXT"),
+            ("registration_sequence", "INTEGER NOT NULL"),
         ),
     ),
     OwnerCodec(
@@ -534,7 +535,9 @@ def schema_sql() -> str:
             "CREATE INDEX subject_keys_by_key ON subject_keys(kind,key_encoding,subject_path)",
         ]
     )
-    return ";\n".join(statements) + ";\n"
+    from cruxible_core.indexes.provider_heads import SCHEMA_SQL as PROVIDER_HEADS_SQL
+
+    return ";\n".join(statements) + ";\n" + PROVIDER_HEADS_SQL
 
 
 def _claim_fields(claim: Any) -> dict[str, SQLValue]:
@@ -650,6 +653,7 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
     if owner.kind == "provider":
         runtime = getattr(source, "runtime_artifact", None)
         result["distribution_version"] = None if runtime is None else runtime.distribution.version
+        result["registration_sequence"] = 0
     if owner.kind in ("line", "procedure-mandate"):
         result.update(
             procedure_identity=source.procedure.target.qualified,
@@ -883,6 +887,23 @@ def insert_owners(
             ),
         )
         ordinal[pin.source_identity] = index + 1
+    for pin in parsed.pins:
+        source = sources.get(pin.source_identity)
+        if (
+            source is not None
+            and pin.source_identity.startswith(("Procedure:", "Blueprint:"))
+            and source.lifecycle.state == "live"
+            and pin.target_identity.startswith("Provider:")
+        ):
+            connection.execute(
+                "INSERT INTO provider_pinners VALUES (?,?,?,?)",
+                (
+                    pin.source_identity,
+                    pin.target_identity,
+                    pin.target_digest,
+                    pin.target_identity.removeprefix("Provider:").partition("/")[0],
+                ),
+            )
     for row in parsed.envelopes:
         if row.kind != "claim":
             continue

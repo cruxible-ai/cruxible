@@ -1,4 +1,4 @@
-"""Governed provider retirement and moves, sized by one name and its reverse pins."""
+"""Governed provider retirement and moves, sized by their changed reverse pins."""
 
 from __future__ import annotations
 
@@ -21,7 +21,13 @@ from cruxible_client.contracts.providers import (
 )
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.providers.build_moves import Mover, build_move, settle_changes
-from cruxible_core.providers.builds import live_pinners, resolve_in_tree, tree_provider_builds
+from cruxible_core.providers.builds import (
+    indexed_exact_provider,
+    indexed_move_pinners,
+    indexed_newest_provider,
+    live_pinners,
+    resolve_provider_build,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
@@ -172,38 +178,39 @@ def service_move_provider(
             if request.to == "newest"
             else (request.to if "/" in request.to else f"{name}/{request.to}")
         )
-        resolution = resolve_in_tree(instance, mode.head, tree, target)
+        with instance.bind_accepted_projection(mode.head) as projection:
+            connection = projection.typed.connection
+            row = (
+                indexed_newest_provider(connection, name)
+                if request.to == "newest"
+                else indexed_exact_provider(connection, "Provider:" + target)
+            )
+            resolution = resolve_provider_build(
+                target,
+                rows=() if row is None else (row,),
+                sequences={} if row is None else {row.identity: 0},
+                coordinate=AcceptedCoordinate.from_internal(mode.head),
+            )
         if resolution.resolved.partition("/")[0] != name:
             raise ValueError("the target build must belong to the requested provider")
         movers = []
         moves = {}
         with instance.bind_accepted_projection(mode.head) as projection:
             connection = projection.typed.connection
-            for row in tree_provider_builds(tree, name):
-                if not row.live or row.identity == f"Provider:{resolution.resolved}":
-                    continue
-                for identity in live_pinners(connection, row.identity, row.artifact_digest):
-                    if request.only and identity not in request.only:
-                        continue
-                    kind, _, item_name = identity.partition(":")
-                    if kind not in {"Procedure", "Blueprint"}:
-                        continue
-                    path_row = connection.execute(
-                        "SELECT path FROM main.artifact_lookup WHERE identity=?", (identity,)
-                    ).fetchone()
-                    assert path_row is not None
-                    movers.append(
-                        Mover(
-                            ArtifactIdentity(kind=kind, name=item_name),
-                            str(path_row[0]),
-                            row.identity.partition(":")[2],
-                            resolution.resolved,
-                        )
+            for identity, path, source in indexed_move_pinners(
+                connection, name, "Provider:" + resolution.resolved, request.only
+            ):
+                kind, _, item_name = identity.partition(":")
+                movers.append(
+                    Mover(
+                        ArtifactIdentity(kind=kind, name=item_name),
+                        path,
+                        source.partition(":")[2],
+                        resolution.resolved,
                     )
-                    if row.identity not in moves:
-                        moves[row.identity] = build_move(
-                            tree, row.identity.partition(":")[2], resolution.resolved
-                        )
+                )
+                if source not in moves:
+                    moves[source] = build_move(tree, source.partition(":")[2], resolution.resolved)
             settled = settle_changes(
                 tree, writes={}, connection=connection, movers=movers, moves=moves
             )

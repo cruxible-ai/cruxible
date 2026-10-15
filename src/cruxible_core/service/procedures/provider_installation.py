@@ -487,18 +487,11 @@ def _carried_from_newest(
     """The most recently registered live build of ``name``: a new build carries its
     independently governed signing keys and capture declarations."""
 
-    from cruxible_core.providers.builds import (
-        newest_live,
-        registration_sequences,
-        tree_provider_builds,
-    )
+    from cruxible_core.providers.builds import indexed_newest_provider
 
-    rows = tree_provider_builds(tree, name)
-    if not any(row.live for row in rows):
-        return None
-    coordinate = AcceptedCoordinate.from_internal(instance.coordinate_for_oid(accepted_oid))
-    with instance.accepted_history_reader(at=coordinate) as history:
-        chosen = newest_live(rows, registration_sequences(history, rows))
+    coordinate = instance.coordinate_for_oid(accepted_oid)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        chosen = indexed_newest_provider(projection.typed.connection, name)
     return None if chosen is None else parse_provider(tree[chosen.path], path=chosen.path)
 
 
@@ -511,8 +504,6 @@ def _definition_changes(
     """The paths an install adds: the build's own path and any contract
     registration not live yet. No existing Provider or registration is written,
     so no live definition owes a successor and the install never strands one."""
-
-    from cruxible_core.providers.builds import tree_provider_builds
 
     tree = instance.immutable_tree_at(accepted_oid)
     candidate = fork_tree(tree)
@@ -589,10 +580,14 @@ def _definition_changes(
             }
         )
         desired = ProviderBuild.model_validate(desired.model_dump(mode="json"))
-    siblings = frozenset(
-        parse_provider(tree[row.path], path=row.path).control_domain
-        for row in tree_provider_builds(tree, desired.provider_name)
-    )
+    with instance.bind_accepted_projection(instance.coordinate_for_oid(accepted_oid)) as projection:
+        siblings = frozenset(
+            row[0]
+            for row in projection.typed.connection.execute(
+                "SELECT control_domain FROM main.provider_control_domains WHERE provider_name=?",
+                (desired.provider_name,),
+            )
+        )
     _refuse_unproven_provider(desired, interfaces, siblings)
     candidate[path] = render_provider(desired)
     changed.append(path)

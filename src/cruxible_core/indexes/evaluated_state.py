@@ -202,6 +202,38 @@ class EvaluationRows:
 
         return select_claim_type_names(self.connection, names, table=self.table("claim_type_names"))
 
+    def provider_sibling_domains(self, name: str, path: str) -> frozenset[str]:
+        """Name-domain counts plus changed providers; never enumerate retained builds."""
+
+        def compute() -> frozenset[str]:
+            counts = dict(
+                self.connection.execute(
+                    "SELECT control_domain,build_count FROM main.provider_control_domains WHERE provider_name=?",
+                    (name,),
+                )
+            )
+            replaced = set(self.changed)
+            replaced.add(path)
+            for changed_path in replaced:
+                if not changed_path.startswith("providers/"):
+                    continue
+                old = self.connection.execute(
+                    "SELECT provider_name,control_domain FROM main.providers WHERE path=?",
+                    (changed_path,),
+                ).fetchone()
+                if old is not None and old[0] == name:
+                    counts[old[1]] -= 1
+                content = self.changed.get(changed_path)
+                if changed_path != path and content is not None:
+                    from cruxible_client.contracts.providers import parse_provider
+
+                    provider = parse_provider(content, path=changed_path)
+                    if provider.provider_name == name:
+                        counts[provider.control_domain] = counts.get(provider.control_domain, 0) + 1
+            return frozenset(domain for domain, count in counts.items() if count)
+
+        return self._memo(("provider_sibling_domains", name, path), compute)
+
     def state(self, path: str) -> ArtifactDependencyStateV1:
         return self._memo(("state", path), lambda: self._state(path))
 

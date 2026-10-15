@@ -251,6 +251,9 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
                 coordinates={},
             ),
         )
+        from cruxible_core.indexes.provider_heads import refresh_provider_heads
+
+        refresh_provider_heads(expected, sources)
         from cruxible_core.indexes.subject_identity import refresh_subject_keys
 
         refresh_subject_keys(expected)
@@ -261,6 +264,10 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             "claim_type_names",
             "vocabulary_terms",
             "subject_keys",
+            "provider_registration_order",
+            "provider_heads",
+            "provider_control_domains",
+            "provider_pinners",
             *(owner.table for owner in OWNER_CODECS),
         ):
             info = expected.execute(f"PRAGMA table_info({table})").fetchall()
@@ -398,6 +405,15 @@ def replace_rows(
         for identity, kind in connection.execute(
             "SELECT identity,kind FROM artifact_lookup WHERE path=?", (path,)
         ).fetchall():
+            if kind == "provider":
+                from cruxible_core.indexes.provider_heads import remove_provider_domain
+
+                name, domain = connection.execute(
+                    "SELECT provider_name,control_domain FROM providers WHERE identity=?",
+                    (identity,),
+                ).fetchone()
+                remove_provider_domain(connection, name, domain)
+            connection.execute("DELETE FROM provider_pinners WHERE source_identity=?", (identity,))
             if kind == "claim":
                 remove_owner_citations(connection, (("Claim", identity),))
             if kind == "attestation":
@@ -420,6 +436,9 @@ def replace_rows(
     insert_owners(
         connection, parsed=parsed, blobs=sources, codec=codec, resolve_digest=resolve_digest
     )
+    from cruxible_core.indexes.provider_heads import refresh_provider_heads
+
+    refresh_provider_heads(connection, sources)
     if not changed:
         refresh_subject_keys(connection)
     else:

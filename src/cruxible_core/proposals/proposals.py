@@ -2632,14 +2632,28 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
 
 
 def _sibling_control_domains(
-    tree: Mapping[str, bytes], provider: ProviderAny, path: str
+    tree: Mapping[str, bytes],
+    provider: ProviderAny,
+    path: str,
+    states: Mapping[str, ArtifactDependencyStateV1],
 ) -> frozenset[str]:
     """The control domains of the other builds of ``provider``'s name in ``tree``.
 
-    One prefix range plus the name's single path: O(builds of one name).
+    Served evaluation reads maintained counts plus changed providers. Cold
+    source-only replay uses one prefix range plus the name's single path.
     """
 
+    from cruxible_core.indexes.evaluated_state import EvaluationRows
+
     name = provider.provider_name
+    owner = getattr(states, "owner", None)
+    if owner is not None:
+        return (
+            owner.provider_sibling_domains(name, path)
+            if isinstance(owner, EvaluationRows)
+            else owner.call(lambda rows: rows.provider_sibling_domains(name, path))
+        )
+    # Cold source-only replay retains the full oracle.
     paths = [*paths_with_prefix(tree, provider_builds_prefix(name)), provider_path(name)]
     return frozenset(
         parse_provider(content, path=sibling).control_domain
@@ -2682,7 +2696,9 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
         predecessor=predecessor,
         interface_registrations=context.resolved.provider_interfaces,
         sibling_control_domains=(
-            _sibling_control_domains(context.candidate_tree, provider, context.path)
+            _sibling_control_domains(
+                context.candidate_tree, provider, context.path, context.candidate_states
+            )
             if predecessor is None
             else frozenset()
         ),

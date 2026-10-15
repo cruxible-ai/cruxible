@@ -9,8 +9,9 @@ most recently registered live build: the one first accepted last. Later
 signing-key or capture-declaration successors do not re-register a build.
 Interface registrations resolve the same way, per interface id.
 
-Everything here reads one name's (or one interface id's) rows plus one history
-read for their paths: O(builds of that name), never every Provider.
+Inventory and authoring resolutions enumerate one name's rows and history.
+Installation and move use the maintained name head instead, without enumerating
+retained builds; move selects only live reverse pinners from its name index.
 """
 
 from __future__ import annotations
@@ -117,6 +118,58 @@ def indexed_provider_builds(connection: sqlite3.Connection, name: str) -> tuple[
             "main.providers WHERE provider_name=? ORDER BY identity",
             (name,),
         )
+    )
+
+
+def indexed_newest_provider(connection: sqlite3.Connection, name: str) -> BuildRow | None:
+    """One maintained name head; no build or accepted-history enumeration."""
+    head = connection.execute(
+        "SELECT identity,ambiguous FROM main.provider_heads WHERE provider_name=?", (name,)
+    ).fetchone()
+    if head is None or head[0] is None:
+        return None
+    if head[1]:
+        raise RequestRefusedError(
+            "cruxible.provider.build_ambiguous",
+            "several live builds were registered together, so none is the most recent; "
+            "name the exact build",
+            repair=RepairOperation(operation="cruxible.provider.list"),
+        )
+    return indexed_exact_provider(connection, str(head[0]))
+
+
+def indexed_exact_provider(connection: sqlite3.Connection, identity: str) -> BuildRow | None:
+    row = connection.execute(
+        "SELECT identity,path,artifact_digest,lifecycle,distribution_version FROM main.providers "
+        "WHERE identity=?",
+        (identity,),
+    ).fetchone()
+    return None if row is None else BuildRow(row[0], row[1], row[2], row[3] == "live", row[4])
+
+
+def indexed_move_pinners(
+    connection: sqlite3.Connection, name: str, target: str, only: tuple[str, ...]
+) -> tuple[tuple[str, str, str], ...]:
+    """Live Procedure/Blueprint pins of this name, sized by the affected pinners.
+
+    The derived relation excludes retired sources and has a name prefix index;
+    builds without pinners never enter this read.
+    """
+    select = (
+        "SELECT p.source_identity,coalesce(proc.path,bp.path),p.target_identity "
+        "FROM main.provider_pinners p "
+        "LEFT JOIN main.procedures proc ON proc.identity=p.source_identity "
+        "LEFT JOIN main.blueprints bp ON bp.identity=p.source_identity "
+        "JOIN main.providers b ON b.identity=p.target_identity "
+        "AND b.artifact_digest=p.target_digest "
+        "WHERE p.provider_name=? AND p.target_identity!=? AND b.lifecycle='live'"
+    )
+    parameters: list[str] = [name, target]
+    if only:
+        select += " AND p.source_identity IN (" + ",".join("?" for _ in only) + ")"
+        parameters.extend(only)
+    return tuple(
+        connection.execute(select + " ORDER BY p.source_identity,p.target_identity", parameters)
     )
 
 
