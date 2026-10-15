@@ -1180,7 +1180,7 @@ def service_reject_playbill_proposal(
         if admission.actor_id == actor_id:
             raise ProposalAdmissionError(
                 "a proposal's own actor withdraws it rather than rejecting it: "
-                "run cruxible proposal withdraw"
+                f'run cruxible proposal withdraw {proposal_id} --reason "<reason>"'
             )
         record, already, coordinate = _close(
             instance,
