@@ -1109,13 +1109,21 @@ def init_playbill(
     if selected_instance is None and get_runtime_bearer_token() is not None:
         # Allocating a host takes the daemon's bootstrap secret, and init takes
         # the new host's own admin credential: no one bearer token does both.
+        # CRUXIBLE_SERVER_BEARER_TOKEN being set in this process's environment
+        # says nothing about whether the daemon actually requires auth -- it
+        # may be inherited from an earlier session against a different host.
+        # Report the configured value and its source, not a guess about the
+        # daemon's posture.
         raise click.UsageError(
-            "with daemon auth on, init initializes a host you have already allocated and "
-            "claimed, and none is selected; nothing was created. Repair: "
-            "`CRUXIBLE_SERVER_BEARER_TOKEN=<bootstrap secret> cruxible host create`, then "
-            "`cruxible credential claim-bootstrap --secret-file <secret file>`, then "
-            "`CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed> cruxible init` "
-            "(or select an allocated host with --instance-id)"
+            "CRUXIBLE_SERVER_BEARER_TOKEN is set in this environment, and no instance is "
+            "selected; init cannot tell whether that token is a host's bootstrap secret "
+            "or an already-claimed admin credential, so nothing was created. If the "
+            "daemon requires auth, repair: `CRUXIBLE_SERVER_BEARER_TOKEN=<bootstrap "
+            "secret> cruxible host create`, then `cruxible credential claim-bootstrap "
+            "--secret-file <secret file>`, then `CRUXIBLE_SERVER_BEARER_TOKEN=<the admin "
+            "token it printed> cruxible init` (or select an allocated host with "
+            "--instance-id). If this token is stale and the daemon does not require "
+            "auth, unset CRUXIBLE_SERVER_BEARER_TOKEN and rerun."
         )
     if selected_instance is not None:
         _refuse_reinit(
