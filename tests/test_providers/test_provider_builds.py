@@ -201,3 +201,25 @@ def test_new_single_path_provider_is_closed_at_the_build_compiler(tmp_path) -> N
     assert "cruxible.provider.single_path_closed" in {
         item.code for item in result.evaluation.diagnostics
     }
+
+
+def test_discovery_lists_builds_under_the_registration_they_actually_pin() -> None:
+    from cruxible_core.service.discovery.discovery import _provider_interfaces
+
+    old = accepted_interface().registration
+    contract = provider_interface_contract(
+        interface_id=old.interface_id,
+        interface_bytes_hex=old.interface_bytes_hex,
+        interface_digest_domain=old.interface_digest_domain,
+        interface_digest=old.interface_digest,
+        effect_class=old.effect_class,
+    )
+    entries = _provider_interfaces(
+        (provider_v2(),),
+        (old, contract),
+        newest={old.interface_id: contract.identity.qualified},
+        newest_builds=frozenset({provider_v2().identity.qualified}),
+    )
+    by_identity = {entry.entry.identity: entry.entry for entry in entries}
+    assert len(by_identity[old.identity.qualified].providers) == 1
+    assert by_identity[contract.identity.qualified].providers == ()

@@ -1012,6 +1012,32 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         artifact_digest=provider_digest(provider).tagged,
     )
     deployment_digest = _digest("served-line-deployment")
+    # Package builds require a retained installation verification. This
+    # operator-owned fixture uses the v1 record matching its historical v2 seal.
+    from cruxible_core.providers.provider_local_runtime import (
+        ProviderInstallationVerificationV1,
+        _deployment_identity,
+    )
+
+    local_deployment = LocalProviderDeploymentV1(
+        deployment_digest=deployment_digest,
+        distribution_path=distribution,
+        lock_path=lock,
+        environment_path=materialization,
+        environment_manifest_path=seal,
+        environment_pin_key="linux-cp311+engine",
+        interpreter_path=interpreter,
+        provider_runtime_version="1.0.0",
+    )
+    verification = ProviderInstallationVerificationV1(
+        deployment_identity_digest=_deployment_identity(local_deployment),
+        distribution_digest=_sha256_file(distribution),
+        lock_digest=_sha256_file(lock),
+        materialization_digest=materialization_digest,
+        environment_manifest_digest=_sha256_file(seal),
+        provider_runtime_version="1.0.0",
+        entrypoints=tuple(item.entrypoint for item in provider.implementations),
+    )
     config_path = state_root / PROVIDER_RUNTIME_CONFIG_PATH
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_bytes(
@@ -1031,6 +1057,7 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
                         "environment_pin_key": "linux-cp311+engine",
                         "interpreter_path": str(interpreter.relative_to(state_root)),
                         "provider_runtime_version": "1.0.0",
+                        "installation_verification": verification.model_dump(mode="json"),
                     }
                 ],
             }

@@ -145,7 +145,13 @@ def installed_providers(instance: PlaybillInstance) -> tuple[InstalledProvider, 
         sequences = registration_sequences(history, builds)
     newest: dict[str, str] = {}
     for name in sorted({row[3] for row in rows}):
-        chosen = newest_live([item for item, row in zip(builds, rows) if row[3] == name], sequences)
+        try:
+            chosen = newest_live(
+                [item for item, row in zip(builds, rows) if row[3] == name], sequences
+            )
+        except RequestRefusedError:
+            # The list remains usable when a bare name cannot choose a build.
+            chosen = None
         if chosen is not None:
             newest[name] = chosen.identity
     installed = []

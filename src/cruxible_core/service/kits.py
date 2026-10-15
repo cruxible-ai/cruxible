@@ -98,7 +98,7 @@ from cruxible_core.claims.claim_type_migrations import (
     dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
-from cruxible_core.derived.derived_state import fork_tree
+from cruxible_core.derived.derived_state import fork_tree, paths_with_prefix
 from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS, genesis_seed_files
@@ -612,8 +612,8 @@ def _read_receipt(
 
 
 def _receipts(instance: PlaybillInstance, tree: Mapping[str, bytes]) -> Iterator[KitReceipt]:
-    for path in sorted(tree):
-        if path.startswith("documents/kit-") and path.endswith(".json"):
+    for path in paths_with_prefix(tree, "documents/kit-"):
+        if path.endswith(".json"):
             kit_id = path.removeprefix("documents/kit-").removesuffix(".json")
             found = _receipt_at(instance, path, tree[path], kit_id)
             if found is not None:
@@ -1327,8 +1327,8 @@ def _default_implementers(
                 "JOIN main.providers r ON r.identity=p.source_identity "
                 "WHERE p.target_identity=? AND p.target_digest=? "
                 "AND p.edge_kind='required_pin' AND p.pin_role='provider-interface' "
-                "AND r.lifecycle='live'",
-                (registration.identity.qualified, artifact_digest),
+                "AND r.lifecycle='live' AND r.provider_name<>?",
+                (registration.identity.qualified, artifact_digest, provider.provider_id),
             )
         }
         if not implementers:

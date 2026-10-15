@@ -39,6 +39,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -628,7 +629,24 @@ def render_provider_interface(
     return pretty_canonical_bytes(registration.model_dump(mode="json"))
 
 
+_INTERFACE_PARSES: ParseMemo[ProviderInterfaceRegistrationAny] = ParseMemo(
+    capacity=256, max_bytes=8 * 1024 * 1024
+)
+
+
 def parse_provider_interface(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> ProviderInterfaceRegistrationAny:
+    """Parse immutable registration bytes once per exact content, path and codec."""
+    return _INTERFACE_PARSES.parse(
+        content, path, codec, lambda: _parse_provider_interface(content, path=path, codec=codec)
+    )
+
+
+def _parse_provider_interface(
     content: bytes,
     *,
     path: str,
@@ -656,6 +674,7 @@ def parse_provider_interface(
     return registration
 
 
+@sealed_memo
 def provider_interface_digest(
     registration: ProviderInterfaceRegistrationV1 | ProviderInterfaceContract,
 ) -> ArtifactDigest:

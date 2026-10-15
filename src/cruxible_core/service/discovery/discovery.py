@@ -29,7 +29,12 @@ from cruxible_client.contracts.provider_interfaces import (
     parse_provider_interface,
     provider_interface_digest,
 )
-from cruxible_client.contracts.providers import ProviderV2, parse_provider, provider_digest
+from cruxible_client.contracts.providers import (
+    ProviderV2,
+    parse_provider,
+    provider_digest,
+    provider_interface_pin,
+)
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
     parse_query_definition,
@@ -119,8 +124,11 @@ def _provider_interfaces(
     implementations: dict[tuple[str, str], list[ProviderInterfaceImplementationV1]] = {}
     for provider in providers:
         for implementation in provider.implementations:
+            pin = provider_interface_pin(provider, implementation.interface_id)
+            if pin is None:
+                continue
             implementations.setdefault(
-                (implementation.interface_id, implementation.interface_digest), []
+                (pin.target.qualified, implementation.interface_digest), []
             ).append(
                 ProviderInterfaceImplementationV1(
                     provider_identity=provider.identity.qualified,
@@ -135,7 +143,7 @@ def _provider_interfaces(
             providers=tuple(
                 sorted(
                     implementations.get(
-                        (registration.interface_id, registration.interface_digest), ()
+                        (registration.identity.qualified, registration.interface_digest), ()
                     ),
                     key=lambda item: (
                         item.provider_identity.encode("utf-8"),

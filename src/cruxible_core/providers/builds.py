@@ -5,8 +5,9 @@ A provider name holds any number of builds, each its own artifact
 registered before builds) is one more build of its name. Pins name exact builds.
 Only new authoring and unpinned references -- a Blueprint slot bound by name, a
 source selection, ``provider move --to newest`` -- resolve a bare name, to the
-most recently registered live build: the one whose current version was
-accepted last. Interface registrations resolve the same way, per interface id.
+most recently registered live build: the one first accepted last. Later
+signing-key or capture-declaration successors do not re-register a build.
+Interface registrations resolve the same way, per interface id.
 
 Everything here reads one name's (or one interface id's) rows plus one history
 read for their paths: O(builds of that name), never every Provider.
@@ -135,10 +136,13 @@ def indexed_interface_registrations(
 
 
 def registration_sequences(history: Any, rows: Sequence[BuildRow]) -> dict[str, int]:
-    """Identity -> the generation that accepted each row's current version.
+    """Identity -> the generation that registered each build or contract.
 
-    One history read for the rows' paths. A version accepted at genesis has no
-    change record (0); one not accepted yet sorts after everything accepted.
+    Build-qualified artifacts keep their first accepted sequence through
+    metadata successors. A legacy single-path artifact orders its current
+    version, since that path could have held another package version before
+    builds. One history read for these paths; genesis sorts at 0 and a build
+    not accepted yet sorts after everything accepted.
     """
 
     versions = history.member_versions(tuple(row.path for row in rows)) if rows else {}
