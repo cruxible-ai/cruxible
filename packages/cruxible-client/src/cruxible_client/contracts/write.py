@@ -225,13 +225,14 @@ Evidence = Annotated[
 
 
 class SlotRef(_StrictWriteModel):
-    """One field of one Subject: the slot a single-value Claim fills."""
+    """One field of one Subject, or with ``value`` one of the values it holds."""
 
     subject: SubjectRef | None = Field(
         default=None,
         description="The Subject as kind/id; default: the write's own subject.",
     )
     field: FieldName
+    value: ClaimValue | None = None
 
 
 class SetChange(_StrictWriteModel):

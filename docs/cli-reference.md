@@ -3289,7 +3289,7 @@ cruxible add SUBJECT FIELD VALUE --because TEXT
   [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
   [--role ROLE] [--expect-absent]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
-cruxible retire TARGET [FIELD] --because TEXT
+cruxible retire TARGET [FIELD [VALUE]] --because TEXT
   [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--dry-run] [--no-accept]
   [--at GIT_OID] [--json]
 cruxible write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
@@ -3349,7 +3349,10 @@ of content it already cites the same way it is answered as done (already live);
 on new evidence (other `--because` words, another Capture) that Claim's evidence
 is refreshed, never a second Claim written; `--expect-absent` refuses it
 instead (`cruxible.write.value_already_present`). `retire` ends one live
-Claim, named by ID or by SUBJECT FIELD when that field holds one value; the
+Claim, named by ID, by SUBJECT FIELD when that field holds one value, or by
+SUBJECT FIELD VALUE for one of several (`cruxible retire app.service/payments
+depends_on pypi.release/requests-2.32.4`; in a `write` file, a target
+`{"subject", "field", "value"}`); the
 Claims that depend on it retire with it; `--expect` compares the field's values
 as on `set`. `write` applies a
 FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":

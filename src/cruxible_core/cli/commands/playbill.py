@@ -4705,6 +4705,7 @@ def add_value(
 @playbill_group.command("retire")
 @click.argument("target")
 @click.argument("field", required=False)
+@click.argument("value", required=False)
 @click.option("--because", required=True, help="Why it ends.")
 @click.option(
     "--reason",
@@ -4719,6 +4720,7 @@ def add_value(
 def retire(
     target: str,
     field: str | None,
+    value: str | None,
     because: str,
     reason: str,
     expect: tuple[str, ...],
@@ -4727,15 +4729,23 @@ def retire(
     at_oid: str | None,
     output_json: bool,
 ) -> None:
-    """Retire one live Claim: TARGET is a Claim ID, or a Subject (kind/id) and its FIELD.
+    """Retire one live Claim: a Claim ID, or a Subject (kind/id), its FIELD and VALUE.
 
+    VALUE names which value to retire; it may be left out when FIELD holds one.
     Claims that depend on it retire with it, in the same change set.
     """
 
+    if value is not None and field is None:
+        raise click.UsageError("VALUE needs FIELD: cruxible retire SUBJECT FIELD VALUE")
+    slot: dict[str, object] | None = None
+    if field is not None:
+        slot = {"subject": target, "field": field}
+        if value is not None:
+            slot["value"] = value
     request = _write_request(
         RetireRequest,
         {
-            "target": target if field is None else {"subject": target, "field": field},
+            "target": target if slot is None else slot,
             "because": because,
             "reason": reason,
             "expect": _expect_option_value(expect),
