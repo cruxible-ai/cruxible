@@ -384,6 +384,95 @@ def test_a_reader_rereads_only_the_sequences_written_since_it_last_looked(
     assert len(store.events()) == 14
 
 
+def _observed(
+    store: ReviewOperationalStore, coordinate, partition: str, event_id: str, generation: int
+):  # type: ignore[no-untyped-def]
+    return store.append(
+        family="block_observation",
+        partition_id=partition,
+        event_id=event_id,
+        payload={"event_id": event_id},
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=_actor(),
+        recorded_at=NOW,
+    )
+
+
+def _windowed(store: ReviewOperationalStore, lower: int, upper: int) -> list[str]:
+    return [
+        str(payload["event_id"])
+        for _event, payload in store.events_in_generation_window(
+            family="block_observation", lower=lower, upper=upper
+        )
+    ]
+
+
+def _filtered(store: ReviewOperationalStore, lower: int, upper: int) -> list[str]:
+    return [
+        str(payload["event_id"])
+        for event, payload in store.events(family="block_observation")
+        if lower <= event.accepted_generation <= upper
+    ]
+
+
+def test_a_generation_window_read_matches_the_filtered_family_and_tracks_every_change(
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.curation.review_operational import reset_review_operational_replays
+
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    store = instance.review_operational_store()
+    assert _windowed(store, 0, 100) == []
+    for partition in ("b", "a"):
+        for generation in range(6):
+            _observed(store, coordinate, partition, f"{partition}-{generation}", generation)
+    assert _windowed(store, 2, 3) == ["a-2", "a-3", "b-2", "b-3"] == _filtered(store, 2, 3)
+    assert _windowed(store, 3, 2) == []
+    assert _windowed(store, 0, 10**9) == _filtered(store, 0, 10**9)
+    # An append, a cut back and a removed partition each move the window read.
+    _observed(store, coordinate, "a", "a-late", 2)
+    assert _windowed(store, 2, 2) == ["a-2", "a-late", "b-2"] == _filtered(store, 2, 2)
+    store.truncate_partition(family="block_observation", partition_id="a", keep=1)
+    assert _windowed(store, 0, 5) == ["a-0", "b-0", "b-1", "b-2", "b-3", "b-4", "b-5"]
+    assert _windowed(store, 0, 5) == _filtered(store, 0, 5)
+    store.remove_partitions(family="block_observation", partition_ids=("b",))
+    assert _windowed(store, 0, 5) == ["a-0"] == _filtered(store, 0, 5)
+    _observed(store, coordinate, "b", "b-new", 4)
+    # A fresh process builds the index once and agrees with the warm one.
+    warm = _windowed(store, 0, 5)
+    reset_review_operational_replays()
+    assert _windowed(store, 0, 5) == warm == ["a-0", "b-new"]
+
+
+def test_a_generation_window_read_does_not_grow_with_history_outside_the_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    store = instance.review_operational_store()
+    loaded: list[int] = []
+    load_event = ReviewOperationalStore._load_event
+
+    def counted(self, directory, family, partition_id, sequence, previous):  # type: ignore[no-untyped-def]
+        loaded.append(sequence)
+        return load_event(self, directory, family, partition_id, sequence, previous)
+
+    monkeypatch.setattr(ReviewOperationalStore, "_load_event", counted)
+    window_sizes: list[int] = []
+    for round_index, old_count in enumerate((10, 100)):
+        for index in range(old_count):
+            _observed(store, coordinate, "block", f"old-{round_index}-{index}", 0)
+        _observed(store, coordinate, "block", f"new-{round_index}", 50)
+        _windowed(store, 41, 50)  # absorbs this round's appends once
+        loaded.clear()
+        window_sizes.append(len(_windowed(store, 41, 50)))
+        # Nothing moved: the pass reads no event and returns only the window.
+        assert loaded == []
+    assert window_sizes == [1, 2]
+
+
 def test_a_replaced_touch_log_makes_the_next_reader_list_the_store_again(
     tmp_path: Path,
 ) -> None:

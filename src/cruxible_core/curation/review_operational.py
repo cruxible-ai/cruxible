@@ -295,6 +295,11 @@ class _PartitionReplay:
     )
     event_ids: dict[object, int] = field(default_factory=dict)
     dirty: bool = True
+    # How many of ``events`` the store's generation index holds, and the
+    # accepted generations they fall in (to drop them if the partition is
+    # read again whole).
+    indexed: int = 0
+    generations: set[int] = field(default_factory=set)
 
     def extend(
         self, loaded: Iterable[tuple[PlaybillReviewOperationalEventV1, dict[str, object]]]
@@ -320,9 +325,15 @@ class _StoreReplay:
     # last listed whole (``epoch``), in order.
     epoch: int = 0
     touches: list[tuple[str, str]] = field(default_factory=list)
+    # family -> accepted generation -> partition directory -> event positions,
+    # maintained from each partition's newly verified events.
+    generation_index: dict[str, dict[int, dict[str, list[int]]]] = field(default_factory=dict)
+    # family -> partition directories touched but not yet read again.
+    unread: dict[str, set[str]] = field(default_factory=dict)
 
     def touched(self, family: str, name: str) -> None:
         self.partitions.setdefault((family, name), _PartitionReplay()).dirty = True
+        self.unread.setdefault(family, set()).add(name)
         self.head = None
         self.family_events.pop(family, None)
         self.touches.append((family, name))
@@ -593,6 +604,8 @@ class ReviewOperationalStore:
         replay.touches.clear()
         replay.partitions.clear()
         replay.family_events.clear()
+        replay.generation_index.clear()
+        replay.unread.clear()
         replay.head = None
         replay.manifest = None
         partitions = self.root / "partitions"
@@ -607,6 +620,7 @@ class ReviewOperationalStore:
             for name in os.listdir(family_root):
                 if not name.startswith("."):
                     replay.partitions[(family, name)] = _PartitionReplay()
+                    replay.unread.setdefault(family, set()).add(name)
 
     def _sync(self, *, compact: bool = False) -> _StoreReplay:
         """This process's replay, moved forward by the touch log; the caller holds the lock.
@@ -661,11 +675,38 @@ class ReviewOperationalStore:
     def _replayed(
         self, replay: _StoreReplay, family: ReviewOperationalFamily, name: str
     ) -> _PartitionReplay | None:
-        """One partition's verified events, reading only the sequences not yet verified."""
+        """One partition's verified events, reading only the sequences not yet verified.
 
+        The generation index moves with it: only the newly verified events are
+        added, and a partition read again whole (or gone) first drops its own.
+        """
+
+        before = replay.partitions.get((family, name))
+        if before is not None and not before.dirty:
+            return before
+        held = self._replay_partition(replay, family, name)
+        index = replay.generation_index.setdefault(family, {})
+        if before is not None and before is not held:
+            for generation in before.generations:
+                slot = index.get(generation)
+                if slot is not None:
+                    slot.pop(name, None)
+                    if not slot:
+                        del index[generation]
+        if held is not None:
+            start = held.indexed if held is before else 0
+            for position in range(start, len(held.events)):
+                generation = held.events[position][0].accepted_generation
+                index.setdefault(generation, {}).setdefault(name, []).append(position)
+                held.generations.add(generation)
+            held.indexed = len(held.events)
+        replay.unread.get(family, set()).discard(name)
+        return held
+
+    def _replay_partition(
+        self, replay: _StoreReplay, family: ReviewOperationalFamily, name: str
+    ) -> _PartitionReplay | None:
         held = replay.partitions.get((family, name))
-        if held is not None and not held.dirty:
-            return held
         directory = self.root / "partitions" / family / name
         if not directory.exists() and not directory.is_symlink():
             replay.partitions.pop((family, name), None)
@@ -1202,6 +1243,43 @@ class ReviewOperationalStore:
             for current in _FAMILIES if family is None else (family,):
                 loaded.extend(self._family_events(replay, current))
             return tuple(loaded)
+
+    def events_in_generation_window(
+        self, *, family: ReviewOperationalFamily, lower: int, upper: int
+    ) -> tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...]:
+        """The verified events of ``family`` recorded at accepted generations ``lower..upper``.
+
+        Ordered as :meth:`events` orders them (partition directory, then
+        sequence). The work is the partitions touched since the last read plus
+        the events in the window, read from the generation index; history
+        outside the window is never visited.
+        """
+        with self._locked():
+            if not self.root.exists() and not self.root.is_symlink():
+                return ()
+            replay = self._sync()
+            self._manifest(replay)
+            for name in sorted(replay.unread.get(family, ())):
+                held = self._replayed(replay, family, name)
+                if held is not None and not held.events:
+                    raise ReviewOperationalStoreError("operational partition is empty")
+            index = replay.generation_index.get(family, {})
+            if upper < lower:
+                return ()
+            generations: Iterable[int] = (
+                range(lower, upper + 1)
+                if upper - lower < len(index)
+                else (generation for generation in index if lower <= generation <= upper)
+            )
+            picked = sorted(
+                (name, position)
+                for generation in generations
+                for name, positions in index.get(generation, {}).items()
+                for position in positions
+            )
+            return tuple(
+                replay.partitions[(family, name)].events[position] for name, position in picked
+            )
 
     def head(self) -> ReviewOperationalHeadV1:
         """Every partition's head, rebuilt only when a partition moved since the last one."""

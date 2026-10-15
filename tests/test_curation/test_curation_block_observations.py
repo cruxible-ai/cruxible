@@ -23,6 +23,7 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.curation.curation_detectors import _block_churn
+from cruxible_core.curation.review_operational import ReviewOperationalStore
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.service.authoring.documents import service_propose_playbill_document
 from cruxible_core.service.discovery.curation import (
@@ -291,7 +292,8 @@ def test_block_churn_never_parses_or_evaluates_observations_outside_its_window(
     A counter on the payload parse proves old observations, well outside the
     fixed-size generation window, are skipped before ever being parsed,
     grouped, or resolved against accepted state -- not merely excluded from
-    the final detections after that work ran.
+    the final detections after that work ran. The store read itself returns
+    only the window: the whole family is never fetched.
     """
 
     instance = _instance_with_document(tmp_path)
@@ -365,6 +367,22 @@ def test_block_churn_never_parses_or_evaluates_observations_outside_its_window(
         return original_validate(cls, payload)
 
     monkeypatch.setattr(BlockObservationV1, "model_validate", classmethod(_counting_validate))
+    fetched: list[object] = []
+    window_read = ReviewOperationalStore.events_in_generation_window
+
+    def _counting_window(self: ReviewOperationalStore, **kwargs: object):  # type: ignore[no-untyped-def]
+        events = window_read(self, **kwargs)  # type: ignore[arg-type]
+        fetched.extend(events)
+        return events
+
+    whole_family = ReviewOperationalStore.events
+
+    def _whole_family(self: ReviewOperationalStore, **kwargs: object):  # type: ignore[no-untyped-def]
+        assert kwargs.get("family") != "block_observation", "read the whole observation family"
+        return whole_family(self, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ReviewOperationalStore, "events_in_generation_window", _counting_window)
+    monkeypatch.setattr(ReviewOperationalStore, "events", _whole_family)
 
     # BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW is 10, so at generation=20 the
     # window is [11, 20]: it holds the 3 freshly-appended events and excludes
@@ -372,6 +390,7 @@ def test_block_churn_never_parses_or_evaluates_observations_outside_its_window(
     detected, coverage = _block_churn(instance=instance, generation=20)
 
     assert len(parsed) == 3
+    assert len(fetched) == 3
     assert coverage.evaluated_fact_count == 3
     assert len(detected) == 1
     assert detected[0].subject == document_identity

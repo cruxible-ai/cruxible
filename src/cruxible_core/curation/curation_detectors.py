@@ -580,17 +580,13 @@ def _block_churn(
         tuple[str, str, str],
         list[tuple[PlaybillReviewOperationalEventV1, BlockObservationV1]],
     ] = defaultdict(list)
-    for event, payload in instance.review_operational_store().events(family="block_observation"):
-        # The event's own recorded generation is written together with the
-        # payload's scan_generation (same append call), so the window bound
-        # is checked here, before parsing the payload, grouping it, or
-        # resolving its backing Subjects' dependency state below -- none of
-        # which this detector needs for an observation outside its fixed-size
-        # window. Block sync/repin record on every run, so this family grows
-        # without bound; this keeps the detector's own per-run work bounded by
-        # the window, not by total history.
-        if not (lower <= event.accepted_generation <= generation):
-            continue
+    # Block sync/repin record on every run, so this family grows without
+    # bound. The event's recorded generation is written in the same append as
+    # the payload's scan_generation, so the store's generation index returns
+    # exactly this fixed-size window; older history is never read here.
+    for event, payload in instance.review_operational_store().events_in_generation_window(
+        family="block_observation", lower=lower, upper=generation
+    ):
         try:
             observation = BlockObservationV1.model_validate(payload)
         except ValueError:
