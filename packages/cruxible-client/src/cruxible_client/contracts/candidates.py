@@ -25,7 +25,7 @@ from cruxible_client.contracts.canonical import (
     normalize_manifest_paths,
     typed_digest,
 )
-from cruxible_client.contracts.content_memo import sealed_memo
+from cruxible_client.contracts.content_memo import seal, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.governance import (
     ActivationPolicy,
@@ -436,6 +436,16 @@ class MemberLawEvaluation(_StrictCandidateModel):
             raise ValueError("member law result must be a canonical object")
         return {str(key): item for key, item in normalized.items()}
 
+    @model_validator(mode="after")
+    def _sealed(self) -> "MemberLawEvaluation":
+        # A validated member entry is final, so it is sealed at once (see
+        # ``content_memo``): one parse of a candidate or receipt checks its law
+        # evidence digest, the closure digest, the receipt digest and the
+        # canonical form, and each reads this entry's one remembered encoding.
+        # Copies (``model_copy``, ``deepcopy``) are never sealed.
+        seal(self)
+        return self
+
 
 @sealed_memo
 def member_law_evidence_digest(evidence: MemberLawEvaluation) -> str:
@@ -522,6 +532,11 @@ class CandidateMemberLawEvidence(_StrictCandidateModel):
             )
         if not valid:
             raise ValueError("candidate member disposition and before/after digests disagree")
+        return self
+
+    @model_validator(mode="after")
+    def _sealed(self) -> "CandidateMemberLawEvidence":
+        seal(self)  # final once validated, as MemberLawEvaluation._sealed
         return self
 
 

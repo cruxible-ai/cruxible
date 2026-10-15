@@ -297,36 +297,61 @@ def canonical_list_digest(domain: str, field: str, items: Sequence[bytes]) -> st
     return composed_canonical_digest(domain, {}, {field: canonical_list_bytes(items)})
 
 
-def _plain(value: object) -> bool:
-    """Built only of ASCII strings, non-bool integers, None, lists and ASCII-keyed dicts."""
+_DICTS = (dict, FrozenDict)
+_LISTS = (list, FrozenList)
 
-    kind = type(value)
+
+def _identical(left: object, right: object) -> bool:
+    """Equal in content and in every value's kind, built only of plain ASCII-keyed JSON.
+
+    Strings must be ASCII, integers and bools compare only with their own kind
+    (``1 == True`` in Python, never in JSON), and dicts and lists only with
+    dicts and lists (sealed ones included).
+    """
+
+    kind = type(left)
     if kind is str:
-        return cast(str, value).isascii()
-    if kind is int or value is None:
-        return True
-    if kind is dict or kind is FrozenDict:
-        return all(
-            type(key) is str and key.isascii() and _plain(item)
-            for key, item in cast(dict[object, object], value).items()
+        return type(right) is str and left == right and cast(str, left).isascii()
+    if kind is int or kind is bool:
+        return type(right) is kind and left == right
+    if left is None:
+        return right is None
+    if kind in _DICTS:
+        if type(right) not in _DICTS:
+            return False
+        mine = cast(dict[object, object], left)
+        theirs = cast(dict[object, object], right)
+        return len(mine) == len(theirs) and all(
+            type(key) is str
+            and key.isascii()
+            and key in theirs
+            and _identical(item, theirs[key])
+            for key, item in mine.items()
         )
-    if kind is list or kind is FrozenList:
-        return all(_plain(item) for item in cast(list[object], value))
+    if kind in _LISTS:
+        if type(right) not in _LISTS:
+            return False
+        mine_items = cast(list[object], left)
+        their_items = cast(list[object], right)
+        return len(mine_items) == len(their_items) and all(
+            _identical(item, other) for item, other in zip(mine_items, their_items)
+        )
     return False
 
 
 def canonical_equal(left: object, right: object) -> bool:
     """``canonical_bytes(left) == canonical_bytes(right)``, encoding only when it must.
 
-    Two equal values built only of ASCII strings, non-bool integers, None,
-    lists and ASCII-keyed dicts have one canonical encoding (ASCII is its own
-    NFC form and cannot collide or hold a surrogate), so plain equality decides
-    them. Anything else -- unequal values that might still share an encoding,
-    or values holding other types -- is encoded and compared, refusing exactly
-    as ``canonical_bytes`` does.
+    Two values identical in content and kind, built only of ASCII strings,
+    integers, bools, None, lists and ASCII-keyed dicts, have one canonical
+    encoding (ASCII is its own NFC form and can neither collide nor hold a
+    surrogate), so they are decided without encoding. Anything else --
+    different values that might still share an encoding, or values holding
+    other types -- is encoded and compared, refusing exactly as
+    ``canonical_bytes`` does.
     """
 
-    if left == right and _plain(left) and _plain(right):
+    if _identical(left, right):
         return True
     return canonical_bytes(left) == canonical_bytes(right)
 

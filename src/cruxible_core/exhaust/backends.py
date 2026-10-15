@@ -31,7 +31,6 @@ from cruxible_core.exhaust.records import (
     journal_genesis_digest,
     journal_stream_directory_key,
     journal_stream_strings,
-    procedure_journal_record_digest,
     verify_journal_range,
 )
 
@@ -526,10 +525,7 @@ class LocalJournalBackend:
             sequence=current.sequence + 1,
             previous_record_digest=current.record_digest,
         )
-        stored = StoredProcedureJournalRecordV1(
-            record=record,
-            record_digest=procedure_journal_record_digest(record),
-        )
+        stored = StoredProcedureJournalRecordV1.bind_stored(record)
         body = canonical_bytes(stored.model_dump(mode="json"))
         if len(body) > _MAX_RECORD_BYTES:
             raise JournalError("journal record exceeds the frozen local frame limit")

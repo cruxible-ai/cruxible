@@ -360,13 +360,17 @@ class GitLedger:
         create-only publication (an existing object is left untouched). The
         directory is fsynced too, so the durability matches ``core.fsync``
         covering loose objects. Git reads these like any object it wrote.
+
+        Every object handed here was addressed by this process from its own
+        bytes a moment before (``_blob_oid`` for blobs, ``_object_oid`` for the
+        trees ``_apply_to_tree`` rewrites), so storing hashes nothing again; a
+        reader still checks each object it reads against its address
+        (``_require_object_hash``).
         """
 
         root = self.path / "objects"
         touched: set[Path] = set()
         for oid, (kind, body) in objects.items():
-            if self._object_oid(kind, body) != oid:
-                raise GitError("object bytes differ from their content address")
             directory = root / oid[:2]
             final = directory / oid[2:]
             if final.exists():

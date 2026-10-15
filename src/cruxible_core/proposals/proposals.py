@@ -4827,9 +4827,9 @@ def _multi_member_evidence(
             query_receipt_digests=item.query_receipt_digests,
             result=item.result,
         )
-        # Each entry is final here: sealed, it is encoded and digested once
-        # however often the candidate and its receipt are verified in-process.
-        seal(evidence)
+        # Validated entries are sealed (``MemberLawEvaluation._sealed``): each is
+        # encoded and digested once however often the candidate and its receipt
+        # are verified in-process.
         law_evidence.append(evidence)
         disposition = _member_disposition(
             predecessor_digest=item.predecessor_artifact_digest,
@@ -4848,7 +4848,6 @@ def _multi_member_evidence(
             closure_role="invalidation" if disposition == "retire" else "authored",
             dependency_proof_refs=proofs,
         )
-        seal(member)
         members.append(member)
     return tuple(members), tuple(law_evidence)
 

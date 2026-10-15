@@ -14,6 +14,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationInfo,
     field_serializer,
     field_validator,
     model_validator,
@@ -681,10 +682,39 @@ class StoredProcedureJournalRecordV1(_StrictJournalModel):
         return _digest(value, label="stored journal record_digest")
 
     @model_validator(mode="after")
-    def _reproduce(self) -> "StoredProcedureJournalRecordV1":
+    def _reproduce(self, info: ValidationInfo) -> "StoredProcedureJournalRecordV1":
+        # The writer that just digested this very record object hands the digest
+        # in (``bind_stored``) rather than have it taken twice.
+        context = info.context
+        if (
+            isinstance(context, _JustDigested)
+            and context.record is self.record
+            and context.digest == self.record_digest
+        ):
+            return self
         if self.record_digest != procedure_journal_record_digest(self.record):
             raise ValueError("stored journal record digest does not reproduce")
         return self
+
+    @classmethod
+    def bind_stored(cls, record: ProcedureJournalRecordV1) -> "StoredProcedureJournalRecordV1":
+        """Store one record under its digest, taken exactly once."""
+
+        digest = procedure_journal_record_digest(record)
+        return cls.model_validate(
+            {"record": record, "record_digest": digest},
+            context=_JustDigested(record, digest),
+        )
+
+
+class _JustDigested:
+    """Validation context: ``digest`` was taken of exactly this ``record`` object."""
+
+    __slots__ = ("record", "digest")
+
+    def __init__(self, record: ProcedureJournalRecordV1, digest: str) -> None:
+        self.record = record
+        self.digest = digest
 
 
 class JournalRangeV1(_StrictJournalModel):

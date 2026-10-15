@@ -401,12 +401,40 @@ class ContentAddressedBodyStore:
             except OSError as exc:
                 raise CasError("CAS body could not be stored durably") from exc
             os.fsync(directory)
+            self._remember_landed(directory, name, digest, landed[2])
             return True
         finally:
             try:
                 os.unlink(temporary, dir_fd=directory)
             except OSError:
                 pass
+
+    def _remember_landed(
+        self, directory: int, name: str, digest: str, landed: os.stat_result
+    ) -> None:
+        """Remember a just-published object as verified: its bytes were read back and hashed.
+
+        The link changes only the file's change time, so the object is the file
+        that was hashed exactly when its device, inode, size and modification
+        time are the read-back's; its identity after the link is then what a
+        later read compares (``_verified_bytes``), and it is not hashed again.
+        """
+
+        try:
+            status = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        except OSError:
+            return
+        if (
+            not stat.S_ISREG(status.st_mode)
+            or _file_identity(status)[:4] != _file_identity(landed)[:4]
+        ):
+            return
+        key = self._memo_key(digest)
+        with _VERIFIED_LOCK:
+            _VERIFIED[key] = _file_identity(status)
+            _VERIFIED.move_to_end(key)
+            while len(_VERIFIED) > _VERIFIED_CAPACITY:
+                _VERIFIED.popitem(last=False)
 
     def _memo_key(self, digest: str) -> tuple[str, str]:
         return (str(self._path(digest)), digest)
