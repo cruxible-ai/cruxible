@@ -1006,3 +1006,56 @@ def test_query_literal_values_stay_inside_the_canonical_value_set() -> None:
     }
     with pytest.raises(CanonicalEncodingError, match="floating-point"):
         QueryLiteralRef(value=1.5)
+
+
+def test_unsorted_projection_fields_name_the_exact_canonical_order() -> None:
+    """A natural authoring order (not byte-sorted) must say exactly how to fix it."""
+
+    with pytest.raises(ValidationError, match=r"use this order: \['item_id', 'status'\]"):
+        QueryProjection(
+            fields=(
+                QueryProjectionField(
+                    name="status", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+                QueryProjectionField(
+                    name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+            )
+        )
+    with pytest.raises(ValidationError, match=r"repeated: item_id"):
+        QueryProjection(
+            fields=(
+                QueryProjectionField(
+                    name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+                QueryProjectionField(
+                    name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+            )
+        )
+
+
+def test_discriminators_survive_exclude_defaults_and_exclude_unset() -> None:
+    """A compact dump must still carry what a discriminated union needs to re-parse it.
+
+    ``tag``/``kind`` fields are declared with a default so ordinary callers
+    never have to type them; that default previously made
+    ``model_dump(exclude_defaults=True)`` (or ``exclude_unset=True``) drop
+    them, silently producing a payload that could not be told apart from a
+    different variant on reload.
+    """
+
+    field = QueryProjectionField(
+        name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+    )
+    compact = field.model_dump(mode="json", exclude_defaults=True)
+    assert compact["tag"] == "playbill-query-projection-field-v1"
+    assert compact["value"]["tag"] == "playbill-query-subject-field-ref-v1"
+    assert compact["value"]["kind"] == "subject_field"
+    assert QueryProjectionField.model_validate(compact) == field
+
+    unset = QueryProjectionField.model_construct(
+        name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+    )
+    unset_dump = unset.model_dump(mode="json", exclude_unset=True)
+    assert unset_dump.get("tag") == "playbill-query-projection-field-v1"

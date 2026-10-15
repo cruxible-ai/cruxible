@@ -12,9 +12,18 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
 
@@ -37,8 +46,35 @@ QueryTraversalDirection = Literal["forward", "reverse"]
 QuerySubjectField = Literal["subject_id", "subject_kind"]
 
 
+def emit_literal_discriminators(instance: BaseModel, data: Any, info: SerializationInfo) -> Any:
+    """Keep every single-valued ``Literal`` field in a dump, even under exclude_defaults/unset.
+
+    A ``tag``/``kind``/``artifact_format``-style field pinned to one literal
+    value is a format or discriminator marker, not an ordinary default that is
+    safe to omit: a discriminated union (or a version-checked loader) cannot
+    re-parse a dump that silently dropped it, which is exactly what
+    ``model_dump(exclude_defaults=True)`` or ``exclude_unset=True`` does today.
+    Detected structurally (a ``Literal`` annotation with exactly one allowed
+    value), so every model built on this convention is covered without having
+    to name each field.
+    """
+
+    if not isinstance(data, dict) or not (info.exclude_defaults or info.exclude_unset):
+        return data
+    for name, field in type(instance).model_fields.items():
+        if name in data:
+            continue
+        if get_origin(field.annotation) is Literal and len(get_args(field.annotation)) == 1:
+            data[name] = getattr(instance, name)
+    return data
+
+
 class _StrictQueryModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> Any:
+        return emit_literal_discriminators(self, handler(self), info)
 
 
 def _nfc(value: str, *, label: str) -> str:
@@ -56,8 +92,18 @@ def byte_sorted(value: tuple[str, ...]) -> tuple[str, ...]:
 def sorted_unique(value: tuple[str, ...], *, label: str) -> tuple[str, ...]:
     """Require one canonical byte-ordered, duplicate-free identifier tuple."""
 
-    if value != byte_sorted(value):
-        raise ValueError(f"{label} must be sorted by unsigned UTF-8 bytes and unique")
+    canonical = byte_sorted(value)
+    if value != canonical:
+        # Name the exact fix, not just the rule: an author who declared these
+        # in a natural order (e.g. display order) should not have to work out
+        # the byte ordering by hand.
+        duplicates = sorted({item for item in value if value.count(item) > 1})
+        detail = (
+            f" (repeated: {', '.join(duplicates)})"
+            if duplicates
+            else f"; use this order: {list(canonical)}"
+        )
+        raise ValueError(f"{label} must be sorted by unsigned UTF-8 bytes and unique{detail}")
     return value
 
 

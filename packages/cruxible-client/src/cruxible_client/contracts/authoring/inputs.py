@@ -7,9 +7,18 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
@@ -68,6 +77,7 @@ from cruxible_client.contracts.proposal_models import (
     validate_change_set_rationale,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
+from cruxible_client.contracts.query.grammar import emit_literal_discriminators
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
@@ -87,6 +97,10 @@ _SUBJECT_SHORTHAND_RE = re.compile(
 
 class _StrictInputModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> Any:
+        return emit_literal_discriminators(self, handler(self), info)
 
 
 class LiteralObjectInput(_StrictInputModel):
@@ -1025,6 +1039,25 @@ def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
         return _trigger_payload(value)
     if isinstance(value, SubjectKindInput):
         return _subject_kind_payload(value)
+    if not isinstance(value, ChangeSetInput):
+        # Every single-member *Input wrapper matched above; what is left
+        # falls through assuming a change set (`.members`). A bare spec type
+        # (e.g. QueryDefinitionSpec, ClaimTypeUpgrade, ...) given directly
+        # instead of its *Input wrapper landed here and raised an
+        # AttributeError on `.members` with no hint of the actual mistake.
+        wrapper_hint = (
+            ' Wrap it: QueryDefinitionInput(kind="query_definition", query_definition=<spec>).'
+            if isinstance(value, QueryDefinitionSpec | QueryDefinition)
+            else ""
+        )
+        raise AuthoringInputError(
+            "cruxible.authoring.input_not_recognized",
+            "input",
+            f"{type(value).__name__} is not a recognized AuthoringInput: it matches none of "
+            "the single-member *Input wrappers and is not a ChangeSetInput either.",
+            "Wrap the value in its matching *Input type (its `kind` literal names it), or "
+            f"pass a ChangeSetInput with members=(...).{wrapper_hint}",
+        )
     members = tuple(_change_set_member(member) for member in value.members)
     identities = tuple(authoring_member_identity(member) for member in members)
     if len(set(identities)) != len(identities):

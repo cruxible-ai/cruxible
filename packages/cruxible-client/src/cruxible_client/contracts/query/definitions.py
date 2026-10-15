@@ -13,9 +13,17 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -51,6 +59,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjection,
     QueryReferenceInventory,
     QueryTraversalStep,
+    emit_literal_discriminators,
     sorted_unique,
     validate_ordering_keys,
 )
@@ -76,6 +85,10 @@ class QueryDefinitionFormatError(FormatError):
 
 class _StrictQueryDefinitionModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> Any:
+        return emit_literal_discriminators(self, handler(self), info)
 
 
 class QueryEvaluationPolicy(_StrictQueryDefinitionModel):
