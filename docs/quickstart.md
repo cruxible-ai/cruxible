@@ -5,7 +5,7 @@ and which security advisories affect those releases, decides what can ship,
 and people and agents act on it every day. In this quickstart, Cruxible holds
 that knowledge for the team:
 
-- the services and their pins, as typed state your editor checks;
+- the services and their pins, as typed state every write is checked against;
 - a check against PyPI that brings back real advisories, as changes you review
   before they land;
 - a repository doc, `docs/dependencies.md`, that is flagged and regenerated
@@ -97,39 +97,45 @@ Line's proposal were verified with an equivalent cited write instead. -->
 
 ## Record what the team knows
 
-Write down the pins, as the services' `requirements.txt` files have them.
-Save this as `seed.py` and run it with `python seed.py`:
+Write down the pins, as the services' `requirements.txt` files have them, in a
+file the repository keeps. Save this as `pins.yaml`:
 
-~~~python
-from cruxible_client import Cruxible
+~~~yaml
+because: Pins from each service's requirements.txt.
+changes:
+  - {op: set, subject: pypi.release/requests-2.32.4, field: package, value: requests}
+  - {op: set, subject: pypi.release/requests-2.32.4, field: version, value: "2.32.4"}
+  - {op: set, subject: pypi.release/jinja2-3.1.6, field: package, value: jinja2}
+  - {op: set, subject: pypi.release/jinja2-3.1.6, field: version, value: "3.1.6"}
+  - {op: set, subject: app.service/payments, field: owner, value: ada}
+  - {op: add, subject: app.service/payments, field: depends_on, value: pypi.release/requests-2.32.4}
+  - {op: set, subject: app.service/billing, field: owner, value: grace}
+  - {op: add, subject: app.service/billing, field: depends_on, value: pypi.release/requests-2.32.4}
+  - {op: set, subject: app.service/search, field: owner, value: linus}
+  - {op: add, subject: app.service/search, field: depends_on, value: pypi.release/jinja2-3.1.6}
+~~~
 
-PINS = {
-    "payments": ("ada", "requests-2.32.4"),
-    "billing": ("grace", "requests-2.32.4"),
-    "search": ("linus", "jinja2-3.1.6"),
-}
+and apply it:
 
-with Cruxible.connect() as cx:
-    batch = cx.changes(because="Pins from each service's requirements.txt.")
-    for release in {"requests-2.32.4", "jinja2-3.1.6"}:
-        package, version = release.split("-")
-        batch.set(f"pypi.release/{release}", "package", package)
-        batch.set(f"pypi.release/{release}", "version", version)
-    for service, (owner, release) in PINS.items():
-        batch.set(f"app.service/{service}", "owner", owner)
-        batch.add(f"app.service/{service}", "depends_on", f"pypi.release/{release}")
-    outcome = batch.write()
-    print(outcome.status, "at generation", outcome.coordinate.generation)
+~~~bash
+cruxible write pins.yaml
 ~~~
 
 ~~~text
-accepted at generation 2
+accepted (generation 2, 698616d82fe7)
+  set pypi.release/requests-2.32.4 package: requests  [CLM-…; verdict supported]
+  ...
+  add app.service/search depends_on: pypi.release/jinja2-3.1.6  [CLM-…; verdict supported]
+  + subject pypi.release/requests-2.32.4
+  ...
 ~~~
 
-Every write says why (`because`), and the changes in one batch land together
-or not at all. Each accepted change is a numbered **generation**, a point in
-history you can read back later. Each value is stored as a **Claim**: the
-value, the reason, and the evidence for it, with an ID (`CLM-…`).
+`set` gives a field its value; `add` adds one more value to a field that holds
+several. Every write says why (`because`), and the changes in one write land
+together or not at all. Each accepted write is a numbered **generation**, a
+point in history you can read back later. Each value is stored as a
+**Claim**: the value, the reason, and the evidence for it, with an ID
+(`CLM-…`).
 
 Read it back:
 
@@ -147,19 +153,22 @@ app.service/search    linus  pypi.release/jinja2-3.1.6     -
 Nobody has recorded any advisories yet. As far as the team knows, everything
 is clear.
 
-Your editor knows this vocabulary too. Cruxible keeps it as Python types in
-`.cruxible/world.pyi`, current whenever the vocabulary changes. Put `.cruxible`
-on your type checker's search path (for mypy, `MYPYPATH=.cruxible`), bind the
-typed world once, and a misspelled field is caught before anything runs:
+Every write is checked against the vocabulary before it lands. A misspelled
+field is refused, with the nearest valid one:
 
-~~~python
-world = cast("World", cx.world())
-world.app.service["search"].set(ownr="grace", because="Grace took over search.")
+~~~bash
+cruxible set app.service/search ownr grace --because "Grace took over search."
 ~~~
 
 ~~~text
-error: Unexpected keyword argument "ownr" for "set" of "_S_app__service"; did you mean "owner"?
+refused (generation 2, 698616d82fe7)
+cruxible.write.unknown_field (change 0): app.service has no field 'ownr'
+  nearest: owner, app.service.owner
 ~~~
+
+Agents do the same through MCP or the Python SDK, where the vocabulary is also
+Python types (`.cruxible/world.pyi`) that an editor or type checker uses; see
+[For AI agents](for-ai-agents.md).
 
 ## A doc that depends on it
 
@@ -184,7 +193,7 @@ All services are clear to release.
 <!-- /cruxible:block:exposed -->
 EOF
 cruxible sources add deps docs/dependencies.md
-git add -A && git commit -m "Dependencies page"
+git add -A && git commit -m "Pins and dependencies page"
 ~~~
 
 `sources add` gives the file a name Cruxible can refer to. Now stamp both
@@ -337,34 +346,33 @@ No repair work in the observed domains.
 
 ## Fix and recheck
 
-The payments team upgrades to `requests 2.33.0`. Record the new pin through
-the typed world. Save as `bump.py`:
-
-~~~python
-from typing import TYPE_CHECKING, cast
-
-from cruxible_client import Cruxible
-
-if TYPE_CHECKING:
-    from world import World
-
-with Cruxible.connect() as cx:
-    world = cast("World", cx.world())
-    (old,) = world.app.service["payments"].depends_on
-    batch = cx.changes(because="payments now pins requests 2.33.0.")
-    batch.set("pypi.release/requests-2.33.0", "package", "requests")
-    batch.set("pypi.release/requests-2.33.0", "version", "2.33.0")
-    batch.retire(old.claim)
-    batch.add("app.service/payments", "depends_on", "pypi.release/requests-2.33.0")
-    outcome = batch.write()
-    print(outcome.status, "at generation", outcome.coordinate.generation)
-~~~
-
-`depends_on` holds the payments pin as a Claim; `retire` ends it and `add`
-records the new one, in one change. Then check the new release against PyPI:
+The payments team upgrades to `requests 2.33.0`. Record the new release and
+move the pin to it, in one write:
 
 ~~~bash
-python bump.py
+cruxible write - <<'EOF'
+because: payments now pins requests 2.33.0.
+changes:
+  - {op: set, subject: pypi.release/requests-2.33.0, field: package, value: requests}
+  - {op: set, subject: pypi.release/requests-2.33.0, field: version, value: "2.33.0"}
+  - {op: retire, target: {subject: app.service/payments, field: depends_on, value: pypi.release/requests-2.32.4}}
+  - {op: add, subject: app.service/payments, field: depends_on, value: pypi.release/requests-2.33.0}
+EOF
+~~~
+
+~~~text
+accepted (generation 4, 51e0d8ab74a5)
+  ...
+  retire app.service/payments depends_on: pypi.release/requests-2.32.4  [CLM-…]
+  add app.service/payments depends_on: pypi.release/requests-2.33.0  [CLM-…; verdict supported]
+  + subject pypi.release/requests-2.33.0
+~~~
+
+`retire` ends a value; the old pin stays in history. (A single retire is
+`cruxible retire app.service/payments depends_on pypi.release/requests-2.32.4
+--because "…"`.) Then check the new release against PyPI:
+
+~~~bash
 cruxible line run pypi.check_advisories
 ~~~
 
@@ -407,8 +415,8 @@ app.service/search    linus  3.1.6            -                    -
 
 The second follows each service's `depends_on` to its release. Nobody wrote
 "billing is affected": it follows from one advisory and the pins you recorded,
-and it answers the same way every time. In Python, `cx.query(name=...)` returns
-the same rows.
+and it answers the same way every time. Agents ask the same through MCP or
+the SDK (`cx.query(name=...)`).
 
 Ask the advisory why it is there, by the `CLM-…` ID the review printed:
 
