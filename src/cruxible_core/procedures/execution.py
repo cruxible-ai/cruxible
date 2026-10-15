@@ -4123,8 +4123,12 @@ class ProcedureExecutor:
             assert isinstance(source, ExternalSourceReference)
             material_bytes = base64.b64decode(provider_result.content_base64, validate=True)
             material = normalize_canonical(json.loads(material_bytes))
-            if canonical_bytes(material) != material_bytes:
-                raise ValueError("Source material is not canonical JSON")
+            # A workspace read's material is the canonical encoding this run made
+            # of its output, and the Capture build verified it canonical again;
+            # any other Provider's material is checked here.
+            if workspace_request is None or source_read_receipt is None:
+                if canonical_bytes(material) != material_bytes:
+                    raise ValueError("Source material is not canonical JSON")
             acquisition_receipt = CaptureAcquisitionReceiptV1(
                 capture_contract_digest=envelope.capture_contract_digest,
                 producer=envelope.producer,
@@ -4198,6 +4202,7 @@ class ProcedureExecutor:
             decision=decision,
             occurrence_path=occurrence.occurrence_path,
             invocation_receipt_digest=invocation_receipt_digest,
+            material_byte_length=len(material_bytes),
         )
         if decision.disposition == "selected":
             state.source_capture_associations.append(
@@ -4229,7 +4234,14 @@ class ProcedureExecutor:
         decision: AcquisitionInputDecision,
         occurrence_path: str | None = None,
         invocation_receipt_digest: str | None = None,
+        material_byte_length: int | None = None,
     ) -> None:
+        """Bind one acquisition result to the run.
+
+        ``material_byte_length`` is the length of the selected material's exact
+        canonical bytes when the caller holds them, so the run's Capture budget
+        is charged without encoding the material again.
+        """
         base = _node_policy_tokens(node) | state.control
         if admission.acquisition_policy_digest is not None:
             base = base | {policy_token(admission.acquisition_policy_digest)}
@@ -4287,8 +4299,13 @@ class ProcedureExecutor:
                 "This acquisition mode produced no canonical material for the run.",
                 node_id=node.node_id,
             )
-        state.capture_bytes += len(canonical_bytes(normalize_canonical(material)))
-        state.outputs[node.as_] = normalize_canonical(material)
+        normalized = normalize_canonical(material)
+        state.capture_bytes += (
+            len(canonical_bytes(normalized))
+            if material_byte_length is None
+            else material_byte_length
+        )
+        state.outputs[node.as_] = normalized
         state.facts[acquisition.capture_digest] = DependencyEvidenceFactsV1(
             epistemic_grade=acquisition.epistemic_grade,
             provenance_grade=acquisition.provenance_grade,

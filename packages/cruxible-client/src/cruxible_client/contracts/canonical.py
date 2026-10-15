@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import threading
+import typing
 import unicodedata
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
@@ -15,7 +16,7 @@ from typing import ClassVar, TypeVar, cast
 
 from pydantic import BaseModel
 
-from cruxible_client.contracts.content_memo import FrozenDict, FrozenList, sealed_memo
+from cruxible_client.contracts.content_memo import FrozenDict, FrozenList, is_sealed, sealed_memo
 from cruxible_client.contracts.errors import CanonicalEncodingError
 from cruxible_client.contracts.primitives import canonical_json, pretty_json
 
@@ -107,30 +108,101 @@ def canonical_bytes(value: object) -> bytes:
     return canonical_json(normalize_canonical(value)).encode("utf-8")
 
 
+def _model_classes(annotation: object) -> frozenset[type]:
+    """Every model class an annotation names, through unions, tuples and Annotated."""
+
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return frozenset((annotation,))
+    found: set[type] = set()
+    for argument in typing.get_args(annotation):
+        found |= _model_classes(argument)
+    return frozenset(found)
+
+
+_COMPOSABLE_FIELDS: dict[type, dict[str, frozenset[type]]] = {}
+
+
+def _composable_fields(cls: type[BaseModel]) -> dict[str, frozenset[type]]:
+    """The fields of ``cls`` whose JSON dump is exactly their model value's own dump.
+
+    A field qualifies when the class has no model serializer, computed field or
+    alias-keyed dump, and the field is neither excluded, aliased nor given its
+    own serializer; the value's class must then be one the annotation names (a
+    subclass would be dumped as its declared class). Decided once per class.
+    """
+
+    found = _COMPOSABLE_FIELDS.get(cls)
+    if found is None:
+        decorators = cls.__pydantic_decorators__
+        serialized = {
+            name
+            for decorator in decorators.field_serializers.values()
+            for name in decorator.info.fields
+        }
+        found = {}
+        if (
+            not decorators.model_serializers
+            and not cls.model_computed_fields
+            and not cls.model_config.get("serialize_by_alias")
+        ):
+            for name, info in cls.model_fields.items():
+                classes = _model_classes(info.annotation)
+                if (
+                    classes
+                    and not info.exclude
+                    and info.serialization_alias is None
+                    and name not in serialized
+                ):
+                    found[name] = classes
+        _COMPOSABLE_FIELDS[cls] = found
+    return found
+
+
+def _sealed_field_bytes(value: object, classes: frozenset[type]) -> bytes | None:
+    """A field value's canonical bytes from sealed models' remembered encodings, if it is one."""
+
+    if type(value) in classes and is_sealed(value):
+        return model_canonical_bytes(cast(BaseModel, value))
+    if (
+        type(value) is tuple
+        and value
+        and all(type(item) in classes and is_sealed(item) for item in value)
+    ):
+        return canonical_list_bytes([model_canonical_bytes(item) for item in value])
+    return None
+
+
 @sealed_memo
 def model_canonical_bytes(model: BaseModel) -> bytes:
     """``canonical_bytes(model.model_dump(mode="json"))``, encoded once per sealed model.
 
     A sealed model cannot change, so its encoding is remembered with it; any
     other model (built in code and never sealed, or a copy) is encoded afresh.
+    Either way, a field holding sealed models (or a tuple of them) takes their
+    remembered encodings and only the rest of the model is dumped and encoded:
+    a record rebuilt around sealed members never re-encodes a member.
     """
 
-    return canonical_bytes(model.model_dump(mode="json"))
+    composed: dict[str, bytes] = {}
+    for name, classes in _composable_fields(type(model)).items():
+        encoded = _sealed_field_bytes(model.__dict__.get(name), classes)
+        if encoded is not None:
+            composed[name] = encoded
+    if not composed:
+        return canonical_bytes(model.model_dump(mode="json"))
+    return composed_canonical_bytes(model.model_dump(mode="json", exclude=set(composed)), composed)
 
 
-def composed_canonical_digest(
-    domain: str,
-    payload: Mapping[str, object],
-    lists: Mapping[str, Sequence[bytes]],
-) -> str:
-    """``canonical_digest(domain, {**payload, **lists})``, each list given as its items' bytes.
+def composed_canonical_bytes(payload: Mapping[str, object], encoded: Mapping[str, bytes]) -> bytes:
+    """``canonical_bytes({**payload, **values})``, each of ``values`` given already encoded.
 
     An object's canonical encoding is its keys' and values' encodings joined in
-    key order, and a list's is its items' joined in order, so list items that
-    were each encoded once (``model_canonical_bytes`` remembers a sealed
-    model's) compose into the same preimage byte for byte, with no item
-    normalized or encoded again. Each entry of ``lists`` must hold exactly the
-    ``canonical_bytes`` of that list's values; ``payload`` is normalized here.
+    key order, and a list's is its items' joined in order, so a value that was
+    already encoded once (verified bytes, ``model_canonical_bytes`` of a sealed
+    model, or a list composed by ``canonical_list_bytes``) composes into the same
+    bytes without being normalized or encoded again. Each entry of ``encoded``
+    must be exactly ``canonical_bytes`` of its value; ``payload`` is normalized
+    here.
     """
 
     normalized = normalize_canonical(dict(payload))
@@ -138,15 +210,12 @@ def composed_canonical_digest(
     members: dict[str, bytes] = {
         key: canonical_json(value).encode("utf-8") for key, value in normalized.items()
     }
-    for raw_key, items in lists.items():
+    for raw_key, value in encoded.items():
         key = _normalize_string(raw_key)
         if key in members:
             raise CanonicalEncodingError(f"$: keys collide after NFC normalization: {key!r}")
-        members[key] = b"[" + b",".join(items) + b"]"
-    if "tag" in members:
-        raise CanonicalEncodingError("payload must not supply the reserved tag field")
-    members["tag"] = canonical_json(_normalize_string(domain)).encode("utf-8")
-    preimage = (
+        members[key] = value
+    return (
         b"{"
         + b",".join(
             canonical_json(key).encode("utf-8") + b":" + members[key]
@@ -154,13 +223,39 @@ def composed_canonical_digest(
         )
         + b"}"
     )
-    return hashlib.sha256(preimage).hexdigest()
+
+
+def composed_canonical_digest(
+    domain: str,
+    payload: Mapping[str, object],
+    encoded: Mapping[str, bytes],
+) -> str:
+    """``canonical_digest(domain, {**payload, **values})``, each of ``values`` given encoded.
+
+    The preimage is ``composed_canonical_bytes`` of the payload with the domain
+    as its reserved ``tag``.
+    """
+
+    if "tag" in payload or "tag" in {_normalize_string(key) for key in encoded}:
+        raise CanonicalEncodingError("payload must not supply the reserved tag field")
+    return hashlib.sha256(
+        composed_canonical_bytes(
+            payload,
+            {**encoded, "tag": canonical_json(_normalize_string(domain)).encode("utf-8")},
+        )
+    ).hexdigest()
+
+
+def canonical_list_bytes(items: Sequence[bytes]) -> bytes:
+    """The canonical encoding of a list from each item's own canonical bytes."""
+
+    return b"[" + b",".join(items) + b"]"
 
 
 def canonical_list_digest(domain: str, field: str, items: Sequence[bytes]) -> str:
     """``canonical_digest(domain, {field: values})`` from each value's own canonical bytes."""
 
-    return composed_canonical_digest(domain, {}, {field: items})
+    return composed_canonical_digest(domain, {}, {field: canonical_list_bytes(items)})
 
 
 def _plain(value: object) -> bool:
@@ -680,7 +775,9 @@ __all__ = [
     "canonical_bytes",
     "canonical_digest",
     "canonical_equal",
+    "canonical_list_bytes",
     "canonical_list_digest",
+    "composed_canonical_bytes",
     "composed_canonical_digest",
     "file_digest",
     "manifest_for_tree",

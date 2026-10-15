@@ -45,12 +45,13 @@ from cruxible_client.contracts.canonical import (
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
+    canonical_list_bytes,
     composed_canonical_digest,
     model_canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.captures import ProducerReceiptResolverProtocol
-from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
+from cruxible_client.contracts.content_memo import ParseMemo, seal, sealed_memo
 from cruxible_client.contracts.documents import BodyVerifierProtocol
 from cruxible_client.contracts.errors import (
     SettlementEvidenceUnproven,
@@ -415,7 +416,7 @@ def _receipt_digest(tag: str, values: Mapping[str, object]) -> ChangeSetDigest:
     """
 
     lists = {
-        name: [model_canonical_bytes(item) for item in value]
+        name: canonical_list_bytes([model_canonical_bytes(item) for item in value])
         for name, value in values.items()
         if name in _MEMBER_LISTS and isinstance(value, tuple)
     }
@@ -471,9 +472,14 @@ def build_change_set_record(
         }
         digest = _receipt_digest(tag, multi_member_values)
         record = {**multi_member_values, "changeset_digest": digest.tagged}
-        if isinstance(candidate, CandidateRecord):
-            return ChangeSetRecordV3.model_validate(record)
-        return ChangeSetRecordV2.model_validate(record)
+        receipt: ChangeSetRecordAnyVersion = (
+            ChangeSetRecordV3.model_validate(record)
+            if isinstance(candidate, CandidateRecord)
+            else ChangeSetRecordV2.model_validate(record)
+        )
+        # Built here and final: sealed, it is rendered and digested once.
+        seal(receipt)
+        return receipt
     values = {
         "sequence": sequence,
         "members": candidate.members,
@@ -693,7 +699,8 @@ def semantic_root_for_record(
     *,
     approval_digests: tuple[str, ...],
     parent_semantic_root: str,
-    parent_record: ChangeSetRecordAnyVersion | None,
+    parent_record: ChangeSetRecordAnyVersion | None = None,
+    parent_derivation: SemanticRootDerivation | None = None,
 ) -> SemanticRoot:
     """Derive one accepted generation's semantic root under its own derivation.
 
@@ -702,16 +709,23 @@ def semantic_root_for_record(
     over a succession boundary is three chances to disagree about which side of
     it a generation is on. The manifest root enters from the receipt the caller
     has already reproduced from member bytes, so nothing here is believed that
-    was not first recomputed.
+    was not first recomputed. The parent enters as its record or as the one
+    fact of it the derivation reads (``parent_derivation``), never both.
     """
 
+    if parent_derivation is not None and parent_record is not None:
+        raise SettlementIntegrityError("a parent enters as its record or its derivation, not both")
     if isinstance(record, ChangeSetRecordV3):
         return compute_semantic_root_v2(
             manifest_root_value=record.candidate.candidate_manifest_root,
             changeset_digest_value=record.changeset_digest,
             approval_digests=approval_digests,
             parent_semantic_root=parent_semantic_root,
-            parent_derivation=record_semantic_root_derivation(parent_record),
+            parent_derivation=(
+                record_semantic_root_derivation(parent_record)
+                if parent_derivation is None
+                else parent_derivation
+            ),
         )
     return compute_semantic_root(
         manifest_root_value=record.candidate.candidate_manifest_root,
@@ -816,6 +830,7 @@ def prepare_generation(
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
     admitted: AdmittedEvaluation | None = None,
+    parent_derivation: SemanticRootDerivation | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state.
 
@@ -825,6 +840,12 @@ def prepare_generation(
     the same candidate and tree, an unchanged derived-state epoch, every
     observed body read and fact build answering the same) and the laws are the
     build's own; every check below runs on it as on a fresh evaluation.
+
+    ``parent_derivation`` is the base generation's own semantic-root derivation,
+    read off the receipt its acceptance verified (``record_semantic_root_derivation``)
+    by a caller that holds it. The new root needs only that one fact of the
+    parent, so the parent's whole receipt is read and parsed only when no caller
+    carries it: a settle's cost then follows its own change, not its parent's.
     """
 
     if actor_binding.actor_id != proposal_actor_id:
@@ -998,7 +1019,11 @@ def prepare_generation(
         record,
         approval_digests=approval_digests,
         parent_semantic_root=base.semantic_root,
-        parent_record=parent_change_set_record(base_tree, sequence=sequence),
+        parent_derivation=(
+            record_semantic_root_derivation(parent_change_set_record(base_tree, sequence=sequence))
+            if parent_derivation is None
+            else parent_derivation
+        ),
     )
     parent_generation = GenerationRoot.from_tagged(base.generation_root)
     descriptor = GenerationDescriptor(

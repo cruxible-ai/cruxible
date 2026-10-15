@@ -60,6 +60,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderSecretReference,
     provider_external_occurrence_plan_digest,
     provider_invocation_output_digest,
+    provider_invocation_output_digest_of_bytes,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
@@ -2428,9 +2429,18 @@ def build_provider_external_capture_v2(
         )
     except (UnicodeDecodeError, ValueError) as exc:
         raise CaptureFormatError("workspace.file result is not canonical JSON") from exc
-    if (workspace_source and canonical_bytes(provider_output) != content) or (
-        output_commitment.output_digest != provider_invocation_output_digest(provider_output)
-    ):
+    if workspace_source:
+        # Verified canonical, the material's own bytes are the output's encoding.
+        reproduces = canonical_bytes(
+            provider_output
+        ) == content and output_commitment.output_digest == (
+            provider_invocation_output_digest_of_bytes(content)
+        )
+    else:
+        reproduces = output_commitment.output_digest == provider_invocation_output_digest(
+            provider_output
+        )
+    if not reproduces:
         raise CaptureFormatError("Provider Capture result differs from its invocation receipt")
     if workspace_source:
         assert source_read_receipt is not None
@@ -3192,8 +3202,9 @@ def _verify_capture_once(
                     raise CaptureFormatError(
                         "workspace.file invocation output digest is unavailable"
                     ) from exc
-                if output_commitment.output_digest != provider_invocation_output_digest(
-                    workspace_body
+                # The material was just verified canonical: its bytes are the encoding.
+                if output_commitment.output_digest != provider_invocation_output_digest_of_bytes(
+                    material
                 ):
                     raise CaptureFormatError(
                         "workspace.file material differs from its invocation receipt"

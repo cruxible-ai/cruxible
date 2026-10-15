@@ -329,6 +329,7 @@ def test_composed_digests_and_cheap_comparisons_equal_the_canonical_ones():
         canonical_bytes,
         canonical_digest,
         canonical_equal,
+        canonical_list_bytes,
         canonical_list_digest,
         composed_canonical_digest,
     )
@@ -340,12 +341,18 @@ def test_composed_digests_and_cheap_comparisons_equal_the_canonical_ones():
         "dom-é", {"members": items}
     )
     assert composed_canonical_digest(
-        "d", payload, {"members": encoded, "law_evidence": []}
-    ) == canonical_digest("d", {**payload, "members": items, "law_evidence": []})
+        "d",
+        payload,
+        {
+            "members": canonical_list_bytes(encoded),
+            "law_evidence": canonical_list_bytes([]),
+            "whole": canonical_bytes(items[0]),
+        },
+    ) == canonical_digest("d", {**payload, "members": items, "law_evidence": [], "whole": items[0]})
     with pytest.raises(ValueError):
         canonical_list_digest("d", "tag", encoded)
     with pytest.raises(ValueError):
-        composed_canonical_digest("d", {"members": 1}, {"members": encoded})
+        composed_canonical_digest("d", {"members": 1}, {"members": canonical_list_bytes(encoded)})
     for path in ("claims/ab/CLM-1.json", "subjects/kïnd/é.json"):
         reference = DependencyProofReference(
             source_path=path,
@@ -440,3 +447,51 @@ def test_claim_type_derived_rules_and_digests_are_taken_once_per_sealed_claim_ty
     assert other is not rules[0] and other.tag == "playbill-claim-adjudication-rule-v2"
     fresh = claim_verdicts.claim_adjudication_rule(value, claim_type_digest=digest)
     assert fresh == rules[0] and fresh is not rules[0]
+
+
+class _Stamped(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: str
+    meta: dict[str, object]
+
+
+class _Stamp(_Stamped):
+    extra: str = "x"
+
+
+class _Holder(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: str = "holder"
+    one: _Stamped
+    many: tuple[_Stamped, ...]
+    maybe: _Stamped | None = None
+    plain: dict[str, str]
+
+
+def test_a_model_holding_sealed_models_composes_their_encodings(monkeypatch):
+    import warnings
+
+    from cruxible_client.contracts import canonical
+
+    first = _Stamped(name="é", meta={"z": [1, None], "a": "b"})
+    second = _Stamped(name="b", meta={})
+    assert seal(first) and seal(second)
+    holder = _Holder(one=first, many=(first, second), plain={"k": "v"})
+    expected = canonical.canonical_bytes(holder.model_dump(mode="json"))
+    assert canonical.model_canonical_bytes(first)  # remembered on the sealed member
+    encoded: list[object] = []
+    real = canonical.canonical_bytes
+    monkeypatch.setattr(
+        canonical, "canonical_bytes", lambda value: encoded.append(value) or real(value)
+    )
+    # The unsealed holder is composed: only its new member is encoded, never the
+    # remembered one, and the bytes are exactly the whole dump's.
+    assert canonical.model_canonical_bytes(holder) == expected
+    assert len(encoded) == 1 and encoded[0] == second.model_dump(mode="json")
+    # A subclass is dumped as its declared class, so it is never composed.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        subclassed = _Stamp(name="q", meta={})
+        assert seal(subclassed)
+        other = _Holder(one=subclassed, many=(first,), plain={})
+        assert canonical.model_canonical_bytes(other) == real(other.model_dump(mode="json"))
