@@ -46,7 +46,9 @@ def write(instance: PlaybillInstance, *changes: dict[str, Any], **options: Any) 
         {"because": "The writer read it.", "changes": list(changes), **options}
     )
     return service_playbill_write(
-        instance, request=request, caller=WriteCaller(actor=OWNER, may_activate=True)
+        instance,
+        request=request,
+        caller=WriteCaller(actor=OWNER, may_activate=True, may_approve=True),
     )
 
 

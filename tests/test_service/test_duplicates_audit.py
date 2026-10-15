@@ -33,7 +33,9 @@ def instance(tmp_path: Path) -> PlaybillInstance:
 def write(instance: PlaybillInstance, *changes: dict[str, Any]) -> None:
     request = WriteRequest.model_validate({"because": "Seen.", "changes": list(changes)})
     outcome = service_playbill_write(
-        instance, request=request, caller=WriteCaller(actor=OWNER, may_activate=True)
+        instance,
+        request=request,
+        caller=WriteCaller(actor=OWNER, may_activate=True, may_approve=True),
     )
     assert outcome.status == "accepted", outcome
 

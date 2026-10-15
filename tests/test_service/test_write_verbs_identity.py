@@ -41,7 +41,9 @@ def _request(*changes: dict[str, Any], **options: Any) -> WriteRequest:
 
 
 def _as(actor_id: str) -> WriteCaller:
-    return WriteCaller(actor=AuthenticatedActor(actor_id=actor_id), may_activate=True)
+    return WriteCaller(
+        actor=AuthenticatedActor(actor_id=actor_id), may_activate=True, may_approve=True
+    )
 
 
 def _proposal_count(instance: PlaybillInstance) -> int:

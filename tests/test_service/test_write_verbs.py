@@ -1827,6 +1827,45 @@ def test_accept_never_and_a_tier_without_activation_stop_at_the_proposal(
     assert _values(instance, WI1, "status") == [] and _values(instance, WI2, "status") == []
 
 
+@pytest.mark.parametrize("surface", ["cli", "mcp", "sdk"])
+@pytest.mark.parametrize("independent", [False, True])
+def test_a_low_tier_caller_gets_no_runnable_higher_tier_call_whatever_the_reason(
+    tmp_path: Path, surface: str, independent: bool
+) -> None:
+    """Independent approval and accept="never" win the reason; the tier still gates the calls."""
+
+    instance, _owner = seed_write_surface(tmp_path, self_approval=not independent)
+    outcome = _write(
+        instance,
+        _set(WI1, "status", "ready"),
+        who=caller(may_activate=False),
+        surface=surface,
+        **({} if independent else {"accept": "never"}),
+    )
+    assert outcome.status == "awaiting_approval" and outcome.approval is not None
+    # The reason stays the one that stopped the write first.
+    assert outcome.approval.reason == (
+        "independent_approval_required" if independent else "accept_never"
+    )
+    assert outcome.approval.activate.startswith("someone who can runs ")
+    if independent:
+        assert outcome.approval.approve is not None
+        assert outcome.approval.approve.startswith("someone who can runs ")
+    else:
+        assert outcome.approval.approve is None
+    assert outcome.next is not None and outcome.next.startswith("someone who can runs ")
+    # A caller whose tier admits both keeps the plain, runnable calls.
+    allowed = _write(
+        instance,
+        _set(WI2, "status", "ready"),
+        surface=surface,
+        **({} if independent else {"accept": "never"}),
+    )
+    assert allowed.approval is not None
+    assert not allowed.approval.activate.startswith("someone who can runs ")
+    assert allowed.next is not None and not allowed.next.startswith("someone who can runs ")
+
+
 def test_an_unaccepted_read_coordinate_refuses_as_an_outcome(instance: PlaybillInstance) -> None:
     outcome = _write(instance, _set(WI1, "status", "ready"), at="f" * 40)
     assert outcome.status == "refused"

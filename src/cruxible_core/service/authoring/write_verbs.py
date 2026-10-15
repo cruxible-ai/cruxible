@@ -205,10 +205,15 @@ _CONTRACT_QUALIFIER = "CaptureContract:"
 
 @dataclass(frozen=True)
 class WriteCaller:
-    """Who is writing, and whether their tier admits activating what they propose."""
+    """Who is writing, and whether their tier admits approving and activating proposals.
+
+    Both decide how a write result's approve/activate/next calls read: one the
+    caller cannot run is named as someone else's, whatever the approval reason.
+    """
 
     actor: AuthenticatedActor
     may_activate: bool
+    may_approve: bool
 
 
 def _refuse(
@@ -2448,27 +2453,39 @@ def _approval(
         if reason == "independent_approval_required"
         else ()
     )
-    activate_call = _render_proposal_call(surface, "activate", proposal_id)
-    if reason == "activation_not_permitted":
-        # This caller's own tier is why activation stopped here; the rendered
-        # call must not read as something they can run themselves.
-        activate_call = f"someone who can runs {activate_call}"
     return ApprovalNeeded(
         reason=reason,
         minimum_approvals=minimum,
         eligible_approvers=approvers,
         approve=(
-            _render_proposal_call(
-                surface,
-                "approve",
-                proposal_id,
-                signer=approvers[0] if approvers else None,
+            _for_caller(
+                _render_proposal_call(
+                    surface,
+                    "approve",
+                    proposal_id,
+                    signer=approvers[0] if approvers else None,
+                ),
+                permitted=caller.may_approve,
             )
             if reason == "independent_approval_required"
             else None
         ),
-        activate=activate_call,
+        activate=_for_caller(
+            _render_proposal_call(surface, "activate", proposal_id),
+            permitted=caller.may_activate,
+        ),
     )
+
+
+def _for_caller(call: str, *, permitted: bool) -> str:
+    """``call`` as this caller can act on it: run it, or hand it to someone who can.
+
+    Gated on the caller's own tier, never on the approval reason: a caller
+    stopped for independent approval or ``accept="never"`` may still lack the
+    tier the call needs.
+    """
+
+    return call if permitted else f"someone who can runs {call}"
 
 
 def _approval_reason(

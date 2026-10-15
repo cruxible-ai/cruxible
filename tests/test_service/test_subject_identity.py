@@ -94,7 +94,7 @@ def write(instance: PlaybillInstance, *changes: dict[str, Any], **request: Any) 
     return service_playbill_write(
         instance,
         request=WriteRequest.model_validate(body),
-        caller=WriteCaller(actor=OWNER, may_activate=True),
+        caller=WriteCaller(actor=OWNER, may_activate=True, may_approve=True),
     )
 
 
