@@ -5,8 +5,10 @@ Three verbs change accepted state, identically on MCP, the CLI, HTTP and the SDK
 - ``set`` puts one value in one field of one Subject. On a single-value field it
   replaces the live value (the Claim it revises is inferred);
 - ``retire`` ends one live Claim, named by ID or by its Subject and field;
-- ``write`` applies a batch of ``set``, ``add`` and ``retire`` changes as one
-  change set.
+- ``write`` applies a batch of ``create``, ``set``, ``add`` and ``retire``
+  changes as one change set. A ``create`` names a new Subject by its kind and
+  key under a label; the write's other changes name it ``{"created": label}``,
+  as their subject or as a Subject value, in any order.
 
 Every write lowers to the ordinary authoring change set and goes through the
 same coordinator, preflight, submit, review and activation as any other
@@ -37,6 +39,7 @@ from cruxible_client.contracts.authoring.models import WorkingSelectionObservati
 from cruxible_client.contracts.codes import CurrentCode, code_told_union
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
 from cruxible_client.contracts.read_values import ShownValue
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyValue
 
 #: The kind part of a Subject reference: a canonical Subject kind.
 SUBJECT_KIND_PATTERN = r"[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*"
@@ -120,7 +123,7 @@ WriteStatus = Literal[
     "would_await_approval",
     "would_refuse",
 ]
-WriteOp = Literal["set", "add", "retire"]
+WriteOp = Literal["create", "set", "add", "retire"]
 ApprovalReason = Literal[
     "independent_approval_required", "activation_not_permitted", "accept_never"
 ]
@@ -223,6 +226,60 @@ Evidence = Annotated[
 
 # -- changes --------------------------------------------------------------------
 
+#: A ``create`` change's label: how the write's other changes name its Subject.
+NEW_SUBJECT_LABEL_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
+NewSubjectLabel = Annotated[
+    str,
+    Field(
+        pattern=NEW_SUBJECT_LABEL_PATTERN,
+        description="A label unique within the write: lowercase, digits, '_' and '-'.",
+    ),
+]
+
+
+class CreatedSubject(_StrictWriteModel):
+    """The Subject a ``create`` change of the same write lands on, named by its label."""
+
+    created: NewSubjectLabel
+
+
+SubjectTarget: TypeAlias = SubjectRef | CreatedSubject
+"""A change's Subject: an accepted one as kind/id, or one this write creates."""
+
+
+class CreateChange(_StrictWriteModel):
+    """Create one Subject by its kind and key; core assigns its id.
+
+    ``key`` is the value of a one-key kind's key, every key part of a composite
+    kind (each key ClaimType by predicate), or absent for a minted kind. A key
+    one live Subject already holds lands on that Subject and creates nothing
+    (the outcome says ``resolved: existing``); ``expect_new`` refuses
+    ``cruxible.write.subject_exists`` instead. Several holders refuse
+    ``cruxible.subject.key_ambiguous``. ``create_new`` makes a further holder of
+    a ``hint`` kind's key (refused on a ``unique`` kind).
+    """
+
+    op: Literal["create"] = "create"
+    label: NewSubjectLabel
+    subject_kind: str = Field(
+        pattern=rf"^{SUBJECT_KIND_PATTERN}$", description="The kind, as orient names it."
+    )
+    key: SubjectKeyValue | tuple[SubjectKeyPart, ...] | None = Field(
+        default=None,
+        description=(
+            "A one-key kind's key value; or each part of a composite key as "
+            '{"predicate", "value"}; none for a minted kind.'
+        ),
+    )
+    create_new: bool = Field(
+        default=False,
+        description="A hint kind only: make a further holder of a key a live Subject holds.",
+    )
+    expect_new: bool = Field(
+        default=False,
+        description="Refuse cruxible.write.subject_exists when a live Subject holds the key.",
+    )
+
 
 class SlotRef(_StrictWriteModel):
     """One field of one Subject: the slot a single-value Claim fills."""
@@ -242,12 +299,15 @@ class SetChange(_StrictWriteModel):
     """
 
     op: Literal["set"] = "set"
-    subject: SubjectRef | None = Field(
+    subject: SubjectTarget | None = Field(
         default=None,
-        description="The Subject as kind/id; default: the write's own subject.",
+        description=(
+            'The Subject as kind/id, or {"created": label} for one this write creates; '
+            "default: the write's own subject."
+        ),
     )
     field: FieldName
-    value: ClaimValue
+    value: ClaimValue | CreatedSubject
     role: WriteRole | None = Field(
         default=None,
         description="Only when the field permits more than one role.",
@@ -263,12 +323,15 @@ class AddChange(_StrictWriteModel):
     """Add one more value to a many-valued field, beside the values already there."""
 
     op: Literal["add"] = "add"
-    subject: SubjectRef | None = Field(
+    subject: SubjectTarget | None = Field(
         default=None,
-        description="The Subject as kind/id; default: the write's own subject.",
+        description=(
+            'The Subject as kind/id, or {"created": label} for one this write creates; '
+            "default: the write's own subject."
+        ),
     )
     field: FieldName
-    value: ClaimValue
+    value: ClaimValue | CreatedSubject
     role: WriteRole | None = Field(
         default=None,
         description="Only when the field permits more than one role.",
@@ -305,7 +368,7 @@ class RetireChange(_StrictWriteModel):
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
 
-Change = Annotated[SetChange | AddChange | RetireChange, Field(discriminator="op")]
+Change = Annotated[CreateChange | SetChange | AddChange | RetireChange, Field(discriminator="op")]
 
 
 # -- requests -------------------------------------------------------------------
@@ -405,6 +468,8 @@ class ChangeOutcome(_StrictWriteModel):
 
     op: WriteOp
     subject: str | None = Field(default=None, exclude_if=_omit_none)
+    # A create: whether it made the Subject or landed on the live one holding its key.
+    resolved: Literal["created", "existing"] | None = Field(default=None, exclude_if=_omit_none)
     field: str | None = Field(default=None, exclude_if=_omit_none)
     predicate: str | None = Field(default=None, exclude_if=_omit_none)
     # The slot's value before and after, as a summary shows it: a long string is
@@ -539,7 +604,15 @@ class WriteOutcome(_StrictWriteModel):
     tag: Literal["playbill-write-outcome-v1"] = "playbill-write-outcome-v1"
     status: WriteStatus
     changes: tuple[ChangeOutcome, ...] = ()
-    subjects_added: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
+    subjects_added: tuple[str, ...] = Field(
+        default=(),
+        exclude_if=_omit_empty,
+        description=(
+            "The Subjects this write creates, by the id core assigned. A minted id (or a "
+            "further hint holder's) is assigned when the write is submitted, so a dry run "
+            "leaves it out."
+        ),
+    )
     proposal: WriteProposalRef | None = Field(default=None, exclude_if=_omit_none)
     coordinate: GetCoordinate = Field(
         description=(
@@ -574,6 +647,10 @@ __all__ = [
     "Change",
     "ChangeOutcome",
     "ContractEvidence",
+    "CreateChange",
+    "CreatedSubject",
+    "NEW_SUBJECT_LABEL_PATTERN",
+    "NewSubjectLabel",
     "ClaimId",
     "ClaimValue",
     "Evidence",
@@ -590,6 +667,7 @@ __all__ = [
     "AddChange",
     "SlotRef",
     "SubjectRef",
+    "SubjectTarget",
     "subject_reference",
     "VerdictNotSupportedWarning",
     "WriteAccept",

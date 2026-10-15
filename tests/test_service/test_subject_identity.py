@@ -347,6 +347,57 @@ def test_authoring_creates_minted_and_composite_subjects_and_reports_their_ids(
     }
 
 
+def test_a_write_creates_minted_composite_and_further_hint_subjects(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.subject_kinds import is_distinct_holder_id
+
+    _create(instance, NOTE, "Same")
+    outcome = write(
+        instance,
+        {"op": "create", "label": "t1", "subject_kind": TICKET},
+        {"op": "create", "label": "t2", "subject_kind": TICKET},
+        {"op": "set", "subject": {"created": "t1"}, "field": "title", "value": "First"},
+        {"op": "set", "subject": {"created": "t2"}, "field": "title", "value": "Second"},
+        {
+            "op": "create",
+            "label": "pair",
+            "subject_kind": PAIR,
+            "key": [
+                {"predicate": f"{PAIR}.left", "value": "Alpha  One"},
+                {"predicate": f"{PAIR}.right", "value": "Beta"},
+            ],
+        },
+        {"op": "create", "label": "note", "subject_kind": NOTE, "key": "same", "create_new": True},
+    )
+    assert outcome.status == "accepted", outcome
+    first, second, title_one, title_two, pair, note = outcome.changes
+    assert first.subject is not None and second.subject is not None
+    assert first.subject.startswith(f"{TICKET}/sub-") and first.subject != second.subject
+    assert (title_one.subject, title_two.subject) == (first.subject, second.subject)
+    assert pair.subject == f"{PAIR}/alpha-one--beta"
+    assert note.subject is not None and note.subject != f"{NOTE}/same"
+    assert is_distinct_holder_id(note.subject.partition("/")[2], ["same"])
+    assert set(outcome.subjects_added) == {
+        first.subject,
+        second.subject,
+        pair.subject,
+        note.subject,
+    }
+    assert key_claims(instance, TICKET, first.subject.partition("/")[2]) == {
+        f"{TICKET}.title": "First"
+    }
+    assert key_claims(instance, PAIR, "alpha-one--beta") == {
+        f"{PAIR}.left": "alpha one",
+        f"{PAIR}.right": "beta",
+    }
+    # A composite kind takes each key part; one bare value names only a one-key kind.
+    bare = write(instance, {"op": "create", "label": "p", "subject_kind": PAIR, "key": "x"})
+    assert bare.refusal is not None and bare.refusal.code == "cruxible.subject.key_invalid"
+    keyed = write(instance, {"op": "create", "label": "t", "subject_kind": TICKET, "key": "x"})
+    assert keyed.refusal is not None and keyed.refusal.code == "cruxible.subject.key_invalid"
+
+
 def test_an_author_chosen_id_for_a_new_subject_refuses(instance: PlaybillInstance) -> None:
     from tests.core_support._identity_support import shell
 

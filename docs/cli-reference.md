@@ -3354,9 +3354,20 @@ Claims that depend on it retire with it; `--expect` compares the field's values
 as on `set`. `write` applies a
 FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
 [...]}`, or a bare list with `--because`, each change
-`{"op": "set" | "add", "subject", "field", "value"}` or
-`{"op": "retire", "target"}`. `add` puts one more value in a many-valued field;
-two adds on one field land in one change set. A top-level `"subject"` is the
+`{"op": "set" | "add", "subject", "field", "value"}`,
+`{"op": "retire", "target"}` or
+`{"op": "create", "label", "subject_kind", "key"}`. `add` puts one more value in
+a many-valued field; two adds on one field land in one change set. A `create`
+makes a Subject of any declared kind: `key` is a one-key kind's value, every
+part of a composite key as `[{"predicate", "value"}, ...]`, or absent for a
+minted kind. The write's other changes name it `{"created": "<label>"}`, as
+their `subject` or as a Subject `value`, in any order. A key one live Subject
+holds lands on that Subject and creates nothing (the outcome says `create
+<ref>: existing`, so running a seed again answers as done); `"expect_new":
+true` refuses `cruxible.write.subject_exists` instead, several holders refuse
+`cruxible.subject.key_ambiguous`, and `"create_new": true` makes a further
+holder of a `hint` kind's key. A minted id comes from the submitted change, so
+a `--dry-run` names none. A top-level `"subject"` is the
 Subject of every change that names none (a retire's target may then be
 `{"field": ...}`); a change's own subject overrides it, and a change with
 neither refuses `cruxible.write.subject_required`. `--schema` prints what FILE

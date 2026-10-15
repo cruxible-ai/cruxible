@@ -60,12 +60,16 @@ def _write(
     return service_playbill_write(instance, request=request, caller=who or caller())
 
 
-def _set(subject: str, field: str, value: object, **extra: object) -> dict[str, Any]:
+def _set(subject: object, field: str, value: object, **extra: object) -> dict[str, Any]:
     return {"op": "set", "subject": subject, "field": field, "value": value, **extra}
 
 
-def _add(subject: str, field: str, value: object) -> dict[str, Any]:
+def _add(subject: object, field: str, value: object) -> dict[str, Any]:
     return {"op": "add", "subject": subject, "field": field, "value": value}
+
+
+def _create(label: str, key: object, **extra: object) -> dict[str, Any]:
+    return {"op": "create", "label": label, "subject_kind": KIND, "key": key, **extra}
 
 
 def _values(instance: PlaybillInstance, subject: str, field: str) -> list[object]:
@@ -309,6 +313,75 @@ def test_a_missing_subject_of_a_known_kind_is_added_in_the_same_change_set(
     assert outcome.subjects_added == (f"{KIND}/wi-new",)
     assert outcome.coordinate.generation == outcome.base.generation + 1  # type: ignore[union-attr]
     assert _values(instance, f"{KIND}/wi-new", "title") == ["Brand new"]
+
+
+# -- create -----------------------------------------------------------------------
+
+
+def test_a_create_is_named_by_its_label_from_changes_in_any_order(
+    instance: PlaybillInstance,
+) -> None:
+    new = {"created": "new"}
+    outcome = _write(
+        instance,
+        _set(new, "title", "Brand new"),
+        _add(WI1, "governs", new),
+        _create("new", "wi-new"),
+    )
+    assert outcome.status == "accepted", outcome
+    assert [change.op for change in outcome.changes] == ["set", "add", "create"]
+    title, edge, created = outcome.changes
+    assert (created.subject, created.resolved) == (f"{KIND}/wi-new", "created")
+    assert title.subject == f"{KIND}/wi-new" and edge.after == f"{KIND}/wi-new"
+    assert outcome.subjects_added == (f"{KIND}/wi-new",)
+    assert _values(instance, f"{KIND}/wi-new", "title") == ["Brand new"]
+    assert _values(instance, WI1, "governs") == [f"{KIND}/wi-new"]
+    # The key is the create's to write: one Claim, never a second.
+    assert _values(instance, f"{KIND}/wi-new", "slug") == ["wi-new"]
+
+
+def test_a_create_whose_key_a_subject_holds_lands_on_it_unless_expected_new(
+    instance: PlaybillInstance,
+) -> None:
+    assert _write(instance, _create("new", "wi-new")).status == "accepted"
+    again = _write(instance, _create("new", "wi-new"), _set({"created": "new"}, "title", "Seen"))
+    assert again.status == "accepted", again
+    created, title = again.changes
+    assert (created.subject, created.resolved) == (f"{KIND}/wi-new", "existing")
+    assert title.subject == f"{KIND}/wi-new" and again.subjects_added == ()
+    refused = _refusal(_write(instance, _create("new", "wi-new", expect_new=True)))
+    assert refused.code == "cruxible.write.subject_exists"
+    assert refused.candidates == (f"{KIND}/wi-new",) and refused.change == 0
+
+
+def test_a_create_refuses_a_repeated_or_unknown_label_and_its_own_key_field(
+    instance: PlaybillInstance,
+) -> None:
+    twice = _refusal(_write(instance, _create("a", "wi-a"), _create("a", "wi-b")))
+    assert (twice.code, twice.change) == ("cruxible.write.label_repeated", 1)
+    unknown = _refusal(_write(instance, _create("a", "wi-a"), _set({"created": "b"}, "title", "x")))
+    assert unknown.code == "cruxible.write.label_unknown"
+    keyed = _refusal(_write(instance, _create("a", "wi-a"), _set({"created": "a"}, "slug", "z")))
+    assert keyed.code == "cruxible.write.key_set_by_creation"
+    new = _refusal(_write(instance, _create("a", "wi-a", create_new=True)))
+    assert new.code == "cruxible.subject.create_new_refused"
+    keyless = _refusal(_write(instance, {"op": "create", "label": "a", "subject_kind": KIND}))
+    assert keyless.code == "cruxible.subject.key_missing"
+    literal = _refusal(_write(instance, _create("a", "wi-a"), _set(WI1, "title", {"created": "a"})))
+    assert literal.code == "cruxible.write.value_type_mismatch"
+
+
+def test_a_dry_run_of_a_create_reports_the_subject_and_writes_nothing(
+    instance: PlaybillInstance,
+) -> None:
+    before = _snapshot(instance)
+    preview = _write(
+        instance, _create("new", "wi-new"), _set({"created": "new"}, "title", "N"), dry_run=True
+    )
+    assert preview.status == "would_accept", preview
+    assert preview.subjects_added == (f"{KIND}/wi-new",)
+    assert preview.changes[0].resolved == "created"
+    assert _snapshot(instance) == before
 
 
 # -- exact content ----------------------------------------------------------------

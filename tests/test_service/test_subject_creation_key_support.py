@@ -111,6 +111,21 @@ def test_a_write_verb_create_by_key_writes_a_supported_key_claim(
     assert verdicts(instance, "cve-2021-44228", TITLE) == ["supported"]
 
 
+def test_a_write_create_change_writes_a_supported_key_claim(
+    instance: PlaybillInstance,
+) -> None:
+    outcome = write(
+        instance,
+        {"op": "create", "label": "cve", "subject_kind": KIND, "key": "CVE-2021-44228"},
+        {"op": "set", "subject": {"created": "cve"}, "field": "title", "value": "Log4Shell"},
+    )
+
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].subject == f"{KIND}/cve-2021-44228"
+    assert verdicts(instance, "cve-2021-44228", SLUG) == ["supported"]
+    assert verdicts(instance, "cve-2021-44228", TITLE) == ["supported"]
+
+
 def test_a_later_revision_of_a_key_claim_still_needs_admitted_evidence(
     instance: PlaybillInstance,
 ) -> None:

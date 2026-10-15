@@ -492,6 +492,24 @@ def _by_write(world: PlaybillInstance, kind: str, key: str | None, create_new: b
     return ("resolved", item.subject)
 
 
+def _by_create(world: PlaybillInstance, kind: str, key: str | None, create_new: bool) -> object:
+    create: dict[str, Any] = {"op": "create", "label": "it", "subject_kind": kind}
+    if key is not None:
+        create["key"] = key
+    if create_new:
+        create["create_new"] = True
+    outcome = _write(
+        world,
+        create,
+        {"op": "set", "subject": {"created": "it"}, "field": "note", "value": "m"},
+        dry_run=True,
+    )
+    if outcome.refusal is not None:
+        return ("refused", (outcome.refusal.code,))
+    created = outcome.changes[0]
+    return ("resolved" if created.resolved == "existing" else "created", created.subject)
+
+
 def _by_procedure_item(
     world: PlaybillInstance, kind: str, key: str | None, create_new: bool
 ) -> object:
@@ -526,6 +544,7 @@ def _by_procedure_item(
 CREATION_ROUTES = {
     "change-set Subject member": _by_member,
     "write kind/<text>": _by_write,
+    "write create": _by_create,
     "Procedure Subject item": _by_procedure_item,
 }
 
@@ -576,6 +595,10 @@ def test_one_creation_rule_on_every_route(
         return
     if route == "write kind/<text>" and create_new:
         return  # the write verb has no create_new; it never makes a further holder
+    if route == "write create" and expected == ("created", "minted"):
+        # A minted id comes from the submitted operation: a dry run names none.
+        assert answer == ("created", None), answer
+        return
     if expected == ("created", "minted"):
         assert answer[0] == "created" and str(answer[1]).startswith(f"{MINT}/sub-"), answer  # type: ignore[index]
         return

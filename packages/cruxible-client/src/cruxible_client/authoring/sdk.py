@@ -249,6 +249,7 @@ from cruxible_client.contracts.write import (
     AddChange,
     Change,
     ClaimValue,
+    CreateChange,
     Evidence,
     ExpectedValue,
     RetireChange,
@@ -1765,9 +1766,11 @@ class WriteBatch:
 
     def __repr__(self) -> str:
         spelled = ", ".join(
-            f"{item.op} {item.subject or self.subject or ''} {item.field}".replace("  ", " ")
-            if not isinstance(item, RetireChange)
-            else f"retire {item.target}"
+            f"retire {item.target}"
+            if isinstance(item, RetireChange)
+            else f"create {item.subject_kind} as {item.label}"
+            if isinstance(item, CreateChange)
+            else f"{item.op} {item.subject or self.subject or ''} {item.field}".replace("  ", " ")
             for item in self.changes
         )
         about = "" if self.subject is None else f", subject={self.subject!r}"

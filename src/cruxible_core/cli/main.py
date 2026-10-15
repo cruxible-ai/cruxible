@@ -777,7 +777,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "playbill", "retire", "Retire one live Claim, by ID or by Subject and field."
     ),
     "write": _command(
-        "playbill", "write_changes", "Apply set, add and retire changes as one change set."
+        "playbill", "write_changes", "Apply create, set, add and retire changes as one change set."
     ),
     "since": _command("playbill", "since", "Read accepted ChangeSet history."),
     "orient": _command(

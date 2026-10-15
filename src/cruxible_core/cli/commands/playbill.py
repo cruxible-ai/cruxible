@@ -4392,7 +4392,9 @@ def _write_text(outcome: WriteOutcome) -> None:
     click.echo(f"{head} (generation {outcome.coordinate.generation}, {outcome.coordinate.git_oid})")
     for change in outcome.changes:
         target = " ".join(part for part in (change.subject, change.field) if part)
-        if change.op == "retire":
+        if change.op == "create":
+            line = f"  create {change.subject or '(id assigned on submit)'}: {change.resolved}"
+        elif change.op == "retire":
             line = f"  retire {target}: {_get_value_text(change.before)}"
         elif change.op == "add":
             line = f"  add {target}: {_get_value_text(change.after)}"
@@ -4757,13 +4759,14 @@ def write_changes(
     at_oid: str | None,
     output_json: bool,
 ) -> None:
-    """Apply FILE's set, add and retire changes as one change set.
+    """Apply FILE's create, set, add and retire changes as one change set.
 
     FILE (YAML or JSON; - reads stdin) holds {"because": ..., "changes": [...]},
     or a bare list of changes with --because. Each change is {"op": "set" |
-    "add", "subject", "field", "value"} or {"op": "retire", "target"}; a
-    top-level "subject" is the Subject of every change that names none.
-    --schema prints the schema.
+    "add", "subject", "field", "value"}, {"op": "retire", "target"} or {"op":
+    "create", "label", "subject_kind", "key"}; other changes name a created
+    Subject {"created": label}, as subject or value. A top-level "subject" is
+    the Subject of every change that names none. --schema prints the schema.
     """
 
     if schema:

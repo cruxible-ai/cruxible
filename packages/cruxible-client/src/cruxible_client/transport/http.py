@@ -1354,7 +1354,7 @@ class CruxibleClient:
         return self._parse_model(response, WriteOutcome)
 
     def write(self, instance_id: str, *, request: WriteRequest) -> WriteOutcome:
-        """Apply set, add and retire changes as one change set."""
+        """Apply create, set, add and retire changes as one change set."""
         response = self._client.post(
             f"/api/v1/{instance_id}/write",
             json=request.model_dump(mode="json", exclude_none=True),
