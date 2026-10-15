@@ -387,7 +387,9 @@ class PlaybillInstance:
         self.claim_law_memo: BoundedCache[bytes] = self.derived.memo(
             "claim-law-evidence", max_entries=65536, max_bytes=64 * 1024 * 1024
         )
-        self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
+        self.prepared_evaluations = PreparedEvaluationAdapter(
+            self.derived, fact_inputs=self.query_fact_inputs
+        )
         for name, namespace, adapter, source in (
             ("accepted-artifacts", "accepted", self.derived, "verified-ledger-tree-v1"),
         ):
@@ -478,6 +480,18 @@ class PlaybillInstance:
             predicates=predicates,
             subject_kinds=subject_kinds,
         )
+
+    def query_fact_inputs(self) -> str | None:
+        """The writer-owned fingerprint of every mutable input accepted query facts read.
+
+        At one accepted coordinate a facts build varies only with the body store
+        and the re-observation journal; this names both (``verdict_input_fingerprint``).
+        A build observed under one value is replayable only while it holds.
+        """
+
+        from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
+
+        return verdict_input_fingerprint(self)
 
     def _request_query_facts(
         self,

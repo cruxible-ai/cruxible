@@ -4701,7 +4701,8 @@ def _evaluate_scoped_members(
         from cruxible_core.proposals.delegated_authority import delegated_authority_issues
 
         # The settle terminal checked this same condition at this head just
-        # before submitting; on exactly those inputs its answer stands.
+        # before submitting; on exactly those inputs, while every fact build it
+        # consumed still stands, its answer stands.
         issues = (
             settle_condition.issues
             if settle_condition is not None
@@ -4711,6 +4712,7 @@ def _evaluate_scoped_members(
                 timestamp=timestamp,
                 scope=scope,
                 candidate_tree=candidate_tree,
+                facts=query_facts_provider,
             )
             else delegated_authority_issues(
                 mandate_digest=delegated_mandate_digest,
@@ -5090,7 +5092,8 @@ def evaluate_proposal_tree(
 
     `settle_condition` is a settle terminal's own check of its mandate's
     condition, made at this head just before it submitted; it is used only
-    when its inputs are exactly this evaluation's.
+    when its inputs are exactly this evaluation's and the fact builds it
+    consumed replay unchanged through `query_facts_provider`.
 
     `replaying_accepted` is only for recovery, re-deriving a generation main
     already holds: Captures it cites were admitted when it was accepted, so they

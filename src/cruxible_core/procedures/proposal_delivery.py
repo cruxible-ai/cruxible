@@ -32,8 +32,9 @@ import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import ValidationError
 
@@ -167,7 +168,11 @@ from cruxible_core.proposals.delegated_authority import (
     claim_types_outside_scope,
     delegated_authority_issues,
 )
-from cruxible_core.proposals.prepared_evaluation import SettlementHandoff
+from cruxible_core.proposals.prepared_evaluation import (
+    FactsObservation,
+    SettlementHandoff,
+    observed_facts_build,
+)
 from cruxible_core.proposals.proposals import ProposalService
 from cruxible_core.runtime.phase_timing import timed_operation
 
@@ -175,6 +180,7 @@ if TYPE_CHECKING:
     from cruxible_core.derived.derived_state import ClaimPredicateKey, SnapshotTree
     from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
     from cruxible_core.procedures.execution import ProcedureRunAdmissionV1
+    from cruxible_core.query.backends import ClaimQueryFactsV1
     from cruxible_core.runtime.instance import PlaybillInstance
 
 PROPOSAL_CLAIM_ID_DOMAIN = "playbill-procedure-proposal-claim-id-v1"
@@ -2266,6 +2272,24 @@ class ProposalTerminalEgressSink:
                 assert mandate is not None and mandate.condition is not None  # checked above
                 head = self.instance.accepted_coordinate()
                 timestamp = canonical_candidate_timestamp(request.evaluation_time)
+                # Each facts build the condition consumes, bound to the mutable
+                # inputs (bodies, re-observations) it was built on; None for one
+                # no binding names.
+                consumed: list[FactsObservation | None] = []
+
+                def condition_facts(
+                    predicates: tuple[str, ...], subject_kinds: tuple[str, ...]
+                ) -> ClaimQueryFactsV1:
+                    value, observation = observed_facts_build(
+                        partial(self.instance._accepted_query_facts, self.instance),
+                        head,
+                        predicates=predicates,
+                        subject_kinds=subject_kinds,
+                        inputs=self.instance.query_fact_inputs,
+                    )
+                    consumed.append(observation)
+                    return cast("ClaimQueryFactsV1", value)
+
                 issues = delegated_authority_issues(
                     mandate_digest=digest,
                     scope=request.target_paths,
@@ -2273,20 +2297,22 @@ class ProposalTerminalEgressSink:
                     candidate_tree=prepared.candidate_tree,
                     current=head,
                     timestamp=timestamp,
-                    facts=lambda predicates, subject_kinds: self.instance._accepted_query_facts(
-                        self.instance, head, predicates=predicates, subject_kinds=subject_kinds
-                    ),
+                    facts=condition_facts,
                     mandate_name=mandate.identity.name,
                 )
-                if handoff is not None:
+                bound = tuple(item for item in consumed if item is not None)
+                if handoff is not None and len(bound) == len(consumed):
                     # Admission evaluates this condition again at the same head;
-                    # on exactly these inputs it takes this answer.
+                    # on exactly these inputs, while these fact builds stand, it
+                    # takes this answer.
                     handoff.settle_condition = DelegatedAuthorityVerdict.of(
                         mandate_digest=digest,
                         current=head,
                         timestamp=timestamp,
                         scope=request.target_paths,
                         candidate_tree=prepared.candidate_tree,
+                        facts=bound,
+                        fact_inputs=self.instance.query_fact_inputs,
                         issues=issues,
                     )
                 codes = sorted({code for code, _message in issues})

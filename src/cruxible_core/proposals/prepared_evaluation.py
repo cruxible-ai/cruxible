@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import copy
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -170,7 +170,7 @@ class PreparedEvaluationScope:
         self.consumed = False
         self.ineligible = False
         self._observations: dict[tuple[str, str, bytes | None], _BodyObservation] = {}
-        self._facts: list[_FactsObservation] = []
+        self._facts: list[FactsObservation] = []
         self._bytes = 0
         self._operation: bytes | None = None
         self._binding: bytes | None = None
@@ -226,15 +226,20 @@ class PreparedEvaluationScope:
             predicates: tuple[str, ...] | None = None,
             subject_kinds: tuple[str, ...] | None = None,
         ) -> Any:
-            value = source(coordinate, predicates=predicates, subject_kinds=subject_kinds)
+            value, observation = observed_facts_build(
+                source,
+                coordinate,
+                predicates=predicates,
+                subject_kinds=subject_kinds,
+                inputs=self.owner.fact_inputs,
+            )
             if not self.ineligible:
-                if len(self._facts) >= self.owner.max_observations:
+                if observation is None or len(self._facts) >= self.owner.max_observations:
+                    # A build no writer-owned binding names cannot be replayed.
                     self.ineligible = True
                     self._facts.clear()
                 else:
-                    self._facts.append(
-                        _FactsObservation(coordinate, predicates, subject_kinds, value)
-                    )
+                    self._facts.append(observation)
             return value
 
         return observed
@@ -393,20 +398,87 @@ class PreparedEvaluationScope:
         self.submission_tree = None
 
 
+#: The writer-owned fingerprint of every mutable input an accepted query-facts
+#: build reads besides the accepted tree; None when it cannot be read.
+FactInputs = Callable[[], "str | None"]
+
+
 @dataclass(frozen=True, slots=True)
-class _FactsObservation:
+class FactsObservation:
+    """One accepted query-facts build an evaluation consumed, and what it was built on.
+
+    At one accepted coordinate a fact row still varies with the body store
+    (a cited Capture's replay availability) and the re-observation journal (a
+    lineage's freshness, read when a condition evaluates). ``inputs`` is their
+    writer-owned fingerprint (``verdict_input_fingerprint``: the body-store
+    landing log, which moves on every evidence body landing or erase, and the
+    re-observation journal's log), read before the build.
+    """
+
     coordinate: AcceptedProjectionCoordinate
     predicates: tuple[str, ...] | None
     subject_kinds: tuple[str, ...] | None
+    inputs: str
     result: Any
+
+
+def observed_facts_build(
+    source: Any,
+    coordinate: AcceptedProjectionCoordinate,
+    *,
+    predicates: tuple[str, ...] | None,
+    subject_kinds: tuple[str, ...] | None,
+    inputs: FactInputs | None,
+) -> tuple[Any, FactsObservation | None]:
+    """One facts build, with its observation; None when no binding names its inputs."""
+    seen = None if inputs is None else inputs()
+    value = source(coordinate, predicates=predicates, subject_kinds=subject_kinds)
+    if seen is None:
+        return value, None
+    return value, FactsObservation(coordinate, predicates, subject_kinds, seen, value)
+
+
+def facts_replay(
+    facts: tuple[FactsObservation, ...],
+    *,
+    query_facts_provider: Any,
+    inputs: FactInputs | None,
+) -> bool:
+    """Whether every observed facts build stands: same inputs, and the same answer now.
+
+    The binding is checked first, so a body landing or erase, or a recorded
+    re-observation, since the build fails without rebuilding anything. On an
+    unchanged binding the provider answers again (a request's pooled build
+    when its body identities hold, else a fresh build) and must equal the
+    observed one; that covers a body rewritten in place, which the
+    writer-owned log does not see. Raising means not replayed.
+    """
+    if not facts:
+        return True
+    if query_facts_provider is None or inputs is None:
+        return False
+    try:
+        now = inputs()
+        for fact in facts:
+            if now is None or fact.inputs != now:
+                return False
+            actual = query_facts_provider(
+                fact.coordinate, predicates=fact.predicates, subject_kinds=fact.subject_kinds
+            )
+            if actual is not fact.result and actual != fact.result:
+                return False
+    except Exception:
+        return False
+    return True
 
 
 def _replays(
     observations: tuple[_BodyObservation, ...],
-    facts: tuple[_FactsObservation, ...],
+    facts: tuple[FactsObservation, ...],
     *,
     bodies: BodyVerifierProtocol,
     query_facts_provider: Any,
+    inputs: FactInputs | None,
 ) -> bool:
     """Whether every observed body read and fact build answers now exactly as it did."""
     try:
@@ -421,18 +493,10 @@ def _replays(
             )
             if actual != observation.result:
                 return False
-        for fact in facts:
-            if query_facts_provider is None:
-                return False
-            actual = query_facts_provider(
-                fact.coordinate, predicates=fact.predicates, subject_kinds=fact.subject_kinds
-            )
-            if actual is not fact.result and actual != fact.result:
-                return False
     except Exception:
         # The full evaluation reproduces its own refusal or exception boundary.
         return False
-    return True
+    return facts_replay(facts, query_facts_provider=query_facts_provider, inputs=inputs)
 
 
 @dataclass(frozen=True)
@@ -457,7 +521,7 @@ class AdmittedEvaluation:
     mandate_digest: str | None
     claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...]
     observations: tuple[_BodyObservation, ...]
-    facts: tuple[_FactsObservation, ...]
+    facts: tuple[FactsObservation, ...]
 
     def reusable(
         self,
@@ -489,6 +553,7 @@ class AdmittedEvaluation:
                 self.facts,
                 bodies=bodies,
                 query_facts_provider=query_facts_provider,
+                inputs=self.owner.fact_inputs,
             )
             or self.epoch != self.owner.epoch
         ):
@@ -583,7 +648,10 @@ class PreparedEvaluationAdapter:
         *,
         max_bytes: int = 32 * 1024 * 1024,
         max_observations: int = 16384,
+        fact_inputs: FactInputs | None = None,
     ) -> None:
+        #: The instance's fact-input binding; without one no facts build is replayable.
+        self.fact_inputs = fact_inputs
         self._lock = threading.Lock()
         self._epoch = 0
         self._counts = {

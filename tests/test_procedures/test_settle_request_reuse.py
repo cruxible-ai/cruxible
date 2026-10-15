@@ -270,6 +270,7 @@ def test_admission_takes_the_settle_condition_checked_just_before_it_at_the_same
 
     from cruxible_core.proposals import delegated_authority
     from cruxible_core.proposals.delegated_authority import DelegatedAuthorityVerdict
+    from cruxible_core.proposals.prepared_evaluation import FactsObservation
     from cruxible_core.proposals.proposals import ProposalService
 
     @contextmanager
@@ -308,20 +309,30 @@ def test_admission_takes_the_settle_condition_checked_just_before_it_at_the_same
     head = instance.accepted_coordinate()
     scope = ("claims/a.json", "claims/b.json")
     tree = {"claims/a.json": b"a", "claims/b.json": b"b", "subjects/x.json": b"x"}
+    built = object()
+    inputs = ["inputs-1"]
+    fact = FactsObservation(head, ("p",), None, inputs[0], built)
     verdict = DelegatedAuthorityVerdict.of(
         mandate_digest="sha256:" + "1" * 64,
         current=head,
         timestamp="2026-09-12T12:00:00.000000Z",
         scope=scope,
         candidate_tree=tree,
+        facts=(fact,),
+        fact_inputs=lambda: inputs[0],
         issues=(),
     )
+
+    def provider(answer: object) -> Any:
+        return lambda coordinate, *, predicates=None, subject_kinds=None: answer
+
     same = {
         "mandate_digest": verdict.mandate_digest,
         "current": head,
         "timestamp": verdict.timestamp,
         "scope": scope,
         "candidate_tree": {**tree, "subjects/x.json": b"unread"},
+        "facts": provider(built),
     }
     assert verdict.answers(**same)  # type: ignore[arg-type]
     for change in (
@@ -330,8 +341,15 @@ def test_admission_takes_the_settle_condition_checked_just_before_it_at_the_same
         {"timestamp": "2026-09-12T12:00:01.000000Z"},
         {"scope": ("claims/a.json",)},
         {"candidate_tree": {**tree, "claims/b.json": b"changed"}},
+        # A facts build that answers otherwise now, or no provider to replay it.
+        {"facts": provider(object())},
+        {"facts": None},
     ):
         assert not verdict.answers(**{**same, **change}), change  # type: ignore[arg-type]
+    # The mutable fact inputs moved (a body landed or was erased, a re-observation
+    # was recorded): the same build no longer stands.
+    inputs[0] = "inputs-2"
+    assert not verdict.answers(**same)  # type: ignore[arg-type]
 
 
 # --- L1: settlement reuses the same request's admission evaluation ---------------------
@@ -425,7 +443,17 @@ def test_a_settle_reuses_its_admission_evaluation_and_settles_what_a_full_one_wo
 
 @pytest.mark.parametrize(
     "violation",
-    ["epoch", "base", "rebased", "candidate", "tree", "body_replay", "facts_replay", "stored"],
+    [
+        "epoch",
+        "base",
+        "rebased",
+        "candidate",
+        "tree",
+        "body_replay",
+        "facts_replay",
+        "fact_inputs",
+        "stored",
+    ],
 )
 def test_each_unmet_reuse_condition_settles_by_a_full_re_evaluation(
     tmp_path: Path, violation: str
@@ -435,7 +463,7 @@ def test_each_unmet_reuse_condition_settles_by_a_full_re_evaluation(
     from dataclasses import replace
 
     from cruxible_core.derived.derived_state import SnapshotTree
-    from cruxible_core.proposals.prepared_evaluation import _FactsObservation
+    from cruxible_core.proposals.prepared_evaluation import FactsObservation
     from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
     from cruxible_core.service.authoring import documents
 
@@ -460,9 +488,17 @@ def test_each_unmet_reuse_condition_settles_by_a_full_re_evaluation(
             first, *rest = admitted.observations
             result = (not first.result) if isinstance(first.result, bool) else b""
             return replace(admitted, observations=(replace(first, result=result), *rest))
+        # The settle condition's own fact builds are carried to settlement.
+        assert admitted.facts, "the settle carried no condition facts build to replay"
+        if violation == "fact_inputs":
+            # The same build, observed under mutable inputs that have since moved.
+            first, *others = admitted.facts
+            return replace(admitted, facts=(replace(first, inputs="moved"), *others))
         assert violation == "facts_replay"
         # A fact build whose answer is not what the provider answers now.
-        unseen = _FactsObservation(admitted.current, ("never.read",), None, object())
+        unseen = FactsObservation(
+            admitted.current, ("never.read",), None, instance.query_fact_inputs(), object()
+        )
         return replace(admitted, facts=(*admitted.facts, unseen))
 
     instance, root, line = _world(tmp_path)
@@ -572,3 +608,218 @@ def test_a_committed_write_settles_from_its_preflight_evaluation(tmp_path: Path)
     assert admissions == []  # admission reused the preflight evaluation
     assert counts["handed"] == 1 and counts["full_evaluations"] == 0, counts
     assert after["settlement_reused"] == before["settlement_reused"] + 1, (before, after)
+
+
+# --- L8 x L1: the condition's mutable fact inputs bind its reuse --------------------------
+
+
+def _seeded_parent(tmp_path: Path) -> tuple[Any, Path, Any, Any, str]:
+    """A ``require_claim`` settle world whose condition is met by one approved Claim.
+
+    Returns the world, the accepted coordinate, and the claim id of the parent
+    Claim the next settle's condition reads.
+    """
+
+    from cruxible_core.service.authoring.documents import (
+        service_activate_playbill_proposal,
+        service_submit_playbill_approval,
+    )
+    from tests.test_ledger.test_activation import _sign
+
+    instance, root, line = SD.settle_world(
+        tmp_path, require_claim=True, candidate_templates=FAN_OUT
+    )
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        canonical_bytes({**fixtures.ADVISORY, "proposals": [_element(0, 0)]})
+    )
+    first = SD._egress(SD.run_settle(instance, root, line))
+    # No accepted Claim meets the condition yet: the first settle proposes.
+    assert first.settle_outcome == "proposed", first
+    approval = _sign(
+        SD.OWNERS[instance.root],
+        first.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=first.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=first.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    (path,) = first.target_paths
+    return instance, root, line, instance.accepted_coordinate(), Path(path).stem
+
+
+def _write_child(root: Path) -> None:
+    """The next run reads a changed file: one new Claim, under a new run Capture."""
+
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        canonical_bytes({**fixtures.ADVISORY, "severity": "low", "proposals": [_element(1, 1)]})
+    )
+
+
+def _at_boundary(
+    monkeypatch: pytest.MonkeyPatch, boundary: str, change: Callable[[dict[str, Any]], None]
+) -> list[dict[str, Any]]:
+    """Run ``change`` after the terminal's condition check: before admission or settlement.
+
+    ``change`` receives what the terminal submitted (its request, candidate
+    tree and settle submission). The returned list holds those once it ran.
+    """
+
+    from cruxible_core.procedures.terminal_services import ProposalTerminalAdapter
+    from cruxible_core.proposals.proposals import ProposalService
+
+    seen: list[dict[str, Any]] = []
+    held: dict[str, Any] = {}
+    real_terminal_submit = ProposalTerminalAdapter.submit
+
+    def terminal_submit(self: Any, **kwargs: Any) -> Any:
+        held.update(kwargs)
+        if boundary == "admission":
+            change(kwargs)
+            seen.append(kwargs)
+        return real_terminal_submit(self, **kwargs)
+
+    monkeypatch.setattr(ProposalTerminalAdapter, "submit", terminal_submit)
+    if boundary == "settlement":
+        real_submit = ProposalService.submit
+
+        def submit(self: Any, *args: Any, **kwargs: Any) -> Any:
+            value = real_submit(self, *args, **kwargs)
+            submitted = kwargs["handoff"]._submitted
+            assert submitted is not None and submitted.evaluation is not None
+            # Admission carried the condition's fact builds on for settlement.
+            assert submitted.evaluation.facts, "the condition's facts were not observed"
+            change(held)
+            seen.append(held)
+            return value
+
+        monkeypatch.setattr(ProposalService, "submit", submit)
+    return seen
+
+
+@pytest.mark.parametrize("boundary", ["admission", "settlement"])
+def test_condition_evidence_erased_after_the_check_is_not_settled_on_the_old_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    """Review F-001: erase the parent Claim's Capture body after the terminal's check.
+
+    The coordinate does not move, but the condition no longer holds: a fresh
+    check refuses it, so the settle must not be accepted on the earlier answer.
+    """
+
+    from cruxible_client.contracts.claims import parse_claim
+    from cruxible_client.contracts.candidates import canonical_candidate_timestamp
+    from cruxible_core.proposals.delegated_authority import delegated_authority_issues
+
+    instance, root, line, parent, claim_id = _seeded_parent(tmp_path)
+    tree = instance.immutable_tree_at(parent.git_oid)
+    (path,) = (item for item in tree if item.startswith("claims/") and claim_id in item)
+    (digest,) = parse_claim(tree[path], path=path).backing.capture_digests
+    _write_child(root)
+    fresh: list[Any] = []
+
+    def erase(submitted: dict[str, Any]) -> None:
+        assert instance.body_store().erase(digest)
+        assert instance.accepted_coordinate() == parent
+        request = submitted["request"]
+        fresh.append(
+            delegated_authority_issues(
+                mandate_digest=submitted["settle_submission"].mandate_digest,
+                scope=request.target_paths,
+                current_tree=instance.immutable_tree_at(parent.git_oid),
+                candidate_tree=submitted["candidate_tree"],
+                current=parent,
+                timestamp=canonical_candidate_timestamp(request.evaluation_time),
+                facts=lambda predicates, subject_kinds: instance._accepted_query_facts(
+                    instance, parent, predicates=predicates, subject_kinds=subject_kinds
+                ),
+            )
+        )
+
+    seen = _at_boundary(monkeypatch, boundary, erase)
+    state = SD.run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+    assert seen, state.terminal
+    (issues,) = fresh
+    # The terminal's own check passed (it submitted as delegated); a fresh one refuses.
+    assert seen[0]["settle_submission"].mode == "delegated"
+    assert any(code == "cruxible.settle.condition_incomplete" for code, _ in issues), issues
+    assert instance.accepted_coordinate() == parent, (boundary, state.terminal)
+
+
+@pytest.mark.parametrize("boundary", ["admission", "settlement"])
+def test_a_reobservation_recorded_after_the_check_forces_the_full_condition_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    """A re-observation moves condition facts at the same coordinate: reuse re-checks.
+
+    The re-observation is real (a later run read the parent's content again);
+    it is recorded after the terminal's check. Admission then checks the
+    condition itself, or settlement re-evaluates in full, to the same bundle.
+    """
+
+    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.proposals import delegated_authority
+    from cruxible_core.proposals.proposals import ProposalService
+
+    instance, root, line, parent, claim_id = _seeded_parent(tmp_path)
+    # Read the parent's file again, unchanged; keep its re-observation to record later.
+    pending: list[dict[str, Any]] = []
+    with _patched(
+        ClaimReobservationStore,
+        "record",
+        lambda _original: lambda self, **kwargs: pending.append(kwargs),
+    ):
+        again = SD.run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=10))
+    assert again.status == "succeeded", again.terminal
+    (kwargs,) = pending
+    assert kwargs["claim_id"] == claim_id
+    assert ClaimReobservationStore(instance).history(claim_id) == ()
+    _write_child(root)
+
+    def reobserve(_submitted: dict[str, Any]) -> None:
+        assert ClaimReobservationStore(instance).record(**kwargs) is not None
+        assert instance.accepted_coordinate() == parent
+
+    checks: Counter[str] = Counter()
+    submitting = [False]
+    real_submit = ProposalService.submit
+    real_issues = delegated_authority.delegated_authority_issues
+
+    def counted_submit(self: Any, *args: Any, **kw: Any) -> Any:
+        submitting[0] = True
+        try:
+            return real_submit(self, *args, **kw)
+        finally:
+            submitting[0] = False
+
+    def counted_issues(*args: Any, **kw: Any) -> Any:
+        checks["in_admission" if submitting[0] else "elsewhere"] += 1
+        return real_issues(*args, **kw)
+
+    monkeypatch.setattr(ProposalService, "submit", counted_submit)
+    monkeypatch.setattr(delegated_authority, "delegated_authority_issues", counted_issues)
+    seen = _at_boundary(monkeypatch, boundary, reobserve)
+    before = instance.prepared_evaluations.status()
+    with _settlement_evaluations() as counts:
+        state = SD.run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=20))
+    after = instance.prepared_evaluations.status()
+    assert seen, state.terminal
+    assert ClaimReobservationStore(instance).history(claim_id)
+    egress = SD._egress(state)
+    assert egress.settle_outcome == "settled", egress
+    assert counts["handed"] == 1, counts
+    if boundary == "admission":
+        # The terminal's answer was not taken: admission checked the condition itself.
+        assert checks["in_admission"] == 1, checks
+        assert counts["full_evaluations"] == 0, counts
+    else:
+        # Admission took the answer; settlement's replay saw the moved inputs.
+        assert checks["in_admission"] == 0, checks
+        assert counts["full_evaluations"] == 1, counts
+        assert after["settlement_invalidated"] == before["settlement_invalidated"] + 1
