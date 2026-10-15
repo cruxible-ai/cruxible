@@ -118,11 +118,8 @@ from cruxible_client.contracts.read_values import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import (
-    SubjectIdUnassignable,
     SubjectKeyPart,
     SubjectKind,
-    distinct_holder_id,
-    minted_subject_id,
     parse_subject_kind,
     subject_kind_path,
 )
@@ -155,6 +152,7 @@ from cruxible_client.contracts.write import (
     subject_reference,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.authoring.lowering import AuthoringLoweringError, subject_creation_paths
 from cruxible_core.authoring.preflight import ComputedPreflight
 from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -170,12 +168,10 @@ from cruxible_core.indexes.subject_identity import (
     KeyTuple,
     SubjectKeyInvalid,
     admits_subject_kinds,
-    assign_creation_id,
     canonical_key,
     compiler_upgrade_repair,
     key_ambiguous_message,
     key_encoding,
-    key_values,
     subject_creation_shape,
     subject_kind_of,
     tree_key_reader,
@@ -462,10 +458,8 @@ class _SlotPin:
 class _Bound:
     """Where one ``create`` change's label lands: a Subject this write makes, or a live one.
 
-    ``path`` is None while core has not assigned the id: a minted Subject, or a
-    further holder of a hint key, is named from the submitted operation, so its
-    Claims name it by its creation member (``member``) until the write is
-    submitted and the id is known.
+    ``path`` is None until shared lowering assigns the complete change set.
+    Sibling Claims name new Subjects by creation member, including keyed ones.
     """
 
     index: int
@@ -493,7 +487,7 @@ class _Bound:
     def slot_path(self) -> str:
         """The path planning keys this Subject's slots by, before and after its id is known."""
 
-        return self.path if self.path is not None else f"pending:{self.label}"
+        return self.path if self.path is not None else f"pending:{self.member}"
 
 
 @dataclass
@@ -534,11 +528,9 @@ class _Plan:
     changes: list[_Planned] = field(default_factory=list)
     #: The Subjects this write creates, at the paths core assigned them.
     subjects: dict[str, SubjectShell] = field(default_factory=dict)
-    #: How each is created: its kind and key.
-    creations: dict[str, SubjectCreationAuthoringPayload] = field(default_factory=dict)
     #: Each ``create`` change's label, and where it lands.
     labels: dict[str, _Bound] = field(default_factory=dict)
-    #: Creations whose id core assigns from the submitted operation, by label.
+    #: Creation members awaiting shared assignment, by their first label.
     pending: dict[str, SubjectCreationAuthoringPayload] = field(default_factory=dict)
     #: A creation member's identity -> the ``create`` change that asked for it.
     creation_changes: dict[str, int] = field(default_factory=dict)
@@ -570,7 +562,8 @@ class _Planner:
         self._read_sequence: int | None = None
         self._refs: dict[tuple[str, str], SubjectRefResolution] = {}
         self._kinds: dict[str, SubjectKind | None] = {}
-        self._planned_keys: dict[tuple[str, str], str] = {}
+        self._planned_keys: dict[tuple[str, str], _Bound] = {}
+        self._pending_paths: dict[str, _Bound] = {}
         self._key_reader: KeyReader | None = None
 
     # -- accepted state ----------------------------------------------------------
@@ -803,19 +796,14 @@ class _Planner:
     def identity_view(self) -> Iterator[IdentityView]:
         """The shared resolver at the head, overlaid with what this write has planned.
 
-        Subjects the write creates hold their keys, and key or alias Claims it
-        retires hold nothing (identity D4, review F-007).
+        Key or alias Claims this write retires hold nothing (identity D4).
+        Pending creations are held separately by canonical key and member,
+        without inventing Subject paths before complete lowering.
         """
 
         if self._key_reader is None:
             self._key_reader = tree_key_reader(self.instance.immutable_tree_at(self.head.git_oid))
-        overlay = IdentityOverlay(
-            subjects={path: True for path in self.plan.subjects},
-            keys={
-                path: tuple((part.predicate, part.value) for part in creation.key)
-                for path, creation in self.plan.creations.items()
-            },
-        )
+        overlay = IdentityOverlay()
         retiring = self._retiring()
         with self.instance.bind_accepted_projection(self.head) as projection:
             connection = projection.typed.connection
@@ -912,7 +900,7 @@ class _Planner:
         return predicate, value
 
     def create_by_key(self, kind: str, subject_id: str, *, index: int, path: str) -> str:
-        """Create the Subject ``kind/<text>`` names by key, and return the path core assigns.
+        """Plan the Subject ``kind/<text>`` names by key, returning its internal slot key.
 
         A reference to a Subject that does not exist, by id, alias or key, of a
         kind with a single key is read as "create by key value <text>": the key
@@ -964,33 +952,20 @@ class _Planner:
         predicate, value = self._key_value(kind, declared, subject_id, index=index, path=path)
         key: KeyTuple = ((predicate, value),)
         planned = self._planned_keys.get((kind, key_encoding(key)))
-        if planned is not None:
-            return planned
-        names = {
-            planned_path.removeprefix(f"subjects/{kind}/").removesuffix(".json")
-            for planned_path in self.plan.subjects
-            if planned_path.startswith(f"subjects/{kind}/")
-        }
-        try:
-            with self.identity_view() as view:
-                assigned = assign_creation_id(view, kind, key, names=names)
-        except SubjectIdUnassignable as exc:
-            raise _refuse(
-                "cruxible.subject.key_invalid", str(exc), change=index, field_path=path
-            ) from exc
-        created = subject_path(kind, assigned)
-        self.plan.subjects[created] = SubjectShell(
-            identity=ArtifactIdentity(kind="Subject", name=f"{kind}/{assigned}"),
-            subject_kind=kind,
-            subject_id=assigned,
-        )
-        self.plan.creations[created] = SubjectCreationAuthoringPayload(
-            subject_kind=kind,
-            key=(SubjectKeyPart(predicate=predicate, value=value),),
-            rationale=self.request.because,
-        )
-        self._planned_keys[(kind, key_encoding(key))] = created
-        return created
+        if planned is None:
+            planned = self._new_creation(
+                index, f"<implicit:{index}>", kind, key, create_new=False, single_text=subject_id
+            )
+        return planned.slot_path
+
+    def _planned_subject(self, kind: str, text: str, *, index: int, path: str) -> _Bound | None:
+        """A pending ordinary holder by key, after live id/alias resolution."""
+
+        declared = self._single_key(kind)
+        if declared is None:
+            return None
+        predicate, value = self._key_value(kind, declared, text, index=index, path=path)
+        return self._planned_keys.get((kind, key_encoding(((predicate, value),))))
 
     def _creatable_kind(self, kind: str, *, index: int, path: str) -> SubjectKind:
         """The live SubjectKind a new ``kind`` Subject is created under, or the refusal."""
@@ -1083,11 +1058,22 @@ class _Planner:
         return key, single
 
     def _pending_creation(
-        self, label: str, kind: str, key: KeyTuple, *, create_new: bool
+        self,
+        label: str,
+        kind: str,
+        key: KeyTuple,
+        *,
+        create_new: bool,
+        single_text: str | None = None,
     ) -> SubjectCreationAuthoringPayload:
         """A creation whose id core assigns at submission, distinct from every other one."""
 
-        parts = tuple(SubjectKeyPart(predicate=predicate, value=value) for predicate, value in key)
+        parts = tuple(
+            SubjectKeyPart(
+                predicate=predicate, value=single_text if single_text is not None else value
+            )
+            for predicate, value in key
+        )
         taken = {payload.member_identity for payload in self.plan.pending.values()}
         rationale = self.request.because
         payload = SubjectCreationAuthoringPayload(
@@ -1105,9 +1091,9 @@ class _Planner:
         One resolver for every creation route (``IdentityView.resolve_creation``):
         a one-key text an alias of the kind names, else the key's live holders --
         none creates, one is that Subject (``existing``), several refuse. A keyed
-        first holder takes its id now (``assign_creation_id``); a minted Subject,
-        or a further holder of a hint key, takes one from the submitted
-        operation, so the write names it by its creation member until then.
+        Subject is named by its creation member until lowering assigns the
+        complete change set; minted and further-holder ids also need the
+        submitted operation.
         """
 
         prefix = f"changes[{index}]"
@@ -1132,21 +1118,12 @@ class _Planner:
                     repair="Leave key and create_new out",
                     field_path=f"{prefix}.key",
                 )
-            payload = self._pending_creation(label, kind, (), create_new=False)
-            self.plan.pending[label] = payload
-            bound = _Bound(
-                index=index,
-                label=label,
-                kind=kind,
-                path=None,
-                resolved="created",
-                member=payload.member_identity,
-            )
+            bound = self._new_creation(index, label, kind, (), create_new=False)
         else:
             bound = self._keyed_creation(index, change, declared)
         self.plan.labels[label] = bound
         if bound.member is not None:
-            self.plan.creation_changes[bound.member] = index
+            self.plan.creation_changes.setdefault(bound.member, index)
         return _Planned(
             index=index,
             op="create",
@@ -1166,12 +1143,6 @@ class _Planner:
                 change=index,
                 repair="Drop create_new: the create then lands on the Subject holding the key",
                 field_path=f"{prefix}.create_new",
-            )
-        planned = None if change.create_new else self._planned_keys.get((kind, key_encoding(key)))
-        if planned is not None:
-            # An earlier change of this write already creates the key's holder.
-            return _Bound(
-                index=index, label=label, kind=kind, path=planned, resolved="created", key=key
             )
         with self.identity_view() as view:
             resolution = view.resolve_creation(
@@ -1210,65 +1181,51 @@ class _Planner:
                 resolved="existing",
                 key=key,
             )
-        if resolution.holders:
-            # create_new on a hint kind whose key a live Subject holds: a further
-            # holder, named from the operation and the member, as lowering names it.
-            payload = self._pending_creation(label, kind, key, create_new=True)
-            self.plan.pending[label] = payload
+        planned = None if change.create_new else self._planned_keys.get((kind, key_encoding(key)))
+        if planned is not None:
             return _Bound(
                 index=index,
                 label=label,
                 kind=kind,
                 path=None,
                 resolved="created",
-                member=payload.member_identity,
+                member=planned.member,
                 key=key,
             )
-        return self._first_holder(index, label, kind, key, create_new=change.create_new)
+        return self._new_creation(
+            index, label, kind, key, create_new=change.create_new, single_text=single
+        )
 
-    def _first_holder(
-        self, index: int, label: str, kind: str, key: KeyTuple, *, create_new: bool
+    def _new_creation(
+        self,
+        index: int,
+        label: str,
+        kind: str,
+        key: KeyTuple,
+        *,
+        create_new: bool,
+        single_text: str | None = None,
     ) -> _Bound:
-        """The first holder of ``key``: core assigns its id now, as lowering will."""
+        """Keep the member reference; lowering assigns ids over the complete change set."""
 
-        names = {
-            planned_path.removeprefix(f"subjects/{kind}/").removesuffix(".json")
-            for planned_path in self.plan.subjects
-            if planned_path.startswith(f"subjects/{kind}/")
-        }
-        try:
-            with self.identity_view() as view:
-                assigned = assign_creation_id(view, kind, key, names=names)
-        except SubjectIdUnassignable as exc:
-            raise _refuse(
-                "cruxible.subject.key_invalid",
-                str(exc),
-                change=index,
-                field_path=f"changes[{index}].key",
-            ) from exc
-        created = subject_path(kind, assigned)
-        payload = SubjectCreationAuthoringPayload(
-            subject_kind=kind,
-            key=tuple(SubjectKeyPart(predicate=predicate, value=value) for predicate, value in key),
-            rationale=self.request.because,
-            create_new=create_new,
+        payload = self._pending_creation(
+            label, kind, key, create_new=create_new, single_text=single_text
         )
-        self.plan.subjects[created] = SubjectShell(
-            identity=ArtifactIdentity(kind="Subject", name=f"{kind}/{assigned}"),
-            subject_kind=kind,
-            subject_id=assigned,
-        )
-        self.plan.creations[created] = payload
-        self._planned_keys[(kind, key_encoding(key))] = created
-        return _Bound(
+        self.plan.pending[label] = payload
+        bound = _Bound(
             index=index,
             label=label,
             kind=kind,
-            path=created,
+            path=None,
             resolved="created",
             member=payload.member_identity,
             key=key,
         )
+        self.plan.labels[label] = bound
+        self._pending_paths[bound.slot_path] = bound
+        if key and not create_new:
+            self._planned_keys[(kind, key_encoding(key))] = bound
+        return bound
 
     def bound(self, label: str, *, index: int, path: str) -> _Bound:
         """The Subject a ``{"created": label}`` reference names: a create change of this write."""
@@ -1299,6 +1256,9 @@ class _Planner:
         resolved = self.resolve_ref(kind, subject_id, index=index, path=path)
         if resolved.path is not None:
             return kind, subject_kind_of(resolved.path)[1], resolved.path
+        planned = self._planned_subject(kind, subject_id, index=index, path=path)
+        if planned is not None:
+            return kind, subject_id, planned.slot_path
         # Names no Subject: key text as written (any case or spacing) is no id, and
         # its path names nothing; create_by_key reads the text as the key.
         return kind, subject_id, f"subjects/{kind}/{subject_id}.json"
@@ -1495,6 +1455,13 @@ class _Planner:
         if resolved.via in {"alias", "key"} and resolved.path is not None:
             assert resolved.ref is not None
             value, subject_id = resolved.ref, resolved.ref.partition("/")[2]
+        planned = (
+            self._planned_subject(kind, subject_id, index=index, path=path)
+            if resolved.path is None
+            else None
+        )
+        if planned is not None:
+            return SubjectClaimObject(address=planned.address), planned.ref
         try:
             target = subject_path(kind, subject_id)
         except (CruxibleError, ValueError) as exc:
@@ -1882,18 +1849,19 @@ class _Planner:
             kind = bound.kind
             path = bound.slot_path
             pending = bound if bound.path is None else None
-            creation = (
-                self.plan.pending.get(bound.label)
-                if pending is not None
-                else self.plan.creations.get(path)
-            )
+            creation = self.plan.pending.get(bound.label)
+            if creation is None and bound.member is not None:
+                # Several labels can name the same ordinary creation member.
+                creation = self.plan.pending[self._pending_paths[bound.slot_path].label]
         else:
             kind, subject_id, path = self.resolve_subject(
                 _named(target), index=index, path=f"{prefix}.subject"
             )
-            if not self.subject_exists(path) and path not in self.plan.subjects:
+            pending = self._pending_paths.get(path)
+            if pending is None and not self.subject_exists(path):
                 path = self.create_by_key(kind, subject_id, index=index, path=f"{prefix}.subject")
-            creation = self.plan.creations.get(path)
+                pending = self._pending_paths[path]
+            creation = None if pending is None else self.plan.pending[pending.label]
         # The outcome names the Subject written, however the change named it (an
         # id, an alias, a key or a create's label): core reports the id. A
         # Subject whose id is assigned at submission is named once it is.
@@ -1967,12 +1935,22 @@ class _Planner:
         else:
             statement_object = self.literal(info, change.value, index=index, field_name=name)
             shown_after = statement_object.value
-        pending_value = (
-            change.value.created
-            if isinstance(change.value, CreatedSubject)
-            and self.plan.labels[change.value.created].path is None
-            else None
-        )
+        pending_value = None
+        if isinstance(statement_object, SubjectClaimObject):
+            if isinstance(change.value, CreatedSubject):
+                value_bound = self.plan.labels[change.value.created]
+                if value_bound.path is None:
+                    pending_value = value_bound.label
+            elif statement_object.address.selector.scheme == "subject-creation-v1":
+                member_digest = statement_object.address.selector.value
+                value_kind = statement_object.address.artifact_path.removeprefix(
+                    "subject-kinds/"
+                ).removesuffix(".json")
+                pending_bound = self._pending_paths.get(
+                    f"pending:SubjectCreation:{value_kind}@{member_digest}"
+                )
+                if pending_bound is not None:
+                    pending_value = pending_bound.label
         capture = self.cited_capture(change, subject=subject, subject_path_value=path, index=index)
         source, citation_role = self.source(
             info, change, role=role, index=index, field_name=name, exact=exact, capture=capture
@@ -2406,7 +2384,7 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
 
     drafts: list[tuple[int | None, AuthoringChangeSetMember]] = [
         (plan.creation_changes.get(creation.member_identity), creation)
-        for creation in (*plan.creations.values(), *plan.pending.values())
+        for creation in plan.pending.values()
     ]
     for item in plan.changes:
         if item.member is not None:
@@ -2524,47 +2502,61 @@ def _pinned_claims(
     )
 
 
-def _bind_pending(plan: _Plan, *, operation: str) -> None:
-    """Name each Subject whose id core assigns from the submitted operation.
+def _bind_pending(
+    instance: PlaybillInstance,
+    plan: _Plan,
+    lowered: _Lowered,
+    *,
+    head: AcceptedProjectionCoordinate,
+    operation: str,
+    preview: bool = False,
+) -> None:
+    """Populate outcomes from lowering's complete assignment, including previews.
 
-    A minted Subject's id, and a further hint holder's, are digests of the
-    operation (the authoring intent) and the creation member, exactly as
-    lowering assigns them; once the write is submitted the outcome names them.
+    A preview omits ids derived from its operation (minted and further holders).
+    Every sibling Claim retains its creation-member reference until lowering.
+    Work grows with this change set and indexed identity probes, never the instance.
     """
 
     if not plan.pending:
         return
-    refs: dict[str, str] = {}
-    for label, payload in plan.pending.items():
-        bound = plan.labels[label]
-        subject_id = (
-            distinct_holder_id(
-                key_values(bound.key), operation=operation, member=payload.member_identity
+    paths = subject_creation_paths(
+        instance,
+        operation=operation,
+        base=head,
+        base_tree=instance.immutable_tree_at(head.git_oid),
+        members=lowered.payload.members,
+        include_operation_dependent=not preview,
+    )
+    created_paths = {path for path, reused in paths.values() if not reused}
+    refs: dict[str, str | None] = {}
+    plan.subjects.clear()
+    for label, bound in plan.labels.items():
+        if bound.member is None:
+            continue
+        assigned = paths.get(bound.member)
+        if assigned is None:
+            refs[label] = None
+            continue
+        path, reused = assigned
+        bound.path = path
+        bound.resolved = "created" if path in created_paths else "existing"
+        kind, subject_id = subject_kind_of(path)
+        ref = f"{kind}/{subject_id}"
+        refs[label] = ref
+        if not reused:
+            plan.subjects[path] = SubjectShell(
+                identity=ArtifactIdentity(kind="Subject", name=ref),
+                subject_kind=kind,
+                subject_id=subject_id,
             )
-            if payload.create_new
-            else minted_subject_id(operation=operation, member=payload.member_identity)
-        )
-        path = subject_path(bound.kind, subject_id)
-        plan.labels[label] = _Bound(
-            index=bound.index,
-            label=label,
-            kind=bound.kind,
-            path=path,
-            resolved=bound.resolved,
-            member=bound.member,
-            key=bound.key,
-        )
-        plan.subjects[path] = SubjectShell(
-            identity=ArtifactIdentity(kind="Subject", name=f"{bound.kind}/{subject_id}"),
-            subject_kind=bound.kind,
-            subject_id=subject_id,
-        )
-        refs[label] = f"{bound.kind}/{subject_id}"
     for item in plan.changes:
         if item.pending_subject is not None:
             ref = refs[item.pending_subject]
             item.outcome["subject"] = ref
-            if item.slot is not None:
+            if item.op == "create":
+                item.outcome["resolved"] = plan.labels[item.pending_subject].resolved
+            if item.slot is not None and ref is not None:
                 item.slot = (subject_path(*ref.split("/", 1)), item.slot[1])
         if item.pending_value is not None:
             item.outcome["after"] = summary_value(refs[item.pending_value])
@@ -3055,11 +3047,7 @@ def _service_write(
         request = _with_default_subject(request)
         read_at = resolve_read_coordinate(instance, request.at) if request.at is not None else head
         plan = _Planner(instance, head=head, read_at=read_at, request=request).build()
-        if (
-            all(item.member is None for item in plan.changes)
-            and not plan.subjects
-            and not plan.pending
-        ):
+        if all(item.member is None for item in plan.changes) and not plan.pending:
             return _already_done(instance, head=head, plan=plan, request=request)
         lowered = _lower(plan, because=request.because, planned_at=head)
     except (WriteRefusalError, ReadRefusalError) as error:
@@ -3072,7 +3060,6 @@ def _service_write(
     if request.dry_run:
         # A minted id is assigned from the submitted operation, which a dry run
         # never makes: it reports the Subjects whose ids are known now.
-        subjects_added = _subjects_added(plan)
         return _dry_run(
             instance,
             head=head,
@@ -3082,7 +3069,6 @@ def _service_write(
             plan=plan,
             lowered=lowered,
             timestamp=timestamp,
-            subjects_added=subjects_added,
         )
     view = coordinator.create(
         actor=caller.actor,
@@ -3090,13 +3076,23 @@ def _service_write(
         canonical_timestamp=timestamp,
         reference_expectations=lowered.expectations or None,
     )
-    _bind_pending(plan, operation=view.intent.intent_id)
-    subjects_added = _subjects_added(plan)
     # This write activates what it admits, in this request: its submission is
     # handed to that activation instead of read back.
     handoff = SettlementHandoff(instance.prepared_evaluations)
     submitted = coordinator.submit(view.intent.intent_id, actor=caller.actor, settlement=handoff)
     intent = submitted.intent
+    try:
+        _bind_pending(
+            instance,
+            plan,
+            lowered,
+            head=_evaluated_head(instance, intent, head),
+            operation=intent.intent_id,
+        )
+    except AuthoringLoweringError:
+        # Preflight reports the structured lowering refusal below.
+        pass
+    subjects_added = _subjects_added(plan)
     changes = _change_outcomes(plan, lowered, intent)
     status = submitted.status
     if status.state in {"preflight_refused", "conflicted_after_rebase"} or (
@@ -3394,13 +3390,15 @@ def _dry_run(
     plan: _Plan,
     lowered: _Lowered,
     timestamp: str,
-    subjects_added: tuple[str, ...],
 ) -> WriteOutcome:
     """Preview the write on its own path: preflight and evaluation, then stop (R12)."""
 
     intent, computed = coordinator.preview(
         actor=caller.actor, payload=lowered.payload, canonical_timestamp=timestamp
     )
+    if computed.lowered is not None:
+        _bind_pending(instance, plan, lowered, head=head, operation=intent.intent_id, preview=True)
+    subjects_added = _subjects_added(plan)
     changed = (
         set()
         if computed.lowered is None

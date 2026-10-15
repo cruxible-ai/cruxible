@@ -3617,7 +3617,8 @@ def _assign_creations(
     Ids, in canonical-key order: a first holder takes the readable rendering of
     its key, suffixed with the key's digest when the rendering is an existing
     Subject's id, a live alias of the kind, or an id this change already
-    assigned; a further holder takes the rendering and a digest of the
+    assigned. Ordinary creations precede create_new members of the same key,
+    with member identity breaking ties; a further holder takes the rendering and a digest of the
     operation and member; a minted kind's Subject an id minted from the
     operation and member. Each records how (``SubjectAssignment``), so the
     candidate boundary re-derives it on every route.
@@ -3710,7 +3711,13 @@ def _assign_creations(
             connection, members_identity_overlay(connection, members=members, base_tree=base_tree)
         )
         for _encoding, index, member, declared, key in sorted(
-            keyed, key=lambda item: (item[3].subject_kind, key_order(item[4]), item[1])
+            keyed,
+            key=lambda item: (
+                item[3].subject_kind,
+                key_order(item[4]),
+                item[2].create_new,
+                item[2].member_identity,
+            ),
         ):
             kind = member.subject_kind
             element = f"members[{index}]"
@@ -3803,6 +3810,7 @@ def subject_creation_paths(
     base: AcceptedProjectionCoordinate,
     base_tree: Mapping[str, bytes],
     members: tuple[AuthoringChangeSetMember, ...],
+    include_operation_dependent: bool = True,
 ) -> dict[str, tuple[str, bool]]:
     """Where each Subject creation in ``members`` lands, as lowering will name it.
 
@@ -3810,16 +3818,22 @@ def subject_creation_paths(
     and nothing is created). ``operation`` is the intent id lowering will run
     under, and ``members`` the whole change (its other members are the overlay
     the creations resolve against); the assignment is the one
-    ``lower_authoring`` makes, for a caller that must name the created Subjects
-    in sibling members before lowering (a Procedure terminal's Claim items
-    naming a Subject item by key).
+    ``lower_authoring`` makes. A write preview can omit operation-derived
+    assignments with ``include_operation_dependent=False``; its minted and
+    further-holder Subjects remain unassigned in public outcomes. Procedure
+    terminals use the complete mapping to name sibling Subject items by key.
     """
 
     return {
         identity: (creation.path, creation.resolved)
         for identity, creation in _assign_creations(
-            instance, operation=operation, base=base, base_tree=base_tree, members=members
+            instance,
+            operation=operation,
+            base=base,
+            base_tree=base_tree,
+            members=members,
         ).items()
+        if include_operation_dependent or creation.assignment is None
     }
 
 
