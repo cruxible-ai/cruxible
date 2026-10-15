@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 from collections.abc import Iterable, Iterator
@@ -235,7 +236,17 @@ class RunLocator:
 
 #: This process's resident connection to each journal index file (setup once per
 #: open; see ``indexes.resident``), used under ``_LOCK``.
-_RESIDENT = ResidentConnections(lock=_LOCK)
+_RESIDENT = ResidentConnections(lock=lambda: _LOCK)
+
+
+def _after_fork_in_child() -> None:
+    # A lock held by another thread at fork time is never released in the child.
+    global _LOCK
+    _LOCK = threading.RLock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 class JournalIndex:

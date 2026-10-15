@@ -39,7 +39,17 @@ CREATE TABLE IF NOT EXISTS backfill_complete (singleton INTEGER PRIMARY KEY);
 """
 _LOCK = threading.RLock()
 #: One connection per index file per process, its schema created once, used under ``_LOCK``.
-_RESIDENT = ResidentConnections(lock=_LOCK)
+_RESIDENT = ResidentConnections(lock=lambda: _LOCK)
+
+
+def _after_fork_in_child() -> None:
+    # A lock held by another thread at fork time is never released in the child.
+    global _LOCK
+    _LOCK = threading.RLock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 def envelope_contract(head: bytes) -> str | None:

@@ -17,10 +17,11 @@ compares one ``lstat`` and one ``pread`` against it. Any unannounced drift (a
 file deleted, replaced, or restored in place over the same inode, or a commit by
 another connection) reopens the connection and runs its setup again before
 SQLite's cached pages could be used; nothing is ever scanned to decide. A
-connection inherited across a fork is never used by the child.
+connection, descriptor or lock inherited across a fork is never used by the
+child: it gets fresh ones (and never closes the parent's).
 
 The oldest idle connection is closed past the capacity; one in use never is.
-Each owner passes the lock that serializes its operations; ``transaction`` holds
+Each owner names the lock that serializes its operations; ``transaction`` holds
 it, so a connection is used by one thread at a time. Tests that count SQL work
 through a wrapped ``sqlite3.connect`` call ``close_idle_connections`` first, so
 the next operation connects again, through the wrapper.
@@ -59,6 +60,11 @@ class _Resident:
     depth: int = 0
 
 
+#: Connections and descriptors a forked child inherited: kept referenced and never
+#: closed there (closing them could touch the parent's files or locks).
+_INHERITED: list[object] = []
+
+
 def _content_stamp(path: Path, descriptor: int) -> ContentStamp | None:
     """The file's stamp now, or None when the path no longer names the held inode."""
 
@@ -92,23 +98,35 @@ def _regular(path: Path, not_regular: Callable[[], BaseException]) -> bool:
     return True
 
 
-#: Every owner in this process, for ``close_idle_connections``.
+#: Every owner in this process, for ``close_idle_connections`` and the fork reset.
 _OWNERS: weakref.WeakSet[ResidentConnections] = weakref.WeakSet()
 
 
 class ResidentConnections:
     """A process's resident connections to index files, most recently used last."""
 
-    def __init__(self, *, lock: threading.RLock, capacity: int = 16) -> None:
+    def __init__(self, *, lock: Callable[[], threading.RLock], capacity: int = 16) -> None:
         self._entries: OrderedDict[str, _Resident] = OrderedDict()
         self._capacity = capacity
+        #: The owner's current lock (an owner replaces its lock in a forked child).
         self._lock = lock
+        self._pid = os.getpid()
         _OWNERS.add(self)
 
     def _close(self, entry: _Resident) -> None:
         if entry.pid == os.getpid():
             entry.connection.close()
             os.close(entry.descriptor)
+        else:
+            _INHERITED.append(entry)
+
+    def _forget_parent(self) -> None:
+        """In a forked child: never reuse (or close) what the parent opened."""
+
+        if self._pid != os.getpid():
+            _INHERITED.extend(self._entries.values())
+            self._entries = OrderedDict()
+            self._pid = os.getpid()
 
     def _open(
         self,
@@ -145,8 +163,7 @@ class ResidentConnections:
             return entry
         regular = _regular(path, not_regular)
         if entry is not None and (
-            entry.pid != os.getpid()
-            or not regular
+            not regular
             or entry.stamp is None
             or _content_stamp(path, entry.descriptor) != entry.stamp
         ):
@@ -179,7 +196,10 @@ class ResidentConnections:
         The owner's lock is held throughout.
         """
 
-        with self._lock:
+        # Process identity first: a child never nests into, or reuses, a block
+        # or connection its parent had.
+        self._forget_parent()
+        with self._lock():
             entry = self._resident(path, open_connection, not_regular)
             outermost = entry.depth == 0
             entry.depth += 1
@@ -199,7 +219,8 @@ class ResidentConnections:
     def close_idle(self) -> None:
         """Close every idle resident connection (shutdown and tests)."""
 
-        with self._lock:
+        self._forget_parent()
+        with self._lock():
             for key in [name for name, item in self._entries.items() if item.depth == 0]:
                 self._close(self._entries.pop(key))
 
@@ -216,6 +237,15 @@ def close_idle_connections() -> None:
     for owner in list(_OWNERS):
         owner.close_idle()
     close_idle_snapshots()
+
+
+def _after_fork_in_child() -> None:
+    for owner in list(_OWNERS):
+        owner._forget_parent()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 __all__ = ["ContentStamp", "ResidentConnections", "close_idle_connections"]

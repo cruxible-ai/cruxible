@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,7 +33,8 @@ class _Refused(Exception):
 
 def _owner() -> tuple[ResidentConnections, list[Path]]:
     opened: list[Path] = []
-    return ResidentConnections(lock=threading.RLock(), capacity=2), opened
+    lock = threading.RLock()
+    return ResidentConnections(lock=lambda: lock, capacity=2), opened
 
 
 def _opener(path: Path, opened: list[Path]):  # type: ignore[no-untyped-def]
@@ -191,6 +194,26 @@ def test_a_capture_envelope_index_sees_an_in_place_restore(tmp_path: Path) -> No
     close_idle_connections()
 
 
+def test_a_forked_child_never_nests_into_its_parents_active_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, opened = _owner()
+    path = tmp_path / "index.sqlite3"
+    real = os.getpid()
+    with owner.transaction(path, _opener(path, opened), not_regular=_Refused) as (parent, _):
+        parent.execute("INSERT INTO t VALUES ('parent, uncommitted')")
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "getpid", lambda: real + 1)
+            with owner.transaction(path, _opener(path, opened), not_regular=_Refused) as (
+                child,
+                outermost,
+            ):
+                # Its own connection, in its own outermost transaction.
+                assert child is not parent and outermost
+                assert child.execute("SELECT count(*) FROM t").fetchone()[0] == 0
+    assert opened == [path, path]
+
+
 def test_closing_idle_connections_makes_the_next_operation_connect_again(tmp_path: Path) -> None:
     owner, opened = _owner()
     path = tmp_path / "index.sqlite3"
@@ -315,6 +338,71 @@ def test_a_pooled_reader_never_serves_cached_rows_after_an_in_place_restore(
     finally:
         pool.release(second)
         pool.close()
+
+
+def test_a_forked_child_never_takes_its_parents_pooled_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "working.sqlite3"
+    writer = _wal_database(path, 1)
+    pool = SnapshotPool()
+    parent = _snapshot(path, pool)
+    held = _snapshot(path, pool)  # checked out in the parent when it forks
+    pool.release(parent)
+    real = os.getpid()
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "getpid", lambda: real + 1)
+        child = _snapshot(path, pool)
+        assert child is not parent and child is not held
+        pool.release(child)
+        pool.release(held)  # the parent's: kept, never closed or rolled back here
+        assert held.execute("SELECT count(*) FROM t").fetchone()[0] == 1
+    assert parent.execute("SELECT count(*) FROM t").fetchone()[0] == 1  # never closed
+    pool.close()
+    writer.close()
+
+
+def test_a_real_fork_opens_a_fresh_snapshot_connection_in_the_child(tmp_path: Path) -> None:
+    script = """
+import os, sqlite3, sys
+from pathlib import Path
+from cruxible_core.indexes.acquisition import SnapshotPool, open_working_snapshot
+from cruxible_core.indexes.history.history_index import working_file_stamp
+path = Path(sys.argv[1])
+with sqlite3.connect(path) as connection:
+    connection.execute("CREATE TABLE t(v)")
+pool = SnapshotPool()
+def snapshot():
+    return open_working_snapshot(
+        path, expected_stamp=working_file_stamp(path),
+        file_stamp=lambda: working_file_stamp(path), pool=pool,
+    )
+first = snapshot()
+pool.release(first)
+read, write = os.pipe()
+pid = os.fork()
+if pid == 0:
+    os.close(read)
+    try:
+        second = snapshot()
+        os.write(write, b"inherited" if second is first else b"fresh")
+    finally:
+        os._exit(0)
+os.close(write)
+result = os.read(read, 100)
+os.waitpid(pid, 0)
+assert first.execute("SELECT count(*) FROM t").fetchone() == (0,)
+pool.close()
+print(result.decode())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path / "fork.sqlite3")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    assert result.stdout.strip() == "fresh", result
 
 
 def test_a_pooled_connection_is_never_reused_for_a_replaced_file(tmp_path: Path) -> None:

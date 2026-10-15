@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 import time
@@ -86,6 +87,9 @@ def _snapshot_identity(stamp: tuple[int, ...]) -> tuple[int, ...]:
     return (*stamp[:2], *stamp[5:7])
 
 
+#: Connections a forked child inherited from its parent's pools: kept referenced
+#: and never closed or rolled back there.
+_INHERITED: list[sqlite3.Connection] = []
 #: Known commits a pool remembers, oldest dropped first.
 _KNOWN_COMMITS = 256
 
@@ -94,7 +98,8 @@ class SnapshotPool:
     """Idle read-only connections to one working database, reused for later WAL snapshots.
 
     A pooled snapshot is the same proof as a fresh one, and reuse is valid only
-    while the file holds what SQLite's cache in that connection could have seen:
+    within the owning process and while the file holds what SQLite's cache in
+    that connection could have seen:
 
     - the connection was opened by pathname under ``guard_database_path`` at a
       stamp naming exactly the database (and WAL) files it opened;
@@ -111,7 +116,8 @@ class SnapshotPool:
 
     Released connections end their read transaction, so an idle one pins no WAL
     frames and holds no lock a writer or a checkpoint waits on. The owner closes
-    the pool before its own shutdown checkpoint.
+    the pool before its own shutdown checkpoint. In a forked child the pool
+    starts empty with a fresh lock; the parent's connections are never used.
     """
 
     def __init__(self, capacity: int = 4) -> None:
@@ -121,13 +127,28 @@ class SnapshotPool:
         self._out: dict[int, tuple[int, ...]] = {}
         #: Stamp before an owner commit -> stamp after it.
         self._known: OrderedDict[tuple[int, ...], tuple[int, ...]] = OrderedDict()
+        #: Ids of connections the parent had checked out when this process forked.
+        self._inherited: set[int] = set()
         self._capacity = capacity
         self._closed = False
+        self._pid = os.getpid()
         _POOLS.add(self)
+
+    def _forget_parent(self) -> None:
+        """In a forked child: drop the parent's connections and lock, use none of them."""
+
+        if self._pid == os.getpid():
+            return
+        _INHERITED.extend(connection for connection, _stamp in self._idle)
+        self._inherited.update(self._out)
+        self._idle, self._out, self._known = [], {}, OrderedDict()
+        self._lock = threading.Lock()
+        self._pid = os.getpid()
 
     def advance(self, before: tuple[int, ...] | None, after: tuple[int, ...]) -> None:
         """Announce that the owner's own commit moved the file from ``before`` to ``after``."""
 
+        self._forget_parent()
         if before is None or before == after:
             return
         with self._lock:
@@ -147,6 +168,7 @@ class SnapshotPool:
         return False
 
     def _take(self, stamp: tuple[int, ...]) -> sqlite3.Connection | None:
+        self._forget_parent()
         identity = _snapshot_identity(stamp)
         stale: list[sqlite3.Connection] = []
         found = None
@@ -163,12 +185,18 @@ class SnapshotPool:
         return found
 
     def _adopt(self, connection: sqlite3.Connection, stamp: tuple[int, ...]) -> None:
+        self._forget_parent()
         with self._lock:
             self._out[id(connection)] = stamp
 
     def release(self, connection: sqlite3.Connection) -> None:
         """End the connection's snapshot; keep it for the next one, or close it."""
 
+        self._forget_parent()
+        if id(connection) in self._inherited:
+            self._inherited.discard(id(connection))
+            _INHERITED.append(connection)
+            return
         with self._lock:
             pinned = self._out.pop(id(connection), None)
         if pinned is not None:
@@ -187,6 +215,11 @@ class SnapshotPool:
     def discard(self, connection: sqlite3.Connection) -> None:
         """Close a connection whose snapshot failed: it is never reused."""
 
+        self._forget_parent()
+        if id(connection) in self._inherited:
+            self._inherited.discard(id(connection))
+            _INHERITED.append(connection)
+            return
         with self._lock:
             self._out.pop(id(connection), None)
         connection.close()
@@ -194,6 +227,7 @@ class SnapshotPool:
     def clear(self) -> None:
         """Close the idle connections; later snapshots connect, and are pooled, again."""
 
+        self._forget_parent()
         with self._lock:
             idle, self._idle = self._idle, []
         for connection, _pinned in idle:
@@ -202,12 +236,13 @@ class SnapshotPool:
     def close(self) -> None:
         """Close the idle connections and pool no more (the owner is shutting down)."""
 
+        self._forget_parent()
         with self._lock:
             self._closed = True
         self.clear()
 
 
-#: Every pool in this process, for ``close_idle_snapshots``.
+#: Every pool in this process, for ``close_idle_snapshots`` and the fork reset.
 _POOLS: weakref.WeakSet[SnapshotPool] = weakref.WeakSet()
 
 
@@ -216,6 +251,15 @@ def close_idle_snapshots() -> None:
 
     for pool in list(_POOLS):
         pool.clear()
+
+
+def _after_fork_in_child() -> None:
+    for pool in list(_POOLS):
+        pool._forget_parent()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 def _pin_pooled_snapshot(
