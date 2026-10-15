@@ -408,3 +408,35 @@ def test_a_member_file_digest_is_taken_once_per_exact_bytes(monkeypatch):
     assert len(hashed) == 3
     assert canonical.file_digest(b"other").value == real(b"other").hexdigest()
     canonical._FILE_DIGESTS.clear()
+
+
+def test_claim_type_derived_rules_and_digests_are_taken_once_per_sealed_claim_type(
+    monkeypatch,
+):
+    from cruxible_client.contracts import claim_verdicts
+
+    claim_types._CLAIM_TYPE_PARSES.clear()
+    value = _claim_type("sha256:" + "4" * 64)
+    sealed = parse_claim_type(render_claim_type(value), path=claim_type_path(value.predicate))
+    digest = claim_type_digest(sealed).tagged
+    hashed: list[str] = []
+    real = claim_verdicts.typed_digest
+
+    def counted(kind, domain, payload):  # type: ignore[no-untyped-def]
+        hashed.append(domain)
+        return real(kind, domain, payload)
+
+    monkeypatch.setattr(claim_verdicts, "typed_digest", counted)
+    rules = [
+        claim_verdicts.claim_adjudication_rule(sealed, claim_type_digest=digest) for _ in range(3)
+    ]
+    assert rules[0] is rules[1] is rules[2] and is_sealed(rules[0])
+    digests = {claim_verdicts.claim_adjudication_rule_digest(rule) for rule in rules}
+    assert len(digests) == 1 and len(hashed) == 2  # the policy digest, then the rule's
+    # Another argument is another rule; an unsealed ClaimType compiles afresh, equal.
+    other = claim_verdicts.claim_adjudication_rule(
+        sealed, claim_type_digest=digest, origin_supports=True
+    )
+    assert other is not rules[0] and other.tag == "playbill-claim-adjudication-rule-v2"
+    fresh = claim_verdicts.claim_adjudication_rule(value, claim_type_digest=digest)
+    assert fresh == rules[0] and fresh is not rules[0]

@@ -109,7 +109,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.codes import CurrentCode, normalize_code
-from cruxible_client.contracts.content_memo import seal
+from cruxible_client.contracts.content_memo import seal, sealed_derive
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     AcceptedDocument,
@@ -985,9 +985,14 @@ class _ForkRebase:
 
 
 def _canonical_model_digest(domain: str, model: BaseModel) -> str:
-    payload = model.model_dump(mode="json")
-    payload.pop("tag", None)
-    return typed_digest(Sha256Value, domain, payload).tagged
+    """One policy's digest under ``domain``, taken once per sealed model (a ClaimType's)."""
+
+    def derive() -> str:
+        payload = model.model_dump(mode="json")
+        payload.pop("tag", None)
+        return typed_digest(Sha256Value, domain, payload).tagged
+
+    return sealed_derive(model, ("proposals._canonical_model_digest", domain), derive)
 
 
 def _member_disposition(

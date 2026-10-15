@@ -13,6 +13,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_types import ClaimType, effective_evidence_requirement
+from cruxible_client.contracts.content_memo import seal, sealed_derive, sealed_memo
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyAny
 from cruxible_client.contracts.providers import ProviderV1
 
@@ -63,6 +64,7 @@ def observation_trust_grade(
     return values[provenance_grade]
 
 
+@sealed_memo
 def _policy_digest(policy: ClaimEvidenceAdmissionPolicyAny) -> str:
     payload = policy.model_dump(mode="json")
     payload.pop("tag")
@@ -140,6 +142,30 @@ def claim_adjudication_rule(
     """
 
     ArtifactDigest.from_tagged(claim_type_digest)
+    # A pure function of the accepted ClaimType and these two values: compiled
+    # (and sealed, so its digest is taken once) once per sealed ClaimType.
+    return sealed_derive(
+        claim_type,
+        ("claim_verdicts.claim_adjudication_rule", claim_type_digest, origin_supports),
+        lambda: _sealed(
+            _compile_claim_adjudication_rule(
+                claim_type, claim_type_digest=claim_type_digest, origin_supports=origin_supports
+            )
+        ),
+    )
+
+
+def _sealed(rule: ClaimAdjudicationRuleAny) -> ClaimAdjudicationRuleAny:
+    seal(rule)
+    return rule
+
+
+def _compile_claim_adjudication_rule(
+    claim_type: ClaimType,
+    *,
+    claim_type_digest: str,
+    origin_supports: bool,
+) -> ClaimAdjudicationRuleAny:
     rule_type: type[ClaimAdjudicationRuleV1] | type[ClaimAdjudicationRule] = (
         ClaimAdjudicationRule
         if origin_supports or effective_evidence_requirement(claim_type) == "none"
@@ -163,6 +189,7 @@ def claim_adjudication_rule(
     )
 
 
+@sealed_memo
 def claim_adjudication_rule_digest(rule: ClaimAdjudicationRuleAny) -> str:
     payload = rule.model_dump(mode="json")
     payload.pop("tag")
