@@ -837,7 +837,7 @@ def _inactive_detectors(
 ) -> tuple[PlaybillCurationInactiveDetectorV1, ...]:
     inactive: list[PlaybillCurationInactiveDetectorV1] = []
     if scan is None or scan.coverage.observed_block_count == 0:
-        if not instance.review_operational_store().events(family="block_observation"):
+        if not instance.review_operational_store().has_events(family="block_observation"):
             inactive.append(
                 PlaybillCurationInactiveDetectorV1(
                     pattern_kind="playbill.curation.block_churn.v1",

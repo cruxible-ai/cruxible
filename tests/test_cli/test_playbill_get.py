@@ -191,6 +191,84 @@ def test_other_cards_print_names_whole_and_nested_rows_readably(
     assert "next: cruxible proposal review sha256:" in result.output
 
 
+def test_a_claim_type_card_maps_stored_playbill_contract_names_for_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stored evidence contract names keep their playbill spelling; get's text does not."""
+
+    from cruxible_client.contracts.get_reads import GetClaimTypeCard, GetEvidenceRule
+
+    _stub(
+        monkeypatch,
+        _result(
+            "claim_type",
+            card=GetClaimTypeCard(
+                predicate="status",
+                subject_kinds=("work_item",),
+                object="string",
+                cardinality="one",
+                roles=("normative",),
+                evidence_requirement="self",
+                revision_evidence="replace",
+                evidence=("playbill.coordinator-self-source-v1",),
+                evidence_rules=(
+                    GetEvidenceRule(
+                        rule_id="self",
+                        roles=("normative",),
+                        contracts=("CaptureContract:playbill.coordinator-self-source-v1",),
+                        admission="direct",
+                    ),
+                ),
+                live_claims=0,
+            ),
+        ),
+    )
+
+    result = CliRunner().invoke(cli, [*PREFIX, "get", "ClaimType:status"])
+
+    assert result.exit_code == 0, result.output
+    assert "playbill." not in result.output
+    assert "evidence: cruxible.coordinator-self-source-v1" in result.output
+    assert "CaptureContract:cruxible.coordinator-self-source-v1" in result.output
+
+
+def test_detail_why_prints_a_readable_summary_and_json_keeps_the_whole_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--detail why`` is a short readable summary; ``--json`` keeps the full envelope."""
+
+    why: dict[str, Any] = {
+        "tag": "playbill-claim-explanation-v2",
+        "coordinate": {"git_oid": "1" * 64},
+        "law_evidence": {
+            "rule_id": "self",
+            "admission": "direct",
+            "capture_contracts": ["playbill.coordinator-self-source-v1"],
+        },
+        "verdict": {"state": "supported"},
+        "source_handles": [{"kind": "self_asserted", "ref": "x"}],
+    }
+    client = _stub(monkeypatch, _result("claim", detail="why", why=dict(why)))
+
+    result = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "why"])
+
+    assert result.exit_code == 0, result.output
+    # Readable summary, not a raw JSON dump: no braces, and the stored
+    # playbill name maps to its Cruxible display name.
+    assert "{" not in result.output
+    assert "playbill." not in result.output
+    assert "cruxible.coordinator-self-source-v1" in result.output
+    assert "state: supported" in result.output
+
+    client.result = _result("claim", detail="why", why=dict(why))
+    json_result = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "why", "--json"])
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.output)
+    assert payload["why"]["law_evidence"]["capture_contracts"] == [
+        "playbill.coordinator-self-source-v1"
+    ]
+
+
 def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

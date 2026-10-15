@@ -64,7 +64,9 @@ def _write(instance: PlaybillInstance, *changes: dict[str, Any], dry_run: bool =
         {"because": "Matrix.", "changes": list(changes), "dry_run": dry_run}
     )
     outcome = service_playbill_write(
-        instance, request=request, caller=WriteCaller(actor=OWNER, may_activate=True)
+        instance,
+        request=request,
+        caller=WriteCaller(actor=OWNER, may_activate=True, may_approve=True),
     )
     if not dry_run:
         assert outcome.status == "accepted", outcome

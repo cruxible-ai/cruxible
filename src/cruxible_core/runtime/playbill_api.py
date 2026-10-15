@@ -1423,6 +1423,7 @@ def _write_outcome(instance_id: str, request: WriteRequest) -> WriteOutcome:
         caller = WriteCaller(
             actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
             may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
+            may_approve=_permits("cruxible_proposal_approve", instance_id=instance_id),
         )
         return service_playbill_write(
             get_playbill_manager().get(instance_id), request=request, caller=caller

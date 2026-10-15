@@ -41,6 +41,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryClaimValueRef,
     QueryComparisonFilter,
     QueryConjunctionFilter,
+    QueryDiscriminatorMissingError,
     QueryEntry,
     QueryInclude,
     QueryLiteralRef,
@@ -1006,3 +1007,96 @@ def test_query_literal_values_stay_inside_the_canonical_value_set() -> None:
     }
     with pytest.raises(CanonicalEncodingError, match="floating-point"):
         QueryLiteralRef(value=1.5)
+
+
+def test_unsorted_projection_fields_name_the_exact_canonical_order() -> None:
+    """A natural authoring order (not byte-sorted) must say exactly how to fix it."""
+
+    with pytest.raises(ValidationError, match=r"use this order: \['item_id', 'status'\]"):
+        QueryProjection(
+            fields=(
+                QueryProjectionField(
+                    name="status", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+                QueryProjectionField(
+                    name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+            )
+        )
+    with pytest.raises(ValidationError, match=r"repeated: item_id"):
+        QueryProjection(
+            fields=(
+                QueryProjectionField(
+                    name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+                QueryProjectionField(
+                    name="item_id", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+                ),
+            )
+        )
+
+
+@pytest.mark.parametrize("mode", ["python", "json"])
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"exclude_defaults": True},
+        {"exclude_unset": True},
+        {"exclude_defaults": True, "exclude": {"fields": {0}}},
+        {"exclude_unset": True, "include": {"fields": {1: {"name", "value"}}}},
+    ],
+)
+def test_a_compact_dump_missing_its_discriminator_refuses_typed_on_parse(
+    mode: str, options: dict[str, object]
+) -> None:
+    """Variant ``kind`` fields default, so a compact dump drops them; parsing must say so.
+
+    Dumps stay pydantic's own (no re-insertion pass): whatever the selection
+    and mode, re-parsing the result either round-trips or refuses with the
+    typed error naming the field and the fix -- never a different variant.
+    """
+
+    projection = QueryProjection(
+        fields=(
+            QueryProjectionField(name="a", value=QueryLiteralRef(value="x")),
+            QueryProjectionField(
+                name="b", value=QuerySubjectFieldRef(binding="item", field="subject_id")
+            ),
+        )
+    )
+    dumped = (
+        projection.model_dump(**options)
+        if mode == "python"
+        else json.loads(projection.model_dump_json(**options))
+    )
+    with pytest.raises(QueryDiscriminatorMissingError) as raised:
+        QueryProjection.model_validate(dumped)
+    assert raised.value.error_code == "cruxible.query.discriminator_missing"
+    assert raised.value.model == "QueryProjectionField"
+    assert raised.value.field_path == "value"
+    assert "literal" in raised.value.tags and "subject_field" in raised.value.tags
+    assert "exclude_defaults=True" in str(raised.value)
+    # A plain dump keeps every discriminator and round-trips in both modes.
+    assert QueryProjection.model_validate(projection.model_dump()) == projection
+    assert QueryProjection.model_validate_json(projection.model_dump_json()) == projection
+
+
+def test_discriminator_refusal_names_sequence_and_optional_union_positions() -> None:
+    comparison = {"kind": "comparison", "operator": "eq", "left": {"kind": "literal", "value": 1}}
+    with pytest.raises(QueryDiscriminatorMissingError) as raised:
+        QueryConjunctionFilter.model_validate(
+            {"kind": "conjunction", "filters": [comparison, {"operator": "eq"}]}
+        )
+    assert raised.value.model == "QueryConjunctionFilter"
+    assert raised.value.field_path == "filters[1]"
+    with pytest.raises(QueryDiscriminatorMissingError) as raised:
+        QueryTraversalStep.model_validate(
+            {
+                "binding": "item",
+                "from_binding": "root",
+                "predicate": "work.status",
+                "direction": "forward",
+                "where": {"operator": "eq"},
+            }
+        )
+    assert (raised.value.model, raised.value.field_path) == ("QueryTraversalStep", "where")

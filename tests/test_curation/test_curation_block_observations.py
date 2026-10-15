@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import get_args
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.declared_blocks import (
     DeclaredBlockPageObservation,
@@ -21,6 +23,7 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.curation.curation_detectors import _block_churn
+from cruxible_core.curation.review_operational import ReviewOperationalStore
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.service.authoring.documents import service_propose_playbill_document
 from cruxible_core.service.discovery.curation import (
@@ -279,3 +282,162 @@ def test_block_churn_counts_body_transitions_across_the_bounded_generation_windo
     assert len(detected) == 1
     assert detected[0].subject == document_identity
     assert detected[0].detail == {"block_id": "status", "source_id": "docs.runbook"}
+
+
+def test_block_churn_never_parses_or_evaluates_observations_outside_its_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Block sync/repin record on every run; this detector's own work must not grow with them.
+
+    A counter on the payload parse proves old observations, well outside the
+    fixed-size generation window, are skipped before ever being parsed,
+    grouped, or resolved against accepted state -- not merely excluded from
+    the final detections after that work ran. The store read itself returns
+    only the window: the whole family is never fetched.
+    """
+
+    instance = _instance_with_document(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    document_identity = ArtifactIdentity(kind="document", name="runbook")
+    store = instance.review_operational_store()
+
+    old_count = 30
+    for index in range(old_count):
+        marker = _marker(coordinate).model_copy(
+            update={"observed_body_digest": "sha256:" + format(index, "064x")}
+        )
+        source = _page(coordinate).model_copy(
+            update={
+                "observed_source_digest": "sha256:" + format(index + 1000, "064x"),
+                "marker_summaries": (marker,),
+            }
+        )
+        observation = build_block_observation(
+            document_identity=document_identity,
+            source=source,
+            marker=marker,
+            scan_coordinate=coordinate,
+            scan_generation=0,
+            actor_context=_actor(),
+        )
+        store.append(
+            family="block_observation",
+            partition_id="document:runbook/docs.runbook/status",
+            event_id=observation.event_id,
+            payload=observation,
+            coordinate=coordinate,
+            generation=0,
+            actor_context=_actor(),
+            recorded_at=NOW,
+        )
+    for offset, scan_generation in enumerate((11, 12, 12)):
+        marker = _marker(coordinate).model_copy(
+            update={"observed_body_digest": "sha256:" + format(old_count + offset, "064x")}
+        )
+        source = _page(coordinate).model_copy(
+            update={
+                "observed_source_digest": "sha256:" + format(old_count + offset + 1000, "064x"),
+                "marker_summaries": (marker,),
+            }
+        )
+        observation = build_block_observation(
+            document_identity=document_identity,
+            source=source,
+            marker=marker,
+            scan_coordinate=coordinate,
+            scan_generation=scan_generation,
+            actor_context=_actor(),
+        )
+        store.append(
+            family="block_observation",
+            partition_id="document:runbook/docs.runbook/status",
+            event_id=observation.event_id,
+            payload=observation,
+            coordinate=coordinate,
+            generation=scan_generation,
+            actor_context=_actor(),
+            recorded_at=NOW,
+        )
+
+    parsed: list[object] = []
+    original_validate = BlockObservationV1.model_validate.__func__  # type: ignore[attr-defined]
+
+    def _counting_validate(cls: type[BlockObservationV1], payload: object) -> BlockObservationV1:
+        parsed.append(payload)
+        return original_validate(cls, payload)
+
+    monkeypatch.setattr(BlockObservationV1, "model_validate", classmethod(_counting_validate))
+    fetched: list[object] = []
+    window_read = ReviewOperationalStore.events_in_generation_window
+
+    def _counting_window(self: ReviewOperationalStore, **kwargs: object):  # type: ignore[no-untyped-def]
+        events = window_read(self, **kwargs)  # type: ignore[arg-type]
+        fetched.extend(events)
+        return events
+
+    whole_family = ReviewOperationalStore.events
+
+    def _whole_family(self: ReviewOperationalStore, **kwargs: object):  # type: ignore[no-untyped-def]
+        assert kwargs.get("family") != "block_observation", "read the whole observation family"
+        return whole_family(self, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ReviewOperationalStore, "events_in_generation_window", _counting_window)
+    monkeypatch.setattr(ReviewOperationalStore, "events", _whole_family)
+
+    # BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW is 10, so at generation=20 the
+    # window is [11, 20]: it holds the 3 freshly-appended events and excludes
+    # every one of the 30 old (generation 0) events, however many accumulate.
+    detected, coverage = _block_churn(instance=instance, generation=20)
+
+    assert len(parsed) == 3
+    assert len(fetched) == 3
+    assert coverage.evaluated_fact_count == 3
+    assert len(detected) == 1
+    assert detected[0].subject == document_identity
+
+
+def test_the_no_observations_check_loads_no_event_and_never_reads_the_family(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.discovery.curation import _inactive_detectors
+
+    instance = _instance_with_document(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    churn = "playbill.curation.block_churn.v1"
+    assert churn in {item.pattern_kind for item in _inactive_detectors(instance, None)}
+    marker = _marker(coordinate)
+    observation = build_block_observation(
+        document_identity=ArtifactIdentity(kind="document", name="runbook"),
+        source=_page(coordinate),
+        marker=marker,
+        scan_coordinate=coordinate,
+        scan_generation=0,
+        actor_context=_actor(),
+    )
+    instance.review_operational_store().append(
+        family="block_observation",
+        partition_id="document:runbook/docs.runbook/status",
+        event_id=observation.event_id,
+        payload=observation,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+    )
+    assert churn not in {item.pattern_kind for item in _inactive_detectors(instance, None)}
+    loaded: list[int] = []
+    load_event = ReviewOperationalStore._load_event
+    whole_family = ReviewOperationalStore.events
+
+    def _counting_load(self, directory, family, partition_id, sequence, previous):  # type: ignore[no-untyped-def]
+        loaded.append(sequence)
+        return load_event(self, directory, family, partition_id, sequence, previous)
+
+    def _whole(self: ReviewOperationalStore, **kwargs: object):  # type: ignore[no-untyped-def]
+        assert kwargs.get("family") != "block_observation", "read the whole observation family"
+        return whole_family(self, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ReviewOperationalStore, "_load_event", _counting_load)
+    monkeypatch.setattr(ReviewOperationalStore, "events", _whole)
+    assert churn not in {item.pattern_kind for item in _inactive_detectors(instance, None)}
+    assert loaded == []

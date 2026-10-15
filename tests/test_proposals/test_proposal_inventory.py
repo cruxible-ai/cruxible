@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from cruxible_client.contracts.errors import (
     ProposalSelectorAmbiguousError,
     ProposalWithdrawnError,
 )
+from cruxible_core.cli.commands.playbill import withdraw_proposal as _withdraw_proposal_command
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import PermissionMode, request_instance_scope
 from cruxible_core.server.auth import ResolvedAuthContext
@@ -879,6 +881,25 @@ def test_the_open_count_keeps_the_listing_snapshot_across_a_concurrent_acceptanc
     assert open_proposal_count(instance) == len(listed)
 
 
+def _assert_rendered_repair_is_runnable(message: str, *, proposal_id: str) -> None:
+    """A rendered repair's exact command must parse against the CLI as printed.
+
+    A hint that merely *looks* plausible (the right verb, missing a required
+    option) is not a repair -- the caller copies it, runs it, and gets a
+    second error. Parse it through the real ``withdraw`` command's own
+    ``click`` parser so a missing required option (``--reason``) fails this
+    test, not the caller.
+    """
+
+    marker = "run cruxible proposal withdraw "
+    assert marker in message, message
+    rendered = message[message.index(marker) + len("run ") :]
+    assert rendered.startswith(f"cruxible proposal withdraw {proposal_id} "), rendered
+    args = shlex.split(rendered)[3:]  # drop "cruxible", "proposal", "withdraw"
+    with _withdraw_proposal_command.make_context("cruxible proposal withdraw", args):
+        pass
+
+
 def test_a_reviewer_rejects_an_open_proposal_with_a_recorded_reason(tmp_path: Path) -> None:
     """Rejection is the reviewer's terminal close: recorded, listed, and refused at settlement."""
 
@@ -892,7 +913,9 @@ def test_a_reviewer_rejects_an_open_proposal_with_a_recorded_reason(tmp_path: Pa
     )
     proposal_id = opened.proposal.admission.proposal_id
 
-    with pytest.raises(ProposalAdmissionError, match="withdraws it rather than rejecting"):
+    with pytest.raises(
+        ProposalAdmissionError, match="withdraws it rather than rejecting"
+    ) as excinfo:
         service_reject_playbill_proposal(
             instance,
             proposal_id=proposal_id,
@@ -900,6 +923,7 @@ def test_a_reviewer_rejects_an_open_proposal_with_a_recorded_reason(tmp_path: Pa
             reason="mine to withdraw",
             rejected_at=WITHDRAWN_AT,
         )
+    _assert_rendered_repair_is_runnable(str(excinfo.value), proposal_id=proposal_id)
     preview = service_reject_playbill_proposal(
         instance,
         proposal_id=proposal_id,

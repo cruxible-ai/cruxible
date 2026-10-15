@@ -575,11 +575,18 @@ def _block_churn(
     coverage = _Coverage(kind)
     for _ in range(document_association_omissions):
         coverage.omit("block_document_association_unavailable")
+    lower = max(0, generation - (BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW - 1))
     grouped: dict[
         tuple[str, str, str],
         list[tuple[PlaybillReviewOperationalEventV1, BlockObservationV1]],
     ] = defaultdict(list)
-    for event, payload in instance.review_operational_store().events(family="block_observation"):
+    # Block sync/repin record on every run, so this family grows without
+    # bound. The event's recorded generation is written in the same append as
+    # the payload's scan_generation, so the store's generation index returns
+    # exactly this fixed-size window; older history is never read here.
+    for event, payload in instance.review_operational_store().events_in_generation_window(
+        family="block_observation", lower=lower, upper=generation
+    ):
         try:
             observation = BlockObservationV1.model_validate(payload)
         except ValueError:
@@ -606,15 +613,12 @@ def _block_churn(
         }
     frozen_coverage = coverage.freeze()
     detections: list[CurationDetectionV1] = []
-    lower = max(0, generation - (BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW - 1))
     for (document, source_id, block_id), observations in sorted(grouped.items()):
+        # Every grouped observation already passed the window check above;
+        # only its order is decided here.
         window = tuple(
             sorted(
-                (
-                    (event, observation)
-                    for event, observation in observations
-                    if lower <= observation.scan_generation <= generation
-                ),
+                observations,
                 key=lambda item: (
                     item[1].scan_generation,
                     item[0].sequence,

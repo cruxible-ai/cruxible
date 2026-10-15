@@ -251,8 +251,14 @@ def cited_captures(instance: PlaybillInstance, claim: str) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
-def caller(*, may_activate: bool = True) -> WriteCaller:
-    return WriteCaller(actor=OWNER, may_activate=may_activate)
+def caller(*, may_activate: bool = True, may_approve: bool | None = None) -> WriteCaller:
+    """A caller at one tier: approve and activate both need graph_write unless split."""
+
+    return WriteCaller(
+        actor=OWNER,
+        may_activate=may_activate,
+        may_approve=may_activate if may_approve is None else may_approve,
+    )
 
 
 __all__ = [

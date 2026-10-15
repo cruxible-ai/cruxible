@@ -200,6 +200,12 @@ def test_init_with_a_bearer_token_and_no_host_refuses_before_creating_one(
     assert result.exit_code != 0
     assert "nothing was created" in result.output
     assert "cruxible credential claim-bootstrap" in result.output
+    # A bearer token present in this process's environment says nothing about
+    # whether the daemon itself requires auth (it may be inherited from an
+    # unrelated session); name the configured value and its source instead of
+    # asserting the daemon's posture as fact.
+    assert "CRUXIBLE_SERVER_BEARER_TOKEN is set in this environment" in result.output
+    assert "daemon auth on" not in result.output
     assert load_cli_context().instance_id is None
     assert get_registry().list_instances() == []
 

@@ -180,6 +180,26 @@ def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity(
     assert raised.value.field_path == "input.members"
 
 
+def test_a_bare_query_definition_spec_without_its_input_wrapper_fails_typed_and_actionable() -> (
+    None
+):
+    """A spec passed directly (forgetting the *Input wrapper) is a named, repairable mistake.
+
+    It is not a change set (no ``.members``) and matches none of the
+    single-member *Input types, so it must not fall through to a bare
+    AttributeError on ``.members``.
+    """
+
+    bare_spec = query_claims_by_type_example().query_definition
+
+    with pytest.raises(AuthoringInputError) as raised:
+        lower_authoring_input(bare_spec)  # type: ignore[arg-type]
+
+    assert raised.value.code == "cruxible.authoring.input_not_recognized"
+    assert "QueryDefinitionSpec" in raised.value.message
+    assert "QueryDefinitionInput" in raised.value.repair
+
+
 def test_input_compile_typed_refuses_a_terminal_v3_claim_with_v2_backing(
     tmp_path: Path,
 ) -> None:
