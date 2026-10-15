@@ -50,6 +50,7 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
     QueryBudgets,
+    QueryClaimFieldRef,
     QueryClaimPresenceFilter,
     QueryClaimValueRef,
     QueryComparisonFilter,
@@ -393,6 +394,22 @@ class _Evaluator:
                 return form
         return ()
 
+    @staticmethod
+    def _operand_vocabulary(ref: QueryValueRef, *others: QueryValueRef) -> tuple[str, ...]:
+        """The closed value set a caller parameter compared with a Claim field must be in.
+
+        A literal is checked when the definition is declared; a parameter only
+        has its value here, and a role or verdict outside the field's set is a
+        type mismatch, never a filter that silently matches nothing.
+        """
+
+        if not isinstance(ref, QueryParameterRef):
+            return ()
+        for other in others:
+            if isinstance(other, QueryClaimFieldRef):
+                return other.vocabulary
+        return ()
+
     def _claim_value(self, row: _Row, binding: str, predicate: str) -> _Value:
         subject_path = row.bindings.get(binding)
         if subject_path is None:
@@ -450,6 +467,48 @@ class _Evaluator:
         )
         return _CONFLICT
 
+    def _claim_field(self, row: _Row, ref: QueryClaimFieldRef) -> _Value:
+        """One field of the Claims a ``claim_value`` read of the predicate reads.
+
+        The field comes from what the evaluation already holds for each read
+        Claim: the role from its statement, the verdict from the visibility the
+        shared verdict path admitted it under. Nothing else is read, so the
+        field costs what the value read costs. A conflicted value is a
+        conflicted field; Claims that agree on a one-cardinality value but not
+        on the field state no single field value either.
+        """
+
+        subject_path = row.bindings.get(ref.binding)
+        if subject_path is None:
+            return _ABSENT
+        claims = self._backend.claims_on(subject_path, ref.predicate)
+        if not claims:
+            return _ABSENT
+        if self._claim_value(row, ref.binding, ref.predicate).state == "conflict":
+            return _CONFLICT
+        values = byte_sorted(
+            tuple(
+                claim.row.accepted.claim.statement.role
+                if ref.field == "role"
+                else claim.visibility.verdict
+                for claim in claims
+            )
+        )
+        if any(claim.row.cardinality == "many" for claim in claims):
+            return _Value(state="present", value=list(values), many=values)
+        if len(values) == 1:
+            return _Value(state="present", value=values[0])
+        if self._definition.evaluation_policy.conflict_behavior == "refuse_on_conflict":
+            subject = self._backend.subject(subject_path)
+            assert subject is not None
+            raise _refuse(
+                CLAIM_CONFLICT,
+                f"Accepted Claims of one value differ in their {ref.field}.",
+                statement_digests=tuple(claim.visibility.statement_digest for claim in claims),
+                subject_identities=(subject.shell.identity.qualified,),
+            )
+        return _CONFLICT
+
     def resolve(self, row: _Row, ref: QueryValueRef) -> _Value:
         """Resolve one declared value reference against a bound row."""
 
@@ -480,6 +539,8 @@ class _Evaluator:
                     else subject.shell.subject_kind
                 ),
             )
+        if isinstance(ref, QueryClaimFieldRef):
+            return self._claim_field(row, ref)
         return self._claim_value(row, ref.binding, ref.predicate)
 
     def typed(
@@ -489,11 +550,13 @@ class _Evaluator:
         value_type: QueryValueType,
         *,
         form: tuple[str, ...] = (),
+        vocabulary: tuple[str, ...] = (),
     ) -> QueryTypedValue | None:
         """Return the declared-type comparable, or None when the value is absent.
 
         ``form`` is the canonical form of the stored values this operand is
-        compared with; the operand is canonicalized by it first.
+        compared with; the operand is canonicalized by it first. ``vocabulary``
+        is the closed value set of a Claim field it is compared with.
         """
 
         resolved = self.resolve(row, ref)
@@ -530,6 +593,11 @@ class _Evaluator:
                 VALUE_TYPE_MISMATCH,
                 f"A query value is not of its declared {value_type} type.",
             )
+        if vocabulary and value not in vocabulary:
+            raise _refuse(
+                VALUE_TYPE_MISMATCH,
+                f"A query value compared with a Claim field is not one of {', '.join(vocabulary)}.",
+            )
         return coerced
 
     def matches(self, row: _Row, filter_: QueryFilter) -> bool:
@@ -556,12 +624,14 @@ class _Evaluator:
                 filter_.left,
                 filter_.value_type,
                 form=self._operand_form(filter_.left, filter_.right),
+                vocabulary=self._operand_vocabulary(filter_.left, filter_.right),
             )
             right = self.typed(
                 row,
                 filter_.right,
                 filter_.value_type,
                 form=self._operand_form(filter_.right, filter_.left),
+                vocabulary=self._operand_vocabulary(filter_.right, filter_.left),
             )
             if left is None or right is None:
                 return False
@@ -576,6 +646,7 @@ class _Evaluator:
             filter_.left,
             filter_.value_type,
             form=self._operand_form(filter_.left, *filter_.values),
+            vocabulary=self._operand_vocabulary(filter_.left, *filter_.values),
         )
         if left is None:
             return filter_.negated
@@ -586,6 +657,7 @@ class _Evaluator:
                 candidate,
                 filter_.value_type,
                 form=self._operand_form(candidate, filter_.left),
+                vocabulary=self._operand_vocabulary(candidate, filter_.left),
             )
             if right is not None and _compare(left.value, right.value, filter_.value_type) == 0:
                 found = True
