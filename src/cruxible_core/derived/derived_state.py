@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol, cast
 
 from cruxible_client.contracts.canonical import CARD_NAMESPACE, normalize_ledger_path
 from cruxible_client.contracts.claims import ClaimArtifactAny, parse_claim
@@ -242,6 +242,8 @@ class SnapshotTree(Mapping[str, bytes]):
         semantic_bytes: int | None = None,
         semantic_members: int | None = None,
         resident_bytes: int | None = None,
+        claim_index: _ClaimEditIndex | None = None,
+        claim_pending: PersistentMap[bool] | None = None,
     ) -> None:
         # Rows hold bytes or a BlobRef whose bytes are read from Git on demand.
         # Sizes below are logical file bytes; ``_resident_bytes`` is what the
@@ -276,6 +278,17 @@ class SnapshotTree(Mapping[str, bytes]):
         self._lock = threading.RLock()
         self._accepted_reader: Callable[[], Any] | None = (
             None if parent is None else parent._accepted_reader
+        )
+        # The accepted root's live Claims of one statement, answered once per
+        # request by the instance that bound this root (see ``claim_items``).
+        self._accepted_claim_items: (
+            Callable[[ClaimPredicateKey], tuple[tuple[str, bytes], ...]] | None
+        ) = None if parent is None else parent._accepted_claim_items
+        # The edited Claims by statement slot, and the Claim paths edited since
+        # that index was last brought up to date (see ``_ClaimEditIndex``).
+        self._claim_index: _ClaimEditIndex | None = claim_index
+        self._claim_pending: PersistentMap[bool] = (
+            claim_pending if claim_pending is not None else PersistentMap()
         )
         self._proofs: Any = None
         self._proof_seed: Any = None
@@ -321,26 +334,27 @@ class SnapshotTree(Mapping[str, bytes]):
 
     def claim_items(self, statement: ClaimPredicateKey) -> tuple[tuple[str, bytes], ...]:
         if self._accepted_reader is not None:
-            from cruxible_core.indexes.evaluated_state import EvaluationRows
+            if self._accepted_claim_items is not None:
+                accepted = self._accepted_claim_items(statement)
+            else:
+                from cruxible_core.indexes.evaluated_state import EvaluationRows
 
-            base = EvaluationRows(self._accepted_reader())
-            try:
-                accepted = base.claim_items(statement)
-            finally:
-                base.close()
+                base = EvaluationRows(self._accepted_reader())
+                try:
+                    accepted = base.claim_items(statement)
+                finally:
+                    base.close()
             if self._parent is None:
                 return accepted
             # A claim row's match fields are the Claim's own statement and
             # lifecycle, so the edited selection is the accepted one with edited
-            # Claim paths re-decided from their new bytes. Building a full
-            # overlay per lookup made lowering a change of n Claims O(n^2).
-            selected = dict(accepted)
-            for path, content in self._edits.items():
-                if not path.startswith("claims/"):
-                    continue
-                selected.pop(path, None)
-                if content is not None and _claim_matches(path, content, statement):
-                    selected[path] = content
+            # Claim paths re-decided from their new bytes. The edited Claims are
+            # indexed by slot as they are staged: re-deciding every edit per
+            # lookup made lowering a change of n Claims O(n^2).
+            edited = self._claim_edit_index().slots.get(_slot_key(statement))
+            selected = {path: content for path, content in accepted if path not in self._edits}
+            if edited is not None:
+                selected.update(edited.items())
             return tuple(sorted(selected.items()))
         # Cold source-only ingress remains the exact full builder oracle.
         rows = []
@@ -359,6 +373,24 @@ class SnapshotTree(Mapping[str, bytes]):
         return tuple(
             parse_claim(content, path=path) for path, content in self.claim_items(statement)
         )
+
+    def _claim_edit_index(self) -> _ClaimEditIndex:
+        """The edited live Claims by slot, current with this tree's edits."""
+        with self._lock:
+            index, pending = self._claim_index, self._claim_pending
+            if index is None:
+                # Built once from the complete edits; forks carry it forward.
+                index, pending = (
+                    _ClaimEditIndex(),
+                    PersistentMap(
+                        (path, True) for path in self._edits if path.startswith("claims/")
+                    ),
+                )
+            if len(pending):
+                index = index.updated(pending, self._edits)
+                pending = PersistentMap()
+            self._claim_index, self._claim_pending = index, pending
+            return index
 
     def edits_from(self, parent: Mapping[str, bytes]) -> Mapping[str, bytes | None] | None:
         # Identity of an internal immutable root proves correspondence, not a
@@ -380,7 +412,58 @@ _CLAIM_MATCH_LOCK = threading.Lock()
 _claim_match_bytes = 0
 
 
-def _claim_matches(path: str, content: bytes, statement: ClaimPredicateKey) -> bool:
+def _slot_key(statement: ClaimPredicateKey) -> str:
+    """One statement's (subject, predicate) as an exact string key."""
+    return _slot_key_of(statement.subject, statement.predicate)
+
+
+def _slot_key_of(subject: SemanticAddress, predicate: str) -> str:
+    return "\x00".join(
+        (
+            subject.tag,
+            subject.artifact_path,
+            subject.selector.scheme,
+            subject.selector.value,
+            predicate,
+        )
+    )
+
+
+@dataclass(frozen=True)
+class _ClaimEditIndex:
+    """A tree's edited live Claims by (subject, predicate), shared by its forks.
+
+    Immutable: an update returns a new index that shares structure, so a fork
+    carries its parent's index in O(1) and each staged Claim costs one update.
+    """
+
+    #: slot key -> edited Claim path -> its bytes, for live Claims only.
+    slots: PersistentMap[PersistentMap[bytes]] = field(default_factory=PersistentMap)
+    #: edited Claim path -> the slot key it is indexed under.
+    slot_of: PersistentMap[str] = field(default_factory=PersistentMap)
+
+    def updated(self, paths: Iterable[str], edits: Mapping[str, bytes | None]) -> _ClaimEditIndex:
+        slots, slot_of = self.slots, self.slot_of
+        for path in paths:
+            previous = slot_of.get(path)
+            if previous is not None:
+                group = slots[previous].delete(path)
+                slots = slots.set(previous, group) if len(group) else slots.delete(previous)
+                slot_of = slot_of.delete(path)
+            content = edits.get(path)
+            if content is None:
+                continue
+            subject, predicate, live = _claim_facts(path, content)
+            if not live:
+                continue
+            key = _slot_key_of(cast(SemanticAddress, subject), predicate)
+            slots = slots.set(key, slots.get(key, PersistentMap()).set(path, content))
+            slot_of = slot_of.set(path, key)
+        return _ClaimEditIndex(slots, slot_of)
+
+
+def _claim_facts(path: str, content: bytes) -> tuple[object, str, bool]:
+    """An edited Claim's (subject address, predicate, live), memoized by its bytes."""
     global _claim_match_bytes
     key = (path, content)
     with _CLAIM_MATCH_LOCK:
@@ -406,8 +489,7 @@ def _claim_matches(path: str, content: bytes, statement: ClaimPredicateKey) -> b
                 ):
                     (old_path, old_content), _facts = _CLAIM_MATCH_FACTS.popitem(last=False)
                     _claim_match_bytes -= len(old_path) + len(old_content)
-    subject, predicate, live = facts
-    return live and subject == statement.subject and predicate == statement.predicate
+    return facts
 
 
 class CandidateTree(MutableMapping[str, bytes]):
@@ -422,6 +504,12 @@ class CandidateTree(MutableMapping[str, bytes]):
         self._semantic_bytes = parent._semantic_bytes
         self._semantic_members = parent._semantic_members
         self._edits = parent._edits if parent._parent is not None else PersistentMap()
+        if parent._parent is not None:
+            with parent._lock:
+                self._claim_index = parent._claim_index
+                self._claim_pending = parent._claim_pending
+        else:
+            self._claim_index, self._claim_pending = _ClaimEditIndex(), PersistentMap()
         self._cached: SnapshotTree | None = parent
 
     def __getitem__(self, key: str) -> bytes:
@@ -463,6 +551,7 @@ class CandidateTree(MutableMapping[str, bytes]):
             if self._parent.get(key) == value
             else self._edits.set(key, value)
         )
+        self._stage_claim(key)
         self._cached = None
 
     def __delitem__(self, key: str) -> None:
@@ -476,7 +565,18 @@ class CandidateTree(MutableMapping[str, bytes]):
             self._semantic_members -= 1
         self._rows = self._rows.delete(key)
         self._edits = self._edits.set(key, None) if key in self._parent else self._edits.delete(key)
+        self._stage_claim(key)
         self._cached = None
+
+    def _stage_claim(self, key: str) -> None:
+        # Keep what the last snapshot's lookups already indexed, then mark this
+        # Claim path for re-indexing on the next slot lookup of a tree holding it.
+        cached = self._cached
+        if cached is not None and cached._parent is not None:
+            with cached._lock:
+                self._claim_index, self._claim_pending = cached._claim_index, cached._claim_pending
+        if key.startswith("claims/"):
+            self._claim_pending = self._claim_pending.set(key, True)
 
     def snapshot(self) -> SnapshotTree:
         if self._cached is None:
@@ -488,6 +588,8 @@ class CandidateTree(MutableMapping[str, bytes]):
                 semantic_bytes=self._semantic_bytes,
                 semantic_members=self._semantic_members,
                 resident_bytes=self._resident_bytes,
+                claim_index=self._claim_index,
+                claim_pending=self._claim_pending,
             )
         return self._cached
 
@@ -695,6 +797,7 @@ def card_free_view(root: SnapshotTree) -> SnapshotTree:
             root._card_free = view
         # Cards are not Claims: the root's accepted projection answers the view.
         view._accepted_reader = root._accepted_reader
+        view._accepted_claim_items = root._accepted_claim_items
     return view
 
 

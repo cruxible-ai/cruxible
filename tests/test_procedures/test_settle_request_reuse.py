@@ -113,3 +113,66 @@ def test_an_evaluation_reads_each_shared_dependency_once_however_many_items_cite
     for table in owner_tables:
         # Fixed per evaluation: the larger batch reads each shared row no more often.
         assert large[table] <= small[table], (table, small, large)
+
+
+# --- L5: one accepted slot read per item, staged edits indexed by slot ---------------
+
+
+def test_slot_reads_and_projection_binds_stay_flat_and_staged_claims_are_indexed_by_slot(
+    tmp_path: Path,
+) -> None:
+    """Delivery, its many-valued fill and lowering ask the same slot at one base once.
+
+    Before, each asked again (three accepted reads per item), every reused
+    projection bind re-verified its coordinate through a fresh history-index
+    snapshot, and each slot lookup on the staged tree re-decided every edit
+    staged so far (n^2/2 Claim facts at n items).
+    """
+
+    from cruxible_core.derived import derived_state
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    @contextmanager
+    def measure() -> Iterator[Counter[str]]:
+        counter: Counter[str] = Counter()
+
+        def facts(original: Any) -> Any:
+            def counted(path: str, content: bytes) -> Any:
+                counter["claim_facts"] += 1
+                return original(path, content)
+
+            return counted
+
+        def reads(original: Any) -> Any:
+            def counted(self: Any, statement: Any) -> Any:
+                counter["accepted_slot_reads"] += 1
+                return original(self, statement)
+
+            return counted
+
+        def verified(original: Any) -> Any:
+            def counted(self: Any, **kwargs: Any) -> Any:
+                counter["coordinate_verifications"] += 1
+                return original(self, **kwargs)
+
+            return counted
+
+        with (
+            _patched(derived_state, "_claim_facts", facts),
+            _patched(evaluated_state.EvaluationRows, "claim_items", reads),
+            _patched(PlaybillInstance, "resolve_accepted_coordinate", verified),
+        ):
+            yield counter
+
+    small, large = _two_batches(tmp_path, measure)
+    assert small["accepted_slot_reads"] > 0, small
+    # One accepted read per added item, not one per pass that asks.
+    assert large["accepted_slot_reads"] - small["accepted_slot_reads"] <= LARGE - SMALL, (
+        small,
+        large,
+    )
+    # A reused bind re-verifies its coordinate once per epoch, not once per lookup.
+    assert large["coordinate_verifications"] <= small["coordinate_verifications"], (small, large)
+    # Each staged Claim is indexed a bounded number of times: linear, not n^2/2.
+    assert small["claim_facts"] > 0, small
+    assert large["claim_facts"] * SMALL <= small["claim_facts"] * LARGE, (small, large)

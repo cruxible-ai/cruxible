@@ -90,6 +90,7 @@ from cruxible_core.compiler.projection_tree import TreeReadLimits, read_register
 from cruxible_core.curation.review_operational import ReviewOperationalStore
 from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.derived.derived_state import (
+    ClaimPredicateKey,
     DerivedState,
     IndexDefinition,
     SnapshotTree,
@@ -2373,12 +2374,55 @@ class PlaybillInstance:
         tree = self.derived.accepted_tree(binding, load, advance)
         # Loaded or advanced from exactly this commit's tree, so its rows are that tree.
         tree._commit_oid = oid
-        tree._accepted_reader = (
-            None
-            if coordinate.git_oid == self._verified_genesis.oid
-            else lambda: self.bind_accepted_projection(coordinate)
-        )
+        if coordinate.git_oid == self._verified_genesis.oid:
+            tree._accepted_reader = None
+            tree._accepted_claim_items = None
+        else:
+            tree._accepted_reader = lambda: self.bind_accepted_projection(coordinate)
+            tree._accepted_claim_items = lambda statement: self._accepted_claim_items(
+                coordinate, statement
+            )
         return tree
+
+    def _accepted_claim_items(
+        self, coordinate: AcceptedProjectionCoordinate, statement: ClaimPredicateKey
+    ) -> tuple[tuple[str, bytes], ...]:
+        """The live Claims of one statement at an accepted coordinate, once per request.
+
+        Accepted state at a coordinate is immutable, so inside ``projection_scope``
+        the answer is remembered for the rest of the request: a settle asks for
+        each item's slot in delivery, in its many-valued fill and in lowering.
+        """
+
+        from cruxible_core.indexes.evaluated_state import EvaluationRows
+
+        pool = _PROJECTION_POOL.get()
+        memo = None if pool is None else pool.values()
+        subject = statement.subject
+        key = (
+            "accepted-claim-items",
+            id(self),
+            coordinate.git_oid,
+            coordinate.semantic_root,
+            coordinate.generation_root,
+            coordinate.compiler.rule_digest,
+            subject.artifact_path,
+            subject.selector.scheme,
+            subject.selector.value,
+            statement.predicate,
+        )
+        if memo is not None:
+            held = memo.get(key)
+            if held is not None:
+                return cast("tuple[tuple[str, bytes], ...]", held)
+        rows = EvaluationRows(self.bind_accepted_projection(coordinate))
+        try:
+            answer = rows.claim_items(statement)
+        finally:
+            rows.close()
+        if memo is not None:
+            memo[key] = answer
+        return answer
 
     def tree_at(self, oid: str) -> dict[str, bytes]:
         """Explicitly materialize an owned tree after proving accepted membership."""
@@ -2528,17 +2572,25 @@ class PlaybillInstance:
         )
         reused = pool.take(key)
         if reused is not None:
-            try:
-                # Still one accepted generation: refused exactly as a fresh bind is.
-                self.resolve_accepted_coordinate(
-                    git_oid=coordinate.git_oid,
-                    semantic_root=coordinate.semantic_root,
-                    generation_root=coordinate.generation_root,
-                    compiler_digest=coordinate.compiler.rule_digest,
-                )
-            except BaseException:
-                reused.close()
-                raise
+            # Still one accepted generation: refused exactly as a fresh bind is.
+            # Within one recovered epoch the answer cannot change, so a request
+            # re-verifies a reused coordinate once per epoch, not once per lookup.
+            memo = pool.values()
+            verified = ("verified-coordinate", *key)
+            recovered = self._recovered
+            if memo is None or memo.get(verified) is not recovered:
+                try:
+                    self.resolve_accepted_coordinate(
+                        git_oid=coordinate.git_oid,
+                        semantic_root=coordinate.semantic_root,
+                        generation_root=coordinate.generation_root,
+                        compiler_digest=coordinate.compiler.rule_digest,
+                    )
+                except BaseException:
+                    reused.close()
+                    raise
+                if memo is not None:
+                    memo[verified] = recovered
             return reused
         return pool.adopt(key, self._bind_accepted_projection(coordinate), owner=self)
 
