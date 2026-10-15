@@ -648,7 +648,10 @@ def _accept_document(instance, owner, name: str, second: int):
     return proposal
 
 
-def test_open_candidate_enumeration_does_not_grow_with_accepted_history(tmp_path, monkeypatch):
+@pytest.mark.parametrize("statement_cached", [False, True], ids=["prepare", "cached"])
+def test_open_candidate_enumeration_does_not_grow_with_accepted_history(
+    tmp_path, monkeypatch, statement_cached, record_property
+):
     import cruxible_core.service.proposals.proposals as proposals_module
     from cruxible_core.service.authoring.documents import AcceptedCoordinate
 
@@ -658,17 +661,38 @@ def test_open_candidate_enumeration_does_not_grow_with_accepted_history(tmp_path
 
     def counted(connection, *args, **kwargs):  # type: ignore[no-untyped-def]
         executed = [0]
+        authorizations = []
+
+        def authorize(*action):
+            authorizations.append(action)
+            return sqlite3.SQLITE_OK
 
         def tick() -> int:
             executed[0] += 1
             return 0
 
-        connection.set_progress_handler(tick, 1)
+        # Changing the authorizer expires prepared statements on this pooled
+        # connection. SQLite 3.41+ can call the progress handler during prepare,
+        # so comparing a first preparation with a later cache hit counts
+        # different work. Exercise both states at each history size, including
+        # preparation in the cold case rather than allowing extra VM steps.
+        connection.set_authorizer(authorize)
         try:
-            return enumerate_open(connection, *args, **kwargs)
-        finally:
-            connection.set_progress_handler(None, 0)
+            if statement_cached:
+                enumerate_open(connection, *args, **kwargs)
+            authorizations.clear()
+            connection.set_progress_handler(tick, 1)
+            try:
+                rows = enumerate_open(connection, *args, **kwargs)
+            finally:
+                connection.set_progress_handler(None, 0)
+            # The authorizer runs during preparation, proving the measured
+            # calls really used the requested cache state.
+            assert bool(authorizations) is not statement_cached
             steps.append(executed[0])
+            return rows
+        finally:
+            connection.set_authorizer(None)
 
     monkeypatch.setattr(proposals_module, "_open_candidates", counted)
     stale = _submit(instance, "left-behind")
@@ -684,6 +708,7 @@ def test_open_candidate_enumeration_does_not_grow_with_accepted_history(tmp_path
         measured.append(steps[-1])
     # Settled candidates leave the open locator: five more accepted proposals
     # add no SQLite work to enumerating the one still open.
+    record_property("open_candidate_vm_steps", measured)
     assert measured[0] == measured[1]
 
 
