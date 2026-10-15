@@ -542,10 +542,6 @@ def _reopen(world: World) -> None:
 # makes the case pass, which a strict xfail reports as a failure until the entry
 # is removed.
 
-_FLOOR_PARSE = (
-    "audit#11: each floor refresh parses and digests every current Claim "
-    "(service/floor/floor_index.py:188 _parse_into, via build_floor_inputs :277)"
-)
 _CURATION = (
     "audit#2: curation detection rescans the instance every generation: unscoped facts "
     "(curation/curation_detectors.py:1279), every Claim revision ever accepted "
@@ -624,27 +620,12 @@ def _grows(reason: str, *counters: str) -> dict[str, str]:
 
 GROWS: dict[str, dict[str, str]] = {
     "tick.after_generation.floor": {
-        **_grows(_FLOOR_PARSE, "claim_parses", "canonical_encodes"),
-        "git_blob_reads": (
-            "audit#11: each floor refresh reads every Claim blob "
-            "(service/floor/floor_index.py:269 -> indexes/typed_state.py:959 prefetch_members)"
-        ),
-        **_grows(
+        # Its parses, encodes, digests, blob and CAS reads and statements no
+        # longer grow once the world's floor has rendered before the measured
+        # tick (a steady-state refresh reads only what the generation changed).
+        "file_opens": (
             "audit#11: each floor refresh re-reads every cited Capture envelope for "
-            "sources/LEDGER (service/floor/floor_sources.py:114 via :165)",
-            "file_opens",
-            "cas_body_reads",
-        ),
-        "sql_vm_steps": (
-            "audit#11: each floor refresh walks all of accepted_member_locations "
-            "(indexes/history/history_index.py:599 latest_sequences(paths=None) GROUP BY "
-            "member_path, from service/floor/floor_index.py:289), reads a record per "
-            "generation (:483) and every member of every generation with a rationale (:643 "
-            "member_paths_by_sequence via service/floor/floor_content.py:296)"
-        ),
-        "sql_statements": (
-            "audit#11: each floor refresh looks up a record per generation "
-            "(indexes/history/history_index.py:483 via service/floor/floor_content.py:295)"
+            "sources/LEDGER (service/floor/floor_sources.py:114 via :165)"
         ),
     },
     "tick.after_generation.curation": {
