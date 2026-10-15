@@ -112,20 +112,29 @@ def _canonical_string(value: str) -> bool:
     )
 
 
-def _canonical_ready(value: object) -> bool:
-    """Whether ``value`` takes the direct encoder (``_ready``), never deeper than the original.
+#: Nesting depth past which a value always takes the original normalizing path.
+#: Far below any supported Python's recursion limit for that path (3.11 spends
+#: two frames per list level, 3.12+ one), so the direct path never accepts, or
+#: refuses, a value the original would not: deeper values meet exactly the
+#: original's limit.
+_DIRECT_DEPTH = 200
 
-    A value too deeply nested to check is left to the normalizing path, which
-    accepts it, or refuses it, exactly as before.
+
+def _canonical_ready(value: object) -> bool:
+    """Whether ``value`` takes the direct encoder (``_ready``).
+
+    A value nested deeper than ``_DIRECT_DEPTH``, or too deep to check from
+    this stack, is left to the normalizing path, which accepts it, or refuses
+    it, exactly as before.
     """
 
     try:
-        return _ready(value)
+        return _ready(value, 0)
     except RecursionError:
         return False
 
 
-def _ready(value: object) -> bool:
+def _ready(value: object, depth: int) -> bool:
     """Whether ``value`` is already in the closed canonical value set, exactly.
 
     Exact ``str`` (NFC, no surrogate), ``int``, ``bool`` and ``None``, and exact
@@ -136,8 +145,7 @@ def _ready(value: object) -> bool:
     directly. Anything else (a float, bytes, a tuple, a subclass, a non-NFC or
     surrogate string) takes the normalizing path and refuses exactly as before.
 
-    One frame per nesting level, as ``normalize_canonical`` takes: plain loops,
-    never a generator frame per container.
+    ``depth`` is the containers above ``value``; one frame per level.
     """
 
     kind = type(value)
@@ -145,14 +153,16 @@ def _ready(value: object) -> bool:
         return _canonical_string(cast(str, value))
     if kind is int or kind is bool or value is None:
         return True
+    if depth >= _DIRECT_DEPTH:
+        return False
     if kind is dict or kind is FrozenDict:
         for key, item in cast(dict[object, object], value).items():
-            if type(key) is not str or not _canonical_string(key) or not _ready(item):
+            if type(key) is not str or not _canonical_string(key) or not _ready(item, depth + 1):
                 return False
         return True
     if kind is list or kind is FrozenList:
         for item in cast(list[object], value):
-            if not _ready(item):
+            if not _ready(item, depth + 1):
                 return False
         return True
     return False
@@ -320,12 +330,13 @@ _DICTS = (dict, FrozenDict)
 _LISTS = (list, FrozenList)
 
 
-def _identical(left: object, right: object) -> bool:
+def _identical(left: object, right: object, depth: int = 0) -> bool:
     """Equal in content and in every value's kind, built only of plain ASCII-keyed JSON.
 
     Strings must be ASCII, integers and bools compare only with their own kind
     (``1 == True`` in Python, never in JSON), and dicts and lists only with
-    dicts and lists (sealed ones included). One frame per nesting level.
+    dicts and lists (sealed ones included). One frame per nesting level; past
+    ``_DIRECT_DEPTH`` the values are left to ``canonical_bytes`` (``False``).
     """
 
     kind = type(left)
@@ -335,6 +346,8 @@ def _identical(left: object, right: object) -> bool:
         return type(right) is kind and left == right
     if left is None:
         return right is None
+    if depth >= _DIRECT_DEPTH:
+        return False
     if kind in _DICTS:
         if type(right) not in _DICTS:
             return False
@@ -347,7 +360,7 @@ def _identical(left: object, right: object) -> bool:
                 type(key) is str
                 and key.isascii()
                 and key in theirs
-                and _identical(item, theirs[key])
+                and _identical(item, theirs[key], depth + 1)
             ):
                 return False
         return True
@@ -359,7 +372,7 @@ def _identical(left: object, right: object) -> bool:
         if len(mine_items) != len(their_items):
             return False
         for item, other in zip(mine_items, their_items):
-            if not _identical(item, other):
+            if not _identical(item, other, depth + 1):
                 return False
         return True
     return False
