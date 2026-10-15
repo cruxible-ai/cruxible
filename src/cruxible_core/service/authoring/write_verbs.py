@@ -2448,6 +2448,11 @@ def _approval(
         if reason == "independent_approval_required"
         else ()
     )
+    activate_call = _render_proposal_call(surface, "activate", proposal_id)
+    if reason == "activation_not_permitted":
+        # This caller's own tier is why activation stopped here; the rendered
+        # call must not read as something they can run themselves.
+        activate_call = f"someone who can runs {activate_call}"
     return ApprovalNeeded(
         reason=reason,
         minimum_approvals=minimum,
@@ -2462,7 +2467,7 @@ def _approval(
             if reason == "independent_approval_required"
             else None
         ),
-        activate=_render_proposal_call(surface, "activate", proposal_id),
+        activate=activate_call,
     )
 
 

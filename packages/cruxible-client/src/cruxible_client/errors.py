@@ -180,9 +180,13 @@ def permission_denied_message(
             f"(effective request mode: {current_mode})"
         )
     else:
+        # No ceiling shortfall: the daemon itself can run this tool. What is
+        # short is the calling credential, which a request narrowed below the
+        # ceiling -- say so, not "the server", or an operator reading this
+        # reaches for the wrong fix (restarting the daemon in a higher mode).
         denial = (
             f"Tool '{tool_name}' requires {required_mode} mode, "
-            f"but server is running in {current_mode} mode"
+            f"but your credential is scoped to {current_mode} mode"
         )
     return f"{denial}. {permission_tier_summary(required_mode)}."
 

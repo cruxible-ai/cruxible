@@ -180,6 +180,29 @@ def test_capability_ceiling_denial_message_survives_round_trip() -> None:
     assert "cruxible_principal_change" in str(restored)
 
 
+def test_credential_scoped_denial_names_the_credential_not_the_server() -> None:
+    """No ceiling shortfall (``ceiling_mode=None``): a narrower credential is why.
+
+    The message must say the credential's own tier, not claim the server (or
+    daemon) is running at that mode -- the daemon's capability ceiling may be
+    far higher.
+    """
+
+    error = PermissionDeniedError(
+        "cruxible_proposal_activate",
+        "GOVERNED_WRITE",
+        "GRAPH_WRITE",
+        ceiling_mode=None,
+    )
+
+    status, body = error_to_response(error)
+    restored = client_errors.response_to_error(status, body)
+
+    assert status == 403
+    assert "your credential is scoped to GOVERNED_WRITE" in str(restored)
+    assert "server is running in" not in str(restored)
+
+
 def test_unknown_error_type_falls_back_to_core_error() -> None:
     restored = client_errors.response_to_error(
         500,
