@@ -249,6 +249,66 @@ def settle_targets(
     return tuple(targets), tuple(issues)
 
 
+@dataclass(frozen=True)
+class DelegatedAuthorityVerdict:
+    """One settle condition check, carried to an evaluation that would repeat it.
+
+    The check reads only the parent state (named by its coordinate), the
+    evaluation timestamp, the change set's scope and the candidate bytes at
+    those paths -- any other path the check reads is unchanged, so the parent
+    holds it. An evaluation with exactly those inputs reuses the issues
+    instead of evaluating the condition again; any other input re-checks.
+    """
+
+    mandate_digest: str
+    current: AcceptedProjectionCoordinate
+    timestamp: str
+    scope: tuple[str, ...]
+    members: tuple[bytes | None, ...]
+    issues: tuple[tuple[str, str], ...]
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        mandate_digest: str,
+        current: AcceptedProjectionCoordinate,
+        timestamp: str,
+        scope: tuple[str, ...],
+        candidate_tree: Mapping[str, bytes],
+        issues: tuple[tuple[str, str], ...],
+    ) -> DelegatedAuthorityVerdict:
+        return cls(
+            mandate_digest=mandate_digest,
+            current=current,
+            timestamp=timestamp,
+            scope=scope,
+            members=tuple(candidate_tree.get(path) for path in scope),
+            issues=issues,
+        )
+
+    def answers(
+        self,
+        *,
+        mandate_digest: str,
+        current: AcceptedProjectionCoordinate,
+        timestamp: str,
+        scope: tuple[str, ...],
+        candidate_tree: Mapping[str, bytes],
+    ) -> bool:
+        """Whether this check was made on exactly these inputs."""
+        return (
+            mandate_digest == self.mandate_digest
+            and timestamp == self.timestamp
+            and scope == self.scope
+            and current == self.current
+            and all(
+                candidate_tree.get(path) == content
+                for path, content in zip(scope, self.members, strict=True)
+            )
+        )
+
+
 def delegated_authority_issues(
     *,
     mandate_digest: str,

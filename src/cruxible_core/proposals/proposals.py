@@ -366,6 +366,7 @@ from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 if TYPE_CHECKING:
     from cruxible_core.evidence.attestation_verification import CaptureContractVersions
+    from cruxible_core.proposals.delegated_authority import DelegatedAuthorityVerdict
 
 _DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.json$")
 _APPROVAL_POLICY_PATH_RE = re.compile(r"^governance/approval-policy\.json$")
@@ -4300,6 +4301,7 @@ def _evaluate_scoped_members(
     delegated_mandate_digest: str | None = None,
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
+    settle_condition: DelegatedAuthorityVerdict | None = None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -4698,18 +4700,31 @@ def _evaluate_scoped_members(
         # parent state, it covers every member and its condition holds for each.
         from cruxible_core.proposals.delegated_authority import delegated_authority_issues
 
-        issues = delegated_authority_issues(
-            mandate_digest=delegated_mandate_digest,
-            scope=scope,
-            current_tree=current_tree,
-            candidate_tree=candidate_tree,
-            current=current,
-            timestamp=timestamp,
-            facts=None
-            if query_facts_provider is None
-            else lambda predicates, subject_kinds: query_facts_provider(
-                current, predicates=predicates, subject_kinds=subject_kinds
-            ),
+        # The settle terminal checked this same condition at this head just
+        # before submitting; on exactly those inputs its answer stands.
+        issues = (
+            settle_condition.issues
+            if settle_condition is not None
+            and settle_condition.answers(
+                mandate_digest=delegated_mandate_digest,
+                current=current,
+                timestamp=timestamp,
+                scope=scope,
+                candidate_tree=candidate_tree,
+            )
+            else delegated_authority_issues(
+                mandate_digest=delegated_mandate_digest,
+                scope=scope,
+                current_tree=current_tree,
+                candidate_tree=candidate_tree,
+                current=current,
+                timestamp=timestamp,
+                facts=None
+                if query_facts_provider is None
+                else lambda predicates, subject_kinds: query_facts_provider(
+                    current, predicates=predicates, subject_kinds=subject_kinds
+                ),
+            )
         )
         if issues:
             return CandidateEvaluation(
@@ -5049,6 +5064,7 @@ def evaluate_proposal_tree(
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
     base_changes: frozenset[str] | None = None,
+    settle_condition: DelegatedAuthorityVerdict | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -5071,6 +5087,10 @@ def evaluate_proposal_tree(
     Otherwise the state is built from scratch. All paths reach the same candidate:
     the carried state is a cache of derivations, never a source of them. Laws,
     bodies, approvals and current-coordinate query facts are never cached here.
+
+    `settle_condition` is a settle terminal's own check of its mandate's
+    condition, made at this head just before it submitted; it is used only
+    when its inputs are exactly this evaluation's.
 
     `replaying_accepted` is only for recovery, re-deriving a generation main
     already holds: Captures it cites were admitted when it was accepted, so they
@@ -5217,6 +5237,7 @@ def evaluate_proposal_tree(
             principal_registry_provider=principal_registry_provider,
             delegated_mandate_digest=delegated_mandate_digest,
             subject_assignment_authority=subject_assignment_authority,
+            settle_condition=settle_condition,
         )
 
 
@@ -5364,6 +5385,7 @@ class ProposalService:
         settle_submission: ProposalSettleSubmission | None,
         expected_candidate: tuple[str, str] | None,
         readmits: ProposalReadmissionLink | None,
+        settlement: SettlementHandoff | None = None,
     ) -> _AdmissionEvaluation:
         """Everything a submission does before its first write: one shared path.
 
@@ -5483,6 +5505,7 @@ class ProposalService:
                 historical_artifact_provider=self.historical_artifact_provider,
                 subject_assignment_authority=self.subject_assignment_authority,
                 delegated_mandate_digest=delegated_mandate_digest,
+                settle_condition=None if settlement is None else settlement.settle_condition,
             )
         _require_executed_derivations(
             outcome, current_tree=current_tree, authorized=authorized_derivations
@@ -5648,6 +5671,7 @@ class ProposalService:
             settle_submission=settle_submission,
             expected_candidate=expected_candidate,
             readmits=readmits,
+            settlement=handoff,
         )
         refuse_write_while_previewing("proposal submission")
         current = evaluated.current

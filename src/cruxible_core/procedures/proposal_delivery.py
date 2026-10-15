@@ -163,6 +163,7 @@ from cruxible_core.procedures.terminal_services import (
     settle_terminal_receipt,
 )
 from cruxible_core.proposals.delegated_authority import (
+    DelegatedAuthorityVerdict,
     claim_types_outside_scope,
     delegated_authority_issues,
 )
@@ -2258,18 +2259,30 @@ class ProposalTerminalEgressSink:
             else:
                 assert mandate is not None and mandate.condition is not None  # checked above
                 head = self.instance.accepted_coordinate()
+                timestamp = canonical_candidate_timestamp(request.evaluation_time)
                 issues = delegated_authority_issues(
                     mandate_digest=digest,
                     scope=request.target_paths,
                     current_tree=self.instance.immutable_tree_at(head.git_oid),
                     candidate_tree=prepared.candidate_tree,
                     current=head,
-                    timestamp=canonical_candidate_timestamp(request.evaluation_time),
+                    timestamp=timestamp,
                     facts=lambda predicates, subject_kinds: self.instance._accepted_query_facts(
                         self.instance, head, predicates=predicates, subject_kinds=subject_kinds
                     ),
                     mandate_name=mandate.identity.name,
                 )
+                if handoff is not None:
+                    # Admission evaluates this condition again at the same head;
+                    # on exactly these inputs it takes this answer.
+                    handoff.settle_condition = DelegatedAuthorityVerdict.of(
+                        mandate_digest=digest,
+                        current=head,
+                        timestamp=timestamp,
+                        scope=request.target_paths,
+                        candidate_tree=prepared.candidate_tree,
+                        issues=issues,
+                    )
                 codes = sorted({code for code, _message in issues})
                 if issues and mandate.condition.fallback == "refuse":
                     raise ProposalDeliveryRefused(

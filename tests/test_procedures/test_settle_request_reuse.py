@@ -55,10 +55,14 @@ def _settle(instance: Any, root: Path, line: Any, *, items: range, batch: int) -
     return egress
 
 
-def _two_batches(tmp_path: Path, measure: Callable[[], Any]) -> tuple[Counter[str], Counter[str]]:
+def _two_batches(
+    tmp_path: Path, measure: Callable[[], Any], *, worlds: list[Any] | None = None
+) -> tuple[Counter[str], Counter[str]]:
     """Settle SMALL then LARGE new Claims, each inside its own fresh ``measure()`` window."""
 
     instance, root, line = _world(tmp_path)
+    if worlds is not None:
+        worlds.append((instance, root, line))
     counts = []
     for batch, items in enumerate((range(SMALL), range(SMALL, SMALL + LARGE))):
         with measure() as counter:
@@ -251,3 +255,77 @@ def test_a_settle_activates_from_its_own_submission_without_reading_it_back(
         assert counts["read_candidate"] == 0, counts
         assert counts["inspect"] == 0, counts
         assert counts["proposal_tree"] == 0, counts
+
+
+# --- L8: the settle condition is checked once per head ---------------------------------
+
+
+def test_admission_takes_the_settle_condition_checked_just_before_it_at_the_same_head(
+    tmp_path: Path,
+) -> None:
+    """The admission evaluation reuses the terminal's own check; other inputs re-check."""
+
+    from cruxible_core.proposals import delegated_authority
+    from cruxible_core.proposals.delegated_authority import DelegatedAuthorityVerdict
+    from cruxible_core.proposals.proposals import ProposalService
+
+    @contextmanager
+    def measure() -> Iterator[Counter[str]]:
+        counter: Counter[str] = Counter()
+        submitting = [False]
+
+        def submit(original: Any) -> Any:
+            def counted(*args: Any, **kwargs: Any) -> Any:
+                submitting[0] = True
+                try:
+                    return original(*args, **kwargs)
+                finally:
+                    submitting[0] = False
+
+            return counted
+
+        def issues(original: Any) -> Any:
+            def counted(*args: Any, **kwargs: Any) -> Any:
+                counter["in_admission" if submitting[0] else "elsewhere"] += 1
+                return original(*args, **kwargs)
+
+            return counted
+
+        with (
+            _patched(ProposalService, "submit", submit),
+            _patched(delegated_authority, "delegated_authority_issues", issues),
+        ):
+            yield counter
+
+    worlds: list[Any] = []
+    small, large = _two_batches(tmp_path, measure, worlds=worlds)
+    assert small["in_admission"] == large["in_admission"] == 0, (small, large)
+
+    ((instance, _root, _line),) = worlds
+    head = instance.accepted_coordinate()
+    scope = ("claims/a.json", "claims/b.json")
+    tree = {"claims/a.json": b"a", "claims/b.json": b"b", "subjects/x.json": b"x"}
+    verdict = DelegatedAuthorityVerdict.of(
+        mandate_digest="sha256:" + "1" * 64,
+        current=head,
+        timestamp="2026-09-12T12:00:00.000000Z",
+        scope=scope,
+        candidate_tree=tree,
+        issues=(),
+    )
+    same = {
+        "mandate_digest": verdict.mandate_digest,
+        "current": head,
+        "timestamp": verdict.timestamp,
+        "scope": scope,
+        "candidate_tree": {**tree, "subjects/x.json": b"unread"},
+    }
+    assert verdict.answers(**same)  # type: ignore[arg-type]
+    for change in (
+        {"mandate_digest": "sha256:" + "2" * 64},
+        {"current": head.model_copy(update={"git_oid": "0" * len(head.git_oid)})},
+        {"timestamp": "2026-09-12T12:00:01.000000Z"},
+        {"scope": ("claims/a.json",)},
+        {"candidate_tree": {**tree, "claims/b.json": b"changed"}},
+    ):
+        assert not verdict.answers(**{**same, **change}), change  # type: ignore[arg-type]

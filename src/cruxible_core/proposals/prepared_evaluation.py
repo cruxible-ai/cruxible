@@ -41,6 +41,7 @@ from cruxible_core.derived.derived_state import (
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 
 if TYPE_CHECKING:
+    from cruxible_core.proposals.delegated_authority import DelegatedAuthorityVerdict
     from cruxible_core.proposals.proposals import CandidateEvaluation
 
 
@@ -334,6 +335,9 @@ class SettlementHandoff:
     def __init__(self) -> None:
         self._submitted: SubmittedProposal | None = None
         self._taken = False
+        #: The settle terminal's own condition check at the head it submits at,
+        #: for the admission evaluation to use when its inputs are the same.
+        self.settle_condition: DelegatedAuthorityVerdict | None = None
 
     def submitted(
         self,
