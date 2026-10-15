@@ -37,6 +37,7 @@ from cruxible_client.contracts.canonical import (
     artifact_path_for_codec,
     artifact_path_matches,
     canonical_bytes,
+    model_canonical_bytes,
     normalize_canonical,
     pretty_canonical_bytes,
     typed_digest,
@@ -1420,10 +1421,25 @@ _CAPTURE_ENVELOPE_ADAPTER: TypeAdapter[CaptureEnvelopeV1 | CaptureEnvelope] = Ty
 def render_capture_envelope(envelope: CaptureEnvelopeV1 | CaptureEnvelope) -> bytes:
     """Return the exact CAS object bytes; Capture envelopes carry no newline."""
 
-    return canonical_bytes(envelope.model_dump(mode="json"))
+    return model_canonical_bytes(envelope)
+
+
+#: Envelopes parsed once per exact bytes and shared sealed: one Capture cited by a
+#: whole fan-out of Claims is read back once per citing Claim.
+_CAPTURE_ENVELOPE_PARSES: ParseMemo[CaptureEnvelopeV1 | CaptureEnvelope] = ParseMemo(
+    capacity=4096, max_bytes=32 * 1024 * 1024
+)
 
 
 def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelope:
+    """Parse one Capture envelope once per exact bytes; see ``content_memo``."""
+
+    return _CAPTURE_ENVELOPE_PARSES.parse(
+        content, "capture-envelope", None, lambda: _parse_capture_envelope(content)
+    )
+
+
+def _parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelope:
     try:
         envelope = _CAPTURE_ENVELOPE_ADAPTER.validate_json(content)
     except ValidationError as exc:
@@ -1443,6 +1459,7 @@ def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelop
     return envelope
 
 
+@sealed_memo
 def capture_digest(envelope: CaptureEnvelopeV1 | CaptureEnvelope) -> CasDigest:
     return CasDigest(hashlib.sha256(render_capture_envelope(envelope)).hexdigest())
 

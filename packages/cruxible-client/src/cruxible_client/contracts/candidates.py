@@ -19,10 +19,13 @@ from cruxible_client.contracts.canonical import (
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
+    canonical_list_digest,
+    model_canonical_bytes,
     normalize_canonical,
     normalize_manifest_paths,
     typed_digest,
 )
+from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.governance import (
     ActivationPolicy,
@@ -32,6 +35,7 @@ from cruxible_client.contracts.governance import (
     governance_identifier,
     validate_approval_requirements,
 )
+from cruxible_client.contracts.primitives import canonical_json
 
 
 class _StrictCandidateModel(BaseModel):
@@ -160,6 +164,7 @@ class SemanticCandidate(_StrictCandidateModel):
 SemanticCandidateLike = SemanticCandidateV1 | SemanticCandidate
 
 
+@sealed_memo
 def candidate_digest(candidate: SemanticCandidateLike) -> CandidateDigest:
     """Hash exactly the five C_s fields under the candidate's own version domain.
 
@@ -305,6 +310,32 @@ class DependencyProofReference(_StrictCandidateModel):
         return governance_identifier(value, label="dependency proof pin role")
 
 
+@sealed_memo
+def dependency_proof_order(reference: DependencyProofReference) -> bytes:
+    """A proof reference's canonical bytes: the order proof sets are sorted and unique in.
+
+    Every field is a validated string, so when all of them are ASCII (paths,
+    digests and pin roles always are in practice) the canonical encoding is
+    exactly the compact sorted-key JSON of the dump: an ASCII string is its own
+    NFC form and holds no surrogate, and ASCII sorts the same as its UTF-8. That
+    JSON is written directly; any other reference takes the full canonical path.
+    """
+
+    payload = reference.model_dump(mode="json")
+    if all(type(value) is str and value.isascii() for value in payload.values()):
+        return canonical_json(payload).encode("ascii")
+    return canonical_bytes(payload)
+
+
+def _sorted_unique_proofs(
+    value: tuple[DependencyProofReference, ...], *, message: str
+) -> tuple[DependencyProofReference, ...]:
+    encoded = tuple(dependency_proof_order(item) for item in value)
+    if encoded != tuple(sorted(set(encoded))):
+        raise ValueError(message)
+    return value
+
+
 class LawEvaluationCoordinate(_StrictCandidateModel):
     """Path-free accepted coordinate at which a member law was evaluated."""
 
@@ -384,10 +415,9 @@ class MemberLawEvaluation(_StrictCandidateModel):
     def _proofs(
         cls, value: tuple[DependencyProofReference, ...]
     ) -> tuple[DependencyProofReference, ...]:
-        encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
-        if encoded != tuple(sorted(set(encoded))):
-            raise ValueError("dependency proof refs must be canonically sorted and unique")
-        return value
+        return _sorted_unique_proofs(
+            value, message="dependency proof refs must be canonically sorted and unique"
+        )
 
     @field_validator("policy_digests", "query_receipt_digests")
     @classmethod
@@ -407,6 +437,7 @@ class MemberLawEvaluation(_StrictCandidateModel):
         return {str(key): item for key, item in normalized.items()}
 
 
+@sealed_memo
 def member_law_evidence_digest(evidence: MemberLawEvaluation) -> str:
     payload = evidence.model_dump(mode="json")
     payload.pop("tag")
@@ -468,10 +499,9 @@ class CandidateMemberLawEvidence(_StrictCandidateModel):
     def _proofs(
         cls, value: tuple[DependencyProofReference, ...]
     ) -> tuple[DependencyProofReference, ...]:
-        encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
-        if encoded != tuple(sorted(set(encoded))):
-            raise ValueError("member dependency proofs must be sorted and unique")
-        return value
+        return _sorted_unique_proofs(
+            value, message="member dependency proofs must be sorted and unique"
+        )
 
     @model_validator(mode="after")
     def _digest_shape(self) -> "CandidateMemberLawEvidence":
@@ -565,12 +595,19 @@ ClosureProofLike = ClosureProofV2 | ClosureProof
 def candidate_member_evidence_digest(
     members: tuple[CandidateMemberLawEvidence, ...],
 ) -> str:
-    """Hash the ordered member evidence under its own unchanged frozen domain."""
+    """Hash the ordered member evidence under its own unchanged frozen domain.
 
-    return typed_digest(
-        Sha256Value,
-        "playbill-candidate-member-evidence-v2",
-        {"members": [item.model_dump(mode="json") for item in members]},
+    The preimage is composed from each member's own canonical bytes, which a
+    sealed member keeps: re-verifying a candidate built from sealed members
+    re-encodes none of them.
+    """
+
+    return Sha256Value(
+        canonical_list_digest(
+            "playbill-candidate-member-evidence-v2",
+            "members",
+            [model_canonical_bytes(item) for item in members],
+        )
     ).tagged
 
 
@@ -769,7 +806,7 @@ PRODUCED_CANDIDATE_VERSION: Final[CandidateWireVersion] = "playbill-validated-ca
 
 
 def render_candidate_record(record: CandidateRecordAnyVersion) -> bytes:
-    return canonical_bytes(record.model_dump(mode="json")) + b"\n"
+    return model_canonical_bytes(record) + b"\n"
 
 
 __all__ = [
@@ -793,6 +830,7 @@ __all__ = [
     "candidate_digest",
     "candidate_member_evidence_digest",
     "canonical_candidate_timestamp",
+    "dependency_proof_order",
     "render_candidate_record",
     "member_law_evidence_digest",
     "validate_candidate_timestamp",

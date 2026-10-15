@@ -235,7 +235,6 @@ from cruxible_core.procedures.terminal_dependencies import (
     produced_capture_token,
     receipt_token,
     terminal_item_key,
-    terminal_item_manifest_digest,
 )
 from cruxible_core.providers.provider_local_runtime import (
     BoundLocalProviderV1,
@@ -261,7 +260,6 @@ from cruxible_core.storage.material_reservations import (
     ProcedureMaterialReservationStore,
     ReservedCaptureStore,
     make_run_reservation,
-    run_material_invocation_id,
 )
 
 ProcedureRunStatusV1 = Literal[
@@ -5024,7 +5022,8 @@ class ProcedureExecutor:
                 TerminalChildReceiptV1(
                     child_index=index,
                     item_key=item_key,
-                    manifest_digest=terminal_item_manifest_digest(manifest),
+                    # The derived facts already digested this exact manifest.
+                    manifest_digest=derived.manifest_digest,
                     record_digest=stored.record_digest,
                     sequence=stored.record.sequence,
                 )
@@ -5765,20 +5764,17 @@ class ProcedureExecutor:
                     _journal_refusal_code(exc),
                     "Procedure journal append refused.",
                 ) from exc
+            # The reservation's invocation id is a function of exactly the six
+            # values it was minted from (the admission's instance and partition,
+            # the event kind, run, binding and body digest), so the stored record
+            # reproduces it iff it carries those same six values.
             if (
                 stored.record.payload_digest != reservation.body_digest
                 or stored.record.event_kind != reservation.intended_event_kind
                 or stored.record.run_id != reservation.run_id
                 or stored.record.admission_binding_digest != reservation.admission_binding_digest
-                or reservation.invocation_id
-                != run_material_invocation_id(
-                    instance_id=stored.record.stream.instance_id,
-                    partition_id=stored.record.partition_id,
-                    event_kind=stored.record.event_kind,
-                    run_id=stored.record.run_id,
-                    admission_binding_digest=stored.record.admission_binding_digest,
-                    body_digest=stored.record.payload_digest,
-                )
+                or stored.record.stream.instance_id != admission.instance_id
+                or stored.record.partition_id != admission.journal_partition_id
             ):
                 raise ExecutionError("journal append did not reproduce its material reservation")
             for pending in pending_to_release:

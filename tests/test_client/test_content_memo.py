@@ -26,6 +26,7 @@ from cruxible_client.contracts.content_memo import (
     ValueMemo,
     is_sealed,
     seal,
+    sealed_derive,
     sealed_memo,
 )
 from cruxible_client.contracts.subjects import (
@@ -275,3 +276,103 @@ def test_owner_contract_schemas_are_frozen_so_procedures_can_be_sealed():
     assert schema.fields["payload"].optional is False
     assert seal(schema) and isinstance(schema.fields, FrozenDict)
     assert isinstance(schema.fields["payload"].json_schema, FrozenDict)
+
+
+def test_a_keyed_derivation_is_remembered_per_sealed_object_and_key():
+    calls = []
+
+    def derive(label: str) -> str:
+        calls.append(label)
+        return label.upper()
+
+    sealed = _Leaf(tags=["a"], meta={})
+    assert seal(sealed)
+    first = sealed_derive(sealed, ("test.keyed", "x"), lambda: derive("x"))
+    again = sealed_derive(sealed, ("test.keyed", "x"), lambda: derive("x"))
+    other = sealed_derive(sealed, ("test.keyed", "y"), lambda: derive("y"))
+    assert (first, again, other) == ("X", "X", "Y") and calls == ["x", "y"]
+    # An unsealed object, or a copy of a sealed one, derives afresh every time.
+    plain = _Leaf(tags=["a"], meta={})
+    copied = sealed.model_copy()
+    for value in (plain, plain, copied):
+        sealed_derive(value, ("test.keyed", "x"), lambda: derive("x"))
+    assert calls == ["x", "y", "x", "x", "x"]
+
+
+def test_a_sealed_model_is_encoded_once_and_a_copy_afresh(monkeypatch):
+    from cruxible_client.contracts import canonical
+
+    encoded = []
+    real = canonical.canonical_bytes
+
+    def counted(value):  # type: ignore[no-untyped-def]
+        encoded.append(value)
+        return real(value)
+
+    monkeypatch.setattr(canonical, "canonical_bytes", counted)
+    sealed = _Leaf(tags=["é", "b"], meta={"k": [1, None]})
+    assert seal(sealed)
+    expected = real(sealed.model_dump(mode="json"))
+    assert {canonical.model_canonical_bytes(sealed) for _ in range(3)} == {expected}
+    assert len(encoded) == 1
+    copied = sealed.model_copy(update={"tags": ["c"]})
+    assert canonical.model_canonical_bytes(copied) == real(copied.model_dump(mode="json"))
+    assert len(encoded) == 2
+
+
+def test_composed_digests_and_cheap_comparisons_equal_the_canonical_ones():
+    from cruxible_client.contracts.candidates import (
+        DependencyProofReference,
+        dependency_proof_order,
+    )
+    from cruxible_client.contracts.canonical import (
+        canonical_bytes,
+        canonical_digest,
+        canonical_equal,
+        canonical_list_digest,
+        composed_canonical_digest,
+    )
+
+    items = [{"b": "é", "a": [1, "x", None]}, {"z": True}, {}]
+    payload = {"sequence": 3, "alpha": "ç", "nested": {"y": [False, None]}}
+    encoded = [canonical_bytes(item) for item in items]
+    assert canonical_list_digest("dom-é", "members", encoded) == canonical_digest(
+        "dom-é", {"members": items}
+    )
+    assert composed_canonical_digest(
+        "d", payload, {"members": encoded, "law_evidence": []}
+    ) == canonical_digest("d", {**payload, "members": items, "law_evidence": []})
+    with pytest.raises(ValueError):
+        canonical_list_digest("d", "tag", encoded)
+    with pytest.raises(ValueError):
+        composed_canonical_digest("d", {"members": 1}, {"members": encoded})
+    for path in ("claims/ab/CLM-1.json", "subjects/kïnd/é.json"):
+        reference = DependencyProofReference(
+            source_path=path,
+            source_artifact_digest="sha256:" + "1" * 64,
+            target_path="claim-types/x.json",
+            target_artifact_digest="sha256:" + "2" * 64,
+            pin_role="claim-type",
+        )
+        assert dependency_proof_order(reference) == canonical_bytes(
+            reference.model_dump(mode="json")
+        )
+    for left, right in (
+        ({"a": "x", "b": [1, None]}, {"a": "x", "b": [1, None]}),
+        ({"a": 1}, {"a": True}),
+        ({"a": "é"}, {"a": "é"}),
+        ({"a": "x"}, {"a": "y"}),
+        (FrozenDict({"a": FrozenList(["x"])}), {"a": ["x"]}),
+    ):
+        assert canonical_equal(left, right) is (canonical_bytes(left) == canonical_bytes(right))
+
+
+def test_a_memo_of_few_large_records_may_keep_an_entry_over_a_sixteenth():
+    large: ParseMemo[_Leaf] = ParseMemo(capacity=2, max_bytes=4096, max_entry_bytes=2048)
+    content = b"y" * 300
+    first = large.parse(content, "p", None, lambda: _Leaf(tags=["a"], meta={}))
+    assert large.parse(content, "p", None, lambda: _Leaf(tags=["b"], meta={})) is first
+    assert is_sealed(first)
+    small: ParseMemo[_Leaf] = ParseMemo(capacity=2, max_bytes=4096)
+    small.parse(content, "p", None, lambda: _Leaf(tags=["a"], meta={}))
+    assert not small._entries

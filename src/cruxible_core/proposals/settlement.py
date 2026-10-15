@@ -45,9 +45,12 @@ from cruxible_client.contracts.canonical import (
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
+    composed_canonical_digest,
+    model_canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.captures import ProducerReceiptResolverProtocol
+from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.documents import BodyVerifierProtocol
 from cruxible_client.contracts.errors import (
     SettlementEvidenceUnproven,
@@ -398,11 +401,34 @@ def _verify_multi_member_change_set(
         raise ValueError(f"{label} self digest does not reproduce")
 
 
+#: The receipt fields that hold one entry per member: composed from each entry's
+#: own canonical bytes, which a sealed entry keeps (``_receipt_digest``).
+_MEMBER_LISTS: Final = ("members", "law_evidence")
+
+
+def _receipt_digest(tag: str, values: Mapping[str, object]) -> ChangeSetDigest:
+    """The change-set digest of ``values`` (models, or tuples of models, or JSON values).
+
+    The per-member lists are composed from their entries' canonical bytes, so a
+    receipt built from a sealed candidate encodes none of its members again; the
+    preimage is byte for byte the one the whole record's JSON dump hashes to.
+    """
+
+    lists = {
+        name: [model_canonical_bytes(item) for item in value]
+        for name, value in values.items()
+        if name in _MEMBER_LISTS and isinstance(value, tuple)
+    }
+    rest = _json_values({name: value for name, value in values.items() if name not in lists})
+    return ChangeSetDigest(composed_canonical_digest(tag, rest, lists))
+
+
+@sealed_memo
 def change_set_digest(record: ChangeSetRecordAnyVersion) -> ChangeSetDigest:
-    payload = record.model_dump(mode="json")
-    payload.pop("tag")
-    payload.pop("changeset_digest")
-    return typed_digest(ChangeSetDigest, record.tag, payload)
+    values = {name: getattr(record, name) for name in type(record).model_fields}
+    values.pop("tag")
+    values.pop("changeset_digest")
+    return _receipt_digest(record.tag, values)
 
 
 def build_change_set_record(
@@ -443,7 +469,7 @@ def build_change_set_record(
             "actor_binding": actor_binding,
             "mandate_digest": mandate_digest,
         }
-        digest = typed_digest(ChangeSetDigest, tag, _json_values(multi_member_values))
+        digest = _receipt_digest(tag, multi_member_values)
         record = {**multi_member_values, "changeset_digest": digest.tagged}
         if isinstance(candidate, CandidateRecord):
             return ChangeSetRecordV3.model_validate(record)
@@ -463,7 +489,7 @@ def build_change_set_record(
         "actor_binding": actor_binding,
         "mandate_digest": mandate_digest,
     }
-    digest = typed_digest(ChangeSetDigest, "playbill-changeset-v1", _json_values(values))
+    digest = _receipt_digest("playbill-changeset-v1", values)
     return ChangeSetRecord.model_validate({**values, "changeset_digest": digest.tagged})
 
 
@@ -487,7 +513,7 @@ def change_set_path(record: ChangeSetRecordAnyVersion) -> str:
 
 
 def render_change_set(record: ChangeSetRecordAnyVersion) -> bytes:
-    return canonical_bytes(record.model_dump(mode="json")) + b"\n"
+    return model_canonical_bytes(record) + b"\n"
 
 
 _CHANGE_SET_RECORD_ADAPTER: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(
@@ -495,6 +521,15 @@ _CHANGE_SET_RECORD_ADAPTER: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter
 )
 _TAGGED_CHANGE_SET_RECORD_ADAPTER: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(
     Annotated[ChangeSetRecordAnyVersion, Field(discriminator="tag")]
+)
+
+
+#: Accepted change-set receipts, parsed once per exact (path, bytes) and shared
+#: sealed (``content_memo``): one settle reads its parent's receipt and its own
+#: (handoff, history) more than once, and each parse re-verifies every member's
+#: law evidence. Few and large: a handful are kept, each up to a few MB of JSON.
+_CHANGE_SET_PARSES: ParseMemo[ChangeSetRecordAnyVersion] = ParseMemo(
+    capacity=8, max_bytes=96 * 1024 * 1024, max_entry_bytes=48 * 1024 * 1024
 )
 
 
@@ -508,21 +543,35 @@ def parse_change_set_record(
     instance has ever settled parses here, and each is verified by the derivation
     it was written under: a ledger that crossed the succession boundary carries a
     v1 or v2 prefix and a v3 suffix, and replaying it end to end is ordinary.
+
+    A parse runs once per exact (path, bytes) and every caller gets the one
+    sealed record; a refusal is never remembered.
     """
 
+    return _CHANGE_SET_PARSES.parse(
+        content,
+        path,
+        None,
+        lambda: _parse_change_set_record(content, path=path, canonical_cache=canonical_cache),
+    )
+
+
+def _parse_change_set_record(
+    content: bytes, *, path: str, canonical_cache: BoundedCache[bool] | None
+) -> ChangeSetRecordAnyVersion:
     try:
         try:
             record = _TAGGED_CHANGE_SET_RECORD_ADAPTER.validate_json(content)
         except (ValueError, ValidationError):
             # Retain the ordinary union's historical malformed/missing-tag
             # behavior and refusal cause. Only valid tagged records avoid
-            # probing unrelated versions; parsed models are never retained.
+            # probing unrelated versions.
             record = _CHANGE_SET_RECORD_ADAPTER.validate_json(content)
     except (ValueError, ValidationError) as exc:
         raise SettlementIntegrityError(f"generation change-set record is invalid: {path}") from exc
-    # History readers still fetch source bytes and construct fresh models. Only
-    # the expensive canonical round trip is reusable for identical content;
-    # this marker neither authenticates a locator nor proves source availability.
+    # A record too large for the parse memo is parsed afresh, and the expensive
+    # canonical round trip stays reusable for identical content; this marker
+    # neither authenticates a locator nor proves source availability.
     key = hashlib.sha256(content).digest() if canonical_cache is not None else None
     if canonical_cache is None or canonical_cache.get(key) is None:
         if render_change_set(record) != content:

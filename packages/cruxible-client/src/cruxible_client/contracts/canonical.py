@@ -11,6 +11,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar, TypeVar, cast
 
+from pydantic import BaseModel
+
+from cruxible_client.contracts.content_memo import FrozenDict, FrozenList, sealed_memo
 from cruxible_client.contracts.errors import CanonicalEncodingError
 from cruxible_client.contracts.primitives import canonical_json, pretty_json
 
@@ -100,6 +103,96 @@ def canonical_bytes(value: object) -> bytes:
     """Encode one normalized value as whitespace-free UTF-8 JSON."""
 
     return canonical_json(normalize_canonical(value)).encode("utf-8")
+
+
+@sealed_memo
+def model_canonical_bytes(model: BaseModel) -> bytes:
+    """``canonical_bytes(model.model_dump(mode="json"))``, encoded once per sealed model.
+
+    A sealed model cannot change, so its encoding is remembered with it; any
+    other model (built in code and never sealed, or a copy) is encoded afresh.
+    """
+
+    return canonical_bytes(model.model_dump(mode="json"))
+
+
+def composed_canonical_digest(
+    domain: str,
+    payload: Mapping[str, object],
+    lists: Mapping[str, Sequence[bytes]],
+) -> str:
+    """``canonical_digest(domain, {**payload, **lists})``, each list given as its items' bytes.
+
+    An object's canonical encoding is its keys' and values' encodings joined in
+    key order, and a list's is its items' joined in order, so list items that
+    were each encoded once (``model_canonical_bytes`` remembers a sealed
+    model's) compose into the same preimage byte for byte, with no item
+    normalized or encoded again. Each entry of ``lists`` must hold exactly the
+    ``canonical_bytes`` of that list's values; ``payload`` is normalized here.
+    """
+
+    normalized = normalize_canonical(dict(payload))
+    assert isinstance(normalized, dict)
+    members: dict[str, bytes] = {
+        key: canonical_json(value).encode("utf-8") for key, value in normalized.items()
+    }
+    for raw_key, items in lists.items():
+        key = _normalize_string(raw_key)
+        if key in members:
+            raise CanonicalEncodingError(f"$: keys collide after NFC normalization: {key!r}")
+        members[key] = b"[" + b",".join(items) + b"]"
+    if "tag" in members:
+        raise CanonicalEncodingError("payload must not supply the reserved tag field")
+    members["tag"] = canonical_json(_normalize_string(domain)).encode("utf-8")
+    preimage = (
+        b"{"
+        + b",".join(
+            canonical_json(key).encode("utf-8") + b":" + members[key]
+            for key in sorted(members, key=lambda name: name.encode("utf-8"))
+        )
+        + b"}"
+    )
+    return hashlib.sha256(preimage).hexdigest()
+
+
+def canonical_list_digest(domain: str, field: str, items: Sequence[bytes]) -> str:
+    """``canonical_digest(domain, {field: values})`` from each value's own canonical bytes."""
+
+    return composed_canonical_digest(domain, {}, {field: items})
+
+
+def _plain(value: object) -> bool:
+    """Built only of ASCII strings, non-bool integers, None, lists and ASCII-keyed dicts."""
+
+    kind = type(value)
+    if kind is str:
+        return cast(str, value).isascii()
+    if kind is int or value is None:
+        return True
+    if kind is dict or kind is FrozenDict:
+        return all(
+            type(key) is str and key.isascii() and _plain(item)
+            for key, item in cast(dict[object, object], value).items()
+        )
+    if kind is list or kind is FrozenList:
+        return all(_plain(item) for item in cast(list[object], value))
+    return False
+
+
+def canonical_equal(left: object, right: object) -> bool:
+    """``canonical_bytes(left) == canonical_bytes(right)``, encoding only when it must.
+
+    Two equal values built only of ASCII strings, non-bool integers, None,
+    lists and ASCII-keyed dicts have one canonical encoding (ASCII is its own
+    NFC form and cannot collide or hold a surrogate), so plain equality decides
+    them. Anything else -- unequal values that might still share an encoding,
+    or values holding other types -- is encoded and compared, refusing exactly
+    as ``canonical_bytes`` does.
+    """
+
+    if left == right and _plain(left) and _plain(right):
+        return True
+    return canonical_bytes(left) == canonical_bytes(right)
 
 
 def pretty_canonical_bytes(value: object) -> bytes:
@@ -533,11 +626,15 @@ __all__ = [
     "Sha256Value",
     "canonical_bytes",
     "canonical_digest",
+    "canonical_equal",
+    "canonical_list_digest",
+    "composed_canonical_digest",
     "file_digest",
     "manifest_for_tree",
     "manifest_for_tree_carrying",
     "manifest_root",
     "manifest_root_from_members",
+    "model_canonical_bytes",
     "normalize_canonical",
     "normalize_ledger_path",
     "normalize_manifest_paths",
