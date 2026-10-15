@@ -7138,6 +7138,47 @@
             "title": "QueryBudgets",
             "type": "object"
           },
+          "QueryClaimFieldRef": {
+            "additionalProperties": false,
+            "description": "A field of the bound Subject's Claim for one exact predicate: its role or verdict.\n\nIt reads the same Claims a ``claim_value`` reference of the predicate reads,\nunder the same evaluation policy. ``role`` is the statement's ClaimRole;\n``verdict`` is the evidence-relative verdict the evaluation admitted the\nClaim under (the vocabulary of ``visible_verdicts``), exactly the one the\nrow's ``read_claims`` record. A conflicted one-cardinality value is a\nconflicted field; a many-valued predicate reads its Claims' distinct values\nas a list. Compared values are strings from the field's closed value set.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "field": {
+                "enum": [
+                  "role",
+                  "verdict"
+                ],
+                "title": "Field",
+                "type": "string"
+              },
+              "kind": {
+                "const": "claim_field",
+                "default": "claim_field",
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-claim-field-ref-v1",
+                "default": "playbill-query-claim-field-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "binding",
+              "predicate",
+              "field"
+            ],
+            "title": "QueryClaimFieldRef",
+            "type": "object"
+          },
           "QueryClaimPresenceFilter": {
             "additionalProperties": false,
             "description": "Whether the bound Subject carries any Claim of one exact predicate.",
@@ -7220,6 +7261,7 @@
               "left": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -7237,6 +7279,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -7262,6 +7307,7 @@
               "right": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -7279,6 +7325,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -8133,6 +8182,7 @@
               "left": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -8150,6 +8200,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -8187,6 +8240,7 @@
                 "items": {
                   "discriminator": {
                     "mapping": {
+                      "claim_field": "#/$defs/QueryClaimFieldRef",
                       "claim_value": "#/$defs/QueryClaimValueRef",
                       "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                       "literal": "#/$defs/QueryLiteralRef",
@@ -8204,6 +8258,9 @@
                     },
                     {
                       "$ref": "#/$defs/QueryClaimValueRef"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryClaimFieldRef"
                     },
                     {
                       "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -8298,6 +8355,7 @@
               "key": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -8315,6 +8373,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -8462,6 +8523,7 @@
               "value": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -8479,6 +8541,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -44936,6 +45001,47 @@
             "title": "QueryBudgets",
             "type": "object"
           },
+          "QueryClaimFieldRef": {
+            "additionalProperties": false,
+            "description": "A field of the bound Subject's Claim for one exact predicate: its role or verdict.\n\nIt reads the same Claims a ``claim_value`` reference of the predicate reads,\nunder the same evaluation policy. ``role`` is the statement's ClaimRole;\n``verdict`` is the evidence-relative verdict the evaluation admitted the\nClaim under (the vocabulary of ``visible_verdicts``), exactly the one the\nrow's ``read_claims`` record. A conflicted one-cardinality value is a\nconflicted field; a many-valued predicate reads its Claims' distinct values\nas a list. Compared values are strings from the field's closed value set.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "field": {
+                "enum": [
+                  "role",
+                  "verdict"
+                ],
+                "title": "Field",
+                "type": "string"
+              },
+              "kind": {
+                "const": "claim_field",
+                "default": "claim_field",
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-claim-field-ref-v1",
+                "default": "playbill-query-claim-field-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "binding",
+              "predicate",
+              "field"
+            ],
+            "title": "QueryClaimFieldRef",
+            "type": "object"
+          },
           "QueryClaimPresenceFilter": {
             "additionalProperties": false,
             "description": "Whether the bound Subject carries any Claim of one exact predicate.",
@@ -45018,6 +45124,7 @@
               "left": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -45035,6 +45142,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -45060,6 +45170,7 @@
               "right": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -45077,6 +45188,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -45709,6 +45823,7 @@
               "left": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -45726,6 +45841,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -45763,6 +45881,7 @@
                 "items": {
                   "discriminator": {
                     "mapping": {
+                      "claim_field": "#/$defs/QueryClaimFieldRef",
                       "claim_value": "#/$defs/QueryClaimValueRef",
                       "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                       "literal": "#/$defs/QueryLiteralRef",
@@ -45780,6 +45899,9 @@
                     },
                     {
                       "$ref": "#/$defs/QueryClaimValueRef"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryClaimFieldRef"
                     },
                     {
                       "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -45874,6 +45996,7 @@
               "key": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -45891,6 +46014,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -46038,6 +46164,7 @@
               "value": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -46055,6 +46182,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -79433,6 +79563,47 @@
             "title": "QueryBudgets",
             "type": "object"
           },
+          "QueryClaimFieldRef": {
+            "additionalProperties": false,
+            "description": "A field of the bound Subject's Claim for one exact predicate: its role or verdict.\n\nIt reads the same Claims a ``claim_value`` reference of the predicate reads,\nunder the same evaluation policy. ``role`` is the statement's ClaimRole;\n``verdict`` is the evidence-relative verdict the evaluation admitted the\nClaim under (the vocabulary of ``visible_verdicts``), exactly the one the\nrow's ``read_claims`` record. A conflicted one-cardinality value is a\nconflicted field; a many-valued predicate reads its Claims' distinct values\nas a list. Compared values are strings from the field's closed value set.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "field": {
+                "enum": [
+                  "role",
+                  "verdict"
+                ],
+                "title": "Field",
+                "type": "string"
+              },
+              "kind": {
+                "const": "claim_field",
+                "default": "claim_field",
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-claim-field-ref-v1",
+                "default": "playbill-query-claim-field-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "binding",
+              "predicate",
+              "field"
+            ],
+            "title": "QueryClaimFieldRef",
+            "type": "object"
+          },
           "QueryClaimPresenceFilter": {
             "additionalProperties": false,
             "description": "Whether the bound Subject carries any Claim of one exact predicate.",
@@ -79578,6 +79749,7 @@
               "left": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -79595,6 +79767,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -79620,6 +79795,7 @@
               "right": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -79637,6 +79813,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -80501,6 +80680,7 @@
               "left": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -80518,6 +80698,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -80555,6 +80738,7 @@
                 "items": {
                   "discriminator": {
                     "mapping": {
+                      "claim_field": "#/$defs/QueryClaimFieldRef",
                       "claim_value": "#/$defs/QueryClaimValueRef",
                       "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                       "literal": "#/$defs/QueryLiteralRef",
@@ -80572,6 +80756,9 @@
                     },
                     {
                       "$ref": "#/$defs/QueryClaimValueRef"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryClaimFieldRef"
                     },
                     {
                       "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -80666,6 +80853,7 @@
               "key": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -80683,6 +80871,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -80903,6 +81094,7 @@
               "value": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -80920,6 +81112,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -83203,6 +83398,47 @@
             "title": "QueryBudgets",
             "type": "object"
           },
+          "QueryClaimFieldRef": {
+            "additionalProperties": false,
+            "description": "A field of the bound Subject's Claim for one exact predicate: its role or verdict.\n\nIt reads the same Claims a ``claim_value`` reference of the predicate reads,\nunder the same evaluation policy. ``role`` is the statement's ClaimRole;\n``verdict`` is the evidence-relative verdict the evaluation admitted the\nClaim under (the vocabulary of ``visible_verdicts``), exactly the one the\nrow's ``read_claims`` record. A conflicted one-cardinality value is a\nconflicted field; a many-valued predicate reads its Claims' distinct values\nas a list. Compared values are strings from the field's closed value set.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "field": {
+                "enum": [
+                  "role",
+                  "verdict"
+                ],
+                "title": "Field",
+                "type": "string"
+              },
+              "kind": {
+                "const": "claim_field",
+                "default": "claim_field",
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-claim-field-ref-v1",
+                "default": "playbill-query-claim-field-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "binding",
+              "predicate",
+              "field"
+            ],
+            "title": "QueryClaimFieldRef",
+            "type": "object"
+          },
           "QueryClaimPresenceFilter": {
             "additionalProperties": false,
             "description": "Whether the bound Subject carries any Claim of one exact predicate.",
@@ -83285,6 +83521,7 @@
               "left": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -83302,6 +83539,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -83327,6 +83567,7 @@
               "right": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -83344,6 +83585,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -84292,6 +84536,7 @@
               "left": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -84309,6 +84554,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -84346,6 +84594,7 @@
                 "items": {
                   "discriminator": {
                     "mapping": {
+                      "claim_field": "#/$defs/QueryClaimFieldRef",
                       "claim_value": "#/$defs/QueryClaimValueRef",
                       "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                       "literal": "#/$defs/QueryLiteralRef",
@@ -84363,6 +84612,9 @@
                     },
                     {
                       "$ref": "#/$defs/QueryClaimValueRef"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryClaimFieldRef"
                     },
                     {
                       "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -84457,6 +84709,7 @@
               "key": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -84474,6 +84727,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -84621,6 +84877,7 @@
               "value": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -84638,6 +84895,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -88942,6 +89202,47 @@
             "title": "QueryClaim",
             "type": "object"
           },
+          "QueryClaimFieldRef": {
+            "additionalProperties": false,
+            "description": "A field of the bound Subject's Claim for one exact predicate: its role or verdict.\n\nIt reads the same Claims a ``claim_value`` reference of the predicate reads,\nunder the same evaluation policy. ``role`` is the statement's ClaimRole;\n``verdict`` is the evidence-relative verdict the evaluation admitted the\nClaim under (the vocabulary of ``visible_verdicts``), exactly the one the\nrow's ``read_claims`` record. A conflicted one-cardinality value is a\nconflicted field; a many-valued predicate reads its Claims' distinct values\nas a list. Compared values are strings from the field's closed value set.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "field": {
+                "enum": [
+                  "role",
+                  "verdict"
+                ],
+                "title": "Field",
+                "type": "string"
+              },
+              "kind": {
+                "const": "claim_field",
+                "default": "claim_field",
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-claim-field-ref-v1",
+                "default": "playbill-query-claim-field-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "binding",
+              "predicate",
+              "field"
+            ],
+            "title": "QueryClaimFieldRef",
+            "type": "object"
+          },
           "QueryClaimPresenceFilter": {
             "additionalProperties": false,
             "description": "Whether the bound Subject carries any Claim of one exact predicate.",
@@ -89143,6 +89444,7 @@
               "left": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -89160,6 +89462,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -89185,6 +89490,7 @@
               "right": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -89202,6 +89508,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -90066,6 +90375,7 @@
               "left": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -90083,6 +90393,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -90120,6 +90433,7 @@
                 "items": {
                   "discriminator": {
                     "mapping": {
+                      "claim_field": "#/$defs/QueryClaimFieldRef",
                       "claim_value": "#/$defs/QueryClaimValueRef",
                       "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                       "literal": "#/$defs/QueryLiteralRef",
@@ -90137,6 +90451,9 @@
                     },
                     {
                       "$ref": "#/$defs/QueryClaimValueRef"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryClaimFieldRef"
                     },
                     {
                       "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -90231,6 +90548,7 @@
               "key": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -90248,6 +90566,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
@@ -90468,6 +90789,7 @@
               "value": {
                 "discriminator": {
                   "mapping": {
+                    "claim_field": "#/$defs/QueryClaimFieldRef",
                     "claim_value": "#/$defs/QueryClaimValueRef",
                     "evaluation_time": "#/$defs/QueryEvaluationTimeRef",
                     "literal": "#/$defs/QueryLiteralRef",
@@ -90485,6 +90807,9 @@
                   },
                   {
                     "$ref": "#/$defs/QueryClaimValueRef"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimFieldRef"
                   },
                   {
                     "$ref": "#/$defs/QuerySubjectFieldRef"
