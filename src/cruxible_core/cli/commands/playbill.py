@@ -4958,11 +4958,32 @@ def _get_value_text(
     return get_value_display(value, width=width, evidence_hint=evidence_hint).text
 
 
+def _public_name(name: str) -> str:
+    """A stored ``playbill``-prefixed identity, mapped to its Cruxible display name.
+
+    Stored and served names keep their ``playbill-*-vN`` spelling: digests and
+    signatures cover them (AGENTS.md "Frozen format tags"). Public text output
+    says Cruxible instead -- at render time only, never by renaming the stored
+    value.
+    """
+    qualifier = "CaptureContract:"
+    if name.startswith(qualifier):
+        return qualifier + _public_name(name[len(qualifier) :])
+    if name.startswith("playbill."):
+        return "cruxible." + name[len("playbill.") :]
+    return name
+
+
 def _emit_get_text(result: Any) -> None:
     """Values first, per kind; ``--json`` carries the whole structured result."""
 
     if result.card is not None:
         card = result.card.model_dump(mode="json")
+        if isinstance(card.get("evidence"), list):
+            card["evidence"] = [_public_name(str(name)) for name in card["evidence"]]
+        for rule in card.get("evidence_rules") or ():
+            if isinstance(rule, dict) and isinstance(rule.get("contracts"), list):
+                rule["contracts"] = [_public_name(str(name)) for name in rule["contracts"]]
         nexts = card.pop("next", [])
         if result.kind == "claim":
             click.echo(f"{card['subject']}  {card['predicate']} = {_get_value_text(card['value'])}")
@@ -5022,8 +5043,9 @@ def _emit_get_text(result: Any) -> None:
             click.echo(f"content_digest: {result.evidence.content_digest}")
         for capture in result.evidence.captures:
             click.echo(
-                f"capture {capture.capture}  {capture.contract} v{capture.version}  "
-                f"source={capture.source}  observed={capture.observed_at.isoformat()}  "
+                f"capture {capture.capture}  {_public_name(capture.contract)} "
+                f"v{capture.version}  source={capture.source}  "
+                f"observed={capture.observed_at.isoformat()}  "
                 f"{capture.role}{' admitted' if capture.admitted else ' not admitted'}"
             )
         for attestation in result.evidence.attestations:
@@ -7355,7 +7377,9 @@ def _orient_predicate_line(item: Mapping[str, Any]) -> str:
     if item.get("stale_after"):
         parts.append(f"stale_after={item['stale_after']}")
     if item.get("evidence") is not None:
-        parts.append("evidence=" + (",".join(item["evidence"]) or "(none)"))
+        parts.append(
+            "evidence=" + (",".join(map(_public_name, item["evidence"])) or "(none)")
+        )
     return "  ".join(parts)
 
 
@@ -7396,7 +7420,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
             shared = kind.get("evidence")
             lines.append(
                 f"  {kind['kind']}  subjects={kind['subjects']}"
-                + (f"  evidence={','.join(shared)}" if shared else "")
+                + (f"  evidence={','.join(map(_public_name, shared))}" if shared else "")
             )
             lines.extend(f"    {_orient_predicate_line(item)}" for item in kind["predicates"])
     artifacts = result.get("artifacts")
@@ -7409,7 +7433,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         shared = detail.get("evidence")
         lines.append(
             f"Kind {detail['kind']}  subjects={detail['subjects']}"
-            + (f"  evidence={','.join(shared)}" if shared else "")
+            + (f"  evidence={','.join(map(_public_name, shared))}" if shared else "")
         )
         lines.extend(f"  {_orient_predicate_line(item)}" for item in detail["predicates"])
         if detail.get("incoming"):

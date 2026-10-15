@@ -171,6 +171,38 @@ def test_both_kind_views_print_shared_evidence_once_and_empty_exceptions() -> No
         assert "note  one  string  evidence=other" in text
 
 
+def test_orient_maps_stored_playbill_contract_names_to_cruxible_for_display() -> None:
+    """Stored evidence names keep their playbill spelling; orient's text does not."""
+
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    kind = {
+        "kind": KIND,
+        "subjects": 1,
+        "evidence": ["playbill.coordinator-self-source-v1"],
+        "predicates": [
+            {
+                "name": "status",
+                "type": "string",
+                "cardinality": "one",
+                "evidence": ["playbill.coordinator-self-source-v1", "feed-a"],
+            },
+        ],
+    }
+    text = _render_orient(
+        {
+            "instance": "inst",
+            "generation": 3,
+            "coordinate": {"git_oid": "a" * 64},
+            "accepted_at": "2026-09-29T00:00:00Z",
+            "kinds": [kind],
+        }
+    )
+    assert "playbill." not in text
+    assert "evidence=cruxible.coordinator-self-source-v1" in text
+    assert "evidence=cruxible.coordinator-self-source-v1,feed-a" in text
+
+
 def test_a_stale_floor_prints_how_far_behind_it_is_and_how_to_refresh() -> None:
     from cruxible_core.cli.commands.playbill import _render_orient
 

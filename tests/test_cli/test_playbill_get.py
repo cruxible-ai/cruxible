@@ -191,6 +191,47 @@ def test_other_cards_print_names_whole_and_nested_rows_readably(
     assert "next: cruxible proposal review sha256:" in result.output
 
 
+def test_a_claim_type_card_maps_stored_playbill_contract_names_for_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stored evidence contract names keep their playbill spelling; get's text does not."""
+
+    from cruxible_client.contracts.get_reads import GetClaimTypeCard, GetEvidenceRule
+
+    _stub(
+        monkeypatch,
+        _result(
+            "claim_type",
+            card=GetClaimTypeCard(
+                predicate="status",
+                subject_kinds=("work_item",),
+                object="string",
+                cardinality="one",
+                roles=("normative",),
+                evidence_requirement="self",
+                revision_evidence="replace",
+                evidence=("playbill.coordinator-self-source-v1",),
+                evidence_rules=(
+                    GetEvidenceRule(
+                        rule_id="self",
+                        roles=("normative",),
+                        contracts=("CaptureContract:playbill.coordinator-self-source-v1",),
+                        admission="direct",
+                    ),
+                ),
+                live_claims=0,
+            ),
+        ),
+    )
+
+    result = CliRunner().invoke(cli, [*PREFIX, "get", "ClaimType:status"])
+
+    assert result.exit_code == 0, result.output
+    assert "playbill." not in result.output
+    assert "evidence: cruxible.coordinator-self-source-v1" in result.output
+    assert "CaptureContract:cruxible.coordinator-self-source-v1" in result.output
+
+
 def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
