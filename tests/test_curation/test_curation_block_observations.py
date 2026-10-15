@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import get_args
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.declared_blocks import (
     DeclaredBlockPageObservation,
@@ -279,3 +281,97 @@ def test_block_churn_counts_body_transitions_across_the_bounded_generation_windo
     assert len(detected) == 1
     assert detected[0].subject == document_identity
     assert detected[0].detail == {"block_id": "status", "source_id": "docs.runbook"}
+
+
+def test_block_churn_never_parses_or_evaluates_observations_outside_its_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Block sync/repin record on every run; this detector's own work must not grow with them.
+
+    A counter on the payload parse proves old observations, well outside the
+    fixed-size generation window, are skipped before ever being parsed,
+    grouped, or resolved against accepted state -- not merely excluded from
+    the final detections after that work ran.
+    """
+
+    instance = _instance_with_document(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    document_identity = ArtifactIdentity(kind="document", name="runbook")
+    store = instance.review_operational_store()
+
+    old_count = 30
+    for index in range(old_count):
+        marker = _marker(coordinate).model_copy(
+            update={"observed_body_digest": "sha256:" + format(index, "064x")}
+        )
+        source = _page(coordinate).model_copy(
+            update={
+                "observed_source_digest": "sha256:" + format(index + 1000, "064x"),
+                "marker_summaries": (marker,),
+            }
+        )
+        observation = build_block_observation(
+            document_identity=document_identity,
+            source=source,
+            marker=marker,
+            scan_coordinate=coordinate,
+            scan_generation=0,
+            actor_context=_actor(),
+        )
+        store.append(
+            family="block_observation",
+            partition_id="document:runbook/docs.runbook/status",
+            event_id=observation.event_id,
+            payload=observation,
+            coordinate=coordinate,
+            generation=0,
+            actor_context=_actor(),
+            recorded_at=NOW,
+        )
+    for offset, scan_generation in enumerate((11, 12, 12)):
+        marker = _marker(coordinate).model_copy(
+            update={"observed_body_digest": "sha256:" + format(old_count + offset, "064x")}
+        )
+        source = _page(coordinate).model_copy(
+            update={
+                "observed_source_digest": "sha256:" + format(old_count + offset + 1000, "064x"),
+                "marker_summaries": (marker,),
+            }
+        )
+        observation = build_block_observation(
+            document_identity=document_identity,
+            source=source,
+            marker=marker,
+            scan_coordinate=coordinate,
+            scan_generation=scan_generation,
+            actor_context=_actor(),
+        )
+        store.append(
+            family="block_observation",
+            partition_id="document:runbook/docs.runbook/status",
+            event_id=observation.event_id,
+            payload=observation,
+            coordinate=coordinate,
+            generation=scan_generation,
+            actor_context=_actor(),
+            recorded_at=NOW,
+        )
+
+    parsed: list[object] = []
+    original_validate = BlockObservationV1.model_validate.__func__  # type: ignore[attr-defined]
+
+    def _counting_validate(cls: type[BlockObservationV1], payload: object) -> BlockObservationV1:
+        parsed.append(payload)
+        return original_validate(cls, payload)
+
+    monkeypatch.setattr(BlockObservationV1, "model_validate", classmethod(_counting_validate))
+
+    # BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW is 10, so at generation=20 the
+    # window is [11, 20]: it holds the 3 freshly-appended events and excludes
+    # every one of the 30 old (generation 0) events, however many accumulate.
+    detected, coverage = _block_churn(instance=instance, generation=20)
+
+    assert len(parsed) == 3
+    assert coverage.evaluated_fact_count == 3
+    assert len(detected) == 1
+    assert detected[0].subject == document_identity
