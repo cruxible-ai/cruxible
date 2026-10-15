@@ -297,20 +297,36 @@ def _query_backing(
     )[0]
 
 
-def _cell(value: object) -> str:
-    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+def _escaped(text: str) -> str:
     return " ".join(text.split()).replace("|", "\\|")
 
 
-def render_query_block_body(rows: Sequence[QueryResultRow]) -> bytes:
-    """Render one query's rows as a block body: a Markdown table, or a list.
+def _shown(value: object) -> str:
+    """A value as a reader reads it: text as written, lists and objects spelled out."""
 
-    Deterministic in the rows alone, so a re-render at the same backing
-    reproduces the same bytes. Rows with projected fields render a table whose
-    first column is the result Subject; rows without render a bulleted list of
-    Subjects. An absent field renders empty and a conflicted one says so.
-    """
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list | tuple):
+        return ", ".join(_shown(item) for item in value)
+    if isinstance(value, Mapping):
+        return ", ".join(f"{key}: {_shown(value[key])}" for key in sorted(value))
+    return str(value)
 
+
+def _subject_shown(identity: str) -> str:
+    return identity.removeprefix("Subject:")
+
+
+def _rows_body(
+    rows: Sequence[QueryResultRow],
+    *,
+    cell: Callable[[object], str],
+    subject_cell: Callable[[str], str],
+) -> bytes:
     if not rows:
         return b"_No rows._\n"
     names: list[str] = []
@@ -318,9 +334,9 @@ def render_query_block_body(rows: Sequence[QueryResultRow]) -> bytes:
         names.extend(field.name for field in row.fields if field.name not in names)
     subjects = [row.result_subject_identity or "" for row in rows]
     if not names:
-        return "".join(f"- {_cell(subject)}\n" for subject in subjects).encode("utf-8")
+        return "".join(f"- {subject_cell(subject)}\n" for subject in subjects).encode("utf-8")
     lines = [
-        "| subject | " + " | ".join(_cell(name) for name in names) + " |",
+        "| subject | " + " | ".join(_escaped(name) for name in names) + " |",
         "|" + "---|" * (len(names) + 1),
     ]
     for subject, row in zip(subjects, rows, strict=True):
@@ -332,10 +348,41 @@ def render_query_block_body(rows: Sequence[QueryResultRow]) -> bytes:
                 if field is None or field.state == "absent"
                 else "(conflicted)"
                 if field.state != "present"
-                else _cell(field.value)
+                else cell(field.value)
             )
-        lines.append("| " + " | ".join([_cell(subject), *cells]) + " |")
+        lines.append("| " + " | ".join([subject_cell(subject), *cells]) + " |")
     return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def render_query_block_body(rows: Sequence[QueryResultRow]) -> bytes:
+    """Render one query's rows as a block body: a Markdown table, or a list.
+
+    Deterministic in the rows alone, so a re-render at the same backing
+    reproduces the same bytes. Rows with projected fields render a table whose
+    first column is the result Subject (as ``kind/id``); rows without render a
+    bulleted list of Subjects. Values read as written: a list of values is
+    comma-separated, an object is ``key: value`` pairs. An absent field renders
+    empty and a conflicted one says so.
+    """
+
+    return _rows_body(
+        rows,
+        cell=lambda value: _escaped(_shown(value)),
+        subject_cell=lambda identity: _escaped(_subject_shown(identity)),
+    )
+
+
+def _render_query_block_body_v1(rows: Sequence[QueryResultRow]) -> bytes:
+    """The rendering before values were spelled out (`Subject:` ids, JSON values).
+
+    Read only to recognise a block rendered that way as a rendering, so sync
+    re-renders it in the current form instead of treating it as prose.
+    """
+
+    def cell(value: object) -> str:
+        return _escaped(value if isinstance(value, str) else json.dumps(value, sort_keys=True))
+
+    return _rows_body(rows, cell=cell, subject_cell=cell)
 
 
 def _evaluated_query_backing(
@@ -826,7 +873,10 @@ def _rendered_from_its_query(
         # The stamp's coordinate no longer answers the query: nothing proves
         # the body was rendered, so it stays the author's.
         return False
-    return _digest(render_query_block_body(rows)) == stamp.body_digest
+    return stamp.body_digest in {
+        _digest(render_query_block_body(rows)),
+        _digest(_render_query_block_body_v1(rows)),
+    }
 
 
 def sync_projection_blocks(
