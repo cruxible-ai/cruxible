@@ -882,10 +882,11 @@ def _required_approvals_text(review: ProposalReview) -> str:
 def render_playbill_proposal_review(review: ProposalReview) -> str:
     """Render the exact candidate a signer is about to attest to.
 
-    This is the approval confirmation, not the review surface: `proposal
-    approve` shows it immediately before asking for a signature, so it stays a
-    full rendering of what the signature will cover. `proposal review` points at
-    the ledger instead.
+    This is the full approval confirmation, not the review surface: `proposal
+    approve --full` shows it immediately before asking for a signature, a full
+    rendering of what the signature will cover (by default `approve` shows
+    `render_playbill_approval_summary`). `proposal review` points at the ledger
+    instead.
     """
 
     lines = [

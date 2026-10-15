@@ -3936,8 +3936,9 @@ incomplete projections without treating modified records as accepted evidence.
 structured read. A Procedure's proposal also prints one page of its items'
 reasons, each under the Claim or Subject path it explains (50 by default,
 `--item-reasons-limit` up to 500); `--item-reasons-after` with the printed
-cursor reads the next page. `proposal approve` still renders the whole candidate before
-asking for a signature, because that rendering is what the signature covers.
+cursor reads the next page. `proposal approve` shows the reason and change summary before
+asking for a signature; `--full` renders every member's artifact and semantic
+delta. The signature covers the exact candidate digest.
 
 A reviewer without a workspace attachment clones the ledger mirror instead and
 runs the same diff against `origin/main`; see [ledger](#ledger) for what the mirror carries and how to get its URL.
