@@ -357,8 +357,8 @@ at the page now. The table is current, and the summary contradicts it:
 
     | subject | advisories | owner | release |
     |---|---|---|---|
-    | Subject:app.service/billing | ["GHSA-gc5v-m9x4-r6x2"] | grace | requests-2.32.4 |
-    | Subject:app.service/payments | ["GHSA-gc5v-m9x4-r6x2"] | ada | requests-2.32.4 |
+    | app.service/billing | GHSA-gc5v-m9x4-r6x2 | grace | requests-2.32.4 |
+    | app.service/payments | GHSA-gc5v-m9x4-r6x2 | ada | requests-2.32.4 |
 
 Rewrite the summary, as you or an agent would:
 
@@ -432,7 +432,7 @@ proposes nothing. Bring the page up to date the same way as before: run
 
     | subject | advisories | owner | release |
     |---|---|---|---|
-    | Subject:app.service/billing | ["GHSA-gc5v-m9x4-r6x2"] | grace | requests-2.32.4 |
+    | app.service/billing | GHSA-gc5v-m9x4-r6x2 | grace | requests-2.32.4 |
 
 ## Step 9: Ask questions and trace the answers
 
