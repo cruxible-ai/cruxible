@@ -1,13 +1,19 @@
 # Quickstart
 
-Cruxible keeps facts about things you care about, with the reason and the
-evidence for each one, and notices when something that depends on a fact has
-to change. In about ten minutes you will:
+Your team runs three Python services. Which release of each library they pin,
+and which security advisories affect those releases, decides what can ship,
+and people and agents act on it every day. In this quickstart, Cruxible holds
+that knowledge for the team:
 
-- record which services use which libraries, with typed values your editor checks;
-- watch a change in the outside world arrive as a proposal you review before it lands;
-- see a status page you wrote get flagged as out of date;
-- ask which services the change reaches, why, and what the answer was before.
+- the services and their pins, as typed state your editor checks;
+- a check against PyPI that brings back real advisories, as changes you review
+  before they land;
+- a repository doc, `docs/dependencies.md`, that is flagged and regenerated
+  when what it summarizes changes;
+- answers to "which services are affected, why, and what did we believe
+  before?".
+
+It takes about fifteen minutes and needs network access to pypi.org.
 
 ## Install and start
 
@@ -17,19 +23,17 @@ Requirements: Python 3.11+ and Git.
 pip install cruxible        # or: uv tool install cruxible
 ~~~
 
-Cruxible runs as a small background server, the daemon, that keeps your
-state. Start it in its own shell:
+Cruxible runs as a background server, the daemon. Start it in its own shell
+and leave it running:
 
 ~~~bash
 cruxible server start --socket ~/.cruxible/run/daemon.sock
 ~~~
 
-It stores everything under `~/.cruxible`. Leave it running.
-
 ## Create a workspace
 
-State lives next to the work it describes, in a Git repository. In a second
-shell:
+The knowledge lives next to the code it describes, in a Git repository. In a
+second shell:
 
 ~~~bash
 mkdir services && cd services && git init
@@ -43,9 +47,11 @@ flags.
 
 ## Install the vocabulary
 
-Cruxible only stores values it has a type for. The types come as a kit, a
-release of definitions you install in one step. This one describes libraries
-and the services that depend on them:
+Cruxible stores values only for fields it has a type for. This quickstart
+needs a few: a service's owner and the releases it pins; a release's package,
+version and advisories. You could define them yourself ([Modeling
+state](modeling-state.md) shows how); to skip that here, install the demo kit,
+which also carries the saved query and the PyPI check used below:
 
 ~~~bash
 cruxible kit add quickstart:1.0.0
@@ -58,9 +64,8 @@ Preview at 500307c09f66; nothing was written.
 Commit this change? [y/N]: y
 ~~~
 
-It shows what it will add and asks first; answering `y` commits exactly the
-change you saw (`--yes` skips the question in scripts). Now look at what you
-have:
+It shows what it will add and asks first (`--yes` skips the question in
+scripts). Now look at what you have:
 
 ~~~bash
 cruxible orient
@@ -68,43 +73,51 @@ cruxible orient
 
 ~~~text
 Kinds (2):
-  app.library  subjects=0
-    advisory  one  enum[none|open|fixed]
-    latest  one  string
-    name  one  string
   app.service  subjects=0
-    depends_on  many  subject:app.library
+    depends_on  many  subject:pypi.release
     name  one  string
     owner  one  string
-Queries:
-  app.exposed_services()  Services that depend on a library with an open advisory.
+  pypi.release  subjects=0
+    advisories  many  string
+    name  one  string
+    package  one  string
+    version  one  string
 ~~~
 
-There are two kinds of thing, `app.library` and `app.service`. Each thing is
-a **Subject**, named `kind/id`, like `app.service/payments`. Each kind has
-fields: `advisory` holds exactly one of `none`, `open` or `fixed`;
-`depends_on` holds any number of libraries. The kit also brought one saved
-query, used later.
+There are two kinds of thing: services, and releases of PyPI packages. Each
+thing is a **Subject**, named `kind/id`: `app.service/payments`,
+`pypi.release/requests-2.32.4`. A service's `depends_on` points at the
+releases it pins.
 
-## Write state
+<!-- Maintainers: `orient` also prints each field's evidence contracts; they are
+trimmed here. The kit's PyPI check (Line pypi.check_advisories, its Procedure,
+and the cruxible-provider-web default it names) is not built yet: the kit add
+output above, the Line run below, and the review and evidence outputs for the
+Line's proposal were verified with an equivalent cited write instead. -->
 
-Record the inventory. Save this as `seed.py` and run it with `python
-seed.py`:
+## Record what the team knows
+
+Write down the pins, as the services' `requirements.txt` files have them.
+Save this as `seed.py` and run it with `python seed.py`:
 
 ~~~python
 from cruxible_client import Cruxible
 
+PINS = {
+    "payments": ("ada", "requests-2.32.4"),
+    "billing": ("grace", "requests-2.32.4"),
+    "search": ("linus", "jinja2-3.1.6"),
+}
+
 with Cruxible.connect() as cx:
-    batch = cx.changes(because="Inventory from the team wiki.")
-    batch.set("app.library/libfoo", "advisory", "none")
-    batch.set("app.library/libbar", "advisory", "none")
-    for service, owner, library in [
-        ("payments", "ada", "libfoo"),
-        ("billing", "grace", "libfoo"),
-        ("search", "linus", "libbar"),
-    ]:
+    batch = cx.changes(because="Pins from each service's requirements.txt.")
+    for release in {"requests-2.32.4", "jinja2-3.1.6"}:
+        package, version = release.split("-")
+        batch.set(f"pypi.release/{release}", "package", package)
+        batch.set(f"pypi.release/{release}", "version", version)
+    for service, (owner, release) in PINS.items():
         batch.set(f"app.service/{service}", "owner", owner)
-        batch.add(f"app.service/{service}", "depends_on", f"app.library/{library}")
+        batch.add(f"app.service/{service}", "depends_on", f"pypi.release/{release}")
     outcome = batch.write()
     print(outcome.status, "at generation", outcome.coordinate.generation)
 ~~~
@@ -113,10 +126,10 @@ with Cruxible.connect() as cx:
 accepted at generation 2
 ~~~
 
-Every write says why (`because`). The changes in one batch land together or
-not at all, and each accepted change is a numbered **generation**: a point in
+Every write says why (`because`), and the changes in one batch land together
+or not at all. Each accepted change is a numbered **generation**, a point in
 history you can read back later. Each value is stored as a **Claim**: the
-value, the reason, and the evidence behind it, with an ID (`CLM-…`).
+value, the reason, and the evidence for it, with an ID (`CLM-…`).
 
 Read it back:
 
@@ -125,19 +138,207 @@ cruxible query app.service --select owner,depends_on
 ~~~
 
 ~~~text
-subject               owner  depends_on          flags
-app.service/billing   grace  app.library/libfoo  -
-app.service/payments  ada    app.library/libfoo  -
-app.service/search    linus  app.library/libbar  -
+subject               owner  depends_on                    flags
+app.service/billing   grace  pypi.release/requests-2.32.4  -
+app.service/payments  ada    pypi.release/requests-2.32.4  -
+app.service/search    linus  pypi.release/jinja2-3.1.6     -
 ~~~
 
-## Typed edits
+Nobody has recorded any advisories yet. As far as the team knows, everything
+is clear.
 
-Cruxible keeps Python types for this vocabulary in `.cruxible/world.pyi`:
-every kind, field and allowed value. `init` wrote it, and it is kept current
-whenever the vocabulary changes, as it just did. Put `.cruxible` on your type
-checker's search path (for mypy, `MYPYPATH=.cruxible`), and edit through the
-typed world. Save as `update.py`:
+Your editor knows this vocabulary too. Cruxible keeps it as Python types in
+`.cruxible/world.pyi`, current whenever the vocabulary changes. Put `.cruxible`
+on your type checker's search path (for mypy, `MYPYPATH=.cruxible`), bind the
+typed world once, and a misspelled field is caught before anything runs:
+
+~~~python
+world = cast("World", cx.world())
+world.app.service["search"].set(ownr="grace", because="Grace took over search.")
+~~~
+
+~~~text
+error: Unexpected keyword argument "ownr" for "set" of "_S_app__service"; did you mean "owner"?
+~~~
+
+## A doc that depends on it
+
+The team keeps a dependencies page in the repository, where people and agents
+read it. Write it with two marked passages: a summary you write, and a table
+Cruxible fills in.
+
+~~~bash
+mkdir docs
+cat > docs/dependencies.md <<'EOF'
+# Dependencies
+
+## Release status
+
+<!-- cruxible:block:summary -->
+All services are clear to release.
+<!-- /cruxible:block:summary -->
+
+## Services with known advisories
+
+<!-- cruxible:block:exposed -->
+<!-- /cruxible:block:exposed -->
+EOF
+cruxible sources add deps docs/dependencies.md
+git add -A && git commit -m "Dependencies page"
+~~~
+
+`sources add` gives the file a name Cruxible can refer to. Now stamp both
+passages with what they reflect, the kit's saved query
+`app.exposed_services` (services pinning a release with a known advisory).
+`--render` fills the table from it:
+
+~~~bash
+cruxible block repin deps exposed --query QueryDefinition:app.exposed_services --render
+cruxible block repin deps summary --query QueryDefinition:app.exposed_services
+~~~
+
+~~~text
+Repinned deps#exposed at generation 2.
+Repinned deps#summary at generation 2.
+~~~
+
+Each marked passage is a **projection block**: it carries a stamp of the state
+it reflects, so Cruxible can tell when it no longer does. Note the
+generation, 2: you will read history at it later. The page now reads:
+
+!!! example "docs/dependencies.md"
+
+    **Release status**
+
+    All services are clear to release.
+
+    **Services with known advisories**
+
+    _No rows._
+
+## Check against PyPI
+
+What the team believes is only as good as its last check. PyPI publishes the
+known vulnerabilities of every release at
+`https://pypi.org/pypi/<package>/<version>/json`. The kit carries a **Line**
+that checks each recorded release there: a named job that runs a
+**Procedure** (a fixed, checked sequence of steps) and turns what it finds
+into proposed changes.
+
+```mermaid
+flowchart LR
+    rel["Recorded releases<br/>(package, version)"] --> fetch["Fetch the release<br/>from pypi.org"]
+    fetch -->|response kept as evidence| cmp["Compare its advisories<br/>with recorded ones"]
+    cmp -->|"+ GHSA-gc5v-m9x4-r6x2"| prop["Proposal"]
+    prop -->|you review and approve| state["Accepted state"]
+```
+
+Run it now (a Line can also run on a schedule):
+
+~~~bash
+cruxible line run pypi.check_advisories
+~~~
+
+It changes nothing by itself. It leaves a **proposal**: a candidate change,
+checked against the current state, waiting for approval. Review it:
+
+~~~bash
+cruxible proposal list --status open
+cruxible proposal review PROPOSAL_ID
+~~~
+
+~~~text
+Changes (1):
+  set pypi.release/requests-2.32.4 advisories: GHSA-gc5v-m9x4-r6x2  [CLM-…]
+~~~
+
+PyPI lists one advisory against `requests 2.32.4` (fixed in 2.33.0) and none
+against `jinja2 3.1.6`. Approve it. This signs it with the key `init` made for
+you, and since yours is the approval it needs, the same command accepts it:
+
+~~~bash
+cruxible proposal approve PROPOSAL_ID --yes
+~~~
+
+~~~text
+Approved sha256:… as YOUR_ID
+Activated at 968bd94e8816…
+~~~
+
+Here you approve your own changes. An instance can instead require someone
+else's approval, so the changes an agent or a Line proposes wait for a person.
+(`--hold` signs without accepting, when someone else should decide when it
+lands.)
+
+## The doc is out of date
+
+Ask what needs attention:
+
+~~~bash
+cruxible next
+~~~
+
+~~~text
+warning  projection_backing_stale  deps#exposed  next=cruxible.block.repin
+  repair: cruxible block repin deps exposed
+warning  projection_backing_stale  deps#summary  next=cruxible.block.repin
+  repair: cruxible block repin deps summary
+~~~
+
+`next` is the to-do list for this instance: everything wrong or waiting, each
+with the command that fixes it. Both passages of the page reflect state that
+has moved. The table is generated, so Cruxible regenerates it:
+
+~~~bash
+cruxible block sync --all
+~~~
+
+~~~text
+docs/dependencies.md#exposed: rendered
+docs/dependencies.md#summary: stale:block_backing_changed
+~~~
+
+The summary is your prose, so Cruxible only flags it. The page now contradicts
+itself:
+
+!!! warning "docs/dependencies.md, summary out of date"
+
+    **Release status**
+
+    All services are clear to release.
+
+    **Services with known advisories**
+
+    | subject | advisories | owner | release |
+    |---|---|---|---|
+    | Subject:app.service/billing | ["GHSA-gc5v-m9x4-r6x2"] | grace | requests-2.32.4 |
+    | Subject:app.service/payments | ["GHSA-gc5v-m9x4-r6x2"] | ada | requests-2.32.4 |
+
+Rewrite the summary (you, or an agent):
+
+~~~markdown
+<!-- cruxible:block:summary:ref:… -->
+Hold payments and billing: requests 2.32.4 has GHSA-gc5v-m9x4-r6x2 (fixed in 2.33.0).
+search is clear to release.
+<!-- /cruxible:block:summary -->
+~~~
+
+and restamp it, which is you declaring the text right again:
+
+~~~bash
+cruxible block repin deps summary
+cruxible next
+~~~
+
+~~~text
+Repinned deps#summary at generation 3.
+No repair work in the observed domains.
+~~~
+
+## Fix and recheck
+
+The payments team upgrades to `requests 2.33.0`. Record the new pin through
+the typed world. Save as `bump.py`:
 
 ~~~python
 from typing import TYPE_CHECKING, cast
@@ -149,242 +350,107 @@ if TYPE_CHECKING:
 
 with Cruxible.connect() as cx:
     world = cast("World", cx.world())
-    libfoo = world.app.library["libfoo"]
-    libfoo.set(latest="2.2", because="Read off the libfoo releases page.")
-    libfoo.set(advisory="opne", because="A typo.")
+    (old,) = world.app.service["payments"].depends_on
+    batch = cx.changes(because="payments now pins requests 2.33.0.")
+    batch.set("pypi.release/requests-2.33.0", "package", "requests")
+    batch.set("pypi.release/requests-2.33.0", "version", "2.33.0")
+    batch.retire(old.claim)
+    batch.add("app.service/payments", "depends_on", "pypi.release/requests-2.33.0")
+    outcome = batch.write()
+    print(outcome.status, "at generation", outcome.coordinate.generation)
 ~~~
 
-Your editor completes `app.library`, `latest` and `advisory`, and the type
-checker rejects the typo before anything runs:
-
-~~~text
-update.py:12: error: Argument "advisory" to "set" of "_S_app__library" has incompatible
-type "Literal['opne']"; expected "Literal['none', 'open', 'fixed']"
-~~~
-
-Run it anyway, and the daemon refuses the bad write with the nearest valid
-value. Nothing lands; the first `set` already did:
-
-~~~text
-WriteRefusalError: cruxible.write.value_not_member: 'opne' is not a member of advisory;
-its members are: none, open, fixed (at changes[0].value); nearest: open, none.
-~~~
-
-## A page that depends on state
-
-Teams write summaries of state: status pages, release notes, runbooks. Write
-one, and mark the passage that depends on state:
+`depends_on` holds the payments pin as a Claim; `retire` ends it and `add`
+records the new one, in one change. Then check the new release against PyPI:
 
 ~~~bash
-mkdir world
-printf '{\n  "libbar": {"advisory": "none"},\n  "libfoo": {"advisory": "none"}\n}\n' > world/advisories.json
-cat > STATUS.md <<'EOF'
-# Release status
-
-<!-- cruxible:block:release -->
-All services are clear to release.
-<!-- /cruxible:block:release -->
-EOF
+python bump.py
+cruxible line run pypi.check_advisories
 ~~~
 
-`world/advisories.json` stands in for an outside source, like a security
-advisory feed. Give both files a name Cruxible can refer to them by, and
-commit:
+PyPI lists no advisories for `requests 2.33.0`, so the check proposes nothing.
+Regenerate the page and update the summary as before (`block sync --all`,
+edit, `block repin deps summary`):
 
-~~~bash
-cruxible sources add advisories world/advisories.json
-cruxible sources add status STATUS.md
-git add -A && git commit -m "Status page and advisory feed"
-~~~
+!!! success "docs/dependencies.md"
 
-Now stamp the passage with what it summarizes, the saved query
-`app.exposed_services`:
+    **Release status**
 
-~~~bash
-cruxible block repin status release --query QueryDefinition:app.exposed_services
-~~~
+    Hold billing: requests 2.32.4 has GHSA-gc5v-m9x4-r6x2 (fixed in 2.33.0).
+    payments and search are clear to release.
 
-~~~text
-Repinned status#release at generation 3.
-~~~
+    **Services with known advisories**
 
-The marker now carries a stamp of the state the prose reflects. Note the
-generation, 3: you will read history at it later. A stamped passage is a
-**projection block**: prose you own, which Cruxible checks but never edits. (A
-block can instead hold a table generated from a query; `cruxible block sync
---all` regenerates those for you.)
+    | subject | advisories | owner | release |
+    |---|---|---|---|
+    | Subject:app.service/billing | ["GHSA-gc5v-m9x4-r6x2"] | grace | requests-2.32.4 |
 
-## The world changes
+## Ask the state directly
 
-The feed now lists an advisory against `libfoo`:
-
-~~~bash
-printf '{\n  "libbar": {"advisory": "none"},\n  "libfoo": {"advisory": "open", "id": "GHSA-2026-0042", "fixed_in": "2.3"}\n}\n' > world/advisories.json
-git commit -am "Advisory feed: libfoo GHSA-2026-0042"
-~~~
-
-The kit carries a **Line** that watches the feed: a named job that runs a
-**Procedure** (a fixed, checked sequence of steps) and turns what it finds
-into proposed changes:
-
-```mermaid
-flowchart LR
-    feed["world/advisories.json"] -->|read and kept as evidence| proc["Procedure:<br/>compare feed to state"]
-    proc -->|"advisory: none → open"| prop["Proposal"]
-    prop -->|you review and approve| state["Accepted state"]
-```
-
-Run it once now (Lines can also run on a schedule or when a file changes):
-
-~~~bash
-cruxible line run app.watch_advisories
-~~~
-
-<!-- Maintainers: the Line run's own output, and its proposal's Why: text, are
-pending the quickstart kit's Procedure. The outputs below were verified with the
-equivalent cited write (`cruxible set ... --evidence-file ... --no-accept`). -->
-
-The run does not change state by itself. It leaves a **proposal**: a
-candidate change, checked against current state, that waits for approval.
-
-~~~bash
-cruxible proposal list --status open
-cruxible proposal review PROPOSAL_ID
-~~~
-
-~~~text
-Why:
-  The advisory feed lists GHSA-2026-0042 against libfoo.
-Changes (1):
-  set app.library/libfoo advisory: none -> open  [CLM-…]
-~~~
-
-Approve it. This signs it with the key `init` made for you, and since your
-approval is the one it needed, the same command accepts it:
-
-~~~bash
-cruxible proposal approve PROPOSAL_ID --yes
-~~~
-
-~~~text
-Approved sha256:… as YOUR_ID
-Activated at e68b51892af7…
-~~~
-
-Here you approve your own changes. An instance can instead require someone
-else's approval, so an agent's proposals wait for a person. (`--hold` signs
-without accepting, when someone else should decide when it lands.)
-
-## Out-of-date pages are flagged
-
-Ask what needs attention:
-
-~~~bash
-cruxible next
-~~~
-
-~~~text
-warning  projection_backing_stale  status#release  next=cruxible.block.repin
-  repair: cruxible block repin status release
-~~~
-
-The status page still says everything is clear, and the state it summarizes
-has moved. `next` is the to-do list for this instance: everything wrong or
-waiting, each with the command that fixes it. Rewrite the passage (you, or an
-agent):
-
-~~~markdown
-<!-- cruxible:block:release:ref:… -->
-Hold payments and billing: libfoo has an open advisory (GHSA-2026-0042).
-search is clear to release.
-<!-- /cruxible:block:release -->
-~~~
-
-and restamp it:
-
-~~~bash
-cruxible block repin status release
-cruxible next
-~~~
-
-~~~text
-Repinned status#release at generation 4.
-No repair work in the observed domains.
-~~~
-
-## What the change reaches
-
-The saved query follows each service's `depends_on` to its library and keeps
-the services whose library has an open advisory:
+The table in the page is a saved query, written into the repository. You can
+ask the state the same question, or a new one, directly:
 
 ~~~bash
 cruxible query --name app.exposed_services
+cruxible query app.service --follow depends_on:release --select owner,release.version,release.advisories
 ~~~
 
 ~~~text
-subject               library  owner  flags
-app.service/billing   libfoo   grace  -
-app.service/payments  libfoo   ada    -
+subject              advisories           owner  release          flags
+app.service/billing  GHSA-gc5v-m9x4-r6x2  grace  requests-2.32.4  -
+
+subject               owner  release.version  release.advisories   flags
+app.service/billing   grace  2.32.4           GHSA-gc5v-m9x4-r6x2  -
+app.service/payments  ada    2.33.0           -                    -
+app.service/search    linus  3.1.6            -                    -
 ~~~
 
-Nobody wrote "billing is exposed". It follows from one changed value and the
-relations you recorded, and it answers the same way every time. The same
-question without saving it first:
+The second follows each service's `depends_on` to its release. Nobody wrote
+"billing is affected": it follows from one advisory and the pins you recorded,
+and it answers the same way every time. In Python, `cx.query(name=...)` returns
+the same rows.
 
-~~~bash
-cruxible query app.service --follow depends_on:lib --select owner,lib.advisory
-~~~
-
-Why does `libfoo` have an open advisory? Ask the Claim, by the `CLM-…` ID the
-review printed:
+Ask the advisory why it is there, by the `CLM-…` ID the review printed:
 
 ~~~bash
 cruxible get CLAIM_ID --detail evidence
 ~~~
 
 ~~~text
-value: open
-capture CAP-7c69c2e6b0e6  ...  source=advisories  observed=2026-10-15T12:34:25Z  evidence admitted
-rationale: The advisory feed lists GHSA-2026-0042 against libfoo.
+value: GHSA-gc5v-m9x4-r6x2
+capture CAP-1fec8823b8ae  ...  observed=2026-10-15T14:27:35Z  evidence admitted
+rationale: PyPI lists GHSA-gc5v-m9x4-r6x2 against requests 2.32.4 (fixed in 2.33.0).
 ~~~
 
-The value rests on a passage of `world/advisories.json`, kept as evidence when
-it was read.
+It rests on the PyPI response, kept as evidence when the check fetched it.
 
 ## What we believed before
 
-Every generation stays readable. Ask the same question at generation 3, when
-the status page was first stamped:
+Every generation stays readable. Ask the same question at generation 2, when
+the page was first stamped:
 
 ~~~bash
-cruxible query --name app.exposed_services --at 3
+cruxible query app.service --follow depends_on:release --select owner,release.version,release.advisories --at 2
 ~~~
 
 ~~~text
-library  owner
-(no rows)
+subject               owner  release.version  release.advisories  flags
+app.service/billing   grace  2.32.4           -                   -
+app.service/payments  ada    2.32.4           -                   -
+app.service/search    linus  3.1.6            -                   -
 ~~~
 
-And see each value a Claim has held, when, and by whom:
-
-~~~bash
-cruxible get CLAIM_ID --detail history
-~~~
-
-~~~text
-rev 2  seq 4 at e68b51892af7  2026-10-15T12:34:25Z  by YOUR_ID  = open
-rev 1  seq 2 at 96161787588b  2026-10-15T12:34:04Z  by YOUR_ID  = none
-~~~
+Then, both payments and billing pinned `requests 2.32.4`, and nobody knew of
+an advisory against it.
 
 ## Next
 
+- [Modeling state](modeling-state.md): define your own kinds and fields.
 - [Concepts](concepts.md): the model behind what you just did.
-- [Modeling state](modeling-state.md): what to make a Subject, a field, or a
-  file, for your own domain.
 - [For AI agents](for-ai-agents.md): connect an agent over MCP or the Python
   SDK, and give it propose-only access.
 - [Projection blocks](declared-blocks.md): stamped passages and generated
-  tables in your pages.
-- [Kits](kits.md): install vocabulary, queries and Procedures someone else
-  built, or build your own.
+  tables in your docs.
+- [Kits](kits.md): install vocabulary, queries and Lines someone else built,
+  or build your own.
 - [CLI reference](cli-reference.md).
