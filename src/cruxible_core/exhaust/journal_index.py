@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
 from uuid import uuid4
 
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.errors import JournalIntegrityError
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.exhaust.records import (
@@ -27,6 +28,8 @@ from cruxible_core.exhaust.records import (
     JournalStreamIdentityV1,
     StoredProcedureJournalRecordV1,
     journal_genesis_digest,
+    journal_stream_key,
+    journal_stream_strings,
 )
 
 if TYPE_CHECKING:
@@ -178,7 +181,21 @@ def _rebuild_schema(conn: sqlite3.Connection) -> None:
 
 
 def _key(stream: JournalStreamIdentityV1) -> str:
-    return canonical_bytes(stream.model_dump(mode="json")).decode()
+    return journal_stream_key(stream)
+
+
+#: A partition's dirty marker (file name, bytes), by the identity's strings.
+_DIRTY_MARKERS: ValueMemo[tuple[str, bytes]] = ValueMemo(capacity=4096)
+
+
+def _dirty_marker(stream: JournalStreamIdentityV1, partition_id: str) -> tuple[str, bytes]:
+    def derive() -> tuple[str, bytes]:
+        value = canonical_bytes(
+            {"stream": stream.model_dump(mode="json"), "partition_id": partition_id}
+        )
+        return hashlib.sha256(value).hexdigest(), value
+
+    return _DIRTY_MARKERS.derive((*journal_stream_strings(stream), partition_id), derive)
 
 
 #: Where a run page stopped: (the index's identity, the admission row's position).
@@ -260,10 +277,8 @@ class JournalIndex:
 
         with _LOCK:
             self.dirty.mkdir(mode=0o700, exist_ok=True)
-            value = canonical_bytes(
-                {"stream": stream.model_dump(mode="json"), "partition_id": partition_id}
-            )
-            _atomic_write(self.dirty / hashlib.sha256(value).hexdigest(), value)
+            name, value = _dirty_marker(stream, partition_id)
+            _atomic_write(self.dirty / name, value)
             _fsync_directory(self.backend.root)
 
     def _sync(

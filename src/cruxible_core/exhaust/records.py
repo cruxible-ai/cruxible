@@ -266,6 +266,34 @@ class JournalStreamIdentityV1(_StrictJournalModel):
 
 
 _GENESIS_DIGESTS: ValueMemo[str] = ValueMemo(capacity=4096)
+#: A stream identity's canonical text and its SHA-256, by the identity's strings.
+_STREAM_KEYS: ValueMemo[tuple[str, str]] = ValueMemo(capacity=1024)
+
+
+def journal_stream_strings(stream: JournalStreamIdentityV1) -> tuple[str, str, str, str]:
+    """The identity's own strings: what every per-stream memo is keyed by, never the model."""
+
+    return (stream.tag, stream.instance_id, stream.journal_family, stream.stream_id)
+
+
+def _stream_keys(stream: JournalStreamIdentityV1) -> tuple[str, str]:
+    def derive() -> tuple[str, str]:
+        text = canonical_bytes(stream.model_dump(mode="json")).decode()
+        return text, hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    return _STREAM_KEYS.derive(journal_stream_strings(stream), derive)
+
+
+def journal_stream_key(stream: JournalStreamIdentityV1) -> str:
+    """The stream identity's canonical JSON text, encoded once per identity per process."""
+
+    return _stream_keys(stream)[0]
+
+
+def journal_stream_directory_key(stream: JournalStreamIdentityV1) -> str:
+    """The SHA-256 of the stream identity's canonical bytes (its directory name)."""
+
+    return _stream_keys(stream)[1]
 
 
 def journal_genesis_digest(stream: JournalStreamIdentityV1, partition_id: str) -> str:
@@ -277,7 +305,7 @@ def journal_genesis_digest(stream: JournalStreamIdentityV1, partition_id: str) -
 
     _identifier(partition_id, label="journal partition_id", pattern=_PARTITION_RE)
     # Keyed by the identity's own strings, never by the caller's model object.
-    key = (stream.tag, stream.instance_id, stream.journal_family, stream.stream_id, partition_id)
+    key = (*journal_stream_strings(stream), partition_id)
     return _GENESIS_DIGESTS.derive(key, lambda: _journal_genesis_digest(stream, partition_id))
 
 
@@ -772,6 +800,9 @@ __all__ = [
     "journal_head_key",
     "journal_head_statement_bytes",
     "journal_payload_bytes",
+    "journal_stream_directory_key",
+    "journal_stream_key",
+    "journal_stream_strings",
     "payload_digest",
     "parse_journal_payload",
     "procedure_journal_record_digest",

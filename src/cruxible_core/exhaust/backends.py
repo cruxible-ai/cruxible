@@ -7,12 +7,14 @@ import json
 import os
 import tempfile
 from collections.abc import Generator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.content_memo import ParseMemo, ValueMemo
 from cruxible_client.contracts.errors import (
     JournalConflictError,
     JournalError,
@@ -27,6 +29,8 @@ from cruxible_core.exhaust.records import (
     ProcedureJournalRecordV1,
     StoredProcedureJournalRecordV1,
     journal_genesis_digest,
+    journal_stream_directory_key,
+    journal_stream_strings,
     procedure_journal_record_digest,
     verify_journal_range,
 )
@@ -122,11 +126,72 @@ def _atomic_write(path: Path, content: bytes, *, mode: int = 0o600) -> None:
 
 
 def _identity_key(stream: JournalStreamIdentityV1) -> str:
-    return hashlib.sha256(canonical_bytes(stream.model_dump(mode="json"))).hexdigest()
+    return journal_stream_directory_key(stream)
 
 
-def _partition_key(partition_id: str) -> str:
-    return hashlib.sha256(partition_id.encode("utf-8")).hexdigest()
+@dataclass(frozen=True)
+class _PartitionKeys:
+    """One partition's validated names and identity bytes, derived once per process."""
+
+    stream_directory: str
+    partition_directory: str
+    identity: bytes
+
+
+#: By the stream identity's strings and the partition id; an invalid coordinate
+#: refuses before anything is kept. One entry per run partition a process touches.
+_PARTITION_KEYS: ValueMemo[_PartitionKeys] = ValueMemo(capacity=4096)
+
+
+def _partition_keys(stream: JournalStreamIdentityV1, partition_id: str) -> _PartitionKeys:
+    def derive() -> _PartitionKeys:
+        # Validation is shared with the frozen head grammar.
+        JournalPartitionHeadV1(
+            stream=stream,
+            partition_id=partition_id,
+            sequence=0,
+            record_digest=journal_genesis_digest(stream, partition_id),
+        )
+        return _PartitionKeys(
+            stream_directory=_identity_key(stream),
+            partition_directory=hashlib.sha256(partition_id.encode("utf-8")).hexdigest(),
+            identity=canonical_bytes(
+                {
+                    "tag": "playbill-local-journal-partition-v1",
+                    "stream": stream.model_dump(mode="json"),
+                    "partition_id": partition_id,
+                }
+            ),
+        )
+
+    return _PARTITION_KEYS.derive((*journal_stream_strings(stream), partition_id), derive)
+
+
+def _parse_journal_frame(body: bytes) -> StoredProcedureJournalRecordV1:
+    try:
+        stored = StoredProcedureJournalRecordV1.model_validate_json(body)
+    except ValueError as exc:
+        raise JournalIntegrityError("journal record frame is malformed") from exc
+    if canonical_bytes(stored.model_dump(mode="json")) != body:
+        raise JournalIntegrityError("journal record frame is not canonical")
+    return stored
+
+
+#: Verified frames by their exact bytes, shared sealed: an appended record is
+#: read back by the index catch-up and then by every selection that names it.
+_FRAME_PARSES: ParseMemo[StoredProcedureJournalRecordV1] = ParseMemo(
+    capacity=8192, max_bytes=32 * 1024 * 1024
+)
+
+
+def parse_journal_frame(body: bytes) -> StoredProcedureJournalRecordV1:
+    """Verify one frame body (strict model, reproduced digest, exact canonical bytes) once.
+
+    Only the frame's own content is remembered; where it sits in its partition
+    (coordinate, sequence and chain) is checked by every read.
+    """
+
+    return _FRAME_PARSES.parse(body, "journal-frame", None, lambda: _parse_journal_frame(body))
 
 
 def journal_log_path(root: Path, stream: JournalStreamIdentityV1, partition_id: str) -> Path:
@@ -136,7 +201,8 @@ def journal_log_path(root: Path, stream: JournalStreamIdentityV1, partition_id: 
     without opening the journal stats this file.
     """
 
-    return root / "streams" / _identity_key(stream) / _partition_key(partition_id) / "records.log"
+    keys = _partition_keys(stream, partition_id)
+    return root / "streams" / keys.stream_directory / keys.partition_directory / "records.log"
 
 
 def _record_matches_draft(
@@ -149,6 +215,21 @@ def _record_matches_draft(
     )
     draft_payload = draft.model_dump(mode="json", exclude={"tag"})
     return record_payload == draft_payload
+
+
+def _parse_writer_state(content: bytes) -> JournalWriterStateV1:
+    try:
+        state = JournalWriterStateV1.model_validate(json.loads(content))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise JournalIntegrityError("journal writer state is malformed") from exc
+    if canonical_bytes(state.model_dump(mode="json")) != content:
+        raise JournalIntegrityError("journal writer state is not canonical")
+    return state
+
+
+#: Writer fences by their exact bytes (a frozen model of scalars): every append
+#: reads the fence, which changes only on activation and fencing.
+_WRITER_STATES: ValueMemo[JournalWriterStateV1] = ValueMemo(capacity=1024)
 
 
 class LocalJournalBackend:
@@ -172,15 +253,9 @@ class LocalJournalBackend:
         *,
         create: bool,
     ) -> Path:
-        # Validation is shared with the frozen head grammar.
-        JournalPartitionHeadV1(
-            stream=stream,
-            partition_id=partition_id,
-            sequence=0,
-            record_digest=journal_genesis_digest(stream, partition_id),
-        )
-        stream_directory = self._streams_root / _identity_key(stream)
-        partition_directory = stream_directory / _partition_key(partition_id)
+        keys = _partition_keys(stream, partition_id)
+        stream_directory = self._streams_root / keys.stream_directory
+        partition_directory = stream_directory / keys.partition_directory
         if create:
             stream_directory.mkdir(mode=0o700, exist_ok=True)
             partition_directory.mkdir(mode=0o700, exist_ok=True)
@@ -195,8 +270,7 @@ class LocalJournalBackend:
                 raise JournalError("journal partition directory escapes its stream")
             self._verify_or_initialize_identity(
                 partition_directory,
-                stream=stream,
-                partition_id=partition_id,
+                expected=keys.identity,
                 create=create,
             )
         return partition_directory
@@ -205,18 +279,10 @@ class LocalJournalBackend:
     def _verify_or_initialize_identity(
         directory: Path,
         *,
-        stream: JournalStreamIdentityV1,
-        partition_id: str,
+        expected: bytes,
         create: bool,
     ) -> None:
         identity_path = directory / "identity.json"
-        expected = canonical_bytes(
-            {
-                "tag": "playbill-local-journal-partition-v1",
-                "stream": stream.model_dump(mode="json"),
-                "partition_id": partition_id,
-            }
-        )
         if not identity_path.exists():
             if not create:
                 raise JournalIntegrityError("journal partition identity is missing")
@@ -268,12 +334,7 @@ class LocalJournalBackend:
                 body = os.pread(descriptor, length, offset + _FRAME_HEADER_BYTES)
                 if len(body) < length:
                     break
-                try:
-                    stored = StoredProcedureJournalRecordV1.model_validate_json(body)
-                except ValueError as exc:
-                    raise JournalIntegrityError("journal record frame is malformed") from exc
-                if canonical_bytes(stored.model_dump(mode="json")) != body:
-                    raise JournalIntegrityError("journal record frame is not canonical")
+                stored = parse_journal_frame(body)
                 record = stored.record
                 if (
                     record.stream != stream
@@ -366,13 +427,8 @@ class LocalJournalBackend:
             return None
         if path.is_symlink() or not path.is_file():
             raise JournalError("journal writer state is not a regular file")
-        try:
-            state = JournalWriterStateV1.model_validate(json.loads(path.read_bytes()))
-        except (UnicodeDecodeError, ValueError) as exc:
-            raise JournalIntegrityError("journal writer state is malformed") from exc
-        if canonical_bytes(state.model_dump(mode="json")) != path.read_bytes():
-            raise JournalIntegrityError("journal writer state is not canonical")
-        return state
+        content = path.read_bytes()
+        return _WRITER_STATES.derive(content, lambda: _parse_writer_state(content))
 
     def writer_state(
         self,
