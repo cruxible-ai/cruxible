@@ -1069,3 +1069,183 @@ def test_cli_width_cuts_offer_evidence_without_changing_other_surfaces(
         else:
             assert not any("evidence" in step for step in subject.next)
             assert history.revisions[0].next == ()
+
+
+# -- a Subject's history: its field events, what changed and why ---------------------
+
+
+def _written(instance: PlaybillInstance, *changes: dict[str, Any], because: str) -> Any:
+    from cruxible_client.contracts.write import WriteRequest
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._write_support import caller
+
+    request = WriteRequest.model_validate({"because": because, "changes": list(changes)})
+    outcome = service_playbill_write(instance, request=request, caller=caller())
+    assert outcome.status == "accepted", outcome
+    return outcome
+
+
+@pytest.fixture
+def fields_world(tmp_path: Path) -> dict[str, Any]:
+    """One work item whose fields are stated, changed, reobserved, added to, retired, contested."""
+
+    from tests.core_support._write_support import KIND, seed_write_surface
+
+    instance, _ = seed_write_surface(tmp_path)
+    item = f"{KIND}/wi-1"
+
+    def put(field: str, value: object, **extra: object) -> dict[str, Any]:
+        return {"op": "set", "subject": item, "field": field, "value": value, **extra}
+
+    coordinates = {}
+    first = _written(instance, put("status", "ready"), put("title", "Tidy"), because="First pass.")
+    coordinates["first"] = first.coordinate.git_oid
+    changed = _written(instance, put("status", "done"), because="Shipped.")
+    coordinates["changed"] = changed.coordinate.git_oid
+    _written(
+        instance,
+        put("title", "Tidy", evidence={"kind": "self", "self": "Seen again."}),
+        because="Looked again.",
+    )
+    _written(
+        instance,
+        {"op": "add", "subject": item, "field": "governs", "value": f"{KIND}/wi-2"},
+        {"op": "add", "subject": item, "field": "governs", "value": f"{KIND}/wi-3"},
+        because="Links.",
+    )
+    _written(
+        instance,
+        {
+            "op": "retire",
+            "target": {"subject": item, "field": "status"},
+            "reason": "was-wrong",
+            "because": "It never shipped.",
+        },
+        because="Correcting.",
+    )
+    _written(instance, put("title", "Contested", contend=True), because="Disagree.")
+    return {
+        "instance": instance,
+        "item": item,
+        "status": first.changes[0].claim,
+        "title": first.changes[1].claim,
+        "coordinates": coordinates,
+    }
+
+
+def _events(result: GetResult) -> Any:
+    from cruxible_client.contracts.get_reads import GetSubjectHistory
+
+    assert isinstance(result.history, GetSubjectHistory), result.history
+    return result.history.events
+
+
+def test_a_subject_history_lists_each_field_event_with_what_changed_and_why(
+    fields_world: dict[str, Any],
+) -> None:
+    from cruxible_client.contracts.get_reads import GetChangeSetReason, GetSubjectHistory
+
+    instance, item = fields_world["instance"], fields_world["item"]
+    result = _get(instance, item, detail="history")
+    assert isinstance(result.history, GetSubjectHistory)
+    assert result.history.revisions and all(
+        revision.change is None for revision in result.history.revisions
+    )
+    events = [event for event in _events(result) if event.field != "slug"]
+    sequences = [event.sequence for event in events]
+    assert sequences == sorted(sequences, reverse=True)
+    timeline = [(event.field, event.change) for event in events]
+    assert timeline[:2] == [("title", "stated"), ("status", "retired")]
+    assert sorted(timeline[2:4]) == [("governs", "stated"), ("governs", "stated")]
+    assert timeline[4:6] == [("title", "reobserved"), ("status", "changed")]
+    assert sorted(timeline[6:]) == [("status", "stated"), ("title", "stated")]
+
+    contested, retired = events[0], events[1]
+    assert contested.contended is True and contested.value == "Contested"
+    assert retired.retirement == "was-wrong" and retired.claim == fields_world["status"]
+    assert isinstance(retired.reason, GetChangeSetReason)
+    assert "It never shipped." in retired.reason.text
+    changed = events[5]
+    assert (changed.before, changed.value) == ("ready", "done")
+    assert changed.reason == GetChangeSetReason(text="Shipped.", proposal=changed.reason.proposal)
+    reobserved = events[4]
+    assert reobserved.value == "Tidy" and reobserved.reason.text == "Looked again."
+    stated = [event for event in events[6:] if event.field == "status"][0]
+    assert stated.contended is False and stated.reason.text == "First pass."
+    assert all(event.actor == "owner" and event.accepted for event in events)
+
+
+def test_a_subject_history_narrows_to_one_field_and_stops_at_the_read_coordinate(
+    fields_world: dict[str, Any],
+) -> None:
+    instance, item = fields_world["instance"], fields_world["item"]
+
+    status = _events(_get(instance, item, detail="history", field="status"))
+    assert [event.change for event in status] == ["retired", "changed", "stated"]
+    assert (
+        _events(_get(instance, item, detail="history", field="project.work_item.status")) == status
+    )
+    refused = _refusal(instance, item, detail="history", field="statuss")
+    assert refused.error_code == "cruxible.get.unknown_field"
+    assert "status" in refused.candidates
+    claim_field = _refusal(instance, fields_world["status"], detail="history", field="status")
+    assert claim_field.error_code == "cruxible.get.field_unsupported"
+
+    earlier = _events(
+        _get(instance, item, detail="history", at=fields_world["coordinates"]["changed"])
+    )
+    assert {(event.field, event.change) for event in earlier} - {("slug", "stated")} == {
+        ("status", "changed"),
+        ("status", "stated"),
+        ("title", "stated"),
+    }
+
+
+def test_a_subject_history_pages_by_a_cursor_pinned_to_its_coordinate(
+    fields_world: dict[str, Any],
+) -> None:
+    instance, item = fields_world["instance"], fields_world["item"]
+    whole = _events(_get(instance, item, detail="history"))
+    pages: list[Any] = []
+    cursor: str | None = None
+    while True:
+        page = _get(instance, item, detail="history", limit=2, cursor=cursor)
+        pages.extend(_events(page))
+        if not page.truncated:
+            break
+        cursor = page.next_cursor
+        assert cursor is not None
+        first_cursor = cursor
+    assert pages == list(whole)
+    # The cursor continues only its own coordinate, and only its own field.
+    with pytest.raises(ListCursorMismatch):
+        _get(
+            instance,
+            item,
+            detail="history",
+            cursor=first_cursor,
+            at=fields_world["coordinates"]["first"],
+        )
+    with pytest.raises(ListCursorMismatch):
+        _get(instance, item, detail="history", cursor=first_cursor, field="status")
+
+
+def test_a_claim_history_says_what_each_revision_did_and_why(
+    fields_world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.get_reads import GetHistory
+
+    instance = fields_world["instance"]
+    history = _get(instance, fields_world["status"], detail="history").history
+    assert isinstance(history, GetHistory)
+    assert [item.change for item in history.revisions] == ["retired", "changed", "stated"]
+    assert history.revisions[0].retirement == "was-wrong"
+    assert [item.reason.text for item in history.revisions[1:]] == ["Shipped.", "First pass."]
+    # --detail evidence keeps its rationale, through the same resolver.
+    evidence = _get(instance, fields_world["title"], detail="evidence").evidence
+    assert evidence is not None and evidence.rationale == "Looked again."
+    # No admission to read: no reason, never an invented one.
+    index = type(instance.proposal_evidence().index)
+    monkeypatch.setattr(index, "rows", lambda *_args, **_kwargs: [])
+    bare = _get(instance, fields_world["status"], detail="history").history
+    assert bare is not None and all(item.reason is None for item in bare.revisions)

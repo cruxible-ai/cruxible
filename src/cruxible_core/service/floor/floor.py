@@ -10,8 +10,8 @@ Document and evidence bodies stay behind ``get``. The F5 projection artifacts
 them.
 
 The service writes nothing. It returns a path-to-bytes map that is a pure
-function of the accepted coordinate and the explicitly pinned review notes
-snapshot. The same inputs always materialize byte-identical files.
+function of the accepted coordinate. The same inputs always materialize
+byte-identical files.
 
 §11.7 makes the file-based context floor half of the reference coverage
 surface, so the floor also carries its own coverage boundary: a

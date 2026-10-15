@@ -11,6 +11,7 @@ a few costs, on a warm instance and on the Claim's first read.
 from __future__ import annotations
 
 from collections import Counter
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -288,16 +289,18 @@ def test_a_batched_claim_read_does_no_record_work_once_its_records_are_verified(
 def test_history_listings_read_each_revisions_member_not_its_whole_record(
     world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_core.service.claims.claims import service_playbill_claim_history
-
     instance = world["instance"]
     work = _Work(monkeypatch)
     claim = world["large"]["title"][0]
-    expected = service_playbill_claim_history(instance, identity=claim)
+    request = GetRequest(
+        ref=claim, detail="history", evaluation_time=datetime(2026, 9, 29, 12, tzinfo=UTC)
+    )
+    access = BodyAccessContext(principal_id="owner", can_read_body=True)
+    expected = service_playbill_get(instance, request=request, access=access)
     work.take()
-    assert service_playbill_claim_history(instance, identity=claim) == expected
+    assert service_playbill_get(instance, request=request, access=access) == expected
     # One revision: its one member, copied out of the resident record.
     assert work.take() == {"members copied": 1}
-    (entry,) = expected.entries
-    assert entry.change_set_path.startswith("changesets/cs-")
-    assert entry.changeset_digest.startswith("sha256:")
+    assert expected.history is not None
+    (revision,) = expected.history.revisions
+    assert revision.change == "stated" and revision.reason is not None

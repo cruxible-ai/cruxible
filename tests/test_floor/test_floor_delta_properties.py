@@ -4,12 +4,13 @@ The history mixes Claim changes, retirements, contenders, Subject-valued edges
 moved in place (fan-in to old and new targets), new ClaimTypes, a short-name
 shadow that appears and is retired, a ClaimType cardinality migration, long
 text that appears and goes away, evidence-cited Claims, a Document revised in
-place, a review rationale revised after acceptance, and one source cited at two
+place, a review note revised after acceptance (which moves nothing: a change's
+rationale is its accepting admission's), and one source cited at two
 external coordinate/selector types by two Claims, the first of which (in
 identity order) is then revised, so an incremental render meets them in the
 other order. For every checked pair of generations (see ``_pairs``) the delta
 applied to the base floor is byte-identical to the full floor at the head; a
-floor installed before the notes revision is repaired to it; the deltas are
+floor installed before the notes revision reaches every head; the deltas are
 the same whether the index was cold, warm or advanced in one coalesced step;
 and applying one twice changes nothing.
 """
@@ -309,7 +310,9 @@ def test_every_delta_rebuilds_the_full_floor_byte_for_byte(
     shown = b"".join(content for tree in fulls.values() for content in tree.values())
     assert b"project.work_item.ext.note: Hello" in shown and b"\next.note: Hello" in shown
     assert b"\ntitle:\n  - " in shown
-    assert b"Later review text." in shown
+    # The admission's rationale, never the revised review note.
+    assert b"The writer checked it." in shown
+    assert b"Later review text." not in shown
     assert (
         b"http-response-v1/whole-response-v1,postgres-lsn-v1/relation-primary-key-v1"
         in fulls[head]["sources/LEDGER"]

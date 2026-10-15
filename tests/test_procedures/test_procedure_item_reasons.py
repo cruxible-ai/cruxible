@@ -212,6 +212,14 @@ def test_a_readmitted_procedure_proposal_keeps_its_items_reasons(tmp_path: Path)
     assert why.reason is not None
     assert why.reason.proposal == accepted_id and why.reason.run == state.run_id
     assert why.reason.reason == delivery.item_template()["rationale"]
+    # The Claim's history names the same reason, through the same resolver.
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    history = service_playbill_get(
+        instance, request=GetRequest(ref=claim_id, detail="history"), access=delivery._READER
+    ).history
+    assert history is not None and history.revisions[0].reason == why.reason
 
 
 # --- plain `get --detail why` (F-003) --------------------------------------------

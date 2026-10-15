@@ -209,6 +209,7 @@ from cruxible_client.contracts.get_reads import (
     GetProcedureTrackRecord,
     GetRequest,
     GetResult,
+    GetSubjectHistory,
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
@@ -251,6 +252,7 @@ from cruxible_client.contracts.write import (
     AddChange,
     Change,
     ClaimValue,
+    CreateChange,
     Evidence,
     ExpectedValue,
     RetireChange,
@@ -1767,9 +1769,11 @@ class WriteBatch:
 
     def __repr__(self) -> str:
         spelled = ", ".join(
-            f"{item.op} {item.subject or self.subject or ''} {item.field}".replace("  ", " ")
-            if not isinstance(item, RetireChange)
-            else f"retire {item.target}"
+            f"retire {item.target}"
+            if isinstance(item, RetireChange)
+            else f"create {item.subject_kind} as {item.label}"
+            if isinstance(item, CreateChange)
+            else f"{item.op} {item.subject or self.subject or ''} {item.field}".replace("  ", " ")
             for item in self.changes
         )
         about = "" if self.subject is None else f", subject={self.subject!r}"
@@ -1800,7 +1804,7 @@ class SubjectCreationDraft(_IntentDraft):
 
 @dataclass(frozen=True)
 class SubjectDraft(_IntentDraft):
-    """One Subject definition drafted by ``cx.subject(...)`` or ``w.<kind>.define(id)``.
+    """One Subject definition (a shell succession) drafted by ``cx.subject(...)``.
 
     Next: ``draft.submit()``, or ``cx.changes(rationale=...).subject(draft)`` with other
     members.
@@ -2992,7 +2996,9 @@ class Cruxible:
         A live client's vocabulary listing selects current head. An explicitly
         pinned context uses its coordinate. The returned World owns a separate
         pinned context and remains readable when the live client moves, without
-        fetching an orientation page. No Subject is read here. The first Subject access of any kind
+        fetching an orientation page. It also lists the live SubjectKinds, which
+        say how ``w.<kind>.define(...)`` names a new Subject. No Subject is read
+        here. The first Subject access of any kind
         reads every Subject of every kind in one list, because the served verb
         takes neither a kind filter nor a cursor; a world with a thousand
         Subjects therefore costs the vocabulary at `world()` and that one list
@@ -3002,6 +3008,7 @@ class Cruxible:
         """
 
         from cruxible_client.authoring.world import build_world
+        from cruxible_client.contracts.orient import OrientSubjectKind
 
         requested = self._read_at()
         names: list[str] = []
@@ -3023,6 +3030,25 @@ class Cruxible:
             cursor = page.next_cursor
         assert coordinate is not None
         self._observe_read(coordinate, expected=requested)
+        # How each kind names a new Subject: one paged listing of the live
+        # SubjectKinds at the same coordinate, O(kinds).
+        subject_kinds: list[OrientSubjectKind] = []
+        cursor = None
+        while True:
+            page = self._client.orient(
+                self._instance_id,
+                section="subject_kinds",
+                limit=api.ORIENT_MAX_LIMIT,
+                cursor=cursor,
+                at=_api_coordinate(coordinate),
+                surface="sdk",
+            )
+            if _coordinate(page.coordinate.model_dump(mode="json")) != coordinate:
+                raise ValueError("the SubjectKind read returned a different accepted coordinate")
+            subject_kinds.extend(page.subject_kinds or ())
+            if not page.truncated or page.next_cursor is None:
+                break
+            cursor = page.next_cursor
         envelopes: list[Mapping[str, object]] = []
         for start in range(0, len(names), GET_BATCH_MAX_REFS):
             batch = self._client.get_batch(
@@ -3043,6 +3069,7 @@ class Cruxible:
             self.at(coordinate),
             coordinate=coordinate,
             claim_type_envelopes=tuple(envelopes),
+            subject_kinds=tuple(subject_kinds),
         )
 
     @overload
@@ -4005,6 +4032,7 @@ class Cruxible:
         *,
         detail: GetDetail = "summary",
         range: tuple[int, int] | str | None = None,
+        field: str | ClaimTypeRef | None = None,
     ) -> KnowledgeCard:
         """Read one governed thing by reference, resolved directly by the daemon.
 
@@ -4018,6 +4046,11 @@ class Cruxible:
         ambiguous name refuses with the nearest names. A Claim summary is a
         ``ClaimView``; other summaries are the values-first card; other
         details carry that detail's payload.
+
+        ``detail="history"`` on a Subject answers its field events, every page
+        read (``GetSubjectHistory``): each revision of each Claim about it,
+        newest first, with what changed and why; ``field`` narrows them to one
+        field. On anything else it answers its revisions (``GetHistory``).
 
         Next: ``detail="evidence"`` for what backs a Claim, ``detail="history"`` for its
         revisions, ``detail="proof"`` for the full envelope; ``card.ref`` passes the thing
@@ -4050,7 +4083,10 @@ class Cruxible:
             (not isinstance(ref, str) and ref.kind is RefKind.CLAIM)
             or (isinstance(ref, str) and ref.removeprefix("Claim:").startswith("CLM-"))
         )
-        result = self._get(text, "proof" if claim_summary else detail, window, coordinate)
+        named = field.address if isinstance(field, ClaimTypeRef) else field
+        result = self._get(
+            text, "proof" if claim_summary else detail, window, coordinate, field=named
+        )
         if detail == "summary" and result.kind == "claim" and not claim_summary:
             # The reference resolved to a Claim only on the daemon; read its
             # envelope at the same coordinate for the typed view.
@@ -4205,12 +4241,15 @@ class Cruxible:
         detail: GetDetail,
         window: ByteRange | None,
         coordinate: AcceptedCoordinate | None,
+        *,
+        field: str | None = None,
     ) -> GetResult:
         requested = self._read_at(coordinate)
         request = GetRequest(
             ref=ref,
             detail=detail,
             range=window,
+            field=field,
             at=requested,
             evaluation_time=datetime.fromisoformat(self._evaluation_time()),
             surface="sdk",
@@ -4223,8 +4262,12 @@ class Cruxible:
         if result.history is not None:
             # History pages newest first; the SDK reads every page, pinned to
             # the first page's coordinate by the cursor, so it never answers
-            # a silently cut history.
-            revisions = list(result.history.revisions)
+            # a silently cut history. A Subject's pages are its field events;
+            # its shell's revisions come whole on each page.
+            first = result.history
+            items: list[Any] = list(
+                first.events if isinstance(first, GetSubjectHistory) else first.revisions
+            )
             page = result
             while page.truncated and page.next_cursor is not None:
                 page = self._client.get(
@@ -4232,13 +4275,18 @@ class Cruxible:
                     request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
                 )
                 assert page.history is not None
-                revisions.extend(page.history.revisions)
+                items.extend(
+                    page.history.events
+                    if isinstance(page.history, GetSubjectHistory)
+                    else page.history.revisions
+                )
+            whole = (
+                first.model_copy(update={"events": tuple(items)})
+                if isinstance(first, GetSubjectHistory)
+                else first.model_copy(update={"revisions": tuple(items)})
+            )
             result = result.model_copy(
-                update={
-                    "history": result.history.model_copy(update={"revisions": tuple(revisions)}),
-                    "truncated": False,
-                    "next_cursor": None,
-                }
+                update={"history": whole, "truncated": False, "next_cursor": None}
             )
         return result
 

@@ -164,8 +164,8 @@ class FloorManifest(_StrictFloorModel):
     renderer: str = Field(pattern=_SHA256)
     coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
-    # Which review notes the change rationale was read from: the digest of every
-    # rationale the floor's changes/ files show (``floor_notes_digest``).
+    # The digest of every rationale the floor's changes/ files show
+    # (``floor_notes_digest``).
     notes_digest: str = Field(pattern=_SHA256)
     files: tuple[FloorEntry, ...]
     floor_digest: str = Field(pattern=_SHA256)
@@ -184,11 +184,10 @@ class FloorManifest(_StrictFloorModel):
 
 
 def floor_notes_digest(rationales: Mapping[int, Iterable[str]]) -> str:
-    """The identity of the review notes a floor read: every rationale it shows.
+    """The identity of every change rationale a floor shows, by change sequence.
 
-    A notes commit moves with every evaluation; this moves only when a
-    rationale the floor shows does, which is the one notes change a floor
-    can see.
+    Each is the accepting admission's rationale (immutable), so this moves only
+    with the set of changes the floor shows.
     """
 
     return typed_digest(

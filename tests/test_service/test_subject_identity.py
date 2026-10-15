@@ -347,6 +347,57 @@ def test_authoring_creates_minted_and_composite_subjects_and_reports_their_ids(
     }
 
 
+def test_a_write_creates_minted_composite_and_further_hint_subjects(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.subject_kinds import is_distinct_holder_id
+
+    _create(instance, NOTE, "Same")
+    outcome = write(
+        instance,
+        {"op": "create", "label": "t1", "subject_kind": TICKET},
+        {"op": "create", "label": "t2", "subject_kind": TICKET},
+        {"op": "set", "subject": {"created": "t1"}, "field": "title", "value": "First"},
+        {"op": "set", "subject": {"created": "t2"}, "field": "title", "value": "Second"},
+        {
+            "op": "create",
+            "label": "pair",
+            "subject_kind": PAIR,
+            "key": [
+                {"predicate": f"{PAIR}.left", "value": "Alpha  One"},
+                {"predicate": f"{PAIR}.right", "value": "Beta"},
+            ],
+        },
+        {"op": "create", "label": "note", "subject_kind": NOTE, "key": "same", "create_new": True},
+    )
+    assert outcome.status == "accepted", outcome
+    first, second, title_one, title_two, pair, note = outcome.changes
+    assert first.subject is not None and second.subject is not None
+    assert first.subject.startswith(f"{TICKET}/sub-") and first.subject != second.subject
+    assert (title_one.subject, title_two.subject) == (first.subject, second.subject)
+    assert pair.subject == f"{PAIR}/alpha-one--beta"
+    assert note.subject is not None and note.subject != f"{NOTE}/same"
+    assert is_distinct_holder_id(note.subject.partition("/")[2], ["same"])
+    assert set(outcome.subjects_added) == {
+        first.subject,
+        second.subject,
+        pair.subject,
+        note.subject,
+    }
+    assert key_claims(instance, TICKET, first.subject.partition("/")[2]) == {
+        f"{TICKET}.title": "First"
+    }
+    assert key_claims(instance, PAIR, "alpha-one--beta") == {
+        f"{PAIR}.left": "alpha one",
+        f"{PAIR}.right": "beta",
+    }
+    # A composite kind takes each key part; one bare value names only a one-key kind.
+    bare = write(instance, {"op": "create", "label": "p", "subject_kind": PAIR, "key": "x"})
+    assert bare.refusal is not None and bare.refusal.code == "cruxible.subject.key_invalid"
+    keyed = write(instance, {"op": "create", "label": "t", "subject_kind": TICKET, "key": "x"})
+    assert keyed.refusal is not None and keyed.refusal.code == "cruxible.subject.key_invalid"
+
+
 def test_an_author_chosen_id_for_a_new_subject_refuses(instance: PlaybillInstance) -> None:
     from tests.core_support._identity_support import shell
 
@@ -763,3 +814,327 @@ def test_an_ambiguous_key_in_front_of_a_retired_id_refuses_on_get(
     )
     assert ambiguous.refusal is not None
     assert ambiguous.refusal.code == "cruxible.subject.key_ambiguous"
+
+
+# -- set/history review: one complete creation assignment -----------------------------
+
+
+def _write_create(
+    label: str, key: object = None, kind: str = DECISION, **options: Any
+) -> dict[str, Any]:
+    return {"op": "create", "label": label, "subject_kind": kind, "key": key, **options}
+
+
+def _write_title(label: str, value: str) -> dict[str, Any]:
+    return {"op": "set", "subject": {"created": label}, "field": "title", "value": value}
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_planned_key_reuse_preserves_each_spellings_live_alias(
+    instance: PlaybillInstance, ambiguous: bool
+) -> None:
+    kind = "dev.punct"
+    accept(
+        instance,
+        change_set(
+            ClaimTypeInput(
+                kind="claim_type",
+                claim_type=_key(
+                    kind, "slug", canonical_form=("nfkc", "trim", "casefold", "strip_punctuation")
+                ),
+            ),
+            ClaimTypeInput(kind="claim_type", claim_type=_field(kind, "title")),
+            SubjectKindInput(
+                kind="subject_kind", name=kind, keys=(f"{kind}.slug",), uniqueness="unique"
+            ),
+        ),
+    )
+    holder = write(instance, _write_create("holder", "other", kind))
+    assert holder.status == "accepted", holder
+    address = holder.changes[0].subject
+    assert address is not None
+    aliased = write(
+        instance, {"op": "add", "subject": address, "field": "semantic.alias", "value": "a-b"}
+    )
+    assert aliased.status == "accepted", aliased
+    if ambiguous:
+        other = write(instance, _write_create("holder", "another", kind))
+        assert other.status == "accepted", other
+        aliased = write(
+            instance,
+            {
+                "op": "add",
+                "subject": other.changes[0].subject,
+                "field": "semantic.alias",
+                "value": "a-b",
+            },
+        )
+        assert aliased.status == "accepted", aliased
+    head = instance.accepted_coordinate()
+    result = write(
+        instance,
+        _write_create("plain", "ab", kind),
+        _write_create("aliased", "a-b", kind),
+        _write_title("aliased", "Belongs to alias holder"),
+    )
+    if ambiguous:
+        assert result.status == "refused", result
+        assert result.refusal is not None
+        assert (result.refusal.code, result.refusal.change) == ("cruxible.write.alias_ambiguous", 1)
+        assert instance.accepted_coordinate() == head
+    else:
+        assert result.status == "accepted", result
+        assert (result.changes[1].subject, result.changes[1].resolved) == (address, "existing")
+        assert (
+            key_claims(instance, kind, address.partition("/")[2])[f"{kind}.title"]
+            == "Belongs to alias holder"
+        )
+
+
+def test_lowering_keeps_original_key_spelling_for_alias_precedence(
+    instance: PlaybillInstance,
+) -> None:
+    kind = "dev.punct"
+    accept(
+        instance,
+        change_set(
+            ClaimTypeInput(
+                kind="claim_type",
+                claim_type=_key(
+                    kind, "slug", canonical_form=("nfkc", "trim", "casefold", "strip_punctuation")
+                ),
+            ),
+            ClaimTypeInput(kind="claim_type", claim_type=_field(kind, "title")),
+            SubjectKindInput(
+                kind="subject_kind", name=kind, keys=(f"{kind}.slug",), uniqueness="unique"
+            ),
+        ),
+    )
+    holder = write(instance, _write_create("holder", "other", kind))
+    assert holder.status == "accepted", holder
+    alias = write(
+        instance,
+        {
+            "op": "add",
+            "subject": holder.changes[0].subject,
+            "field": "semantic.alias",
+            "value": "ab",
+        },
+    )
+    assert alias.status == "accepted", alias
+    result = write(
+        instance, _write_create("punctuated", "a-b", kind), _write_title("punctuated", "New holder")
+    )
+    assert result.status == "accepted", result
+    assert result.changes[0].subject != holder.changes[0].subject
+    assert result.changes[0].resolved == "created"
+    assert result.changes[1].subject == result.changes[0].subject
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("implicit", [False, True])
+def test_rendering_collisions_keep_labels_and_subject_values_bound(
+    instance: PlaybillInstance, reverse: bool, implicit: bool
+) -> None:
+    from cruxible_client.contracts.claims import SubjectClaimObject
+
+    predicate = f"{DECISION}.peer"
+    accept(
+        instance,
+        change_set(
+            ClaimTypeInput(
+                kind="claim_type",
+                claim_type=identity_claim_type(
+                    "peer",
+                    canonical_form=None,
+                    object_kind="subject",
+                    object_kinds=(DECISION,),
+                    predicate=predicate,
+                    subject_kinds=(DECISION,),
+                ),
+            )
+        ),
+    )
+    labels = [("hyphen", "a-b", "Hyphen"), ("space", "a b", "Space")]
+    if reverse:
+        labels.reverse()
+    creates = [_write_create(label, key) for label, key, _title in labels]
+    fields = [_write_title(label, title) for label, _key_text, title in labels]
+    if implicit:
+        # The second creation uses the string shorthand; it shares complete assignment.
+        creates.pop()
+        label, key, title = labels[1]
+        fields[1] = {"op": "set", "subject": f"{DECISION}/{key}", "field": "title", "value": title}
+    result = write(
+        instance,
+        *creates,
+        *fields,
+        {
+            "op": "set",
+            "subject": {"created": labels[0][0]},
+            "field": "peer",
+            "value": f"{DECISION}/{labels[1][1]}" if implicit else {"created": labels[1][0]},
+        },
+        {
+            "op": "set",
+            "subject": f"{DECISION}/{labels[1][1]}" if implicit else {"created": labels[1][0]},
+            "field": "peer",
+            "value": {"created": labels[0][0]},
+        },
+    )
+    assert result.status == "accepted", result
+    titles = result.changes[len(creates) : len(creates) + 2]
+    addresses = [item.subject for item in titles]
+    assert len(set(addresses)) == 2
+    for index, ((_label, key, title), item) in enumerate(zip(labels, titles, strict=True)):
+        assert item.subject is not None
+        path = subject_path(DECISION, item.subject.partition("/")[2])
+        with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+            rows = projection.typed.connection.execute(
+                "SELECT identity, predicate FROM claims WHERE subject_path=? AND lifecycle='live'",
+                (path,),
+            ).fetchall()
+        values: dict[str, object] = {}
+        for identity, field in rows:
+            claim_id = str(identity).removeprefix("Claim:")
+            claim_path = f"claims/{claim_id[4:6]}/{claim_id}.json"
+            claim = parse_claim(tree(instance)[claim_path], path=claim_path)
+            obj = claim.statement.object
+            values[str(field)] = (
+                obj.address.artifact_path.removeprefix("subjects/").removesuffix(".json")
+                if isinstance(obj, SubjectClaimObject)
+                else obj.value
+            )
+        assert values == {
+            f"{DECISION}.slug": key,
+            f"{DECISION}.title": title,
+            predicate: addresses[1 - index],
+        }
+        if not implicit:
+            assert result.changes[index].subject == item.subject
+    assert (
+        next(
+            item.subject
+            for (_label, key, _title), item in zip(labels, titles, strict=True)
+            if key == "a b"
+        )
+        == f"{DECISION}/a-b"
+    )
+    assert set(result.subjects_added) == set(addresses)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_hint_first_and_further_holders_in_one_write(
+    instance: PlaybillInstance, reverse: bool
+) -> None:
+    creates = [
+        _write_create("first", "same", NOTE),
+        _write_create("further", "same", NOTE, create_new=True),
+    ]
+    if reverse:
+        creates.reverse()
+    result = write(instance, *creates)
+    assert result.status == "accepted", result
+    by_label = {
+        change["label"]: outcome.subject
+        for change, outcome in zip(creates, result.changes, strict=True)
+    }
+    assert by_label["first"] == f"{NOTE}/same"
+    assert by_label["further"] != by_label["first"]
+    assert set(result.subjects_added) == set(by_label.values())
+    for address in by_label.values():
+        assert address is not None
+        assert key_claims(instance, NOTE, address.partition("/")[2]) == {f"{NOTE}.title": "same"}
+
+
+def test_two_labels_for_one_pending_key_share_slots(instance: PlaybillInstance) -> None:
+    result = write(
+        instance,
+        _write_create("one", "Same"),
+        _write_create("two", "SAME"),
+        _write_title("one", "One"),
+        _write_title("two", "Two"),
+    )
+    assert result.refusal is not None
+    assert result.refusal.code == "cruxible.write.slot_set_twice"
+    accepted = write(
+        instance,
+        _write_create("one", "Same"),
+        _write_create("two", "SAME"),
+        _write_title("two", "One"),
+    )
+    assert accepted.status == "accepted", accepted
+    assert len(accepted.subjects_added) == 1
+    assert all(item.subject == f"{DECISION}/same" for item in accepted.changes)
+
+
+@pytest.mark.parametrize("mode", ["minted", "further_existing", "further_batch"])
+def test_dry_run_keeps_every_pending_subject_outcome_unassigned(
+    instance: PlaybillInstance, mode: str
+) -> None:
+    kind = TICKET if mode == "minted" else NOTE
+    accept(
+        instance,
+        change_set(
+            ClaimTypeInput(kind="claim_type", claim_type=_field(kind, "body")),
+            ClaimTypeInput(
+                kind="claim_type",
+                claim_type=identity_claim_type(
+                    "peer",
+                    canonical_form=None,
+                    object_kind="subject",
+                    object_kinds=(kind,),
+                    predicate=f"{DECISION}.peer",
+                    subject_kinds=(DECISION,),
+                ),
+            ),
+        ),
+    )
+    root = write(instance, _write_create("root", "root"))
+    assert root.status == "accepted", root
+    if mode == "further_existing":
+        first = write(instance, _write_create("first", "same", NOTE))
+        assert first.status == "accepted", first
+    head = instance.accepted_coordinate()
+    label = "ticket" if mode == "minted" else "further"
+    creation = (
+        _write_create(label, kind=kind)
+        if mode == "minted"
+        else _write_create(label, "same", kind, create_new=True)
+    )
+    changes = [
+        creation,
+        {"op": "set", "subject": {"created": label}, "field": "body", "value": "Body"},
+        {
+            "op": "add",
+            "subject": {"created": label},
+            "field": "semantic.alias",
+            "value": "draft alias",
+        },
+    ]
+    if mode == "minted":
+        changes.append(_write_title(label, "Ticket"))
+    pending_count = len(changes)
+    changes.append(
+        {
+            "op": "set",
+            "subject": root.changes[0].subject,
+            "field": "peer",
+            "value": {"created": label},
+        }
+    )
+    if mode == "further_batch":
+        changes.append(_write_create("first", "same", NOTE))
+    preview = write(instance, *changes, dry_run=True)
+    assert preview.status == "would_accept", preview
+    assert all(item.subject is None for item in preview.changes[:pending_count]), preview
+    assert preview.changes[pending_count].after is None
+    assert preview.subjects_added == ((f"{NOTE}/same",) if mode == "further_batch" else ())
+    assert f"<{label}>" not in preview.model_dump_json()
+    assert instance.accepted_coordinate() == head
+    accepted = write(instance, *changes)
+    assert accepted.status == "accepted", accepted
+    address = accepted.changes[0].subject
+    assert address is not None
+    assert all(item.subject == address for item in accepted.changes[:pending_count])
+    assert accepted.changes[pending_count].after == address

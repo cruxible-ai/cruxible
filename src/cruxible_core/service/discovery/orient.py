@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import sqlite3
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -56,6 +57,7 @@ from cruxible_client.contracts.orient import (
     OrientQuery,
     OrientResult,
     OrientSection,
+    OrientSubjectKind,
     OrientSurface,
     OrientYou,
 )
@@ -162,8 +164,33 @@ class _State:
     documents: tuple[OrientDocument, ...]
     queries: tuple[OrientQuery, ...]
     interfaces: tuple[OrientInterface, ...] = ()
-    #: Each declared kind's identity rule as orient shows it (``kind_identity``).
+    #: Each declared kind's identity rule as orient shows it: ``keys: a, b (unique)``
+    #: or ``minted``.
     identities: dict[str, str] = dataclass_field(default_factory=dict)
+
+
+def accepted_subject_kinds(connection: sqlite3.Connection) -> tuple[OrientSubjectKind, ...]:
+    """Every live SubjectKind in one projection, by kind: one read of the index.
+
+    The rows the ``subject_kinds`` section pages and the world stub types
+    ``define`` from; it grows with the vocabulary, never with the Subjects.
+    """
+
+    rows: list[OrientSubjectKind] = []
+    for identity, rule, uniqueness, keys in connection.execute(
+        "SELECT identity, rule, uniqueness, key_predicates FROM subject_kinds "
+        "WHERE lifecycle='live' ORDER BY identity"
+    ):
+        minted = str(rule) == "minted"
+        rows.append(
+            OrientSubjectKind(
+                kind=str(identity).removeprefix("SubjectKind:"),
+                rule="minted" if minted else "keys",
+                keys=() if minted else tuple(json.loads(str(keys))),
+                uniqueness=None if minted or uniqueness is None else str(uniqueness),  # type: ignore[arg-type]
+            )
+        )
+    return tuple(rows)
 
 
 def _query_row(query: QueryDefinition) -> OrientQuery:
@@ -268,13 +295,10 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
             )
         }
         identities = {
-            str(identity).removeprefix("SubjectKind:"): kind_identity(
-                str(rule), str(uniqueness) if uniqueness is not None else None, str(keys)
-            )
-            for identity, rule, uniqueness, keys in connection.execute(
-                "SELECT identity, rule, uniqueness, key_predicates FROM subject_kinds "
-                "WHERE lifecycle='live'"
-            )
+            item.kind: "minted"
+            if item.rule == "minted"
+            else f"keys: {', '.join(item.keys)} ({item.uniqueness})"
+            for item in accepted_subject_kinds(connection)
         }
         procedures = tuple(
             OrientProcedure(
@@ -313,15 +337,6 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         ),
         identities=identities,
     )
-
-
-def kind_identity(rule: str, uniqueness: str | None, key_predicates: str) -> str:
-    """How orient states a kind's identity rule: ``keys: a, b (unique)`` or ``minted``."""
-
-    if rule == "minted":
-        return "minted"
-    keys = ", ".join(json.loads(key_predicates))
-    return f"keys: {keys} ({uniqueness})"
 
 
 # -- predicate descriptors ----------------------------------------------------
@@ -850,7 +865,6 @@ def service_playbill_orient(
     # whatever is accepted meanwhile (a point-in-time read).
     served = AcceptedCoordinate.from_internal(coordinate)
     moment = (evaluation_time or datetime.now(UTC)).astimezone(UTC)
-    state = _read_state(instance, coordinate)
     base: dict[str, Any] = {
         "instance": instance.descriptor.instance_id,
         "coordinate": served,
@@ -860,6 +874,32 @@ def service_playbill_orient(
         "mirror_url": instance.ledger_mirror_url(),
     }
     calls: list[_Call] = []
+    if section == "subject_kinds":
+        # One read of the SubjectKind index: it grows with the vocabulary,
+        # never with the Subjects the full map counts.
+        with instance.bind_accepted_projection(coordinate) as projection:
+            declared = accepted_subject_kinds(projection.typed.connection)
+        page, next_cursor = _page(
+            declared,
+            [item.kind for item in declared],
+            view=view,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+        )
+        if page:
+            calls.append(_Call("get", (("ref", f"SubjectKind:{page[0].kind}"),)))
+        if next_cursor is not None:
+            calls.append(_Call("orient", (("section", section), ("cursor", next_cursor))))
+        return OrientResult(
+            **base,
+            section=section,
+            subject_kinds=page,
+            truncated=next_cursor is not None,
+            next_cursor=next_cursor,
+            next=tuple(render_orient_call(call, surface) for call in calls),
+        )
+    state = _read_state(instance, coordinate)
 
     if kind is not None:
         detail = _kind_detail(instance, coordinate, state, kind)
@@ -1498,6 +1538,7 @@ def _section_rows(state: _State, section: OrientSection) -> tuple[tuple[Any, ...
 
 __all__ = [
     "OrientCaller",
+    "accepted_subject_kinds",
     "interface_row",
     "render_orient_call",
     "service_playbill_head",

@@ -46,6 +46,7 @@ def test_get_is_a_read_only_default_tool_with_only_declared_parameters(
         "evaluation_time",
         "limit",
         "cursor",
+        "field",
     }
     assert schema["properties"]["detail"]["enum"] == [
         "summary",

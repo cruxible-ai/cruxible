@@ -1,9 +1,10 @@
 """The floor's README and its changes/ files.
 
-Accepted values come only from the accepted tree. Review prose is read from the
-proposal note of the exact candidate each accepted change published, by path,
-and is shown as attributed rationale, never as a Claim or proof of adoption.
-No evidence bodies, working files, or authoring-intent exhaust are read.
+Accepted values come only from the accepted tree. A change's rationale is the
+one ``get`` shows: the exact admission that accepted its candidate
+(``service.discovery.change_reasons``), shown as attributed rationale, never as
+a Claim or proof of adoption. No evidence bodies, working files, or
+authoring-intent exhaust are read.
 """
 
 from __future__ import annotations
@@ -11,21 +12,14 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.primitives import pretty_json
-from cruxible_client.contracts.proposal_models import (
-    ProposalAdmissionRecord,
-    ProposalEvaluationRecord,
-)
 from cruxible_core.indexes.history.history_index import AcceptedGenerationLocation, HistoryReader
-from cruxible_core.proposals.proposal_notes import admission_bytes, evaluation_bytes
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.change_reasons import ChangeReasons
 
 CHANGES_PREFIX = "changes/"
-NOTES_REF = "refs/notes/playbill-eval"
 
 FLOOR_README = """\
 # Cruxible floor
@@ -88,9 +82,9 @@ accepted history, so what the floor shows is fixed by the coordinate. One that
 is nevertheless lost refuses a fresh render as an integrity failure; the floor
 is never published differently for the same accepted state.
 
-`manifest.json` names the review notes the change rationale was read from
-(`notes_digest`); a rationale revised after acceptance makes a refresh replace
-the floor whole.
+A change's rationale is the one `get` shows: the admission that accepted it,
+which never changes; `manifest.json` binds every rationale the changes/ files
+show (`notes_digest`).
 
 ## Not for grep
 
@@ -135,121 +129,28 @@ def member_ref(path: str) -> str:
     return path
 
 
-def review_snapshot_oid(instance: PlaybillInstance) -> str | None:
-    """The review notes commit the notes ref names now: one immutable snapshot."""
-
-    return instance._ledger._resolve_ref(NOTES_REF)
-
-
-def notes_changed_between(
-    instance: PlaybillInstance, before: str | None, after: str | None
-) -> frozenset[str] | None:
-    """The commits whose note differs between two notes snapshots; None for every one."""
-
-    if before == after:
-        return frozenset()
-    if before is None or after is None:
-        return None
-    return frozenset(
-        change.path.replace("/", "") for change in instance._ledger.changed_entries(before, after)
-    )
-
-
-@dataclass(frozen=True)
-class ChangeNote:
-    """What one accepted change's review notes say: its proposals' commits and rationale."""
-
-    commits: tuple[str, ...]
-    rationale: tuple[str, ...]
-
-
-def _candidate_commits(
-    instance: PlaybillInstance, candidate_digests: Iterable[str]
-) -> dict[str, tuple[str, ...]]:
-    """Every proposal commit that published each candidate digest."""
-
-    digests = sorted(set(candidate_digests))
-    if not digests:
-        return {}
-    evidence = instance.proposal_evidence()
-    assert evidence.index is not None
-    found: dict[str, set[str]] = {digest: set() for digest in digests}
-    with evidence.index.read(evidence) as connection:
-        for start in range(0, len(digests), 500):
-            chunk = digests[start : start + 500]
-            for digest, candidate, review in connection.execute(
-                "SELECT candidate_digest,candidate_commit_oid,review_commit_oid FROM proposals "
-                "WHERE candidate_digest IN (" + ",".join("?" for _ in chunk) + ")",
-                chunk,
-            ):
-                found[str(digest)].update(oid for oid in (candidate, review) if oid is not None)
-    return {digest: tuple(sorted(oids)) for digest, oids in found.items()}
-
-
 def change_rationales(
-    instance: PlaybillInstance,
-    generations: Iterable[AcceptedGenerationLocation],
-    notes_oid: str | None,
+    instance: PlaybillInstance, generations: Iterable[AcceptedGenerationLocation]
 ) -> dict[int, tuple[str, ...]]:
-    """Each accepted change's review rationale, read by path from one notes commit."""
+    """Each accepted change's rationale: the one ``get`` shows (``ChangeReasons``).
 
-    return {
-        sequence: note.rationale
-        for sequence, note in change_notes(instance, generations, notes_oid).items()
-    }
-
-
-def change_notes(
-    instance: PlaybillInstance,
-    generations: Iterable[AcceptedGenerationLocation],
-    notes_oid: str | None,
-) -> dict[int, ChangeNote]:
-    """Each accepted change's review notes, read by path from one notes commit.
-
-    A change's rationale is what the proposals that published its exact
-    candidate, by its own actor, recorded. A missing note is missing rationale,
-    never invented. ``notes_oid`` is one immutable notes commit, or None for no
-    notes at all.
+    The exact admission that accepted the change's candidate, by its own
+    actor, never withdrawn -- none or several and the change shows none, never
+    invented. Admissions are immutable, so a change's rationale is fixed once
+    it is accepted: the floor reads it when the change enters and never again.
     """
 
+    generations = list(generations)
+    result: dict[int, tuple[str, ...]] = {item.sequence: () for item in generations}
     wanted = [item for item in generations if item.candidate_digest is not None]
-    result: dict[int, ChangeNote] = {item.sequence: ChangeNote((), ()) for item in generations}
-    if notes_oid is None or not wanted:
+    if not wanted:
         return result
-    commits = _candidate_commits(instance, (str(item.candidate_digest) for item in wanted))
-    pairs = sorted({("evaluation", oid) for oids in commits.values() for oid in oids})
-    notes = instance.read_proposal_notes(pairs, notes_commit=notes_oid) if pairs else {}
+    reasons = ChangeReasons(instance)
+    reasons.prefetch(wanted)
     for generation in wanted:
-        by_proposal: dict[str, str] = {}
-        for oid in commits.get(str(generation.candidate_digest), ()):
-            content = notes.get(("evaluation", oid))
-            if content is None:
-                continue
-            lines = content.splitlines(keepends=True)
-            if len(lines) % 2:
-                raise ProposalIntegrityError("floor review note has an incomplete record pair")
-            for i in range(0, len(lines), 2):
-                admission = ProposalAdmissionRecord.model_validate_json(lines[i])
-                evaluation = ProposalEvaluationRecord.model_validate_json(lines[i + 1])
-                if (
-                    admission_bytes(admission) != lines[i]
-                    or evaluation_bytes(evaluation) != lines[i + 1]
-                    or admission.proposal_id != evaluation.proposal_id
-                ):
-                    raise ProposalIntegrityError(
-                        "floor review note is not a canonical proposal pair"
-                    )
-                if (
-                    evaluation.verdict == "candidate"
-                    and evaluation.candidate_digest == generation.candidate_digest
-                    and admission.actor_id == generation.actor_id
-                ):
-                    if admission.rationale:
-                        by_proposal[admission.proposal_id] = admission.rationale
-        result[generation.sequence] = ChangeNote(
-            commits.get(str(generation.candidate_digest), ()),
-            tuple(dict.fromkeys(by_proposal[key] for key in sorted(by_proposal))),
-        )
+        admission = reasons.admission(generation)
+        if admission is not None and admission.rationale:
+            result[generation.sequence] = (admission.rationale,)
     return result
 
 

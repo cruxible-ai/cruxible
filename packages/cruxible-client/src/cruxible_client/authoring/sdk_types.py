@@ -478,9 +478,10 @@ class AbsentSubject(SdkError):
         self.coordinate = coordinate
         super().__init__(
             f"no accepted Subject {subject_kind}/{subject_id} exists at coordinate "
-            f"{coordinate.git_oid}. Repair: define it in this changeset with "
-            f"world.{subject_kind}.define({subject_id!r}), or search for the "
-            "address the daemon actually accepted."
+            f"{coordinate.git_oid}. Repair: create it by its key, "
+            f"w.write(w.{subject_kind}.define(<key>, ...), because=...) (core assigns "
+            "the id, and a key a live Subject holds lands on it), or find the id the "
+            f"daemon accepted with cx.query({subject_kind!r}, ...)."
         )
 
 

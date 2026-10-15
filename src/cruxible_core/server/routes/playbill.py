@@ -940,7 +940,7 @@ def retire(instance_id: str, req: RetireRequest) -> WriteOutcome:
 
 @router.post("/{instance_id}/write", response_model=WriteOutcome)
 def write(instance_id: str, req: WriteRequest) -> WriteOutcome:
-    """Apply set, add and retire changes as one change set."""
+    """Apply create, set, add and retire changes as one change set."""
     return playbill_api.playbill_write(resolve_server_instance_id(instance_id), request=req)
 
 

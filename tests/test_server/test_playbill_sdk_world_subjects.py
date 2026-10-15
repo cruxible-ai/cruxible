@@ -147,3 +147,179 @@ def test_a_retired_subject_takes_no_place_under_the_ceiling(
 
     assert [row["subject_id"] for row in first.rows] == ["wi-2"]  # type: ignore[attr-defined]
     assert first.capped == ()  # type: ignore[attr-defined]
+
+
+# -- typed creation: w.<kind>.define(...) and w.write(...) -----------------------------
+
+DECISION, TICKET, NOTE, PAIR = "dev.decision", "dev.ticket", "dev.note", "dev.pair"
+
+
+def _accept_identity_kinds(instance: PlaybillInstance, *, actor_id: str) -> None:
+    """A unique slug kind, a minted kind, a hint kind and a composite kind, through authoring."""
+
+    from cruxible_client.contracts.authoring.inputs import (
+        ChangeSetInput,
+        ClaimTypeInput,
+        SubjectKindInput,
+        lower_authoring_input,
+    )
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from tests.test_service.test_subject_identity import _field, _key
+
+    payload = lower_authoring_input(
+        ChangeSetInput(
+            kind="change_set",
+            members=(
+                ClaimTypeInput(kind="claim_type", claim_type=_key(DECISION, "slug")),
+                ClaimTypeInput(kind="claim_type", claim_type=_field(DECISION, "title")),
+                SubjectKindInput(
+                    kind="subject_kind",
+                    name=DECISION,
+                    keys=(f"{DECISION}.slug",),
+                    uniqueness="unique",
+                ),
+                ClaimTypeInput(kind="claim_type", claim_type=_field(TICKET, "title")),
+                SubjectKindInput(kind="subject_kind", name=TICKET, minted=True),
+                ClaimTypeInput(kind="claim_type", claim_type=_key(NOTE, "title")),
+                SubjectKindInput(
+                    kind="subject_kind", name=NOTE, keys=(f"{NOTE}.title",), uniqueness="hint"
+                ),
+                ClaimTypeInput(kind="claim_type", claim_type=_key(PAIR, "left")),
+                ClaimTypeInput(kind="claim_type", claim_type=_key(PAIR, "right")),
+                SubjectKindInput(
+                    kind="subject_kind",
+                    name=PAIR,
+                    keys=(f"{PAIR}.left", f"{PAIR}.right"),
+                    uniqueness="unique",
+                ),
+            ),
+        )
+    )
+    actor = AuthenticatedActor(actor_id=actor_id)
+    submitted = AuthoringIntentCoordinator.for_instance(instance).compile_and_submit(
+        actor=actor, payload=payload, canonical_timestamp="2026-09-29T11:59:40.000000Z"
+    )
+    assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=submitted.status.proposal_id, activated_by=actor_id
+    )
+    assert receipt.status == "accepted", receipt
+
+
+@pytest.fixture
+def typed(playbill_http: tuple[TestClient, str, Path], tmp_path: Path) -> Cruxible:
+    """The write vocabulary (work items keyed by slug) and four more identity rules."""
+
+    client, instance_id, _key = playbill_http
+    actor = client.get(f"/api/v1/{instance_id}/whoami").json()["actor_id"]
+    instance = get_playbill_manager().get(instance_id)
+    seed_write_vocabulary(instance, actor_id=actor)
+    _accept_identity_kinds(instance, actor_id=actor)
+    transport = CruxibleClient(base_url="http://testserver")
+    transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
+    workspace = tmp_path / "sdk-workspace"
+    workspace.mkdir()
+    return Cruxible._from_client(  # noqa: SLF001
+        transport,
+        instance_id=instance_id,
+        workspace=workspace,
+        clock=lambda: datetime(2026, 9, 29, 12, tzinfo=UTC),
+    )
+
+
+def test_one_write_creates_five_typed_subjects_and_edits_an_accepted_one(typed: Cruxible) -> None:
+    w = typed.world()
+    items = w.project.work_item
+    first = items.define("wi-new-a", title="First")
+    second = items.define(slug="wi-new-b", status="ready").add(governs=first)
+    ticket = w.dev.ticket.define(title="A ticket")
+    pair = w.dev.pair.define(left="Alpha  One", right="Beta")
+    note = w.dev.note.define("Only a key")
+    edit = items["wi-1"].edit().set(title="One").add(governs=second)
+
+    outcome = w.write(second, ticket, edit, pair, note, first, because="Seeded together.")
+
+    assert outcome.status == "accepted", outcome
+    assert outcome.base is not None
+    assert outcome.coordinate.generation == outcome.base.generation + 1
+    assert first.address == f"{KIND}/wi-new-a" and second.address == f"{KIND}/wi-new-b"
+    assert ticket.address is not None and ticket.address.startswith(f"{TICKET}/sub-")
+    assert pair.address == f"{PAIR}/alpha-one--beta"
+    assert note.address == f"{NOTE}/only-a-key"
+    assert set(outcome.subjects_added) == {
+        first.address,
+        second.address,
+        ticket.address,
+        pair.address,
+        note.address,
+    }
+    read = typed.world()
+    assert [view.value for view in read.project.work_item["wi-new-a"].title] == ["First"]
+    assert [view.value for view in read.dev.ticket[ticket.address.split("/", 1)[1]].title] == [
+        "A ticket"
+    ]
+    assert [view.value for view in read.project.work_item["wi-1"].title] == ["One"]
+    with pytest.raises(AbsentSubject):
+        read.project.work_item["wi-typo"].set(title="x", because="A typo is never a creation.")
+
+
+def test_a_define_run_again_lands_on_its_subject_and_expect_new_refuses(typed: Cruxible) -> None:
+    from cruxible_client.contracts.errors import WriteRefusalError
+    from cruxible_client.contracts.subject_kinds import key_digest_hex
+
+    w = typed.world()
+    first = w.dev.decision.define("ship it", title="Ship")
+    assert first.write(because="Decided.").status == "accepted"
+    assert first.address == f"{DECISION}/ship-it"
+
+    again = typed.world().dev.decision.define("Ship  It")
+    outcome = again.write(because="Decided again.")
+    assert (outcome.changes[0].resolved, again.address) == ("existing", f"{DECISION}/ship-it")
+    with pytest.raises(WriteRefusalError) as refused:
+        typed.world().dev.decision.define("ship it", expect_new=True).write(because="New?")
+    assert refused.value.error_code == "cruxible.write.subject_exists"
+
+    # A key whose rendering another Subject's id holds takes the digest suffix.
+    taken = typed.world().dev.decision.define("ship-it")
+    assert taken.write(because="Another decision.").status == "accepted"
+    assert taken.address == f"{DECISION}/ship-it-{key_digest_hex(['ship-it'])[:8]}"
+
+
+def test_a_hint_key_two_subjects_hold_is_ambiguous_to_define(typed: Cruxible) -> None:
+    from cruxible_client.contracts.errors import WriteRefusalError
+
+    w = typed.world()
+    assert w.dev.note.define("Same").write(because="One.").status == "accepted"
+    further = typed.world().dev.note.define("same", create_new=True)
+    assert further.write(because="Another thing, same name.").status == "accepted"
+    assert further.address is not None and further.address != f"{NOTE}/same"
+    with pytest.raises(WriteRefusalError) as refused:
+        typed.world().dev.note.define("SAME").write(because="Which one?")
+    assert refused.value.error_code == "cruxible.subject.key_ambiguous"
+
+
+def test_the_sdk_reads_a_subject_s_whole_field_history_across_pages(
+    pb: Cruxible, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.get_reads import GetSubjectHistory
+    from cruxible_core.service.discovery import get as get_module
+
+    for value, because in (("ready", "Started."), ("blocked", "Waiting."), ("done", "Shipped.")):
+        pb.set(f"{KIND}/wi-1", "status", value, because=because)
+    # Pages of two events: the SDK follows the cursor to the last one.
+    monkeypatch.setattr(get_module, "GET_HISTORY_DEFAULT_LIMIT", 2)
+
+    history = pb.get(f"{KIND}/wi-1", detail="history", field="status").value
+
+    assert isinstance(history, GetSubjectHistory)
+    assert [(event.change, event.value) for event in history.events] == [
+        ("changed", "done"),
+        ("changed", "blocked"),
+        ("stated", "ready"),
+    ]
+    assert [event.reason.text for event in history.events] == [  # type: ignore[union-attr]
+        "Shipped.",
+        "Waiting.",
+        "Started.",
+    ]
+    assert history.events[0].before == "blocked"  # type: ignore[union-attr]

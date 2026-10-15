@@ -5,8 +5,10 @@ Three verbs change accepted state, identically on MCP, the CLI, HTTP and the SDK
 - ``set`` puts one value in one field of one Subject. On a single-value field it
   replaces the live value (the Claim it revises is inferred);
 - ``retire`` ends one live Claim, named by ID or by its Subject and field;
-- ``write`` applies a batch of ``set``, ``add`` and ``retire`` changes as one
-  change set.
+- ``write`` applies a batch of ``create``, ``set``, ``add`` and ``retire``
+  changes as one change set. A ``create`` names a new Subject by its kind and
+  key under a label; the write's other changes name it ``{"created": label}``,
+  as their subject or as a Subject value, in any order.
 
 Every write lowers to the ordinary authoring change set and goes through the
 same coordinator, preflight, submit, review and activation as any other
@@ -37,6 +39,7 @@ from cruxible_client.contracts.authoring.models import WorkingSelectionObservati
 from cruxible_client.contracts.codes import CurrentCode, code_told_union
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
 from cruxible_client.contracts.read_values import ShownValue
+from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyValue
 
 #: The kind part of a Subject reference: a canonical Subject kind.
 SUBJECT_KIND_PATTERN = r"[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*"
@@ -75,9 +78,7 @@ SubjectRef = Annotated[
     Field(
         pattern=SUBJECT_REF_PATTERN,
         description=(
-            "A Subject as kind/id, for example 'dev.roadmap_item/tidy-cli', or as "
-            "kind/<alias or single key value>, for example "
-            "'security.vulnerability/CVE-2021-44228'; '@kind/id' names the same Subject."
+            "kind/id or kind/<alias or single key value>; an optional '@' prefix is ignored."
         ),
     ),
 ]
@@ -90,10 +91,7 @@ FieldName = Annotated[
     Field(
         min_length=1,
         max_length=512,
-        description=(
-            "A field of the Subject's kind: the predicate without the kind prefix "
-            "(orient lists them), or the full predicate."
-        ),
+        description=("A field from orient, or its full predicate."),
     ),
 ]
 ClaimValue = bool | int | float | str
@@ -105,8 +103,8 @@ ExpectedValue = ClaimValue | tuple[ClaimValue, ...]
 value of the field as a list (``[]`` when it must hold none)."""
 
 _EXPECT_DESCRIPTION = (
-    "Compare-and-set: the field's value as you read it (list every live value if "
-    "many-valued; [] for none); otherwise cruxible.write.slot_changed shows it."
+    "Compare-and-set: the value read, all live values as a list for many-valued fields, "
+    "or [] for none; refuses slot_changed on mismatch."
 )
 
 WriteRole = Literal["normative", "observation", "environment_binding"]
@@ -120,7 +118,7 @@ WriteStatus = Literal[
     "would_await_approval",
     "would_refuse",
 ]
-WriteOp = Literal["set", "add", "retire"]
+WriteOp = Literal["create", "set", "add", "retire"]
 ApprovalReason = Literal[
     "independent_approval_required", "activation_not_permitted", "accept_never"
 ]
@@ -142,11 +140,7 @@ def _omit_empty(value: object) -> bool:
 
 
 class SelfEvidence(_StrictWriteModel):
-    """The writer's own words as the Claim's source; the default is ``because``.
-
-    For an exact-content field the source is the value itself, byte for byte, so
-    the text is its own evidence and nothing else needs to be passed.
-    """
+    """Self evidence; defaults to because, or the value itself for exact content."""
 
     kind: Literal["self"] = "self"
     self: str = Field(min_length=1, description="The text that backs the value.")
@@ -159,12 +153,7 @@ def capture_handle(digest: str, *, length: int = 12) -> str:
 
 
 class CaptureEvidence(_StrictWriteModel):
-    """An existing Capture, cited as evidence for the value.
-
-    ``capture`` is its digest, or its handle ``CAP-<12+ hex>``: a digest prefix
-    unique among the verified Captures the instance holds, cited or not. The
-    handle is resolved to the digest before the write is lowered.
-    """
+    """Cite a verified Capture by digest or unique digest-prefix handle."""
 
     kind: Literal["capture"] = "capture"
     capture: str = Field(
@@ -174,11 +163,7 @@ class CaptureEvidence(_StrictWriteModel):
 
 
 class ContractEvidence(_StrictWriteModel):
-    """The newest verified exact-bytes Capture of one CaptureContract about the Subject.
-
-    A Capture is about the Subject when an accepted Claim on it cites it or its
-    source names the Subject. The outcome names the one used as ``capture``.
-    """
+    """Use the newest verified exact-bytes Capture under this contract about the Subject."""
 
     kind: Literal["contract"] = "contract"
     contract: str = Field(
@@ -189,12 +174,7 @@ class ContractEvidence(_StrictWriteModel):
 
 
 class FileEvidence(_StrictWriteModel):
-    """A span of a workspace file, cited as evidence: ``PATH#ANCHOR``.
-
-    The anchor is text occurring exactly once in the file. The writer's side
-    (CLI, SDK, MCP adapter) reads it and sends what it observed; the daemon
-    never reads workspace files.
-    """
+    """File evidence sent as bytes by the client; the daemon never reads workspace files."""
 
     kind: Literal["file"] = "file"
     file: str = Field(
@@ -223,6 +203,51 @@ Evidence = Annotated[
 
 # -- changes --------------------------------------------------------------------
 
+#: A ``create`` change's label: how the write's other changes name its Subject.
+NEW_SUBJECT_LABEL_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
+NewSubjectLabel = Annotated[
+    str,
+    Field(
+        pattern=NEW_SUBJECT_LABEL_PATTERN,
+        description="Unique label within this write.",
+    ),
+]
+
+
+class CreatedSubject(_StrictWriteModel):
+    """Refer to a create change in this write by label, in any order."""
+
+    created: NewSubjectLabel
+
+
+SubjectTarget: TypeAlias = SubjectRef | CreatedSubject
+"""A change's Subject: an accepted one as kind/id, or one this write creates."""
+
+
+class CreateChange(_StrictWriteModel):
+    """Create by key or reuse its sole live holder; ambiguous keys refuse. Core assigns the id."""
+
+    op: Literal["create"] = "create"
+    label: NewSubjectLabel
+    subject_kind: str = Field(
+        pattern=rf"^{SUBJECT_KIND_PATTERN}$", description="The kind, as orient names it."
+    )
+    key: SubjectKeyValue | tuple[SubjectKeyPart, ...] | None = Field(
+        default=None,
+        description=(
+            "A one-key kind's key value; or each part of a composite key as "
+            '{"predicate", "value"}; none for a minted kind.'
+        ),
+    )
+    create_new: bool = Field(
+        default=False,
+        description="A hint kind only: make a further holder of a key a live Subject holds.",
+    )
+    expect_new: bool = Field(
+        default=False,
+        description="Refuse cruxible.write.subject_exists when a live Subject holds the key.",
+    )
+
 
 class SlotRef(_StrictWriteModel):
     """One field of one Subject, or with ``value`` one of the values it holds."""
@@ -236,19 +261,15 @@ class SlotRef(_StrictWriteModel):
 
 
 class SetChange(_StrictWriteModel):
-    """Put ``value`` in a single-value field, replacing the live value.
-
-    The live Claim it replaces is inferred. ``contend`` states a competing Claim
-    beside the live one instead of replacing it.
-    """
+    """Replace a single-value field; contend=true states a competing Claim instead."""
 
     op: Literal["set"] = "set"
-    subject: SubjectRef | None = Field(
+    subject: SubjectTarget | None = Field(
         default=None,
-        description="The Subject as kind/id; default: the write's own subject.",
+        description="Default: the write's subject.",
     )
     field: FieldName
-    value: ClaimValue
+    value: ClaimValue | CreatedSubject
     role: WriteRole | None = Field(
         default=None,
         description="Only when the field permits more than one role.",
@@ -264,12 +285,12 @@ class AddChange(_StrictWriteModel):
     """Add one more value to a many-valued field, beside the values already there."""
 
     op: Literal["add"] = "add"
-    subject: SubjectRef | None = Field(
+    subject: SubjectTarget | None = Field(
         default=None,
-        description="The Subject as kind/id; default: the write's own subject.",
+        description="Default: the write's subject.",
     )
     field: FieldName
-    value: ClaimValue
+    value: ClaimValue | CreatedSubject
     role: WriteRole | None = Field(
         default=None,
         description="Only when the field permits more than one role.",
@@ -280,8 +301,7 @@ class AddChange(_StrictWriteModel):
     expect_absent: bool = Field(
         default=False,
         description=(
-            "Refuse cruxible.write.value_already_present when the value is already "
-            "live, instead of answering it as already done."
+            "Refuse value_already_present instead of treating a live value as already done."
         ),
     )
 
@@ -306,7 +326,7 @@ class RetireChange(_StrictWriteModel):
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
 
-Change = Annotated[SetChange | AddChange | RetireChange, Field(discriminator="op")]
+Change = Annotated[CreateChange | SetChange | AddChange | RetireChange, Field(discriminator="op")]
 
 
 # -- requests -------------------------------------------------------------------
@@ -406,6 +426,8 @@ class ChangeOutcome(_StrictWriteModel):
 
     op: WriteOp
     subject: str | None = Field(default=None, exclude_if=_omit_none)
+    # A create: whether it made the Subject or landed on the live one holding its key.
+    resolved: Literal["created", "existing"] | None = Field(default=None, exclude_if=_omit_none)
     field: str | None = Field(default=None, exclude_if=_omit_none)
     predicate: str | None = Field(default=None, exclude_if=_omit_none)
     # The slot's value before and after, as a summary shows it: a long string is
@@ -540,7 +562,15 @@ class WriteOutcome(_StrictWriteModel):
     tag: Literal["playbill-write-outcome-v1"] = "playbill-write-outcome-v1"
     status: WriteStatus
     changes: tuple[ChangeOutcome, ...] = ()
-    subjects_added: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
+    subjects_added: tuple[str, ...] = Field(
+        default=(),
+        exclude_if=_omit_empty,
+        description=(
+            "The Subjects this write creates, by the id core assigned. A minted id (or a "
+            "further hint holder's) is assigned when the write is submitted, so a dry run "
+            "leaves it out."
+        ),
+    )
     proposal: WriteProposalRef | None = Field(default=None, exclude_if=_omit_none)
     coordinate: GetCoordinate = Field(
         description=(
@@ -575,6 +605,10 @@ __all__ = [
     "Change",
     "ChangeOutcome",
     "ContractEvidence",
+    "CreateChange",
+    "CreatedSubject",
+    "NEW_SUBJECT_LABEL_PATTERN",
+    "NewSubjectLabel",
     "ClaimId",
     "ClaimValue",
     "Evidence",
@@ -591,6 +625,7 @@ __all__ = [
     "AddChange",
     "SlotRef",
     "SubjectRef",
+    "SubjectTarget",
     "subject_reference",
     "VerdictNotSupportedWarning",
     "WriteAccept",

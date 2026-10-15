@@ -678,10 +678,10 @@ Reads retained capture metadata and available bytes at cx.coordinate. Does not r
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-get(ref: str | TypedRef, *, detail: GetDetail = "summary", range: tuple[int, int] | str | None = None) -> KnowledgeCard
+get(ref: str | TypedRef, *, detail: GetDetail = "summary", range: tuple[int, int] | str | None = None, field: str | ClaimTypeRef | None = None) -> KnowledgeCard
 ```
 
-Reads one thing by reference; the daemon resolves the reference directly (never through search). `ref` is a typed Subject/ClaimType/Claim/Procedure/Query/Source ref (read at its coordinate) or any string an agent sees: `CLM-...` or a unique prefix, `kind/id`, a predicate (full or a unique leaf), `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, an artifact path, a proposal id or prefix, or an operational reference (`Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`, `ProcedureRun:<run_id>` or `RUN-<12+ hex>`; their cards live in `cruxible_client.contracts.operational_reads`), or a governance reference: `Trigger:<name>`, `Principal:<id>`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, `SourceAcquisitionPolicy:<name>`, `ProviderInterface:<name>`. A Claim summary is a `ClaimView`; other summaries are the values-first card (`GetSubjectCard`, `GetClaimTypeCard`, ...) from `cruxible_client.contracts.get_reads`; other details carry their payload (`GetEvidence`, whose `value` is the Claim's whole value; `GetHistory`, newest first, with every page read; `GetBody`, whose `body_digest` names the whole body even when `range` reads part of it; the explain dict for `why`, on a Claim, Subject or Document; and for `proof` a `ClaimViewRecord` on a Claim or the envelope dict otherwise). A summary card shows a string value over 500 characters as a `TruncatedText` (`cruxible_client.contracts.read_values`: `preview`, `length`, and `read_whole`, the exact `{ref, detail, at}` read of the whole value at the generation it was previewed at), never as the value; `cx.read_whole(preview)` makes that read. An object value is a `ShownObject` (`object`, the value whole), so an object shaped like a preview or marker never reads as one. Query rows and Claim cells, `World.values` and write outcomes use the same types; a plain query row cell and a write's `after` name no `read_whole` (use `claims=True` for a cell's Claims; `after` is the value the write sent). The card's `coordinate` is the full accepted coordinate: the SDK asks the daemon for it (`full_coordinate`), where MCP and CLI summaries carry only the 12-hex git oid prefix and generation.
+Reads one thing by reference; the daemon resolves the reference directly (never through search). `ref` is a typed Subject/ClaimType/Claim/Procedure/Query/Source ref (read at its coordinate) or any string an agent sees: `CLM-...` or a unique prefix, `kind/id`, a predicate (full or a unique leaf), `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, an artifact path, a proposal id or prefix, or an operational reference (`Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`, `ProcedureRun:<run_id>` or `RUN-<12+ hex>`; their cards live in `cruxible_client.contracts.operational_reads`), or a governance reference: `Trigger:<name>`, `Principal:<id>`, `ApprovalPolicy:instance`, `ProcedureRuntimePolicy:instance`, `SourceAcquisitionPolicy:<name>`, `ProviderInterface:<name>`. A Claim summary is a `ClaimView`; other summaries are the values-first card (`GetSubjectCard`, `GetClaimTypeCard`, ...) from `cruxible_client.contracts.get_reads`; other details carry their payload (`GetEvidence`, whose `value` is the Claim's whole value; `GetHistory`, newest first, with every page read, each revision with its `change` and `reason`; on a Subject `GetSubjectHistory`: its shell's revisions and every page of its field events (`GetFieldStated`, `GetFieldChanged` with `before`, `GetFieldReobserved`, `GetFieldRetired`), which `field=` narrows to one field; `GetBody`, whose `body_digest` names the whole body even when `range` reads part of it; the explain dict for `why`, on a Claim, Subject or Document; and for `proof` a `ClaimViewRecord` on a Claim or the envelope dict otherwise). A summary card shows a string value over 500 characters as a `TruncatedText` (`cruxible_client.contracts.read_values`: `preview`, `length`, and `read_whole`, the exact `{ref, detail, at}` read of the whole value at the generation it was previewed at), never as the value; `cx.read_whole(preview)` makes that read. An object value is a `ShownObject` (`object`, the value whole), so an object shaped like a preview or marker never reads as one. Query rows and Claim cells, `World.values` and write outcomes use the same types; a plain query row cell and a write's `after` name no `read_whole` (use `claims=True` for a cell's Claims; `after` is the value the write sent). The card's `coordinate` is the full accepted coordinate: the SDK asks the daemon for it (`full_coordinate`), where MCP and CLI summaries carry only the 12-hex git oid prefix and generation.
 
 **Conditions and effects:** An unknown or ambiguous reference refuses with `cruxible.get.ref_not_found` or `cruxible.get.ref_ambiguous` and the nearest names; a detail that does not apply to the kind refuses naming the ones that do. A Document body over 64 KiB needs `range`. Inspect `kind` before using `value`.
 
@@ -2364,7 +2364,9 @@ Python keyword and member collisions.
 | `world.claim_type("security.asset.status")` | WorldClaimType |
 | `claim_type("active")` or `claim_type.active` | Predicate-bound LiteralValue, validated locally |
 | `claim_type.as_kind` | KindNamespace when a predicate name is also a Subject kind |
-| `kind.define("new-id")` | SubjectDraft; does not accept or publish it |
+| `kind.define(<key>, <field>=...)` | WorldNewSubject: a frozen draft of a new Subject by its key (as the kind's SubjectKind names it: one value, each composite part by leaf, or none when minted); `.set`/`.add` return a new draft; nothing is sent until `world.write(...)` or `draft.write(...)` |
+| `subject.edit().set(...)` | WorldSubjectEdit: `set`/`add`/`retire` changes to an accepted Subject, sent later |
+| `world.write(*drafts, *edits, because=...)` | One change set: each draft is a `create` change, named by a label from the others, in any order; after acceptance `draft.address` is the id core assigned |
 | `kind.where(state="open", count__gt=3)` | CompactQuery; `.select(...)`, `.order_by(...)`, `.limit(n)`, `.run()` or iterate every page |
 | `world.stub()` | Generated type-stub source for this vocabulary |
 
@@ -2528,6 +2530,36 @@ names are checked against the World before the wire. A World's writes are
 checked from its coordinate advanced past its own accepted writes, so its
 references stay valid after them; only a field someone else moved refuses. The
 generated stub types `set` and `add` per kind, enum members as `Literal`s.
+`subject.edit()` returns the same changes unsent, for `world.write(...)` beside
+new Subjects' drafts.
+
+New Subjects come from `world.<kind>.define(...)`, typed per kind by its
+SubjectKind: a one-key kind takes its key positionally or by its leaf, a
+composite kind each key part by its leaf, a minted kind none; every other
+keyword is a field (set when it holds one value, added when it holds many).
+A key one live Subject already holds lands on that Subject and creates nothing
+(the outcome's `resolved: existing`, so a seed run twice answers as done);
+`expect_new=True` refuses `cruxible.write.subject_exists`, and `create_new=True`
+makes a further holder of a `hint` kind's key. `w.<kind>["id"]` never creates:
+a missing id raises `AbsentSubject`. A kind no SubjectKind declares has no
+`define()`.
+
+Creation bindings follow the complete batch's deterministic assignment, including
+keys with the same readable rendering. A dry run leaves `subject=None` on every
+change about a minted or further-holder Subject until submission assigns its id;
+`subjects_added` omits those Subjects.
+
+```python
+w = cx.world()
+requests = w.pypi.release.define(package="requests", version="2.32.4")
+outcome = w.write(
+    requests,
+    w.app.service.define("payments", owner="ada").add(depends_on=requests),
+    w.app.service["billing"].edit().set(owner="grace"),
+    because="Pins from each service's requirements.txt.",
+)
+requests.address    # the id core assigned, once accepted
+```
 
 <a id="api-worldsubject-subject-kind"></a>
 
@@ -7638,10 +7670,10 @@ than after a proposal.
 #### `build_world`
 
 ```text
-build_world(cx: 'Cruxible', *, coordinate: 'AcceptedCoordinate', claim_type_envelopes: 'Sequence[Mapping[str, object]]') -> 'World'
+build_world(cx: 'Cruxible', *, coordinate: 'AcceptedCoordinate', claim_type_envelopes: 'Sequence[Mapping[str, object]]', subject_kinds: 'Sequence[OrientSubjectKind]' = ()) -> 'World'
 ```
 
-Assemble one world from the accepted ClaimType vocabulary.
+Assemble one world from the accepted ClaimType vocabulary and its SubjectKinds.
 
 Subject kinds come from the vocabulary rather than from the Subjects
 themselves, which is what lets `cx.world()` name every kind without reading

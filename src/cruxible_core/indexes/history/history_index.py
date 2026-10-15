@@ -566,6 +566,29 @@ class HistoryReader:
             )
         )
 
+    def member_locations(
+        self, paths: Sequence[str]
+    ) -> dict[str, tuple[AcceptedMemberLocation, ...]]:
+        """Each path's member occurrences to this cutoff, oldest first, in one chunked read.
+
+        ``member_history`` for many paths at once, on the same path index
+        (``members_by_path``): the rows a page of their revisions is located by.
+        """
+
+        found: dict[str, list[AcceptedMemberLocation]] = {path: [] for path in paths}
+        ordered = tuple(dict.fromkeys(paths))
+        for start in range(0, len(ordered), 500):
+            chunk = ordered[start : start + 500]
+            for row in self._connection.execute(
+                "SELECT * FROM accepted_member_locations "
+                f"WHERE member_path IN ({','.join('?' for _ in chunk)}) AND sequence<=? "
+                "ORDER BY member_path,sequence,member_ordinal",
+                (*chunk, self.sequence),
+            ):
+                location = AcceptedMemberLocation(*row)
+                found[location.member_path].append(location)
+        return {path: tuple(items) for path, items in found.items()}
+
     def member_versions(
         self, paths: Sequence[str]
     ) -> dict[str, tuple[tuple[int, str | None], ...]]:

@@ -67,6 +67,7 @@ from cruxible_client.contracts.write import (
     CaptureEvidence,
     ClaimValue,
     ContractEvidence,
+    CreateChange,
     ExpectedValue,
     FileEvidence,
     RetireChange,
@@ -174,7 +175,9 @@ class McpAddChange(AddChange):
     evidence: McpEvidence | None = Field(default=None, description=_EVIDENCE_DEFAULT)
 
 
-McpChange = Annotated[McpSetChange | McpAddChange | RetireChange, Field(discriminator="op")]
+McpChange = Annotated[
+    CreateChange | McpSetChange | McpAddChange | RetireChange, Field(discriminator="op")
+]
 
 
 InstanceId = Annotated[
@@ -979,12 +982,19 @@ def register_tools(
             Field(
                 ge=1,
                 le=GET_HISTORY_MAX_LIMIT,
-                description='Revisions per detail="history" page, newest first; default 20.',
+                description=(
+                    'Revisions (a Subject\'s field events) per detail="history" page, '
+                    "newest first; default 20."
+                ),
             ),
         ] = None,
         cursor: Annotated[
             str | None,
             Field(description='next_cursor of the previous detail="history" page.'),
+        ] = None,
+        field: Annotated[
+            str | None,
+            Field(description='detail="history" on a Subject: only this field\'s events.'),
         ] = None,
     ) -> GetResult:
         """Read one governed thing by reference, values first."""
@@ -997,6 +1007,7 @@ def register_tools(
             evaluation_time=evaluation_time,
             limit=limit,
             cursor=cursor,
+            field=field,
         )
 
     @_tool
@@ -1141,8 +1152,10 @@ def register_tools(
             Field(
                 min_length=1,
                 description=(
-                    'Each {"op": "set"|"add", "subject", "field", "value"} or '
-                    '{"op": "retire", "target"}; add puts one more value in a many-valued field.'
+                    'Each {"op": "set"|"add", "subject", "field", "value"}, '
+                    '{"op": "retire", "target"} or {"op": "create", "label", "subject_kind", '
+                    '"key"}; add puts one more value in a many-valued field; other changes '
+                    'name a created Subject {"created": label}.'
                 ),
             ),
         ],
@@ -1168,7 +1181,7 @@ def register_tools(
             Field(description="The coordinate you read at; default: current head."),
         ] = None,
     ) -> WriteOutcome:
-        """Apply set, add and retire changes together as one change set."""
+        """Apply create, set, add and retire changes together as one change set."""
         return handlers.handle_playbill_write(
             require_instance_id(instance_id),
             changes=changes,

@@ -19,20 +19,13 @@ that resolved at one coordinate may name something else at the next.
     vulnerability.severity                      # live Claims under that predicate
     w.sec.vuln.severity.cardinality             # the ClaimType's own structure
 
-    draft = cx.changes(rationale="Name the package this advisory affects.")
-    package = draft.subject(w.sec.package.define("click"))
-    draft.claim(
-        subject=vulnerability,
-        predicate=w.sec.vuln.affects_package,
-        value=package,                          # the same set defines it
-        role="observation",
-        rationale="The advisory names this package.",
-        self_source="affects: click\n",
-        supported_by=None, copied_from=None, qualifier=None,
-        effective_period=None, revises=None, dispositions={},
-        subject_definition=None, claim_type_definition=None,
+    click = w.sec.package.define("click", ecosystem="pypi")    # a new Subject, by its key
+    w.write(
+        click,
+        vulnerability.edit().add(affects_package=click),       # the same change set names it
+        because="The advisory names this package.",
     )
-    intent = draft.prepare()
+    click.address                               # the id core assigned, once accepted
 """
 
 from __future__ import annotations
@@ -40,8 +33,8 @@ from __future__ import annotations
 import keyword
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
@@ -71,11 +64,14 @@ from cruxible_client.contracts.records import RecordConstructor
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.compact_query import CompactQuery
-    from cruxible_client.authoring.sdk import ClaimView, Cruxible, SubjectCreationDraft
+    from cruxible_client.authoring.sdk import ClaimView, Cruxible
     from cruxible_client.contracts.compact_query import QueryClaimValue
+    from cruxible_client.contracts.orient import OrientSubjectKind
+    from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyValue
     from cruxible_client.contracts.write import (
         Change,
         Evidence,
+        RetireChange,
         WriteAccept,
         WriteOutcome,
         WriteRetireReason,
@@ -159,6 +155,7 @@ SUBJECT_MEMBERS = frozenset(
         "address",
         "claims",
         "coordinate",
+        "edit",
         "explain",
         "kind",
         "retire",
@@ -273,6 +270,30 @@ class _Node:
     subject_kind: bool = False
     structure: ClaimTypeStructure | None = None
     meaning: _Meaning | None = None
+    #: The kind's live SubjectKind: how a new Subject of it is named. None for a
+    #: kind no SubjectKind declares, which no World can create Subjects of.
+    identity: _Identity | None = None
+
+
+@dataclass(frozen=True)
+class _Identity:
+    """One kind's SubjectKind identity rule: its key ClaimTypes in key order, or minted."""
+
+    rule: Literal["keys", "minted"]
+    keys: tuple[str, ...] = ()
+    unique: bool = True
+
+    def key_words(self) -> dict[str, str]:
+        """Each key part's ``define()`` keyword (its leaf, keyword-escaped) -> its predicate."""
+
+        from cruxible_client.authoring.compact_query import keyword_name
+
+        words: dict[str, str] = {}
+        for predicate in self.keys:
+            spelled = keyword_name(predicate.rsplit(".", 1)[-1])
+            if spelled is not None:
+                words[spelled] = predicate
+        return words
 
 
 @dataclass(frozen=True)
@@ -480,27 +501,17 @@ class WorldSubject(SubjectRef):
 
         Every field set here is one change of one change set. The names are
         checked against this World before the wire; a leaf that is a Python
-        keyword takes one trailing underscore (``class_``). References from this
-        World stay valid after it: the next write is checked from this World's
-        coordinate plus its own writes, so only a slot someone else moved refuses.
+        keyword takes one trailing underscore (``class_``). A value may be a new
+        Subject's draft (``w.<kind>.define(...)``), created in the same change
+        set. References from this World stay valid after it: the next write is
+        checked from this World's coordinate plus its own writes, so only a slot
+        someone else moved refuses.
 
         Next: ``outcome.next`` for what is still needed; ``cx.get(subject)`` reads it back.
         """
 
-        from cruxible_client.contracts.write import SetChange
-
-        changes = [
-            SetChange(
-                subject=self.address,
-                field=self._world._write_field(self.subject_kind, name),
-                value=_write_value(value),
-                evidence=evidence,
-                role=role,
-                contend=contend,
-            )
-            for name, value in fields.items()
-        ]
-        return self._world._write(changes, because=because, dry_run=dry_run, accept=accept)
+        edit = self.edit().set(evidence=evidence, role=role, contend=contend, **fields)
+        return edit.write(because=because, dry_run=dry_run, accept=accept)
 
     def add(
         self,
@@ -522,20 +533,8 @@ class WorldSubject(SubjectRef):
         Next: ``outcome.next`` for what is still needed.
         """
 
-        from cruxible_client.contracts.write import AddChange
-
-        changes = [
-            AddChange(
-                subject=self.address,
-                field=self._world._write_field(self.subject_kind, name),
-                value=_write_value(value),
-                evidence=evidence,
-                role=role,
-                expect_absent=expect_absent,
-            )
-            for name, value in fields.items()
-        ]
-        return self._world._write(changes, because=because, dry_run=dry_run, accept=accept)
+        edit = self.edit().add(evidence=evidence, role=role, expect_absent=expect_absent, **fields)
+        return edit.write(because=because, dry_run=dry_run, accept=accept)
 
     def retire(
         self,
@@ -552,16 +551,20 @@ class WorldSubject(SubjectRef):
         Next: ``outcome.next``; ``cx.get(subject)`` shows the field without it.
         """
 
-        from cruxible_client.contracts.write import RetireChange, SlotRef
+        edit = self.edit().retire(field, reason=reason)
+        return edit.write(because=because, dry_run=dry_run, accept=accept)
 
-        name = field.address if isinstance(field, ClaimTypeRef) else field
-        predicate = (
-            name
-            if "." in name and self._world._node_at(name) is not None
-            else self._world._write_field(self.subject_kind, name)
-        )
-        change = RetireChange(target=SlotRef(subject=self.address, field=predicate), reason=reason)
-        return self._world._write([change], because=because, dry_run=dry_run, accept=accept)
+    def edit(self) -> WorldSubjectEdit:
+        """Start changes to this Subject that are written later, in one change set.
+
+        ``edit().set(...)``, ``.add(...)`` and ``.retire(...)`` take exactly what
+        ``set``, ``add`` and ``retire`` take, but return the edit instead of
+        writing, so it can be sent beside new Subjects' drafts.
+
+        Next: ``w.write(edit, *drafts, because=...)`` or ``edit.write(because=...)``.
+        """
+
+        return WorldSubjectEdit(address=self.address, _world=self._world)
 
     def __getitem__(self, predicate: str | ClaimTypeRef) -> tuple[ClaimView, ...]:
         """Read the live Claims under one predicate, named in full or by leaf."""
@@ -598,6 +601,190 @@ class WorldSubject(SubjectRef):
         return sorted({*super().__dir__(), *leaves})
 
 
+@dataclass(frozen=True, eq=False)
+class _FieldChange:
+    """One field change a draft or an edit carries until ``World.write`` sends it.
+
+    Compared by identity: a draft derived by ``.set``/``.add`` shares its
+    parent's changes, so a change is sent once however many drafts carry it.
+    """
+
+    op: Literal["set", "add"]
+    field: str
+    value: object
+    evidence: Evidence | None = None
+    role: WriteRole | None = None
+    contend: bool = False
+    expect_absent: bool = False
+
+
+class _Landing:
+    """Where one new Subject landed: shared by a draft and every draft derived from it."""
+
+    __slots__ = ("ref",)
+
+    def __init__(self) -> None:
+        self.ref: str | None = None
+
+
+class WorldWritable:
+    """What ``World.write`` sends: a new Subject's draft or an accepted Subject's edit."""
+
+    __slots__ = ()
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class WorldNewSubject(WorldWritable):
+    """A new Subject of one kind, drafted by ``w.<kind>.define(...)``; nothing is sent yet.
+
+    The draft is frozen: ``.set``/``.add`` return a new draft carrying one more
+    change. Pass it as a Subject value anywhere in the same ``w.write`` (or to
+    ``edit().set``): it is sent as a reference to its own ``create``, so the
+    order of drafts never matters. ``w.write`` (or ``draft.write``) creates it,
+    or lands on the one live Subject its key already names. Once accepted,
+    ``address`` is the id core assigned. Reads at this World's coordinate still
+    do not see it: ``cx.world()`` again for those.
+    """
+
+    subject_kind: str
+    _world: World = field(repr=False)
+    _key: SubjectKeyValue | tuple[SubjectKeyPart, ...] | None = None
+    _create_new: bool = False
+    _expect_new: bool = False
+    _changes: tuple[_FieldChange, ...] = ()
+    _landing: _Landing = field(default_factory=_Landing, repr=False)
+
+    @property
+    def address(self) -> str | None:
+        """The Subject's ``kind/id`` once a write of it was accepted, else None.
+
+        Next: ``cx.get(draft.address)`` reads it back.
+        """
+
+        return self._landing.ref
+
+    def set(
+        self,
+        /,
+        *,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        **fields: object,
+    ) -> WorldNewSubject:
+        """This draft with single-value fields set, by leaf. Next: ``.write(because=...)``."""
+
+        changes = self._world._field_changes(
+            self.subject_kind, "set", fields, evidence=evidence, role=role
+        )
+        return replace(self, _changes=self._changes + changes)
+
+    def add(
+        self,
+        /,
+        *,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        **fields: object,
+    ) -> WorldNewSubject:
+        """This draft with one more value in many-valued fields. Next: ``.write(because=...)``."""
+
+        changes = self._world._field_changes(
+            self.subject_kind, "add", fields, evidence=evidence, role=role
+        )
+        return replace(self, _changes=self._changes + changes)
+
+    def write(
+        self, *, because: str, dry_run: bool = False, accept: WriteAccept = "if_allowed"
+    ) -> WriteOutcome:
+        """Send this draft alone, as one change set: ``w.write(draft, because=...)``.
+
+        Next: ``draft.address`` once accepted; ``outcome.next`` otherwise.
+        """
+
+        return self._world.write(self, because=because, dry_run=dry_run, accept=accept)
+
+    def __repr__(self) -> str:
+        landed = "" if self._landing.ref is None else f" -> {self._landing.ref}"
+        return f"<WorldNewSubject {self.subject_kind} key={self._key!r}{landed}>"
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class WorldSubjectEdit(WorldWritable):
+    """Changes to one accepted Subject, started by ``subject.edit()``; nothing is sent yet.
+
+    Frozen: ``.set``, ``.add`` and ``.retire`` return a new edit with one more
+    change. ``w.write(edit, ...)`` sends it beside new Subjects' drafts.
+    """
+
+    address: str
+    _world: World = field(repr=False)
+    _changes: tuple[_FieldChange | RetireChange, ...] = ()
+
+    def set(
+        self,
+        /,
+        *,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        **fields: object,
+    ) -> WorldSubjectEdit:
+        """This edit with single-value fields set, by leaf, as ``WorldSubject.set`` takes them."""
+
+        kind = self.address.split("/", 1)[0]
+        changes = self._world._field_changes(
+            kind, "set", fields, evidence=evidence, role=role, contend=contend
+        )
+        return replace(self, _changes=self._changes + changes)
+
+    def add(
+        self,
+        /,
+        *,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        expect_absent: bool = False,
+        **fields: object,
+    ) -> WorldSubjectEdit:
+        """This edit with one more value in many-valued fields, as ``WorldSubject.add``."""
+
+        kind = self.address.split("/", 1)[0]
+        changes = self._world._field_changes(
+            kind, "add", fields, evidence=evidence, role=role, expect_absent=expect_absent
+        )
+        return replace(self, _changes=self._changes + changes)
+
+    def retire(
+        self,
+        field: str | ClaimTypeRef,
+        /,
+        *,
+        reason: WriteRetireReason = "was-rescinded",
+    ) -> WorldSubjectEdit:
+        """This edit with one field's live value retired, as ``WorldSubject.retire``."""
+
+        from cruxible_client.contracts.write import RetireChange, SlotRef
+
+        name = field.address if isinstance(field, ClaimTypeRef) else field
+        predicate = (
+            name
+            if "." in name and self._world._node_at(name) is not None
+            else self._world._write_field(self.address.split("/", 1)[0], name)
+        )
+        change = RetireChange(target=SlotRef(subject=self.address, field=predicate), reason=reason)
+        return replace(self, _changes=(*self._changes, change))
+
+    def write(
+        self, *, because: str, dry_run: bool = False, accept: WriteAccept = "if_allowed"
+    ) -> WriteOutcome:
+        """Send this edit alone, as one change set. Next: ``outcome.next``."""
+
+        return self._world.write(self, because=because, dry_run=dry_run, accept=accept)
+
+    def __repr__(self) -> str:
+        return f"<WorldSubjectEdit {self.address} changes={len(self._changes)}>"
+
+
 class KindNamespace:
     """One dotted name in the world: a Subject kind, a prefix, or both.
 
@@ -608,7 +795,7 @@ class KindNamespace:
     a Python identifier is spelled.
 
     Next: ``kind["<id>"]`` for a Subject, ``kind.where(...)`` for a query,
-    ``kind.define("<id>")`` for a new one.
+    ``kind.define(<key>, <field>=...)`` for a new one.
     """
 
     __slots__ = ("_node", "_world")
@@ -635,19 +822,40 @@ class KindNamespace:
 
         return tuple(self._subjects())
 
-    def define(self, key: str | int | bool | None = None) -> SubjectCreationDraft:
-        """Draft creating one Subject of this kind by its key; core assigns its id.
+    def define(
+        self,
+        /,
+        *key: SubjectKeyValue,
+        create_new: bool = False,
+        expect_new: bool = False,
+        **fields: object,
+    ) -> WorldNewSubject:
+        """Draft one new Subject of this kind by its key, with fields; core assigns its id.
 
-        ``key`` is the value of the kind's one key (its SubjectKind names it); omit
-        it for a minted kind. The id is the readable rendering of the canonical key.
+        The kind's SubjectKind says what the key is: a one-key kind takes its
+        value positionally or by its key's leaf; a composite kind takes each key
+        part by its leaf; a minted kind takes none. Every other keyword is a
+        field: set when it holds one value, added when it holds many. A key one
+        live Subject already holds lands on that Subject and creates nothing
+        (``resolved: existing``, so a seed run again answers as done);
+        ``expect_new=True`` refuses ``cruxible.write.subject_exists`` instead.
+        ``create_new=True`` makes a further holder of a ``hint`` kind's key.
 
-        Next: ``draft.submit()``, or ``cx.changes(...).subject(draft)``; a write that
-        names a missing Subject of a single-key unique kind creates it by that key too.
+        Next: ``w.write(draft, ..., because=...)`` or ``draft.write(because=...)``.
         """
 
         kind = self._require_kind()
         self._world._assert_current()
-        return self._world._playbill.new_subject(kind, key=key)
+        identity = self._node.identity
+        if identity is None:
+            raise WorldStructureError(
+                f"no accepted SubjectKind declares {kind}, so no new {kind} Subject can be "
+                "created; author one first (`cruxible authoring example subject-kind` prints "
+                "one), then read a new World"
+            )
+        return self._world._define(
+            kind, identity, key, dict(fields), create_new=create_new, expect_new=expect_new
+        )
 
     def where(self, /, **filters: object) -> CompactQuery:
         """Start a compact query over this kind, filtered all-of by keyword.
@@ -754,7 +962,8 @@ _DESCRIBED_VERBS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ('w.<kind>["<id>"].set(<field>=...)', "replace a single value (because=...)"),
             ('w.<kind>["<id>"].add(<field>=...)', "add to a many-valued field"),
             ('w.<kind>["<id>"].retire("<field>")', "end the live value"),
-            ('cx.changes(because="...")', "several changes as one change set"),
+            ("w.<kind>.define(<key>, <field>=...)", "draft a new Subject by its key"),
+            ('w.write(*drafts, *edits, because="...")', "drafts and edit()s as one change set"),
         ),
     ),
     ("Then:", (("cx.next(expiring_within=...)", "what needs attention"),)),
@@ -928,6 +1137,231 @@ class World:
         # leaf that could not be a keyword as it stands; no other leaf ends in one.
         leaf = keyword_or_leaf[:-1] if keyword_or_leaf.endswith("_") else keyword_or_leaf
         return self._predicate_for(subject_kind, leaf).address
+
+    def write(
+        self,
+        *items: WorldWritable,
+        because: str,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+    ) -> WriteOutcome:
+        """Send new Subjects' drafts and accepted Subjects' edits as one change set.
+
+        Each draft is one ``create`` change, sent first, and the drafts and edits
+        name it by a label the write assigns, so a draft may be the value of
+        another in any order; a draft named only as a value is created too.
+        Checked from this World's write basis, like every write of it. Once
+        accepted, each draft's ``address`` is the id the outcome reports.
+
+        Next: ``outcome.next``; ``cx.world()`` again to read what landed.
+        """
+
+        from cruxible_client.contracts.write import (
+            AddChange,
+            CreateChange,
+            CreatedSubject,
+            SetChange,
+        )
+
+        if not items:
+            raise TypeError("write() needs at least one draft or edit")
+        labels: dict[int, str] = {}
+        sent: dict[int, list[_FieldChange]] = {}
+        creates: list[tuple[_Landing, CreateChange]] = []
+        changes: list[Change] = []
+
+        def mine(item: WorldWritable) -> None:
+            if getattr(item, "_world", None) is not self:
+                raise WorldStructureError(
+                    f"{item!r} was drafted from another World; draft it from this one"
+                )
+
+        def value(raw: object) -> Any:
+            if isinstance(raw, WorldNewSubject):
+                return CreatedSubject(created=label(raw))
+            return _write_value(raw)
+
+        def send(
+            subject: str | CreatedSubject,
+            items: Sequence[_FieldChange],
+            done: list[_FieldChange],
+        ) -> None:
+            for item in items:
+                if any(item is earlier for earlier in done):
+                    continue
+                done.append(item)
+                changes.append(
+                    SetChange(
+                        subject=subject,
+                        field=item.field,
+                        value=value(item.value),
+                        evidence=item.evidence,
+                        role=item.role,
+                        contend=item.contend,
+                    )
+                    if item.op == "set"
+                    else AddChange(
+                        subject=subject,
+                        field=item.field,
+                        value=value(item.value),
+                        evidence=item.evidence,
+                        role=item.role,
+                        expect_absent=item.expect_absent,
+                    )
+                )
+
+        def label(draft: WorldNewSubject) -> str:
+            mine(draft)
+            key = id(draft._landing)
+            name = labels.get(key)
+            if name is None:
+                name = labels[key] = f"new-{len(labels) + 1}"
+                creates.append(
+                    (
+                        draft._landing,
+                        CreateChange(
+                            label=name,
+                            subject_kind=draft.subject_kind,
+                            key=draft._key,
+                            create_new=draft._create_new,
+                            expect_new=draft._expect_new,
+                        ),
+                    )
+                )
+            send(CreatedSubject(created=name), draft._changes, sent.setdefault(key, []))
+            return name
+
+        for item in items:
+            if isinstance(item, WorldNewSubject):
+                label(item)
+            elif isinstance(item, WorldSubjectEdit):
+                mine(item)
+                done = sent.setdefault(id(item), [])
+                for change in item._changes:
+                    if isinstance(change, _FieldChange):
+                        send(item.address, (change,), done)
+                    else:
+                        changes.append(change)
+            else:
+                raise TypeError(f"write() takes drafts and edits, not {type(item).__name__}")
+        outcome = self._write(
+            [create for _landing, create in creates] + changes,
+            because=because,
+            dry_run=dry_run,
+            accept=accept,
+        )
+        if outcome.status == "accepted":
+            for position, (landing, _create) in enumerate(creates):
+                landing.ref = outcome.changes[position].subject
+        return outcome
+
+    def _define(
+        self,
+        kind: str,
+        identity: _Identity,
+        key: tuple[SubjectKeyValue, ...],
+        fields: dict[str, object],
+        *,
+        create_new: bool,
+        expect_new: bool,
+    ) -> WorldNewSubject:
+        """One draft: its key read by the kind's identity rule, the other keywords as fields."""
+
+        from cruxible_client.contracts.subject_kinds import SubjectKeyPart
+
+        sent: SubjectKeyValue | tuple[SubjectKeyPart, ...] | None = None
+        if identity.rule == "minted":
+            if key or create_new:
+                raise TypeError(
+                    f"{kind} is minted: core names its Subjects, so define() takes no key"
+                )
+        else:
+            words = identity.key_words()
+            given = {words[name]: fields.pop(name) for name in list(fields) if name in words}
+            if key:
+                if len(key) != 1 or len(identity.keys) != 1 or given:
+                    raise TypeError(
+                        f"{kind} is named by its key ({', '.join(identity.keys)}): pass "
+                        + (
+                            "its value once, positionally or by keyword"
+                            if len(identity.keys) == 1
+                            else "each part by keyword"
+                        )
+                    )
+                given = {identity.keys[0]: key[0]}
+            missing = [predicate for predicate in identity.keys if predicate not in given]
+            if missing:
+                raise TypeError(f"define() needs the key of {kind}: {', '.join(missing)}")
+            values: dict[str, SubjectKeyValue] = {}
+            for predicate, raw in given.items():
+                part = raw.value if isinstance(raw, LiteralValue) else raw
+                if not isinstance(part, (str, int, bool)) or part == "":
+                    raise TypeError(
+                        f"{predicate}: a key part is a non-empty string, an integer or a "
+                        f"boolean, not {part!r}"
+                    )
+                values[predicate] = part
+            if create_new and identity.unique:
+                raise TypeError(
+                    f"{kind} keys are unique: a key names one Subject, so create_new does not apply"
+                )
+            sent = (
+                values[identity.keys[0]]
+                if len(identity.keys) == 1
+                else tuple(
+                    SubjectKeyPart(predicate=predicate, value=values[predicate])
+                    for predicate in identity.keys
+                )
+            )
+        changes: list[_FieldChange] = []
+        for name, raw in fields.items():
+            predicate = self._write_field(kind, name)
+            node = self._node_at(predicate)
+            assert node is not None and node.structure is not None
+            changes.append(
+                _FieldChange(
+                    op="add" if node.structure.cardinality == "many" else "set",
+                    field=predicate,
+                    value=raw,
+                )
+            )
+        return WorldNewSubject(
+            subject_kind=kind,
+            _world=self,
+            _key=sent,
+            _create_new=create_new,
+            _expect_new=expect_new,
+            _changes=tuple(changes),
+        )
+
+    def _field_changes(
+        self,
+        kind: str,
+        op: Literal["set", "add"],
+        fields: Mapping[str, object],
+        *,
+        evidence: Evidence | None,
+        role: WriteRole | None,
+        contend: bool = False,
+        expect_absent: bool = False,
+    ) -> tuple[_FieldChange, ...]:
+        """One change per field keyword, each name checked against this World."""
+
+        self._assert_current()
+        if not fields:
+            raise TypeError("a write needs at least one field=value")
+        return tuple(
+            _FieldChange(
+                op=op,
+                field=self._write_field(kind, name),
+                value=value,
+                evidence=evidence,
+                role=role,
+                contend=contend,
+                expect_absent=expect_absent,
+            )
+            for name, value in fields.items()
+        )
 
     def _write(
         self,
@@ -1528,6 +1962,7 @@ def _replace(root: _Node, path: str, **updates: object) -> None:
         subject_kind=cast(bool, updates.get("subject_kind", existing.subject_kind)),
         structure=cast("ClaimTypeStructure | None", updates.get("structure", existing.structure)),
         meaning=cast("_Meaning | None", updates.get("meaning", existing.meaning)),
+        identity=cast("_Identity | None", updates.get("identity", existing.identity)),
     )
 
 
@@ -1567,18 +2002,20 @@ def build_world(
     *,
     coordinate: AcceptedCoordinate,
     claim_type_envelopes: Sequence[Mapping[str, object]],
+    subject_kinds: Sequence[OrientSubjectKind] = (),
 ) -> World:
-    """Assemble one world from the accepted ClaimType vocabulary.
+    """Assemble one world from the accepted ClaimType vocabulary and its SubjectKinds.
 
     Subject kinds come from the vocabulary rather than from the Subjects
     themselves, which is what lets `cx.world()` name every kind without reading
     a single Subject: a kind with no ClaimType admitting it is a kind nothing
-    can be said about.
+    can be said about. Each kind's SubjectKind (``subject_kinds``) says how a
+    new Subject of it is named, which is what ``define()`` takes.
     """
 
     root = _Node(path="")
     unstructured: list[str] = []
-    subject_kinds: set[str] = set()
+    kinds: set[str] = set()
     for envelope in claim_type_envelopes:
         lifecycle = envelope.get("lifecycle")
         if isinstance(lifecycle, Mapping) and lifecycle.get("state") == "retired":
@@ -1606,16 +2043,32 @@ def build_world(
         structure = check.structure
         _insert(root, structure.predicate)
         _replace(root, structure.predicate, structure=structure, meaning=_meaning(envelope))
-        subject_kinds.update(structure.allowed_subject_kinds)
-        subject_kinds.update(structure.allowed_object_subject_kinds)
+        kinds.update(structure.allowed_subject_kinds)
+        kinds.update(structure.allowed_object_subject_kinds)
     # A descriptor ClaimType (semantic.alias) admits the pseudo-kind
     # semantic.subject -- every Subject -- which is never a kind of its own.
-    subject_kinds.difference_update(DESCRIPTOR_KINDS)
-    for subject_kind in sorted(subject_kinds):
+    kinds.difference_update(DESCRIPTOR_KINDS)
+    declared_kinds: set[str] = set()
+    for subject_kind in sorted(kinds):
         if not all(_SEGMENT_RE.fullmatch(segment) for segment in subject_kind.split(".")):
             continue
         _insert(root, subject_kind)
         _replace(root, subject_kind, subject_kind=True)
+        declared_kinds.add(subject_kind)
+    for declared in subject_kinds:
+        # A SubjectKind no accepted ClaimType admits names a kind nothing can be
+        # said about: the World has no node to put it on.
+        if declared.kind not in declared_kinds:
+            continue
+        _replace(
+            root,
+            declared.kind,
+            identity=_Identity(
+                rule=declared.rule,
+                keys=tuple(declared.keys),
+                unique=declared.uniqueness != "hint",
+            ),
+        )
     return World(
         cx,
         coordinate=coordinate,
@@ -1640,13 +2093,15 @@ def vocabulary_world(
     *,
     coordinate: AcceptedCoordinate,
     claim_type_envelopes: Sequence[Mapping[str, object]],
+    subject_kinds: Sequence[OrientSubjectKind] = (),
 ) -> World:
-    """A World over accepted ClaimType envelopes alone, for rendering its stub."""
+    """A World over accepted ClaimType envelopes and SubjectKinds alone, for its stub."""
 
     return build_world(
         cast("Cruxible", _VocabularyOnly()),
         coordinate=coordinate,
         claim_type_envelopes=claim_type_envelopes,
+        subject_kinds=subject_kinds,
     )
 
 
@@ -1657,8 +2112,11 @@ __all__ = [
     "SUBJECT_MEMBERS",
     "World",
     "WorldClaimType",
+    "WorldNewSubject",
     "WorldStructureError",
     "WorldSubject",
+    "WorldSubjectEdit",
+    "WorldWritable",
     "admit_literal",
     "build_world",
     "literal_schema_members",

@@ -3357,9 +3357,20 @@ Claims that depend on it retire with it; `--expect` compares the field's values
 as on `set`. `write` applies a
 FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
 [...]}`, or a bare list with `--because`, each change
-`{"op": "set" | "add", "subject", "field", "value"}` or
-`{"op": "retire", "target"}`. `add` puts one more value in a many-valued field;
-two adds on one field land in one change set. A top-level `"subject"` is the
+`{"op": "set" | "add", "subject", "field", "value"}`,
+`{"op": "retire", "target"}` or
+`{"op": "create", "label", "subject_kind", "key"}`. `add` puts one more value in
+a many-valued field; two adds on one field land in one change set. A `create`
+makes a Subject of any declared kind: `key` is a one-key kind's value, every
+part of a composite key as `[{"predicate", "value"}, ...]`, or absent for a
+minted kind. The write's other changes name it `{"created": "<label>"}`, as
+their `subject` or as a Subject `value`, in any order. A key one live Subject
+holds lands on that Subject and creates nothing (the outcome says `create
+<ref>: existing`, so running a seed again answers as done); `"expect_new":
+true` refuses `cruxible.write.subject_exists` instead, several holders refuse
+`cruxible.subject.key_ambiguous`, and `"create_new": true` makes a further
+holder of a `hint` kind's key. A minted id comes from the submitted change, so
+a `--dry-run` names none. A top-level `"subject"` is the
 Subject of every change that names none (a retire's target may then be
 `{"field": ...}`); a change's own subject overrides it, and a change with
 neither refuses `cruxible.write.subject_required`. `--schema` prints what FILE
@@ -3384,8 +3395,8 @@ depend on it.
 
 ~~~text
 cruxible get REF [--detail summary|evidence|why|history|proof|body]
-  [--range START:END] [--output FILE] [--limit N] [--cursor C] [--at GIT_OID]
-  [--evaluation-time TS] [--json]
+  [--range START:END] [--output FILE] [--limit N] [--cursor C] [--field FIELD]
+  [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
 
 Reads one thing by any reference form you have seen: `CLM-...` (or a unique
@@ -3423,9 +3434,21 @@ aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
 `contradicted`, `uncovered`, `unsure_hold`) -- `evidence` lists a Claim's captures by
 CaptureContract name and version, its attestations and rationale, `why` and
 `proof` print today's explanation and full envelope, `history` lists revisions
-newest first with values and who changed them (`--limit`, default 20, per page;
-a cut page prints the `--cursor` command that continues it), and `body` prints
-a Document's bytes. A body over 64 KiB needs `--range`. A summary cuts a string
+newest first with values, who changed them and why (`--limit`, default 20, per
+page; a cut page prints the `--cursor` command that continues it), and `body`
+prints a Document's bytes. A Claim's revision says what it did -- `stated` (its
+first), `changed`, `reobserved` (the same value on new backing) or `retired`
+(with `was-rescinded`, `was-wrong` or `superseded`) -- and every revision its
+`reason`: the Procedure item's own reason when a Procedure proposed it, else
+the rationale of the change set that accepted it (a write's `--because` with
+any per-retire note), cut past 500 characters (`get <proposal>` reads it whole),
+or none when no single admission accepted it. A Subject's history is its
+fields' events: its shell's own revisions, then one page of changes to its
+fields grouped by field, each field's value timeline (`changed  grace ->
+linus`, `stated ... (contends with a live value)` for a competing value in a
+single-value field); `--field FIELD` narrows them to one field. Locating a page
+reads the Subject's own Claims and revisions; only the page's revisions are
+read. A body over 64 KiB needs `--range`. A summary cuts a string
 value over 500 characters and says how long it is; `--detail evidence` or
 `proof` shows it whole. Subject rows carry the Claim id behind each value. A
 summary's coordinate is the git oid's 12-hex prefix and the generation; the
@@ -3467,7 +3490,9 @@ horizon and live Claim count, the predicates of other kinds that point at it
 PREDICATE:alias`), plus up to five sample Subject IDs. A kind that
 does not exist is refused as `cruxible.orient.kind_not_found` with the nearest
 kinds. `--section` pages one artifact family as compact rows; follow
-`next_cursor` with `--cursor` while `truncated` is true. `--section runs` lists
+`next_cursor` with `--cursor` while `truncated` is true. `--section
+subject_kinds` lists each live SubjectKind and how a new Subject of the kind is
+named (`keys: <key ClaimTypes> (unique|hint)` or `minted`). `--section runs` lists
 Procedure runs, newest admission first, each with its Procedure, status,
 admission time, Line and finished-node count, and `--section running` lists
 only the runs still running. Both page by the admission's immutable position,
@@ -3591,8 +3616,8 @@ with `contains` on MCP) instead.
 
 ### What is in the floor
 
-The floor is a pure function of the accepted coordinate (and the pinned review
-notes snapshot its change rationale is read from). It holds no source content:
+The floor is a pure function of the accepted coordinate (a change's rationale
+is its accepting admission's, the one `get` shows). It holds no source content:
 Document and evidence bodies stay behind `get`, and the ledger clone is the
 audit path.
 
@@ -3601,7 +3626,7 @@ audit path.
 | `current/<kind>/<id>.yaml` | One file per Subject, values first (below). |
 | `current/<kind>/<id>.<field>.txt` | A text value too long to inline (over 2 KiB or 40 lines), whole; never truncated. |
 | `current/<kind>/INDEX` | One tab-separated line per Subject of the kind: ref, a title-like value, `field=value` for each state-like field. |
-| `changes/<seq>.json` | The accepted change that introduced a current Claim revision: time, actor, the rationale its proposal recorded, and the refs it changed. |
+| `changes/<seq>.json` | The accepted change that introduced a current Claim revision: time, actor, the rationale of the admission that accepted it (the one `get` shows), and the refs it changed. |
 | `sources/INDEX` | Written by the client from `sources/LEDGER` and its own source catalog, outside the daemon manifest: one tab-separated line per evidence source (self-source Captures excluded; a Document is a source, cited or not, on the line of its name): source, CaptureContract(s), where it lives (the workspace path the catalog binds it to, `(missing)` when that file is gone; otherwise the ledger locator), citing-Claim count, the generation it last changed. |
 | `sources/LEDGER` | The same lines from accepted state alone, which holds no workspace paths: the locator is the Document of the source's name (`Document:<id>`); otherwise every distinct `coordinate/selector` type pair its Captures were taken at, sorted and comma-separated (a foreign source has none); or `-`. |
 | `projections/INDEX` | Written by the client from its own workspace bindings, outside the daemon manifest: one line per workspace file bound to accepted state (Document body, evidence source, rendered block), its role, bound ref and the generation that ref last changed. A bound file that does not exist is a `workspace_binding_missing` row in `next`, not a line here. |
@@ -3655,10 +3680,11 @@ moved, so a floor at generation B lacks exactly the files stamped after B plus
 the paths dropped since. `orient` reports `floor: {at, generations_behind}`
 from the manifest alone.
 
-The manifest also names the review notes the change rationale was read from
-(`notes_digest`, the digest of every rationale `changes/` shows); a rationale
-revised after acceptance changes it, and a refresh then replaces the floor
-whole.
+A change's rationale is the one `get` shows for it (`--detail evidence`, and
+each revision's `reason` under `--detail history`): the exact admission that
+accepted the change's candidate, by its own actor and never withdrawn; with
+none or several, the change shows none. The manifest binds every rationale
+`changes/` shows (`notes_digest`).
 
 The daemon keeps a rebuildable floor index on each instance and advances it by
 the ledger diff: a generation restamps and re-renders only the files its

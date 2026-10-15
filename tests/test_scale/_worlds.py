@@ -813,7 +813,13 @@ def build_world(directory: Path, shape: Shape) -> World:
     with world.instance.accepted_history_reader() as history:
         world.listening_generation = history.sequence
     # Every consumer part has run once, so a measured tick is a steady-state
-    # tick, never a part's first catch-up over the whole instance.
+    # tick, never a part's first catch-up over the whole instance. The floor
+    # has nothing due until a generation fires floor.refresh, so it renders
+    # once here through the same refresh its unit runs: otherwise the measured
+    # after-generation tick would be the world's first, cold floor render.
+    from cruxible_core.consumers.floor import refresh_floor
+
+    refresh_floor(world.instance, instance_id)
     for part in TICK_PARTS:
         tick(world, part)
     settle_advertisement(world.instance)

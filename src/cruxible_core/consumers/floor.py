@@ -37,6 +37,7 @@ from cruxible_client.contracts.floor import (
     seal_floor_delta,
 )
 from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.subject_kinds import SUBJECT_KIND_PREFIX
 from cruxible_client.contracts.workspace_layout import WORLD_STUB_PATH
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
@@ -50,6 +51,7 @@ from cruxible_core.errors import RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.admission import FLOOR_ADMISSION
 from cruxible_core.server.registry import InstanceRecord, get_registry
+from cruxible_core.service.discovery.orient import accepted_subject_kinds
 from cruxible_core.service.floor.floor import service_export_playbill_floor
 from cruxible_core.service.floor.floor_delta import service_playbill_floor_delta
 from cruxible_core.service.floor.floor_index import (
@@ -126,11 +128,13 @@ def _deliver_world_stub(instance: Any, render: FloorRender, root: Path) -> None:
     """Keep the workspace's world stub current, rendering it only when the vocabulary moved.
 
     The stub types the accepted vocabulary alone, so a generation that touched
-    no ClaimType leaves it as it is: the check reads only the change records
-    after the generation last checked (one ranged lookup), never the vocabulary
-    or the instance. A changed vocabulary, a new workspace, a rewound history,
-    a missing stub or a cold start renders it once, from the ClaimTypes the
-    floor index already holds; the file is written only when its bytes differ.
+    no ClaimType and no SubjectKind leaves it as it is: the check reads only the
+    change records after the generation last checked (two ranged lookups),
+    never the vocabulary or the instance. A changed vocabulary, a new
+    workspace, a rewound history, a missing stub or a cold start renders it
+    once, from the ClaimTypes the floor index already holds and the live
+    SubjectKinds of the head's projection (one read, O(kinds)); the file is
+    written only when its bytes differ.
     """
 
     head = render.inputs.coordinate
@@ -145,13 +149,23 @@ def _deliver_world_stub(instance: Any, render: FloorRender, root: Path) -> None:
                 int(kept[1]) <= generation
                 and history.generation(int(kept[1])).git_oid == kept[2]
                 and not history.touched_under(CLAIM_TYPES_PREFIX, int(kept[1]), generation)
+                and not history.touched_under(SUBJECT_KIND_PREFIX, int(kept[1]), generation)
             )
     if current:
         digest = str(kept[3])
     else:
+        at = instance.resolve_accepted_coordinate(
+            git_oid=head.git_oid,
+            semantic_root=head.semantic_root,
+            generation_root=head.generation_root,
+            compiler_digest=head.compiler_digest,
+        )
+        with instance.bind_accepted_projection(at) as projection:
+            subject_kinds = accepted_subject_kinds(projection.typed.connection)
         rendered = render_vocabulary_stub(
             (claim_type.model_dump(mode="json") for claim_type in render.inputs.types.values()),
             coordinate=contracts.AcceptedCoordinate.model_validate(head.model_dump(mode="json")),
+            subject_kinds=subject_kinds,
         )
         write_world_stub(root, rendered)
         digest = stub_vocabulary_digest(rendered) or ""

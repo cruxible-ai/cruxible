@@ -250,6 +250,41 @@ def _write(
     return run
 
 
+def _typed_creates(world: World) -> list[dict[str, Any]]:
+    """Two Subjects by ``create`` changes, one naming the other by its label."""
+
+    return [
+        {"op": "create", "label": "a", "subject_kind": KIND, "key": "typed-a"},
+        {"op": "create", "label": "b", "subject_kind": KIND, "key": "typed-b"},
+        {"op": "set", "subject": {"created": "a"}, "field": "title", "value": "typed a"},
+        {"op": "add", "subject": {"created": "b"}, "field": "governs", "value": {"created": "a"}},
+    ]
+
+
+_HISTORY_SUBJECT = f"{KIND}/history-subject"
+
+
+def _revise(world: World, subject: str, count: int) -> None:
+    for revision in range(count):
+        _worlds.write(
+            world,
+            [{"op": "set", "subject": subject, "field": "title", "value": f"revision {revision}"}],
+        )
+    settle_advertisement(world.instance)
+
+
+def _subject_history(subject: str, *, limit: int | None = None) -> Callable[[World], object]:
+    def run(world: World) -> object:
+        result = playbill_api.playbill_get(
+            world.instance_id, request=GetRequest(ref=subject, detail="history", limit=limit)
+        )
+        assert result.history is not None and result.history.kind == "subject", result
+        assert len(result.history.events) >= min(limit or 6, 6), result.history
+        return result
+
+    return run
+
+
 def _tick(part: str) -> Callable[[World], object]:
     def run(world: World) -> object:
         return _worlds.tick(world, part)
@@ -507,10 +542,6 @@ def _reopen(world: World) -> None:
 # makes the case pass, which a strict xfail reports as a failure until the entry
 # is removed.
 
-_FLOOR_PARSE = (
-    "audit#11: each floor refresh parses and digests every current Claim "
-    "(service/floor/floor_index.py:188 _parse_into, via build_floor_inputs :277)"
-)
 _CURATION = (
     "audit#2: curation detection rescans the instance every generation: unscoped facts "
     "(curation/curation_detectors.py:1279), every Claim revision ever accepted "
@@ -589,27 +620,12 @@ def _grows(reason: str, *counters: str) -> dict[str, str]:
 
 GROWS: dict[str, dict[str, str]] = {
     "tick.after_generation.floor": {
-        **_grows(_FLOOR_PARSE, "claim_parses", "canonical_encodes"),
-        "git_blob_reads": (
-            "audit#11: each floor refresh reads every Claim blob "
-            "(service/floor/floor_index.py:269 -> indexes/typed_state.py:959 prefetch_members)"
-        ),
-        **_grows(
+        # Its parses, encodes, digests, blob and CAS reads and statements no
+        # longer grow once the world's floor has rendered before the measured
+        # tick (a steady-state refresh reads only what the generation changed).
+        "file_opens": (
             "audit#11: each floor refresh re-reads every cited Capture envelope for "
-            "sources/LEDGER (service/floor/floor_sources.py:114 via :165)",
-            "file_opens",
-            "cas_body_reads",
-        ),
-        "sql_vm_steps": (
-            "audit#11: each floor refresh walks all of accepted_member_locations "
-            "(indexes/history/history_index.py:599 latest_sequences(paths=None) GROUP BY "
-            "member_path, from service/floor/floor_index.py:289), reads a record per "
-            "generation (:483) and every member of every generation with a rationale (:643 "
-            "member_paths_by_sequence via service/floor/floor_content.py:296)"
-        ),
-        "sql_statements": (
-            "audit#11: each floor refresh looks up a record per generation "
-            "(indexes/history/history_index.py:483 via service/floor/floor_content.py:295)"
+            "sources/LEDGER (service/floor/floor_sources.py:114 via :165)"
         ),
     },
     "tick.after_generation.curation": {
@@ -741,6 +757,12 @@ def _routes() -> list[Route]:
         ),
         Route("authoring.trigger_member", _authoring_trigger),
         Route("write.stale_base", _stale_base_write, prepare=_hold_coordinate),
+        Route("write.create.typed", _write(_typed_creates)),
+        Route(
+            "read.get.subject_history",
+            _subject_history(_HISTORY_SUBJECT),
+            prepare=lambda world: _revise(world, _HISTORY_SUBJECT, 6),
+        ),
         Route("tick.after_body_store.facts", _tick("facts"), prepare=_store_body),
         Route("cold.write", _write(lambda w: _creates(w, "cold")), prepare=_reopen),
         Route(
@@ -810,6 +832,49 @@ def test_route_work_does_not_grow_with_the_instance(
         f"(allowed {small * RATIO + SLACK[counter]:g})"
         + (_top_statements(measured) if counter == "sql_vm_steps" else "")
     )
+
+
+def test_a_subject_history_page_grows_only_in_the_rows_that_locate_it(session: Session) -> None:
+    """6 vs 60 of the Subject's own revisions, one page of five: only locating grows.
+
+    Every counter but the VM steps that walk the Subject's member rows stays
+    at the page's cost: its blobs, parses, record facts and reasons. The
+    revisions are adds and retirements of one value, each a lineage of its own:
+    revising one Claim 60 times would accumulate its evidence, so the page's
+    Claims themselves would grow, which is the data and not the read.
+    """
+
+    world = session.small
+    six, sixty = f"{KIND}/history-six", f"{KIND}/history-sixty"
+    target = world.subject(0)
+    for subject, cycles in ((six, 3), (sixty, 30)):
+        _revise(world, subject, 1)
+        for _cycle in range(cycles):
+            _worlds.write(
+                world, [{"op": "add", "subject": subject, "field": "governs", "value": target}]
+            )
+            _worlds.write(
+                world,
+                [{"op": "retire", "target": {"subject": subject, "field": "governs"}}],
+            )
+    settle_advertisement(world.instance)
+    # Each page read once first: both measured reads find their generations'
+    # records, facts and admissions parsed, so neither pays a cold first parse.
+    for subject in (six, sixty):
+        _subject_history(subject, limit=5)(world)
+    measured: dict[str, dict[str, Any]] = {}
+    for subject in (six, sixty):
+        with counting(world.root) as window:
+            _subject_history(subject, limit=5)(world)
+        assert not window.unexplained, window.unexplained[:5]
+        measured[subject] = {name: window.counts[name] for name in COUNTERS}
+    for counter in COUNTERS:
+        if counter == "sql_vm_steps":
+            continue  # the located rows: the Subject's own revisions
+        small, large = measured[six][counter], measured[sixty][counter]
+        assert large <= small * RATIO + SLACK[counter], (
+            f"subject history {counter}: 6 revisions {small}, 60 revisions {large}"
+        )
 
 
 def _top_statements(measured: dict[str, dict[str, Any]], shown: int = 5) -> str:

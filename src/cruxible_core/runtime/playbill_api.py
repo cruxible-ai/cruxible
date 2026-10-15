@@ -1445,7 +1445,7 @@ def playbill_retire(instance_id: str, *, request: RetireRequest) -> WriteOutcome
 
 
 def playbill_write(instance_id: str, *, request: WriteRequest) -> WriteOutcome:
-    """Apply a batch of set, add and retire changes as one change set."""
+    """Apply a batch of create, set, add and retire changes as one change set."""
 
     check_permission("cruxible_write", instance_id=instance_id)
     return _write_outcome(instance_id, request)

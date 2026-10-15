@@ -27,6 +27,8 @@ from typing import Any, cast
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
+from cruxible_client.contracts.candidates import CandidateMemberEvidence
+from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.captures import (
     CaptureContract,
     parse_capture_envelope,
@@ -38,13 +40,18 @@ from cruxible_client.contracts.claim_types import (
     effective_revision_evidence,
 )
 from cruxible_client.contracts.claims import (
+    ClaimArtifact,
     ClaimArtifactAny,
+    ClaimRetirementReason,
     ExactContentClaimObject,
     SubjectClaimObject,
+    claim_artifact_digest,
     claim_path,
+    claim_statement_digest,
     parse_claim,
 )
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_client.contracts.get_display import (
     GET_CLI_HISTORY_VALUE_WIDTH,
     GET_CLI_VALUE_WIDTH,
@@ -71,6 +78,11 @@ from cruxible_client.contracts.get_reads import (
     GetDocumentCard,
     GetEvidence,
     GetEvidenceRule,
+    GetFieldChanged,
+    GetFieldEvent,
+    GetFieldReobserved,
+    GetFieldRetired,
+    GetFieldStated,
     GetHistory,
     GetPrincipalCard,
     GetProcedureCard,
@@ -92,10 +104,12 @@ from cruxible_client.contracts.get_reads import (
     GetSourceAcquisitionPolicyCard,
     GetSubjectCard,
     GetSubjectClaim,
+    GetSubjectHistory,
     GetSubjectKindCard,
     GetTriggerCard,
     ReadFlag,
     ReadSurface,
+    RevisionChange,
 )
 from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
@@ -111,9 +125,14 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.triggers import Trigger
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import SUBJECT_KIND_PATTERN, SUBJECT_REF_TEXT_PATTERN
+from cruxible_core.indexes.history.history_index import (
+    AcceptedGenerationLocation,
+    AcceptedMemberLocation,
+)
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.change_reasons import ChangeReasons
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.discovery import (
     AcceptedProviderInterface,
@@ -1780,86 +1799,14 @@ def _proposal_card(
 # -- evidence ------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _AcceptingProposal:
-    """The proposal that accepted a member's latest revision, and its item's own reason."""
-
-    rationale: str | None
-    reason: GetProposedReason | None
-
-
-def _accepting_proposal(
+def _latest_generation(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, path: str
-) -> _AcceptingProposal | None:
-    """Find the exact admission that accepted ``path``'s latest revision, then its item reason.
-
-    The accepted generation's retained change-set record names the candidate
-    and the admission's actor binding (actor and source compilation digest). An
-    admission is the accepting one only when it matches all three and was not
-    withdrawn or rejected; a candidate digest alone names the semantic change,
-    which an unrelated admission can share. No match, or more than one, and the
-    revision has no attributed proposal: nothing is picked by id order.
-
-    Work: one history member lookup, one candidate locator row per admission
-    sharing the candidate, one admission each, then one reason file. The
-    accepted generation's actor binding is read from its retained change-set
-    record's verified facts: the record is parsed whole once per instance, and
-    a later read of any revision it accepted reuses its small facts without
-    copying or re-parsing it.
-    """
+) -> AcceptedGenerationLocation | None:
+    """The accepted generation of ``path``'s latest revision at ``coordinate``: one lookup."""
 
     with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(coordinate)) as h:
         latest = h.latest_member(path)
-        if latest is None:
-            return None
-        generation = h.generation(latest.sequence)
-        if generation.source_record_path is None or generation.candidate_digest is None:
-            return None
-        facts = h.read_generation_facts(latest.sequence, instance.retained_record_reader())
-    evidence = instance.proposal_evidence()
-    if evidence.index is None:
-        return None
-    matches = []
-    for row in evidence.index.rows(evidence, "candidate_digest=?", (facts.candidate_digest,)):
-        if row["withdrawal_path"] is not None:
-            continue  # withdrawn or rejected: never the admission that was accepted
-        admission = evidence.read_admission(row["proposal_id"])
-        if (
-            admission.actor_id == facts.actor_id
-            and admission.source_compilation_digest == facts.source_compilation_digest
-        ):
-            matches.append(admission)
-    if len(matches) != 1:
-        return None
-    (admission,) = matches
-    operation = evidence.item_reason_operation(admission)
-    item = None if operation is None else evidence.read_item_reason(operation, path)
-    return _AcceptingProposal(
-        rationale=admission.rationale,
-        reason=(
-            None
-            if item is None
-            else GetProposedReason(
-                reason=item.reason,
-                truncated=item.truncated,
-                proposal=admission.proposal_id,
-                procedure=item.procedure,
-                run=item.run_id,
-                terminal=item.terminal,
-            )
-        ),
-    )
-
-
-def _claim_rationale(
-    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, claim_id: str
-) -> str | None:
-    """Why this Claim revision was proposed: its own item's reason, else the change set's."""
-
-    accepting = _accepting_proposal(instance, coordinate, claim_path(claim_id))
-    if accepting is None:
-        return None
-    return accepting.reason.reason if accepting.reason is not None else accepting.rationale
+        return None if latest is None else h.generation(latest.sequence)
 
 
 def _claim_evidence(
@@ -1923,9 +1870,34 @@ def _claim_evidence(
     )
 
 
+def _claim_rationale(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, claim_id: str
+) -> str | None:
+    """Why this Claim revision was proposed, whole: the shared resolver's text."""
+
+    path = claim_path(claim_id)
+    generation = _latest_generation(instance, coordinate, path)
+    return None if generation is None else ChangeReasons(instance).rationale(generation, path)
+
+
 # -- history -------------------------------------------------------------------------
 
 _HISTORY_LIST = "get history"
+
+
+@dataclass(frozen=True)
+class _Shown:
+    """What one revision shows once read: its value, lifecycle and, for a Claim, its change."""
+
+    value: object = None
+    content_digest: str | None = None
+    lifecycle: str | None = None
+    change: RevisionChange | None = None
+    retirement: ClaimRetirementReason | None = None
+
+
+def _nothing_shown() -> _Shown:
+    return _Shown()
 
 
 @dataclass(frozen=True)
@@ -1935,9 +1907,116 @@ class _RevisionEntry:
     revision: int
     sequence: int
     digest: str
-    lifecycle: str | None
-    # The revision's value and, for exact content, its digest.
-    value: Callable[[], tuple[object, str | None]] | None = None
+    # The member path the revision changed, which its reason is read for.
+    path: str | None = None
+    # What the revision shows, read only when a page shows it.
+    read: Callable[[], _Shown] = _nothing_shown
+
+
+class _ClaimVersions:
+    """One Claim path's accepted revisions: located by the history index, read when shown.
+
+    Locating is the path's member rows (``members_by_path``); a row whose bytes
+    are unchanged (an evaluation) is no revision. A revision's blob is read,
+    parsed and verified against its record member only when a page shows it, or
+    the revision after it compares against it, and once.
+    """
+
+    def __init__(
+        self,
+        instance: PlaybillInstance,
+        history: Any,
+        path: str,
+        locations: Sequence[AcceptedMemberLocation],
+    ) -> None:
+        self._instance = instance
+        self._history = history
+        self._records = instance.retained_record_reader()
+        self.path = path
+        located: list[AcceptedMemberLocation] = []
+        for location in locations:
+            if location.artifact_digest is None:
+                continue
+            if located and located[-1].artifact_digest == location.artifact_digest:
+                continue
+            located.append(location)
+        self.locations = tuple(located)
+        self._claims: dict[int, ClaimArtifactAny] = {}
+
+    def claim(self, index: int) -> ClaimArtifactAny:
+        """Revision ``index`` (oldest first), verified against its accepted record member."""
+
+        if index not in self._claims:
+            location = self.locations[index]
+            generation = self._history.generation(location.sequence)
+            member = self._history.read_member(location, self._records)
+            content = self._instance.blob_at(generation.git_oid, self.path)
+            if content is None:
+                raise ProjectionIntegrityError("Claim history source is unavailable")
+            claim = parse_claim(content, path=self.path)
+            digest = claim_artifact_digest(claim).tagged
+            source_digest = (
+                file_digest(content).tagged
+                if isinstance(member, CandidateMemberEvidence)
+                else digest
+            )
+            if source_digest != location.artifact_digest:
+                raise ProjectionIntegrityError("Claim history source binding differs")
+            self._claims[index] = claim
+        return self._claims[index]
+
+    def change(self, index: int) -> tuple[RevisionChange, ClaimRetirementReason | None]:
+        """What revision ``index`` did: stated, changed, reobserved, or retired (and why)."""
+
+        claim = self.claim(index)
+        if claim.lifecycle.state == "retired":
+            return "retired", claim.retirement.reason if isinstance(claim, ClaimArtifact) else None
+        if index == 0:
+            return "stated", None
+        before = self.claim(index - 1)
+        same = claim_statement_digest(claim.statement) == claim_statement_digest(before.statement)
+        return ("reobserved" if same else "changed"), None
+
+    def shown(self, index: int, content: ExactContentReader) -> _Shown:
+        claim = self.claim(index)
+        value, content_digest = _shown(
+            claim.statement.object, lambda: _artifact_value(claim), content
+        )
+        change, retirement = self.change(index)
+        return _Shown(
+            value=value,
+            content_digest=content_digest,
+            lifecycle=claim.lifecycle.state,
+            change=change,
+            retirement=retirement,
+        )
+
+
+def _generation_coordinate(generation: AcceptedGenerationLocation) -> ClientCoordinate:
+    return ClientCoordinate(
+        git_oid=generation.git_oid,
+        semantic_root=generation.semantic_root,
+        generation_root=generation.generation_root,
+        compiler_digest=generation.compiler_digest,
+    )
+
+
+def _accepted_by(
+    instance: PlaybillInstance, history: Any, generation: AcceptedGenerationLocation
+) -> tuple[str, str | None, tuple[str, ...]]:
+    """When a generation was accepted, by whom, and who approved it (its record's facts)."""
+
+    # Genesis carries no change-set record: its instant is the bootstrap's and
+    # nobody approved it.
+    if generation.source_record_path is None:
+        accepted = instance.accepted_evaluation_time(generation.git_oid)
+        return accepted.strftime("%Y-%m-%dT%H:%M:%S.%fZ"), generation.actor_id, ()
+    facts = history.read_generation_facts(generation.sequence, instance.retained_record_reader())
+    return (
+        facts.timestamp,
+        generation.actor_id or facts.actor_id,
+        tuple(dict.fromkeys(facts.approval_signers)),
+    )
 
 
 def _revision(
@@ -1947,48 +2026,31 @@ def _revision(
     *,
     ref: str,
     surface: ReadSurface,
+    content: ExactContentReader,
+    reasons: ChangeReasons,
 ) -> GetRevision:
     generation = history.generation(entry.sequence)
-    # Genesis carries no change-set record: its instant is the bootstrap's and
-    # nobody approved it.
-    facts = (
-        None
-        if generation.source_record_path is None
-        else history.read_generation_facts(entry.sequence, instance.retained_record_reader())
-    )
-    value, content_digest = (None, None) if entry.value is None else entry.value()
+    accepted, actor, approved_by = _accepted_by(instance, history, generation)
+    shown = entry.read()
     # The revision's own generation, so the whole read returns this revision's value.
-    cut_value = summary_value(value, read_whole=whole_value_read(ref, generation.git_oid))
+    cut_value = summary_value(shown.value, read_whole=whole_value_read(ref, generation.git_oid))
     return GetRevision(
         revision=entry.revision,
         sequence=entry.sequence,
         git_oid=generation.git_oid[:12],
-        accepted=(
-            instance.accepted_evaluation_time(generation.git_oid).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            if facts is None
-            else facts.timestamp
-        ),
-        actor=generation.actor_id or (None if facts is None else facts.actor_id),
-        approved_by=(() if facts is None else tuple(dict.fromkeys(facts.approval_signers))),
-        lifecycle=entry.lifecycle,
+        accepted=accepted,
+        actor=actor,
+        approved_by=approved_by,
+        lifecycle=shown.lifecycle,
         value=cut_value,
-        next=(
-            _render_get(
-                surface,
-                ref,
-                "evidence",
-                at=ClientCoordinate(
-                    git_oid=generation.git_oid,
-                    semantic_root=generation.semantic_root,
-                    generation_root=generation.generation_root,
-                    compiler_digest=generation.compiler_digest,
-                ),
-            ),
-        )
+        next=(_render_get(surface, ref, "evidence", at=_generation_coordinate(generation)),)
         if _value_was_cut(cut_value, surface=surface, width=GET_CLI_HISTORY_VALUE_WIDTH)
         else (),
-        content_digest=content_digest,
+        content_digest=shown.content_digest,
         digest=_short_digest(entry.digest),
+        change=shown.change,
+        reason=None if entry.path is None else reasons.reason(generation, entry.path),
+        retirement=shown.retirement,
     )
 
 
@@ -1998,41 +2060,33 @@ def _history_entries(
     history: Any,
     content: ExactContentReader,
 ) -> list[_RevisionEntry]:
-    """Every accepted revision up to the read coordinate, oldest first."""
+    """Every accepted revision up to the read coordinate, oldest first, located only.
+
+    A Claim's revisions are its member rows; a Subject shell's, a Document's
+    and a definition's come from their own history reads, which are few.
+    """
 
     from cruxible_core.service.authoring.documents import service_playbill_document_history
-    from cruxible_core.service.claims.claims import service_playbill_claim_history
     from cruxible_core.service.claims.subjects import service_playbill_subject_history
 
     cutoff = history.sequence
     entries: list[_RevisionEntry] = []
     if resolved.kind == "claim":
         path = claim_path(_name(resolved.identity))
-
-        def claim_value(git_oid: str) -> Callable[[], tuple[object, str | None]]:
-            def read() -> tuple[object, str | None]:
-                member = instance.blob_at(git_oid, path)
-                if member is None:
-                    return None, None
-                claim = parse_claim(member, path=path)
-                return _shown(claim.statement.object, lambda: _artifact_value(claim), content)
-
-            return read
-
-        for claim_entry in service_playbill_claim_history(
-            instance, identity=resolved.identity
-        ).entries:
-            if claim_entry.sequence <= cutoff:
-                entries.append(
-                    _RevisionEntry(
-                        revision=len(entries) + 1,
-                        sequence=claim_entry.sequence,
-                        digest=claim_entry.artifact_digest,
-                        lifecycle=claim_entry.lifecycle_state,
-                        value=claim_value(claim_entry.coordinate.git_oid),
-                    )
+        versions = _ClaimVersions(instance, history, path, history.member_history(path))
+        for index, location in enumerate(versions.locations):
+            assert location.artifact_digest is not None
+            entries.append(
+                _RevisionEntry(
+                    revision=index + 1,
+                    sequence=location.sequence,
+                    digest=location.artifact_digest,
+                    path=path,
+                    read=functools.partial(versions.shown, index, content),
                 )
+            )
     elif resolved.kind == "subject":
+        shell_path = resolved.path or f"subjects/{_name(resolved.identity)}.json"
         for subject_entry in service_playbill_subject_history(
             instance, identity=resolved.identity
         ).entries:
@@ -2042,7 +2096,8 @@ def _history_entries(
                         revision=len(entries) + 1,
                         sequence=subject_entry.sequence,
                         digest=subject_entry.artifact_digest,
-                        lifecycle=subject_entry.lifecycle_state,
+                        path=shell_path,
+                        read=functools.partial(_Shown, lifecycle=subject_entry.lifecycle_state),
                     )
                 )
     elif resolved.kind == "document":
@@ -2056,8 +2111,8 @@ def _history_entries(
                         revision=len(entries) + 1,
                         sequence=document_entry.sequence,
                         digest=document_entry.envelope_digest,
-                        lifecycle=None,
-                        value=functools.partial(lambda value: (value, None), body),
+                        path=resolved.path,
+                        read=functools.partial(_Shown, value=body),
                     )
                 )
     else:
@@ -2072,7 +2127,7 @@ def _history_entries(
                     revision=len(entries) + 1,
                     sequence=location.occurrence_sequence,
                     digest=location.artifact_digest,
-                    lifecycle=None,
+                    path=location.path,
                 )
             )
     return entries
@@ -2083,17 +2138,59 @@ def _history(
     coordinate: AcceptedProjectionCoordinate,
     resolved: ResolvedRef,
     *,
-    ref: str,
-    surface: ReadSurface,
+    request: GetRequest,
     limit: int,
     continuation: ListContinuation | None,
     content: ExactContentReader,
-) -> tuple[GetHistory, bool, str | None]:
-    """One page of revisions, newest first, and the cursor that continues it."""
+) -> tuple[GetHistory | GetSubjectHistory, bool, str | None]:
+    """One page of history, newest first, and the cursor that continues it.
 
+    A Subject's page is its field events (``GetSubjectHistory``); anything
+    else's is its own revisions. Either way locating costs the thing's own
+    history -- its member rows -- and reading costs the page.
+    """
+
+    if request.field is not None and resolved.kind != "subject":
+        raise ReadRefusalError(
+            "cruxible.get.field_unsupported",
+            f"field narrows the history of a Subject, and {resolved.display} is a "
+            f"{resolved.kind.replace('_', ' ')}",
+            repair=RepairOperation(
+                operation="cruxible.get", arguments={"ref": resolved.display, "detail": "history"}
+            ),
+            repair_line=f"Run {_render_get(request.surface, resolved.display, 'history')}",
+            context={"ref": resolved.display, "kind": resolved.kind},
+        )
     at = AcceptedCoordinate.from_internal(coordinate)
+    reasons = ChangeReasons(instance)
+    surface = request.surface
     with instance.accepted_history_reader(at=at) as history:
         newest_first = list(reversed(_history_entries(instance, resolved, history, content)))
+        revisions = tuple(
+            _revision(
+                instance,
+                history,
+                entry,
+                ref=resolved.display,
+                surface=surface,
+                content=content,
+                reasons=reasons,
+            )
+            for entry in (newest_first if resolved.kind == "subject" else ())
+        )
+        if resolved.kind == "subject":
+            return _subject_events(
+                instance,
+                coordinate,
+                resolved,
+                history,
+                shell=revisions,
+                request=request,
+                limit=limit,
+                continuation=continuation,
+                content=content,
+                reasons=reasons,
+            )
         keys = [(str(entry.sequence), entry.digest) for entry in newest_first]
         snapshot = list_snapshot(keys)
         page, truncated = page_after_boundary(
@@ -2104,22 +2201,244 @@ def _history(
             limit=limit,
             list_name=_HISTORY_LIST,
         )
-        revisions = tuple(
-            _revision(instance, history, entry, ref=resolved.display, surface=surface)
+        reasons.prefetch(history.generation(entry.sequence) for entry in page)
+        shown = tuple(
+            _revision(
+                instance,
+                history,
+                entry,
+                ref=resolved.display,
+                surface=surface,
+                content=content,
+                reasons=reasons,
+            )
             for entry in page
         )
     next_cursor = (
         encode_list_cursor(
             list_name=_HISTORY_LIST,
             coordinate=at.model_dump(mode="json"),
-            selection={"ref": ref},
+            selection=_history_selection(request),
             snapshot=snapshot,
             last_key=(str(page[-1].sequence), page[-1].digest),
         )
         if truncated and page
         else None
     )
-    return GetHistory(revisions=revisions), truncated, next_cursor
+    return GetHistory(revisions=shown), truncated, next_cursor
+
+
+def _history_field(
+    kind: str, field: str, accepted: frozenset[str], *, ref: str, surface: ReadSurface
+) -> str:
+    """The predicate ``field`` names for a Subject of ``kind``, as get and orient name it."""
+
+    predicate = field if field in accepted else f"{kind}.{field}"
+    if predicate in accepted:
+        return predicate
+    shown = sorted(
+        short_field_name(item, kind, accepted) for item in accepted if item.startswith(f"{kind}.")
+    )
+    raise ReadRefusalError(
+        "cruxible.get.unknown_field",
+        f"{kind} has no field {field!r}",
+        repair=RepairOperation(
+            operation="cruxible.get", arguments={"ref": ref, "detail": "history"}
+        ),
+        repair_line=f"Name a field of {kind}, or run {_render_get(surface, ref, 'history')}",
+        candidates=nearest(field, shown),
+        context={"ref": ref, "field": field},
+    )
+
+
+def _subject_events(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    history: Any,
+    *,
+    shell: tuple[GetRevision, ...],
+    request: GetRequest,
+    limit: int,
+    continuation: ListContinuation | None,
+    content: ExactContentReader,
+    reasons: ChangeReasons,
+) -> tuple[GetSubjectHistory, bool, str | None]:
+    """One page of a Subject's field events, newest first, pinned to the read coordinate.
+
+    Its Claim lineages are the projection's Claims about it, any lifecycle
+    (``claims_by_subject_predicate``; ``field`` narrows to one predicate's
+    prefix of it), and their revisions one read of their member rows: locating
+    costs the Subject's own Claims and revisions. Only the page's revisions are
+    read (each, and the one before it for what it changed), and only the page's
+    generations' facts and reasons.
+    """
+
+    subject = resolved.path or f"subjects/{_name(resolved.identity)}.json"
+    kind = _subject_ref(subject).split("/", 1)[0]
+    with instance.bind_accepted_projection(coordinate) as projection:
+        accepted = _live_predicates(projection)
+        predicate = (
+            None
+            if request.field is None
+            else _history_field(
+                kind, request.field, accepted, ref=resolved.display, surface=request.surface
+            )
+        )
+        connection = projection.typed.connection
+        rows = connection.execute(
+            "SELECT identity, predicate, qualifier, lifecycle FROM claims WHERE subject_path=?"
+            + ("" if predicate is None else " AND predicate=?")
+            + " ORDER BY identity",
+            (subject,) if predicate is None else (subject, predicate),
+        ).fetchall()
+        single = {
+            name
+            for name in {str(row[1]) for row in rows}
+            if isinstance(claim_type := projection.typed.source(f"ClaimType:{name}"), ClaimType)
+            and claim_type.cardinality == "one"
+        }
+    lineages = {
+        claim_path(str(identity).removeprefix("Claim:")): (
+            str(name),
+            None if qualifier is None else str(qualifier),
+            str(lifecycle),
+        )
+        for identity, name, qualifier, lifecycle in rows
+    }
+    located = history.member_locations(tuple(lineages))
+    versions = {path: _ClaimVersions(instance, history, path, located[path]) for path in lineages}
+    events = sorted(
+        (
+            (location.sequence, path, index)
+            for path, lineage in versions.items()
+            for index, location in enumerate(lineage.locations)
+        ),
+        key=lambda item: (-item[0], item[1].encode("utf-8")),
+    )
+    keys = [(str(sequence), path) for sequence, path, _index in events]
+    snapshot = list_snapshot(keys)
+    page, truncated = page_after_boundary(
+        events,
+        keys=keys,
+        snapshot=snapshot,
+        continuation=continuation,
+        limit=limit,
+        list_name=_HISTORY_LIST,
+    )
+    # A single-value slot's lineage is live from its first revision until it
+    # retires; retirement is terminal, so the projection's lifecycle says whether
+    # its last revision retired it.
+    spans = {
+        path: (
+            lineage.locations[0].sequence,
+            lineage.locations[-1].sequence if lineages[path][2] == "retired" else None,
+        )
+        for path, lineage in versions.items()
+        if lineage.locations
+    }
+
+    def contended(path: str, sequence: int) -> bool:
+        name, qualifier, _lifecycle = lineages[path]
+        if name not in single:
+            return False
+        return any(
+            other != path
+            and lineages[other][:2] == (name, qualifier)
+            and first < sequence
+            and (ended is None or ended > sequence)
+            for other, (first, ended) in spans.items()
+        )
+
+    reasons.prefetch(history.generation(sequence) for sequence, _path, _index in page)
+    shown = tuple(
+        _field_event(
+            instance,
+            history,
+            versions[path],
+            index,
+            field=short_field_name(lineages[path][0], kind, accepted),
+            predicate=lineages[path][0],
+            qualifier=lineages[path][1],
+            contended=index == 0 and contended(path, sequence),
+            surface=request.surface,
+            content=content,
+            reasons=reasons,
+        )
+        for sequence, path, index in page
+    )
+    at = AcceptedCoordinate.from_internal(coordinate)
+    next_cursor = (
+        encode_list_cursor(
+            list_name=_HISTORY_LIST,
+            coordinate=at.model_dump(mode="json"),
+            selection=_history_selection(request),
+            snapshot=snapshot,
+            last_key=(str(page[-1][0]), page[-1][1]),
+        )
+        if truncated and page
+        else None
+    )
+    return GetSubjectHistory(revisions=shell, events=shown), truncated, next_cursor
+
+
+def _field_event(
+    instance: PlaybillInstance,
+    history: Any,
+    versions: _ClaimVersions,
+    index: int,
+    *,
+    field: str,
+    predicate: str,
+    qualifier: str | None,
+    contended: bool,
+    surface: ReadSurface,
+    content: ExactContentReader,
+    reasons: ChangeReasons,
+) -> GetFieldEvent:
+    location = versions.locations[index]
+    generation = history.generation(location.sequence)
+    accepted, actor, approved_by = _accepted_by(instance, history, generation)
+    claim = versions.claim(index)
+    claim_id = claim.identity.name
+    value, content_digest = _shown(claim.statement.object, lambda: _artifact_value(claim), content)
+    cut = summary_value(value, read_whole=whole_value_read(claim_id, generation.git_oid))
+    common: dict[str, Any] = {
+        "field": field,
+        "predicate": predicate,
+        "qualifier": qualifier,
+        "claim": claim_id,
+        "sequence": location.sequence,
+        "git_oid": generation.git_oid[:12],
+        "accepted": accepted,
+        "actor": actor,
+        "approved_by": approved_by,
+        "reason": reasons.reason(generation, versions.path),
+        "value": cut,
+        "content_digest": content_digest,
+        "next": (_render_get(surface, claim_id, "evidence", at=_generation_coordinate(generation)),)
+        if _value_was_cut(cut, surface=surface, width=GET_CLI_HISTORY_VALUE_WIDTH)
+        else (),
+    }
+    change, retirement = versions.change(index)
+    if change == "retired":
+        return GetFieldRetired(**common, retirement=retirement)
+    if change == "stated":
+        return GetFieldStated(**common, contended=contended)
+    if change == "reobserved":
+        return GetFieldReobserved(**common)
+    earlier = versions.claim(index - 1)
+    before, _digest = _shown(earlier.statement.object, lambda: _artifact_value(earlier), content)
+    before_at = history.generation(versions.locations[index - 1].sequence).git_oid
+    return GetFieldChanged(
+        **common, before=summary_value(before, read_whole=whole_value_read(claim_id, before_at))
+    )
+
+
+def _history_selection(request: GetRequest) -> dict[str, str]:
+    """What a history cursor continues: the reference, and the field it was narrowed to."""
+
+    return {"ref": request.ref, **({} if request.field is None else {"field": request.field})}
 
 
 def _history_continuation(
@@ -2131,7 +2450,7 @@ def _history_continuation(
     if request.cursor is None:
         return None, request.at
     continuation = decode_list_cursor(
-        request.cursor, list_name=_HISTORY_LIST, selection={"ref": request.ref}
+        request.cursor, list_name=_HISTORY_LIST, selection=_history_selection(request)
     )
     pinned = ClientCoordinate.model_validate(continuation.coordinate)
     at = request.at
@@ -2526,16 +2845,18 @@ def service_playbill_get(
             if resolved.kind == "claim"
             else resolved.path or f"subjects/{_name(resolved.identity)}.json"
         )
-        accepting = _accepting_proposal(instance, coordinate, member)
-        if accepting is not None and accepting.reason is not None:
-            fields["reason"] = accepting.reason
+        accepted_at = _latest_generation(instance, coordinate, member)
+        reason = (
+            None if accepted_at is None else ChangeReasons(instance).reason(accepted_at, member)
+        )
+        if isinstance(reason, GetProposedReason):
+            fields["reason"] = reason
     elif request.detail == "history":
         fields["history"], fields["truncated"], fields["next_cursor"] = _history(
             instance,
             coordinate,
             resolved,
-            ref=request.ref,
-            surface=surface,
+            request=request,
             limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
             continuation=continuation,
             content=content,

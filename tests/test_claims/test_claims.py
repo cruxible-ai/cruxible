@@ -45,6 +45,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
+from cruxible_client.contracts.get_reads import GetHistory, GetRequest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
@@ -60,7 +61,8 @@ from cruxible_client.contracts.subjects import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.service.claims.claims import service_playbill_claim_history
+from cruxible_core.service.discovery.get import service_playbill_get
+from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -464,7 +466,7 @@ def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
     }
 
 
-def test_service_claim_history_returns_each_accepted_lineage_entry(
+def test_claim_history_returns_each_accepted_revision_located_by_the_index(
     tmp_path: Path, monkeypatch
 ) -> None:
     instance, owner = initialize_local(tmp_path)
@@ -531,18 +533,18 @@ def test_service_claim_history_returns_each_accepted_lineage_entry(
     monkeypatch.setattr(instance, "accepted_history", forbidden)
     monkeypatch.setattr(instance, "tree_at", forbidden)
     monkeypatch.setattr(instance, "paths_at", forbidden)
-    history = service_playbill_claim_history(instance, identity=f"Claim:{claim_id}")
+    history = service_playbill_get(
+        instance,
+        request=GetRequest(ref=claim_id, detail="history"),
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+    ).history
 
-    assert history.identity == f"Claim:{claim_id}"
-    assert tuple(entry.sequence for entry in history.entries) == (1, 2)
-    assert history.entries[0].artifact_digest == claim_artifact_digest(predecessor).tagged
-    assert history.entries[0].predecessor_digest is None
-    assert history.entries[1].artifact_digest == claim_artifact_digest(successor).tagged
-    assert history.entries[1].predecessor_digest == claim_artifact_digest(predecessor).tagged
-    assert tuple(entry.lifecycle_state for entry in history.entries) == ("live", "live")
-    assert tuple(entry.change_set_path for entry in history.entries) == (
-        "changesets/cs-00000000000000000001.json",
-        "changesets/cs-00000000000000000002.json",
-    )
-    assert all(entry.changeset_digest for entry in history.entries)
-    assert all(entry.candidate_digest for entry in history.entries)
+    assert isinstance(history, GetHistory)
+    # Newest first; ``revision`` counts from the oldest.
+    assert tuple(item.sequence for item in history.revisions) == (2, 1)
+    assert tuple(item.revision for item in history.revisions) == (2, 1)
+    assert history.revisions[0].digest == claim_artifact_digest(successor).tagged[:19]
+    assert history.revisions[1].digest == claim_artifact_digest(predecessor).tagged[:19]
+    assert tuple(item.lifecycle for item in history.revisions) == ("live", "live")
+    # The successor restates the same statement on new bytes: a reobservation.
+    assert tuple(item.change for item in history.revisions) == ("reobserved", "stated")
