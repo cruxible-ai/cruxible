@@ -5247,6 +5247,9 @@ class _AdmissionEvaluation:
     validated_tree: Mapping[str, bytes]
     is_rebase: bool
     outcome: CandidateEvaluation
+    #: The scope whose observations back ``outcome``, for a same-request settlement.
+    observer: PreparedEvaluationScope | None = None
+    delegated_mandate_digest: str | None = None
 
 
 class ProposalHeadMovedError(ProposalAdmissionError):
@@ -5477,13 +5480,17 @@ class ProposalService:
         )
         if delegated_mandate_digest is not None:
             outcome = None
+        # What backs the outcome, for a settlement in this same request: the
+        # preflight scope it was taken from, or a fresh observer of this one.
+        observer = prepared if outcome is not None else None
         if outcome is None:
+            observer = None if settlement is None else settlement.observer()
             outcome = evaluate_proposal_tree(
                 base_tree=base_tree,
                 current_tree=current_tree,
                 proposed_tree=validated_tree,
                 current=current,
-                bodies=self.bodies,
+                bodies=self.bodies if observer is None else observer.bodies(self.bodies),
                 timestamp=timestamp,
                 rebased=is_rebase,
                 base_changes=(
@@ -5493,9 +5500,21 @@ class ProposalService:
                 ),
                 actor_id=actor.actor_id,
                 claim_type_expansions=request.claim_type_expansions,
-                promotion_verifier=self.promotion_verifier,
-                producer_receipt_resolver=self.producer_receipt_resolver,
-                query_facts_provider=self.query_facts_provider,
+                promotion_verifier=(
+                    self.promotion_verifier
+                    if observer is None
+                    else observer.promotion(self.promotion_verifier)
+                ),
+                producer_receipt_resolver=(
+                    self.producer_receipt_resolver
+                    if observer is None
+                    else observer.receipts(self.producer_receipt_resolver)
+                ),
+                query_facts_provider=(
+                    self.query_facts_provider
+                    if observer is None
+                    else observer.facts(self.query_facts_provider)
+                ),
                 tree_state_provider=self.tree_state_provider,
                 principal_registry_provider=self.principal_registry_provider,
                 retained_tree=self._accepted_tree_provider,
@@ -5526,6 +5545,8 @@ class ProposalService:
             validated_tree=validated_tree,
             is_rebase=is_rebase,
             outcome=outcome,
+            observer=observer,
+            delegated_mandate_digest=delegated_mandate_digest,
         )
 
     def _stale_base_tree(self, oid: str) -> Mapping[str, bytes]:
@@ -5846,7 +5867,21 @@ class ProposalService:
             workspace_advertisement=advertisement,
         )
         if handoff is not None and outcome.candidate is not None:
-            handoff.submitted(result=result, tree=outcome.tree, current=current)
+            handoff.submitted(
+                result=result,
+                tree=outcome.tree,
+                current=current,
+                evaluation=None
+                if evaluated.observer is None
+                else evaluated.observer.admitted(
+                    outcome,
+                    current=current,
+                    actor_id=actor.actor_id,
+                    timestamp=timestamp,
+                    mandate_digest=evaluated.delegated_mandate_digest,
+                    claim_type_expansions=request.claim_type_expansions,
+                ),
+            )
         return result
 
 

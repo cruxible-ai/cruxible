@@ -174,7 +174,10 @@ from cruxible_core.ledger.recovery import (
     recover_instance,
 )
 from cruxible_core.ledger.witness import WitnessSink
-from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationAdapter
+from cruxible_core.proposals.prepared_evaluation import (
+    AdmittedEvaluation,
+    PreparedEvaluationAdapter,
+)
 from cruxible_core.proposals.proposal_evidence import (
     ProposalEvidenceStore,
     SettledCandidate,
@@ -2917,11 +2920,15 @@ class PlaybillInstance:
         sequence: int,
         candidate_tree_oid: str | None = None,
         mandate_digest: str | None = None,
+        admitted: AdmittedEvaluation | None = None,
     ) -> VerifiedGenerationBundle:
         """Construct one verified generation without exposing the Git ledger to surfaces.
 
         ``mandate_digest`` names the settle ProcedureMandate whose delegated
         authority replaces candidate approval; only the settle terminal passes it.
+        ``admitted`` is the same request's own admission evaluation (see
+        ``settlement.prepare_generation``); only an activation handed its
+        submission passes it.
         """
 
         self.require_writable()
@@ -2956,6 +2963,7 @@ class PlaybillInstance:
             historical_artifact_provider=self.accepted_artifact_version,
             principal_registry_provider=self.accepted_principal_registry,
             subject_assignment_authority=self.subject_assignment_authority(),
+            admitted=admitted,
         )
 
     def settle_and_activate(
@@ -2969,6 +2977,7 @@ class PlaybillInstance:
         proposal_actor_id: str,
         candidate_tree_oid: str | None = None,
         mandate_digest: str | None = None,
+        admitted: AdmittedEvaluation | None = None,
     ) -> ActivationResult:
         """Publish one owned preparation and install its verified successor state.
 
@@ -2988,6 +2997,7 @@ class PlaybillInstance:
                 sequence=previous.head.sequence + 1,
                 candidate_tree_oid=candidate_tree_oid,
                 mandate_digest=mandate_digest,
+                admitted=admitted,
             )
             successor = (
                 prepared_generation_for_handoff(

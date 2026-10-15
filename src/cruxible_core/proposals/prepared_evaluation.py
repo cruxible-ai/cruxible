@@ -4,6 +4,12 @@ No token crosses a transport, survives its call scope, or authorizes a write.
 Submission still validates ingress and current writable/actor/base/ref bindings.
 CAS observations are freshly replayed; operational query/receipt/promotion reads
 and CAS writes make an evaluation ineligible until they have revision bindings.
+
+The same observations carry an admission evaluation on to the settlement of the
+same request (``AdmittedEvaluation``, maintainer ruling
+settle-reuses-first-evaluation-1015). There a settle run's own producer
+receipts are stable (its fenced, append-only journal records, written under
+this request), and accepted query facts are observed and replayed like bodies.
 """
 
 from __future__ import annotations
@@ -15,6 +21,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+from cruxible_client.contracts.authoring_profiles import ClaimTypeExpansionEvidence
+from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     CaptureObjectStoreProtocol,
@@ -125,19 +133,22 @@ class _ObservedReceipts:
     def producer_receipt(
         self, digest: str, *, run_id: str
     ) -> ProviderProducerReceiptResolution | ProcedureProducerReceiptProtocol | None:
-        self.scope.ineligible = True
+        if run_id != self.scope.stable_run:
+            self.scope.ineligible = True
         return self.source.producer_receipt(digest, run_id=run_id)
 
     def produced_capture(
         self, capture_digest: str, *, run_id: str
     ) -> tuple[CaptureProductionRecord, ...]:
-        self.scope.ineligible = True
+        if run_id != self.scope.stable_run:
+            self.scope.ineligible = True
         return self.source.produced_capture(capture_digest, run_id=run_id)
 
     def recall_verified(self, capture_digest: str) -> VerifiedCaptureMemo | None:
         memo = self.source.recall_verified(capture_digest)
-        if memo is not None and capture_digest not in self._own:
+        if memo is not None and capture_digest not in self._own and self.scope.stable_run is None:
             # An answer this evaluation did not observe in the bodies it reads.
+            # A settle run's request verified it from immutable journal records.
             self.scope.ineligible = True
         return memo
 
@@ -149,12 +160,17 @@ class _ObservedReceipts:
 class PreparedEvaluationScope:
     """Private capability held by exactly one synchronous coordinator submit."""
 
-    def __init__(self, owner: PreparedEvaluationAdapter, epoch: int) -> None:
+    def __init__(
+        self, owner: PreparedEvaluationAdapter, epoch: int, *, stable_run: str | None = None
+    ) -> None:
         self.owner, self.epoch = owner, epoch
+        #: The settle run whose own journal receipts are stable in this request.
+        self.stable_run = stable_run
         self.closed = False
         self.consumed = False
         self.ineligible = False
         self._observations: dict[tuple[str, str, bytes | None], _BodyObservation] = {}
+        self._facts: list[_FactsObservation] = []
         self._bytes = 0
         self._operation: bytes | None = None
         self._binding: bytes | None = None
@@ -199,6 +215,30 @@ class PreparedEvaluationScope:
 
         return observed
 
+    def facts(self, source: Any) -> Any:
+        """Accepted query facts, observed so a settlement can replay them exactly."""
+        if source is None:
+            return None
+
+        def observed(
+            coordinate: AcceptedProjectionCoordinate,
+            *,
+            predicates: tuple[str, ...] | None = None,
+            subject_kinds: tuple[str, ...] | None = None,
+        ) -> Any:
+            value = source(coordinate, predicates=predicates, subject_kinds=subject_kinds)
+            if not self.ineligible:
+                if len(self._facts) >= self.owner.max_observations:
+                    self.ineligible = True
+                    self._facts.clear()
+                else:
+                    self._facts.append(
+                        _FactsObservation(coordinate, predicates, subject_kinds, value)
+                    )
+            return value
+
+        return observed
+
     def receipts(
         self, source: ProducerReceiptResolverProtocol | None
     ) -> ProducerReceiptResolverProtocol | None:
@@ -224,8 +264,9 @@ class PreparedEvaluationScope:
             return
         from cruxible_core.proposals.proposals import CandidateEvaluation
 
-        # Only immutable trees and detached result models are retained. Derived
-        # evaluation state is not consumed by ProposalService and is not copied.
+        # Only immutable trees, detached result models and the derived state of
+        # the candidate tree (immutable; a settlement in the same request
+        # builds its generation from it) are retained.
         tree = (
             outcome.tree if isinstance(outcome.tree, SnapshotTree) else SnapshotTree(outcome.tree)
         )
@@ -235,6 +276,7 @@ class PreparedEvaluationScope:
             copy.deepcopy(outcome.candidate),
             copy.deepcopy(outcome.diagnostics),
             False,
+            state=outcome.state,
             claim_admission_accounts=copy.deepcopy(outcome.claim_admission_accounts),
         )
         self._binding = _binding(current, actor, request, limits, timestamp)
@@ -300,14 +342,160 @@ class PreparedEvaluationScope:
             copy.deepcopy(value.candidate),
             copy.deepcopy(value.diagnostics),
             False,
+            state=value.state,
             claim_admission_accounts=copy.deepcopy(value.claim_admission_accounts),
+        )
+
+    def admitted(
+        self,
+        outcome: CandidateEvaluation,
+        *,
+        current: AcceptedProjectionCoordinate,
+        actor_id: str,
+        timestamp: str,
+        mandate_digest: str | None,
+        claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...],
+    ) -> AdmittedEvaluation | None:
+        """This scope's evaluation, as the same request's settlement may reuse it.
+
+        None unless every input the evaluation consulted can be replayed: an
+        ineligible or closed scope, a rebased or refused outcome, or one
+        without its derived state is settled by a full re-evaluation.
+        """
+        if (
+            self.closed
+            or self.ineligible
+            or outcome.rebased
+            or outcome.candidate is None
+            or outcome.diagnostics
+            or outcome.state is None
+            or not isinstance(outcome.tree, SnapshotTree)
+        ):
+            return None
+        return AdmittedEvaluation(
+            owner=self.owner,
+            epoch=self.epoch,
+            outcome=outcome,
+            current=current,
+            actor_id=actor_id,
+            timestamp=timestamp,
+            mandate_digest=mandate_digest,
+            claim_type_expansions=claim_type_expansions,
+            observations=tuple(self._observations.values()),
+            facts=tuple(self._facts),
         )
 
     def close(self) -> None:
         self.closed = True
         self._observations.clear()
+        self._facts.clear()
         self._outcome = None
         self.submission_tree = None
+
+
+@dataclass(frozen=True, slots=True)
+class _FactsObservation:
+    coordinate: AcceptedProjectionCoordinate
+    predicates: tuple[str, ...] | None
+    subject_kinds: tuple[str, ...] | None
+    result: Any
+
+
+def _replays(
+    observations: tuple[_BodyObservation, ...],
+    facts: tuple[_FactsObservation, ...],
+    *,
+    bodies: BodyVerifierProtocol,
+    query_facts_provider: Any,
+) -> bool:
+    """Whether every observed body read and fact build answers now exactly as it did."""
+    try:
+        for observation in observations:
+            actual = (
+                bodies.verify(observation.digest)
+                if observation.access is None
+                else cast(CaptureObjectStoreProtocol, bodies).read(
+                    observation.digest,
+                    access=BodyAccessContext.model_validate_json(observation.access),
+                )
+            )
+            if actual != observation.result:
+                return False
+        for fact in facts:
+            if query_facts_provider is None:
+                return False
+            actual = query_facts_provider(
+                fact.coordinate, predicates=fact.predicates, subject_kinds=fact.subject_kinds
+            )
+            if actual is not fact.result and actual != fact.result:
+                return False
+    except Exception:
+        # The full evaluation reproduces its own refusal or exception boundary.
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class AdmittedEvaluation:
+    """A submission's admission evaluation, for the same request's own settlement.
+
+    Settlement re-derives a candidate from durable records because activation
+    is, in general, a separate request. In the request that submitted it the
+    evaluation is still in hand: ``reusable`` returns it instead when the base
+    is the one it evaluated at, it was not rebased, the candidate and tree are
+    exactly the ones it produced, the derived-state epoch is unchanged and every
+    body read and fact build it observed answers the same. Anything else
+    re-evaluates in full.
+    """
+
+    owner: PreparedEvaluationAdapter
+    epoch: int
+    outcome: CandidateEvaluation
+    current: AcceptedProjectionCoordinate
+    actor_id: str
+    timestamp: str
+    mandate_digest: str | None
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...]
+    observations: tuple[_BodyObservation, ...]
+    facts: tuple[_FactsObservation, ...]
+
+    def reusable(
+        self,
+        *,
+        base: AcceptedProjectionCoordinate,
+        candidate: CandidateRecordAnyVersion,
+        candidate_tree: Mapping[str, bytes],
+        actor_id: str,
+        mandate_digest: str | None,
+        claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...],
+        bodies: BodyVerifierProtocol,
+        query_facts_provider: Any,
+    ) -> CandidateEvaluation | None:
+        outcome = self.outcome
+        assert outcome.candidate is not None  # admitted() holds only a candidate
+        if (
+            self.epoch != self.owner.epoch
+            or outcome.rebased
+            or outcome.state is None
+            or base != self.current
+            or candidate_tree is not outcome.tree
+            or candidate.candidate_digest != outcome.candidate.candidate_digest
+            or candidate.candidate.timestamp != self.timestamp
+            or actor_id != self.actor_id
+            or mandate_digest != self.mandate_digest
+            or claim_type_expansions != self.claim_type_expansions
+            or not _replays(
+                self.observations,
+                self.facts,
+                bodies=bodies,
+                query_facts_provider=query_facts_provider,
+            )
+            or self.epoch != self.owner.epoch
+        ):
+            self.owner.count("settlement_invalidated")
+            return None
+        self.owner.count("settlement_reused")
+        return outcome
 
 
 @dataclass(frozen=True)
@@ -320,6 +508,8 @@ class SubmittedProposal:
     tree: SnapshotTree
     #: The accepted coordinate the submission evaluated at and published against.
     current: AcceptedProjectionCoordinate
+    #: Its admission evaluation, when settlement may reuse it (see ``AdmittedEvaluation``).
+    evaluation: AdmittedEvaluation | None = None
 
 
 class SettlementHandoff:
@@ -332,7 +522,16 @@ class SettlementHandoff:
     activation that takes it consumes it, whatever proposal it names.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        owner: PreparedEvaluationAdapter | None = None,
+        *,
+        stable_run: str | None = None,
+    ) -> None:
+        #: The instance's adapter: without one, admission is not observed for reuse.
+        self.owner = owner
+        #: A settle run's own id: its journal receipts are stable in this request.
+        self.stable_run = stable_run
         self._submitted: SubmittedProposal | None = None
         self._taken = False
         #: The settle terminal's own condition check at the head it submits at,
@@ -345,13 +544,24 @@ class SettlementHandoff:
         result: ProposalResult,
         tree: Mapping[str, bytes],
         current: AcceptedProjectionCoordinate,
+        evaluation: AdmittedEvaluation | None = None,
     ) -> None:
         """Hold a durable submission; only a tree that stays immutable is held."""
         if self._taken or self._submitted is not None or result.candidate is None:
             return
         if not isinstance(tree, SnapshotTree):
             return
-        self._submitted = SubmittedProposal(result=result, tree=tree, current=current)
+        if evaluation is not None and evaluation.outcome.tree is not tree:
+            evaluation = None
+        self._submitted = SubmittedProposal(
+            result=result, tree=tree, current=current, evaluation=evaluation
+        )
+
+    def observer(self) -> PreparedEvaluationScope | None:
+        """A fresh scope observing one admission evaluation, or None without an owner."""
+        if self.owner is None or self._taken or self._submitted is not None:
+            return None
+        return PreparedEvaluationScope(self.owner, self.owner.epoch, stable_run=self.stable_run)
 
     def take(self, proposal_id: str) -> SubmittedProposal | None:
         """The submission of ``proposal_id``, once; None for any other proposal."""
@@ -376,7 +586,14 @@ class PreparedEvaluationAdapter:
     ) -> None:
         self._lock = threading.Lock()
         self._epoch = 0
-        self._counts = {"started": 0, "reused": 0, "invalidated": 0, "ineligible": 0}
+        self._counts = {
+            "started": 0,
+            "reused": 0,
+            "invalidated": 0,
+            "ineligible": 0,
+            "settlement_reused": 0,
+            "settlement_invalidated": 0,
+        }
         self.max_bytes, self.max_observations = max_bytes, max_observations
         owner.register(
             IndexDefinition("prepared-evaluation", "candidate", "1", "same-call-observations-v1"),

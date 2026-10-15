@@ -77,6 +77,7 @@ from cruxible_core.indexes.projection import (
 from cruxible_core.indexes.subject_identity import SubjectAssignmentAuthority
 from cruxible_core.ledger.bootstrap import generation_root
 from cruxible_core.ledger.git import GitLedger
+from cruxible_core.proposals.prepared_evaluation import AdmittedEvaluation
 from cruxible_core.proposals.proposal_message import generation_commit_message
 from cruxible_core.proposals.proposals import (
     AcceptedReferentsProvider,
@@ -765,8 +766,17 @@ def prepare_generation(
     | None = None,
     historical_artifact_provider: HistoricalArtifactProvider | None = None,
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
+    admitted: AdmittedEvaluation | None = None,
 ) -> VerifiedGenerationBundle:
-    """Build and verify a generation bundle without mutating main or serving state."""
+    """Build and verify a generation bundle without mutating main or serving state.
+
+    ``admitted`` is the admission evaluation of the same request's own
+    submission. It stands in for re-deriving the candidate only when it is
+    exactly reusable (``AdmittedEvaluation.reusable``: same base, unrebased,
+    the same candidate and tree, an unchanged derived-state epoch, every
+    observed body read and fact build answering the same) and the laws are the
+    build's own; every check below runs on it as on a fresh evaluation.
+    """
 
     if actor_binding.actor_id != proposal_actor_id:
         raise SettlementIntegrityError(
@@ -777,38 +787,57 @@ def prepare_generation(
     if ledger.read_main() != base.git_oid:
         raise SettlementIntegrityError("settlement base is not the current main ref")
     base_tree = (accepted_tree_provider or ledger.read_tree)(base.git_oid)
-    reevaluated = evaluate_proposal_tree(
-        base_tree=base_tree,
-        current_tree=base_tree,
-        proposed_tree=candidate_tree,
-        current=base,
-        bodies=bodies,
-        timestamp=candidate.candidate.timestamp,
-        rebased=False,
-        actor_id=actor_binding.actor_id,
-        claim_type_expansions=claim_type_expansions_from_candidate(candidate),
-        promotion_verifier=promotion_verifier,
-        query_facts_provider=query_facts_provider,
-        producer_receipt_resolver=producer_receipt_resolver,
-        replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
-        wire_version=candidate.tag,
-        acceptance_laws=laws,
-        tree_state_provider=tree_state_provider,
-        retained_tree=accepted_tree_provider or ledger.read_tree,
-        claim_law_provider=claim_law_provider,
-        attestation_principal_provider=attestation_principal_provider,
-        accepted_referents_provider=accepted_referents_provider,
-        principal_registry_provider=principal_registry_provider,
-        delegated_mandate_digest=mandate_digest,
-        historical_artifact_provider=historical_artifact_provider,
-        subject_assignment_authority=subject_assignment_authority,
-        historical_law_coordinates={
-            member.path: (
-                member.law_identifier,
-                candidate.law_digests[member.law_identifier],
-            )
-            for member in candidate.members
-        },
+    expansions = claim_type_expansions_from_candidate(candidate)
+    reused = (
+        None
+        if admitted is None or laws is not ACCEPTANCE_LAWS
+        else admitted.reusable(
+            base=base,
+            candidate=candidate,
+            candidate_tree=candidate_tree,
+            actor_id=actor_binding.actor_id,
+            mandate_digest=mandate_digest,
+            claim_type_expansions=expansions,
+            bodies=bodies,
+            query_facts_provider=query_facts_provider,
+        )
+    )
+    reevaluated = (
+        reused
+        if reused is not None
+        else evaluate_proposal_tree(
+            base_tree=base_tree,
+            current_tree=base_tree,
+            proposed_tree=candidate_tree,
+            current=base,
+            bodies=bodies,
+            timestamp=candidate.candidate.timestamp,
+            rebased=False,
+            actor_id=actor_binding.actor_id,
+            claim_type_expansions=expansions,
+            promotion_verifier=promotion_verifier,
+            query_facts_provider=query_facts_provider,
+            producer_receipt_resolver=producer_receipt_resolver,
+            replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
+            wire_version=candidate.tag,
+            acceptance_laws=laws,
+            tree_state_provider=tree_state_provider,
+            retained_tree=accepted_tree_provider or ledger.read_tree,
+            claim_law_provider=claim_law_provider,
+            attestation_principal_provider=attestation_principal_provider,
+            accepted_referents_provider=accepted_referents_provider,
+            principal_registry_provider=principal_registry_provider,
+            delegated_mandate_digest=mandate_digest,
+            historical_artifact_provider=historical_artifact_provider,
+            subject_assignment_authority=subject_assignment_authority,
+            historical_law_coordinates={
+                member.path: (
+                    member.law_identifier,
+                    candidate.law_digests[member.law_identifier],
+                )
+                for member in candidate.members
+            },
+        )
     )
     unproven = tuple(
         sorted(

@@ -2591,7 +2591,7 @@ def _service_write(
     )
     # This write activates what it admits, in this request: its submission is
     # handed to that activation instead of read back.
-    handoff = SettlementHandoff()
+    handoff = SettlementHandoff(instance.prepared_evaluations)
     submitted = coordinator.submit(view.intent.intent_id, actor=caller.actor, settlement=handoff)
     intent = submitted.intent
     changes = _change_outcomes(plan, lowered, intent)

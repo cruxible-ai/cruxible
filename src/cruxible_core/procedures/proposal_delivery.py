@@ -2241,7 +2241,13 @@ class ProposalTerminalEgressSink:
         result = existing
         # Only a submission this request makes itself hands its records to the
         # activation below; a recovered one is activated from what is stored.
-        handoff = SettlementHandoff() if existing is None else None
+        # This run's own journal receipts are stable within the request (maintainer
+        # ruling settle-reuses-first-evaluation-1015).
+        handoff = (
+            SettlementHandoff(self.instance.prepared_evaluations, stable_run=request.run_id)
+            if existing is None
+            else None
+        )
         if result is None:
             if request.capped_by is not None:
                 submission = ProposalSettleSubmission(

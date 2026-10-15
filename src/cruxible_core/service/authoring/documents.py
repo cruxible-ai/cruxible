@@ -659,12 +659,15 @@ def service_activate_playbill_proposal(
             "canonical sha256 digest"
         ) from exc
     submitted = None if handoff is None else handoff.take(proposal_id)
-    if submitted is not None:
-        proposal, candidate, base = _submitted_for_activation(instance, submitted)
+    in_hand = None if submitted is None else _submitted_for_activation(instance, submitted)
+    if submitted is not None and in_hand is not None:
+        proposal, candidate, base = in_hand
         evaluation = proposal.evaluation
         assert evaluation.evaluated_tree_oid is not None  # a candidate verdict names its tree
         candidate_tree: Mapping[str, bytes] = submitted.tree
     else:
+        # Not this request's own submission, or not what is stored: read it back.
+        submitted = None
         proposal, candidate = _candidate_for_proposal(instance, proposal_id)
         evaluation = proposal.evaluation
         if evaluation.evaluated_tree_oid is None:
@@ -702,6 +705,7 @@ def service_activate_playbill_proposal(
         ),
         proposal_actor_id=proposal.admission.actor_id,
         mandate_digest=mandate_digest,
+        admitted=None if submitted is None else submitted.evaluation,
     )
     if activation.status not in {"accepted", "lost_cas"}:
         raise SettlementIntegrityError("activation returned an unsupported terminal status")
@@ -739,35 +743,33 @@ def service_activate_playbill_proposal(
 
 def _submitted_for_activation(
     instance: PlaybillInstance, submitted: SubmittedProposal
-) -> tuple[ProposalResult, CandidateRecordAnyVersion, AcceptedProjectionCoordinate]:
+) -> tuple[ProposalResult, CandidateRecordAnyVersion, AcceptedProjectionCoordinate] | None:
     """The activation inputs of this request's own submission, without reading them back.
 
     What a read-back would establish is checked on the stored records it can
     see cheaply: the proposal is not withdrawn or rejected, its stored
     evaluation (which names the candidate digest and the evaluated tree) is
     exactly the one in hand, and it is not stale against the current head.
+    None when the stored records are not the ones in hand: activation then
+    reads everything back and settles from that, as any other request would.
     """
 
     proposal = submitted.result
     proposal_id = proposal.admission.proposal_id
     candidate = proposal.candidate
-    if candidate is None:
-        raise ProposalIntegrityError("a submission handed to activation has no candidate")
     evidence = instance.proposal_evidence()
     evidence.refuse_closed(proposal_id)
-    if evidence.read_evaluation(proposal_id) != proposal.evaluation:
-        raise ProposalIntegrityError(
-            "the stored proposal evaluation differs from the submission that wrote it"
-        )
-    if proposal.evaluation.candidate_digest != candidate.candidate_digest:
-        raise ProposalIntegrityError("the submission's evaluation names another candidate")
-    base = submitted.current
-    if proposal.evaluation.evaluated_base_oid != base.git_oid:
-        raise ProposalIntegrityError("the submission evaluated at another base")
+    if (
+        candidate is None
+        or proposal.evaluation.candidate_digest != candidate.candidate_digest
+        or proposal.evaluation.evaluated_base_oid != submitted.current.git_oid
+        or evidence.read_evaluation(proposal_id) != proposal.evaluation
+    ):
+        return None
     if instance.accepted_coordinate().semantic_root != candidate.candidate.parent_semantic_root:
         # The list would call it stale: accepted state moved past its parent.
         raise ProposalStale(proposal_id)
-    return proposal, candidate, base
+    return proposal, candidate, submitted.current
 
 
 def _resume_waiting_kits(instance: PlaybillInstance, candidate: CandidateRecordAnyVersion) -> None:
