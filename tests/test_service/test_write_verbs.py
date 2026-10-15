@@ -1822,7 +1822,7 @@ def test_accept_never_and_a_tier_without_activation_stop_at_the_proposal(
     # The caller's own tier is why activation stopped: the rendered next step
     # must not read as a command this caller can run themselves.
     assert tier.approval.activate.startswith("someone who can runs ")
-    assert "cruxible proposal activate" in tier.approval.activate
+    assert "proposal_activate" in tier.approval.activate
     assert tier.next == tier.approval.activate
     assert _values(instance, WI1, "status") == [] and _values(instance, WI2, "status") == []
 
