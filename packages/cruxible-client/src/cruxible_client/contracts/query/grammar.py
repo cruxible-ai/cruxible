@@ -9,16 +9,16 @@ the PC-F query-engine slice; nothing here reads accepted state.
 
 from __future__ import annotations
 
-import json
 import re
 import unicodedata
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, cast, get_args, get_origin
+from typing import Annotated, Any, Literal, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
+from cruxible_client.contracts.errors import FormatError
 
 _BINDING_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _PARAMETER_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -39,67 +39,113 @@ QueryTraversalDirection = Literal["forward", "reverse"]
 QuerySubjectField = Literal["subject_id", "subject_kind"]
 
 
-def reinsert_literal_discriminators(instance: object, data: object) -> object:
-    """Restore every single-valued ``Literal`` field a dump dropped, recursively.
+class QueryDiscriminatorMissingError(FormatError):
+    """A tagged-union payload in a query declaration names no variant.
 
-    A ``tag``/``kind``/``artifact_format``-style field pinned to one literal
-    value is a format or discriminator marker, not an ordinary default that is
-    safe to omit: a discriminated union (or a version-checked loader) cannot
-    re-parse a dump that silently dropped it, which is exactly what
-    ``model_dump(exclude_defaults=True)`` or ``exclude_unset=True`` does by
-    default. Detected structurally (a ``Literal`` annotation with exactly one
-    allowed value), so every model built on this convention is covered
-    without having to name each field.
-
-    Walks ``data`` beside the ``instance`` that produced it, in plain Python
-    after the real dump -- never as a registered pydantic serializer. A
-    serializer is part of the model's core schema, and FastAPI/pydantic mint
-    a separate, far less specific "-Output" JSON Schema variant for any model
-    whose serialization can no longer be determined statically; that would
-    move the served OpenAPI surface's pin for the worse (an object that
-    documents no properties) merely from adding this quality-of-life fix.
+    Variant ``kind`` fields carry a default so authors never type them, and
+    ``model_dump(exclude_defaults=True)`` or ``exclude_unset=True`` therefore
+    leaves them out. Such a payload cannot say which variant it is, so parsing
+    it refuses here, naming the field and the fix, instead of guessing.
     """
 
-    if isinstance(instance, BaseModel):
-        if not isinstance(data, dict):
-            return data
-        for name, field in type(instance).model_fields.items():
-            value = getattr(instance, name)
-            if name in data:
-                data[name] = reinsert_literal_discriminators(value, data[name])
-            elif get_origin(field.annotation) is Literal and len(get_args(field.annotation)) == 1:
-                data[name] = value
-        return data
-    if isinstance(instance, Mapping) and isinstance(data, Mapping):
-        return {
-            key: reinsert_literal_discriminators(value, data.get(key))
-            for key, value in instance.items()
-        }
-    if isinstance(instance, list | tuple) and isinstance(data, list):
-        return [reinsert_literal_discriminators(item, sub) for item, sub in zip(instance, data)]
-    return data
+    error_code = "cruxible.query.discriminator_missing"
+
+    def __init__(
+        self, *, model: str, field_path: str, discriminator: str, tags: tuple[str, ...]
+    ) -> None:
+        self.model = model
+        self.field_path = field_path
+        self.discriminator = discriminator
+        self.tags = tags
+        super().__init__(
+            f"{self.error_code}: {model}.{field_path} has no `{discriminator}`, so it names "
+            f"none of its variants ({', '.join(tags)}). Set `{discriminator}` on it; a dump "
+            "made with exclude_defaults=True or exclude_unset=True omits defaulted "
+            "discriminators, so dump it without those flags."
+        )
 
 
-def dump_with_literal_discriminators(
-    instance: BaseModel, dump: Callable[..., dict[str, Any]], **kwargs: Any
-) -> dict[str, Any]:
-    data = dump(**kwargs)
-    if kwargs.get("exclude_defaults") or kwargs.get("exclude_unset"):
-        data = cast(dict[str, Any], reinsert_literal_discriminators(instance, data))
-    return data
+# (field, holds a sequence, discriminator, variant tags) per model with a tagged union.
+_UnionSlot = tuple[str, bool, str, tuple[str, ...]]
+_UNION_SLOTS: dict[type[BaseModel], tuple[_UnionSlot, ...]] = {}
+
+
+def _tagged_union(
+    annotation: object, discriminator: object = None
+) -> tuple[str, tuple[str, ...]] | None:
+    if get_origin(annotation) is Annotated:
+        base, *metadata = get_args(annotation)
+        for item in metadata:
+            named = getattr(item, "discriminator", None)
+            if isinstance(named, str):
+                return _tagged_union(base, named)
+        return None
+    if not isinstance(discriminator, str):
+        return None
+    members = [
+        member
+        for member in get_args(annotation)
+        if isinstance(member, type) and issubclass(member, BaseModel)
+    ]
+    tags = tuple(
+        sorted(
+            str(tag)
+            for member in members
+            for tag in get_args(member.model_fields[discriminator].annotation)
+        )
+    )
+    return discriminator, tags
+
+
+def _union_slots(model: type[BaseModel]) -> tuple[_UnionSlot, ...]:
+    slots: list[_UnionSlot] = []
+    for name, field in model.model_fields.items():
+        annotation = field.annotation
+        found = _tagged_union(annotation, field.discriminator)
+        many = False
+        if found is None:
+            for argument in get_args(annotation):
+                found = _tagged_union(argument)
+                if found is not None:
+                    many = get_origin(annotation) in (tuple, list)
+                    break
+        if found is not None:
+            slots.append((name, many, *found))
+    return tuple(slots)
+
+
+def require_union_discriminators(model: type[BaseModel], data: object) -> None:
+    """Refuse, typed, a tagged-union member of ``data`` that names no variant."""
+
+    if not isinstance(data, Mapping):
+        return
+    slots = _UNION_SLOTS.get(model)
+    if slots is None:
+        slots = _UNION_SLOTS[model] = _union_slots(model)
+    for name, many, discriminator, tags in slots:
+        value = data.get(name)
+        if many:
+            items = list(enumerate(value)) if isinstance(value, list | tuple) else []
+        else:
+            items = [(None, value)]
+        for index, item in items:
+            if isinstance(item, Mapping) and discriminator not in item:
+                raise QueryDiscriminatorMissingError(
+                    model=model.__name__,
+                    field_path=name if index is None else f"{name}[{index}]",
+                    discriminator=discriminator,
+                    tags=tags,
+                )
 
 
 class _StrictQueryModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        return dump_with_literal_discriminators(self, super().model_dump, **kwargs)
-
-    def model_dump_json(self, **kwargs: Any) -> str:
-        if not (kwargs.get("exclude_defaults") or kwargs.get("exclude_unset")):
-            return super().model_dump_json(**kwargs)
-        indent = kwargs.pop("indent", None)
-        return json.dumps(self.model_dump(mode="json", **kwargs), indent=indent)
+    @model_validator(mode="before")
+    @classmethod
+    def _require_discriminators(cls, data: Any) -> Any:
+        require_union_discriminators(cls, data)
+        return data
 
 
 def _nfc(value: str, *, label: str) -> str:
@@ -727,6 +773,7 @@ __all__ = [
     "QueryComparisonOperator",
     "QueryConjunctionFilter",
     "QueryDisjunctionFilter",
+    "QueryDiscriminatorMissingError",
     "QueryEntry",
     "QueryArtifactsEntry",
     "QueryArtifactsEntry",
@@ -753,5 +800,6 @@ __all__ = [
     "sorted_unique",
     "validate_ordering_keys",
     "predicate_name",
+    "require_union_discriminators",
     "subject_kind_name",
 ]

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import base64
-import json
 import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -69,7 +68,6 @@ from cruxible_client.contracts.proposal_models import (
     validate_change_set_rationale,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
-from cruxible_client.contracts.query.grammar import dump_with_literal_discriminators
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
@@ -89,15 +87,6 @@ _SUBJECT_SHORTHAND_RE = re.compile(
 
 class _StrictInputModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        return dump_with_literal_discriminators(self, super().model_dump, **kwargs)
-
-    def model_dump_json(self, **kwargs: Any) -> str:
-        if not (kwargs.get("exclude_defaults") or kwargs.get("exclude_unset")):
-            return super().model_dump_json(**kwargs)
-        indent = kwargs.pop("indent", None)
-        return json.dumps(self.model_dump(mode="json", **kwargs), indent=indent)
 
 
 class LiteralObjectInput(_StrictInputModel):

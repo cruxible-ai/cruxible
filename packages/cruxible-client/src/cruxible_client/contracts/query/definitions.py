@@ -51,7 +51,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjection,
     QueryReferenceInventory,
     QueryTraversalStep,
-    dump_with_literal_discriminators,
+    require_union_discriminators,
     sorted_unique,
     validate_ordering_keys,
 )
@@ -78,14 +78,11 @@ class QueryDefinitionFormatError(FormatError):
 class _StrictQueryDefinitionModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        return dump_with_literal_discriminators(self, super().model_dump, **kwargs)
-
-    def model_dump_json(self, **kwargs: Any) -> str:
-        if not (kwargs.get("exclude_defaults") or kwargs.get("exclude_unset")):
-            return super().model_dump_json(**kwargs)
-        indent = kwargs.pop("indent", None)
-        return json.dumps(self.model_dump(mode="json", **kwargs), indent=indent)
+    @model_validator(mode="before")
+    @classmethod
+    def _require_discriminators(cls, data: Any) -> Any:
+        require_union_discriminators(cls, data)
+        return data
 
 
 class QueryEvaluationPolicy(_StrictQueryDefinitionModel):
