@@ -8,6 +8,7 @@ import sqlite3
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_client.contracts.subjects import render_subject
 from cruxible_core.compiler.assembler import ProjectionAssembler
@@ -189,16 +190,36 @@ def test_changed_region_reads_stay_fixed_as_unrelated_owners_grow(tmp_path, monk
 
 
 def test_detached_state_models_and_merkle_shells_cannot_poison_reuse(tmp_path):
+    from dataclasses import FrozenInstanceError
+
     tree, counts, _ = _fixture(tmp_path, _tree())
     view = derive_indexed_state(tree)
-    view.dependencies.states[_path("anchor")].identity.__dict__["name"] = "forged"
+    # A parsed Subject's identity is frozen Pydantic, and ParseMemo shares the
+    # one sealed parse of this content with every reader: the public API
+    # refuses an in-place write, so a caller cannot poison the shared parse
+    # that the next `derive_indexed_state(tree)` call reuses. (A `__dict__`
+    # bypass is not part of the contract -- it is not refused, and with a
+    # parse now potentially shared, using it anyway can poison reuse for
+    # everyone, which is exactly what this test now checks cannot happen
+    # through the supported API.)
+    with pytest.raises(ValidationError):
+        view.dependencies.states[_path("anchor")].identity.name = "forged"
+    # The merkle/dependency shells handed to a caller are plain frozen
+    # dataclasses, rebuilt detached on every read; the public API refuses to
+    # mutate them in place too.
     node = view.merkle.nodes[_path("anchor")]
-    node.__dict__["member_digest"] = "forged"
-    object.__setattr__(node.digest, "value", "0" * 64)
-    object.__setattr__(view.merkle.root, "value", "1" * 64)
-    object.__setattr__(view.dependencies.edge_tree.root, "value", "2" * 64)
-    view.dependencies.__dict__["states"] = {}
-    view.__dict__["members"] = {}
+    with pytest.raises(FrozenInstanceError):
+        node.member_digest = "forged"
+    with pytest.raises(FrozenInstanceError):
+        node.digest.value = "0" * 64
+    with pytest.raises(FrozenInstanceError):
+        view.merkle.root.value = "1" * 64
+    with pytest.raises(FrozenInstanceError):
+        view.dependencies.edge_tree.root.value = "2" * 64
+    with pytest.raises(FrozenInstanceError):
+        view.dependencies.states = {}
+    with pytest.raises(FrozenInstanceError):
+        view.members = {}
     _same(derive_indexed_state(tree), build_tree_state(tree))
     assert counts["opened"] == counts["closed"]
 

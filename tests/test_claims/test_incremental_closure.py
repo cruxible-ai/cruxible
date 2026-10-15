@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import random
 
+import pytest
+from pydantic import ValidationError
+
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -290,17 +293,33 @@ def test_retained_dependency_rows_and_parse_memo_cannot_be_poisoned() -> None:
     index = build_dependency_index(tree)
     expected = build_dependency_index(tree)
     retained = index.states[_path("dependent")]
-    # Frozen Pydantic models do not freeze the dictionaries beneath them.
-    retained.identity.__dict__["name"] = "poisoned"
-    retained.pins[0].target.__dict__["name"] = "poisoned"
-    retained.lifecycle.__dict__["state"] = "retired"
-    retained.__dict__["artifact_digest"] = "poisoned"
-    index.edges_by_source[_path("dependent")][0].__dict__["target_path"] = "poisoned"
-    index.edges_by_target[_path("anchor")][0].__dict__["source_path"] = "poisoned"
+    # A parsed artifact is frozen Pydantic at every depth, shared or not: the
+    # public API refuses an in-place write anywhere in the tree, so a caller
+    # cannot poison a retained row, a retained edge, or (via parse_dependency_
+    # artifact / parse_subject) the one sealed parse ParseMemo shares with
+    # every other reader of this exact content. There is no supported way to
+    # reach past that refusal (a `__dict__` or `object.__setattr__` bypass is
+    # not part of the contract, and -- now that a parse can be the same shared
+    # object every caller gets -- doing it anyway can corrupt reuse for
+    # everyone, which is exactly the failure mode this test used to rely on).
+    with pytest.raises(ValidationError):
+        retained.identity.name = "poisoned"
+    with pytest.raises(ValidationError):
+        retained.pins[0].target.name = "poisoned"
+    with pytest.raises(ValidationError):
+        retained.lifecycle.state = "retired"
+    with pytest.raises(ValidationError):
+        retained.artifact_digest = "poisoned"
+    with pytest.raises(ValidationError):
+        index.edges_by_source[_path("dependent")][0].target_path = "poisoned"
+    with pytest.raises(ValidationError):
+        index.edges_by_target[_path("anchor")][0].source_path = "poisoned"
     parsed = parse_dependency_artifact(_path("dependent"), tree[_path("dependent")])
     assert parsed is not None
-    parsed.pins[0].target.__dict__["name"] = "poisoned"
-    parsed.__dict__["pins"] = ()
+    with pytest.raises(ValidationError):
+        parsed.pins[0].target.name = "poisoned"
+    with pytest.raises(ValidationError):
+        parsed.pins = ()
     _assert_same_index(index, expected)
     _assert_same_index(build_dependency_index(tree), expected)
     revised = {**tree, _path("anchor"): render_subject(_subject("anchor", revision=1))}

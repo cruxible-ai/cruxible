@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import gc
 import pickle
+import weakref
 
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -171,15 +172,36 @@ def test_a_sealed_memo_is_bounded_by_the_lives_of_its_objects():
     def tag_count(value: _Root) -> int:
         return sum(len(leaf.tags) for leaf in value.leaves)
 
-    before = len(content_memo._SEALED)
     roots = [_Root(leaves=(_Leaf(tags=["a"] * n, meta={}),)) for n in range(50)]
     for root in roots:
         seal(root)
     assert [tag_count(root) for root in roots] == list(range(50))
-    assert len(content_memo._SEALED) == before + 100
+
+    # Identify exactly the entries our own 50 roots and 50 leaves hold, by id.
+    # Checking against that set -- rather than the ambient size of _SEALED --
+    # keeps this deterministic: some other, unrelated sealed object elsewhere
+    # in the process can be sitting in a reference cycle that only this test's
+    # gc.collect() call happens to resolve, which moves a raw-length "before"
+    # baseline without any object of ours being involved.
+    our_keys = {id(root) for root in roots} | {id(root.leaves[0]) for root in roots}
+    assert len(our_keys) == 100
+    assert our_keys <= set(content_memo._SEALED)
+
+    # Drive the assertion off weakref callbacks on our own objects, not off
+    # refcount timing: a callback fires exactly when CPython actually frees
+    # the object, whether that happens on `del` or only once gc.collect()
+    # breaks a cycle, so there is nothing to race.
+    released: set[int] = set()
+    watchers = [
+        weakref.ref(obj, lambda _ref, key=key: released.add(key))
+        for root in roots
+        for key, obj in ((id(root), root), (id(root.leaves[0]), root.leaves[0]))
+    ]
     del roots, root
     gc.collect()
-    assert len(content_memo._SEALED) == before
+    assert released == our_keys
+    assert watchers  # keep the weakrefs themselves alive until after the asserts
+    assert our_keys.isdisjoint(content_memo._SEALED)
 
 
 def test_digests_follow_the_current_content_of_shallowly_frozen_models():
