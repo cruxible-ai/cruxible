@@ -102,9 +102,48 @@ def normalize_canonical(value: object, *, location: str = "$") -> CanonicalValue
     raise CanonicalEncodingError(f"{location}: unsupported value type {type(value).__name__}")
 
 
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _canonical_string(value: str) -> bool:
+    # Exactly what ``_normalize_string`` returns unchanged: NFC and surrogate-free.
+    return value.isascii() or (
+        unicodedata.is_normalized("NFC", value) and _SURROGATE.search(value) is None
+    )
+
+
+def _canonical_ready(value: object) -> bool:
+    """Whether ``value`` is already in the closed canonical value set, exactly.
+
+    Exact ``str`` (NFC, no surrogate), ``int``, ``bool`` and ``None``, and exact
+    lists and string-keyed dicts of them (the sealed containers included): for
+    such a value ``normalize_canonical`` changes nothing a JSON encoder sees --
+    its keys are already NFC, so none can collide, and sorting by code point is
+    sorting by UTF-8 -- so the stdlib encoder writes the canonical bytes
+    directly. Anything else (a float, bytes, a tuple, a subclass, a non-NFC or
+    surrogate string) takes the normalizing path and refuses exactly as before.
+    """
+
+    kind = type(value)
+    if kind is str:
+        return _canonical_string(cast(str, value))
+    if kind is int or kind is bool or value is None:
+        return True
+    if kind is dict or kind is FrozenDict:
+        for key, item in cast(dict[object, object], value).items():
+            if type(key) is not str or not _canonical_string(key) or not _canonical_ready(item):
+                return False
+        return True
+    if kind is list or kind is FrozenList:
+        return all(_canonical_ready(item) for item in cast(list[object], value))
+    return False
+
+
 def canonical_bytes(value: object) -> bytes:
     """Encode one normalized value as whitespace-free UTF-8 JSON."""
 
+    if _canonical_ready(value):
+        return canonical_json(value).encode("utf-8")
     return canonical_json(normalize_canonical(value)).encode("utf-8")
 
 
@@ -295,6 +334,8 @@ def canonical_equal(left: object, right: object) -> bool:
 def pretty_canonical_bytes(value: object) -> bytes:
     """Encode one normalized value as sorted indent-2 JSON with one final LF."""
 
+    if _canonical_ready(value):
+        return pretty_json(value).encode("utf-8") + b"\n"
     return pretty_json(normalize_canonical(value)).encode("utf-8") + b"\n"
 
 

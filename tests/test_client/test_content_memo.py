@@ -333,6 +333,7 @@ def test_composed_digests_and_cheap_comparisons_equal_the_canonical_ones():
         canonical_list_digest,
         composed_canonical_digest,
     )
+    from cruxible_client.contracts.errors import CanonicalEncodingError
 
     items = [{"b": "é", "a": [1, "x", None]}, {"z": True}, {}]
     payload = {"sequence": 3, "alpha": "ç", "nested": {"y": [False, None]}}
@@ -349,9 +350,9 @@ def test_composed_digests_and_cheap_comparisons_equal_the_canonical_ones():
             "whole": canonical_bytes(items[0]),
         },
     ) == canonical_digest("d", {**payload, "members": items, "law_evidence": [], "whole": items[0]})
-    with pytest.raises(ValueError):
+    with pytest.raises(CanonicalEncodingError):
         canonical_list_digest("d", "tag", encoded)
-    with pytest.raises(ValueError):
+    with pytest.raises(CanonicalEncodingError):
         composed_canonical_digest("d", {"members": 1}, {"members": canonical_list_bytes(encoded)})
     for path in ("claims/ab/CLM-1.json", "subjects/kïnd/é.json"):
         reference = DependencyProofReference(
@@ -495,3 +496,52 @@ def test_a_model_holding_sealed_models_composes_their_encodings(monkeypatch):
         assert seal(subclassed)
         other = _Holder(one=subclassed, many=(first,), plain={})
         assert canonical.model_canonical_bytes(other) == real(other.model_dump(mode="json"))
+
+
+def test_the_direct_encoder_writes_exactly_the_normalizing_encoders_bytes():
+    import random
+
+    from cruxible_client.contracts import canonical
+    from cruxible_client.contracts.errors import CanonicalEncodingError
+    from cruxible_client.contracts.primitives import canonical_json, pretty_json
+
+    def outcome(encode, value):  # type: ignore[no-untyped-def]
+        try:
+            return encode(value)
+        except CanonicalEncodingError as exc:
+            return (type(exc), str(exc))
+
+    def normalizing(value):  # type: ignore[no-untyped-def]
+        return canonical_json(canonical.normalize_canonical(value)).encode("utf-8")
+
+    def normalizing_pretty(value):  # type: ignore[no-untyped-def]
+        return pretty_json(canonical.normalize_canonical(value)).encode("utf-8") + b"\n"
+
+    # NFC and decomposed spellings (which collide as keys), surrogates, escapes,
+    # astral characters, big integers, bools, sealed containers, and refusals.
+    strings = ["", "a", "é", "é", "Å", "\ud800", "x\udfffy", "😀", '\x00\n"\\', "ß"]
+    scalars: list[object] = [*strings, 0, -5, 10**30, True, False, None]
+    random_values = random.Random(1015)
+
+    def value(depth: int = 0) -> object:
+        roll = random_values.random()
+        if depth > 3 or roll < 0.3:
+            return random_values.choice(scalars)
+        if roll < 0.6:
+            return [value(depth + 1) for _ in range(random_values.randint(0, 4))]
+        return {
+            random_values.choice(strings): value(depth + 1)
+            for _ in range(random_values.randint(0, 4))
+        }
+
+    fixed: list[object] = [
+        1.5,
+        b"x",
+        (1, 2),
+        {1: "x"},
+        FrozenDict({"b": FrozenList([1, "é"]), "a": None}),
+        {"é": 1, "é": 2},
+    ]
+    for item in [*fixed, *(value() for _ in range(5000))]:
+        assert outcome(canonical.canonical_bytes, item) == outcome(normalizing, item)
+        assert outcome(canonical.pretty_canonical_bytes, item) == outcome(normalizing_pretty, item)
