@@ -322,10 +322,7 @@ def _identical(left: object, right: object) -> bool:
         mine = cast(dict[object, object], left)
         theirs = cast(dict[object, object], right)
         return len(mine) == len(theirs) and all(
-            type(key) is str
-            and key.isascii()
-            and key in theirs
-            and _identical(item, theirs[key])
+            type(key) is str and key.isascii() and key in theirs and _identical(item, theirs[key])
             for key, item in mine.items()
         )
     if kind in _LISTS:

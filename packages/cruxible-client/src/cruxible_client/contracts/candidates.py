@@ -309,6 +309,13 @@ class DependencyProofReference(_StrictCandidateModel):
     def _pin_role(cls, value: str) -> str:
         return governance_identifier(value, label="dependency proof pin role")
 
+    @model_validator(mode="after")
+    def _sealed(self) -> "DependencyProofReference":
+        # Final once validated: sealed, its sort key (``dependency_proof_order``)
+        # is encoded once however many proof sets and edge sets sort it.
+        seal(self)
+        return self
+
 
 @sealed_memo
 def dependency_proof_order(reference: DependencyProofReference) -> bytes:

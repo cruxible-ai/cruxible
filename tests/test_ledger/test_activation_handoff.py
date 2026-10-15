@@ -130,7 +130,10 @@ def test_two_served_writes_handoff_without_recovery_and_detach_mutable_state(
             with instance.bind_accepted_projection(instance.accepted_coordinate()):
                 pass
             expected_record = render_change_set(instance.accepted_history()[-1].record)
-            bundles[-1].record.law_digests.clear()
+            # The bundle's receipt is sealed when built: nothing can change it in
+            # place, so nothing can write through it into instance state.
+            with pytest.raises(TypeError):
+                bundles[-1].record.law_digests.clear()
             # The generation tree is an immutable snapshot; nothing can write
             # through it into instance state.
             with pytest.raises(TypeError):
