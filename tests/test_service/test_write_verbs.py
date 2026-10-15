@@ -369,6 +369,97 @@ def test_self_evidence_a_field_does_not_admit_lands_uncovered_and_says_so(
     assert supported.changes[0].verdict == "supported" and supported.warnings == ()
 
 
+def _counted_value_reads(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Record every read-path verdict read a write makes."""
+
+    from cruxible_core.service.claims import claim_reads
+
+    calls: list[Any] = []
+    real = claim_reads.service_read_claim_values
+
+    def counted(target: PlaybillInstance, *, request: Any) -> Any:
+        calls.append(request)
+        return real(target, request=request)
+
+    monkeypatch.setattr(claim_reads, "service_read_claim_values", counted)
+    return calls
+
+
+def _read_path_verdicts(instance: PlaybillInstance, *fields: str) -> dict[str, str]:
+    """Every live wi-1 Claim's verdict at the head, by the read machinery."""
+
+    from cruxible_client.contracts.claim_reads import ClaimValuesRequest
+    from cruxible_core.service.claims.claim_reads import service_read_claim_values
+
+    result = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequest(
+            at=write_verbs._full(instance.accepted_coordinate()),
+            subject_paths=(subject_path(KIND, "wi-1"),),
+            predicates=tuple(sorted(f"{KIND}.{field}" for field in fields)),
+        ),
+    )
+    return {write_verbs._bare(row.claim_id): row.verdict for row in result.values}
+
+
+def test_a_commit_reports_the_admitted_candidates_verdicts_without_reading_them_back(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admission already judged every written Claim; the commit result carries that."""
+
+    calls = _counted_value_reads(monkeypatch)
+    outcome = _write(instance, _set(WI1, "status", "ready"), _set(WI1, "measured", 3))
+    assert outcome.status == "accepted", outcome
+    assert calls == []
+    verdicts = {change.claim: change.verdict for change in outcome.changes}
+    assert sorted(str(value) for value in verdicts.values()) == ["supported", "uncovered"]
+    assert verdicts == _read_path_verdicts(instance, "status", "measured")
+    (warning,) = outcome.warnings
+    assert (warning.change, warning.verdict) == (1, "uncovered")
+    assert warning.repair is not None and outcome.next == warning.repair
+
+
+def test_a_commit_reads_back_only_the_claims_it_did_not_write(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    live = _write(instance, _add(WI1, "labels", "urgent")).changes[0]
+    calls = _counted_value_reads(monkeypatch)
+    outcome = _write(instance, _add(WI1, "labels", "urgent"), _set(WI1, "status", "ready"))
+    assert outcome.status == "accepted" and outcome.proposal is not None, outcome
+    # The already-live add was not in the candidate: it alone is read, at the new head.
+    (request,) = calls
+    assert request.predicates == (f"{KIND}.labels",)
+    assert request.at == write_verbs._full(instance.accepted_coordinate())
+    present, fresh = outcome.changes
+    assert present.claim == live.claim and (present.verdict, fresh.verdict) == (
+        "uncovered",
+        "supported",
+    )
+    read = _read_path_verdicts(instance, "labels", "status")
+    assert {present.claim: present.verdict, fresh.claim: fresh.verdict}.items() <= read.items()
+
+
+def test_a_generation_that_is_not_the_admitted_candidate_is_read_back_whole(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a generation whose record names the evaluated candidate reuses its verdicts.
+
+    Write-verb admissions are held to the preflight head (every Claim change pins
+    its slot), so a two-delta admission onto a moved head is refused before it
+    can be accepted; should any accepted generation ever differ from the
+    candidate admission evaluated, the commit re-reads every touched slot.
+    """
+
+    calls = _counted_value_reads(monkeypatch)
+    monkeypatch.setattr(PlaybillInstance, "accepted_candidate_digest", lambda _self, _oid: None)
+    outcome = _write(instance, _set(WI1, "status", "ready"), _set(WI1, "measured", 3))
+    assert outcome.status == "accepted", outcome
+    (request,) = calls
+    assert request.predicates == (f"{KIND}.measured", f"{KIND}.status")
+    verdicts = {change.claim: change.verdict for change in outcome.changes}
+    assert verdicts == _read_path_verdicts(instance, "status", "measured")
+
+
 class _Sent(Exception):
     def __init__(self, request: Any) -> None:
         self.request = request
@@ -1143,14 +1234,14 @@ def test_a_competing_set_between_planning_and_submit_refuses_leaving_nothing_to_
     real = write_verbs._coordinator
     interleaved: list[WriteOutcome | None] = []
 
-    def coordinator(target: PlaybillInstance, claim_ids: Any) -> Any:
+    def coordinator(target: PlaybillInstance, claim_ids: Any, **kwargs: Any) -> Any:
         # Planning is done; a competing set lands before this write is admitted.
         if not interleaved:
             interleaved.append(None)
             interleaved[0] = _write(
                 target, _set(subject, "status", "blocked"), because="Someone else."
             )
-        return real(target, claim_ids)
+        return real(target, claim_ids, **kwargs)
 
     monkeypatch.setattr(write_verbs, "_coordinator", coordinator)
     options = {"at": read_at} if pinned else {}
@@ -1185,11 +1276,11 @@ def test_a_contender_joining_the_slot_before_admission_refuses_the_retire_unprop
     if stage == "before_create":
         real = write_verbs._coordinator
 
-        def coordinator(target: PlaybillInstance, claim_ids: Any) -> Any:
+        def coordinator(target: PlaybillInstance, claim_ids: Any, **kwargs: Any) -> Any:
             if not landed:
                 landed.append(True)
                 _contend(target)
-            return real(target, claim_ids)
+            return real(target, claim_ids, **kwargs)
 
         monkeypatch.setattr(write_verbs, "_coordinator", coordinator)
     else:
@@ -1513,11 +1604,11 @@ def test_a_contender_after_the_expect_check_still_refuses_at_admission(
     real = write_verbs._coordinator
     landed: list[bool] = []
 
-    def coordinator(target: PlaybillInstance, claim_ids: Any) -> Any:
+    def coordinator(target: PlaybillInstance, claim_ids: Any, **kwargs: Any) -> Any:
         if not landed:
             landed.append(True)
             _contend(target)
-        return real(target, claim_ids)
+        return real(target, claim_ids, **kwargs)
 
     monkeypatch.setattr(write_verbs, "_coordinator", coordinator)
     outcome = _write(instance, _set(WI1, "status", "done", expect="ready"))

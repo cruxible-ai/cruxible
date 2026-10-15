@@ -60,7 +60,10 @@ from cruxible_client.contracts.authoring.models import (
     authoring_member_identity,
 )
 from cruxible_client.contracts.builtin_claim_types import admits_object_subject
-from cruxible_client.contracts.candidates import canonical_candidate_timestamp
+from cruxible_client.contracts.candidates import (
+    CandidateRecordAnyVersion,
+    canonical_candidate_timestamp,
+)
 from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
     canonicalize_literal,
@@ -2170,6 +2173,31 @@ def _accepted_verdicts(
     return {_bare(row.claim_id): row.verdict for row in result.values}
 
 
+def _committed_verdicts(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    plan: _Plan,
+    candidate: CandidateRecordAnyVersion | None,
+) -> dict[str, str]:
+    """Each written Claim's verdict at the generation this write was accepted as.
+
+    Admission evaluated the candidate against the head it landed on -- after
+    rebasing it onto that head when the head had moved past preflight (the
+    two-delta admission), so a merged-in change is already in that evaluation --
+    and activation publishes exactly that candidate on exactly that head. When
+    the accepted generation's record names this candidate, its law evidence is
+    therefore every written Claim's verdict there, and only the Claims it did
+    not write (already-live changes) are read at the accepted coordinate. Any
+    other generation (none should occur) is read whole, as before.
+    """
+
+    if candidate is None or (
+        instance.accepted_candidate_digest(coordinate.git_oid) != candidate.candidate_digest
+    ):
+        return _accepted_verdicts(instance, coordinate, plan)
+    return _pending_verdicts(instance, coordinate, plan, _candidate_verdicts(candidate))
+
+
 def _pending_verdicts(
     instance: PlaybillInstance,
     head: AcceptedProjectionCoordinate,
@@ -2454,7 +2482,10 @@ def _approval_reason(
 
 
 def _coordinator(
-    instance: PlaybillInstance, claim_ids: Sequence[str]
+    instance: PlaybillInstance,
+    claim_ids: Sequence[str],
+    *,
+    admitted: list[CandidateRecordAnyVersion] | None = None,
 ) -> AuthoringIntentCoordinator:
     pending: Iterator[str] = iter(tuple(claim_ids))
 
@@ -2467,6 +2498,7 @@ def _coordinator(
         instance=instance,
         store=AuthoringIntentCoordinator.for_instance(instance).store,
         claim_id_factory=mint,
+        on_admitted=None if admitted is None else admitted.append,
     )
 
 
@@ -2530,7 +2562,10 @@ def _service_write(
         lowered = _lower(plan, because=request.because, planned_at=head)
     except (WriteRefusalError, ReadRefusalError) as error:
         return refuse(_refusal(error))
-    coordinator = _coordinator(instance, lowered.claim_ids)
+    # The candidate admission evaluated, kept so an accepted write reports the
+    # verdicts that evaluation computed instead of re-deriving them.
+    admitted: list[CandidateRecordAnyVersion] = []
+    coordinator = _coordinator(instance, lowered.claim_ids, admitted=admitted)
     timestamp = canonical_candidate_timestamp(utc_now())
     subjects_added = tuple(
         f"{shell.subject_kind}/{shell.subject_id}" for shell in plan.subjects.values()
@@ -2586,6 +2621,7 @@ def _service_write(
             changes=changes,
             subjects_added=subjects_added,
             proposal=None,
+            candidate=admitted[-1] if admitted else None,
         )
     assert status.proposal_id is not None
     proposal_id = status.proposal_id
@@ -2625,6 +2661,7 @@ def _service_write(
                 changes=changes,
                 subjects_added=subjects_added,
                 proposal=WriteProposalRef(proposal_id=proposal_id, state="accepted"),
+                candidate=admitted[-1] if admitted else None,
             )
         return WriteOutcome(
             status="refused",
@@ -2778,6 +2815,7 @@ def _accepted(
     changes: tuple[ChangeOutcome, ...],
     subjects_added: tuple[str, ...],
     proposal: WriteProposalRef | None,
+    candidate: CandidateRecordAnyVersion | None = None,
 ) -> WriteOutcome:
     coordinate = (
         instance.accepted_coordinate()
@@ -2795,7 +2833,7 @@ def _accepted(
         head=coordinate,
         plan=plan,
         changes=changes,
-        verdicts=_accepted_verdicts(instance, coordinate, plan),
+        verdicts=_committed_verdicts(instance, coordinate, plan, candidate),
         surface=request.surface,
         because=request.because,
     )

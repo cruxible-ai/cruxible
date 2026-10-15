@@ -2311,6 +2311,17 @@ class PlaybillInstance:
             raise FormatError("genesis author and committer timestamps disagree")
         return author_time
 
+    def accepted_candidate_digest(self, oid: str) -> str | None:
+        """The candidate digest one accepted generation's change-set record settled.
+
+        ``None`` for genesis or an OID outside accepted history.
+        """
+
+        generation = self._generation_for_oid(oid)
+        if generation is None or generation.record is None:
+            return None
+        return generation.record.candidate_digest
+
     def coordinate_for_oid(self, oid: str) -> AcceptedProjectionCoordinate:
         """Resolve one accepted historical OID to its complete verified coordinate."""
 
