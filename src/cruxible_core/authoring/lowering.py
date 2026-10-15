@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
@@ -78,6 +77,7 @@ from cruxible_client.contracts.builtin_claim_types import (
 from cruxible_client.contracts.canonical import (
     Sha256Value,
     canonical_bytes,
+    file_digest,
     normalize_canonical,
     typed_digest,
 )
@@ -5399,7 +5399,8 @@ def _encoded_members(members: tuple[tuple[str, bytes], ...]) -> list[dict[str, o
     return [
         {
             "content_base64": base64.b64encode(content).decode("ascii"),
-            "content_sha256": "sha256:" + hashlib.sha256(content).hexdigest(),
+            # The member's file digest: the one every later layer takes of it.
+            "content_sha256": file_digest(content).tagged,
             "path": path,
         }
         for path, content in members

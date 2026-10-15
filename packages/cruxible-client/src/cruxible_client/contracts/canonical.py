@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import unicodedata
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -393,10 +395,61 @@ def typed_digest(digest_type: type[DigestT], domain: str, payload: Mapping[str, 
     return digest_type(canonical_digest(domain, payload))
 
 
-def file_digest(content: bytes) -> ArtifactDigest:
-    """Hash exact artifact bytes independently of Git's object format."""
+class _FileDigests:
+    """Member digests by their exact bytes, bounded by entries and by bytes held.
 
-    return ArtifactDigest(hashlib.sha256(content).hexdigest())
+    A new member's bytes travel by reference from the lowering that renders them
+    through evaluation, the evaluated tree state, the Merkle update and the
+    projection rows, and each of those layers takes the member's file digest. A
+    ``bytes`` object caches its own hash, so every layer handed the same object
+    finds the digest with one dict probe; equal bytes read back from Git find it
+    with one comparison. Only exact ``bytes`` are kept (a subclass could compare
+    or hash otherwise), and a value is an immutable digest shared by every
+    caller.
+    """
+
+    _CAPACITY = 16384
+    _MAX_BYTES = 32 * 1024 * 1024
+    _MAX_ENTRY = 1024 * 1024
+
+    def __init__(self) -> None:
+        self._entries: OrderedDict[bytes, ArtifactDigest] = OrderedDict()
+        self._bytes = 0
+        self._lock = threading.Lock()
+
+    def digest(self, content: bytes) -> ArtifactDigest:
+        if type(content) is not bytes or len(content) > self._MAX_ENTRY:
+            return ArtifactDigest(hashlib.sha256(content).hexdigest())
+        with self._lock:
+            found = self._entries.get(content)
+            if found is not None:
+                self._entries.move_to_end(content)
+                return found
+        value = ArtifactDigest(hashlib.sha256(content).hexdigest())
+        with self._lock:
+            if content not in self._entries:
+                self._entries[content] = value
+                self._bytes += len(content)
+            while self._entries and (
+                len(self._entries) > self._CAPACITY or self._bytes > self._MAX_BYTES
+            ):
+                old, _digest = self._entries.popitem(last=False)
+                self._bytes -= len(old)
+        return value
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            self._bytes = 0
+
+
+_FILE_DIGESTS = _FileDigests()
+
+
+def file_digest(content: bytes) -> ArtifactDigest:
+    """Hash exact artifact bytes independently of Git's object format, once per content."""
+
+    return _FILE_DIGESTS.digest(content)
 
 
 def normalize_ledger_path(path: str) -> str:

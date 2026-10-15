@@ -376,3 +376,35 @@ def test_a_memo_of_few_large_records_may_keep_an_entry_over_a_sixteenth():
     small: ParseMemo[_Leaf] = ParseMemo(capacity=2, max_bytes=4096)
     small.parse(content, "p", None, lambda: _Leaf(tags=["a"], meta={}))
     assert not small._entries
+
+
+def test_a_member_file_digest_is_taken_once_per_exact_bytes(monkeypatch):
+    import hashlib
+
+    from cruxible_client.contracts import canonical
+
+    hashed: list[bytes] = []
+    real = hashlib.sha256
+
+    def counted(content=b""):  # type: ignore[no-untyped-def]
+        hashed.append(bytes(content))
+        return real(content)
+
+    monkeypatch.setattr(canonical.hashlib, "sha256", counted)
+    canonical._FILE_DIGESTS.clear()
+    content = b'{"member": "first"}\n'
+    first = canonical.file_digest(content)
+    # The same object, and equal bytes read back elsewhere, reuse the one digest.
+    assert canonical.file_digest(content) is first
+    assert canonical.file_digest(bytes(bytearray(content))) is first
+    assert first.value == real(content).hexdigest() and hashed == [content]
+
+    class Tricky(bytes):
+        pass
+
+    # A bytes subclass is never kept: it is hashed afresh every time.
+    canonical.file_digest(Tricky(content))
+    canonical.file_digest(Tricky(content))
+    assert len(hashed) == 3
+    assert canonical.file_digest(b"other").value == real(b"other").hexdigest()
+    canonical._FILE_DIGESTS.clear()
