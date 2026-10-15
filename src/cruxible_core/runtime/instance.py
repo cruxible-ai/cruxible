@@ -504,19 +504,19 @@ class PlaybillInstance:
         """Facts remembered for this request while their mutable inputs hold.
 
         At one accepted coordinate a fact row varies only with the body store
-        and the re-observation journal: the verdict input fingerprint covers
-        every evidence body landing or erase and every re-observation, and the
-        file identity of each body-store object the build consulted covers a
-        rewrite. Both are checked before reuse, so a reused build answers
-        exactly as a fresh one would.
+        and the re-observation journal. The verdict input fingerprint names
+        both by writer-owned positions: the landing log's (every evidence body
+        landing, erase and damage record) and the re-observation journal's.
+        A remembered build is served while that fingerprint is unchanged, in
+        bounded work: no consulted body is enumerated or stat'ed (presence
+        comes from the landing index; out-of-band corruption is found by
+        damage records and direct byte verification, never by per-read file
+        checks). A build that consulted an external reader is never remembered.
         """
 
         from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
         from cruxible_core.service.discovery.query import build_accepted_query_facts
-        from cruxible_core.service.evidence.evidence import (
-            UNKNOWN_BODIES,
-            body_fingerprints_hold,
-        )
+        from cruxible_core.service.evidence.evidence import UNKNOWN_BODIES
 
         memo = pool.values()
         fingerprint = verdict_input_fingerprint(self)
@@ -536,8 +536,8 @@ class PlaybillInstance:
         )
         held = memo.get(key)
         if held is not None:
-            kept, seen, bodies = held
-            if seen == fingerprint and body_fingerprints_hold(self, bodies):
+            kept, seen = held
+            if seen == fingerprint:
                 return cast("ClaimQueryFactsV1", kept)
         consulted: dict[str, Any] = {}
         facts = build_accepted_query_facts(
@@ -548,7 +548,7 @@ class PlaybillInstance:
             consulted_bodies=consulted,
         )
         if UNKNOWN_BODIES not in consulted and verdict_input_fingerprint(self) == fingerprint:
-            memo[key] = (facts, fingerprint, tuple(consulted.items()))
+            memo[key] = (facts, fingerprint)
         else:
             memo.pop(key, None)
         return facts

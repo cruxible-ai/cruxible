@@ -446,12 +446,14 @@ def facts_replay(
 ) -> bool:
     """Whether every observed facts build stands: same inputs, and the same answer now.
 
-    The binding is checked first, so a body landing or erase, or a recorded
-    re-observation, since the build fails without rebuilding anything. On an
-    unchanged binding the provider answers again (a request's pooled build
-    when its body identities hold, else a fresh build) and must equal the
-    observed one; that covers a body rewritten in place, which the
-    writer-owned log does not see. Raising means not replayed.
+    Replay uses the accepted coordinate and the writer-owned landing/damage
+    and re-observation positions. The binding is checked first, so a body
+    landing, erase or damage record, or a recorded re-observation, since the
+    build fails without rebuilding anything. On an unchanged binding the
+    provider answers again -- the request pool serves the unchanged build in
+    bounded work, without touching body files -- so the evaluation replaying
+    it observes the build too; the answer must be the observed one. Raising
+    means not replayed.
     """
     if not facts:
         return True

@@ -713,8 +713,8 @@ def test_condition_evidence_erased_after_the_check_is_not_settled_on_the_old_ans
     check refuses it, so the settle must not be accepted on the earlier answer.
     """
 
-    from cruxible_client.contracts.claims import parse_claim
     from cruxible_client.contracts.candidates import canonical_candidate_timestamp
+    from cruxible_client.contracts.claims import parse_claim
     from cruxible_core.proposals.delegated_authority import delegated_authority_issues
 
     instance, root, line, parent, claim_id = _seeded_parent(tmp_path)
@@ -823,3 +823,63 @@ def test_a_reobservation_recorded_after_the_check_forces_the_full_condition_path
         assert checks["in_admission"] == 0, checks
         assert counts["full_evaluations"] == 1, counts
         assert after["settlement_invalidated"] == before["settlement_invalidated"] + 1
+
+
+def test_an_unchanged_facts_replay_touches_no_body_file_however_many_claims_it_reads(
+    tmp_path: Path,
+) -> None:
+    """Review F-002: replaying a pooled condition build on unchanged inputs is bounded.
+
+    The pool serves it on the writer-owned landing/damage and re-observation
+    positions alone: no consulted body's file identity is read, at 2 Claims or
+    at 6 (before, one stat per body behind the predicate: 4, then 12).
+    """
+
+    from functools import partial
+
+    from cruxible_client.contracts.claims import parse_claim
+    from cruxible_core.proposals.prepared_evaluation import facts_replay, observed_facts_build
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    instance, root, line = _world(tmp_path)
+    measured: list[tuple[int, int]] = []
+    for batch in range(6):
+        _settle(instance, root, line, items=range(batch, batch + 1), batch=batch)
+        if batch + 1 not in (2, 6):
+            continue
+        coordinate = instance.accepted_coordinate()
+        tree = instance.immutable_tree_at(coordinate.git_oid)
+        path = next(item for item in tree if item.startswith("claims/"))
+        predicate = parse_claim(tree[path], path=path).statement.predicate
+        source = partial(instance._accepted_query_facts, instance)
+        with instance.projection_scope():
+            value, fact = observed_facts_build(
+                source,
+                coordinate,
+                predicates=(predicate,),
+                subject_kinds=(),
+                inputs=instance.query_fact_inputs,
+            )
+            assert fact is not None and len(value.claims) == batch + 1
+            touched: Counter[str] = Counter()
+
+            def counted(name: str) -> Callable[[Any], Any]:
+                def wrap(original: Any) -> Any:
+                    def probe(self: Any, digest: str) -> Any:
+                        touched[name] += 1
+                        return original(self, digest)
+
+                    return probe
+
+                return wrap
+
+            with (
+                _patched(ContentAddressedBodyStore, "file_identity", counted("file_identity")),
+                _patched(ContentAddressedBodyStore, "_object_status", counted("object_status")),
+            ):
+                assert facts_replay(
+                    (fact,), query_facts_provider=source, inputs=instance.query_fact_inputs
+                )
+        measured.append((batch + 1, sum(touched.values())))
+    assert [claims for claims, _ in measured] == [2, 6]
+    assert all(count == 0 for _, count in measured), measured
