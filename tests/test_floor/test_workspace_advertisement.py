@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.floor import workspace_advertisement as advertisement_module
 from cruxible_core.floor.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
@@ -205,46 +204,6 @@ def test_advertisement_refuses_instead_of_ssh_command_without_execution(
     assert not daemon_uid_marker.exists()
 
 
-def test_protocol_gate_blocks_execution_if_effective_url_check_is_bypassed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, ledger = _repositories(tmp_path, "sha1")
-    daemon_uid_marker = tmp_path / "daemon-uid"
-    _git(
-        workspace,
-        "config",
-        "url.ssh://attacker.invalid/x.insteadOf",
-        str(ledger.resolve()),
-    )
-    _git(
-        workspace,
-        "config",
-        "core.sshCommand",
-        f"/bin/sh -c 'id > {daemon_uid_marker}'",
-    )
-    monkeypatch.setattr(
-        advertisement_module,
-        "_effective_remote_urls",
-        lambda _workspace: subprocess.CompletedProcess(
-            (),
-            0,
-            f"{ledger.resolve()}\n".encode(),
-            b"",
-        ),
-    )
-
-    result = advertise_workspace_refs(
-        workspace_root=workspace,
-        ledger_path=ledger,
-        ledger_object_format="sha1",
-    )
-
-    assert result.status == "failed"
-    assert result.failure_code == "fetch_failed"
-    assert not daemon_uid_marker.exists()
-
-
 def test_advertisement_ignores_alternate_refs_command_with_real_alternates(
     tmp_path: Path,
 ) -> None:
@@ -286,43 +245,17 @@ def test_git_environment_drops_ambient_execution_configuration(
     }
     for name, value in ambient.items():
         monkeypatch.setenv(name, value)
-    observed: list[dict[str, str]] = []
-    commands: list[tuple[str, ...]] = []
-    real_run = subprocess.run
 
-    def observe(*args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        observed.append(dict(kwargs["env"]))
-        commands.append(tuple(args[0]))  # type: ignore[arg-type]
-        return real_run(*args, **kwargs)  # type: ignore[arg-type,return-value]
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("workspace advertisement spawned a process")
 
-    monkeypatch.setattr(advertisement_module.subprocess, "run", observe)
-
+    monkeypatch.setattr(subprocess, "run", forbidden)
     result = advertise_workspace_refs(
         workspace_root=workspace,
         ledger_path=ledger,
         ledger_object_format="sha1",
     )
-
     assert result.status == "updated"
-    assert observed
-    fetch_commands = tuple(command for command in commands if "fetch" in command)
-    assert len(fetch_commands) == 1
-    assert "--no-recurse-submodules" in fetch_commands[0]
-    for environment in observed:
-        assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
-        assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
-        assert not (
-            {
-                "GIT_CONFIG_COUNT",
-                "GIT_CONFIG_KEY_0",
-                "GIT_CONFIG_VALUE_0",
-                "GIT_DIR",
-                "GIT_WORK_TREE",
-                "GIT_SSH_COMMAND",
-                "GIT_EXTERNAL_DIFF",
-            }
-            & environment.keys()
-        )
 
 
 def test_non_utf8_git_config_output_is_a_typed_remote_conflict(tmp_path: Path) -> None:
@@ -340,7 +273,7 @@ def test_non_utf8_git_config_output_is_a_typed_remote_conflict(tmp_path: Path) -
     assert result.failure_code == "remote_conflict"
 
 
-def test_advertisement_reports_git_unavailable(
+def test_advertisement_needs_no_git_executable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace, ledger = _repositories(tmp_path, "sha1")
@@ -352,8 +285,7 @@ def test_advertisement_reports_git_unavailable(
         ledger_object_format="sha1",
     )
 
-    assert result.status == "failed"
-    assert result.failure_code == "git_unavailable"
+    assert result.status == "updated"
 
 
 def test_advertisement_is_total_for_unexpected_failures(
@@ -544,3 +476,19 @@ def test_advertisement_never_prunes_the_authors_own_notes(tmp_path: Path) -> Non
     )
 
     assert _git(workspace, "notes", "--ref=refs/notes/commits", "show", head) == "mine"
+
+
+def test_linked_worktree_uses_common_config_objects_and_refs(tmp_path):
+    workspace, ledger = _repositories(tmp_path, "sha256")
+    linked = tmp_path / "linked"
+    _git(workspace, "worktree", "add", "-b", "linked", str(linked))
+    _git(ledger, "pack-refs", "--all")
+    _git(ledger, "repack", "-a", "-d")
+    result = advertise_workspace_refs(
+        workspace_root=linked, ledger_path=ledger, ledger_object_format="sha256"
+    )
+    assert result.status == "updated"
+    assert _git(linked, "rev-parse", "refs/remotes/cruxible-ledger/accepted") == _git(
+        ledger, "rev-parse", "main"
+    )
+    _git(linked, "fsck", "--strict", "--no-dangling")
