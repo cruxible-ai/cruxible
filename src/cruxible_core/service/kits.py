@@ -31,7 +31,11 @@ from cruxible_client.contracts.documents import (
     parse_document,
     render_document,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.errors import (
+    ProposalIntegrityError,
+    ProposalStale,
+    SettlementIntegrityError,
+)
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_PREFIXES,
     KIT_RECEIPT_DOCUMENT_KIND,
@@ -1229,9 +1233,28 @@ def _submit(
         # Like provider install and value writes, a kit change the approval
         # policy lets through lands at once; otherwise it stops at proposed.
         assert admitted.proposal_id is not None
-        activation = service_activate_playbill_proposal(
-            instance, proposal_id=admitted.proposal_id, activated_by=actor_id
-        )
+        try:
+            activation = service_activate_playbill_proposal(
+                instance, proposal_id=admitted.proposal_id, activated_by=actor_id
+            )
+        except (SettlementIntegrityError, ProposalStale):
+            # A concurrent add can publish after activation's stale check but
+            # before settlement. Preserve integrity errors at the same head;
+            # a genuinely moved preview gets the ordinary R12 refusal.
+            with instance.accepted_head_held() as head_oid:
+                if head_oid == base.git_oid:
+                    raise
+                mode.confirm_head(head_oid)
+            return KitChangeResult(
+                kit_id=kit_id,
+                version=version,
+                status="blocked",
+                plan=plan,
+                proposal_id=admitted.proposal_id,
+                detail="Accepted state moved during kit add; preview the kit again.",
+                coordinate=mode.coordinate,
+                **described,  # type: ignore[arg-type]
+            )
         if activation.status == "accepted":
             status = "accepted"
     return KitChangeResult(

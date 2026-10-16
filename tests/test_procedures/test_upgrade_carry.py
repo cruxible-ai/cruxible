@@ -20,6 +20,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     parse_line_spec,
     render_line_spec,
 )
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.triggers import CadenceSchedule, CaptureLandingSchedule
 from cruxible_core.consumers.next.line_upgrades import _STATE, catch_up, disabled_upgrades
 from cruxible_core.coverage.contracts import CoverageAccessProfile
@@ -36,7 +37,7 @@ from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_line_arming import LOCAL, _admissions
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
 from tests.test_procedures.test_procedure_mandates_v2 import _accepted_query, _query, _settle
-from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
+from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor, _slotless_procedure
 
 
 def _changed(procedure):
@@ -186,11 +187,7 @@ def test_cost_reads_only_re_pinned_procedures_dependents(tmp_path, monkeypatch, 
     instance, line, procedure, owner = line_world(
         tmp_path, CadenceSchedule(interval_seconds=2), with_owner=True
     )
-    unrelated_procedure = procedure.procedure.model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="Procedure", name="unrelated"),
-        }
-    )
+    unrelated_procedure = _slotless_procedure("unrelated").procedure
     pin = line.procedure.model_copy(
         update={
             "target": unrelated_procedure.identity,
@@ -222,6 +219,11 @@ def test_cost_reads_only_re_pinned_procedures_dependents(tmp_path, monkeypatch, 
     )
     from cruxible_core.derived.derived_state import SnapshotTree
 
+    # This measures the warm planning route; cold index creation is separate.
+    coordinate = instance.accepted_coordinate()
+    instance.immutable_tree_at(coordinate.git_oid)
+    with instance.bind_accepted_projection(coordinate):
+        pass
     reads = []
     original = SnapshotTree.__getitem__
 
@@ -331,7 +333,9 @@ def test_retirement_clears_upgrade_row_and_keeps_history_readable(tmp_path):
     )
     assert not disabled_upgrades(instance)
     found = instance.accepted_artifact_version(
-        instance.accepted_coordinate(), line_spec_digest(line).tagged, family="lines/"
+        AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        line_spec_digest(line).tagged,
+        family="lines/",
     )
     assert found == (f"lines/{line.identity.name}.json", original)
 
@@ -364,6 +368,7 @@ def test_enable_after_an_ordinary_line_edit_clears_upgrade_finding(tmp_path, ena
             "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(upgraded).tagged),
         }
     )
+    candidate = instance.tree_at(instance.accepted_coordinate().git_oid)
     candidate[path] = render_line_spec(edited)
     _accept_tree(
         instance, owner, candidate, timestamp="2026-08-26T15:00:00.000000Z", proposal_name="edit"
