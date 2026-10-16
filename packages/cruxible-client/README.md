@@ -3874,6 +3874,11 @@ readings(
 
 Inspect measurement standing and retained readings. Never writes.
 
+If retained payloads are unavailable, `unavailable_reading_count` reports the
+known number of unavailable reading records. `unavailable_payloads` contains
+at most `limit` representative digests, and affected contracts have status
+`unavailable`; the sample is not a complete history of missing payloads.
+
 A page's `cursor` continues that page's selection: the observation
 instant and coordinate the first page was answered at travel inside
 it, so passing the cursor back with the same `run`/`measurements`

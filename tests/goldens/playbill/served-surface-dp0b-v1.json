@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "durability-policy-1015",
-    "surface_digest": "sha256:71de676e2f6a0f3f4ac2cf14b3e25277c0af70376f4134387e4b3c04f41e8425"
+    "surface_digest": "sha256:133390781bb15ae142026899cf91a0feba7d06c74ee94571003d0c52604278e7"
   },
   "surface": {
     "cli_leaves": [
@@ -1637,7 +1637,7 @@
         "request_model": "cruxible_client.contracts.procedures.readings.ProcedureReadingsRequest",
         "request_schema_digest": "sha256:934160c455d6d73c3a7c185df756bf1234c342bb8551189f108264fadee79941",
         "response_model": "cruxible_client.contracts.procedures.readings.ProcedureReadingsResult",
-        "response_schema_digest": "sha256:3691646a65b875bf23e8b8f277b691ffdcf9b3e852f04c45fdbc0a513d50f448"
+        "response_schema_digest": "sha256:b85e76d99d56447317e15b0550586c090115c416cf6e31fd2facf86decb18cca"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.run_procedure",
@@ -2488,7 +2488,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_readings",
         "input_schema_digest": "sha256:e41ce4e6c2ab5ea98ab40cd85bc49a3ab7774d4eb17dfc8a22ec201812262831",
         "name": "cruxible_procedure_readings",
-        "output_schema_digest": "sha256:272e02ecd1225e6da8be84a829e6caad80a9cdf79b19164b19c894262c72f3af",
+        "output_schema_digest": "sha256:857deda643921fc872c507467ca9163f3f8c927d0640855c408435d50090f1ec",
         "permission": "READ_ONLY"
       },
       {
