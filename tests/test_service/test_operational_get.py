@@ -245,18 +245,28 @@ def test_a_capture_card_names_the_evidence_workers_finding(
     instance, capture_digest, _contract, _when = prediction_world
     finding = evidence.EvidenceFinding(
         capture_digest=capture_digest,
-        part="body",
-        object_digest="sha256:" + "b" * 64,
+        part="envelope",
+        object_digest=capture_digest,
         state="missing",
         checked_at=datetime(2026, 9, 3, tzinfo=UTC),
     )
     monkeypatch.setattr(evidence, "evidence_findings", lambda _instance: (finding,))
 
-    card = _get(instance, f"Capture:{capture_digest}").card
-
-    assert isinstance(card, GetCaptureCard)
-    assert card.status == "unavailable"
-    assert card.status_detail is not None and card.status_detail.startswith("body missing")
+    store = instance.body_store()
+    path = store._path(capture_digest)
+    original = path.read_bytes()
+    try:
+        path.unlink()
+        assert store.availability(capture_digest) == "missing"
+        card = _get(instance, f"Capture:{capture_digest}").card
+        assert isinstance(card, GetCaptureCard)
+        assert card.status == "unavailable"
+        assert card.status_detail is not None and card.status_detail.startswith("envelope missing")
+    finally:
+        path.write_bytes(original)
+        assert store.availability(capture_digest) == "present"
+    # An old worker finding cannot override a newer repair completion.
+    assert _get(instance, f"Capture:{capture_digest}").card.status == "available"
 
 
 def test_a_procedure_run_line_ref_does_not_break_bare_proposal_ids(line_world) -> None:  # type: ignore[no-untyped-def]

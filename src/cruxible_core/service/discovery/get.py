@@ -31,7 +31,6 @@ from cruxible_client.contracts.candidates import CandidateMemberEvidence
 from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.captures import (
     CaptureContract,
-    parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_reads import ClaimValueRecord, ClaimValuesRequest
 from cruxible_client.contracts.claim_types import (
@@ -118,7 +117,7 @@ from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
 from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
-from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.semantic import SemanticAddress, SourceMapping
 from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
@@ -178,7 +177,9 @@ from cruxible_core.service.read_refusals import (
     nearest,
     resolve_read_coordinate,
 )
+from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import PositionedBodies, positioned_read
 
 _CLAIM_ID = re.compile(r"^CLM-[0-9a-f]{32}$")
 _CLAIM_PREFIX = re.compile(r"^CLM-[0-9a-f]{4,31}$")
@@ -1324,9 +1325,16 @@ def _claim_type_card(
     )
 
 
-def _document_size(instance: PlaybillInstance, body_digest: str) -> int | None:
-    metadata = instance.body_store().metadata(body_digest, access=_SERVICE_ACCESS)
-    return metadata.byte_length
+def _document_size(projection: Any, identity: str, body_digest: str) -> int | None:
+    """The accepted whole-body mapping's length, if the landing index holds it."""
+
+    if not PositionedBodies(projection.typed.bodies).verify(body_digest):
+        return None
+    for fact in projection.typed.facts("cruxible.document.source_mapping", identity=identity):
+        if fact.fact_key == "whole_body":
+            mapping = SourceMapping.model_validate(fact.value)
+            return max((span.end_byte for span in mapping.spans), default=0)
+    return None
 
 
 def _document_card(
@@ -1338,12 +1346,13 @@ def _document_card(
 ) -> GetDocumentCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         shell = cast(DocumentShell, projection.typed.source(resolved.identity))
+        size = _document_size(projection, resolved.identity, shell.body_digest)
     return GetDocumentCard(
         document=_name(resolved.identity),
         title=shell.title,
         document_kind=shell.document_kind,
         media_type=shell.media_type,
-        size=_document_size(instance, shell.body_digest),
+        size=size,
         revision=shell.lifecycle.revision,
         next=(
             _render_get(surface, resolved.display, "body"),
@@ -1890,9 +1899,7 @@ def _claim_evidence(
     bodies = instance.body_store()
     captures: list[GetCaptureEvidence] = []
     for account in explanation.admission_accounts:
-        envelope = parse_capture_envelope(
-            bodies.read(account.capture_digest, access=_SERVICE_ACCESS)
-        )
+        envelope = capture_envelope(bodies, account.capture_digest, access=_SERVICE_ACCESS)
         version = names.version_of(account.capture_contract_digest)
         source = getattr(envelope.source, "source_identity", None)
         if source is None and version is not None:
@@ -2620,8 +2627,8 @@ def _proof(
     if resolved.kind == "procedure_run":
         return procedure_run_proof(instance, resolved.identity, viewer=viewer)
     if resolved.kind == "capture":
-        envelope = parse_capture_envelope(
-            instance.body_store().read(resolved.identity, access=_SERVICE_ACCESS)
+        envelope = capture_envelope(
+            instance.body_store(), resolved.identity, access=_SERVICE_ACCESS
         )
         return {
             "coordinate": at.model_dump(mode="json"),
@@ -2743,6 +2750,7 @@ def _why(
 # -- entry point ----------------------------------------------------------------------------
 
 
+@positioned_read
 def service_playbill_get(
     instance: PlaybillInstance,
     *,

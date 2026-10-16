@@ -331,6 +331,16 @@ class ContentAddressedBodyStore:
         status = self._object_status(digest)
         return None if status is None else _file_identity(status)
 
+    def verified_identity(self, digest: str) -> tuple[int, int, int, int, int] | None:
+        """Last verified identity, for the sweep's baseline; never inspect the file.
+
+        This is an observation, not a presence or integrity check. A cold process
+        may have none; the sweep then verifies that body on its next pass.
+        """
+
+        with _VERIFIED_LOCK:
+            return _VERIFIED.get(self._memo_key(digest))
+
     def store(self, content: bytes, *, journal_payload: bool = False) -> CasObjectMetadata:
         """Durably store inert bytes, idempotently, under their exact digest.
 
@@ -476,6 +486,7 @@ class ContentAddressedBodyStore:
         shard, name = self._names(digest)
         directory = self._shard(shard)
         if directory is None:
+            self._damaged(digest, "missing")
             raise CasError("CAS object is missing")
         try:
             key = self._memo_key(digest)
@@ -683,14 +694,22 @@ class DryRunBodyStore:
 
     def store(self, content: bytes, *, journal_payload: bool = False) -> CasObjectMetadata:
         digest = self.digest_bytes(content).tagged
-        if not self._base.verify(digest):
-            self._held[digest] = bytes(content)
+        # A preview owns its proposed bytes; it never probes the on-disk body
+        # just to decide whether these identical bytes already landed.
+        self._held[digest] = bytes(content)
         return CasObjectMetadata(
             digest=digest, present=True, byte_length=len(content), redacted=False
         )
 
+    def holds(self, digest: str) -> bool:
+        """Whether this preview supplies the body independently of disk presence."""
+
+        return digest in self._held
+
     def verify(self, digest: str) -> bool:
-        return digest in self._held or self._base.verify(digest)
+        from cruxible_core.storage.read_positions import PositionedBodies
+
+        return self.holds(digest) or PositionedBodies(self._base).verify(digest)
 
     def availability(self, digest: str) -> Literal["present", "missing", "corrupt"]:
         return "present" if digest in self._held else self._base.availability(digest)
@@ -706,7 +725,9 @@ class DryRunBodyStore:
     def metadata(self, digest: str, *, access: BodyAccessContext) -> CasObjectMetadata:
         held = self._held.get(digest)
         if held is None:
-            return self._base.metadata(digest, access=access)
+            from cruxible_core.storage.read_positions import PositionedBodies
+
+            return PositionedBodies(self._base).metadata(digest, access=access)
         return CasObjectMetadata(
             digest=digest,
             present=True,

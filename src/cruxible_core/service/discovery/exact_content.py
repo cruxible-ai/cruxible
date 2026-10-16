@@ -24,6 +24,7 @@ from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.read_values import ExactContentRef
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import read_body
 
 ExactContentValue = str | ExactContentRef
 
@@ -45,8 +46,8 @@ class ExactContentReader:
     def _read(self, digest: str) -> bytes | None:
         if digest not in self._bytes:
             try:
-                self._bytes[digest] = self._instance.body_store().read(
-                    digest, access=_CLAIM_VALUE_ACCESS
+                self._bytes[digest] = read_body(
+                    self._instance.body_store(), digest, access=_CLAIM_VALUE_ACCESS
                 )
             except (CruxibleError, OSError, ValueError):
                 self._bytes[digest] = None

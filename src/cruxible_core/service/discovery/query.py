@@ -79,6 +79,7 @@ from cruxible_core.service.evidence.evidence import (
     accepted_claim_attestations,
     accepted_claim_providers,
 )
+from cruxible_core.storage.read_positions import positioned_read
 
 CLAIM_PATH_PREFIX = "claims/"
 SUBJECT_PATH_PREFIX = "subjects/"
@@ -607,6 +608,7 @@ def _subject_kind_of_path(path: str) -> str:
     return path.split("/", 2)[1]
 
 
+@positioned_read
 def build_accepted_query_facts(
     instance: ClaimReadSourceProtocol,
     *,
@@ -761,6 +763,7 @@ def parameters_through_aliases(
     return resolved
 
 
+@positioned_read
 def evaluate_accepted_query(
     instance: PlaybillInstance,
     definition: AcceptedQueryDefinition,
@@ -833,6 +836,7 @@ def evaluate_accepted_query(
     )
 
 
+@positioned_read
 def service_run_playbill_query(
     instance: PlaybillInstance,
     *,

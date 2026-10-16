@@ -254,7 +254,11 @@ def test_the_freshness_lookup_is_bounded_by_cited_contents_not_history(tmp_path:
     reader = ReobservationReader.of(instance)
     reader.probes = reader.rows_read = 0
     at = _START + timedelta(hours=2)
-    verdict = _verdict(instance, at)
+    from cruxible_core.storage.read_positions import ReadPositions, read_positions, reading_at
+
+    positions = read_positions(instance)
+    with reading_at(ReadPositions(positions.landing_log, positions.landing, 100 + len(hourly))):
+        verdict = _verdict(instance, at)
     # Recorded by 2:00 means observed by 1:59:30 (the record at 50 min + 3 * 1390 s).
     (expiration,) = verdict.freshness_expirations
     assert expiration.reobserved_at == _START + timedelta(minutes=50, seconds=3 * 1390)

@@ -21,7 +21,6 @@ from cruxible_client.contracts.accepted_attestations import (
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     parse_capture_contract,
-    parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyProjectionProtocol
 from cruxible_client.contracts.claim_attestations import (
@@ -81,8 +80,15 @@ from cruxible_core.indexes.history.history_index import HistoryReader, RetainedR
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
-from cruxible_core.storage.read_positions import PositionedBodies, body_present
+from cruxible_core.storage.read_positions import (
+    PositionedBodies,
+    body_identity,
+    current_positions,
+    positioned_read,
+    recording_identities,
+)
 
 
 class _StrictEvidenceServiceModel(BaseModel):
@@ -723,36 +729,17 @@ def _referent_digests(
 
 
 _AVAILABILITY_CAPACITY = 65536
-# (instance root, capture digest) -> (answer, the CAS objects it consulted with
-# the file identity each had then, or None when absent).
-_AVAILABILITY_MEMO: OrderedDict[
-    tuple[str, str],
-    tuple[bool, tuple[tuple[str, tuple[int, int, int, int, int] | None], ...]],
-] = OrderedDict()
-
-
-def _cas_file_identity(store: Any, digest: str) -> tuple[int, int, int, int, int] | None:
-    try:
-        identity = store.file_identity(digest)
-    except ValueError:
-        return None
-    return cast(tuple[int, int, int, int, int] | None, identity)
-
+# One derivation per Capture and landing position. A damage/repair record moves
+# that position just as a landing/erase does; no file identities validate reuse.
+_AVAILABILITY_MEMO: OrderedDict[tuple[str, str, str, int], tuple[bool, BodyFingerprints]] = (
+    OrderedDict()
+)
 
 _UNKNOWN_BODIES = "\0unknown"
-"""A ``bodies`` key saying no identity can stand for an availability answer."""
 UNKNOWN_BODIES = _UNKNOWN_BODIES
 
 
-def body_fingerprints_hold(
-    instance: ClaimReadSourceProtocol, fingerprints: BodyFingerprints, *, store: Any = None
-) -> bool:
-    """Whether every recorded body-store object still has the identity it had: one stat each."""
-
-    store = store if store is not None else instance.body_store()
-    return all(_cas_file_identity(store, digest) == seen for digest, seen in fingerprints)
-
-
+@positioned_read
 def _current_replay_available(
     instance: ClaimReadSourceProtocol,
     capture_digest_value: str,
@@ -761,98 +748,66 @@ def _current_replay_available(
     store: Any = None,
     bodies: dict[str, CasFileIdentity | None] | None = None,
 ) -> bool:
-    """Whether a Capture's evidence can still be replayed from retained material.
+    """Whether retained evidence was available at this read's landing position.
 
-    The answer is a function of the CAS objects it consults (the Capture body
-    and, for CAS-backed sources, the source or commitment bytes) and of
-    immutable ledger objects. It is remembered per Capture with the file
-    identity of each consulted CAS object and reused only while every identity
-    is unchanged, so any write, removal or rewrite of those files is observed.
-    Answers that consulted an external reader are never remembered.
-
-    ``bodies`` receives the identity of every CAS object this answer used, as
-    this call observed it: the remembered identities it just matched, or the
-    identities that bracket a fresh derivation. When no identity can stand for
-    the answer (an external reader, or a file that moved while it was read) it
-    receives ``_UNKNOWN_BODIES`` instead.
+    Only the Capture's own dependencies are consulted. The landing position
+    names all presence inputs, including damage and repair; external adapters
+    and preview-held bodies are never memoized under that persistent position.
+    ``bodies`` keeps the sweep's last verified observations, not validity checks.
     """
+
+    from cruxible_core.storage.cas import dry_run_held_bodies
 
     root = getattr(instance, "root", None)
     store = store if store is not None else instance.body_store()
-    if not readers and body_present(store, capture_digest_value) is not None:
-        # A positioned read: presence is the landing log's at the read's position,
-        # so the answer is a function of that position alone and nothing is
-        # remembered or re-checked here. An object absent at the position is
-        # recorded absent whatever its file is, so no identity-keyed memo of this
-        # answer outlives a landing; a present one's identity is the sweep's
-        # baseline for objects rewritten in place, not a check.
-        objects: list[str] = []
-        available = _replay_available(
-            instance,
-            capture_digest_value,
-            readers=readers,
-            store=PositionedBodies(store),
-            consulted=objects,
-        )
-        if bodies is not None:
-            bodies.update(
-                (digest, _cas_file_identity(store, digest) if body_present(store, digest) else None)
-                for digest in dict.fromkeys(objects)
-                if digest != "external"
-            )
-        return available
-    key = None if readers or not isinstance(root, Path) else (str(root), capture_digest_value)
-    if key is not None:
+    landings = getattr(store, "landings", None)
+    key = None
+    if (
+        not readers
+        and isinstance(root, Path)
+        and landings is not None
+        and dry_run_held_bodies() is None
+    ):
+        positions = current_positions()
+        if positions is None:
+            head = landings.head()
+            identity, sequence = head.identity, head.sequence
+        else:
+            identity, sequence = positions.landing_log, positions.landing
+        key = (str(root), capture_digest_value, identity, sequence)
         remembered = memo_get(_AVAILABILITY_MEMO, key)
         if remembered is not None:
             answer, consulted = remembered
-            if all(_cas_file_identity(store, digest) == seen for digest, seen in consulted):
-                if bodies is not None:
+            if bodies is not None:
+                # The boolean belongs to the landing position. A worker's
+                # physical baseline belongs to its own observation, never to
+                # a previous reader's in-memory verified-file cache.
+                if recording_identities():
+                    bodies.update(
+                        (digest, body_identity(store, digest)) for digest, _seen in consulted
+                    )
+                else:
                     bodies.update(consulted)
-                return answer
-    first: list[str] = []
+            return answer
+    objects: list[str] = []
     available = _replay_available(
-        instance, capture_digest_value, readers=readers, store=store, consulted=first
+        instance,
+        capture_digest_value,
+        readers=readers,
+        store=PositionedBodies(store),
+        consulted=objects,
     )
-    if key is None:
-        # An external reader's answer rests on more than CAS objects.
-        if bodies is not None:
-            bodies[_UNKNOWN_BODIES] = None
-        return available
-
-    def observe(
-        consulted: list[str],
-    ) -> tuple[tuple[str, tuple[int, int, int, int, int] | None], ...]:
-        return tuple(
-            (digest, _cas_file_identity(store, digest)) for digest in dict.fromkeys(consulted)
-        )
-
-    # An answer is remembered only with observations that bracket a derivation
-    # of it: identities read, the answer derived again, identities read again.
-    # Anything that moved in between shows as different identities (nothing is
-    # remembered) or is already reflected in the second answer, which is what
-    # this call returns either way.
-    before = observe(first)
-    second: list[str] = []
-    available = _replay_available(
-        instance, capture_digest_value, readers=readers, store=store, consulted=second
+    consulted = tuple(
+        (digest, body_identity(store, digest))
+        for digest in dict.fromkeys(objects)
+        if digest != "external"
     )
-    after = observe(second)
-    stable = second == first and after == before
     if bodies is not None:
-        if stable:
-            # With no reader, an externally held commitment is simply not
-            # replayable: the answer rests on the CAS objects consulted alone.
-            bodies.update((digest, seen) for digest, seen in after if digest != "external")
-        else:
+        bodies.update(consulted)
+        if readers or landings is None:
             bodies[_UNKNOWN_BODIES] = None
-    if stable and "external" not in first:
-        memo_put(
-            _AVAILABILITY_MEMO,
-            key,
-            (available, after),
-            capacity=_AVAILABILITY_CAPACITY,
-        )
+    if key is not None and "external" not in objects:
+        memo_put(_AVAILABILITY_MEMO, key, (available, consulted), capacity=_AVAILABILITY_CAPACITY)
     return available
 
 
@@ -872,6 +827,7 @@ def _verified(store: Any, digest: str) -> bool:
         return False
 
 
+@positioned_read
 def _replay_available(
     instance: ClaimReadSourceProtocol,
     capture_digest_value: str,
@@ -881,17 +837,17 @@ def _replay_available(
     consulted: list[str] | None = None,
 ) -> bool:
     store = store if store is not None else instance.body_store()
+    store = store if isinstance(store, PositionedBodies) else PositionedBodies(store)
     noted = consulted if consulted is not None else []
     noted.append(capture_digest_value)
     if not _verified(store, capture_digest_value):
         return False
     access = BodyAccessContext(principal_id="playbill-verdict", can_read_body=True)
     try:
-        body = store.read(capture_digest_value, access=access)
+        envelope = capture_envelope(store, capture_digest_value, access=access)
     except CasError:
         # Damaged since it verified: unavailable, as above.
         return False
-    envelope = parse_capture_envelope(body)
     if isinstance(envelope.source, CasSourceReference):
         noted.append(envelope.source.content_digest)
         return _verified(store, envelope.source.content_digest)
@@ -1296,6 +1252,7 @@ def _record_verdict_time_boundaries(
             boundaries.add(attestation.statement.valid_until)
 
 
+@positioned_read
 def service_evaluate_playbill_claim_verdict(
     instance: PlaybillInstance,
     *,

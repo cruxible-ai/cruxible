@@ -24,7 +24,7 @@ from cruxible_client.contracts.claims import (
     ClaimCitationReference,
     LegacyCitationReference,
 )
-from cruxible_client.contracts.errors import ProjectionFormatError
+from cruxible_client.contracts.errors import CasError, ProjectionFormatError
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.coverage.contracts import CoverageClaimCitationV2
 from cruxible_core.coverage.indexes import (
@@ -100,7 +100,10 @@ def coverage_rows(
         first: CaptureEnvelopeAny | None = None
         for capture in captures:
             digest = str(capture["capture_digest"])
-            envelope = reader._envelope(digest, bodies, envelopes, access=access)
+            try:
+                envelope = reader._envelope(digest, bodies, envelopes, access=access)
+            except CasError:
+                continue
             if first is None:
                 first = envelope
             trust: ObservationTrustGrade = "proposer_observed"
@@ -156,14 +159,19 @@ def coverage_rows(
                     observation_trust=trust,
                 )
                 associations[association.sort_key] = association
-        assert first is not None
+        if first is None:
+            continue
         values = dict(
             commitment_digest=first.commitment.digest,
             digest_kind=first.commitment.digest_kind,
             byte_length=first.commitment.byte_length,
             accepted_source=accepted_logical_source(first.source),
             access_class="instance",
-            capture_digests=tuple(str(capture["capture_digest"]) for capture in captures),
+            capture_digests=tuple(
+                str(capture["capture_digest"])
+                for capture in captures
+                if str(capture["capture_digest"]) in envelopes
+            ),
             claim_addresses=tuple(
                 SemanticAddress.claim_statement(path) for path in sorted(addresses)
             ),

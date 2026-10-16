@@ -13,7 +13,6 @@ from cruxible_client.contracts import ClaimViewRecord as ClientClaimViewV2
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
-    parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_types import (
     claim_type_path,
@@ -43,6 +42,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import (
+    CasError,
     ClaimNotFoundError,
     ProjectionIntegrityError,
     ProposalIntegrityError,
@@ -75,7 +75,9 @@ from cruxible_core.service.claims.retirement_context import (
     ClaimRetirementContextV1,
     claim_retirement_context,
 )
+from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import PositionedBodies, positioned_read, read_body
 
 if TYPE_CHECKING:
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
@@ -370,6 +372,7 @@ def _observed_at(timestamp: str) -> datetime:
     return value
 
 
+@positioned_read
 def service_get_playbill_claim(
     instance: PlaybillInstance,
     *,
@@ -448,6 +451,7 @@ def materialize_playbill_claim_view(
     )
 
 
+@positioned_read
 def service_list_playbill_claims(
     instance: PlaybillInstance,
     *,
@@ -614,12 +618,16 @@ def _claim_admission_accounts(
     # A batch resolves the confined body store once and passes it down.
     bodies = instance.body_store() if bodies is None else bodies
     for citation in claim_citation_references(claim):
-        envelope = parse_capture_envelope(
-            bodies.read(
+        try:
+            envelope = capture_envelope(
+                bodies,
                 citation.capture_digest,
                 access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
             )
-        )
+        except CasError:
+            # The accepted citation remains; its missing metadata supplies no
+            # admission account. The verdict reports replay unavailability.
+            continue
         contract = contracts.get(envelope.capture_contract_digest) or _superseded_contract(
             instance, coordinate, envelope.capture_contract_digest
         )
@@ -779,6 +787,7 @@ def resolve_playbill_claim_group(
     )
 
 
+@positioned_read
 def service_explain_playbill_claim(
     instance: PlaybillInstance,
     *,
@@ -828,12 +837,14 @@ def service_explain_playbill_claim(
         _claim_admission_tree(instance, claim=claim, coordinate=coordinate)
     )
     for digest in claim.backing.capture_digests:
-        envelope = parse_capture_envelope(
-            instance.body_store().read(
+        try:
+            envelope = capture_envelope(
+                instance.body_store(),
                 digest,
                 access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
             )
-        )
+        except CasError:
+            continue
         spans = tuple(
             span
             for mapping in claim.backing.source_mappings
@@ -982,9 +993,12 @@ class _InstanceSourceMaterialResolver:
         return self._instance.blob_at(self._coordinate.git_oid, artifact_path)
 
     def read_cas(self, content_digest: str, *, access: BodyAccessContext) -> bytes | None:
-        if not self._instance.body_store().verify(content_digest):
+        if not PositionedBodies(self._instance.body_store()).verify(content_digest):
             return None
-        return self._instance.body_store().read(content_digest, access=access)
+        try:
+            return read_body(self._instance.body_store(), content_digest, access=access)
+        except CasError:
+            return None
 
     def read_external(self, source: ExternalSourceReference) -> object | None:
         if self._external_reader is None:

@@ -34,6 +34,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS envelopes (
  contract_digest TEXT NOT NULL, capture_digest TEXT NOT NULL,
  PRIMARY KEY(contract_digest, capture_digest)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS envelopes_by_capture ON envelopes(capture_digest);
 CREATE TABLE IF NOT EXISTS backfilled (shard TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS backfill_complete (singleton INTEGER PRIMARY KEY);
 """
@@ -167,6 +168,64 @@ class CaptureEnvelopeIndex:
                 (*versions, limit + 1),
             ).fetchall()
         digests = tuple(str(row[0]) for row in rows)
+        return digests[:limit], len(digests) <= limit
+
+    def prefix(self, hex_prefix: str, *, limit: int) -> tuple[tuple[str, ...], bool]:
+        """Bounded Capture candidates by digest prefix; no body directory scan.
+
+        Backfill is the existing one-time cold migration, never a warm read's
+        population walk. A preview uses the existing index read-only.
+        """
+
+        from cruxible_core.storage.cas import dry_run_held_bodies
+
+        lower = "sha256:" + hex_prefix
+        query = (
+            "SELECT DISTINCT capture_digest FROM envelopes "
+            "WHERE capture_digest>=? AND capture_digest<? ORDER BY capture_digest LIMIT ?"
+        )
+        held = dry_run_held_bodies()
+        if held is None:
+            with self._connection() as connection:
+                self._backfill(connection)
+                rows = connection.execute(query, (lower, lower + "￿", limit + 1)).fetchall()
+            found = {str(row[0]) for row in rows}
+        else:
+            found = set()
+            # Preview never creates or updates a derived index. A pre-index
+            # store uses its cold migration fallback, without persisting it.
+            done: set[str] = set()
+            complete = False
+            if self.path.is_file() and not self.path.is_symlink():
+                with _LOCK:
+                    connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=30)
+                    try:
+                        found.update(
+                            str(row[0])
+                            for row in connection.execute(query, (lower, lower + "￿", limit + 1))
+                        )
+                        done = {
+                            row[0] for row in connection.execute("SELECT shard FROM backfilled")
+                        }
+                        complete = bool(
+                            connection.execute("SELECT 1 FROM backfill_complete").fetchone()
+                        )
+                    finally:
+                        connection.close()
+            if not complete:
+                for shard in self._shards():
+                    if shard not in done:
+                        found.update(
+                            digest
+                            for _contract, digest in self._shard_envelopes(shard)
+                            if digest.startswith(lower)
+                        )
+            found.update(
+                digest
+                for digest, content in held.items()
+                if digest.startswith(lower) and envelope_contract(content) is not None
+            )
+        digests = tuple(sorted(found))
         return digests[:limit], len(digests) <= limit
 
     def _captures_without_writing(

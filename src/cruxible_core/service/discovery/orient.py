@@ -107,6 +107,7 @@ from cruxible_core.service.read_refusals import (
     nearest,
     resolve_read_coordinate,
 )
+from cruxible_core.storage.read_positions import positioned_read
 
 if TYPE_CHECKING:
     from cruxible_core.consumers.next.facts import ReadHeads
@@ -828,6 +829,7 @@ def service_playbill_head(
     )
 
 
+@positioned_read
 def service_playbill_orient(
     instance: PlaybillInstance,
     *,

@@ -95,6 +95,7 @@ def test_missing_generated_body_recovers_and_corruption_refuses(tmp_path: Path) 
         assert lowering.call_count == 2
         body_path = instance.body_store()._path(digest)
         body_path.write_bytes(b"corrupt")
+        assert instance.body_store().availability(digest) == "corrupt"
         with pytest.raises(CasError, match="content address"):
             coordinator.preflight(intent.intent_id, actor=actor)
 

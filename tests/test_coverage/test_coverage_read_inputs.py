@@ -20,7 +20,7 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_statement_digest,
 )
-from cruxible_client.contracts.errors import CasError, FormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_core.coverage.adapter import (
     WorkingSourceObservation,
     observe_working_source,
@@ -31,6 +31,7 @@ from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.claims import _claim_from_view, service_list_playbill_claims
 from cruxible_core.service.discovery import coverage as coverage
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import body_present
 from tests.core_support._citation_index_oracle import (
     CaptureCitationInputV2,
     build_evidence_citation_index_v2,
@@ -62,7 +63,7 @@ def _projected_index(instance, *, at):  # type: ignore[no-untyped-def]
             )
         )
         for digest in artifact.backing.capture_digests:
-            if digest in captures:
+            if digest in captures or body_present(instance.body_store(), digest) is False:
                 continue
             envelope = parse_capture_envelope(
                 instance.body_store().read(
@@ -121,18 +122,18 @@ def test_service_reuses_captures_and_matches_projection_route(
     at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     expected_index = _projected_index(instance, at=at)
     capture_count = len({d for row in expected_index.citations for d in row.capture_digests})
-    original_parse = citation_sql.parse_capture_envelope
+    original_parse = citation_sql.capture_envelope
     parsed = 0
 
-    def counted(content):  # type: ignore[no-untyped-def]
+    def counted(*args, **kwargs):  # type: ignore[no-untyped-def]
         nonlocal parsed
         parsed += 1
-        return original_parse(content)
+        return original_parse(*args, **kwargs)
 
     def forbidden(*args, **kwargs):  # type: ignore[no-untyped-def]
         raise AssertionError("coverage must not materialize inspection projections")
 
-    monkeypatch.setattr(citation_sql, "parse_capture_envelope", counted)
+    monkeypatch.setattr(citation_sql, "capture_envelope", counted)
     monkeypatch.setattr(
         "cruxible_core.service.claims.claims.service_list_playbill_claims", forbidden
     )
@@ -181,12 +182,17 @@ def test_subsequent_reads_recheck_source_bytes_and_capture_cas(tmp_path: Path) -
     path = instance.body_store()._path(digest)
     content = path.read_bytes()
     path.unlink()
-    with pytest.raises(CasError):
-        coverage.build_accepted_evidence_index_v2(instance, at=at)
+    # Metadata reads retain their indexed answer until verification observes damage.
+    assert coverage.build_accepted_evidence_index_v2(instance, at=at) == index
+    assert instance.body_store().availability(digest) == "missing"
+    missing = coverage.build_accepted_evidence_index_v2(instance, at=at)
+    assert missing == _projected_index(instance, at=at)
+    assert digest not in {d for row in missing.citations for d in row.capture_digests}
     path.write_bytes(b"corrupt")
-    with pytest.raises(CasError):
-        coverage.build_accepted_evidence_index_v2(instance, at=at)
+    assert instance.body_store().availability(digest) == "corrupt"
+    assert coverage.build_accepted_evidence_index_v2(instance, at=at) == missing
     path.write_bytes(content)
+    assert instance.body_store().availability(digest) == "present"
     assert coverage.build_accepted_evidence_index_v2(instance, at=at) == index
 
 

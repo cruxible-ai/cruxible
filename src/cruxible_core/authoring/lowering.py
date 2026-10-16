@@ -322,6 +322,7 @@ from cruxible_core.indexes.subject_identity import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.phase_timing import timed_phase
+from cruxible_core.storage.capture_metadata import capture_envelope
 
 
 @dataclass(eq=False)
@@ -795,7 +796,7 @@ def cited_observation(instance: PlaybillInstance, capture_digest: str) -> tuple[
 
     access = BodyAccessContext(principal_id="playbill-authoring", can_read_body=True)
     try:
-        envelope = parse_capture_envelope(instance.body_store().read(capture_digest, access=access))
+        envelope = capture_envelope(instance.body_store(), capture_digest, access=access)
     except (CruxibleError, OSError, ValueError):
         return capture_digest, capture_digest
     return envelope.capture_contract_digest, observed_content(envelope).digest

@@ -375,8 +375,10 @@ def test_coverage_exports_match_frozen_versions_and_recheck_availability(world):
         assert sql == cold
         assert evidence_citation_index_digest(sql) == evidence_citation_index_digest(cold)
     world.store._path(a).unlink()
-    with pytest.raises(CasError):
-        coverage_rows(world.reader, bodies=world.store, at=AT)
+    assert world.store.availability(a) == "missing"
+    unavailable, envelopes = coverage_rows(world.reader, bodies=world.store, at=AT)
+    assert a not in envelopes
+    assert a not in {d for row in unavailable.citations for d in row.capture_digests}
 
 
 @pytest.mark.parametrize("unrelated", [0, 100, 500])
@@ -589,8 +591,10 @@ def test_retirement_relations_survive_unavailable_cas_like_retained_facts(
     assert _retirement_relations(old_reader, identity) == expected
     assert _retirement_relations(world.reader, identity) == expected
     assert world.reader.conflicts() == conflicts
-    with pytest.raises(CasError):
-        coverage_rows(world.reader, bodies=world.store, at=AT)
+    assert world.store.availability(first) == unavailable
+    index, envelopes = coverage_rows(world.reader, bodies=world.store, at=AT)
+    assert first not in envelopes
+    assert first not in {d for row in index.citations for d in row.capture_digests}
 
 
 def test_source_metadata_retains_exact_large_commitment_length_without_body(world):

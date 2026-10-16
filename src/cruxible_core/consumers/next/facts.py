@@ -76,7 +76,13 @@ from cruxible_core.consumers.protocol import ConsumerHealth, ConsumerRepair, Con
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.indexes.typed_state import utc_microseconds
 from cruxible_core.server.config import get_disabled_consumers
-from cruxible_core.storage.read_positions import ReadPositions, reading_at
+from cruxible_core.storage.read_positions import (
+    ReadPositions,
+    body_identity,
+    reading_at,
+    recording_body_identities,
+    unpositioned_operation,
+)
 from cruxible_core.triggers.journal import (
     cancel_deadline,
     latest_sequence,
@@ -340,11 +346,9 @@ def read_positions(instance: Any) -> ReadPositions:
     """Record where the re-observation journal and then the landing log stand: the
     positions a read outside the accepted coordinate and the door answers as of."""
 
-    from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
+    from cruxible_core.storage.read_positions import read_positions as sample
 
-    reobs = ClaimReobservationStore(instance).head_sequence()
-    landing = instance.body_store().landings.head()
-    return ReadPositions(landing.identity, landing.sequence, reobs)
+    return sample(instance)
 
 
 def read_heads(
@@ -378,17 +382,24 @@ def read_heads(
     reobs = 0 if journal is None else ClaimReobservationStore(instance).head_sequence()
     expire = latest_sequence(instance, action=NEXT_EXPIRE)
     sweep = latest_sequence(instance, action=EVIDENCE_SWEEP)
-    landing = instance.body_store().landings.head()
+    from cruxible_core.storage.read_positions import current_positions
+
+    positions = current_positions()
+    if positions is None:
+        landing = instance.body_store().landings.head()
+        landing_identity, landing_sequence = landing.identity, landing.sequence
+    else:
+        landing_identity, landing_sequence = positions.landing_log, positions.landing
     return ReadHeads(
         coordinate=coordinate,
         generation=generation,
         generation_oid=public.git_oid,
         compiler=public.compiler_digest,
         door_root=door,
-        landing_log=landing.identity,
-        landing=landing.sequence,
+        landing_log=landing_identity,
+        landing=landing_sequence,
         reobs_journal="" if journal is None else journal[0],
-        reobs=reobs,
+        reobs=reobs if positions is None else positions.reobs,
         expire=expire,
         sweep=sweep,
     )
@@ -669,7 +680,7 @@ def _claim_facts(
         consulted = capture_bodies.get(capture, {})
         if consulted is not None and capture not in consulted:
             # The door reads the Capture envelope itself.
-            capture_bodies[capture] = {**consulted, capture: store.file_identity(capture)}
+            capture_bodies[capture] = {**consulted, capture: body_identity(store, capture)}
     return _Facts(
         claim=claim,
         row=row,
@@ -2045,6 +2056,7 @@ def _changes(
     return _Change(delta, touched.at)
 
 
+@unpositioned_operation
 def catch_up(instance: Any, *, now: datetime) -> None:
     """Move facts and rows to the current heads: from the records past each cursor, else rebuild."""
 
@@ -2058,7 +2070,7 @@ def catch_up(instance: Any, *, now: datetime) -> None:
         original = _read_cursors(connection)
     if original is not None and original.heads == heads.key():
         return
-    with reading_at(heads.positions):
+    with reading_at(heads.positions), recording_body_identities():
         _catch_up_to(instance, heads, original, now=now, swept=swept)
 
 
@@ -2831,7 +2843,7 @@ def rebuilt_tables(instance: Any, *, at: datetime) -> dict[str, list[tuple[Any, 
     heads = read_heads(instance)
     connection = sqlite3.connect(":memory:")
     try:
-        with reading_at(heads.positions):
+        with reading_at(heads.positions), recording_body_identities():
             delta = _rebuild(instance, heads, at=at)
             connection.executescript(_SCHEMA)
             _settle(

@@ -29,7 +29,6 @@ from collections.abc import Mapping, Sequence
 
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
-    parse_capture_envelope,
 )
 from cruxible_client.contracts.errors import CasError, ProposalIntegrityError
 from cruxible_client.contracts.source_references import (
@@ -71,7 +70,9 @@ from cruxible_core.coverage.resolver import (
 from cruxible_core.indexes.evidence.citation_coverage import coverage_rows
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import AcceptedCoordinate
+from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import PositionedBodies, positioned_read, read_body
 
 COVERAGE_ACCESS_PROFILE_ID = "cruxible.coverage.read"
 COVERAGE_PRINCIPAL = "playbill-coverage"
@@ -111,6 +112,7 @@ def _resolve_coordinate(
     )
 
 
+@positioned_read
 def build_accepted_evidence_index_v2(
     instance: PlaybillInstance,
     *,
@@ -193,10 +195,9 @@ def _materialized_wanted_selections(
             content: bytes | None = None
             if envelope.commitment.materialization == "cas":
                 try:
-                    metadata = store.metadata(digest, access=access)
-                    if not metadata.present:
+                    if not PositionedBodies(store).verify(digest):
                         continue
-                    content = store.read(digest, access=access)
+                    content = read_body(store, digest, access=access)
                 except CasError as exc:
                     raise CoverageCommitmentMaterializationCorrupt(
                         "retained commitment bytes failed CAS verification"
@@ -350,7 +351,7 @@ def _capture_envelopes(
     access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
     store = instance.body_store()
     return {
-        digest: parse_capture_envelope(store.read(digest, access=access))
+        digest: capture_envelope(store, digest, access=access)
         for digest in sorted(
             {capture for citation in index.citations for capture in citation.capture_digests}
         )
@@ -391,6 +392,7 @@ def _publish_manifest_v2(
     return candidate
 
 
+@positioned_read
 def service_resolve_playbill_coverage(
     instance: PlaybillInstance,
     *,

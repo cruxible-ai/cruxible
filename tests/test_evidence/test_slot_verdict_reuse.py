@@ -117,6 +117,7 @@ def test_slot_answers_are_reused_exactly_when_their_reads_hold(tmp_path: Path, m
     # Retained evidence disappearing changes replay availability for its slot.
     digest = instance.body_store().digest_bytes(b"status: blocked").tagged
     instance.body_store()._path(digest).unlink()
+    assert instance.body_store().availability(digest) == "missing"
     check({"subjects/project.work_item/wi-43.json"})
 
     # Later instants are served only inside each slot's invariance interval.
@@ -159,10 +160,9 @@ def test_evidence_vanishing_while_a_slot_is_remembered_is_not_masked(tmp_path, m
     assert _derive(instance, fresh=False) == _derive(instance, fresh=True)
 
 
-def test_availability_is_not_remembered_across_a_change_during_its_derivation(
-    tmp_path, monkeypatch
-):
-    from cruxible_core.service.evidence import evidence as playbill_evidence
+def test_availability_at_an_old_position_survives_a_damage_record(tmp_path):
+    from cruxible_core.service.evidence import evidence
+    from cruxible_core.storage.read_positions import read_positions, reading_at
 
     instance, _owner = seed_claims(tmp_path)
     capture = (
@@ -170,24 +170,17 @@ def test_availability_is_not_remembered_across_a_change_during_its_derivation(
         .claims()[0]
         .backing.capture_digests[0]
     )
-    playbill_evidence._AVAILABILITY_MEMO.clear()
-    identity = playbill_evidence._cas_file_identity
-    vanished = []
-
-    def evidence_vanishes_before_observation(store, digest):
-        if not vanished:
-            store._path(capture).unlink()
-            vanished.append(digest)
-        return identity(store, digest)
-
-    monkeypatch.setattr(
-        playbill_evidence, "_cas_file_identity", evidence_vanishes_before_observation
-    )
-    available = playbill_evidence._current_replay_available
-    assert available(instance, capture, readers={}) is False
-    monkeypatch.setattr(playbill_evidence, "_cas_file_identity", identity)
-    assert available(instance, capture, readers={}) is False
-    assert playbill_evidence._replay_available(instance, capture, readers={}) is False
+    before = read_positions(instance)
+    available = evidence._current_replay_available
+    with reading_at(before):
+        assert available(instance, capture, readers={})
+    instance.body_store()._path(capture).unlink()
+    # Availability is unchanged until verification records the damage.
+    assert available(instance, capture, readers={})
+    assert instance.body_store().availability(capture) == "missing"
+    assert not available(instance, capture, readers={})
+    with reading_at(before):
+        assert available(instance, capture, readers={})
 
 
 def test_a_shared_capture_observed_inconsistently_is_not_remembered(tmp_path, monkeypatch):
@@ -254,7 +247,7 @@ def _remembered_derivation(instance):  # type: ignore[no-untyped-def]
 def test_a_remembered_derivation_is_not_served_over_a_body_rewritten_in_place(
     tmp_path: Path, keep_mtime: bool
 ) -> None:
-    """The evidence generation sees arrivals and removals; the body fingerprints see the rest."""
+    """Sequenced damage invalidates warm and cold derivations alike."""
 
     instance, _owner = seed_claims(tmp_path)
     context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
@@ -263,9 +256,12 @@ def test_a_remembered_derivation_is_not_served_over_a_body_rewritten_in_place(
     before = _derive(instance, fresh=True)[0]
 
     _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=keep_mtime)
-    # The keyed evidence generation does not move; the entry must still not be served.
+    # Presence stays the landing index's until a verification records damage.
     assert playbill_search.verdict_input_fingerprint(instance) == fingerprint
-    # Served straight from the remembered derivation: nothing is reset.
+    assert _remembered_derivation(instance) == before
+    assert instance.body_store().availability(capture) == "corrupt"
+    assert playbill_search.verdict_input_fingerprint(instance) != fingerprint
+    # The damage record invalidates the remembered derivation.
     warm = _outcome(lambda: _remembered_derivation(instance))
     cold = _outcome(lambda: _derive(instance, fresh=True)[0])
     assert warm == cold
@@ -312,6 +308,7 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         digest = projection.typed.source(f"Claim:{claim_id}").statement.object.content_digest
     _rewrite_in_place(instance.body_store()._path(digest), keep_mtime=keep_mtime)
+    assert instance.body_store().availability(digest) == "corrupt"
 
     warm = _outcome(read)
     playbill_search.reset_claim_resolution_memo()
@@ -374,6 +371,7 @@ def test_a_body_rewritten_after_its_read_but_before_the_memo_insert_is_not_remem
     _remembered_derivation(instance)  # derives from the good bytes; the body moves
     monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", snapshot)
     assert rewritten
+    assert instance.body_store().availability(target) == "corrupt"
 
     warm = _outcome(lambda: _remembered_derivation(instance))
     cold = _outcome(lambda: _derive(instance, fresh=True)[0])
@@ -415,6 +413,7 @@ def test_an_availability_evicted_before_the_insert_keeps_every_dependency(
     _remembered_derivation(instance)
     monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", snapshot)
     _rewrite_in_place(instance.body_store()._path(target), keep_mtime=True)
+    assert instance.body_store().availability(target) == "corrupt"
 
     warm = _outcome(lambda: _remembered_derivation(instance))
     cold = _outcome(lambda: _derive(instance, fresh=True)[0])

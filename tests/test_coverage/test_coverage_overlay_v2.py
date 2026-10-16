@@ -172,6 +172,9 @@ def test_present_corrupt_cas_material_refuses_instead_of_falling_back() -> None:
     envelope_bytes = render_capture_envelope(accepted.envelope)
 
     class _CorruptStore:
+        def verify(self, digest: str) -> bool:
+            return True
+
         def metadata(self, digest: str, *, access: object) -> object:
             return SimpleNamespace(present=True)
 

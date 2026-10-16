@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
-from cruxible_client.contracts.captures import parse_capture_envelope
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ExactContentClaimObject,
@@ -88,7 +87,9 @@ from cruxible_core.service.discovery.operational_viewer import (
     may_see_arming,
 )
 from cruxible_core.service.discovery.runs import run_counts, run_rows
+from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import PositionedBodies
 
 _SERVICE_ACCESS = BodyAccessContext(principal_id="playbill-operational-reads", can_read_body=True)
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -197,9 +198,9 @@ def uncited_capture_present(instance: PlaybillInstance, digest: str) -> bool:
     """Whether a full Capture digest no accepted Claim cites is retained as a Capture."""
 
     try:
-        if not instance.body_store().metadata(digest, access=_SERVICE_ACCESS).present:
+        if not PositionedBodies(instance.body_store()).verify(digest):
             return False
-        parse_capture_envelope(instance.body_store().read(digest, access=_SERVICE_ACCESS))
+        capture_envelope(instance.body_store(), digest, access=_SERVICE_ACCESS)
     except (CruxibleError, ValueError):
         return False
     return True
@@ -613,17 +614,26 @@ def _availability(
 ) -> tuple[Literal["available", "unavailable"], str | None]:
     """Whether the store can still produce a Capture, as the evidence worker last saw."""
 
+    from cruxible_client.contracts.captures import required_capture_bodies
     from cruxible_core.consumers.next.evidence import evidence_findings
 
+    store = instance.body_store()
+    try:
+        envelope = capture_envelope(store, digest, access=_SERVICE_ACCESS)
+        if all(
+            PositionedBodies(store).verify(body)
+            for body in required_capture_bodies(envelope, digest)
+        ):
+            return "available", None
+    except (CruxibleError, ValueError):
+        pass
     found = [item for item in evidence_findings(instance) if item.capture_digest == digest]
     if found:
         return "unavailable", "; ".join(
             f"{item.part} {item.state} (checked {format_datetime(item.checked_at)})"
             for item in found
         )
-    if not instance.body_store().metadata(digest, access=_SERVICE_ACCESS).present:
-        return "unavailable", "envelope missing from the store"
-    return "available", None
+    return "unavailable", "retained evidence unavailable at the read position"
 
 
 def capture_card(
@@ -677,9 +687,7 @@ def capture_card(
             observed_at = _from_microseconds(int(observed_us))
             size = None if length is None else int(length)
         else:
-            envelope = parse_capture_envelope(
-                instance.body_store().read(digest, access=_SERVICE_ACCESS)
-            )
+            envelope = capture_envelope(instance.body_store(), digest, access=_SERVICE_ACCESS)
             contract_digest = envelope.capture_contract_digest
             source = getattr(envelope.source, "source_identity", None)
             observed_at = envelope.observed_at

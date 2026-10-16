@@ -29,7 +29,9 @@ from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import service_open_playbill_source
+from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import PositionedBodies, positioned_read, read_body
 
 
 class CaptureReadInvalid(FormatError):
@@ -207,10 +209,10 @@ def verify_accepted_capture(
     """
 
     store = instance.body_store()
-    if not store.metadata(digest, access=access).present:
+    if not PositionedBodies(store).verify(digest):
         return "capture_unavailable"
     try:
-        raw = store.read(digest, access=access)
+        raw = read_body(store, digest, access=access)
     except CruxibleError as exc:
         raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
     try:
@@ -246,14 +248,13 @@ def verify_accepted_capture(
                     # source() validates the indexed member against the accepted tree.
                     projection.typed.source(identity.qualified)
                     producers[identity.qualified] = owner.artifact_digest
-        if (
-            envelope.commitment.materialization == "cas"
-            and not store.metadata(envelope.commitment.digest, access=access).present
+        if envelope.commitment.materialization == "cas" and not PositionedBodies(store).verify(
+            envelope.commitment.digest
         ):
             return "body_unavailable"
         envelope = verify_capture(
             digest,
-            store=store,
+            store=PositionedBodies(store),
             contract=contract,
             ledger_resolver=_LedgerResolver(instance),
             producer_artifact_digests=producers,
@@ -286,11 +287,7 @@ class RetainedCaptureInventory:
     nearest: tuple[str, ...] = ()
 
 
-# Canonical envelopes sort their keys, and this one sorts first.
-_ENVELOPE_HEAD = b'{"capture_contract_digest":"'
-_HEAD_LENGTH = len(_ENVELOPE_HEAD) + len("sha256:") + 64
-
-
+@positioned_read
 def retained_captures(
     instance: PlaybillInstance,
     *,
@@ -301,33 +298,30 @@ def retained_captures(
     """The Captures the instance holds whose digest starts with ``hex_prefix``.
 
     Cited or not: a Capture is retained as soon as it is stored. At most
-    ``budget`` stored objects are examined; when the store holds more under the
-    prefix the inventory is incomplete and says so, and callers refuse rather
-    than treat a partial inventory as the whole. ``nearest`` passes on that many
-    digests sharing the longest prefix with ``hex_prefix``. Nothing here is
-    verified; ``verify_accepted_capture`` verifies what a caller keeps.
+    ``budget`` indexed envelope candidates are examined; if more match, the
+    inventory is incomplete and callers refuse a partial answer. Unrelated
+    bodies do not enter the lookup. Nothing here is verified against a contract;
+    ``verify_accepted_capture`` verifies what a caller keeps.
     """
 
     store = instance.body_store()
-    scan = store.scan(hex_prefix, budget=budget, nearest=nearest)
+    digests, complete = store.capture_envelopes.prefix(hex_prefix, limit=budget)
     found: list[RetainedCapture] = []
-    for digest in scan.digests:
-        head = store.peek(digest, _HEAD_LENGTH)
-        if not head.startswith(_ENVELOPE_HEAD):
-            continue
+    for digest in digests:
         try:
-            envelope = parse_capture_envelope(store.read(digest, access=_INVENTORY_ACCESS))
+            envelope = capture_envelope(store, digest, access=_INVENTORY_ACCESS)
         except (CruxibleError, ValueError):
             continue
         found.append(RetainedCapture(digest=digest, envelope=envelope))
     return RetainedCaptureInventory(
-        captures=tuple(found), complete=scan.complete, nearest=scan.nearest
+        captures=tuple(found), complete=complete, nearest=digests[:nearest]
     )
 
 
 _INVENTORY_ACCESS = BodyAccessContext(principal_id="playbill-capture-inventory", can_read_body=True)
 
 
+@positioned_read
 def contract_captures(
     instance: PlaybillInstance,
     *,
@@ -348,7 +342,7 @@ def contract_captures(
     found: list[RetainedCapture] = []
     for digest in digests:
         try:
-            envelope = parse_capture_envelope(store.read(digest, access=_INVENTORY_ACCESS))
+            envelope = capture_envelope(store, digest, access=_INVENTORY_ACCESS)
         except (CruxibleError, ValueError):
             continue
         found.append(RetainedCapture(digest=digest, envelope=envelope))
@@ -394,6 +388,7 @@ CaptureHandleResolution = (
 )
 
 
+@positioned_read
 def resolve_capture_handle(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -461,6 +456,7 @@ def _verifies(
     return not isinstance(verified, str)
 
 
+@positioned_read
 def service_read_playbill_capture(
     instance: PlaybillInstance,
     *,
