@@ -356,6 +356,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "observe_blocks",
         "depublish_block",
         "measure_procedure",
+        "dispose_procedure_resolution",
         "list_procedure_readings",
         "claim_runtime_bootstrap",
         "create_runtime_credential",

@@ -485,7 +485,7 @@ proc.dispose_resolution(batch["rollout-healthy"].resolution_id,
 The CLI is `cruxible procedure dispose NAME RESOLUTION_ID --verdict overturned
 --reason TEXT`; MCP is `cruxible_procedure_dispose(name=NAME, request={"resolution_id":
 ID, "verdict": "overturned", "reason": TEXT})` in the full profile. Use `upheld`
-to confirm the answer. Core records your judgment without interpreting the reason.
+to confirm the answer. Cruxible records your judgment without interpreting the reason.
 The authenticated reviewing principal is recorded; this requires `GOVERNED_WRITE`.
 An exact retry returns the original disposition. Changing the last verdict is
 allowed only on the latest answer of a live Procedure revision. Inspect

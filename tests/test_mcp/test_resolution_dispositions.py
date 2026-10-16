@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from cruxible_client import contracts
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
-from cruxible_core.runtime.permissions import TOOL_PERMISSIONS, PermissionMode
+from cruxible_core.runtime.permissions import TOOL_PERMISSIONS, PermissionMode, reset_permissions
 
 
 def test_resolution_disposition_tool_schema_and_governed_tier(monkeypatch):
@@ -49,6 +49,7 @@ def test_resolution_disposition_handler_uses_the_typed_transport(monkeypatch):
 
 def test_review_hidden_in_read_only_and_default_profiles(monkeypatch):
     for mode, profile in (("read_only", "full"), ("admin", "default")):
+        reset_permissions()
         monkeypatch.setenv("CRUXIBLE_MODE", mode)
         monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", profile)
         names = {tool.name for tool in asyncio.run(create_server().list_tools())}

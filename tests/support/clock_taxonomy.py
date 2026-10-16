@@ -427,6 +427,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureMeasurementReviewTrigger", "window"): "VALIDITY WINDOW",
     ("ProcedureReadingV1", "observed_at"): "ASSERTION TIME",
     ("ProcedureReadingV1", "recorded_at"): "ASSERTION TIME",
+    ("ResolutionDispositionSummary", "recorded_at"): "ASSERTION TIME",
+    ("ResolutionDispositionSummary", "sequence"): "SETTLEMENT ORDER",
     ("ProcedureResolutionDispositionV1", "recorded_at"): "ASSERTION TIME",
     ("ProcedureResolutionDispositionV1", "sequence"): "SETTLEMENT ORDER",
     ("ProcedureResolutionV1", "observed_at"): "ASSERTION TIME",

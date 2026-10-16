@@ -12,6 +12,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
 )
 from cruxible_client.contracts.procedures.dispositions import ProcedureResolutionDispositionRequest
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.readings import ProcedureReadingsRequest
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.procedures.resolution import (
@@ -121,7 +122,7 @@ def test_uphold_retry_overturn_get_history_and_remeasure_equal_the_fold(measured
                 ref=f"Procedure:{procedure.identity.name}",
                 detail=detail,
                 surface="cli",
-                limit=1,
+                limit=1 if detail == "history" else None,
             ),
             access=access,
         )
@@ -204,11 +205,20 @@ def test_unknown_and_unavailable_books_refuse(measured):
 def test_replaced_contract_refuses_but_its_history_remains_readable(measured):
     instance, owner, procedure, first = measured
     old = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    definition = procedure.definition.model_copy(
+        update={
+            "budget": procedure.definition.budget.model_copy(
+                update={"max_items": procedure.definition.budget.max_items - 1}
+            )
+        }
+    )
     changed = procedure.model_copy(
         update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
             "lifecycle": ArtifactLifecycle(
                 predecessor_digest=procedure_artifact_digest(procedure).tagged
-            )
+            ),
         }
     )
     _activate_procedure(
@@ -217,6 +227,15 @@ def test_replaced_contract_refuses_but_its_history_remains_readable(measured):
     with pytest.raises(ResolutionDispositionRefused) as refused:
         _dispose(instance, procedure, first, at=old)
     assert refused.value.error_code == "cruxible.resolution.contract_closed"
+    historical = service_playbill_get(
+        instance,
+        request=GetRequest(ref=f"Procedure:{procedure.identity.name}", at=old.git_oid),
+        access=BodyAccessContext(principal_id="reviewer", can_read_body=True),
+    )
+    row = next(
+        row for row in historical.card.measurement_reviews if row.measurement_name == "rows-present"
+    )
+    assert row.standing_resolution_id == first.resolution_id
 
 
 def test_retired_contract_refuses(measured):

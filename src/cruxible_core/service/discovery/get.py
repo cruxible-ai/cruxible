@@ -1624,23 +1624,21 @@ def _procedure_reviews(
     *,
     history_limit: int = 0,
 ) -> tuple[ProcedureMeasurementReview, ...]:
-    from cruxible_client.contracts.procedures.artifacts import (
-        AcceptedProcedure,
-        procedure_artifact_digest,
-    )
+    from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
     from cruxible_core.service.procedures.resolution_dispositions import (
         procedure_measurement_reviews,
     )
 
     with instance.bind_accepted_projection(coordinate) as projection:
         procedure = projection.typed.source(resolved.identity)
-    assert procedure is not None
+        row = projection.typed.envelope(resolved.identity)
+    assert procedure is not None and row is not None
     return procedure_measurement_reviews(
         instance,
         accepted=AcceptedProcedure(
             path=resolved.path or f"procedures/{_name(resolved.identity)}.json",
             procedure=procedure,
-            artifact_digest=procedure_artifact_digest(procedure).tagged,
+            artifact_digest=row.artifact_digest,
         ),
         observation=coordinate,
         history_limit=history_limit,
