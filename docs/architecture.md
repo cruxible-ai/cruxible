@@ -186,3 +186,20 @@ Tests follow the same ownership under `tests/test_<domain>/`; shared fixtures
 live in `tests/core_support/`. Frozen format fixtures remain in `tests/goldens/`.
 Internal package relocation does not rename wire operations, managed-state
 paths, or signed format identifiers.
+
+### Operational journal publication
+
+A terminal publishes its item-dependency records as one fenced append group.
+The records retain their individual sequence numbers, digests and hash chain.
+One reservation sidecar names the group's CAS payloads before they are written;
+the sidecar is removed only after the complete group is appended and indexed.
+The journal remains authoritative and its SQLite indexes are rebuildable.
+
+Operational journal frames, payload bodies and reservation sidecars are
+best-effort exhaust: they have no per-item fsync. A crash can lose recent
+exhaust. Complete frames remain independently verifiable, incomplete trailing
+frames are discarded by the next writer, and payload availability checks treat
+missing or truncated bytes as unavailable. Direct body-byte reads still refuse
+missing or corrupt bytes. Promoting a payload into ordinary evidence flushes it
+under the evidence store's durability rules. Accepted-state publication retains
+its existing durable Git and evidence writes.

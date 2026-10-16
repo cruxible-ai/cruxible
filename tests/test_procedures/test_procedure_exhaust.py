@@ -177,11 +177,11 @@ def test_partition_names_are_derived_once_and_identity_is_still_checked(
         )
     append(1)
     assert len(journal.all_records(stream, partition_id)) == 2
-    # The new frame is encoded once and verified once on read-back; no partition
-    # name, identity, dirty marker, stream key or writer fence is encoded again,
-    # and re-reading verified frames costs nothing.
-    assert encoded == ["cruxible_core.exhaust.backends"] * 2
-    # The identity file is still read and compared on every access.
+    # The new frame is encoded once and retained from its bound value; no
+    # partition name, identity, dirty marker, stream key or writer fence is
+    # encoded again, and reading back these exact bytes needs no second parse.
+    assert encoded == ["cruxible_core.exhaust.backends"]
+    # A changed identity stamp still forces the full byte comparison.
     identity = next((tmp_path / "journal" / "streams").glob("*/*/identity.json"))
     identity.write_bytes(identity.read_bytes() + b" ")
     with pytest.raises(JournalIntegrityError, match="identity substitution"):

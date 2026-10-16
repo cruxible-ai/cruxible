@@ -135,6 +135,50 @@ class ProcedureRunIndex:
             terminal_egress_resolved_count=int(row["terminal_egress_resolved_count"]),
         )
 
+    def apply_records(self, records: tuple[StoredProcedureJournalRecordV1, ...]) -> None:
+        """Advance a running run past one ordered group of item dependencies.
+
+        These records only advance the cursor: validate the group in memory,
+        then one read, one update and one commit regardless of group size.
+        """
+        if not records:
+            return
+        first, last = records[0].record, records[-1].record
+        if first.run_id is None or first.admission_binding_digest is None:
+            raise ExecutionError("Procedure run exhaust lacks a run or admission binding")
+        previous = None
+        for stored in records:
+            record = stored.record
+            if (
+                record.run_id != first.run_id
+                or record.admission_binding_digest != first.admission_binding_digest
+                or record.stream != first.stream
+                or record.partition_id != first.partition_id
+                or record.event_kind != "item_dependencies"
+                or (
+                    previous is not None
+                    and (
+                        record.sequence != previous.record.sequence + 1
+                        or record.previous_record_digest != previous.record_digest
+                    )
+                )
+            ):
+                raise ExecutionError("Procedure item dependency group is inconsistent")
+            previous = stored
+        with self._conn:
+            existing = self.get(first.run_id)
+            if (
+                existing is None
+                or existing.status != "running"
+                or existing.admission_binding_digest != first.admission_binding_digest
+                or first.sequence <= existing.last_sequence
+            ):
+                raise ExecutionError("Procedure item dependency group cannot extend this run")
+            self._conn.execute(
+                "UPDATE procedure_run_index SET last_sequence = ? WHERE run_id = ?",
+                (last.sequence, first.run_id),
+            )
+
     def apply_record(
         self,
         stored: StoredProcedureJournalRecordV1,

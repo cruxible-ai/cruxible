@@ -1,4 +1,4 @@
-"""Durable non-CAS leases closing body-store to journal-append reachability gaps."""
+"""Non-CAS leases closing body-store to journal-append reachability gaps."""
 
 from __future__ import annotations
 
@@ -99,6 +99,27 @@ class RunMaterialReservationV1(_StrictReservationModel):
     def _identity(self) -> "RunMaterialReservationV1":
         if self.reservation_id != run_reservation_id(self):
             raise ValueError("run-material reservation id does not reproduce")
+        return self
+
+
+class RunMaterialReservationGroupV1(_StrictReservationModel):
+    tag: Literal["playbill-run-material-reservation-group-v1"] = (
+        "playbill-run-material-reservation-group-v1"
+    )
+    reservation_id: str
+    members: tuple[RunMaterialReservationV1, ...]
+
+    @model_validator(mode="after")
+    def _identity(self) -> "RunMaterialReservationGroupV1":
+        if not self.members or len({item.reservation_id for item in self.members}) != len(
+            self.members
+        ):
+            raise ValueError("reservation group must have distinct members")
+        expected = typed_digest(
+            Sha256Value, self.tag, {"members": [item.reservation_id for item in self.members]}
+        ).tagged
+        if self.reservation_id != expected:
+            raise ValueError("reservation group id does not reproduce")
         return self
 
 
@@ -385,7 +406,22 @@ class ProcedureMaterialReservationStore:
         digest = Sha256Value.from_tagged(reservation_id)
         return self.root / f"{digest.value}.json"
 
-    def reserve_locked(self, record: MaterialReservationV1) -> None:
+    def reserve_many_locked(self, records: Sequence[RunMaterialReservationV1]) -> str:
+        """One best-effort sidecar, published before any of the group's bodies."""
+        members = tuple(records)
+        reservation_id = typed_digest(
+            Sha256Value,
+            "playbill-run-material-reservation-group-v1",
+            {"members": [item.reservation_id for item in members]},
+        ).tagged
+        group = RunMaterialReservationGroupV1(reservation_id=reservation_id, members=members)
+        self.reserve_locked(group)
+        return reservation_id
+
+    def reserve_locked(
+        self,
+        record: MaterialReservationV1 | RunMaterialReservationGroupV1,
+    ) -> None:
         path = self._path(record.reservation_id)
         content = canonical_bytes(record.model_dump(mode="json")) + b"\n"
         if path.exists() or path.is_symlink():
@@ -401,9 +437,7 @@ class ProcedureMaterialReservationStore:
             with os.fdopen(descriptor, "wb", closefd=True) as handle:
                 handle.write(content)
                 handle.flush()
-                os.fsync(handle.fileno())
             os.replace(temp, path)
-            _fsync_directory(self.root)
         finally:
             if temp.exists():
                 temp.unlink()
@@ -415,7 +449,6 @@ class ProcedureMaterialReservationStore:
         if path.is_symlink() or not path.is_file():
             raise ProcedureMaterialReservationError("reservation file is not trustworthy")
         path.unlink()
-        _fsync_directory(self.root)
 
     def release(self, reservation_id: str) -> None:
         with self.locked():
@@ -423,6 +456,7 @@ class ProcedureMaterialReservationStore:
 
     def active_locked(self) -> tuple[MaterialReservationV1, ...]:
         records: list[MaterialReservationV1] = []
+        self._active_groups: dict[str, tuple[str, ...]] = {}
         for path in sorted(self.root.glob("*.json"), key=lambda item: item.name):
             try:
                 if path.is_symlink() or not path.is_file():
@@ -435,6 +469,8 @@ class ProcedureMaterialReservationStore:
                     if tag == "playbill-pending-admission-material-reservation-v1"
                     else RunMaterialReservationV1
                     if tag == "playbill-run-material-reservation-v1"
+                    else RunMaterialReservationGroupV1
+                    if tag == "playbill-run-material-reservation-group-v1"
                     else None
                 )
                 if model is None:
@@ -447,7 +483,13 @@ class ProcedureMaterialReservationStore:
                 raise ProcedureMaterialRecoveryRequired(
                     "run_recovery_required: reservation sidecar is corrupt"
                 ) from exc
-            records.append(record)
+            if isinstance(record, RunMaterialReservationGroupV1):
+                self._active_groups[record.reservation_id] = tuple(
+                    member.reservation_id for member in record.members
+                )
+                records.extend(record.members)
+            else:
+                records.append(record)
         return tuple(records)
 
     def active(self) -> tuple[MaterialReservationV1, ...]:
@@ -561,8 +603,22 @@ class ProcedureMaterialReservationStore:
                     raise ProcedureMaterialRecoveryRequired(
                         "run_recovery_required: reservation has multiple authenticated references"
                     )
-                self.release_locked(reservation.reservation_id)
                 released.append(reservation.reservation_id)
+            # Validate the complete scan before removing a group lease. A failure
+            # on a later member must leave every earlier member reachable.
+            remaining = set(released)
+            for group_id, members in self._active_groups.items():
+                selected = remaining.intersection(members)
+                if selected:
+                    if len(selected) != len(members):
+                        raise ProcedureMaterialRecoveryRequired(
+                            "run_recovery_required: recovery covers only part "
+                            "of a reservation group"
+                        )
+                    self.release_locked(group_id)
+                    remaining.difference_update(members)
+            for reservation_id in remaining:
+                self.release_locked(reservation_id)
         return tuple(released)
 
 
