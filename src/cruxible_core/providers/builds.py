@@ -148,7 +148,12 @@ def indexed_exact_provider(connection: sqlite3.Connection, identity: str) -> Bui
 
 
 def indexed_move_pinners(
-    connection: sqlite3.Connection, name: str, target: str, only: tuple[str, ...]
+    connection: sqlite3.Connection,
+    name: str,
+    target: str,
+    only: tuple[str, ...],
+    *,
+    procedures_only: bool = False,
 ) -> tuple[tuple[str, str, str], ...]:
     """Live Procedure/Blueprint pins of this name, sized by the affected pinners.
 
@@ -164,6 +169,8 @@ def indexed_move_pinners(
         "AND b.artifact_digest=p.target_digest "
         "WHERE p.provider_name=? AND p.target_identity!=? AND b.lifecycle='live'"
     )
+    if procedures_only:
+        select += " AND proc.identity IS NOT NULL"
     parameters: list[str] = [name, target]
     if only:
         select += " AND p.source_identity IN (" + ",".join("?" for _ in only) + ")"

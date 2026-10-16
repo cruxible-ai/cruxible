@@ -434,3 +434,50 @@ def test_admission_domain_work_is_flat_with_same_name_build_population(
         instance.connection.close()
     print("work at 20/200 builds:", work)
     assert work[0] == work[1], work
+
+
+@pytest.mark.parametrize("pinners", [0, 1])
+@pytest.mark.parametrize("preview", [True, False])
+def test_kit_mover_discovery_is_flat_with_retained_builds(
+    tmp_path, monkeypatch, package, pinners, preview
+):
+    from cruxible_client.contracts.providers import provider_digest
+    from cruxible_core.service.kits import _kit_movers, _kit_moves
+
+    work = []
+    for size in (20, 200):
+        instance, providers = _population(tmp_path, package, size)
+        old, target = providers[0], providers[-1]
+        if pinners:
+            instance.connection.execute(
+                "INSERT INTO procedures VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    "Procedure:one",
+                    "procedures/one.json",
+                    "fixture",
+                    "sha256:" + "1" * 64,
+                    None,
+                    1,
+                    "live",
+                    "sha256:" + "2" * 64,
+                    "fixture",
+                    "drain",
+                    "direct",
+                ),
+            )
+            instance.connection.execute(
+                "INSERT INTO provider_pinners VALUES (?,?,?,?)",
+                ("Procedure:one", old.identity.qualified, provider_digest(old).tagged, NAME),
+            )
+        shipped = SimpleNamespace(provider_id=NAME, build=target.identity.name)
+
+        def select():
+            movers = _kit_movers(instance.connection, instance.tree, (shipped,), {})
+            assert len(movers) == pinners
+            # Preview and commit share discovery; commit also builds mappings.
+            if not preview:
+                assert len(_kit_moves(instance.tree, movers)) == pinners
+
+        work.append(_work(instance, monkeypatch, select))
+        instance.connection.close()
+    assert work[0] == work[1], work

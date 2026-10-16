@@ -107,11 +107,10 @@ from cruxible_core.providers.build_moves import (
     Mover,
     SettledMoves,
     build_move,
-    live_procedure_pinners,
     live_triggers_of,
     settle_changes,
 )
-from cruxible_core.providers.builds import tree_provider_builds
+from cruxible_core.providers.builds import indexed_move_pinners, tree_provider_builds
 from cruxible_core.providers.package_inspection import (
     InspectedProviderPackage,
     inspect_provider_package,
@@ -974,28 +973,29 @@ def _kit_movers(
 
     The release's own definitions it replaces already pin the kit's build; every
     other live pinner (the kit's kept ones, and the user's) moves to it.
-    O(builds of each kit provider + their live pinners), from the pin index.
+    O(affected live Procedure pins), from the maintained name reverse-pin index.
     """
 
     found = []
     for provider in providers:
-        for row in tree_provider_builds(tree, provider.provider_id):
-            if row.identity == f"Provider:{provider.build}":
+        for identity, path, source in indexed_move_pinners(
+            connection,
+            provider.provider_id,
+            f"Provider:{provider.build}",
+            (),
+            procedures_only=True,
+        ):
+            if path in writes and _artifact_state(path, writes[path]).lifecycle.state != "live":
                 continue
-            for identity, path in live_procedure_pinners(
-                connection, row.identity, row.artifact_digest
-            ):
-                if path in writes and _artifact_state(path, writes[path]).lifecycle.state != "live":
-                    continue
-                kind, _, name = identity.partition(":")
-                found.append(
-                    Mover(
-                        identity=ArtifactIdentity(kind=kind, name=name),
-                        path=path,
-                        from_build=row.identity.partition(":")[2],
-                        to_build=provider.build,
-                    )
+            kind, _, name = identity.partition(":")
+            found.append(
+                Mover(
+                    identity=ArtifactIdentity(kind=kind, name=name),
+                    path=path,
+                    from_build=source.partition(":")[2],
+                    to_build=provider.build,
                 )
+            )
     return tuple(sorted(found, key=lambda item: (item.identity.qualified, item.from_build)))
 
 
