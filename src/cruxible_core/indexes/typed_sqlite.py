@@ -251,9 +251,16 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
                 coordinates={},
             ),
         )
-        from cruxible_core.indexes.provider_heads import refresh_provider_heads
+        from cruxible_core.indexes.provider_heads import (
+            cold_provider_source,
+            refresh_provider_heads,
+        )
 
-        refresh_provider_heads(expected, sources)
+        refresh_provider_heads(
+            expected,
+            sources,
+            historical_source=cold_provider_source(repository, accepted.git_oid, sources),
+        )
         from cruxible_core.indexes.subject_identity import refresh_subject_keys
 
         refresh_subject_keys(expected)
@@ -380,6 +387,7 @@ def replace_rows(
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
     bodies: Any = None,
     whole_checks: bool = True,
+    historical_provider_source: Callable[[str, int], bytes] | None = None,
 ) -> None:
     from cruxible_core.indexes.subject_identity import refresh_subject_keys
 
@@ -438,7 +446,7 @@ def replace_rows(
     )
     from cruxible_core.indexes.provider_heads import refresh_provider_heads
 
-    refresh_provider_heads(connection, sources)
+    refresh_provider_heads(connection, sources, historical_source=historical_provider_source)
     if not changed:
         refresh_subject_keys(connection)
     else:
@@ -524,8 +532,14 @@ def initialize(
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA user_version={PROJECTION_STORAGE_SCHEMA_VERSION}")
         connection.executescript(complete_schema_sql())
+        from cruxible_core.indexes.provider_heads import cold_provider_source
+        from cruxible_core.indexes.sqlite import _source_repository
+
         replace_rows(
             connection,
+            historical_provider_source=cold_provider_source(
+                _source_repository(request.repository_path), request.git_oid, sources
+            ),
             request=request,
             parsed=parsed,
             sources=sources,

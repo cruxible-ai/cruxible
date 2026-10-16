@@ -10,9 +10,11 @@ and ambiguity without enumerating a name's retained builds.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from cruxible_client.contracts.canonical import file_digest
+from cruxible_client.contracts.providers import parse_provider, provider_build_key, provider_digest
 from cruxible_core.proposals.settlement import parse_change_set_record
 
 SCHEMA_SQL = """
@@ -47,7 +49,46 @@ def remove_provider_domain(connection: sqlite3.Connection, name: str, domain: st
     )
 
 
-def refresh_provider_heads(connection: sqlite3.Connection, sources: Mapping[str, bytes]) -> None:
+def registration_key(content: bytes, path: str) -> str:
+    """Stable runtime identity, unaffected by signing/capture metadata successors."""
+    provider = parse_provider(content, path=path)
+    runtime = getattr(provider, "runtime_artifact", None)
+    return "" if runtime is None else provider_build_key(runtime).tagged
+
+
+def cold_provider_source(
+    repository: Any, head_oid: str, sources: Mapping[str, bytes]
+) -> Callable[[str, int], bytes]:
+    """Cold reconstruction only: locate exact historical legacy runtime bytes.
+
+    This one walk is O(retained generations); ordinary deltas supply their own bytes.
+    """
+    records = [
+        parse_change_set_record(raw, path=path)
+        for path, raw in sources.items()
+        if path.startswith("changesets/")
+    ]
+    latest = max((record.sequence for record in records), default=0)
+    coordinates = {latest: head_oid}
+
+    def read(path: str, sequence: int) -> bytes:
+        while sequence not in coordinates:
+            oldest = min(coordinates)
+            coordinates[oldest - 1] = repository.parent_of(coordinates[oldest])
+        raw = repository.blob_at(coordinates[sequence], path)
+        if raw is None:
+            raise ValueError(f"historical Provider {path} at {sequence} is absent")
+        return raw
+
+    return read
+
+
+def refresh_provider_heads(
+    connection: sqlite3.Connection,
+    sources: Mapping[str, bytes],
+    *,
+    historical_source: Callable[[str, int], bytes] | None = None,
+) -> None:
     # sources is the accepted delta (the entire source only at cold construction).
     for path, content in sources.items():
         if not path.startswith("changesets/"):
@@ -57,15 +98,24 @@ def refresh_provider_heads(connection: sqlite3.Connection, sources: Mapping[str,
             if member.artifact_kind != "provider":
                 continue
             name = member.path.removeprefix("providers/").removesuffix(".json")
-            digest = (
-                ""
-                if "/" in name
-                else getattr(
-                    member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
+            digest = ""
+            if "/" not in name:
+                raw = sources.get(member.path)
+                commitment = getattr(member, "candidate_artifact_digest", None)
+                legacy = getattr(member, "artifact_digest", None)
+                matches = raw is not None and (
+                    provider_digest(parse_provider(raw, path=member.path)).tagged == commitment
+                    if commitment is not None
+                    else file_digest(raw).tagged == legacy
                 )
-            )
-            if digest is None:
-                continue
+                if not matches:
+                    if historical_source is None:
+                        raise ValueError(
+                            "cold legacy registration reconstruction needs historical bytes"
+                        )
+                    raw = historical_source(member.path, record.sequence)
+                assert raw is not None
+                digest = registration_key(raw, member.path)
             connection.execute(
                 "INSERT INTO provider_registration_order VALUES (?,?,?) ON CONFLICT(path,digest) "
                 "DO UPDATE SET sequence=min(sequence,excluded.sequence)",
@@ -83,13 +133,16 @@ def refresh_provider_heads(connection: sqlite3.Connection, sources: Mapping[str,
             continue
         name, identity, digest, domain = row
         names.add(name)
-        # A build keeps its first registration through metadata successors. A
-        # historical single-path Provider orders the current version instead.
-        keys = ("", "") if "/" in identity else (digest, file_digest(content).tagged)
+        # Metadata successors keep the first acceptance of this stable runtime.
+        key = "" if "/" in identity else registration_key(content, path)
         sequence = connection.execute(
-            "SELECT min(sequence) FROM provider_registration_order WHERE path=? AND digest IN (?,?)",
-            (path, *keys),
+            "SELECT min(sequence) FROM provider_registration_order WHERE path=? AND digest=?",
+            (path, key),
         ).fetchone()[0]
+        if sequence is None:
+            connection.execute(
+                "INSERT INTO provider_registration_order VALUES (?,?,0)", (path, key)
+            )
         connection.execute(
             "UPDATE providers SET registration_sequence=? WHERE identity=?",
             (0 if sequence is None else sequence, identity),
