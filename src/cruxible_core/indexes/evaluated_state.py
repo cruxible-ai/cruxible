@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from cruxible_client.contracts.candidates import DependencyProofReference
 from cruxible_client.contracts.canonical import (
-    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
     canonical_bytes,
     file_digest,
     is_candidate_card_path,
@@ -247,7 +247,7 @@ class EvaluationRows:
             f"SELECT kind,format_tag,artifact_digest FROM {self.table('artifact_lookup')} WHERE path=?",
             path,
         )
-        if self.reader.codec == CURRENT_ARTIFACT_CODEC or row[0] == "attestation":
+        if self.reader.codec == ArtifactCodec.CURRENT_PRETTY_JSON or row[0] == "attestation":
             from cruxible_core.claims.closure import parse_dependency_artifact
 
             state = parse_dependency_artifact(path, self.source_bytes(path))

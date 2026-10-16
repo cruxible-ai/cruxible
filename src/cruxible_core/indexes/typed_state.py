@@ -1317,9 +1317,9 @@ class TypedStateReader:
         row = self.envelope(identity)
         if row is None or row.kind not in OWNER_BY_KIND:
             return None
-        from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
+        from cruxible_client.contracts.canonical import ArtifactCodec
 
-        if self.codec == CURRENT_ARTIFACT_CODEC or row.kind == "attestation":
+        if self.codec == ArtifactCodec.CURRENT_PRETTY_JSON or row.kind == "attestation":
             from cruxible_core.claims.closure import parse_dependency_artifact
 
             state = parse_dependency_artifact(row.path, self.member_bytes(row.path))

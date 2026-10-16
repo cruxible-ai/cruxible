@@ -549,7 +549,9 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
         assert submitted.status.proposal_id is not None, (
             None
             if submitted.intent.last_preflight is None
-            else submitted.intent.last_preflight.model_dump(mode="json")
+            else tuple(
+                (d.code, d.message) for d in submitted.intent.last_preflight.frontier.diagnostics
+            )
         )
         _activate(instance, submitted)
         pending = coordinator.create(
@@ -594,7 +596,9 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
     assert submitted.status.proposal_id is not None, (
         None
         if submitted.intent.last_preflight is None
-        else submitted.intent.last_preflight.model_dump(mode="json")
+        else tuple(
+            (d.code, d.message) for d in submitted.intent.last_preflight.frontier.diagnostics
+        )
     )
     _activate(instance, submitted)
     instance.refresh()
@@ -748,7 +752,9 @@ def test_one_submit_verifies_a_shared_capture_once(
     assert submitted.status.proposal_id is not None, (
         None
         if submitted.intent.last_preflight is None
-        else submitted.intent.last_preflight.model_dump(mode="json")
+        else tuple(
+            (d.code, d.message) for d in submitted.intent.last_preflight.frontier.diagnostics
+        )
     )
     # Lowering, the preflight laws and admission share the submit's one context:
     # one run lookup and one verification for six Claims. The Capture is read

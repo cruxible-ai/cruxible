@@ -235,3 +235,26 @@ def test_a_failed_member_scan_retains_the_whole_group_lease(tmp_path: Path) -> N
     with pytest.raises(RuntimeError, match="incomplete scan"):
         leases.recover_run_material(incomplete_scan, bodies=bodies)
     assert leases.active() == reservations
+
+
+def test_bound_record_carries_immutable_contracts_but_detaches_mutable_attribution():
+    from cruxible_core.exhaust.records import ProcedureJournalRecordV1, journal_genesis_digest
+
+    draft = _draft("owned-attribution")
+    previous = journal_genesis_digest(draft.stream, draft.partition_id)
+    record = ProcedureJournalRecordV1.bind(draft, sequence=1, previous_record_digest=previous)
+    fresh = ProcedureJournalRecordV1.model_validate(
+        {
+            **draft.model_dump(mode="python", exclude={"tag"}),
+            "sequence": 1,
+            "previous_record_digest": previous,
+        }
+    )
+    assert record == fresh
+    assert record.stream is draft.stream
+    assert record.accepted_coordinate is draft.accepted_coordinate
+    assert record.actor_context is not draft.actor_context
+    draft.actor_context.actor_id = "changed-draft"
+    assert record.actor_context.actor_id == "operator"
+    record.actor_context.actor_id = "changed-record"
+    assert draft.actor_context.actor_id == "changed-draft"
