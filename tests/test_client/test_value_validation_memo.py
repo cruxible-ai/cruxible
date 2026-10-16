@@ -70,3 +70,22 @@ def test_public_coordinates_are_reused_by_all_four_scalar_values():
     for _ in range(2):
         with pytest.raises(ValidationError):
             AcceptedCoordinate.from_internal(internal)
+
+
+def test_provider_build_names_reuse_validated_scalar_values_and_preserve_refusals():
+    from cruxible_client.contracts.providers import (
+        ProviderBuildName,
+        ProviderFormatError,
+        parse_provider_build_name,
+    )
+
+    for text in ("workspace.file", "example.provider/" + "a" * 64):
+        first = parse_provider_build_name(text)
+        assert parse_provider_build_name(text) is first
+        assert first == ProviderBuildName.model_validate(first.model_dump(mode="json"))
+        with pytest.raises(ValidationError):
+            first.name = "changed"
+    for text in ("", "provider/short", "provider/" + "A" * 64, "provider/extra/path"):
+        for _ in range(2):
+            with pytest.raises(ProviderFormatError):
+                parse_provider_build_name(text)
