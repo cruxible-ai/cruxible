@@ -369,7 +369,12 @@ def artifact_request() -> Iterator[None]:
         _REQUEST_CARRIER.reset(token)
 
 
-def request_derive(key: tuple[object, ...], derive: Callable[[], _V]) -> _V:
+def request_derive(
+    key: tuple[object, ...],
+    derive: Callable[[], _V],
+    *,
+    retain: Callable[[_V], bool] | None = None,
+) -> _V:
     """One pure immutable derivation per exact value key in the owning request.
 
     Callers own the namespace (the first key element) and must supply immutable
@@ -382,7 +387,8 @@ def request_derive(key: tuple[object, ...], derive: Callable[[], _V]) -> _V:
     found = carrier.derived.get(key, _MISSING)
     if found is _MISSING:
         found = derive()
-        carrier.derived[key] = found
+        if retain is None or retain(found):
+            carrier.derived[key] = found
     return found  # type: ignore[return-value]
 
 
