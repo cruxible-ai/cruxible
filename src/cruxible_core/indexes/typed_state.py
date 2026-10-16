@@ -539,8 +539,9 @@ def schema_sql() -> str:
         ]
     )
     from cruxible_core.indexes.provider_heads import SCHEMA_SQL as PROVIDER_HEADS_SQL
+    from cruxible_core.indexes.query_selection import SCHEMA_SQL as QUERY_SELECTION_SQL
 
-    return ";\n".join(statements) + ";\n" + PROVIDER_HEADS_SQL
+    return ";\n".join(statements) + ";\n" + PROVIDER_HEADS_SQL + QUERY_SELECTION_SQL
 
 
 def _claim_fields(claim: Any) -> dict[str, SQLValue]:

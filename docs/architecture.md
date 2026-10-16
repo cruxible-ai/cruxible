@@ -285,3 +285,12 @@ lock, so the recreated inode acquires durability again. This
 work follows changed members and their citations, never the stored population.
 After repairing missing exhaust, rebuild its incomplete derived partition index
 (or restart) to restore that partition's readings and resolution view.
+
+Accepted query reads narrow their facts through the projection's Subject identity
+and scalar Claim value indexes. Matching Subjects retain every competing Claim
+of the requested predicates. Plain named reads apply their result budget before
+loading facts, while maintained per-kind counts preserve truncation totals. Kind
+counts update only when a Subject row changes. Absence, negation, traversals,
+includes, and filters whose refusal or verdict accounting cannot be preserved
+use the full-load evaluator. Projection storage schema 19 rebuilds older derived
+indexes once; accepted ledger formats and query result bytes are unchanged.

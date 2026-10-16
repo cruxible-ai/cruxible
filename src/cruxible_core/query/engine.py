@@ -813,6 +813,9 @@ def evaluate_claim_query(
     budgets: QueryBudgets | None = None,
     backend_factory: ClaimQueryBackendFactoryV1 = DirectClaimFactIndex,
     resolve_reference: SubjectReferenceResolver | None = None,
+    entry_paths: tuple[str, ...] | None = None,
+    entry_candidate_count: int | None = None,
+    canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
 ) -> ClaimQueryResult:
     """Evaluate one accepted QueryDefinition against accepted Claim facts.
 
@@ -851,6 +854,9 @@ def evaluate_claim_query(
             budgets=_effective_budgets(query, budgets),
             backend_factory=backend_factory,
             resolve_reference=resolve_reference,
+            entry_paths=entry_paths,
+            entry_candidate_count=entry_candidate_count,
+            canonical_forms=canonical_forms,
         )
     except _RefusalSignal as signal:
         return ClaimQueryResult(
@@ -1086,6 +1092,9 @@ def _evaluate(
     budgets: QueryBudgets,
     backend_factory: ClaimQueryBackendFactoryV1,
     resolve_reference: SubjectReferenceResolver | None = None,
+    entry_paths: tuple[str, ...] | None = None,
+    entry_candidate_count: int | None = None,
+    canonical_forms: Mapping[str, tuple[str, ...]] | None = None,
 ) -> ClaimQueryResult:
     query = definition.query
     backend = backend_factory(facts, definition=query, evaluation_time=evaluation_time)
@@ -1102,7 +1111,9 @@ def _evaluate(
         backend=backend,
         parameters=parameters,
         evaluation_time=evaluation_time,
-        canonical_forms={
+        canonical_forms=canonical_forms
+        if canonical_forms is not None
+        else {
             row.accepted.claim.statement.predicate: row.canonical_form
             for row in facts.claims
             if row.canonical_form
@@ -1115,7 +1126,9 @@ def _evaluate(
         query,
         evaluator,
         backend,
-        _entry_rows(query, backend, parameters),
+        _entry_rows(query, backend, parameters)
+        if entry_paths is None
+        else [_Row(bindings={query.entry.binding: path}) for path in entry_paths],
         budgets,
         clipped,
     )
@@ -1156,7 +1169,7 @@ def _evaluate(
     retained_path_count = len(rows) if budgets.max_paths is not None else None
 
     rows = [rows[position] for position in evaluator.order(rows, query.orderings)]
-    candidate_result_count = len(rows)
+    candidate_result_count = len(rows) if entry_candidate_count is None else entry_candidate_count
     conflicts: dict[bytes, QueryConflict] = {}
     if query.result_cardinality == "one" and candidate_result_count > 1:
         identities = _result_subject_identities(backend, query, rows)
