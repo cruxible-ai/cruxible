@@ -116,15 +116,15 @@ class PackStore:
             pack.extend(checksum)
             rows.sort()
             fanout = [0] * 256
-            for oid, _, _ in rows:
-                fanout[oid[0]] += 1
+            for raw_oid, _, _ in rows:
+                fanout[raw_oid[0]] += 1
             for i in range(1, 256):
                 fanout[i] += fanout[i - 1]
             index = bytearray(b"\xfftOc" + struct.pack(">I", 2))
             index.extend(struct.pack(">256I", *fanout))
             index.extend(b"".join(row[0] for row in rows))
             index.extend(b"".join(struct.pack(">I", row[1]) for row in rows))
-            large = []
+            large: list[int] = []
             for _, _, offset in rows:
                 if offset >= 0x80000000:
                     index.extend(struct.pack(">I", 0x80000000 | len(large)))
@@ -148,8 +148,8 @@ class PackStore:
                     if os.path.exists(name):
                         os.unlink(name)
             _directory_sync(self.directory)
-            for oid, _, offset in rows:
-                self.locations[oid.hex()] = (stem.with_suffix(".pack"), offset)
+            for raw_oid, _, offset in rows:
+                self.locations[raw_oid.hex()] = (stem.with_suffix(".pack"), offset)
             self.stamp = _stamp(self.directory)
 
     def read(self, oid: str) -> tuple[str, bytes] | None:
@@ -162,10 +162,10 @@ class PackStore:
                 raw = None
             if raw is not None:
                 header, sep, body = raw.partition(b"\x00")
-                kind, _, size = header.partition(b" ")
+                raw_kind, _, size = header.partition(b" ")
                 if not sep or int(size) != len(body):
                     raise GitError("malformed loose Git object")
-                result = kind.decode("ascii"), body
+                result = raw_kind.decode("ascii"), body
             else:
                 self._discover(width)
                 location = self.locations.get(oid)
@@ -239,6 +239,35 @@ class PackStore:
         else:
             raise GitError("unsupported Git pack object type")
         return base[0], _apply_delta(base[1], body)
+
+    def remove(self, oids: set[str]) -> tuple[str, ...]:
+        """Explicit loser cleanup: rewrite affected packs, retaining shared objects.
+
+        This cold repair path may enumerate the pack index. Ordinary writes do
+        not call it. Callers prove these objects are unreachable under ledger
+        publication locks before handing them here.
+        """
+        if not oids:
+            return ()
+        with self.lock:
+            self._discover(len(next(iter(oids))) // 2)
+            affected = {path for oid, (path, _) in self.locations.items() if oid in oids}
+            retained = {
+                oid: self.read(oid)
+                for oid, (path, _) in self.locations.items()
+                if path in affected and oid not in oids
+            }
+            self.write({oid: value for oid, value in retained.items() if value is not None})
+            for path in affected:
+                mapped = self.maps.pop(path, None)
+                if mapped is not None:
+                    mapped.close()
+                path.with_suffix(".idx").unlink(missing_ok=True)
+                path.unlink(missing_ok=True)
+            _directory_sync(self.directory)
+            self.stamp = None
+            self._discover(len(next(iter(oids))) // 2)
+            return tuple(sorted(oids))
 
     def close(self) -> None:
         with self.lock:

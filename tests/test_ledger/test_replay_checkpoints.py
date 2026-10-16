@@ -568,7 +568,10 @@ def test_a_forged_tree_under_a_verified_head_checkpoint_is_never_served(tmp_path
         for entry_name, (entry_mode, oid) in entries.items()
     )
     loose = ledger.path / "objects" / subtree[:2] / subtree[2:]
-    assert loose.is_file()
+    loose.parent.mkdir(exist_ok=True)
+    if not loose.exists():
+        original = ledger._git(["cat-file", "tree", subtree])
+        loose.write_bytes(zlib.compress(b"tree %d\x00" % len(original) + original))
     loose.chmod(0o644)
     loose.write_bytes(zlib.compress(b"tree %d\x00" % len(body) + body))
     for cache in (

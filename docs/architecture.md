@@ -162,8 +162,12 @@ record references is deleted under it.
 - **Line coverage.** An idle Line's coverage that moved only in time advances
   the dispatch projection and is not journaled.
 - **The ledger.** Every ref, note and archived proposal is kept. Objects are
-  written loose; every 64 accepted generations the daemon packs them
-  (`repack -a -d`), packs refs and writes the commit-graph, off the
+  written in in-process pack/index batches, flushed before publishing their
+  refs. Commit signatures use Ed25519 SSHSIG compatible with `git verify-commit`;
+  ref leases use Git's files-backend lockfile protocol. Reads support loose
+  objects and Git's delta-compressed packs. Every 64 accepted generations the
+  daemon consolidates packs (`repack -a -d`), packs refs and writes the
+  commit-graph, off the
   acceptance path, and at start, before serving, it also prunes unreachable
   loose objects, the one step that is safe only while no writer is in flight.
 

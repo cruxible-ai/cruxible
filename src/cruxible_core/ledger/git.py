@@ -1,17 +1,18 @@
-"""System-Git ledger primitives for Cruxible generation zero."""
+"""Git-compatible in-process ledger primitives; system Git for transport and maintenance."""
 
 from __future__ import annotations
 
 import atexit
 import bisect
+import configparser
 import fcntl
+import functools
 import hashlib
 import os
 import re
 import secrets
 import signal
 import subprocess
-import tempfile
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -19,7 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Final, cast
+from typing import Final, ParamSpec, TypeVar, cast, overload
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -40,6 +41,8 @@ from cruxible_core.derived.derived_state import (
 )
 from cruxible_core.governance.keys import raw_public_key_hex_from_openssh
 from cruxible_core.ledger.git_objects import PackStore
+from cruxible_core.ledger.git_signing import load_private, sign_commit
+from cruxible_core.ledger.git_signing import verify_commit as verify_signature
 from cruxible_core.runtime.phase_timing import timed_phase
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -156,8 +159,25 @@ def _proven_blob_entries(entries: tuple[GitTreeEntry, ...]) -> tuple[GitTreeEntr
     return entries
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _pack_transaction(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Group a logical ledger operation; publish its objects before any ref."""
+
+    @functools.wraps(method)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        ledger = cast("GitLedger", args[0])
+        reader = _batch_reader(ledger.path)
+        with reader.transaction():
+            return method(*args, **kwargs)
+
+    return wrapped
+
+
 class GitLedger:
-    """A daemon-owned bare repository accessed only through system Git."""
+    """A daemon-owned bare repository with Git-compatible objects, signatures and refs."""
 
     def __init__(
         self,
@@ -210,12 +230,15 @@ class GitLedger:
     def object_format(self) -> GitObjectFormat:
         if self._object_format_cache is not None:
             return self._object_format_cache
-        value = self._git(["rev-parse", "--show-object-format"]).decode().strip()
+        config = configparser.ConfigParser(interpolation=None, strict=False)
+        config.read(self.path / "config")
+        value = config.get("extensions", "objectformat", fallback="sha1")
         if value not in {"sha1", "sha256"}:
             raise GitError(f"unsupported Git object format: {value!r}")
         self._object_format_cache = cast(GitObjectFormat, value)
         return self._object_format_cache
 
+    @_pack_transaction
     def create_signed_genesis(
         self,
         tree: Mapping[str, bytes],
@@ -237,13 +260,8 @@ class GitLedger:
             "GIT_AUTHOR_DATE": timestamp,
             "GIT_COMMITTER_DATE": timestamp,
         }
-        oid = (
-            self._git(
-                ["commit-tree", "-S", tree_oid, "-m", "Initialize Cruxible instance"],
-                environment=commit_environment,
-            )
-            .decode()
-            .strip()
+        oid = self._create_commit(
+            tree_oid, (), "Initialize Cruxible instance", commit_environment, signed=True
         )
         self._validate_oid(oid)
         if self.parent_of(oid) is not None:
@@ -252,6 +270,7 @@ class GitLedger:
             raise GitError("new genesis commit signature does not verify")
         return oid
 
+    @_pack_transaction
     def create_signed_generation(
         self,
         tree: Mapping[str, bytes],
@@ -305,22 +324,7 @@ class GitLedger:
         environment: Mapping[str, str],
     ) -> str:
         pending = self._mark_generation_in_flight(f"pending-{secrets.token_hex(8)}")
-        oid = (
-            self._git(
-                [
-                    "commit-tree",
-                    "-S",
-                    tree_oid,
-                    "-p",
-                    parent_oid,
-                    "-m",
-                    message,
-                ],
-                environment=environment,
-            )
-            .decode()
-            .strip()
-        )
+        oid = self._create_commit(tree_oid, (parent_oid,), message, environment, signed=True)
         self._validate_oid(oid)
         self._mark_generation_in_flight(oid)
         pending.unlink()
@@ -329,6 +333,45 @@ class GitLedger:
             raise GitError("new generation commit parent differs from settlement base")
         if not self.verify_commit(oid):
             raise GitError("new generation commit signature does not verify")
+        return oid
+
+    def _create_commit(
+        self,
+        tree_oid: str,
+        parents: Sequence[str],
+        message: str,
+        environment: Mapping[str, str],
+        *,
+        signed: bool = False,
+    ) -> str:
+        timestamp = environment["GIT_AUTHOR_DATE"]
+        try:
+            instant = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if instant.tzinfo is None or instant.year < 1970:
+                raise ValueError("commit timestamp must have a timezone")
+            date = f"{int(instant.timestamp())} {instant.strftime('%z')}"
+        except ValueError as exc:
+            raise GitError("invalid Git commit timestamp") from exc
+        headers = [f"tree {tree_oid}", *(f"parent {parent}" for parent in parents)]
+        for role in ("AUTHOR", "COMMITTER"):
+            name, email = environment[f"GIT_{role}_NAME"], environment[f"GIT_{role}_EMAIL"]
+            if any(char in name + email for char in "<>\n\x00"):
+                raise GitError("invalid Git commit identity")
+            headers.append(f"{role.lower()} {name} <{email}> {date}")
+        encoding = self.review_commit_context().decode("utf-8").strip() or "UTF-8"
+        if encoding.lower() not in {"utf8", "utf-8"}:
+            headers.append(f"encoding {encoding}")
+        body = ("\n".join(headers) + "\n\n" + message).encode("utf-8")
+        if not body.endswith(b"\n"):
+            body += b"\n"
+        if signed:
+            try:
+                key = load_private(self._signing_key_path.read_bytes())
+                body = sign_commit(body, key, sha256=self.object_format() == "sha256")
+            except (OSError, ValueError) as exc:
+                raise GitError("daemon commit signing failed") from exc
+        oid = self._object_oid("commit", body)
+        self._store_loose_objects({oid: ("commit", body)})
         return oid
 
     def _blob_oid(self, content: bytes) -> str:
@@ -354,7 +397,12 @@ class GitLedger:
 
     def _store_loose_objects(self, objects: Mapping[str, tuple[str, bytes]]) -> None:
         """Publish one in-process pack/index, with no per-object file operations."""
-        _batch_reader(self.path).store.write(objects)
+        reader = _batch_reader(self.path)
+        pending = getattr(reader._transaction, "pending", None)
+        if pending is None:
+            reader.store.write(objects)
+        else:
+            pending.update(objects)
 
     def _tree_entries_of(self, tree_oid: str) -> dict[str, tuple[bytes, str]]:
         found = _batch_reader(self.path).objects((tree_oid,))[tree_oid]
@@ -476,6 +524,7 @@ class GitLedger:
         self._store_loose_objects(written)
         return root
 
+    @_pack_transaction
     def _write_tree(
         self,
         tree: Mapping[str, bytes],
@@ -635,6 +684,7 @@ class GitLedger:
         _remember_listing(repository, oid, _listing_with(parent_listing, changes, sizes))
         return oid
 
+    @_pack_transaction
     def _extend_tree(
         self,
         base_tree: str,
@@ -654,7 +704,7 @@ class GitLedger:
 
         self._validate_oid(base_tree)
         shared = None if base_rows is None else edited_paths(tree, base_rows)
-        base: tuple[GitTreeEntry, ...] | None = None
+        base: _Listing | None = None
         if base_rows is not None and shared is not None:
             if any(path in base_rows and path not in tree for path in shared):
                 raise GitError("extended tree does not carry every member of its base")
@@ -689,6 +739,7 @@ class GitLedger:
             _remember_listing(repository, oid, listing)
         return oid
 
+    @_pack_transaction
     def create_proposal_commit(
         self,
         tree: Mapping[str, bytes],
@@ -727,26 +778,10 @@ class GitLedger:
             "GIT_AUTHOR_DATE": timestamp,
             "GIT_COMMITTER_DATE": timestamp,
         }
-        commit_oid = (
-            self._git(
-                [
-                    "commit-tree",
-                    tree_oid,
-                    "-p",
-                    base_oid,
-                    "-m",
-                    message,
-                ],
-                environment=commit_environment,
-            )
-            .decode()
-            .strip()
-        )
+        commit_oid = self._create_commit(tree_oid, (base_oid,), message, commit_environment)
         self._validate_oid(commit_oid)
         zero_oid = "0" * (40 if self.object_format() == "sha1" else 64)
-        self._git(
-            ["update-ref", target_ref, commit_oid, expected_ref_oid or zero_oid],
-        )
+        self._update_refs([f"update {target_ref} {commit_oid} {expected_ref_oid or zero_oid}"])
         return commit_oid, tree_oid
 
     def read_proposal_ref(self, target_ref: str) -> str | None:
@@ -760,40 +795,53 @@ class GitLedger:
         if not _PROPOSAL_REVIEW_REF_RE.fullmatch(ref):
             raise GitError("proposal review ref name is malformed")
         self._validate_oid(oid)
-        self._git(["update-ref", ref, oid])
+        self._update_refs([f"update {ref} {oid}"])
 
     def proposal_refs(self) -> dict[str, str]:
         """Snapshot the current author slots, including interrupted publications."""
-        return {
-            ref: oid
-            for line in self._git(
-                ["for-each-ref", "--format=%(objectname) %(refname)", "refs/proposals/"]
-            )
-            .decode()
-            .splitlines()
-            for oid, ref in (line.split(" ", 1),)
-        }
+        return self._refs("refs/proposals/")
 
+    def _archive_members(self, tip: str) -> PersistentMap[bool]:
+        key = (_repository_key(self.path), tip)
+        cached = _ARCHIVE_MEMBERS.get(key)
+        if cached is not None:
+            return cached
+        # Cold archive seed only; subsequent heads extend this immutable map
+        # from newly retained commits, stopping at already-retained ancestry.
+        return self._extend_archive_members(PersistentMap(), (tip,) if tip else ())
+
+    def _extend_archive_members(
+        self, known: PersistentMap[bool], roots: Sequence[str]
+    ) -> PersistentMap[bool]:
+        pending = list(roots)
+        while pending:
+            oid = pending.pop()
+            if oid in known:
+                continue
+            found = _batch_reader(self.path).objects((oid,))[oid]
+            if found is None or found[0] != "commit":
+                raise GitError("proposal archive target is not a retained commit")
+            known = known.set(oid, True)
+            pending.extend(_commit_parents(found[1]))
+        return known
+
+    @_pack_transaction
     def _archive_update(self, oids: Sequence[str]) -> list[str]:
         """Build a fixed-tree retention chain; callers CAS its head with ref removal."""
-        previous = (
-            self._git(["for-each-ref", "--format=%(objectname)", PROPOSAL_ARCHIVE_REF])
-            .decode()
-            .strip()
-        )
+        previous = self._resolve_ref(PROPOSAL_ARCHIVE_REF) or ""
         tip = previous
+        known = self._archive_members(previous)
         empty_tree = None
         for oid in sorted(set(oids)):
             self._validate_oid(oid)
-            if tip and self.is_ancestor(oid, tip):
+            if oid in known:
                 continue
-            if (
-                not self.object_exists(oid)
-                or self._git(["cat-file", "-t", oid]).strip() != b"commit"
-            ):
+            found = _batch_reader(self.path).objects((oid,))[oid]
+            if found is None or found[0] != "commit":
                 raise GitError("proposal archive target is not a retained commit")
             if empty_tree is None:
-                empty_tree = self._git(["mktree"], input_bytes=b"").decode().strip()
+                empty_tree = self._object_oid("tree", b"")
+                self._store_loose_objects({empty_tree: ("tree", b"")})
             parents = ([tip] if tip else []) + [oid]
             # No growing manifest/tree and no authoring ancestry. The archive is
             # unsigned retention metadata, outside accepted-state authority.
@@ -804,11 +852,12 @@ class GitLedger:
                 + "committer cruxible-daemon <daemon@cruxible.invalid> 0 +0000\n\n"
                 + "Retain closed proposal\n"
             ).encode()
-            tip = (
-                self._git(["hash-object", "-t", "commit", "-w", "--stdin"], input_bytes=raw)
-                .decode()
-                .strip()
-            )
+            tip = self._object_oid("commit", raw)
+            self._store_loose_objects({tip: ("commit", raw)})
+            known = self._extend_archive_members(known, (oid,)).set(tip, True)
+            _ARCHIVE_MEMBERS[(_repository_key(self.path), tip)] = known
+            while len(_ARCHIVE_MEMBERS) > 16:
+                _ARCHIVE_MEMBERS.popitem(last=False)
         if tip == previous:
             # Deleting a duplicate root still relies on this exact archive head.
             return [f"verify {PROPOSAL_ARCHIVE_REF} {previous}"] if oids and previous else []
@@ -818,10 +867,7 @@ class GitLedger:
         """Retain a completed refusal before its author slot can be reused."""
         commands = self._archive_update(oids)
         if commands:
-            self._git(
-                ["update-ref", "--stdin"],
-                input_bytes=("\n".join(["start", *commands, "prepare", "commit"]) + "\n").encode(),
-            )
+            self._update_refs(commands)
 
     def replace_proposal_review_refs(
         self, refs: Mapping[str, str], *, retired_targets: Mapping[str, str] | None = None
@@ -834,15 +880,7 @@ class GitLedger:
                 raise GitError("proposal review ref name is malformed")
             self._validate_oid(oid)
             normalized[ref] = oid
-        current = {
-            ref: oid
-            for line in self._git(
-                ["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads/proposals/"]
-            )
-            .decode()
-            .splitlines()
-            for oid, ref in (line.split(" ", 1),)
-        }
+        current = self._refs("refs/heads/proposals/")
         retired = {ref: oid for ref, oid in current.items() if ref not in normalized}
         for ref, oid in (retired_targets or {}).items():
             if not _PROPOSAL_REF_RE.fullmatch(ref):
@@ -851,12 +889,7 @@ class GitLedger:
             retired[ref] = oid
         # One local conversion only: fold old per-proposal pins into the same
         # chain before deleting them. Unrelated refs in this namespace refuse.
-        for line in (
-            self._git(["for-each-ref", "--format=%(objectname) %(refname)", "refs/settled/"])
-            .decode()
-            .splitlines()
-        ):
-            oid, ref = line.split(" ", 1)
+        for ref, oid in self._refs("refs/settled/").items():
             if ref == PROPOSAL_ARCHIVE_REF:
                 continue
             if not _LEGACY_SETTLED_RE.fullmatch(ref):
@@ -870,28 +903,17 @@ class GitLedger:
         )
         commands.extend(f"delete {ref} {oid}" for ref, oid in sorted(retired.items()))
         if commands:
-            self._git(
-                ["update-ref", "--stdin"],
-                input_bytes=("\n".join(["start", *commands, "prepare", "commit"]) + "\n").encode(),
-            )
+            self._update_refs(commands)
 
     def mirror_refs(self) -> dict[str, str]:
         """Capture owned public refs, excluding private proposal/pinning refs."""
-        rows = self._git(
-            [
-                "for-each-ref",
-                "--format=%(objectname) %(refname)",
-                _MIRROR_MAIN,
-                *NOTE_REFS.values(),
-                PROPOSAL_ARCHIVE_REF,
-                *_MIRROR_PREFIXES,
-            ]
-        )
-        refs: dict[str, str] = {}
-        for line in rows.decode("utf-8").splitlines():
-            oid, _, ref = line.partition(" ")
-            if self._mirror_owned_ref(ref):
-                refs[ref] = oid
+        refs = {
+            ref: oid
+            for ref in (_MIRROR_MAIN, PROPOSAL_ARCHIVE_REF, *NOTE_REFS.values())
+            if (oid := self._resolve_ref(ref)) is not None
+        }
+        for prefix in _MIRROR_PREFIXES:
+            refs.update(self._refs(prefix))
         return self._validate_mirror_snapshot(refs)
 
     @staticmethod
@@ -1104,6 +1126,134 @@ class GitLedger:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         return (detail or f"git {operation} exited {result.returncode}")[:500]
 
+    def _refs(self, prefix: str) -> dict[str, str]:
+        """Enumerate a requested ref namespace, including packed refs (maintenance)."""
+        result: dict[str, str] = {}
+        packed = self.path / "packed-refs"
+        if packed.exists():
+            for line in packed.read_text().splitlines():
+                if line and not line.startswith(("#", "^")):
+                    oid, ref = line.split(" ", 1)
+                    if ref.startswith(prefix):
+                        result[ref] = oid
+        root = self.path / prefix.rstrip("/")
+        paths = root.rglob("*") if root.is_dir() else (root,)
+        for path in paths:
+            if path.is_file() and not path.name.endswith(".lock"):
+                ref = path.relative_to(self.path).as_posix()
+                resolved = self._resolve_ref(ref)
+                if resolved is not None:
+                    result[ref] = resolved
+        return result
+
+    def _update_refs(self, commands: Sequence[str]) -> None:
+        """Git files-backend lock/verify/rename transaction, with packed deletes.
+
+        All leases are checked while every changed ref is locked, before any
+        publication. A failure before publication leaves refs untouched. Git's
+        files backend also publishes a multi-ref transaction by successive
+        renames; the archive is published before any retired root is removed.
+        """
+        _batch_reader(self.path).flush()
+        parsed: dict[str, tuple[str, str | None, str | None]] = {}
+        for command in commands:
+            fields = command.split()
+            operation, ref = fields[:2]
+            if (
+                not _SAFE_REF_RE.fullmatch(ref)
+                or ".." in ref
+                or ref.endswith(".lock")
+                or any(part.startswith(".") for part in ref.split("/"))
+            ):
+                raise GitError("unsafe Git reference")
+            if operation == "update":
+                new, expected = fields[2], fields[3] if len(fields) > 3 else None
+                self._validate_oid(new)
+            elif operation in ("delete", "verify"):
+                new, expected = None, fields[2] if len(fields) > 2 else None
+            else:
+                raise GitError("unsupported ref transaction command")
+            if ref in parsed:
+                raise GitError("duplicate ref in transaction")
+            parsed[ref] = (operation, new, expected)
+        locks: dict[str, tuple[Path, int]] = {}
+        packed_lock: Path | None = None
+        packed_fd: int | None = None
+        try:
+            for ref in sorted(parsed):
+                path = self.path / ref
+                missing: list[Path] = []
+                parent = path.parent
+                while not parent.exists():
+                    missing.append(parent)
+                    parent = parent.parent
+                path.parent.mkdir(parents=True, exist_ok=True)
+                for created in reversed(missing):
+                    _fsync_directory(created.parent)
+                lock = path.with_name(path.name + ".lock")
+                fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+                locks[ref] = (lock, fd)
+            for ref, (_operation, new, expected) in parsed.items():
+                current = self._resolve_ref(ref)
+                if expected is not None and current != (
+                    None if set(expected) == {"0"} else expected
+                ):
+                    raise GitError(f"Git ref compare-and-set failed: {ref}")
+                if new is not None and not self.object_exists(new):
+                    raise GitError("Git ref target object is unavailable")
+            deletions = {ref for ref, value in parsed.items() if value[0] == "delete"}
+            packed = self.path / "packed-refs"
+            if deletions and packed.exists():
+                packed_lock = self.path / "packed-refs.lock"
+                packed_fd = os.open(packed_lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+                retained = []
+                keep = True
+                # Packed refs are one frozen file. Removing a packed entry
+                # necessarily rewrites that file, only during retirement.
+                for line in packed.read_bytes().splitlines(keepends=True):
+                    if line.startswith(b"^"):
+                        if keep:
+                            retained.append(line)
+                        continue
+                    keep = (
+                        line.startswith(b"#")
+                        or not line.strip()
+                        or (line.split(b" ", 1)[-1].strip().decode() not in deletions)
+                    )
+                    if keep:
+                        retained.append(line)
+                with os.fdopen(packed_fd, "wb", closefd=False) as stream:
+                    stream.write(b"".join(retained))
+                    stream.flush()
+                    os.fsync(packed_fd)
+            for ref, (_operation, new, _expected) in parsed.items():
+                if new is not None:
+                    _lock, fd = locks[ref]
+                    os.write(fd, (new + "\n").encode("ascii"))
+                    os.fsync(fd)
+            # Publish replacement roots before deletion; leases already proved.
+            for ref, (operation, new, _expected) in parsed.items():
+                if new is not None:
+                    os.replace(locks[ref][0], self.path / ref)
+                    _fsync_directory((self.path / ref).parent)
+            if packed_fd is not None and packed_lock is not None:
+                os.replace(packed_lock, packed)
+                _fsync_directory(self.path)
+            for ref, (operation, _new, _expected) in parsed.items():
+                if operation == "delete":
+                    (self.path / ref).unlink(missing_ok=True)
+                    _fsync_directory((self.path / ref).parent)
+        except OSError as exc:
+            raise GitError(f"Git ref transaction failed: {exc}") from exc
+        finally:
+            for lock, fd in locks.values():
+                os.close(fd)
+                lock.unlink(missing_ok=True)
+            if packed_fd is not None:
+                os.close(packed_fd)
+                assert packed_lock is not None
+                packed_lock.unlink(missing_ok=True)
+
     def _resolve_ref(self, ref: str) -> str | None:
         """One full ref name's object ID, or None when the ref does not exist.
 
@@ -1145,7 +1295,14 @@ class GitLedger:
 
     def review_commit_context(self) -> bytes:
         """Read the mutable Git configuration that affects review commit bytes."""
-        return self._config_read(["config", "--default", "UTF-8", "--get", "i18n.commitencoding"])
+        raw = (self.path / "config").read_text()
+        if _CONFIG_INCLUDE_RE.search(raw.encode()) is not None:
+            return self._config_read(
+                ["config", "--default", "UTF-8", "--get", "i18n.commitencoding"]
+            )
+        config = configparser.ConfigParser(interpolation=None, strict=False)
+        config.read_string(raw)
+        return (config.get("i18n", "commitencoding", fallback="UTF-8") + "\n").encode()
 
     def _review_commit_identities(self, actor_id: str, timestamp: str) -> dict[str, str]:
         """Git's author/committer identity lines and commit encoding for a review commit.
@@ -1156,32 +1313,20 @@ class GitLedger:
         process per proposal. Anything else is left to ``git var -l``.
         """
 
-        if _PLAIN_ACTOR_RE.fullmatch(actor_id):
-            try:
-                instant = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
-                    tzinfo=timezone.utc
-                )
-            except ValueError:
-                instant = None
-            if instant is not None and instant.year >= 1970:
-                date = f"{int(instant.timestamp())} +0000"
-                encoding = self.review_commit_context().decode("utf-8").strip() or "UTF-8"
-                return {
-                    "GIT_AUTHOR_IDENT": (
-                        f"{actor_id} <{actor_id}@proposal.playbill.invalid> {date}"
-                    ),
-                    "GIT_COMMITTER_IDENT": f"cruxible-daemon <daemon@cruxible.invalid> {date}",
-                    "i18n.commitencoding": encoding,
-                }
-        return dict(
-            line.partition("=")[::2]
-            for line in self._config_read(
-                ["var", "-l"], environment=self._review_commit_environment(actor_id, timestamp)
-            )
-            .decode("utf-8")
-            .splitlines()
-            if "=" in line
-        )
+        if any(char in actor_id for char in "<>\n\x00") or not actor_id.strip():
+            raise GitError("invalid Git review actor")
+        try:
+            instant = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if instant.tzinfo is None or instant.year < 1970:
+                raise ValueError("timestamp must have timezone")
+        except ValueError as exc:
+            raise GitError("invalid Git review timestamp") from exc
+        date = f"{int(instant.timestamp())} {instant.strftime('%z')}"
+        return {
+            "GIT_AUTHOR_IDENT": f"{actor_id} <{actor_id}@proposal.playbill.invalid> {date}",
+            "GIT_COMMITTER_IDENT": f"cruxible-daemon <daemon@cruxible.invalid> {date}",
+            "i18n.commitencoding": self.review_commit_context().decode().strip() or "UTF-8",
+        }
 
     def proposal_review_commit_oid(
         self, *, tree_oid: str, base_oid: str, actor_id: str, timestamp: str, message: str
@@ -1217,6 +1362,7 @@ class GitLedger:
             return hashlib.sha1(preimage).hexdigest()  # noqa: S324 - Git object identity
         return hashlib.sha256(preimage).hexdigest()
 
+    @_pack_transaction
     def proposal_review_commit(
         self,
         *,
@@ -1232,21 +1378,7 @@ class GitLedger:
         self._validate_oid(base_oid)
         _validate_commit_message(message)
         environment = self._review_commit_environment(actor_id, timestamp)
-        oid = (
-            self._git(
-                [
-                    "commit-tree",
-                    tree_oid,
-                    "-p",
-                    base_oid,
-                    "-m",
-                    message,
-                ],
-                environment=environment,
-            )
-            .decode()
-            .strip()
-        )
+        oid = self._create_commit(tree_oid, (base_oid,), message, environment)
         self._validate_oid(oid)
         expected = self.proposal_review_commit_oid(
             tree_oid=tree_oid,
@@ -1297,25 +1429,46 @@ class GitLedger:
 
     def _batch_paths(self, expressions: Sequence[str], kind: str) -> dict[str, str]:
         """Resolve selected tree paths using Git's structured stdin protocol."""
-        found = {}
-        for start in range(0, len(expressions), 256):
-            batch = expressions[start : start + 256]
-            rows = self._git(
-                ["--no-replace-objects", "cat-file", "--batch-check"],
-                input_bytes=("\n".join(batch) + "\n").encode("ascii"),
-            ).splitlines()
-            if len(rows) != len(batch):
-                raise GitError("Git note lookup returned an incomplete batch")
-            for expression, row in zip(batch, rows):
-                if row == (expression + " missing").encode("ascii"):
-                    continue
-                try:
-                    oid, actual_kind, size = row.decode("ascii").split()
-                    self._validate_oid(oid)
-                    valid = actual_kind == kind and int(size) >= 0
-                except (UnicodeError, ValueError) as exc:
-                    raise GitError("Git note lookup returned malformed metadata") from exc
-                if not valid:
+        found: dict[str, str] = {}
+        reader = _batch_reader(self.path)
+        checked: dict[str, tuple[str, bytes] | None] = {}
+
+        def read(oid: str) -> tuple[str, bytes] | None:
+            if oid not in checked:
+                checked[oid] = reader.objects((oid,))[oid]
+            return checked[oid]
+
+        for expression in expressions:
+            name, separator, path = expression.partition(":")
+            tree_suffix = name.endswith("^{tree}")
+            if tree_suffix:
+                name = name[:-7]
+            oid = self._resolve_ref(name) if name.startswith("refs/") else name
+            if oid is None:
+                continue
+            value = read(oid)
+            if value is not None and value[0] == "commit" and (separator or tree_suffix):
+                first = value[1].split(b"\n", 1)[0]
+                if not first.startswith(b"tree "):
+                    raise GitError("Git note lookup commit has no tree")
+                oid = first[5:].decode("ascii")
+                value = read(oid)
+            if separator:
+                for segment in path.split("/"):
+                    if value is None or value[0] != "tree":
+                        value = None
+                        break
+                    # read() checks current bytes before using immutable parsed
+                    # entries. Corrupted objects never hide behind this memo.
+                    entries = self._parsed_tree(_repository_key(self.path), oid)
+                    child = entries.get(segment)
+                    if child is None:
+                        value = None
+                        break
+                    oid = child[1]
+                    value = read(oid)
+            if value is not None:
+                if value[0] != kind:
                     raise GitError("Git note lookup returned the wrong object type")
                 found[expression] = oid
         return found
@@ -1353,48 +1506,17 @@ class GitLedger:
 
     def _read_review_objects(self, expected: Mapping[str, str]) -> dict[str, bytes]:
         """Batch exact object bytes with positional, type, and Git-hash proofs."""
-        ordered = tuple(expected)
-        for oid in ordered:
-            self._validate_oid(oid)
         objects: dict[str, bytes] = {}
-        for start in range(0, len(ordered), 128):
-            batch = ordered[start : start + 128]
-            output = self._git(
-                ["--no-replace-objects", "cat-file", "--batch"],
-                input_bytes=("\n".join(batch) + "\n").encode("ascii"),
-            )
-            position = 0
-            for oid in batch:
-                end = output.find(b"\n", position)
-                if end < 0:
-                    raise GitError("Git review object output has no header")
-                header = output[position:end]
-                position = end + 1
-                if header == f"{oid} missing".encode("ascii"):
-                    continue
-                try:
-                    actual, kind, raw_size = header.decode("ascii").split()
-                    size = int(raw_size)
-                except (UnicodeDecodeError, ValueError) as exc:
-                    raise GitError("Git review object metadata is malformed") from exc
-                if actual != oid or kind != expected[oid] or size < 0:
+        for oid, kind in expected.items():
+            self._validate_oid(oid)
+            try:
+                value = _batch_reader(self.path).objects((oid,))[oid]
+            except GitError as exc:
+                raise GitError("Git review object bytes do not reproduce its OID") from exc
+            if value is not None:
+                if value[0] != kind:
                     raise GitError("Git review object differs from the requested object")
-                end = position + size
-                if end >= len(output) or output[end : end + 1] != b"\n":
-                    raise GitError("Git review object payload is truncated")
-                body = output[position:end]
-                preimage = f"{kind} {size}".encode("ascii") + b"\x00" + body
-                digest = (
-                    hashlib.sha1(preimage).hexdigest()  # noqa: S324 - Git object identity
-                    if self.object_format() == "sha1"
-                    else hashlib.sha256(preimage).hexdigest()
-                )
-                if digest != oid:
-                    raise GitError("Git review object bytes do not reproduce its OID")
-                objects[oid] = body
-                position = end + 1
-            if position != len(output):
-                raise GitError("Git review object output has trailing bytes")
+                objects[oid] = value[1]
         return objects
 
     def tree_oid(self, commit_oid: str) -> str:
@@ -1412,7 +1534,7 @@ class GitLedger:
     def set_main_genesis(self, oid: str) -> None:
         self._validate_oid(oid)
         zero_oid = "0" * (40 if self.object_format() == "sha1" else 64)
-        self._git(["update-ref", "refs/heads/main", oid, zero_oid])
+        self._update_refs([f"update refs/heads/main {oid} {zero_oid}"])
 
     def compare_and_set_main(self, oid: str, *, expected_oid: str) -> bool:
         """Advance main exactly once over its expected parent, or report a race loss."""
@@ -1421,23 +1543,13 @@ class GitLedger:
         self._validate_oid(expected_oid)
         if self.parent_of(oid) != expected_oid:
             raise GitError("main CAS target is not parented by the expected OID")
-        result = _command(
-            [
-                "git",
-                f"--git-dir={self.path}",
-                "update-ref",
-                "refs/heads/main",
-                oid,
-                expected_oid,
-            ],
-            check=False,
-        )
-        if result.returncode == 0:
-            return True
-        if self.read_main() != expected_oid:
-            return False
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise GitError(f"main CAS failed without a competing ref update: {detail}")
+        try:
+            self._update_refs([f"update refs/heads/main {oid} {expected_oid}"])
+        except GitError:
+            if self.read_main() != expected_oid:
+                return False
+            raise
+        return True
 
     @contextmanager
     def activation_lock(self) -> Iterator[None]:
@@ -1617,13 +1729,12 @@ class GitLedger:
             _fsync_directory(self.path)
 
     def loose_object_count(self) -> int:
-        """How many loose objects the ledger holds (Python writes every object loose)."""
+        """Compaction backlog: loose objects plus excess per-operation packs."""
 
-        for line in self._git(["count-objects", "-v"]).decode().splitlines():
-            key, _separator, value = line.partition(":")
-            if key == "count":
-                return int(value.strip())
-        return 0
+        values = dict(
+            line.split(": ", 1) for line in self._git(["count-objects", "-v"]).decode().splitlines()
+        )
+        return int(values.get("count", "0")) + max(0, int(values.get("packs", "0")) - 1)
 
     def compact_objects(self) -> None:
         """Pack every reachable object and write the commit-graph.
@@ -1715,6 +1826,8 @@ class GitLedger:
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
+        packed_deleted = _batch_reader(self.path).store.remove(set(object_ids))
+        deleted.extend(object_id for object_id in packed_deleted if object_id not in deleted)
         return tuple(deleted)
 
     def object_exists(self, oid: str) -> bool:
@@ -1743,6 +1856,7 @@ class GitLedger:
             raise GitError(f"unknown Cruxible note kind: {kind!r}")
         return ref
 
+    @_pack_transaction
     def _write_note(self, kind: str, oid: str, content: bytes, *, replace: bool) -> None:
         """Attach one note through the one write every note ref shares.
 
@@ -1756,12 +1870,44 @@ class GitLedger:
 
         self._validate_oid(oid)
         ref = self._note_ref(kind)
-        arguments = ["notes", f"--ref={ref}", "add"]
-        if replace:
-            arguments.append("-f")
-        arguments.extend(("-F", "-", oid))
         with self._note_lock():
-            self._git(arguments, input_bytes=content)
+            head = self._resolve_ref(ref)
+            existing = self._read_note(kind, oid)
+            if existing is not None and not replace:
+                raise GitError("note already exists")
+            tree = None if head is None else self._commit_tree(head)
+            # Preserve Git's existing fanout, descending only the target path.
+            directory, remaining, path = tree, oid, ""
+            while directory is not None:
+                entries = self._encoded_tree(directory).entries
+                if remaining in entries:
+                    break
+                child = entries.get(remaining[:2])
+                if child is None or child[0] != b"40000":
+                    break
+                path += remaining[:2] + "/"
+                directory, remaining = child[1], remaining[2:]
+            if existing is None and not path:
+                path, remaining = oid[:2] + "/", oid[2:]
+            blob = self._blob_oid(content)
+            root = self._commit_changes_to_tree(tree, {path + remaining: blob}, {blob: content})
+            now = datetime.now(timezone.utc).isoformat()
+            environment = {
+                "GIT_AUTHOR_NAME": "cruxible-daemon",
+                "GIT_AUTHOR_EMAIL": "daemon@cruxible.invalid",
+                "GIT_COMMITTER_NAME": "cruxible-daemon",
+                "GIT_COMMITTER_EMAIL": "daemon@cruxible.invalid",
+                "GIT_AUTHOR_DATE": now,
+                "GIT_COMMITTER_DATE": now,
+            }
+            commit = self._create_commit(
+                root,
+                () if head is None else (head,),
+                f"Notes added by Cruxible ({kind})",
+                environment,
+            )
+            zero = "0" * len(commit)
+            self._update_refs([f"update {ref} {commit} {head or zero}"])
         if self._read_note(kind, oid) != content:
             raise GitError(f"{kind} note did not persist exactly")
 
@@ -1807,9 +1953,7 @@ class GitLedger:
             found = reader.objects((tree,))[tree]
             if found is None or found[0] != "tree":
                 return _ASK_GIT
-            entries = _tree_entries(found[1], raw_length=len(oid) // 2)
-            if entries is None:
-                return _ASK_GIT
+            entries = self._parsed_tree(_repository_key(self.path), tree)
             note = entries.get(remaining)
             if note is not None:
                 mode, note_oid = note
@@ -1888,38 +2032,13 @@ class GitLedger:
                 path = "/".join([oid[i : i + 2] for i in range(0, split, 2)] + [oid[split:]])
                 wanted[f"{ref}:{path}"] = (kind, oid)
         found: dict[tuple[str, str], bytes] = {}
-        if wanted:
-            ordered = tuple(wanted)
-            output = self._git(
-                ["--no-replace-objects", "cat-file", "--batch"],
-                input_bytes=("\n".join(ordered) + "\n").encode("ascii"),
-            )
-            position = 0
-            for expression in ordered:
-                end = output.find(b"\n", position)
-                if end < 0:
-                    raise GitError("Git note output has no header")
-                header = output[position:end]
-                position = end + 1
-                if header == f"{expression} missing".encode("ascii"):
-                    continue
-                try:
-                    _oid, object_type, raw_size = header.decode("ascii").split()
-                    size = int(raw_size)
-                except (UnicodeDecodeError, ValueError) as exc:
-                    raise GitError("Git note metadata is malformed") from exc
-                if object_type != "blob" or size < 0:
-                    raise GitError("Git note is not a blob")
-                end = position + size
-                if end >= len(output) or output[end : end + 1] != b"\n":
-                    raise GitError("Git note payload is truncated")
-                key = wanted[expression]
-                if key in found:
-                    raise GitError("Git notes repeat an annotated object")
-                found[key] = output[position:end]
-                position = end + 1
-            if position != len(output):
-                raise GitError("Git note output has trailing bytes")
+        resolved = self._batch_paths(tuple(wanted), "blob")
+        bodies = self._read_review_objects({oid: "blob" for oid in resolved.values()})
+        for expression, oid in resolved.items():
+            key = wanted[expression]
+            if key in found:
+                raise GitError("Git notes repeat an annotated object")
+            found[key] = bodies[oid]
         return {pair: found.get(pair) for pair in pairs}
 
     def read_main(self) -> str:
@@ -2350,7 +2469,7 @@ class GitLedger:
                 _PARSED_TREE_ENTRIES -= len(evicted)
         return entries
 
-    def _remembered_whole_listing(self, oid: str) -> tuple[GitTreeEntry, ...] | None:
+    def _remembered_whole_listing(self, oid: str) -> _Listing | None:
         """Whichever whole listing of this object is remembered, sized or not."""
 
         self._validate_oid(oid)
@@ -2400,7 +2519,7 @@ class GitLedger:
             return _select_from_listing(whole, paths)
         cached = _remembered_listing(repository, oid, with_sizes=with_sizes)
         if cached is not None:
-            return cached
+            return tuple(cached)
         # A commit lists as its root tree, and the tree is usually what this
         # process just wrote or listed: resolve it from the commit's own bytes.
         tree = self._commit_tree(oid)
@@ -2408,7 +2527,7 @@ class GitLedger:
             cached = _remembered_listing(repository, tree, with_sizes=with_sizes)
             if cached is not None:
                 _remember_listing(repository, oid, cached)
-                return cached
+                return tuple(cached)
         listing = self._read_tree_listing(oid, with_sizes=with_sizes, paths=None)
         if listing:
             _remember_listing(repository, oid, listing)
@@ -2542,22 +2661,10 @@ class GitLedger:
             if key in _VERIFIED_COMMITS:
                 _VERIFIED_COMMITS.move_to_end(key)
                 return True
-        with tempfile.NamedTemporaryFile(prefix="playbill-allowed-signer-") as exact_signers:
-            exact_signers.write(signer + b"\n")
-            exact_signers.flush()
-            os.fsync(exact_signers.fileno())
-            result = _command(
-                [
-                    "git",
-                    f"--git-dir={self.path}",
-                    "-c",
-                    f"gpg.ssh.allowedSignersFile={exact_signers.name}",
-                    "verify-commit",
-                    oid,
-                ],
-                check=False,
-            )
-        if result.returncode != 0:
+        public = serialization.load_ssh_public_key(b" ".join(signer.split()[1:]))
+        if not isinstance(public, Ed25519PublicKey):
+            return False
+        if not self._verify_public(oid, public):
             return False
         with _VERIFIED_COMMITS_LOCK:
             _VERIFIED_COMMITS[key] = None
@@ -2580,26 +2687,24 @@ class GitLedger:
             public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
         except ValueError as exc:
             raise GitError("historical daemon public key is malformed") from exc
-        openssh = public_key.public_bytes(
-            encoding=serialization.Encoding.OpenSSH,
-            format=serialization.PublicFormat.OpenSSH,
-        )
-        with tempfile.NamedTemporaryFile(prefix="playbill-historical-signer-") as signers:
-            signers.write(principal_id.encode("utf-8") + b" " + openssh + b"\n")
-            signers.flush()
-            os.fsync(signers.fileno())
-            result = _command(
-                [
-                    "git",
-                    f"--git-dir={self.path}",
-                    "-c",
-                    f"gpg.ssh.allowedSignersFile={signers.name}",
-                    "verify-commit",
-                    oid,
-                ],
-                check=False,
-            )
-        return result.returncode == 0
+        return self._verify_public(oid, public_key)
+
+    def _verify_public(self, oid: str, public: Ed25519PublicKey) -> bool:
+        key = (_repository_key(self.path), oid, public.public_bytes_raw())
+        with _VERIFIED_COMMITS_LOCK:
+            if key in _VERIFIED_COMMITS:
+                _VERIFIED_COMMITS.move_to_end(key)
+                return True
+        found = _batch_reader(self.path).objects((oid,))[oid]
+        if found is None or found[0] != "commit":
+            return False
+        if not verify_signature(found[1], public, sha256=self.object_format() == "sha256"):
+            return False
+        with _VERIFIED_COMMITS_LOCK:
+            _VERIFIED_COMMITS[key] = None
+            while len(_VERIFIED_COMMITS) > _VERIFIED_COMMIT_CAPACITY:
+                _VERIFIED_COMMITS.popitem(last=False)
+        return True
 
     def main_history(self) -> tuple[str, ...]:
         """Return the non-merge main chain in oldest-first order.
@@ -2671,18 +2776,19 @@ class GitLedger:
     def is_ancestor(self, ancestor_oid: str, descendant_oid: str) -> bool:
         self._validate_oid(ancestor_oid)
         self._validate_oid(descendant_oid)
-        result = _command(
-            [
-                "git",
-                f"--git-dir={self.path}",
-                "merge-base",
-                "--is-ancestor",
-                ancestor_oid,
-                descendant_oid,
-            ],
-            check=False,
-        )
-        return result.returncode == 0
+        pending = [descendant_oid]
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current == ancestor_oid:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            found = _batch_reader(self.path).objects((current,))[current]
+            if found is not None and found[0] == "commit":
+                pending.extend(_commit_parents(found[1]))
+        return False
 
     def _allowed_signer_entry(self, principal_id: str) -> bytes:
         matches: list[bytes] = []
@@ -2893,8 +2999,6 @@ def _file_identity(path: Path) -> tuple[int, ...] | None:
 
 
 _ASK_GIT: Final = object()
-# An actor id Git's ident normalization leaves exactly as written.
-_PLAIN_ACTOR_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?$")
 _SAFE_REF_RE = re.compile(r"^refs/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$")
 _PACKED_REFS_CAPACITY = 16
 # Repository identity -> (packed-refs file identity, ref -> object ID).
@@ -2998,6 +3102,25 @@ class _BatchBlobReader:
         self.path = path
         self._lock = threading.RLock()
         self.store = PackStore(path)
+        self._transaction = threading.local()
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        if getattr(self._transaction, "pending", None) is not None:
+            yield
+            return
+        self._transaction.pending = {}
+        try:
+            yield
+            self.flush()
+        finally:
+            self._transaction.pending = None
+
+    def flush(self) -> None:
+        pending = getattr(self._transaction, "pending", None)
+        if pending:
+            self.store.write(pending)
+            pending.clear()
 
     def close(self) -> None:
         self.store.close()
@@ -3043,7 +3166,8 @@ class _BatchBlobReader:
 
     def objects(self, oids: Sequence[str]) -> dict[str, tuple[str, bytes] | None]:
         with self._lock:
-            return {oid: self.store.read(oid) for oid in oids}
+            pending = getattr(self._transaction, "pending", None) or {}
+            return {oid: pending[oid] if oid in pending else self.store.read(oid) for oid in oids}
 
     def read(self, oids: Sequence[str]) -> dict[str, bytes]:
         blobs: dict[str, bytes] = {}
@@ -3052,42 +3176,6 @@ class _BatchBlobReader:
                 raise GitError("Git batch blob output differs from the requested blob")
             blobs[oid] = value[1]
         return blobs
-
-
-_OBJECT_INFO_CHUNK: Final = 256
-
-
-def _object_info_row(header: bytes, expected_oid: str) -> tuple[str, int] | None:
-    if not header.endswith(b"\n"):
-        raise GitError("Git object metadata ended before its header")
-    if header == expected_oid.encode("ascii") + b" missing\n":
-        return None
-    try:
-        actual_oid, object_type, raw_size = header[:-1].decode("ascii").split()
-        size = int(raw_size)
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise GitError("Git object metadata is malformed") from exc
-    if actual_oid != expected_oid or size < 0:
-        raise GitError("Git object metadata differs from its request")
-    return (object_type, size)
-
-
-def _require_object_hash(oid: str, object_type: str, body: bytes) -> None:
-    """Refuse object bytes that do not hash to the ID they were read under.
-
-    Git serves a stored object without re-hashing it, so bytes replaced on disk
-    after the ledger was verified would otherwise be returned under the
-    original ID. Every object this reader hands out is checked.
-    """
-
-    algorithm = {40: "sha1", 64: "sha256"}.get(len(oid))
-    if algorithm is None:
-        raise GitError(f"ledger object ID has an unknown length: {oid}")
-    digest = hashlib.new(algorithm)
-    digest.update(f"{object_type} {len(body)}".encode("ascii") + b"\x00")
-    digest.update(body)
-    if digest.hexdigest() != oid:
-        raise GitError(f"ledger object bytes do not hash to their ID: {oid}")
 
 
 # A generation commit is marked here from before it exists until it is on main
@@ -3111,6 +3199,8 @@ def _repository_key(path: Path) -> tuple[str, int, int]:
     return (resolved, identity.st_dev, identity.st_ino)
 
 
+_ARCHIVE_MEMBERS: OrderedDict[tuple[tuple[str, int, int], str], PersistentMap[bool]] = OrderedDict()
+
 _VERIFIED_COMMIT_CAPACITY = 256
 _VERIFIED_COMMITS: OrderedDict[tuple[tuple[str, int, int], str, bytes], None] = OrderedDict()
 _VERIFIED_COMMITS_LOCK = threading.Lock()
@@ -3120,9 +3210,7 @@ _TREE_LISTING_CAPACITY = 32
 # Listings are also bounded by their total entries, so the memory they hold
 # follows the tree size rather than a fixed count of whole trees.
 _TREE_LISTING_ENTRY_CAPACITY = 400_000
-_TREE_LISTINGS: OrderedDict[tuple[tuple[str, int, int], str, bool], tuple[GitTreeEntry, ...]] = (
-    OrderedDict()
-)
+_TREE_LISTINGS: OrderedDict[tuple[tuple[str, int, int], str, bool], _Listing] = OrderedDict()
 _TREE_LISTINGS_LOCK = threading.Lock()
 
 
@@ -3150,14 +3238,12 @@ _LISTING_INDEX_CAPACITY = 16
 _LISTING_INDEX_ENTRY_CAPACITY = 200_000
 # id(listing) -> (the listing itself, path -> position, paths in sorted order).
 # The listing is held so its id cannot be reused while the index is remembered.
-_LISTING_INDEXES: OrderedDict[
-    int, tuple[tuple[GitTreeEntry, ...], dict[str, int], tuple[str, ...]]
-] = OrderedDict()
+_LISTING_INDEXES: OrderedDict[int, tuple[_Listing, dict[str, int], tuple[str, ...]]] = OrderedDict()
 _LISTING_INDEXES_LOCK = threading.Lock()
 
 
 def _listing_index(
-    listing: tuple[GitTreeEntry, ...],
+    listing: _Listing,
 ) -> tuple[dict[str, int], tuple[str, ...]]:
     """Path -> position and the sorted paths, built once per remembered listing."""
 
@@ -3182,9 +3268,14 @@ def _listing_index(
     return indexed[1], indexed[2]
 
 
-def _listing_has_path(listing: tuple[GitTreeEntry, ...], path: str) -> bool:
+def _listing_has_path(listing: _Listing, path: str) -> bool:
     """Whether a file, or a directory with any entry beneath it, is named path."""
 
+    if isinstance(listing, _PersistentListing):
+        if path in listing.rows:
+            return True
+        _, subtree = listing.rows.split_prefix(path + "/")
+        return bool(subtree)
     positions, ordered = _listing_index(listing)
     if path in positions:
         return True
@@ -3193,7 +3284,7 @@ def _listing_has_path(listing: tuple[GitTreeEntry, ...], path: str) -> bool:
     return cursor < len(ordered) and ordered[cursor].startswith(prefix)
 
 
-def _listing_child_names(listing: tuple[GitTreeEntry, ...], directory: str) -> tuple[str, ...]:
+def _listing_child_names(listing: _Listing, directory: str) -> tuple[str, ...]:
     """A directory's immediate child names, skipping each child's own subtree.
 
     A file child is one entry and advances by one. A directory child's first
@@ -3204,6 +3295,21 @@ def _listing_child_names(listing: tuple[GitTreeEntry, ...], directory: str) -> t
     subtree: the work tracks the number of children, not the subtree sizes.
     """
 
+    if isinstance(listing, _PersistentListing):
+        prefix = directory + "/" if directory else ""
+        rows = listing.rows
+        if prefix:
+            _, rows = rows.split_prefix(prefix)
+        persistent_names = []
+        while rows:
+            path = next(iter(rows))
+            name, separator, _ = path[len(prefix) :].partition("/")
+            persistent_names.append(name)
+            if separator:
+                rows, _ = rows.split_prefix(prefix + name + "/")
+            else:
+                rows = rows.delete(path)
+        return tuple(persistent_names)
     _positions, ordered = _listing_index(listing)
     prefix = directory + "/" if directory else ""
     names: list[str] = []
@@ -3218,9 +3324,7 @@ def _listing_child_names(listing: tuple[GitTreeEntry, ...], directory: str) -> t
     return tuple(names)
 
 
-def _select_from_listing(
-    listing: tuple[GitTreeEntry, ...], paths: Sequence[str]
-) -> tuple[GitTreeEntry, ...]:
+def _select_from_listing(listing: _Listing, paths: Sequence[str]) -> tuple[GitTreeEntry, ...]:
     """A literal pathspec's selection from a whole listing, in listing order.
 
     Each requested path selects its exact entry, or every entry beneath it when
@@ -3229,6 +3333,18 @@ def _select_from_listing(
     selection rather than the size of the tree.
     """
 
+    if isinstance(listing, _PersistentListing):
+        chosen: dict[str, GitTreeEntry] = {}
+        for path in paths:
+            row = listing.rows.get(path)
+            if row is not None:
+                chosen[path] = row
+            _, subtree = listing.rows.split_prefix(path + "/")
+            chosen.update(subtree.items())
+        return tuple(
+            entry if listing.sized else replace(entry, size=None)
+            for _, entry in sorted(chosen.items())
+        )
     positions, ordered = _listing_index(listing)
     selected: set[int] = set()
     for path in paths:
@@ -3243,36 +3359,60 @@ def _select_from_listing(
     return tuple(listing[position] for position in sorted(selected))
 
 
+@dataclass(frozen=True, slots=True)
+class _PersistentListing(Sequence[GitTreeEntry]):
+    rows: PersistentMap[GitTreeEntry]
+    sized: bool = True
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __iter__(self) -> Iterator[GitTreeEntry]:
+        if self.sized:
+            return iter(self.rows.values())
+        return (replace(entry, size=None) for entry in self.rows.values())
+
+    @overload
+    def __getitem__(self, index: int) -> GitTreeEntry: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[GitTreeEntry, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> GitTreeEntry | tuple[GitTreeEntry, ...]:
+        return tuple(self)[index]
+
+
+_Listing = tuple[GitTreeEntry, ...] | _PersistentListing
+
+
 def _listing_with(
-    listing: tuple[GitTreeEntry, ...],
+    listing: _Listing,
     changes: Mapping[str, str | None],
     sizes: Mapping[str, int],
-) -> tuple[GitTreeEntry, ...]:
+) -> _Listing:
     """A path-ordered listing with changed paths replaced, added or removed."""
 
-    entries = list(listing)
+    rows = (
+        listing.rows
+        if isinstance(listing, _PersistentListing)
+        else PersistentMap((entry.path, entry) for entry in listing)
+    )
     for path, oid in changes.items():
-        position = bisect.bisect_left(
-            entries, path.encode("utf-8"), key=lambda entry: entry.path.encode("utf-8")
-        )
-        present = position < len(entries) and entries[position].path == path
         if oid is None:
-            if present:
-                del entries[position]
-            continue
-        entry = GitTreeEntry(
-            path=path, mode="100644", object_type="blob", oid=oid, size=sizes[path]
-        )
-        if present:
-            entries[position] = entry
+            rows = rows.delete(path)
         else:
-            entries.insert(position, entry)
-    return tuple(entries)
+            rows = rows.set(
+                path,
+                GitTreeEntry(
+                    path=path, mode="100644", object_type="blob", oid=oid, size=sizes[path]
+                ),
+            )
+    return _PersistentListing(rows)
 
 
 def _remembered_listing(
     repository: tuple[str, int, int], oid: str, *, with_sizes: bool
-) -> tuple[GitTreeEntry, ...] | None:
+) -> _Listing | None:
     with _TREE_LISTINGS_LOCK:
         key = (repository, oid, with_sizes)
         cached = _TREE_LISTINGS.get(key)
@@ -3284,16 +3424,23 @@ def _remembered_listing(
         return None
     # A sized listing carries every unsized field; only the size differs. The
     # derived listing is remembered too, so repeated reads share one object.
-    unsized = tuple(replace(entry, size=None) for entry in sized)
+    unsized = (
+        _PersistentListing(sized.rows, sized=False)
+        if isinstance(sized, _PersistentListing)
+        else tuple(replace(entry, size=None) for entry in sized)
+    )
     if unsized:
         _remember_listing(repository, oid, unsized)
     return unsized
 
 
-def _remember_listing(
-    repository: tuple[str, int, int], oid: str, listing: tuple[GitTreeEntry, ...]
-) -> None:
-    key = (repository, oid, listing[0].size is not None if listing else True)
+def _remember_listing(repository: tuple[str, int, int], oid: str, listing: _Listing) -> None:
+    if not isinstance(listing, _PersistentListing):
+        listing = _PersistentListing(
+            PersistentMap((entry.path, entry) for entry in listing),
+            sized=listing[0].size is not None if listing else True,
+        )
+    key = (repository, oid, listing.sized)
     with _TREE_LISTINGS_LOCK:
         _TREE_LISTINGS[key] = listing
         _TREE_LISTINGS.move_to_end(key)

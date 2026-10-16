@@ -437,16 +437,6 @@ class _InteriorEdit:
         return MerkleNode(prefix=prefix, digest=digest, segments=self.segments)
 
 
-def _refuse_casefold_sibling(prefix: str, segment: str, siblings: Iterable[str]) -> None:
-    folded = segment.casefold()
-    for sibling in siblings:
-        if sibling != segment and sibling.casefold() == folded:
-            raise CanonicalEncodingError(
-                f"case-fold-colliding siblings refused below {prefix or '/'}: "
-                f"{sibling!r} and {segment!r}"
-            )
-
-
 def _member_digest(path: str, value: str) -> str:
     try:
         return ArtifactDigest(value).value

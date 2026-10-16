@@ -72,38 +72,15 @@ def test_snapshot_rehashes_corrupted_loose_commit_on_every_read(ledger):
         ledger.read_review_projection((base,), dependencies={})
 
 
-@pytest.mark.parametrize(
-    "output",
-    [
-        b"",
-        b"wrong missing\n",
-        b"{oid} tree 0\n\n",
-        b"{oid} commit -1\n",
-        b"{oid} commit 5\ncut",
-        b"{oid} missing\nextra",
-    ],
-)
-def test_snapshot_refuses_malformed_batch_output(ledger, monkeypatch, output):
-    oid = ledger.read_main()
-    monkeypatch.setattr(ledger, "_git", lambda *a, **kw: output.replace(b"{oid}", oid.encode()))
-    with pytest.raises(GitError):
-        ledger._read_review_objects({oid: "commit"})
-
-
-def test_snapshot_batches_large_object_inventory(ledger, monkeypatch):
+def test_snapshot_reads_selected_objects_without_a_git_process(ledger, monkeypatch):
     size = len(ledger.read_main())
     oids = {f"{i:0{size}x}": "commit" for i in range(300)}
-    batches = []
 
-    def missing(args, *, input_bytes, **kwargs):
-        assert args == ["--no-replace-objects", "cat-file", "--batch"]
-        batch = input_bytes.splitlines()
-        batches.append(batch)
-        return b"".join(oid + b" missing\n" for oid in batch)
+    def unexpected(*args, **kwargs):
+        raise AssertionError("object reads must stay in process")
 
-    monkeypatch.setattr(ledger, "_git", missing)
+    monkeypatch.setattr(ledger, "_git", unexpected)
     assert ledger._read_review_objects(oids) == {}
-    assert list(map(len, batches)) == [128, 128, 44]
 
 
 def test_reconciliation_reuses_verified_commits_but_still_refuses_note_tamper(
@@ -172,6 +149,10 @@ def test_snapshot_rehashes_corrupted_note_blob(ledger):
         .strip()
     )
     path = ledger.path / "objects" / note_oid[:2] / note_oid[2:]
+    if not path.exists():
+        body = ledger.read_blob(note_oid)
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(zlib.compress(b"blob %d\x00" % len(body) + body))
     raw = zlib.decompress(path.read_bytes())
     assert raw.endswith(b"good\n")
     path.chmod(0o600)
@@ -237,7 +218,7 @@ def test_selected_notes_support_fanout_and_shared_note_roots(ledger, depth, monk
     monkeypatch.setattr(git_module, "_command", capture)
     _, notes = ledger.read_review_projection((target,), dependencies={})
     assert notes == {(kind, target): b"retained note\n" for kind in ("evaluation", "approval")}
-    assert len(commands) == 2
+    assert commands == []
 
 
 def test_selected_notes_batch_many_targets_without_historical_listing(ledger, monkeypatch):
@@ -269,5 +250,4 @@ def test_selected_notes_batch_many_targets_without_historical_listing(ledger, mo
     monkeypatch.setattr(git_module, "_command", capture)
     found = ledger._review_note_oids(targets[:40])
     assert found == {("evaluation", target): blob for target in targets[:40]}
-    assert max(batches) <= 256
-    assert len(batches) <= 6  # Bounded stdin batches, not forty note processes.
+    assert batches == []
