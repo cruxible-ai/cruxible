@@ -130,3 +130,26 @@ def test_persistent_child_listing_seeks_subtrees_without_deleting_rows(monkeypat
     assert git._listing_child_names(listing, "") == ("a-file", "a", "a0", "b")
     assert git._listing_child_names(listing, "a") == ("one", "two")
     assert git._listing_child_names(listing, "absent") == ()
+
+
+def test_repeated_candidates_share_the_cold_listing_seed(monkeypatch):
+    from cruxible_client.contracts.persistent import PersistentMap
+
+    repository = ("cold-listing-test", 1, 1)
+    oid = "c" * 64
+    entries = tuple(
+        git.GitTreeEntry(path=f"item/{i}", mode="100644", object_type="blob", oid="a" * 64, size=1)
+        for i in range(800)
+    )
+    git._remember_listing(repository, oid, entries)
+    seed = git._remembered_listing(repository, oid, with_sizes=True)
+    assert seed is not None
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("candidate rebuilt the whole cold listing seed")
+
+    monkeypatch.setattr(PersistentMap, "__init__", forbidden)
+    for path in ("item/one", "item/two"):
+        changed = git._listing_with(seed, {path: "b" * 64}, {path: 2})
+        assert len(changed) == 801
+    assert len(seed) == 800

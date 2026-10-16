@@ -3638,16 +3638,14 @@ def _remembered_listing(
 
 
 def _remember_listing(repository: tuple[str, int, int], oid: str, listing: _Listing) -> None:
-    # Whole-tree reads already materialize a sorted tuple. Keep it: eagerly
-    # rebuilding AVL nodes adds full-tree allocation to cold reads and full
-    # writes. Only the first delta needs a persistent seed;
-    # subsequent deltas share that seed through their commit/tree aliases.
-    sized = (
-        listing.sized
-        if isinstance(listing, _PersistentListing)
-        else (listing[0].size is not None if listing else True)
-    )
-    key = (repository, oid, sized)
+    # Seed once per cold listing. Repeated candidates fork this shared map;
+    # leaving the cached seed as a tuple would rebuild all nodes per fork.
+    if not isinstance(listing, _PersistentListing):
+        listing = _PersistentListing(
+            PersistentMap((entry.path, entry) for entry in listing),
+            sized=listing[0].size is not None if listing else True,
+        )
+    key = (repository, oid, listing.sized)
     with _TREE_LISTINGS_LOCK:
         _TREE_LISTINGS[key] = listing
         _TREE_LISTINGS.move_to_end(key)
