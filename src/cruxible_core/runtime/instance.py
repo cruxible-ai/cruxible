@@ -206,6 +206,7 @@ from cruxible_core.storage.cas import (
     dry_run_held_bodies,
 )
 from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
+from cruxible_core.storage.read_positions import unpositioned_operation
 
 if TYPE_CHECKING:
     from cruxible_core.evidence.attestation_verification import CaptureContractVersions
@@ -2854,6 +2855,7 @@ class PlaybillInstance:
         with self._state_lock, self._ledger.activation_lock():
             yield self._ledger.read_main()
 
+    @unpositioned_operation
     def refresh(self, *, witness: WitnessSink | None = None) -> AcceptedProjectionCoordinate:
         """Replay accepted state and repair publication, excluding concurrent writers."""
         with self._state_lock, self._ledger.activation_lock():
@@ -2924,6 +2926,7 @@ class PlaybillInstance:
         if self._quiet_checkpoints is not None:
             self._quiet_checkpoints.flush()
 
+    @unpositioned_operation
     def prepare_generation(
         self,
         *,

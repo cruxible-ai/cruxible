@@ -406,6 +406,7 @@ class AuthoringIntentCoordinator:
             raise RuntimeError("preflight transition omitted its result")
         return updated.last_preflight
 
+    @unpositioned_operation
     def _compute_and_bind_preflight(
         self,
         intent_id: str,
@@ -413,6 +414,8 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
         prepared: PreparedEvaluationScope | None = None,
     ) -> tuple[ComputedPreflight, AuthoringIntentV1]:
+        # This persists a preflight and lands its lowered evidence. Unlike an
+        # in-memory preview, it must see those new bodies even inside a read.
         current = self.store.get(intent_id, actor_id=actor.actor_id)
         computed = compute_preflight(self.instance, intent=current, actor=actor, prepared=prepared)
         if computed.result.verdict == "refused":
