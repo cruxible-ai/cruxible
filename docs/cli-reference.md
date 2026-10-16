@@ -3877,6 +3877,10 @@ for an open or refused proposal. A stale ClaimType migration is not
 byte-rebased because its dependent inventory may have changed; run
 `cruxible claim-type migrate` again at the current head instead.
 
+A readmitted proposal that becomes stale can be readmitted again. Each link
+replays its retained tree from the base where that tree was evaluated; the
+original Procedure item reasons remain available in review and after acceptance.
+
 `proposal withdraw` is the terminal statement for the opposite case: an open (or
 stale) proposal that will never be activated, because a hard limit refuses its
 activation or its author changed their mind. It writes one immutable withdrawal
