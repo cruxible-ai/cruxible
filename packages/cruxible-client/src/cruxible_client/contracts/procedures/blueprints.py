@@ -50,7 +50,7 @@ from cruxible_client.contracts.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_client.contracts.provider_interfaces import AcceptedProviderInterfaceRegistration
-from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2
+from cruxible_client.contracts.providers import AcceptedProvider, ProviderV2, provider_interface_pin
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _BLUEPRINT_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -260,16 +260,30 @@ def fitting_implementation(provider: AcceptedProvider, slot: ProcedurePinSlot) -
 
 
 def _replace_slots(
-    value: Any, *, pins: Mapping[str, dict[str, Any]], impls: Mapping[str, str]
+    value: Any,
+    *,
+    pins: Mapping[str, dict[str, Any]],
+    impls: Mapping[str, str],
+    interfaces: Mapping[str, ArtifactPin],
 ) -> Any:
     if isinstance(value, list):
-        return [_replace_slots(item, pins=pins, impls=impls) for item in value]
+        return [
+            _replace_slots(item, pins=pins, impls=impls, interfaces=interfaces) for item in value
+        ]
     if isinstance(value, dict):
         provider = value.get("provider")
         if isinstance(provider, dict) and provider.get("tag") == _SLOT_REF_TAG:
             slot = str(provider["slot_name"])
-            value = {**value, "provider": pins[slot], "implementation_digest": impls[slot]}
-        return {key: _replace_slots(item, pins=pins, impls=impls) for key, item in value.items()}
+            value = {
+                **value,
+                "provider": pins[slot],
+                "implementation_digest": impls[slot],
+                "interface": interfaces[slot].model_dump(mode="json"),
+            }
+        return {
+            key: _replace_slots(item, pins=pins, impls=impls, interfaces=interfaces)
+            for key, item in value.items()
+        }
     return value
 
 
@@ -303,6 +317,7 @@ def instantiate_blueprint(
     bindings: list[ProcedureSlotBinding] = []
     interface_digests: dict[str, str] = {}
     implementations: dict[str, str] = {}
+    interfaces: dict[str, ArtifactPin] = {}
     for slot_name in sorted(declarations, key=lambda item: item.encode("utf-8")):
         slot = declarations[slot_name]
         provider = providers[slot_name]
@@ -314,6 +329,19 @@ def instantiate_blueprint(
                 f"{slot_name!r}'s interface exactly once.",
                 slot=slot_name,
             )
+        original = blueprint_slot_interface(blueprint, slot_name)
+        interface = (
+            None
+            if original is None
+            else provider_interface_pin(provider.provider, original.target.name.partition("/")[0])
+        )
+        if interface is None:
+            raise BlueprintInstantiationError(
+                "cruxible.blueprint.provider_interface_mismatch",
+                f"Provider {provider.provider.identity.name!r} pins no registration for slot {slot_name!r}",
+                slot=slot_name,
+            )
+        interfaces[slot_name] = interface
         implementations[slot_name] = implementation
         # Verified per slot: the one implementation serving this slot's interface.
         interface_digests[slot_name] = slot.interface_digest
@@ -344,7 +372,13 @@ def instantiate_blueprint(
             blueprint, name=name, providers=providers, implementations=implementations
         )
         if blueprint.definition.source is not None
-        else _bind_graph(blueprint, name=name, bindings=bindings, implementations=implementations)
+        else _bind_graph(
+            blueprint,
+            name=name,
+            bindings=bindings,
+            implementations=implementations,
+            interfaces=interfaces,
+        )
     )
     pins = {
         (pin.role, pin.target.qualified, pin.artifact_digest): pin
@@ -356,7 +390,7 @@ def instantiate_blueprint(
     if not set(pins).issubset(
         {
             (pin.role, pin.target.qualified, pin.artifact_digest)
-            for pin in (*closure.exact_pins, *extra_pins)
+            for pin in (*closure.exact_pins, *interfaces.values(), *extra_pins)
         }
     ):
         raise BlueprintInstantiationError(
@@ -391,10 +425,11 @@ def _bind_graph(
     name: str,
     bindings: list[ProcedureSlotBinding],
     implementations: Mapping[str, str],
+    interfaces: Mapping[str, ArtifactPin],
 ) -> ProcedureDefinition:
     raw = blueprint.definition.model_dump(mode="json", by_alias=True)
     pins = {item.slot_name: item.artifact_pin.model_dump(mode="json") for item in bindings}
-    bound = _replace_slots(raw, pins=pins, impls=implementations)
+    bound = _replace_slots(raw, pins=pins, impls=implementations, interfaces=interfaces)
     bound["pin_slots"] = []
     bound["name"] = name
     return ProcedureDefinition.model_validate(bound)
@@ -423,11 +458,13 @@ def _recompile_source(
         if not isinstance(value, SourceSlotBinding):
             continue
         provider = providers[slot_name].provider
+        interface = provider_interface_pin(provider, value.interface.partition("/")[0])
+        assert interface is not None
         bound[slot_name] = SourceProviderBinding(
             provider=provider.identity.name,
             provider_version=provider_digest(provider).tagged,
-            interface=value.interface,
-            interface_version=value.interface_version,
+            interface=interface.target.name,
+            interface_version=interface.artifact_digest,
             interface_digest=value.interface_digest,
             implementation_digest=implementations[slot_name],
             effect_class=value.effect_class,
