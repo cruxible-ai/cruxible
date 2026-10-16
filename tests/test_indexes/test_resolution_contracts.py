@@ -856,3 +856,46 @@ def test_cas_changes_only_visit_affected_books_and_repair_without_a_history_scan
         assert not restored.unavailable and reads == [digest, digest]
         assert restored.resolution_count(activation.contract_id) == 6
     _same_answers(restored, _replayed(activation, journal, bodies, stream, partition), activation)
+
+
+def test_stale_disposition_head_is_a_conflict_but_bad_sequence_is_integrity_failure(tmp_path):
+    from cruxible_client.contracts.errors import JournalConflictError
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    activation, journal, bodies, stream, partition, writer = _resolution_partition(tmp_path)
+    first = _answer(activation, writer, stream, 1, overturn=False)
+    _, before = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    disposition = build_resolution_disposition(
+        first,
+        sequence=1,
+        verdict="upheld",
+        reviewer_actor_context=_actor("reviewer"),
+        recorded_at=NOW + timedelta(seconds=11),
+        note="Checked.",
+    )
+    append_resolution_disposition(
+        writer,
+        activation=activation,
+        resolution=first,
+        disposition=disposition,
+        stream=stream,
+        expected_head=before,
+    )
+    with pytest.raises(JournalConflictError):
+        append_resolution_disposition(
+            writer,
+            activation=activation,
+            resolution=first,
+            disposition=disposition,
+            stream=stream,
+            expected_head=before,
+        )
+    with pytest.raises(ExecutionError, match="sequence is discontinuous"):
+        append_resolution_disposition(
+            writer,
+            activation=activation,
+            resolution=first,
+            disposition=disposition.model_copy(update={"sequence": 4}),
+            stream=stream,
+            expected_head=journal.read_head(stream, partition),
+        )

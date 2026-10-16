@@ -314,3 +314,51 @@ def test_review_resolution_over_http_and_sdk(owned_playbill_http, tmp_path):
     )
     row = next(row for row in listed.contracts if row.measurement_name == "rows-present")
     assert row.resolution is None and row.review.last_disposition == result.disposition
+
+
+def test_real_competing_disposition_has_http_conflict_status(owned_playbill_http, monkeypatch):
+    from datetime import timedelta
+
+    from cruxible_core.procedures.resolution import build_resolution_disposition
+    from cruxible_core.service.procedures import resolution_dispositions as module
+
+    client, instance_id, reviewer_key_path = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")
+    material = GeneratedKeyMaterial(
+        principal=reviewer,
+        private_key_path=reviewer_key_path,
+        public_key_path=reviewer_key_path.with_suffix(".pub"),
+    )
+    seed_claims_into(instance, material)
+    _, _, procedure = measured_world_on(instance, material)
+    base = f"/api/v1/{instance_id}/procedures/{procedure.identity.name}"
+    measured = client.post(
+        f"{base}/measurements",
+        json={"measurement_names": ["rows-present"], "evaluation_time": "2026-08-24T16:31:00Z"},
+    )
+    assert measured.status_code == 200, measured.text
+    resolution_id = measured.json()["rows"][0]["resolution"]["resolution_id"]
+    append = module.append_resolution_disposition
+
+    def compete_then_append(writer, **kwargs):
+        intended = kwargs["disposition"]
+        competing = build_resolution_disposition(
+            kwargs["resolution"],
+            sequence=intended.sequence,
+            verdict="overturned",
+            reviewer_actor_context=intended.reviewer_actor_context,
+            recorded_at=intended.recorded_at - timedelta(seconds=1),
+            note="Another review landed first.",
+        )
+        append(writer, **{**kwargs, "disposition": competing})
+        return append(writer, **kwargs)
+
+    monkeypatch.setattr(module, "append_resolution_disposition", compete_then_append)
+    response = client.post(
+        f"{base}/resolution-dispositions",
+        json={"resolution_id": resolution_id, "verdict": "upheld", "reason": "Evidence checked."},
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error_code"] == "cruxible.resolution.conflict"
+    assert response.json()["repair"]["operation"] == "cruxible.procedure.readings"

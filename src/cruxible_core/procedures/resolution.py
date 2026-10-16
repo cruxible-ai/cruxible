@@ -33,7 +33,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.claims import claim_path, claim_statement_address
-from cruxible_client.contracts.errors import ExecutionError
+from cruxible_client.contracts.errors import ExecutionError, JournalConflictError
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.measurements import (
@@ -1829,6 +1829,12 @@ def append_resolution_disposition(
     if disposition.resolution_id != resolution.resolution_id:
         raise ExecutionError("resolution disposition names another resolution")
     book, _head = resolution_book_at_head(writer.journal, stream, activation, bodies=writer.bodies)
+    # Validate against the immutable book at the caller's decision head. A
+    # competitor landing before this reread is a CAS conflict, before semantic
+    # checks can misclassify its valid new sequence/latest answer as corruption.
+    # A competitor landing after this reread is caught by writer.append's CAS.
+    if expected_head is not None and _head != expected_head:
+        raise JournalConflictError("resolution disposition expected head is stale or substituted")
     if book.unavailable:
         raise ExecutionError("resolution exhaust payload is unavailable")
     stored_resolution = book.resolution_by_id(resolution.resolution_id)

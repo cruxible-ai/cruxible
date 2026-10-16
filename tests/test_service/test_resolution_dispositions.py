@@ -413,3 +413,36 @@ def test_disposition_append_keeps_the_accepted_head_hold(measured, monkeypatch):
     monkeypatch.setattr(instance, "holding_accepted_head", tracked_hold)
     monkeypatch.setattr(module, "append_resolution_disposition", append_while_held)
     assert _dispose(instance, procedure, first).written_now
+
+
+def test_real_competing_disposition_returns_typed_conflict(measured, monkeypatch):
+    from cruxible_core.procedures.resolution import build_resolution_disposition
+    from cruxible_core.service.procedures import resolution_dispositions as module
+
+    instance, _, procedure, first = measured
+    append = module.append_resolution_disposition
+
+    def compete_then_append(writer, **kwargs):
+        competing = build_resolution_disposition(
+            kwargs["resolution"],
+            sequence=1,
+            verdict="overturned",
+            reviewer_actor_context=_actor(instance, "other-reviewer"),
+            recorded_at=RECORD_AT + timedelta(minutes=1),
+            note="A competing judgment.",
+        )
+        append(writer, **{**kwargs, "disposition": competing})
+        return append(writer, **kwargs)
+
+    monkeypatch.setattr(module, "append_resolution_disposition", compete_then_append)
+    with pytest.raises(ResolutionDispositionRefused) as refused:
+        _dispose(instance, procedure, first)
+    assert refused.value.error_code == "cruxible.resolution.conflict"
+    assert refused.value.http_status == 409
+    assert refused.value.repair.operation == "cruxible.procedure.readings"
+    view = _book(instance, procedure)[3]
+    assert view.disposition_count(first.resolution_id) == 1
+    assert (
+        view.last_disposition(first.resolution_id).reviewer_actor_context.actor_id
+        == "other-reviewer"
+    )
