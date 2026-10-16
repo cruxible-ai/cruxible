@@ -194,11 +194,11 @@ from cruxible_core.exhaust import (
     LocalJournalBackend,
 )
 from cruxible_core.exhaust.line_inbox import LineInboxStore
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.promotions import VerifiedExhaustRecordV1
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
     StoredProcedureJournalRecordV1,
-    parse_journal_payload,
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -1056,14 +1056,13 @@ def _stored_line_admission(
 ) -> ProcedureRunAdmissionV5 | None:
     if stored.record.event_kind != "admission_bound":
         return None
-    payload = parse_journal_payload(
-        instance.body_store().read(
-            stored.record.payload_digest,
-            access=BodyAccessContext(
-                principal_id="line-occurrence-registry",
-                can_read_body=True,
-            ),
-        )
+    payload = read_payload(
+        instance.body_store(),
+        stored.record.payload_digest,
+        access=BodyAccessContext(
+            principal_id="line-occurrence-registry",
+            can_read_body=True,
+        ),
     )
     if (
         not isinstance(payload, dict)
@@ -2089,6 +2088,39 @@ def _fold_terminal_egress(
     )
 
 
+def _unavailable_run_state(stored, *, admission=None) -> ProcedureRunStateV2:  # type: ignore[no-untyped-def]
+    """Keep the authenticated run identity, without inventing a replay or receipt."""
+    record = stored.record
+    return ProcedureRunStateV2(
+        run_id=record.run_id,
+        procedure_identity=(
+            admission.procedure_identity
+            if admission is not None
+            else ArtifactIdentity(kind="Procedure", name="unavailable")
+        ),
+        procedure_artifact_digest=record.procedure_artifact_digest,
+        bound_coordinate=(
+            admission.bound_coordinate if admission is not None else record.accepted_coordinate
+        ),
+        head_at_admission=(
+            admission.head_at_admission if admission is not None else record.accepted_coordinate
+        ),
+        lane="current" if admission is None else admission.lane,
+        evaluation_time=record.recorded_at if admission is None else admission.admitted_at,
+        status="operational_failed",
+        pending_inputs=(),
+        outcomes=(),
+        next_operation=ProcedureNextOperationV1(kind="terminal"),
+        terminal=ProcedureOperationalFailure(
+            code="replay_material_unavailable",
+            message="Run exhaust payload is unavailable.",
+            journal_coordinate=_journal_coordinate(stored),
+            details={"payload_digest": record.payload_digest, "availability": "unavailable"},
+            repair=served_repair_for_refusal("replay_material_unavailable"),
+        ),
+    )
+
+
 def _state_from_records(
     instance: PlaybillInstance,
     *,
@@ -2123,7 +2155,9 @@ def _state_from_records(
     terminal_egress: dict[str, ProcedureTerminalEgress] = {}
     children: list[ProcedureChildInvocation] = []
     for stored in records:
-        payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
+        payload = read_payload(bodies, stored.record.payload_digest, access=access)
+        if isinstance(payload, UnavailablePayload):
+            return _unavailable_run_state(stored, admission=admission)
         if (
             stored.record.event_kind == "child_invocation"
             and isinstance(payload, dict)
@@ -4554,6 +4588,21 @@ def load_playbill_procedure_run_grain(
     """Reconstruct one run's state and read back the grains its journal proves."""
 
     state = _state_from_records(instance, run_id=run_id)
+    if (
+        isinstance(state.terminal, ProcedureOperationalFailure)
+        and state.terminal.code == "replay_material_unavailable"
+    ):
+        return ProcedureRunGrainRecordV1(
+            state=state,
+            invocation_origin="actor",
+            occurrence_id=None,
+            attempt=1,
+            line_identity=None,
+            line_spec_digest=None,
+            finalized=False,
+            node_verdicts={},
+            selected_arms={},
+        )
     records = _records_for_run(instance, run_id)
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="procedure-run-grain", can_read_body=True)
@@ -4571,7 +4620,7 @@ def load_playbill_procedure_run_grain(
         kind = stored.record.event_kind
         if kind not in {"admission_bound", "node_fired", "branch_evaluated", "attempt_finalized"}:
             continue
-        payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
+        payload = read_payload(bodies, stored.record.payload_digest, access=access)
         if not isinstance(payload, dict):
             continue
         if kind == "admission_bound":
@@ -4679,9 +4728,10 @@ def service_recover_provider_invocations(
         starts: dict[str, ProviderInvocationStarted] = {}
         completed: dict[str, ProviderInvocationCompleted] = {}
         for stored in records:
-            payload = parse_journal_payload(
-                bodies.read(stored.record.payload_digest, access=access)
-            )
+            payload = read_payload(bodies, stored.record.payload_digest, access=access)
+            if isinstance(payload, UnavailablePayload):
+                admission = None
+                break
             if stored.record.event_kind == "admission_bound" and isinstance(payload, dict):
                 parsed_bound = parse_admission_payload(payload)
                 if isinstance(parsed_bound, ProcedureAdmissionBoundPayloadV5):

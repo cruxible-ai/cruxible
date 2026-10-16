@@ -44,10 +44,12 @@ def test_linux_is_one_filesystem_barrier_without_per_file_fsync(tmp_path, monkey
     )
     calls = []
     monkeypatch.setattr(cas.sys, "platform", "linux")
-    monkeypatch.setattr(cas, "_sync_filesystem", lambda fd: calls.append(fd) or True)
+    monkeypatch.setattr(
+        cas, "_sync_filesystem", lambda fd: calls.append(os.fstat(fd).st_ino) or True
+    )
     monkeypatch.setattr(os, "fsync", lambda fd: pytest.fail("per-file Linux fsync"))
     store.flush_cited(digests)
-    assert calls == [store._root_fd]
+    assert calls == [tmp_path.parent.stat().st_ino]
     assert store._durable == set(digests)
 
 
@@ -62,14 +64,19 @@ def test_failed_barrier_does_not_mark_citations_durable(tmp_path, monkeypatch):
 
 
 def test_settle_flush_covers_every_citation_before_main(tmp_path, monkeypatch):
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_client.contracts.claims import parse_claim
     from cruxible_core.ledger.git import GitLedger
-    from cruxible_core.storage.acceptance import cited_bodies
+    from cruxible_core.storage.cas import BodyAccessContext
     from tests.test_procedures.test_procedure_settlement_delivery import run_settle, settle_world
 
     instance, root, line = settle_world(tmp_path)
     store = instance.body_store()
+    assert instance.activation_publisher().bodies is store
+    already_durable = set(store._durable)
     flushed = Counter()
     namespaces = set()
+    observations = []
     original_flush = os.fsync
     original_main = GitLedger.compare_and_set_main
     original_barrier = ContentAddressedBodyStore.flush_cited
@@ -85,12 +92,12 @@ def test_settle_flush_covers_every_citation_before_main(tmp_path, monkeypatch):
                 namespaces.add((metadata.st_dev, metadata.st_ino))
         original_flush(fd)
 
-    def barrier(self, digests):
+    def barrier(self, digests, **kwargs):
         nonlocal in_barrier
         covered.update(digests)
         in_barrier = True
         try:
-            original_barrier(self, digests)
+            original_barrier(self, digests, **kwargs)
         finally:
             in_barrier = False
 
@@ -101,15 +108,48 @@ def test_settle_flush_covers_every_citation_before_main(tmp_path, monkeypatch):
         tree = self.read_tree(oid)
         path = max(path for path in tree if path.startswith("changesets/"))
         record = parse_change_set_record(tree[path], path=path)
-        expected = set(cited_bodies(record, tree, store))
-        assert expected and expected <= covered
-        assert expected <= store._durable
-        for digest in expected:
-            metadata = store._path(digest).stat()
-            assert flushed[(metadata.st_dev, metadata.st_ino)] == 1
-            parent = store._path(digest).parent.stat()
-            assert (parent.st_dev, parent.st_ino) in namespaces
-        assert self.read_main() == expected_oid
+        expected = set()
+        for member in record.members:
+            if member.path.startswith("claims/"):
+                for digest in parse_claim(
+                    tree[member.path], path=member.path
+                ).backing.capture_digests:
+                    expected.add(digest)
+                    envelope = parse_capture_envelope(
+                        store.read(
+                            digest,
+                            access=BodyAccessContext(principal_id="test", can_read_body=True),
+                        )
+                    )
+                    if envelope.commitment.materialization == "cas":
+                        expected.add(envelope.commitment.digest)
+                    content_digest = getattr(envelope.source, "content_digest", None)
+                    if content_digest is not None:
+                        expected.add(content_digest)
+                    if envelope.input_receipt_set_manifest_digest is not None:
+                        expected.add(envelope.input_receipt_set_manifest_digest)
+        observations.append(
+            (
+                expected,
+                set(covered),
+                set(store._durable),
+                {
+                    digest: flushed[
+                        (store._path(digest).stat().st_dev, store._path(digest).stat().st_ino)
+                    ]
+                    for digest in expected
+                },
+                {
+                    digest: (
+                        store._path(digest).parent.stat().st_dev,
+                        store._path(digest).parent.stat().st_ino,
+                    )
+                    in namespaces
+                    for digest in expected
+                },
+                self.read_main() == expected_oid,
+            )
+        )
         return original_main(self, oid, expected_oid=expected_oid)
 
     monkeypatch.setattr(cas, "_sync_filesystem", lambda fd: False)
@@ -118,6 +158,33 @@ def test_settle_flush_covers_every_citation_before_main(tmp_path, monkeypatch):
     monkeypatch.setattr(GitLedger, "compare_and_set_main", main)
     state = run_settle(instance, root, line)
     assert state.status == "succeeded", state.terminal
-    assert covered
+    assert observations
+    for expected, covered_at_main, durable_at_main, counts, parents, parent_held in observations:
+        assert expected and expected <= covered_at_main
+        assert expected <= durable_at_main
+        assert counts == {digest: 0 if digest in already_durable else 1 for digest in expected}
+        assert all(parents[digest] for digest in expected if digest not in already_durable)
+        assert parent_held
     store.flush_cited(tuple(covered))
     assert max(flushed.values()) == 1
+
+
+def test_failed_acceptance_barrier_never_moves_main(tmp_path, monkeypatch):
+    from cruxible_core.ledger import activation
+    from tests.test_procedures.test_procedure_settlement_delivery import run_settle, settle_world
+
+    instance, root, line = settle_world(tmp_path)
+    before = instance.accepted_coordinate()
+    attempted = []
+
+    def fail(*args):
+        attempted.append(True)
+        raise OSError("acceptance flush failed")
+
+    monkeypatch.setattr(activation, "flush_acceptance", fail)
+    try:
+        run_settle(instance, root, line)
+    except OSError:
+        pass
+    assert attempted
+    assert instance.accepted_coordinate() == before

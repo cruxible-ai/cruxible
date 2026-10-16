@@ -16,8 +16,8 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_core.exhaust import (
     StoredProcedureJournalRecordV1,
-    parse_journal_payload,
 )
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 
 IndexedProcedureRunStatusV1 = Literal[
@@ -341,12 +341,21 @@ class ProcedureRunIndex:
         )
         self._conn.commit()
         for stored in records:
-            self.apply_record(
-                stored,
-                payload=parse_journal_payload(
-                    bodies.read(stored.record.payload_digest, access=access)
-                ),
-            )
+            payload = read_payload(bodies, stored.record.payload_digest, access=access)
+            if isinstance(payload, UnavailablePayload):
+                # A failed derived entry cannot re-execute a run whose effect
+                # completion may have been lost. Its service read reports the
+                # exact unavailable payload from the authenticated records.
+                first, last = records[0].record, records[-1].record
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO procedure_run_index "
+                    "(run_id,admission_binding_digest,status,first_sequence,last_sequence) "
+                    "VALUES (?,?,'failed',?,?)",
+                    (run_id, first.admission_binding_digest, first.sequence, last.sequence),
+                )
+                self._conn.commit()
+                return
+            self.apply_record(stored, payload=payload)
 
 
 __all__ = [

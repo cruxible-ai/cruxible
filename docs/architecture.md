@@ -197,9 +197,18 @@ The journal remains authoritative and its SQLite indexes are rebuildable.
 
 Operational journal frames, payload bodies and reservation sidecars are
 best-effort exhaust: they have no per-item fsync. A crash can lose recent
-exhaust. Complete frames remain independently verifiable, incomplete trailing
-frames are discarded by the next writer, and payload availability checks treat
-missing or truncated bytes as unavailable. Direct body-byte reads still refuse
-missing or corrupt bytes. Promoting a payload into ordinary evidence flushes it
-under the evidence store's durability rules. Accepted-state publication retains
-its existing durable Git and evidence writes.
+payloads while their authenticated journal records remain. Service reads classify
+those records as unavailable; run reads return `replay_material_unavailable`,
+reading inspection lists `unavailable_payloads`, and affected measurement results
+say `unavailable`. Recovery preserves leases and does not re-drive an effect
+whose completion may have been lost. Direct body-byte reads still refuse.
+
+Before advancing main, acceptance flushes the changed artifacts' transitive CAS
+citation closure (including Capture material and promoted payloads) and namespace
+parents. Linux uses one `syncfs` on the instance filesystem; other platforms
+flush each not-yet-durable cited body and touched directory once, alongside the
+existing Git-object flushes. A failed barrier leaves main unmoved. The process
+remembers durable bodies so repeated citations do not repeat body fsyncs. This
+work follows changed members and their citations, never the stored population.
+After repairing missing exhaust, rebuild its incomplete derived partition index
+(or restart) to restore that partition's readings and resolution view.

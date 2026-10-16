@@ -35,7 +35,7 @@ from cruxible_core.proposals.settlement import (
     render_generation_descriptor,
 )
 from cruxible_core.runtime.phase_timing import timed_phase
-from cruxible_core.storage.acceptance import cited_bodies
+from cruxible_core.storage.acceptance import flush_acceptance
 from cruxible_core.storage.cas import BodyProjectionProtocol, ContentAddressedBodyStore
 
 MAIN_CAS: Final = "main.cas"
@@ -226,7 +226,7 @@ class ActivationPublisher:
 
         _checkpoint(MAIN_CAS, "before", crash_hook)
         if isinstance(self.bodies, ContentAddressedBodyStore):
-            self.bodies.flush_cited(cited_bodies(bundle.record, bundle.tree, self.bodies))
+            flush_acceptance(bundle.record, bundle.tree, self.bodies)
         won = self.ledger.compare_and_set_main(
             bundle.oid,
             expected_oid=bundle.settlement.base_oid,

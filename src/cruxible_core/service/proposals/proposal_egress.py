@@ -56,10 +56,10 @@ from cruxible_client.contracts.procedures.results import (
 )
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.exhaust import ProcedureExhaustWriter
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
     JournalStreamIdentityV1,
-    parse_journal_payload,
 )
 from cruxible_core.procedures.egress import (
     PreparedTerminalEgressV1,
@@ -102,6 +102,7 @@ class _RunFold:
     finalized: bool = False
     prepared: dict[str, dict[str, Any]] = field(default_factory=dict)
     resolved: dict[str, dict[str, Any]] = field(default_factory=dict)
+    unavailable: bool = False
     provider_calls: int = 0
     invocation_receipt_digests: list[str] = field(default_factory=list)
     associations: list[dict[str, str]] = field(default_factory=list)
@@ -109,6 +110,8 @@ class _RunFold:
     def unresolved(self) -> dict[str, dict[str, Any]]:
         """Prepared egress the door must be driven for: never resolved, or resolved `failed`."""
 
+        if self.unavailable:
+            return {}
         return {
             node_id: payload
             for node_id, payload in self.prepared.items()
@@ -118,6 +121,8 @@ class _RunFold:
     def resolved_unfinalized(self) -> dict[str, dict[str, Any]]:
         """Prepared egress that resolved `delivered`/`refused` in a run never finalized."""
 
+        if self.unavailable:
+            return {}
         return {
             node_id: self.resolved[node_id]
             for node_id in self.prepared
@@ -139,7 +144,10 @@ def _fold_partition(
         if run_id is None:
             continue
         fold = runs.setdefault(run_id, _RunFold())
-        payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
+        payload = read_payload(bodies, stored.record.payload_digest, access=access)
+        if isinstance(payload, UnavailablePayload):
+            fold.unavailable = True
+            continue
         kind = stored.record.event_kind
         if kind == "admission_bound" and isinstance(payload, dict):
             if payload.get("tag") in ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS:
@@ -210,12 +218,15 @@ def service_recover_proposal_egress(
             if unresolved:
                 ((node_id, prepared_payload),) = unresolved.items()
                 try:
-                    disposition, resolving = _resolve_prepared(
+                    recovered_result = _resolve_prepared(
                         instance,
                         admission=admission,
                         prepared_payload=prepared_payload,
                         recorded_at=recorded_at,
                     )
+                    if isinstance(recovered_result, UnavailablePayload):
+                        continue
+                    disposition, resolving = recovered_result
                 except (CruxibleError, OSError, ValueError) as exc:
                     # Corrupt or contradictory evidence under the operation's
                     # ref is not resolved by retrying; it is reported, the run
@@ -364,7 +375,7 @@ def _resolve_prepared(
     admission: ProcedureRunAdmissionV5,
     prepared_payload: Mapping[str, Any],
     recorded_at: datetime,
-) -> tuple[RecoveredProposalEgressDisposition, dict[str, CanonicalValue]]:
+) -> tuple[RecoveredProposalEgressDisposition, dict[str, CanonicalValue]] | UnavailablePayload:
     """Re-drive the idempotent door from the journaled request; return the resolving record."""
 
     base_payload: dict[str, CanonicalValue] = {
@@ -426,7 +437,10 @@ def _resolve_prepared(
     if nested is not None:
         from cruxible_core.service.procedures.nested_runs import retained_delegation
 
-        delegation = retained_delegation(instance, nested)
+        retained = retained_delegation(instance, nested)
+        if isinstance(retained, UnavailablePayload):
+            return retained
+        delegation = retained
         root = delegation.authority(nested)
         accepted = _accepted_procedure(instance, name=root.target.name, coordinate=coordinate)
     mandates = _accepted_line_mandates(

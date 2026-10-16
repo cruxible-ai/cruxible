@@ -54,10 +54,10 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.records import (
     LINE_INBOX_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
-    parse_journal_payload,
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -253,14 +253,19 @@ class LineInboxStore:
                         self.stream, partition_id=_PARTITION, first_sequence=start
                     )
                 ):
-                    payload = parse_journal_payload(
-                        self.instance.body_store().read(
-                            stored.record.payload_digest,
-                            access=BodyAccessContext(
-                                principal_id="line-inbox-projection", can_read_body=True
-                            ),
-                        )
+                    payload = read_payload(
+                        self.instance.body_store(),
+                        stored.record.payload_digest,
+                        access=BodyAccessContext(
+                            principal_id="line-inbox-projection", can_read_body=True
+                        ),
                     )
+                    if isinstance(payload, UnavailablePayload):
+                        conn.execute(
+                            "INSERT OR REPLACE INTO progress VALUES(1,?)", (stored.record.sequence,)
+                        )
+                        self._preview_sequence = stored.record.sequence
+                        continue
                     if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
                         raise ValueError("invalid Line inbox transition")
                     self._apply(conn, payload, stored.record.sequence)

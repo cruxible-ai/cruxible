@@ -166,8 +166,8 @@ from cruxible_core.exhaust import (
     ProcedureJournalRecordDraftV1,
     StoredProcedureJournalRecordV1,
     journal_payload_bytes,
-    parse_journal_payload,
 )
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.writer import note_invocation_start
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -1524,7 +1524,7 @@ def read_admission_material_body(
         metadata = bodies.metadata(member.body_digest, access=access)
     except Exception as exc:
         raise _OperationalFailure(
-            "admission_material_corrupt",
+            "replay_material_unavailable",
             details={**details, "body_digest": member.body_digest},
         ) from exc
     if not metadata.present:
@@ -1540,7 +1540,7 @@ def read_admission_material_body(
         return bodies.read(member.body_digest, access=access)
     except Exception as exc:  # pragma: no cover - metadata and read share verification
         raise _OperationalFailure(
-            "admission_material_corrupt",
+            "replay_material_unavailable",
             details={**details, "body_digest": member.body_digest},
         ) from exc
 
@@ -2700,6 +2700,12 @@ class ProcedureExecutor:
         if indexed is not None:
             if indexed.admission_binding_digest != admission.admission_binding_digest:
                 raise ExecutionError("run_id collides across distinct admission bindings")
+            if indexed.status == "failed" and indexed.final_payload_digest is None:
+                return ProcedureRunResultV1(
+                    run_id=admission.run_id,
+                    status="failed",
+                    receipt=self._receipt(admission, list(existing_records)),
+                )
             if indexed.status != "running":
                 return self._replay_completed(admission, existing_records)
             effect_state = (
@@ -4431,11 +4437,14 @@ class ProcedureExecutor:
         ]
         if len(admission_records) != 1:
             raise ExecutionError("nested receipt requires exactly one child admission")
-        admitted = parse_admission_payload(
-            parse_journal_payload(
-                self.bodies.read(admission_records[0].record.payload_digest, access=access)
+        payload = read_payload(
+            self.bodies, admission_records[0].record.payload_digest, access=access
+        )
+        if isinstance(payload, UnavailablePayload):
+            raise _OperationalFailure(
+                "replay_material_unavailable", details={"payload_digest": payload.digest}
             )
-        ).admission
+        admitted = parse_admission_payload(payload).admission
         if procedure_parent_binding(admitted) != context.binding:
             raise ExecutionError("nested receipt is not bound to this parent occurrence")
         if (
@@ -4447,9 +4456,11 @@ class ProcedureExecutor:
             or admitted.journal_partition_id != result.receipt.partition_id
         ):
             raise ExecutionError("nested receipt names another Procedure")
-        final = parse_journal_payload(
-            self.bodies.read(child_records[-1].record.payload_digest, access=access)
-        )
+        final = read_payload(self.bodies, child_records[-1].record.payload_digest, access=access)
+        if isinstance(final, UnavailablePayload):
+            raise _OperationalFailure(
+                "replay_material_unavailable", details={"payload_digest": final.digest}
+            )
         if child_records[-1].record.event_kind != "attempt_finalized" or not isinstance(
             final, dict
         ):
@@ -5915,9 +5926,13 @@ class ProcedureExecutor:
                 },
             )
         access = BodyAccessContext(principal_id="procedure-run-replay", can_read_body=True)
-        payload = parse_journal_payload(
-            self.bodies.read(run_records[-1].record.payload_digest, access=access)
-        )
+        payload = read_payload(self.bodies, run_records[-1].record.payload_digest, access=access)
+        if isinstance(payload, UnavailablePayload):
+            return ProcedureRunResultV1(
+                run_id=admission.run_id,
+                status="failed",
+                receipt=self._receipt(admission, run_records),
+            )
         if not isinstance(payload, dict):
             raise ExecutionError("attempt-finalized payload is not an object")
         receipt = self._receipt(admission, run_records)

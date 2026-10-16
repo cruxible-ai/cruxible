@@ -18,6 +18,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust.line_inbox import LineInboxStore
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import CaptureTerminalEgressSink
 from cruxible_core.procedures.execution import (
@@ -46,9 +47,8 @@ from cruxible_core.storage.material_reservations import (
 
 def retained_delegation(
     instance: PlaybillInstance, admission: NestedProcedureRunAdmission
-) -> ProcedureDelegation:
+) -> ProcedureDelegation | UnavailablePayload:
     """Rebuild delegation from the recorded parent call, never a caller's ancestry claim."""
-    from cruxible_core.exhaust.records import parse_journal_payload
     from cruxible_core.procedures.execution import ProcedureRunAdmissionV2, parse_admission_payload
     from cruxible_core.service.procedures.procedure_runs import (
         ProcedureRunRecoveryRequired,
@@ -62,15 +62,12 @@ def retained_delegation(
         raise ProcedureRunRecoveryRequired("Nested recovery requires a delegation binding")
     records = _records_for_run(instance, binding.parent_run_id)
     access = BodyAccessContext(principal_id="nested-recovery", can_read_body=True)
-    payloads = [
-        (
-            row.record.event_kind,
-            parse_journal_payload(
-                instance.body_store().read(row.record.payload_digest, access=access)
-            ),
-        )
-        for row in records
-    ]
+    payloads = []
+    for row in records:
+        payload = read_payload(instance.body_store(), row.record.payload_digest, access=access)
+        if isinstance(payload, UnavailablePayload):
+            return payload
+        payloads.append((row.record.event_kind, payload))
     admissions = [
         parse_admission_payload(value).admission
         for kind, value in payloads
@@ -127,7 +124,9 @@ def retained_delegation(
     delegation.authority(admission)
     nested_parent = nested_admission(parent)
     if nested_parent is not None:
-        retained_delegation(instance, nested_parent)
+        retained = retained_delegation(instance, nested_parent)
+        if isinstance(retained, UnavailablePayload):
+            return retained
     return delegation
 
 

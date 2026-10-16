@@ -25,6 +25,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.errors import JournalIntegrityError
 from cruxible_client.contracts.temporal import format_datetime
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.records import (
     JournalPartitionHeadV1,
     JournalStreamIdentityV1,
@@ -894,7 +895,6 @@ class JournalIndex:
         here, once each, from their payloads. An id no retained start names is
         absent from the answer.
         """
-        from cruxible_core.exhaust.records import parse_journal_payload
         from cruxible_core.storage.cas import BodyAccessContext
 
         access = BodyAccessContext(principal_id="provider-recovery", can_read_body=True)
@@ -912,9 +912,12 @@ class JournalIndex:
                     break
                 for row in pending:
                     stored = self.read_row(row)
-                    payload = parse_journal_payload(
-                        bodies.read(stored.record.payload_digest, access=access)
-                    )
+                    payload = read_payload(bodies, stored.record.payload_digest, access=access)
+                    if isinstance(payload, UnavailablePayload):
+                        conn.execute(
+                            "DELETE FROM invocation_pending WHERE record_id=?", (row["id"],)
+                        )
+                        continue
                     if not isinstance(payload, dict) or not isinstance(
                         payload.get("invocation_id"), str
                     ):
@@ -956,7 +959,6 @@ class JournalIndex:
         Metadata catch-up is bounded independently of the result page. A caller
         must not report absence while selector coverage is incomplete.
         """
-        from cruxible_core.exhaust.records import parse_journal_payload
         from cruxible_core.storage.cas import BodyAccessContext
 
         access = BodyAccessContext(principal_id="trigger-discovery", can_read_body=True)
@@ -971,9 +973,9 @@ class JournalIndex:
             ).fetchall()
             for row in fresh[:1024]:
                 stored = self.read_row(row)
-                payload = parse_journal_payload(
-                    bodies.read(stored.record.payload_digest, access=access)
-                )
+                payload = read_payload(bodies, stored.record.payload_digest, access=access)
+                if isinstance(payload, UnavailablePayload):
+                    continue
                 if (
                     not isinstance(payload, dict)
                     or payload.get("tag") != "playbill-procedure-produced-capture-v1"

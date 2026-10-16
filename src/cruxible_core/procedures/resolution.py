@@ -52,8 +52,8 @@ from cruxible_core.exhaust import (
     JournalStreamIdentityV1,
     ProcedureExhaustWriter,
     StoredProcedureJournalRecordV1,
-    parse_journal_payload,
 )
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.graph_digests import cached_node_digests
@@ -1284,6 +1284,7 @@ class ProcedureResolutionBook:
         self.activations = {item.contract_id: item for item in activations}
         if len(self.activations) != len(activations):
             raise ExecutionError("duplicate ResolutionContract activation")
+        self.unavailable: tuple[UnavailablePayload, ...] = ()
         self.resolutions: dict[str, list[ProcedureResolutionV1 | ProcedureResolutionV2]] = (
             defaultdict(list)
         )
@@ -1297,12 +1298,16 @@ class ProcedureResolutionBook:
     ) -> None:
         self.resolutions.clear()
         self.dispositions.clear()
+        self.unavailable = ()
         for stored in records:
             if stored.record.event_kind not in _RESOLUTION_EVENTS:
                 continue
-            payload = parse_journal_payload(
-                bodies.read(stored.record.payload_digest, access=_REPLAY_ACCESS)
-            )
+            payload = read_payload(bodies, stored.record.payload_digest, access=_REPLAY_ACCESS)
+            if isinstance(payload, UnavailablePayload):
+                self.unavailable = (payload,)
+                self.resolutions.clear()
+                self.dispositions.clear()
+                return
             try:
                 if stored.record.event_kind == "resolution":
                     resolution = _parse_resolution(payload)
@@ -1396,6 +1401,7 @@ class _ResolutionFold:
     records: PersistentMap[bytes]
     event_kinds: frozenset[str]
     payloads: PersistentMap[tuple[int, ...] | None]
+    unavailable: tuple[UnavailablePayload, ...] = ()
 
     @classmethod
     def empty(cls) -> _ResolutionFold:
@@ -1420,6 +1426,12 @@ class _ResolutionFold:
         head: JournalPartitionHeadV1 | None,
     ) -> _ResolutionFold:
         """This fold with ``records`` (the ones after its head, in order) folded on."""
+        if self.unavailable:
+            return replace(
+                self,
+                head_sequence=0 if head is None else head.sequence,
+                head_digest=None if head is None else head.record_digest,
+            )
         counts, last, resolutions = self.counts, self.last, self.resolutions
         dispositions, kept, kinds, payloads = (
             self.dispositions,
@@ -1437,7 +1449,14 @@ class _ResolutionFold:
             # The identity is taken before the read: a file changed after it was
             # verified then shows a different identity at the next validation.
             identity = bodies.file_identity(digest)
-            payload = parse_journal_payload(bodies.read(digest, access=_REPLAY_ACCESS))
+            payload = read_payload(bodies, digest, access=_REPLAY_ACCESS)
+            if isinstance(payload, UnavailablePayload):
+                return replace(
+                    _ResolutionFold.empty(),
+                    head_sequence=0 if head is None else head.sequence,
+                    head_digest=None if head is None else head.record_digest,
+                    unavailable=(payload,),
+                )
             payloads = payloads.set(digest, identity)
             try:
                 if kind == "resolution":
@@ -1498,8 +1517,8 @@ class _ResolutionFold:
 
         One identity check per payload: unchanged, the bytes it was derived from
         are still there. A payload whose file changed is read and verified again,
-        refusing exactly as a replay's read would (``CasError`` for a missing or
-        damaged object); verified, the fold stands (the address is the content).
+        reporting the partition unavailable when bytes are missing or damaged;
+        verified, the fold stands (the address is the content).
         The identity remembered for it is the one taken before that verified
         read, never a stat after it: a file replaced after the read then shows a
         different identity and is verified again, so no unverified bytes are
@@ -1510,7 +1529,14 @@ class _ResolutionFold:
             current = bodies.file_identity(digest)
             if current is not None and current == identity:
                 continue
-            bodies.read(digest, access=_REPLAY_ACCESS)
+            payload = read_payload(bodies, digest, access=_REPLAY_ACCESS)
+            if isinstance(payload, UnavailablePayload):
+                return replace(
+                    _ResolutionFold.empty(),
+                    head_sequence=self.head_sequence,
+                    head_digest=self.head_digest,
+                    unavailable=(payload,),
+                )
             moved[digest] = current
         if not moved:
             return self
@@ -1529,6 +1555,10 @@ class ResolutionBookView:
 
     def __init__(self, fold: _ResolutionFold) -> None:
         self._fold = fold
+
+    @property
+    def unavailable(self) -> tuple[UnavailablePayload, ...]:
+        return self._fold.unavailable
 
     def resolution_count(self, contract_id: str) -> int:
         return self._fold.counts.get(contract_id, 0)
@@ -1681,6 +1711,8 @@ def append_procedure_resolution(
     if law.verdict == "refused":
         raise ExecutionError(law.message or "resolution law refused")
     book, _head = resolution_book_at_head(writer.journal, stream, activation, bodies=writer.bodies)
+    if book.unavailable:
+        raise ExecutionError("resolution exhaust payload is unavailable")
     count = book.resolution_count(activation.contract_id)
     if resolution.sequence != count + 1:
         raise ExecutionError("resolution sequence is discontinuous")
@@ -1719,6 +1751,8 @@ def append_resolution_disposition(
     if disposition.resolution_id != resolution.resolution_id:
         raise ExecutionError("resolution disposition names another resolution")
     book, _head = resolution_book_at_head(writer.journal, stream, activation, bodies=writer.bodies)
+    if book.unavailable:
+        raise ExecutionError("resolution exhaust payload is unavailable")
     stored_resolution = book.resolution_by_id(resolution.resolution_id)
     if stored_resolution != resolution:
         raise ExecutionError("resolution disposition target is absent from exhaust")

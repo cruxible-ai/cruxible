@@ -2898,7 +2898,7 @@ class PlaybillInstance:
         return ActivationPublisher(
             self._ledger,
             publication_directory=paths["projections"],
-            bodies=ContentAddressedBodyStore(paths["cas"]),
+            bodies=self.body_store(),
             witness=witness,
             accepted_coordinates_by_sequence=self._accepted_coordinates_by_sequence(),
             checkpoint_directory=self._checkpoint_directory(self.root),

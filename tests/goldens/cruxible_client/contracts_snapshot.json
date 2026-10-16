@@ -40315,6 +40315,7 @@
               },
               "reading_status": {
                 "enum": [
+                  "unavailable",
                   "not_requested",
                   "recorded",
                   "replayed",
@@ -40338,6 +40339,7 @@
               },
               "status": {
                 "enum": [
+                  "unavailable",
                   "pending",
                   "open",
                   "expired",
@@ -40840,6 +40842,7 @@
           "required": true,
           "schema": {
             "enum": [
+              "unavailable",
               "pending",
               "open",
               "expired",
@@ -41179,6 +41182,7 @@
           },
           "status": {
             "enum": [
+              "unavailable",
               "pending",
               "open",
               "expired",
@@ -41832,6 +41836,7 @@
           "required": true,
           "schema": {
             "enum": [
+              "unavailable",
               "not_requested",
               "recorded",
               "replayed",
@@ -41869,6 +41874,7 @@
           "required": true,
           "schema": {
             "enum": [
+              "unavailable",
               "pending",
               "open",
               "expired",
@@ -42461,6 +42467,7 @@
           },
           "reading_status": {
             "enum": [
+              "unavailable",
               "not_requested",
               "recorded",
               "replayed",
@@ -42484,6 +42491,7 @@
           },
           "status": {
             "enum": [
+              "unavailable",
               "pending",
               "open",
               "expired",
@@ -48793,6 +48801,22 @@
             "title": "Truncated",
             "type": "boolean"
           }
+        },
+        "unavailable_payloads": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "unavailable_payloads",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Unavailable Payloads",
+            "type": "array"
+          }
         }
       },
       "json_schema": {
@@ -48899,6 +48923,7 @@
               },
               "status": {
                 "enum": [
+                  "unavailable",
                   "pending",
                   "open",
                   "expired",
@@ -49450,6 +49475,14 @@
             "default": false,
             "title": "Truncated",
             "type": "boolean"
+          },
+          "unavailable_payloads": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Unavailable Payloads",
+            "type": "array"
           }
         },
         "required": [

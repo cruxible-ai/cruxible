@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from collections.abc import Mapping
 
 from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
@@ -18,6 +20,13 @@ from cruxible_core.exhaust.promotions import (
 )
 from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
+
+# These are immutable citation edges, not availability: another store still
+# verifies/flushes every pending body. The digest alone names the same content
+# across roots. A warm acceptance never re-reads a Capture already interpreted.
+_CAPTURE_EDGES: OrderedDict[str, tuple[tuple[str, ...], tuple[str, ...]]] = OrderedDict()
+_CAPTURE_EDGES_LOCK = threading.Lock()
+_CAPTURE_EDGES_CAPACITY = 65536
 
 _ACCESS = BodyAccessContext(principal_id="acceptance-durability", can_read_body=True)
 
@@ -60,12 +69,35 @@ def cited_bodies(
         if digest in visited:
             continue
         visited.add(digest)
-        envelope = parse_capture_envelope(bodies.read(digest, access=_ACCESS))
-        found.update(required_capture_bodies(envelope, digest))
-        manifest_digest = envelope.input_receipt_set_manifest_digest
-        if manifest_digest is not None:
-            manifest_inputs = InputReceiptSetManifest.model_validate_json(
-                bodies.read(manifest_digest, access=_ACCESS)
-            )
-            captures.extend(manifest_inputs.input_capture_digests)
+        with _CAPTURE_EDGES_LOCK:
+            edges = _CAPTURE_EDGES.get(digest)
+            if edges is not None:
+                _CAPTURE_EDGES.move_to_end(digest)
+        if edges is None:
+            envelope = parse_capture_envelope(bodies.read(digest, access=_ACCESS))
+            required = required_capture_bodies(envelope, digest)
+            inputs: tuple[str, ...] = ()
+            manifest_digest = envelope.input_receipt_set_manifest_digest
+            if manifest_digest is not None:
+                manifest_inputs = InputReceiptSetManifest.model_validate_json(
+                    bodies.read(manifest_digest, access=_ACCESS)
+                )
+                inputs = manifest_inputs.input_capture_digests
+            edges = (required, inputs)
+            with _CAPTURE_EDGES_LOCK:
+                _CAPTURE_EDGES[digest] = edges
+                _CAPTURE_EDGES.move_to_end(digest)
+                while len(_CAPTURE_EDGES) > _CAPTURE_EDGES_CAPACITY:
+                    _CAPTURE_EDGES.popitem(last=False)
+        found.update(edges[0])
+        captures.extend(edges[1])
     return tuple(sorted(found))
+
+
+def flush_acceptance(
+    record: ChangeSetRecordAnyVersion,
+    tree: Mapping[str, bytes],
+    bodies: ContentAddressedBodyStore,
+) -> None:
+    """The single batched storage barrier immediately before main publication."""
+    bodies.flush_cited(cited_bodies(record, tree, bodies))

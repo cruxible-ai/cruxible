@@ -65,10 +65,9 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.exhaust.backends import LocalJournalBackend
-from cruxible_core.ledger import recovery
+from cruxible_core.ledger import activation, recovery
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.proposals import settlement
-from cruxible_core.storage.cas import ContentAddressedBodyStore
 from tests.core_support import _pc_c_support
 from tests.core_support._subject_kind_support import core_assigned
 from tests.test_procedures import test_procedure_proposal_delivery as proposal_support
@@ -171,7 +170,7 @@ def _flushing(original: Callable[..., Any]) -> Callable[..., Any]:
 def _journal_counted() -> Iterator[None]:
     original = ProcedureExecutor._append_events
     append = LocalJournalBackend.append_many
-    flush = ContentAddressedBodyStore.flush_cited
+    flush = activation.flush_acceptance
 
     def barrier(self: Any, *args: Any, **kwargs: Any) -> Any:
         _COUNTS.in_acceptance_flush = True
@@ -195,13 +194,13 @@ def _journal_counted() -> Iterator[None]:
             _COUNTS.counts["journal_records"] += len(drafts)
         return append(self, drafts, **kwargs)
 
-    ContentAddressedBodyStore.flush_cited = barrier
+    activation.flush_acceptance = barrier
     ProcedureExecutor._append_events = group
     LocalJournalBackend.append_many = append_many
     try:
         yield
     finally:
-        ContentAddressedBodyStore.flush_cited = flush
+        activation.flush_acceptance = flush
         ProcedureExecutor._append_events = original
         LocalJournalBackend.append_many = append
 

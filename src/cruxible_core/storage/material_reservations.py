@@ -17,10 +17,10 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.errors import ExecutionError
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
     StoredProcedureJournalRecordV1,
-    parse_journal_payload,
 )
 from cruxible_core.storage.cas import (
     BodyAccessContext,
@@ -544,6 +544,8 @@ class ProcedureMaterialReservationStore:
     ) -> tuple[str, ...]:
 
         released: list[str] = []
+        self.unavailable: list[UnavailablePayload] = []
+        unavailable_reservations: set[str] = set()
         access = BodyAccessContext(principal_id="procedure-material-recovery", can_read_body=True)
         with self.locked():
             for reservation in self.active_locked():
@@ -584,9 +586,11 @@ class ProcedureMaterialReservationStore:
                             matches.append(stored)
                         continue
                     try:
-                        payload = parse_journal_payload(
-                            bodies.read(record.payload_digest, access=access)
-                        )
+                        payload = read_payload(bodies, record.payload_digest, access=access)
+                        if isinstance(payload, UnavailablePayload):
+                            self.unavailable.append(payload)
+                            unavailable_reservations.add(reservation.reservation_id)
+                            break
                     except Exception as exc:
                         raise ProcedureMaterialRecoveryRequired(
                             "run_recovery_required: admission reference cannot be authenticated"
@@ -603,11 +607,17 @@ class ProcedureMaterialReservationStore:
                     raise ProcedureMaterialRecoveryRequired(
                         "run_recovery_required: reservation has multiple authenticated references"
                     )
-                released.append(reservation.reservation_id)
+                if reservation.reservation_id not in unavailable_reservations:
+                    released.append(reservation.reservation_id)
             # Validate the complete scan before removing a group lease. A failure
             # on a later member must leave every earlier member reachable.
             remaining = set(released)
+            withheld: set[str] = set()
             for group_id, members in self._active_groups.items():
+                if unavailable_reservations.intersection(members):
+                    remaining.difference_update(members)
+                    withheld.update(members)
+                    continue
                 selected = remaining.intersection(members)
                 if selected:
                     if len(selected) != len(members):
@@ -619,7 +629,7 @@ class ProcedureMaterialReservationStore:
                     remaining.difference_update(members)
             for reservation_id in remaining:
                 self.release_locked(reservation_id)
-        return tuple(released)
+        return tuple(item for item in released if item not in withheld)
 
 
 def _validated_admission_material_members(payload: object) -> tuple[Any, ...]:
