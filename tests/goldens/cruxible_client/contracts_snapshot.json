@@ -183,7 +183,7 @@
         "cruxible.block.detach",
         "cruxible.block.repin",
         "cruxible.block.sync",
-        "cruxible.sources.propose",
+        "cruxible.files.propose",
         "cruxible.proposal.readmit",
         "cruxible.proposal.approve",
         "cruxible.proposal.activate",
@@ -11850,7 +11850,7 @@
                   "workspace_not_attached",
                   "workspace_binding_invalid",
                   "workspace_instance_mismatch",
-                  "workspace_source_catalog_invalid",
+                  "workspace_file_catalog_invalid",
                   "source_path_invalid",
                   "source_not_projection_target",
                   "block_marker_malformed",
@@ -12046,7 +12046,7 @@
                   "workspace_not_attached",
                   "workspace_binding_invalid",
                   "workspace_instance_mismatch",
-                  "workspace_source_catalog_invalid",
+                  "workspace_file_catalog_invalid",
                   "source_path_invalid",
                   "source_not_projection_target",
                   "block_marker_malformed",
@@ -13547,7 +13547,7 @@
                       "workspace_not_attached",
                       "workspace_binding_invalid",
                       "workspace_instance_mismatch",
-                      "workspace_source_catalog_invalid",
+                      "workspace_file_catalog_invalid",
                       "source_path_invalid",
                       "source_not_projection_target",
                       "block_marker_malformed",
@@ -19777,6 +19777,244 @@
         "selector_type",
         "workspace",
         "workspace_binding_digest"
+      ]
+    },
+    "FileCheckResult": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "alignments": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "alignments",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Alignments",
+            "type": "array"
+          }
+        },
+        "compilation_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "compilation_digest",
+          "required": true,
+          "schema": {
+            "title": "Compilation Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-source-check-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-source-check-v1",
+            "default": "playbill-source-check-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "accepted_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "alignments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Alignments",
+            "type": "array"
+          },
+          "compilation_digest": {
+            "title": "Compilation Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-source-check-v1",
+            "default": "playbill-source-check-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "compilation_digest",
+          "accepted_coordinate",
+          "alignments"
+        ],
+        "title": "FileCheckResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "alignments",
+        "compilation_digest"
+      ]
+    },
+    "FileContext": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "documents": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "documents",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-source-context-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-source-context-v1",
+            "default": "playbill-source-context-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "accepted_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "documents": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-source-context-v1",
+            "default": "playbill-source-context-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accepted_coordinate",
+          "documents"
+        ],
+        "title": "FileContext",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "documents"
       ]
     },
     "FloorConsumerOutcome": {
@@ -30813,7 +31051,7 @@
                   "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.sources.propose",
+                  "cruxible.files.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
@@ -30885,7 +31123,7 @@
                   "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.sources.propose",
+                  "cruxible.files.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
@@ -31266,7 +31504,7 @@
                   "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.sources.propose",
+                  "cruxible.files.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
@@ -31338,7 +31576,7 @@
                   "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.sources.propose",
+                  "cruxible.files.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
@@ -31846,7 +32084,7 @@
                   "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.sources.propose",
+                  "cruxible.files.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
@@ -31918,7 +32156,7 @@
                   "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.sources.propose",
+                  "cruxible.files.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
@@ -32334,7 +32572,7 @@
               "cruxible.block.detach",
               "cruxible.block.repin",
               "cruxible.block.sync",
-              "cruxible.sources.propose",
+              "cruxible.files.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
               "cruxible.proposal.activate",
@@ -32402,7 +32640,7 @@
               "cruxible.block.detach",
               "cruxible.block.repin",
               "cruxible.block.sync",
-              "cruxible.sources.propose",
+              "cruxible.files.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
               "cruxible.proposal.activate",
@@ -32497,7 +32735,7 @@
               "cruxible.block.detach",
               "cruxible.block.repin",
               "cruxible.block.sync",
-              "cruxible.sources.propose",
+              "cruxible.files.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
               "cruxible.proposal.activate",
@@ -32711,7 +32949,7 @@
               "cruxible.block.detach",
               "cruxible.block.repin",
               "cruxible.block.sync",
-              "cruxible.sources.propose",
+              "cruxible.files.propose",
               "cruxible.proposal.readmit",
               "cruxible.proposal.approve",
               "cruxible.proposal.activate",
@@ -33365,7 +33603,7 @@
                   "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.sources.propose",
+                  "cruxible.files.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
@@ -33437,7 +33675,7 @@
                   "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.sources.propose",
+                  "cruxible.files.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
@@ -34039,7 +34277,7 @@
                   "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.sources.propose",
+                  "cruxible.files.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
@@ -34111,7 +34349,7 @@
                   "cruxible.block.detach",
                   "cruxible.block.repin",
                   "cruxible.block.sync",
-                  "cruxible.sources.propose",
+                  "cruxible.files.propose",
                   "cruxible.proposal.readmit",
                   "cruxible.proposal.approve",
                   "cruxible.proposal.activate",
@@ -100136,244 +100374,6 @@
         "generation",
         "member_path",
         "predecessor_artifact_digest"
-      ]
-    },
-    "SourceCheckResult": {
-      "fields": {
-        "accepted_coordinate": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "accepted_coordinate",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          }
-        },
-        "alignments": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "alignments",
-          "required": true,
-          "schema": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Alignments",
-            "type": "array"
-          }
-        },
-        "compilation_digest": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "compilation_digest",
-          "required": true,
-          "schema": {
-            "title": "Compilation Digest",
-            "type": "string"
-          }
-        },
-        "tag": {
-          "default": "playbill-source-check-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-source-check-v1",
-            "default": "playbill-source-check-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "AcceptedCoordinate": {
-            "additionalProperties": false,
-            "description": "Path-free public handle for one fully verified accepted generation.",
-            "properties": {
-              "compiler_digest": {
-                "title": "Compiler Digest",
-                "type": "string"
-              },
-              "generation_root": {
-                "title": "Generation Root",
-                "type": "string"
-              },
-              "git_oid": {
-                "title": "Git Oid",
-                "type": "string"
-              },
-              "semantic_root": {
-                "title": "Semantic Root",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-accepted-coordinate-v1",
-                "default": "playbill-accepted-coordinate-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "git_oid",
-              "semantic_root",
-              "generation_root",
-              "compiler_digest"
-            ],
-            "title": "AcceptedCoordinate",
-            "type": "object"
-          }
-        },
-        "additionalProperties": false,
-        "properties": {
-          "accepted_coordinate": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          },
-          "alignments": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Alignments",
-            "type": "array"
-          },
-          "compilation_digest": {
-            "title": "Compilation Digest",
-            "type": "string"
-          },
-          "tag": {
-            "const": "playbill-source-check-v1",
-            "default": "playbill-source-check-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "required": [
-          "compilation_digest",
-          "accepted_coordinate",
-          "alignments"
-        ],
-        "title": "SourceCheckResult",
-        "type": "object"
-      },
-      "required_fields": [
-        "accepted_coordinate",
-        "alignments",
-        "compilation_digest"
-      ]
-    },
-    "SourceContext": {
-      "fields": {
-        "accepted_coordinate": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "accepted_coordinate",
-          "required": true,
-          "schema": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          }
-        },
-        "documents": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "documents",
-          "required": true,
-          "schema": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Documents",
-            "type": "array"
-          }
-        },
-        "tag": {
-          "default": "playbill-source-context-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-source-context-v1",
-            "default": "playbill-source-context-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "$defs": {
-          "AcceptedCoordinate": {
-            "additionalProperties": false,
-            "description": "Path-free public handle for one fully verified accepted generation.",
-            "properties": {
-              "compiler_digest": {
-                "title": "Compiler Digest",
-                "type": "string"
-              },
-              "generation_root": {
-                "title": "Generation Root",
-                "type": "string"
-              },
-              "git_oid": {
-                "title": "Git Oid",
-                "type": "string"
-              },
-              "semantic_root": {
-                "title": "Semantic Root",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-accepted-coordinate-v1",
-                "default": "playbill-accepted-coordinate-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "git_oid",
-              "semantic_root",
-              "generation_root",
-              "compiler_digest"
-            ],
-            "title": "AcceptedCoordinate",
-            "type": "object"
-          }
-        },
-        "additionalProperties": false,
-        "properties": {
-          "accepted_coordinate": {
-            "$ref": "#/$defs/AcceptedCoordinate"
-          },
-          "documents": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Documents",
-            "type": "array"
-          },
-          "tag": {
-            "const": "playbill-source-context-v1",
-            "default": "playbill-source-context-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "required": [
-          "accepted_coordinate",
-          "documents"
-        ],
-        "title": "SourceContext",
-        "type": "object"
-      },
-      "required_fields": [
-        "accepted_coordinate",
-        "documents"
       ]
     },
     "SourceReadReceipt": {
