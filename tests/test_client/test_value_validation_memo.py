@@ -1,10 +1,18 @@
 """Immutable string values validate once without losing kind or refusal semantics."""
 
+from contextlib import nullcontext
+
 import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import parse_artifact_identity
-from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha256Value
+from cruxible_client.contracts.canonical import (
+    ArtifactDigest,
+    CasDigest,
+    Sha256Value,
+    _valid_sha256_hex,
+)
+from cruxible_client.contracts.content_memo import artifact_request
 from cruxible_client.contracts.semantic import SemanticAddress
 
 
@@ -19,6 +27,69 @@ def test_digest_values_are_shared_by_kind_and_refuse_invalid_values():
         for _ in range(2):
             with pytest.raises(ValueError):
                 ArtifactDigest.from_tagged(invalid)
+
+
+@pytest.mark.parametrize("in_request", [False, True])
+def test_rejected_digests_never_grow_validation_or_value_caches(in_request):
+    _valid_sha256_hex.cache_clear()
+    Sha256Value._from_hex.cache_clear()
+    try:
+        with artifact_request() if in_request else nullcontext():
+            digest = "e" * 64
+            tagged = "sha256:" + digest
+            first = ArtifactDigest.from_tagged(tagged)
+            assert ArtifactDigest.from_tagged(tagged) is first
+            assert Sha256Value._from_hex.cache_info().hits == 1
+            assert type(CasDigest.from_tagged(tagged)) is CasDigest
+            assert _valid_sha256_hex.cache_info().hits == 1
+            baseline_hex = _valid_sha256_hex.cache_info()
+            baseline_values = Sha256Value._from_hex.cache_info()
+
+            for index in range(16):
+                for invalid in (
+                    f"{index:x}",
+                    f"{index:063x}A",
+                    f"{index:063x}z",
+                    "a" * 65 + str(index),
+                    "a" * (1024 * 1024) + str(index),
+                ):
+                    before_hex = _valid_sha256_hex.cache_info()
+                    before_values = Sha256Value._from_hex.cache_info()
+                    for kind in (ArtifactDigest, CasDigest, Sha256Value):
+                        message = f"{kind.kind} must be 32 bytes of lowercase SHA-256 hex"
+                        for _ in range(2):
+                            with pytest.raises(ValueError) as direct:
+                                kind(invalid)
+                            assert str(direct.value) == message
+                            with pytest.raises(ValueError) as tagged_error:
+                                kind.from_tagged("sha256:" + invalid)
+                            assert str(tagged_error.value) == message
+                    if len(invalid) != 64:
+                        assert _valid_sha256_hex.cache_info() == before_hex
+                        assert Sha256Value._from_hex.cache_info() == before_values
+                    assert _valid_sha256_hex.cache_info().currsize == baseline_hex.currsize
+                    assert Sha256Value._from_hex.cache_info().currsize == baseline_values.currsize
+
+            for kind in (ArtifactDigest, CasDigest, Sha256Value):
+                for invalid in ("sha1:" + digest, "sha1:" + "a" * (1024 * 1024), digest):
+                    with pytest.raises(ValueError) as algorithm_error:
+                        kind.from_tagged(invalid)
+                    assert str(algorithm_error.value) == (
+                        f"{kind.kind} must use the 'sha256' algorithm tag"
+                    )
+
+            # No refusal became a hit; the successful entries survived them all.
+            assert _valid_sha256_hex.cache_info().hits == baseline_hex.hits
+            assert Sha256Value._from_hex.cache_info().hits == baseline_values.hits
+        assert _valid_sha256_hex.cache_info().currsize == baseline_hex.currsize
+        assert Sha256Value._from_hex.cache_info().currsize == baseline_values.currsize
+        assert ArtifactDigest.from_tagged(tagged) is first
+        assert Sha256Value._from_hex.cache_info().hits == baseline_values.hits + 1
+        assert ArtifactDigest(digest) == first
+        assert _valid_sha256_hex.cache_info().hits == baseline_hex.hits + 1
+    finally:
+        _valid_sha256_hex.cache_clear()
+        Sha256Value._from_hex.cache_clear()
 
 
 def test_cached_identities_and_addresses_are_immutable_and_copies_are_independent():
