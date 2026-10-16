@@ -1234,6 +1234,8 @@ class GitLedger:
                 raise GitError("duplicate ref in transaction")
             parsed[ref] = (operation, new, expected)
         locks: dict[str, tuple[Path, int]] = {}
+        published: set[str] = set()
+        packed_published = False
         packed_lock: Path | None = None
         packed_fd: int | None = None
         try:
@@ -1296,9 +1298,11 @@ class GitLedger:
             for ref, (operation, new, _expected) in parsed.items():
                 if new is not None:
                     os.replace(locks[ref][0], self.path / ref)
+                    published.add(ref)
                     sync_directory((self.path / ref).parent)
             if packed_fd is not None and packed_lock is not None:
                 os.replace(packed_lock, packed)
+                packed_published = True
                 sync_directory(self.path)
             for ref, (operation, _new, _expected) in parsed.items():
                 if operation == "delete":
@@ -1315,13 +1319,17 @@ class GitLedger:
         except OSError as exc:
             raise GitError(f"Git ref transaction failed: {exc}") from exc
         finally:
-            for lock, fd in locks.values():
+            for ref, (lock, fd) in locks.items():
                 os.close(fd)
-                lock.unlink(missing_ok=True)
+                # Rename consumed our pathname. A successor may already own a
+                # new lock there; descriptor cleanup never implies path ownership.
+                if ref not in published:
+                    lock.unlink(missing_ok=True)
             if packed_fd is not None:
                 os.close(packed_fd)
                 assert packed_lock is not None
-                packed_lock.unlink(missing_ok=True)
+                if not packed_published:
+                    packed_lock.unlink(missing_ok=True)
 
     def _resolve_ref(self, ref: str) -> str | None:
         """One full ref name's object ID, or None when the ref does not exist.

@@ -331,3 +331,63 @@ def test_main_rename_only_names_a_durable_complete_request(ledger, monkeypatch, 
     # System Git is also a fresh reader, including after interrupted publication.
     assert ledger._git(["show", "refs/heads/main:one"]) == b"changed"
     ledger._git(["fsck", "--strict", "--no-dangling"])
+
+
+@pytest.mark.parametrize("kind", ("ref", "packed-refs"))
+@pytest.mark.parametrize("fail_sync", (False, True))
+def test_publication_cleanup_preserves_the_next_writers_lock(
+    ledger,
+    monkeypatch,
+    kind,
+    fail_sync,
+):
+    import os
+    from pathlib import Path
+
+    from cruxible_core.ledger import git
+
+    base = ledger.create_signed_genesis({}, timestamp="2026-10-15T12:00:00Z")
+    ledger.set_main_genesis(base)
+    ref = "refs/heads/other"
+    if kind == "packed-refs":
+        ledger._update_refs([f"update {ref} {base}"])
+        ledger._git(["pack-refs", "--all"])
+        target = ledger.path / "packed-refs"
+        commands = [f"delete {ref} {base}"]
+    else:
+        target = ledger.path / ref
+        commands = [f"update {ref} {base}"]
+    lock = target.with_name(target.name + ".lock")
+    real_replace, real_sync = os.replace, git._fsync_directory
+    successor_fd = None
+
+    def publish(source, destination):
+        nonlocal successor_fd
+        real_replace(source, destination)
+        if Path(destination) == target:
+            successor_fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            os.write(successor_fd, b"successor owns this lock\n")
+
+    def sync(path):
+        if fail_sync and successor_fd is not None:
+            raise OSError("interrupt publisher after its rename")
+        return real_sync(path)
+
+    monkeypatch.setattr(os, "replace", publish)
+    monkeypatch.setattr(git, "_fsync_directory", sync)
+    try:
+        if fail_sync:
+            with pytest.raises(GitError, match="interrupt publisher"):
+                ledger._update_refs(commands)
+        else:
+            ledger._update_refs(commands)
+        assert successor_fd is not None
+        assert lock.read_bytes() == b"successor owns this lock\n"
+        assert lock.stat().st_ino == os.fstat(successor_fd).st_ino
+        # A third writer must still be excluded while B owns the lease.
+        with pytest.raises(FileExistsError):
+            os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    finally:
+        if successor_fd is not None:
+            os.close(successor_fd)
+        lock.unlink(missing_ok=True)

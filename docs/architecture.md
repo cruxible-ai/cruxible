@@ -170,7 +170,9 @@ record references is deleted under it.
   prepared in that pack before acceptance; their refs
   still publish in retirement order. Interrupted
   pre-acceptance publications are advisory and may need re-proposal. Commit signatures use Ed25519 SSHSIG compatible with `git verify-commit`;
-  ref leases use Git's files-backend lockfile protocol. Reads support loose
+  ref leases use Git's files-backend lockfile protocol. Publishing a ref,
+  packed-refs or config lock consumes its pathname; cleanup closes the original
+  descriptor without unlinking a successor's lock. Reads support loose
   objects and Git's delta-compressed packs. Every 64 accepted generations the
   daemon consolidates packs (`repack -a -d`), packs refs and writes the
   commit-graph, off the

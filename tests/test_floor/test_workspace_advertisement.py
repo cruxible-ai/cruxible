@@ -507,3 +507,34 @@ def test_advertisement_keeps_unicode_local_urls_git_readable(tmp_path):
     )
     assert result.status == "updated"
     assert _git(workspace, "config", "--get", "remote.cruxible-ledger.url") == str(ledger)
+
+
+def test_config_publication_cleanup_preserves_the_next_writers_lock(tmp_path, monkeypatch):
+    from cruxible_core.floor.workspace_advertisement import _config, _configure_remote
+
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    common = workspace / ".git"
+    config = common / "config"
+    lock = common / "config.lock"
+    real_replace = os.replace
+    successor_fd = None
+
+    def publish(source, destination):
+        nonlocal successor_fd
+        real_replace(source, destination)
+        if Path(destination) == config:
+            successor_fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            os.write(successor_fd, b"successor config\n")
+
+    monkeypatch.setattr(os, "replace", publish)
+    try:
+        _configure_remote(common, _config(config), str(ledger.resolve()), workspace)
+        assert successor_fd is not None
+        assert lock.read_bytes() == b"successor config\n"
+        assert lock.stat().st_ino == os.fstat(successor_fd).st_ino
+        with pytest.raises(FileExistsError):
+            os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    finally:
+        if successor_fd is not None:
+            os.close(successor_fd)
+        lock.unlink(missing_ok=True)

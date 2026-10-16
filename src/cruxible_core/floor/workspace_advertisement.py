@@ -212,6 +212,7 @@ def _configure_remote(
     config = common / "config"
     lock = common / "config.lock"
     fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    published = False
     try:
         # Preserve unrelated bytes and settings; replace only the owned keys.
         output = []
@@ -235,10 +236,12 @@ def _configure_remote(
         with stream:
             stream.write("".join(output).encode())
         os.replace(lock, config)
+        published = True
     finally:
         if fd >= 0:
             os.close(fd)
-        lock.unlink(missing_ok=True)
+        if not published:
+            lock.unlink(missing_ok=True)
 
 
 def _copy_objects(source: Path, target: Path, roots: tuple[str, ...]) -> None:
