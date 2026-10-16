@@ -258,3 +258,28 @@ def test_bound_record_carries_immutable_contracts_but_detaches_mutable_attributi
     assert record.actor_context.actor_id == "operator"
     record.actor_context.actor_id = "changed-record"
     assert draft.actor_context.actor_id == "changed-draft"
+
+
+def test_group_builds_only_its_published_head(tmp_path, monkeypatch):
+    from cruxible_core.exhaust import backends
+
+    backend = _backend(tmp_path, "journal")
+    _activate(backend)
+    head = backend.read_head(_stream(), PARTITION)
+    original = backends.JournalPartitionHeadV1
+    heads = []
+
+    def counted(**kwargs):
+        result = original(**kwargs)
+        heads.append(result)
+        return result
+
+    monkeypatch.setattr(backends, "JournalPartitionHeadV1", counted)
+    group = backend.append_many(
+        tuple(_draft(str(i)) for i in range(20)), expected_head=head, fencing_token="writer-a"
+    )
+    assert len(heads) == 1
+    assert heads[0].sequence == group[-1].record.sequence == 20
+    assert heads[0].record_digest == group[-1].record_digest
+    assert backend.read_head(_stream(), PARTITION) == heads[0]
+    assert all(b.record.previous_record_digest == a.record_digest for a, b in zip(group, group[1:]))

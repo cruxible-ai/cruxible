@@ -674,3 +674,55 @@ def test_request_carrier_releases_values_and_never_retains_refusals():
         raise RuntimeError("release on error")
     gc.collect()
     assert reference() is derived_reference() is None
+
+
+def test_request_carrier_does_not_remember_returned_refusals():
+    calls = []
+
+    def derive():
+        calls.append(1)
+        return "refused"
+
+    with artifact_request():
+        for _ in range(2):
+            assert (
+                request_derive(("test.refusal_value",), derive, retain=lambda v: v != "refused")
+                == "refused"
+            )
+    assert len(calls) == 2
+
+
+def test_statement_address_carrier_keeps_validation_and_subclass_behavior():
+    from cruxible_client.contracts.semantic import SemanticAddress, SemanticSelector
+
+    path = "claims/aa/CLM-" + "a" * 32 + ".json"
+    expected = SemanticAddress(
+        artifact_path=path, selector=SemanticSelector(scheme="claim-statement-v1", value="")
+    )
+    with artifact_request():
+        first = SemanticAddress.claim_statement(path)
+        assert first == expected
+        assert SemanticAddress.claim_statement(path) is first
+        assert SemanticAddress.claim_statement("claims/bb/other.json") is not first
+        with pytest.raises(ValueError):
+            SemanticAddress.claim_statement("../bad.json")
+
+    class Address(SemanticAddress):
+        pass
+
+    assert type(Address.claim_statement(path)) is Address
+
+
+def test_subject_identity_comparison_preserves_the_exact_contract_type():
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.subjects import SubjectShell
+
+    class ExtendedIdentity(ArtifactIdentity):
+        pass
+
+    with pytest.raises(ValueError, match="Subject identity must equal"):
+        SubjectShell(
+            identity=ExtendedIdentity(kind="Subject", name="work/item"),
+            subject_kind="work",
+            subject_id="item",
+        )

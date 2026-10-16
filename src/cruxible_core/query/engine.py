@@ -42,6 +42,7 @@ from cruxible_client.contracts.canonical_forms import (
 )
 from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdictV1
 from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
+from cruxible_client.contracts.content_memo import request_derive
 from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
@@ -778,12 +779,19 @@ def _binding_row(
         return QueryRowBinding(binding=binding)
     subject = backend.subject(path)
     assert subject is not None
-    return QueryRowBinding(
-        binding=binding,
-        subject_identity=subject.shell.identity.qualified,
-        subject_kind=subject.shell.subject_kind,
-        subject_id=subject.shell.subject_id,
-        subject_path=path,
+    # A query can use the same subject binding in its result and truncation
+    # witness. These are the complete scalar inputs of the served contract.
+    identity = subject.shell.identity.qualified
+    kind, identifier = subject.shell.subject_kind, subject.shell.subject_id
+    return request_derive(
+        ("query.row_binding", binding, identity, kind, identifier, path),
+        lambda: QueryRowBinding(
+            binding=binding,
+            subject_identity=identity,
+            subject_kind=kind,
+            subject_id=identifier,
+            subject_path=path,
+        ),
     )
 
 

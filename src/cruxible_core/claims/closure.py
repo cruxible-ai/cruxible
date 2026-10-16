@@ -678,6 +678,34 @@ def _sorted_edges(
     return tuple(sorted(edges, key=dependency_proof_order))
 
 
+def dependency_proof(
+    *,
+    source_path: str,
+    source_artifact_digest: str,
+    target_path: str,
+    target_artifact_digest: str,
+    pin_role: str,
+) -> DependencyProofReference:
+    """Carry an exact edge across immutable selections in this request."""
+    return request_derive(
+        (
+            "core.dependency_proof",
+            source_path,
+            source_artifact_digest,
+            target_path,
+            target_artifact_digest,
+            pin_role,
+        ),
+        lambda: DependencyProofReference(
+            source_path=source_path,
+            source_artifact_digest=source_artifact_digest,
+            target_path=target_path,
+            target_artifact_digest=target_artifact_digest,
+            pin_role=pin_role,
+        ),
+    )
+
+
 def _outgoing_edges(
     source: ArtifactDependencyStateV1,
     *,
@@ -693,7 +721,7 @@ def _outgoing_edges(
         if target is None or target.artifact_digest != pin.artifact_digest:
             continue
         edges.append(
-            DependencyProofReference(
+            dependency_proof(
                 source_path=source.path,
                 source_artifact_digest=source.artifact_digest,
                 target_path=target.path,

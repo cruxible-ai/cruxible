@@ -220,6 +220,14 @@ class SemanticAddress(_StrictSemanticModel):
 
     @classmethod
     def claim_statement(cls, artifact_path: str) -> "SemanticAddress":
+        if cls is SemanticAddress and type(artifact_path) is str:
+            from cruxible_client.contracts.content_memo import request_derive
+
+            address: SemanticAddress = request_derive(
+                ("semantic.claim_statement", artifact_path),
+                lambda: _claim_statement_address(artifact_path),
+            )
+            return address
         return cls(
             artifact_path=artifact_path,
             selector=SemanticSelector(scheme="claim-statement-v1", value=""),
@@ -328,6 +336,20 @@ def _whole_artifact_address(artifact_path: str) -> SemanticAddress:
     address = SemanticAddress(
         artifact_path=artifact_path, selector=SemanticSelector(scheme="artifact-v1", value="")
     )
+    seal(address)
+    return address
+
+
+@lru_cache(maxsize=1)
+def _claim_statement_selector() -> SemanticSelector:
+    return SemanticSelector(scheme="claim-statement-v1", value="")
+
+
+@lru_cache(maxsize=16384)
+def _claim_statement_address(artifact_path: str) -> SemanticAddress:
+    from cruxible_client.contracts.content_memo import seal
+
+    address = SemanticAddress(artifact_path=artifact_path, selector=_claim_statement_selector())
     seal(address)
     return address
 

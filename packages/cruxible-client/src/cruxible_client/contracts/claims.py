@@ -79,7 +79,13 @@ from cruxible_client.contracts.claim_verdicts import (
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
 )
-from cruxible_client.contracts.content_memo import ParseMemo, ValueMemo, sealed_memo
+from cruxible_client.contracts.content_memo import (
+    ParseMemo,
+    ValueMemo,
+    request_derive,
+    seal,
+    sealed_memo,
+)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionWindow,
     projection_window_intersecting,
@@ -88,6 +94,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyAny,
     ClaimEvidenceAdmissionTrace,
     EvidenceAdmissionInput,
     VerifiedAttestationGrade,
@@ -1513,6 +1520,12 @@ class CaptureEvidenceKindEvaluation:
     trace: ClaimEvidenceAdmissionTrace
 
 
+@sealed_memo
+def _evidence_admission_policy_key(policy: ClaimEvidenceAdmissionPolicyAny) -> bytes:
+    """Exact policy content; a mutable copy is encoded afresh, never remembered."""
+    return canonical_bytes(policy.model_dump(mode="json"))
+
+
 def evaluate_capture_evidence_admissions(
     claim: ClaimArtifactAny,
     *,
@@ -1571,24 +1584,47 @@ def evaluate_capture_evidence_admissions(
             and kind in rule.evidence_kinds
         )
         source_bound = any(subject_binding_by_rule[rule.rule_id] for rule in matching_rules)
-        decisions.append(
-            CaptureEvidenceKindEvaluation(
-                evidence_kind=kind,
-                trace=evaluate_claim_evidence_admission_trace(
-                    claim_type.evidence_admission_policy,
-                    EvidenceAdmissionInput(
-                        claim_role=claim.statement.role,
-                        capture_contract_digest=capture_contract.artifact_digest,
-                        capture_contract_identity=capture_contract.contract.identity.qualified,
-                        evidence_kind=kind,
-                        reducer_digest=claim.backing.reducer_digest,
-                        input_claim_artifact_digests=claim.backing.input_claim_digests,
-                        attestation_grade=attestation_grade,
-                        source_subject_bound=source_bound,
-                    ),
-                    subject_binding_by_rule=subject_binding_by_rule,
+        # The law and lowering can ask the same policy question, and many
+        # Claims ask it of the same Capture. Only these derived inputs affect
+        # admission; Claim identity, path and the source bytes do not. The policy
+        # bytes bind the complete policy, including rules that did not match.
+        key = (
+            "claims.evidence_admission",
+            _evidence_admission_policy_key(claim_type.evidence_admission_policy),
+            claim.statement.role,
+            capture_contract.artifact_digest,
+            capture_contract.contract.identity.qualified,
+            kind,
+            claim.backing.reducer_digest,
+            claim.backing.input_claim_digests,
+            attestation_grade,
+            source_bound,
+            tuple(sorted(subject_binding_by_rule.items())),
+        )
+
+        def derive(
+            kind: str = kind, source_bound: bool = source_bound
+        ) -> CaptureEvidenceKindEvaluation:
+            trace = evaluate_claim_evidence_admission_trace(
+                claim_type.evidence_admission_policy,
+                EvidenceAdmissionInput(
+                    claim_role=claim.statement.role,
+                    capture_contract_digest=capture_contract.artifact_digest,
+                    capture_contract_identity=capture_contract.contract.identity.qualified,
+                    evidence_kind=kind,
+                    reducer_digest=claim.backing.reducer_digest,
+                    input_claim_artifact_digests=claim.backing.input_claim_digests,
+                    attestation_grade=attestation_grade,
+                    source_subject_bound=source_bound,
                 ),
+                subject_binding_by_rule=subject_binding_by_rule,
             )
+            if not seal(trace):
+                raise TypeError("evidence admission traces must be immutable")
+            return CaptureEvidenceKindEvaluation(evidence_kind=kind, trace=trace)
+
+        decisions.append(
+            request_derive(key, derive, retain=lambda item: item.trace.result.verdict == "eligible")
         )
     return tuple(decisions)
 
@@ -2224,7 +2260,7 @@ def evaluate_claim_law(
                 "An attributed retirement requires an exact live Claim predecessor.",
                 path=path,
             )
-        if claim.lifecycle != ArtifactLifecycle():
+        if claim.lifecycle.state != "live" or claim.lifecycle.predecessor_digest is not None:
             return _diagnostic(
                 "cruxible.claim.unexpected_predecessor",
                 "A new Claim must begin live without a predecessor.",
