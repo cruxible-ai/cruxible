@@ -106,7 +106,15 @@ class PackStore:
         self.maps.clear()
         self.stamp = stamp
 
-    def write(self, objects: Mapping[str, tuple[str, bytes]], *, keep: bool = False) -> Path | None:
+    def write(
+        self,
+        objects: Mapping[str, tuple[str, bytes]],
+        *,
+        keep: bool = False,
+        durable: bool = True,
+        replacing: Path | None = None,
+        encoded: dict[str, bytes] | None = None,
+    ) -> Path | None:
         if not objects:
             return None
         width = len(next(iter(objects))) // 2
@@ -117,11 +125,15 @@ class PackStore:
             rows: list[tuple[bytes, int, int]] = []
             for oid, (kind, body) in objects.items():
                 offset = len(pack)
-                encoded = _pack_header(kind, len(body)) + zlib.compress(
-                    body, level=0 if kind == "tree" else -1
-                )
-                pack.extend(encoded)
-                rows.append((bytes.fromhex(oid), zlib.crc32(encoded), offset))
+                entry = None if encoded is None else encoded.get(oid)
+                if entry is None:
+                    entry = _pack_header(kind, len(body)) + zlib.compress(
+                        body, level=0 if kind == "tree" else -1
+                    )
+                    if encoded is not None:
+                        encoded[oid] = entry
+                pack.extend(entry)
+                rows.append((bytes.fromhex(oid), zlib.crc32(entry), offset))
             checksum = _hash(bytes(pack), width)
             pack.extend(checksum)
             rows.sort()
@@ -144,7 +156,18 @@ class PackStore:
             index.extend(b"".join(struct.pack(">Q", offset) for offset in large))
             index.extend(checksum)
             index.extend(_hash(bytes(index), width))
-            stem = self.directory / f"pack-{checksum.hex()}"
+            # A request's best-effort publications replace one provisional
+            # pack/index pair. Entry offsets stay stable as objects append.
+            # Acceptance seals it under the final checksum-derived name.
+            stem = (
+                replacing.with_suffix("")
+                if replacing is not None and not durable
+                else self.directory / f"pack-{checksum.hex()}"
+            )
+            if replacing is not None:
+                mapped = self.maps.pop(replacing, None)
+                if mapped is not None:
+                    mapped.close()
             if keep:
                 # Git honors .keep even for an as-yet-unreferenced pack. Make
                 # the protection visible before either pack/index publication.
@@ -155,13 +178,20 @@ class PackStore:
                     with os.fdopen(fd, "wb") as stream:
                         stream.write(content)
                         stream.flush()
-                        os.fsync(stream.fileno())
+                        if durable:
+                            os.fsync(stream.fileno())
                     os.chmod(name, 0o444)
                     os.replace(name, stem.with_suffix(suffix))
                 finally:
                     if os.path.exists(name):
                         os.unlink(name)
-            _directory_sync(self.directory)
+            if replacing is not None and replacing != stem.with_suffix(".pack"):
+                replacing.with_suffix(".idx").unlink(missing_ok=True)
+                replacing.unlink(missing_ok=True)
+                replacing.with_suffix(".keep").unlink(missing_ok=True)
+                self.members.pop(replacing, None)
+            if durable:
+                _directory_sync(self.directory)
             for raw_oid, _, offset in rows:
                 self.locations[raw_oid.hex()] = (stem.with_suffix(".pack"), offset)
             self.members[stem.with_suffix(".pack")] = {

@@ -162,8 +162,10 @@ record references is deleted under it.
 - **Line coverage.** An idle Line's coverage that moved only in time advances
   the dispatch projection and is not journaled.
 - **The ledger.** Every ref, note and archived proposal is kept. Objects are
-  written in in-process pack/index batches, flushed before publishing their
-  refs. Commit signatures use Ed25519 SSHSIG compatible with `git verify-commit`;
+  staged in one in-process request pack/index pair. Proposal refs and notes
+  publish in authority order without a durable flush; acceptance seals and
+  flushes the pair and its changed refs before returning. Interrupted
+  pre-acceptance publications are advisory and may need re-proposal. Commit signatures use Ed25519 SSHSIG compatible with `git verify-commit`;
   ref leases use Git's files-backend lockfile protocol. Reads support loose
   objects and Git's delta-compressed packs. Every 64 accepted generations the
   daemon consolidates packs (`repack -a -d`), packs refs and writes the

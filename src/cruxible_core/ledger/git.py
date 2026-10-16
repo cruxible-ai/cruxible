@@ -1175,6 +1175,12 @@ class GitLedger:
                     result[ref] = resolved
         return result
 
+    @contextmanager
+    def request_pack(self) -> Iterator[None]:
+        """Stage advisory publications together; acceptance seals one durable pack."""
+        with _batch_reader(self.path).request():
+            yield
+
     def _update_refs(self, commands: Sequence[str]) -> None:
         """Git files-backend lock/verify/rename transaction, with packed deletes.
 
@@ -1183,7 +1189,22 @@ class GitLedger:
         files backend also publishes a multi-ref transaction by successive
         renames; the archive is published before any retired root is removed.
         """
-        _batch_reader(self.path).flush()
+        reader = _batch_reader(self.path)
+        reader.flush()
+        deferred = getattr(reader._transaction, "request", False)
+
+        def sync_directory(path: Path) -> None:
+            if deferred:
+                reader._transaction.directories.add(path)
+            else:
+                _fsync_directory(path)
+
+        def sync_file(fd: int, path: Path) -> None:
+            if deferred:
+                reader._transaction.files.add(path)
+            else:
+                os.fsync(fd)
+
         parsed: dict[str, tuple[str, str | None, str | None]] = {}
         for command in commands:
             fields = command.split()
@@ -1218,7 +1239,7 @@ class GitLedger:
                     parent = parent.parent
                 path.parent.mkdir(parents=True, exist_ok=True)
                 for created in reversed(missing):
-                    _fsync_directory(created.parent)
+                    sync_directory(created.parent)
                 lock = path.with_name(path.name + ".lock")
                 fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
                 locks[ref] = (lock, fd)
@@ -1254,29 +1275,32 @@ class GitLedger:
                 with os.fdopen(packed_fd, "wb", closefd=False) as stream:
                     stream.write(b"".join(retained))
                     stream.flush()
-                    os.fsync(packed_fd)
+                    sync_file(packed_fd, packed)
             for ref, (_operation, new, _expected) in parsed.items():
                 if new is not None:
                     _lock, fd = locks[ref]
                     os.write(fd, (new + "\n").encode("ascii"))
-                    os.fsync(fd)
+                    sync_file(fd, self.path / ref)
             # Publish replacement roots before deletion; leases already proved.
             for ref, (operation, new, _expected) in parsed.items():
                 if new is not None:
                     os.replace(locks[ref][0], self.path / ref)
-                    _fsync_directory((self.path / ref).parent)
+                    sync_directory((self.path / ref).parent)
             if packed_fd is not None and packed_lock is not None:
                 os.replace(packed_lock, packed)
-                _fsync_directory(self.path)
+                sync_directory(self.path)
             for ref, (operation, _new, _expected) in parsed.items():
                 if operation == "delete":
                     (self.path / ref).unlink(missing_ok=True)
-                    _fsync_directory((self.path / ref).parent)
-            reader = _batch_reader(self.path)
-            for _operation, new, _expected in parsed.values():
-                if new is not None:
-                    reader.store.release_oid(new)
-            reader.release_keeps()
+                    sync_directory((self.path / ref).parent)
+            if deferred:
+                if parsed.get("refs/heads/main", (None, None, None))[1] is not None:
+                    reader._transaction.accepted = True
+            else:
+                for _operation, new, _expected in parsed.values():
+                    if new is not None:
+                        reader.store.release_oid(new)
+                reader.release_keeps()
         except OSError as exc:
             raise GitError(f"Git ref transaction failed: {exc}") from exc
         finally:
@@ -3153,6 +3177,47 @@ class _BatchBlobReader:
         self._transaction = threading.local()
 
     @contextmanager
+    def request(self) -> Iterator[None]:
+        if getattr(self._transaction, "pending", None) is not None:
+            yield
+            return
+        self._transaction.pending = {}
+        self._transaction.keeps = []
+        self._transaction.retain = False
+        self._transaction.request = True
+        self._transaction.accepted = False
+        self._transaction.pack = None
+        self._transaction.staged_count = -1
+        self._transaction.encoded = {}
+        self._transaction.files = set()
+        self._transaction.directories = set()
+        try:
+            yield
+        finally:
+            try:
+                # Even an exception after a winning CAS must finish durability;
+                # a failed advisory request has no accepted-state obligation.
+                self.flush(final=True)
+                if self._transaction.accepted:
+                    for path in sorted(self._transaction.files):
+                        try:
+                            fd = os.open(path, os.O_RDONLY)
+                        except FileNotFoundError:
+                            continue  # a later publication deleted this ref
+                        try:
+                            os.fsync(fd)
+                        finally:
+                            os.close(fd)
+                    for path in sorted(self._transaction.directories):
+                        _fsync_directory(path)
+                if self._transaction.accepted or not self._transaction.retain:
+                    self.release_keeps()
+            finally:
+                self._transaction.pending = None
+                self._transaction.request = False
+                self._transaction.encoded = None
+
+    @contextmanager
     def transaction(self) -> Iterator[None]:
         if getattr(self._transaction, "pending", None) is not None:
             yield
@@ -3174,9 +3239,24 @@ class _BatchBlobReader:
             self.store.release(keeps)
             keeps.clear()
 
-    def flush(self) -> None:
+    def flush(self, *, final: bool = False) -> None:
         pending = getattr(self._transaction, "pending", None)
-        if pending:
+        if not pending:
+            return
+        if getattr(self._transaction, "request", False):
+            if not final and len(pending) == getattr(self._transaction, "staged_count", -1):
+                return
+            path = self.store.write(
+                pending,
+                keep=True,
+                durable=final and self._transaction.accepted,
+                replacing=self._transaction.pack,
+                encoded=self._transaction.encoded,
+            )
+            self._transaction.pack = path
+            self._transaction.staged_count = len(pending)
+            self._transaction.keeps[:] = [path] if path is not None else []
+        else:
             path = self.store.write(pending, keep=True)
             if path is not None:
                 self._transaction.keeps.append(path)

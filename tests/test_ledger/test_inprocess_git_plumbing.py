@@ -130,3 +130,60 @@ def test_prepared_generation_survives_external_repack_until_ref_publication(ledg
     assert ledger.compare_and_set_main(generation, expected_oid=base)
     assert not list((ledger.path / "objects/pack").glob("*.keep"))
     assert ledger.read_tree(generation) == {"one": b"changed"}
+
+
+def test_request_stages_one_pair_and_flushes_only_at_acceptance(ledger, monkeypatch):
+    import os
+
+    base = ledger.create_signed_genesis({"one": b"one"}, timestamp="2026-10-15T12:00:00Z")
+    ledger.set_main_genesis(base)
+    directory = ledger.path / "objects/pack"
+    before = set(directory.glob("*.pack"))
+    synced = []
+    real_fsync = os.fsync
+
+    def observe(fd):
+        import fcntl
+        import sys
+
+        path = (
+            fcntl.fcntl(fd, 50, b"\x00" * 1024).split(b"\x00", 1)[0].decode()
+            if sys.platform == "darwin"
+            else os.readlink(f"/proc/self/fd/{fd}")
+        )
+        synced.append(path)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", observe)
+    with ledger.request_pack():
+        proposal, tree = ledger.create_proposal_commit(
+            {"one": b"two"},
+            base_oid=base,
+            target_ref="refs/proposals/owner/test",
+            actor_id="owner",
+            timestamp="2026-10-15T12:01:00Z",
+            expected_ref_oid=None,
+            message="Change one",
+        )
+        ledger.write_proposal_note("evaluation", proposal, b"evaluation\n")
+        assert not synced
+        assert len(set(directory.glob("*.pack")) - before) == 1
+        # Independent Git sees the staged proposal and note before main moves.
+        assert ledger._git(["cat-file", "-t", proposal]) == b"commit\n"
+        assert ledger.read_main() == base
+        generation = ledger.create_signed_generation(
+            {"one": b"two", "changesets/one": b"record"},
+            parent_oid=base,
+            sequence=1,
+            timestamp="2026-10-15T12:01:00Z",
+            message="Accept one",
+            extends_tree=tree,
+        )
+        assert ledger.compare_and_set_main(generation, expected_oid=base)
+        ledger.write_generation_note(generation, b"descriptor\n")
+        ledger.replace_proposal_review_refs({})
+    assert len(set(directory.glob("*.pack")) - before) == 1
+    assert len([path for path in synced if path.endswith(".pack")]) == 1
+    assert len([path for path in synced if path.endswith(".idx")]) == 1
+    assert not list(directory.glob("*.keep"))
+    ledger._git(["fsck", "--strict", "--no-dangling"])

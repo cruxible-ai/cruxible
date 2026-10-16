@@ -2628,7 +2628,8 @@ class PlaybillInstance:
         pool = ProjectionPool()
         token = _PROJECTION_POOL.set(pool)
         try:
-            yield
+            with self._ledger.request_pack():
+                yield
         finally:
             _PROJECTION_POOL.reset(token)
             pool.close()
