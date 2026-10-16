@@ -456,6 +456,7 @@ class ProjectionAssembler:
                 parsed=parsed,
                 assembler_implementation=PYTHON_REFERENCE_ASSEMBLER,
                 sources=blob_map,
+                repository=self._repository,
                 bodies=self.bodies,
                 resolve_digest=resolver,
             ),

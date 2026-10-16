@@ -534,6 +534,7 @@ def initialize(
     request: AssemblerRequest,
     parsed: ParsedProjectionTree,
     sources: Mapping[str, bytes],
+    repository: Any,
     codec: ArtifactCodec,
     assembler_implementation: str,
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
@@ -545,13 +546,10 @@ def initialize(
         connection.execute(f"PRAGMA user_version={PROJECTION_STORAGE_SCHEMA_VERSION}")
         connection.executescript(complete_schema_sql())
         from cruxible_core.indexes.provider_heads import cold_provider_source
-        from cruxible_core.indexes.sqlite import _source_repository
 
         replace_rows(
             connection,
-            historical_provider_source=cold_provider_source(
-                _source_repository(request.repository_path), request.git_oid, sources
-            ),
+            historical_provider_source=cold_provider_source(repository, request.git_oid, sources),
             request=request,
             parsed=parsed,
             sources=sources,

@@ -12,7 +12,6 @@ from __future__ import annotations
 import sqlite3
 from collections import Counter
 from collections.abc import Callable, Mapping
-from typing import Any
 
 from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.provider_interfaces import (
@@ -22,6 +21,7 @@ from cruxible_client.contracts.provider_interfaces import (
 )
 from cruxible_client.contracts.providers import parse_provider, provider_build_key, provider_digest
 from cruxible_core.indexes.sql_batch import execute_values, insert_rows, select_in
+from cruxible_core.ledger.protocols import LedgerRepositoryProtocol
 from cruxible_core.proposals.settlement import parse_change_set_record
 
 SCHEMA_SQL = """
@@ -92,11 +92,12 @@ def registration_key(content: bytes, path: str) -> str:
 
 
 def cold_provider_source(
-    repository: Any, head_oid: str, sources: Mapping[str, bytes]
+    repository: LedgerRepositoryProtocol, head_oid: str, sources: Mapping[str, bytes]
 ) -> Callable[[str, int], bytes | None]:
     """Cold reconstruction only: locate exact historical legacy runtime bytes.
 
-    This one walk is O(retained generations); ordinary deltas supply their own bytes.
+    Walk ancestry and list each needed historical tree once, only on cold
+    reconstruction; ordinary deltas supply their own bytes.
     """
     records = [
         parse_change_set_record(raw, path=path)
@@ -104,16 +105,29 @@ def cold_provider_source(
         if path.startswith("changesets/")
     ]
     latest = max((record.sequence for record in records), default=0)
-    coordinates = {latest: head_oid}
+    coordinates: dict[int, str | None] = {latest: head_oid}
     oldest = latest
+    historical_entries: dict[str, dict[str, str]] = {}
 
     def read(path: str, sequence: int) -> bytes | None:
         nonlocal oldest
+        if sequence == latest:
+            return sources.get(path)
         while sequence not in coordinates:
-            coordinates[oldest - 1] = repository.parent_of(coordinates[oldest])
+            oid = coordinates[oldest]
+            if oid is None:
+                return None
+            coordinates[oldest - 1] = repository.parent_of(oid)
             oldest -= 1
-        raw = repository.blob_at(coordinates[sequence], path)
-        return None if raw is None else bytes(raw)
+        oid = coordinates[sequence]
+        if oid is None:
+            return None
+        # Only cold reconstruction needs historical listings. Cache each once;
+        # use the repository protocol rather than assuming an on-disk Git ledger.
+        if oid not in historical_entries:
+            historical_entries[oid] = {entry.path: entry.oid for entry in repository.list_tree(oid)}
+        blob_oid = historical_entries[oid].get(path)
+        return None if blob_oid is None else repository.read_blob(blob_oid)
 
     return read
 
