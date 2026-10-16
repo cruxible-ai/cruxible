@@ -81,26 +81,38 @@ class PackStore:
             self.directory.glob("*.idx"),
             key=lambda item: not item.with_suffix(".pending").exists(),
         ):
-            data = index.read_bytes()
-            if data[:8] != b"\xfftOc\x00\x00\x00\x02":
-                raise GitError("unsupported Git pack index version")
-            if _hash(data[:-width], width) != data[-width:]:
-                raise GitError("Git pack index checksum mismatch")
-            count = struct.unpack_from(">I", data, 8 + 255 * 4)[0]
-            start = 8 + 256 * 4
-            offsets = start + count * (width + 4)
-            if offsets + count * 4 + width * 2 > len(data):
-                raise GitError("truncated Git pack index")
-            for i in range(count):
-                oid = data[start + i * width : start + (i + 1) * width].hex()
-                offset = struct.unpack_from(">I", data, offsets + i * 4)[0]
-                if offset & 0x80000000:
-                    offset = struct.unpack_from(
-                        ">Q", data, offsets + count * 4 + (offset & 0x7FFFFFFF) * 8
-                    )[0]
+            pending_index = index.with_suffix(".pending").exists()
+            try:
+                indexed: dict[str, int] = {}
+                data = index.read_bytes()
+                if data[:8] != b"\xfftOc\x00\x00\x00\x02":
+                    raise GitError("unsupported Git pack index version")
+                if _hash(data[:-width], width) != data[-width:]:
+                    raise GitError("Git pack index checksum mismatch")
+                count = struct.unpack_from(">I", data, 8 + 255 * 4)[0]
+                start = 8 + 256 * 4
+                offsets = start + count * (width + 4)
+                if offsets + count * 4 + width * 2 > len(data):
+                    raise GitError("truncated Git pack index")
                 pack_path = index.with_suffix(".pack")
-                locations[oid] = (pack_path, offset)
-                members.setdefault(pack_path, {})[oid] = offset
+                for i in range(count):
+                    oid = data[start + i * width : start + (i + 1) * width].hex()
+                    offset = struct.unpack_from(">I", data, offsets + i * 4)[0]
+                    if offset & 0x80000000:
+                        offset = struct.unpack_from(
+                            ">Q", data, offsets + count * 4 + (offset & 0x7FFFFFFF) * 8
+                        )[0]
+                    indexed[oid] = offset
+                if not pack_path.is_file():
+                    raise GitError("Git pack file is unavailable")
+                locations.update((oid, (pack_path, offset)) for oid, offset in indexed.items())
+                members[pack_path] = indexed
+            except (OSError, ValueError, IndexError, struct.error, GitError):
+                if not pending_index:
+                    raise
+                # Advisory publication can disappear or tear before acceptance.
+                # Its objects are absent; a durable pack is still authoritative.
+                continue
         self.locations = locations
         self.members = members
         # Close stale mappings on an explicit external repack. In-process writes
@@ -230,6 +242,14 @@ class PackStore:
 
     def info(self, oid: str) -> tuple[str, int] | None:
         """Read headers only; metadata never hashes or inflates an object's body."""
+        try:
+            return self._info(oid)
+        except (OSError, ValueError, IndexError, struct.error, zlib.error, GitError):
+            if self.is_pending(oid):
+                return None
+            raise
+
+    def _info(self, oid: str) -> tuple[str, int] | None:
         with self.lock:
             width = len(oid) // 2
             self._discover(width)
@@ -312,16 +332,18 @@ class PackStore:
 
     def read(self, oid: str) -> tuple[str, bytes] | None:
         try:
-            return self._read(oid)
-        except FileNotFoundError:
-            # An external gc may replace a pack between discovery and open.
-            # Rediscover once for that maintenance event, never for an ordinary
-            # missing-object probe on the write path.
-            with self.lock:
-                self.stamp = None
-                self._discover(len(oid) // 2)
-            return self._read(oid)
-        except (OSError, ValueError, IndexError, struct.error, zlib.error) as exc:
+            try:
+                return self._read(oid)
+            except FileNotFoundError:
+                # An external gc may replace a pack between discovery and open.
+                # Rediscover once, never on an ordinary missing-object probe.
+                with self.lock:
+                    self.stamp = None
+                    self._discover(len(oid) // 2)
+                return self._read(oid)
+        except (OSError, ValueError, IndexError, struct.error, zlib.error, GitError) as exc:
+            if self.is_pending(oid):
+                return None
             raise GitError(f"Git object storage is corrupt or unavailable: {oid}") from exc
 
     def _read(self, oid: str) -> tuple[str, bytes] | None:

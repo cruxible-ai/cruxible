@@ -94,3 +94,29 @@ def test_metadata_does_not_read_or_hash_payloads(tmp_path, monkeypatch):
     assert store.info(loose_oid) == ("blob", 100000000)
     assert inflated == b"blob 100000000\x00"
     assert store.info("e" * 64) is None
+
+
+def test_damaged_advisory_pack_is_absent_without_hiding_durable_objects(tmp_path):
+    store = PackStore(tmp_path)
+    (tmp_path / "objects/pack").mkdir(parents=True)
+    # Use real identities so a durable read still exercises payload integrity.
+    import hashlib
+
+    durable_oid = hashlib.sha256(b"blob 7\x00durable").hexdigest()
+    advisory_oid = hashlib.sha256(b"blob 8\x00advisory").hexdigest()
+    store.write({durable_oid: ("blob", b"durable")})
+    path = store.write({advisory_oid: ("blob", b"advisory")}, durable=False)
+    assert path is not None
+    path.chmod(0o644)
+    path.write_bytes(b"torn")
+    fresh = PackStore(tmp_path)
+    assert fresh.read(advisory_oid) is None
+    assert fresh.info(advisory_oid) is None
+    assert fresh.read(durable_oid) == ("blob", b"durable")
+    fresh.close()
+    path.with_suffix(".idx").chmod(0o644)
+    path.with_suffix(".idx").write_bytes(b"torn index")
+    fresh = PackStore(tmp_path)
+    assert fresh.read(advisory_oid) is None
+    assert fresh.read(durable_oid) == ("blob", b"durable")
+    fresh.close()
