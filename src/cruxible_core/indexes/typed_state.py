@@ -1265,7 +1265,12 @@ class TypedStateReader:
                 parameters.extend(claim_predicates)
             predicates.append(
                 "(claim_identity,claim_artifact_digest) IN "
-                "(SELECT identity,artifact_digest FROM claims" + selected + ")"
+                "(SELECT identity,artifact_digest FROM claims"
+                # Literal indexes also start with predicate; keep this read on
+                # its dedicated predicate seek, independent of planner ties.
+                + (" INDEXED BY claims_by_predicate" if claim_predicates is not None else "")
+                + selected
+                + ")"
             )
         rows = self.connection.execute(
             "SELECT path,envelope_digest,artifact_digest FROM attestations "

@@ -315,11 +315,14 @@ def test_a_physical_schema_change_moves_the_storage_schema_version():
 
 #: The predicate-scoped Claim reads a served query makes (as the scaling probe saw them).
 _PREDICATE_READS = (
-    "SELECT path FROM claims WHERE 1 AND predicate IN (?) AND lifecycle='live' ORDER BY path",
-    "SELECT DISTINCT t.path FROM claims c JOIN claim_types t ON t.identity=c.claim_type_identity "
+    "SELECT path FROM claims INDEXED BY claims_by_predicate "
+    "WHERE 1 AND predicate IN (?) AND lifecycle='live' ORDER BY path",
+    "SELECT DISTINCT t.path FROM claims c INDEXED BY claims_by_predicate "
+    "JOIN claim_types t ON t.identity=c.claim_type_identity "
     "WHERE 1 AND c.predicate IN (?) AND c.lifecycle='live'",
     "SELECT path,envelope_digest,artifact_digest FROM attestations WHERE "
     "(claim_identity,claim_artifact_digest) IN (SELECT identity,artifact_digest FROM claims "
+    "INDEXED BY claims_by_predicate "
     "WHERE predicate IN (?)) ORDER BY attested_at_us,envelope_digest",
 )
 
@@ -346,7 +349,7 @@ def _claim_row(number: int, predicate: str) -> tuple[object, ...]:
     )
 
 
-def _predicate_read_work(other_claims: int) -> list[int]:
+def _predicate_read_work(other_claims: int, index: str) -> tuple[list[int], list[int]]:
     """VM instructions per predicate-scoped read, beside ``other_claims`` other-kind key Claims."""
 
     with sqlite3.connect(":memory:") as connection:
@@ -362,7 +365,9 @@ def _predicate_read_work(other_claims: int) -> list[int]:
         )
         # Projections are never ANALYZEd: the planner reads the schema alone.
         work = []
+        visited = []
         for statement in _PREDICATE_READS:
+            statement = statement.replace("claims_by_predicate", index)
             steps = [0]
 
             def tick(steps: list[int] = steps) -> int:
@@ -373,10 +378,25 @@ def _predicate_read_work(other_claims: int) -> list[int]:
             connection.execute(statement, ("project.work_item.status",)).fetchall()
             connection.set_progress_handler(None, 1)
             work.append(steps[0])
-        return work
+            # Count the Claim rows reached inside each seek, including the
+            # attestation subquery even when no attestation is present.
+            visits = []
+            connection.create_function(
+                "visit_claim", 1, lambda identity: visits.append(identity) or 1
+            )
+            column = "c.predicate" if "c.predicate" in statement else "predicate"
+            identity = "c.identity" if column == "c.predicate" else "identity"
+            counted = statement.replace(
+                column + " IN (?)", column + f" IN (?) AND visit_claim({identity})"
+            )
+            assert connection.execute(counted, ("project.work_item.status",)).fetchall() == (
+                connection.execute(statement, ("project.work_item.status",)).fetchall()
+            )
+            visited.append(len(visits))
+        return work, visited
 
 
-def test_predicate_scoped_claim_reads_seek_and_do_not_grow_with_other_key_claims():
+def test_predicate_scoped_claim_reads_seek_and_do_not_grow_with_other_key_claims(record_property):
     """Every keyed Subject holds a key Claim, so other kinds' Claims must never be scanned.
 
     ``claims_by_predicate`` answers each predicate-scoped read by seeking its
@@ -390,12 +410,70 @@ def test_predicate_scoped_claim_reads_seek_and_do_not_grow_with_other_key_claims
                 str(row[3]) for row in connection.execute("EXPLAIN QUERY PLAN " + statement, ("x",))
             )
             assert "claims_by_predicate" in plan, plan
-    small, large = _predicate_read_work(10), _predicate_read_work(2000)
+            record_property("predicate_plan", plan)
+            for label, replacement in (
+                ("unhinted", ""),
+                ("literal", "INDEXED BY claims_by_literal_boolean"),
+            ):
+                alternative = statement.replace("INDEXED BY claims_by_predicate", replacement)
+                alternative_plan = " ".join(
+                    str(row[3])
+                    for row in connection.execute("EXPLAIN QUERY PLAN " + alternative, ("x",))
+                )
+                record_property(label + "_plan", alternative_plan)
+                if label == "literal":
+                    assert "SEARCH" in alternative_plan and "(predicate=?)" in alternative_plan
+    small, small_rows = _predicate_read_work(10, "claims_by_predicate")
+    large, large_rows = _predicate_read_work(2000, "claims_by_predicate")
+    record_property("predicate_vm_steps", str((small, large)))
+    record_property("predicate_claim_rows", str((small_rows, large_rows)))
+    assert small_rows == large_rows == [2, 2, 2]
     # A deeper b-tree costs a few instructions per seek, never a row per other Claim.
     assert all(after - before <= 16 for before, after in zip(small, large, strict=True)), (
         small,
         large,
     )
+
+    # The competing scalar index is a predicate seek too, but cannot use the
+    # lifecycle suffix without constraining its literal columns. Keep the
+    # dedicated index and its strict plan assertion rather than accepting ties.
+    literal_small, literal_small_rows = _predicate_read_work(10, "claims_by_literal_boolean")
+    literal_large, literal_large_rows = _predicate_read_work(2000, "claims_by_literal_boolean")
+    record_property("literal_vm_steps", str((literal_small, literal_large)))
+    record_property("literal_claim_rows", str((literal_small_rows, literal_large_rows)))
+    assert literal_small_rows == literal_large_rows == [2, 2, 2]
+    assert all(
+        after - before <= 16 for before, after in zip(literal_small, literal_large, strict=True)
+    ), (literal_small, literal_large)
+
+
+def test_served_predicate_reads_use_the_pinned_statements(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from cruxible_core.service.discovery.query import build_accepted_query_facts
+
+    instance, _, _ = _accepted_claim_world(tmp_path)
+    statements = []
+    bind = instance.bind_accepted_projection
+
+    @contextmanager
+    def traced(*args, **kwargs):
+        with bind(*args, **kwargs) as projection:
+            projection.typed.connection.set_trace_callback(statements.append)
+            try:
+                yield projection
+            finally:
+                projection.typed.connection.set_trace_callback(None)
+
+    monkeypatch.setattr(instance, "bind_accepted_projection", traced)
+    facts = build_accepted_query_facts(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+        predicates=("project.work_item.status",),
+    )
+    assert facts.claims
+    for statement in _PREDICATE_READS:
+        assert statement.replace("?", "'project.work_item.status'") in statements
 
 
 def _slot_reads() -> tuple[tuple[str, tuple[str, ...]], ...]:

@@ -455,7 +455,12 @@ class _AcceptedQueryFactsRead:
                     else:
                         type_sql = (
                             "SELECT DISTINCT t.path FROM claims c "
-                            "JOIN claim_types t ON t.identity=c.claim_type_identity WHERE 1"
+                            + (
+                                "INDEXED BY claims_by_predicate "
+                                if self._predicates is not None
+                                else ""
+                            )
+                            + "JOIN claim_types t ON t.identity=c.claim_type_identity WHERE 1"
                         )
                         type_values: tuple[str, ...] = ()
                         if self._predicates is not None:
@@ -634,7 +639,12 @@ def _claim_paths(
     return tuple(
         str(row[0])
         for row in connection.execute(
-            "SELECT path FROM claims WHERE " + " AND ".join(where) + " ORDER BY path", values
+            "SELECT path FROM claims "
+            + ("INDEXED BY claims_by_predicate " if predicates is not None else "")
+            + "WHERE "
+            + " AND ".join(where)
+            + " ORDER BY path",
+            values,
         )
     )
 

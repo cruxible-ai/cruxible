@@ -293,6 +293,8 @@ conjunctions apply identity restrictions before value and kind selections, and
 each disjunction branch receives the same incoming candidates. Plain named reads
 apply their result budget before loading facts, while maintained per-kind counts
 preserve truncation totals. Kind counts update only when a Subject row changes.
+Predicate-scoped Claim, ClaimType, and attestation reads explicitly select
+`claims_by_predicate`, keeping their seek stable beside the scalar value indexes.
 Absence, negation, traversals,
 includes, and filters whose refusal or verdict accounting cannot be preserved
 use the full-load evaluator. Projection storage schema 19 rebuilds older derived
