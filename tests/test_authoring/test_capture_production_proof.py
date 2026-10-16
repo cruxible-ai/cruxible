@@ -43,7 +43,6 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import SettlementEvidenceUnproven
-from cruxible_client.contracts.providers import provider_digest
 from cruxible_client.contracts.source_references import (
     CasSourceReference,
     EvidenceCommitment,
@@ -517,8 +516,11 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
     world: ProducedCaptures, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     instance = world.instance
-    provider = accepted_provider().provider
-    # A version-1 Provider Capture, as Sources produced before receipts.
+    source_capture, _terminal_capture = _genuine(world)
+    produced = _envelope(instance, source_capture)
+    # A version-1 Capture of the Provider build this world actually accepted.
+    # acquisition_demo patches the producer fixture to a package build; the
+    # module's imported single-path accepted_provider is not that build.
     legacy = build_cas_capture(
         store=instance.body_store(),
         contract=world.contract,
@@ -527,11 +529,11 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
             run_kind="provider",
             run_id="legacy-provider-run",
             bound_generation=instance.accepted_coordinate().generation_root,
-            executable_identity=provider.identity,
-            executable_digest=provider_digest(provider).tagged,
+            executable_identity=produced.run_coordinate.executable_identity,
+            executable_digest=produced.run_coordinate.executable_digest,
         ),
         run_receipt_digest=capture_contract_digest(world.contract).tagged,
-        producer=provider.identity,
+        producer=produced.producer,
         producer_binding_digest=capture_contract_digest(world.contract).tagged,
         observed_at=datetime(2026, 9, 2, 11, tzinfo=UTC),
     ).capture_digest
