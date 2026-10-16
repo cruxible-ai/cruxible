@@ -115,3 +115,57 @@ def test_missing_admission_does_not_authorize_repeating_an_admitted_event(tmp_pa
         assert isinstance(prior, _UnavailableLineAdmission)
         (cached,) = _trigger_admissions(instance, accepted, trigger.trigger.identity)
         assert cached is prior
+
+
+def test_missing_inbox_posting_does_not_break_surviving_disposition(tmp_path):
+    from cruxible_client.contracts.line_inbox import InboxDismissed
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+    from cruxible_core.exhaust.line_inbox import InboxUnavailable, LineInboxStore
+    from cruxible_core.service.procedures.line_inbox import (
+        service_get_inbox_item,
+        service_list_inbox,
+    )
+    from tests.test_procedures.test_line_inbox_delivery import _entries, inbox_world
+    from tests.test_procedures.test_manual_line_runs import manual_run
+    from tests.test_procedures.test_procedure_source_runs import NOW, _actor
+
+    instance, root, line = inbox_world(tmp_path, items={"items": [{"note": "review"}]})
+    first = manual_run(instance, line, at=NOW, root=root)
+    assert first.status == "succeeded"
+    (entry,) = _entries(instance)
+    store = LineInboxStore(instance)
+    store.record_disposition(
+        entry.envelope.item_id,
+        InboxDismissed(actor_id="owner", decided_at=NOW, reason="seen"),
+        actor=_actor(instance),
+        now=NOW,
+        coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    )
+    (posting, disposition) = store._journal(create=False).select_records(
+        store.stream, partition_id="inbox"
+    )
+    path = instance.body_store()._path(posting.record.payload_digest)
+    original = path.read_bytes()
+    path.unlink()
+    store.path.unlink()  # A rebuildable index must tolerate the lost posting.
+    for read in (
+        lambda: LineInboxStore(instance).unread_by_line(),
+        lambda: service_list_inbox(instance, limit=1),
+        lambda: service_get_inbox_item(instance, item=entry.envelope.item_id),
+        lambda: store.record_disposition(
+            entry.envelope.item_id,
+            InboxDismissed(actor_id="owner", decided_at=NOW, reason="again"),
+            actor=_actor(instance),
+            now=NOW,
+            coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        ),
+    ):
+        with pytest.raises(InboxUnavailable) as refused:
+            read()
+        assert refused.value.context["availability"] == "unavailable"
+        assert refused.value.payload.digest == posting.record.payload_digest
+    assert len(store._journal(create=False).select_records(store.stream, partition_id="inbox")) == 2
+    path.write_bytes(original)
+    store.path.unlink()  # Explicit repair replays both surviving transitions.
+    assert LineInboxStore(instance).unread_by_line() == ()
+    assert service_get_inbox_item(instance, item=entry.envelope.item_id).item.status == "dismissed"

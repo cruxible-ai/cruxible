@@ -39,6 +39,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.errors import ReadRefusalError
 from cruxible_client.contracts.line_inbox import (
     INBOX_ITEM_MAX_BYTES,
     INBOX_RECENT_DISPOSITIONS,
@@ -73,9 +74,10 @@ _DISPOSITION: TypeAdapter[InboxDisposition] = TypeAdapter(InboxDisposition)
 _PREVIEW: TypeAdapter[ShownValue] = TypeAdapter(ShownValue)
 #: The projection's layout; a projection written under another one is rebuilt
 #: from the journal, which it only ever caches.
-_SCHEMA_VERSION = 2
-_TABLES = ("progress", "items", "postings", "unread", "dispositions")
+_SCHEMA_VERSION = 3
+_TABLES = ("progress", "items", "postings", "unread", "dispositions", "incomplete")
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS incomplete (singleton INTEGER PRIMARY KEY, payload_digest TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS progress (singleton INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS items (
  item_id TEXT PRIMARY KEY, line TEXT NOT NULL, status TEXT NOT NULL, last_seen TEXT NOT NULL,
@@ -92,6 +94,20 @@ CREATE TABLE IF NOT EXISTS postings (
  PRIMARY KEY(run_id, node_id, item_key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS unread (line TEXT PRIMARY KEY, count INTEGER NOT NULL);
 """
+
+
+class InboxUnavailable(ReadRefusalError):
+    """An inbox prerequisite was lost; neither reads nor writes may assume completeness."""
+
+    def __init__(self, payload_digest: str) -> None:
+        self.payload = UnavailablePayload(payload_digest)
+        super().__init__(
+            "cruxible.inbox.unavailable",
+            "Inbox journal payload is unavailable; its projection is incomplete",
+            http_status=409,
+            repair_line="Restore the payload and rebuild the inbox projection",
+            context={"availability": "unavailable", "payload_digest": payload_digest},
+        )
 
 
 class InboxItemNotFound(LookupError):
@@ -243,6 +259,11 @@ class LineInboxStore:
                         conn.execute(f"DROP TABLE IF EXISTS {table}")
                     conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                 conn.executescript(_SCHEMA)
+                missing = conn.execute(
+                    "SELECT payload_digest FROM incomplete WHERE singleton=1"
+                ).fetchone()
+                if missing is not None:
+                    raise InboxUnavailable(missing[0])
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
                 start = row[0] + 1 if row else 1
                 self._preview_sequence = start - 1
@@ -261,11 +282,14 @@ class LineInboxStore:
                         ),
                     )
                     if isinstance(payload, UnavailablePayload):
+                        # Stop before applying any dependents. Persist a single
+                        # incomplete marker so warm reads never scan the tail
+                        # or claim a complete projection from the surviving rows.
                         conn.execute(
-                            "INSERT OR REPLACE INTO progress VALUES(1,?)", (stored.record.sequence,)
+                            "INSERT OR REPLACE INTO incomplete VALUES(1,?)", (payload.digest,)
                         )
-                        self._preview_sequence = stored.record.sequence
-                        continue
+                        conn.commit()
+                        raise InboxUnavailable(payload.digest)
                     if not isinstance(payload, dict) or payload.get("tag") != _EVENT_TAG:
                         raise ValueError("invalid Line inbox transition")
                     self._apply(conn, payload, stored.record.sequence)

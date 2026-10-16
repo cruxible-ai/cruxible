@@ -4407,8 +4407,28 @@ def _line_inbox_items(
 
     if not access_profile.permits("instance"):
         return ()
-    from cruxible_core.exhaust.line_inbox import LineInboxStore
+    from cruxible_core.exhaust.line_inbox import InboxUnavailable, LineInboxStore
 
+    try:
+        unread = LineInboxStore(instance).unread_by_line()
+    except InboxUnavailable as exc:
+        return (
+            _item(
+                severity="repair",
+                reason="line_inbox_unread",
+                subject_identity="inbox",
+                detail={
+                    "availability": "unavailable",
+                    "payload_digest": exc.payload.digest,
+                    "detail": "Inbox volume is unknown because its journal is incomplete.",
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="cruxible.inbox.list",
+                    target="inbox",
+                    required_change="restore_inbox_payload_and_rebuild_projection",
+                ),
+            ),
+        )
     return tuple(
         _item(
             severity="repair",
@@ -4425,7 +4445,7 @@ def _line_inbox_items(
                 arguments={"line": line.removeprefix("Line:"), "status": "unread"},
             ),
         )
-        for line, count in LineInboxStore(instance).unread_by_line()
+        for line, count in unread
     )
 
 
