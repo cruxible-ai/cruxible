@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import random
 from collections import Counter
 from unittest.mock import patch
@@ -79,3 +80,22 @@ def test_one_subject_write_has_flat_python_work_at_ten_times_siblings(tmp_path):
         counts.append(work)
     assert counts[0] == counts[1]
     assert counts[1]["merkle_entries"] == counts[1]["git_entries"] == 3
+
+
+def test_pack_file_work_is_constant_per_batch(tmp_path):
+    ledger = git.GitLedger.initialize(
+        tmp_path / "ledger.git",
+        object_format="sha256",
+        signing_key_path=tmp_path / "unused",
+        allowed_signers_path=tmp_path / "unused",
+    )
+    calls = []
+    sync = os.fsync
+    for n in (1, 100):
+        with patch("os.fsync", side_effect=lambda fd: (calls.append(fd), sync(fd))[-1]):
+            ledger._store_loose_objects(
+                {ledger._blob_oid(str(i).encode()): ("blob", str(i).encode()) for i in range(n)}
+            )
+        assert len(calls) == 3
+        calls.clear()
+    assert not list((ledger.path / "objects").glob("[0-9a-f][0-9a-f]/*"))

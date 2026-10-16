@@ -1,8 +1,5 @@
 """Pack writes/readback interoperate with system Git, including repack deltas."""
 
-import os
-from unittest.mock import patch
-
 import pytest
 
 from cruxible_core.ledger.git import GitLedger
@@ -32,25 +29,6 @@ def test_pack_index_is_git_readable_fsck_clean_and_reads_git_deltas(tmp_path, al
         ledger._blob_oid(body): fresh.read(ledger._blob_oid(body))[1] for body in tree.values()
     } == {ledger._blob_oid(body): body for body in tree.values()}
     fresh.close()
-
-
-def test_pack_file_work_is_constant_per_batch(tmp_path):
-    ledger = GitLedger.initialize(
-        tmp_path / "ledger.git",
-        object_format="sha256",
-        signing_key_path=tmp_path / "unused",
-        allowed_signers_path=tmp_path / "unused",
-    )
-    calls = []
-    sync = os.fsync
-    for n in (1, 100):
-        with patch("os.fsync", side_effect=lambda fd: (calls.append(fd), sync(fd))[-1]):
-            ledger._store_loose_objects(
-                {ledger._blob_oid(str(i).encode()): ("blob", str(i).encode()) for i in range(n)}
-            )
-        assert len(calls) == 3
-        calls.clear()
-    assert not list((ledger.path / "objects").glob("[0-9a-f][0-9a-f]/*"))
 
 
 def test_corrupted_packed_payload_is_refused(tmp_path):
