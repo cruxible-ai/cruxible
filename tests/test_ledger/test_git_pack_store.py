@@ -51,3 +51,22 @@ def test_pack_file_work_is_constant_per_batch(tmp_path):
         assert len(calls) == 3
         calls.clear()
     assert not list((ledger.path / "objects").glob("[0-9a-f][0-9a-f]/*"))
+
+
+def test_corrupted_packed_payload_is_refused(tmp_path):
+    from cruxible_client.contracts.errors import GitError
+
+    ledger = GitLedger.initialize(
+        tmp_path / "ledger.git",
+        object_format="sha256",
+        signing_key_path=tmp_path / "unused",
+        allowed_signers_path=tmp_path / "unused",
+    )
+    root = ledger._write_tree({"file-name": b"payload"})
+    pack = next((ledger.path / "objects/pack").glob("*.pack"))
+    raw = pack.read_bytes()
+    assert b"file-name" in raw  # level-zero tree stream
+    pack.chmod(0o644)
+    pack.write_bytes(raw.replace(b"file-name", b"fake-name"))
+    with pytest.raises(GitError):
+        PackStore(ledger.path).read(root)

@@ -111,3 +111,22 @@ def test_only_one_thread_can_win_a_ref_lease(ledger):
     with ThreadPoolExecutor(max_workers=2) as executor:
         assert sorted(executor.map(compete, range(2))) == [False, True]
     assert not list((ledger.path / "refs").rglob("*.lock"))
+
+
+def test_prepared_generation_survives_external_repack_until_ref_publication(ledger):
+    base = ledger.create_signed_genesis({"one": b"base"}, timestamp="2026-10-15T12:00:00Z")
+    ledger.set_main_genesis(base)
+    assert not list((ledger.path / "objects/pack").glob("*.keep"))
+    generation = ledger.create_signed_generation(
+        {"one": b"changed"},
+        parent_oid=base,
+        sequence=1,
+        timestamp="2026-10-15T12:01:00Z",
+        message="Accept one",
+    )
+    assert list((ledger.path / "objects/pack").glob("*.keep"))
+    ledger._git(["repack", "-a", "-d"])
+    assert ledger.object_exists(generation)
+    assert ledger.compare_and_set_main(generation, expected_oid=base)
+    assert not list((ledger.path / "objects/pack").glob("*.keep"))
+    assert ledger.read_tree(generation) == {"one": b"changed"}

@@ -268,6 +268,7 @@ class GitLedger:
             raise GitError("genesis commit unexpectedly has a parent")
         if not self.verify_commit(oid):
             raise GitError("new genesis commit signature does not verify")
+        _batch_reader(self.path)._transaction.retain = True
         return oid
 
     @_pack_transaction
@@ -327,6 +328,7 @@ class GitLedger:
         oid = self._create_commit(tree_oid, (parent_oid,), message, environment, signed=True)
         self._validate_oid(oid)
         self._mark_generation_in_flight(oid)
+        _batch_reader(self.path)._transaction.retain = True
         pending.unlink()
         _fsync_directory(pending.parent)
         if self.parent_of(oid) != parent_oid:
@@ -863,12 +865,14 @@ class GitLedger:
             return [f"verify {PROPOSAL_ARCHIVE_REF} {previous}"] if oids and previous else []
         return [f"update {PROPOSAL_ARCHIVE_REF} {tip} {previous or '0' * len(tip)}"]
 
+    @_pack_transaction
     def archive_proposal_commits(self, oids: Sequence[str]) -> None:
         """Retain a completed refusal before its author slot can be reused."""
         commands = self._archive_update(oids)
         if commands:
             self._update_refs(commands)
 
+    @_pack_transaction
     def replace_proposal_review_refs(
         self, refs: Mapping[str, str], *, retired_targets: Mapping[str, str] | None = None
     ) -> None:
@@ -1243,6 +1247,11 @@ class GitLedger:
                 if operation == "delete":
                     (self.path / ref).unlink(missing_ok=True)
                     _fsync_directory((self.path / ref).parent)
+            reader = _batch_reader(self.path)
+            for _operation, new, _expected in parsed.values():
+                if new is not None:
+                    reader.store.release_oid(new)
+            reader.release_keeps()
         except OSError as exc:
             raise GitError(f"Git ref transaction failed: {exc}") from exc
         finally:
@@ -3110,16 +3119,28 @@ class _BatchBlobReader:
             yield
             return
         self._transaction.pending = {}
+        self._transaction.keeps = []
+        self._transaction.retain = False
         try:
             yield
             self.flush()
         finally:
+            if not self._transaction.retain:
+                self.release_keeps()
             self._transaction.pending = None
+
+    def release_keeps(self) -> None:
+        keeps = getattr(self._transaction, "keeps", [])
+        if keeps:
+            self.store.release(keeps)
+            keeps.clear()
 
     def flush(self) -> None:
         pending = getattr(self._transaction, "pending", None)
         if pending:
-            self.store.write(pending)
+            path = self.store.write(pending, keep=True)
+            if path is not None:
+                self._transaction.keeps.append(path)
             pending.clear()
 
     def close(self) -> None:

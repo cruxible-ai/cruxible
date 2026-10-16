@@ -61,6 +61,7 @@ class PackStore:
         self.directory = repository / "objects" / "pack"
         self.lock = threading.RLock()
         self.locations: dict[str, tuple[Path, int]] = {}
+        self.members: dict[Path, dict[str, int]] = {}
         self.maps: OrderedDict[Path, mmap.mmap] = OrderedDict()
         self.stamp: tuple[int, int, int] | None = None
 
@@ -69,6 +70,7 @@ class PackStore:
         if stamp == self.stamp:
             return
         locations: dict[str, tuple[Path, int]] = {}
+        members: dict[Path, dict[str, int]] = {}
         for index in self.directory.glob("*.idx"):
             data = index.read_bytes()
             if data[:8] != b"\xfftOc\x00\x00\x00\x02":
@@ -87,8 +89,11 @@ class PackStore:
                     offset = struct.unpack_from(
                         ">Q", data, offsets + count * 4 + (offset & 0x7FFFFFFF) * 8
                     )[0]
-                locations[oid] = (index.with_suffix(".pack"), offset)
+                pack_path = index.with_suffix(".pack")
+                locations[oid] = (pack_path, offset)
+                members.setdefault(pack_path, {})[oid] = offset
         self.locations = locations
+        self.members = members
         # Close stale mappings on an explicit external repack. In-process writes
         # register their own locations without this population walk.
         for mapped in self.maps.values():
@@ -96,9 +101,9 @@ class PackStore:
         self.maps.clear()
         self.stamp = stamp
 
-    def write(self, objects: Mapping[str, tuple[str, bytes]]) -> None:
+    def write(self, objects: Mapping[str, tuple[str, bytes]], *, keep: bool = False) -> Path | None:
         if not objects:
-            return
+            return None
         width = len(next(iter(objects))) // 2
         with self.lock:
             self.directory.mkdir(exist_ok=True)
@@ -135,6 +140,10 @@ class PackStore:
             index.extend(checksum)
             index.extend(_hash(bytes(index), width))
             stem = self.directory / f"pack-{checksum.hex()}"
+            if keep:
+                # Git honors .keep even for an as-yet-unreferenced pack. Make
+                # the protection visible before either pack/index publication.
+                stem.with_suffix(".keep").touch(exist_ok=True)
             for suffix, content in ((".pack", pack), (".idx", index)):
                 fd, name = tempfile.mkstemp(prefix="tmp_pack_", dir=self.directory)
                 try:
@@ -150,9 +159,40 @@ class PackStore:
             _directory_sync(self.directory)
             for raw_oid, _, offset in rows:
                 self.locations[raw_oid.hex()] = (stem.with_suffix(".pack"), offset)
+            self.members[stem.with_suffix(".pack")] = {
+                raw_oid.hex(): offset for raw_oid, _, offset in rows
+            }
+            self.stamp = _stamp(self.directory)
+            return stem.with_suffix(".pack")
+
+    def release(self, packs: list[Path]) -> None:
+        with self.lock:
+            for path in packs:
+                path.with_suffix(".keep").unlink(missing_ok=True)
             self.stamp = _stamp(self.directory)
 
+    def release_oid(self, oid: str) -> None:
+        with self.lock:
+            self._discover(len(oid) // 2)
+            location = self.locations.get(oid)
+            if location is not None:
+                self.release([location[0]])
+
     def read(self, oid: str) -> tuple[str, bytes] | None:
+        try:
+            return self._read(oid)
+        except FileNotFoundError:
+            # An external gc may replace a pack between discovery and open.
+            # Rediscover once for that maintenance event, never for an ordinary
+            # missing-object probe on the write path.
+            with self.lock:
+                self.stamp = None
+                self._discover(len(oid) // 2)
+            return self._read(oid)
+        except (OSError, ValueError, IndexError, struct.error, zlib.error) as exc:
+            raise GitError(f"Git object storage is corrupt or unavailable: {oid}") from exc
+
+    def _read(self, oid: str) -> tuple[str, bytes] | None:
         width = len(oid) // 2
         with self.lock:
             loose = self.repository / "objects" / oid[:2] / oid[2:]
@@ -251,7 +291,9 @@ class PackStore:
             return ()
         with self.lock:
             self._discover(len(next(iter(oids))) // 2)
-            affected = {path for oid, (path, _) in self.locations.items() if oid in oids}
+            affected = {
+                path for path, members in self.members.items() if oids.intersection(members)
+            }
             retained = {
                 oid: self.read(oid)
                 for oid, (path, _) in self.locations.items()
@@ -262,6 +304,7 @@ class PackStore:
                 mapped = self.maps.pop(path, None)
                 if mapped is not None:
                     mapped.close()
+                path.with_suffix(".keep").unlink(missing_ok=True)
                 path.with_suffix(".idx").unlink(missing_ok=True)
                 path.unlink(missing_ok=True)
             _directory_sync(self.directory)
