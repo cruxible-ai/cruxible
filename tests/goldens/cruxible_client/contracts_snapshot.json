@@ -157,6 +157,7 @@
         "consumer_stalled",
         "line_coverage_gap",
         "line_work_pending",
+        "line_disabled_by_upgrade",
         "line_settled_prior_refusals",
         "line_inbox_unread",
         "evidence_unavailable",
@@ -30858,6 +30859,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_disabled_by_upgrade",
               "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
@@ -31249,6 +31251,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_disabled_by_upgrade",
               "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
@@ -31789,6 +31792,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_disabled_by_upgrade",
               "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
@@ -31999,6 +32003,7 @@
                   "consumer_stalled",
                   "line_coverage_gap",
                   "line_work_pending",
+                  "line_disabled_by_upgrade",
                   "line_settled_prior_refusals",
                   "line_inbox_unread",
                   "evidence_unavailable",
@@ -32292,6 +32297,7 @@
               "consumer_stalled",
               "line_coverage_gap",
               "line_work_pending",
+              "line_disabled_by_upgrade",
               "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
@@ -33354,6 +33360,7 @@
                   "consumer_stalled",
                   "line_coverage_gap",
                   "line_work_pending",
+                  "line_disabled_by_upgrade",
                   "line_settled_prior_refusals",
                   "line_inbox_unread",
                   "evidence_unavailable",
@@ -33517,6 +33524,7 @@
                   "consumer_stalled",
                   "line_coverage_gap",
                   "line_work_pending",
+                  "line_disabled_by_upgrade",
                   "line_settled_prior_refusals",
                   "line_inbox_unread",
                   "evidence_unavailable",
@@ -75613,6 +75621,36 @@
             "type": "boolean"
           }
         },
+        "automation_carries": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "automation_carries",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "line": "#/$defs/CarriedLineV1",
+                  "mandate": "#/$defs/CarriedMandateV1"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CarriedLineV1"
+                },
+                {
+                  "$ref": "#/$defs/CarriedMandateV1"
+                }
+              ]
+            },
+            "title": "Automation Carries",
+            "type": "array"
+          }
+        },
         "carried_dependents": {
           "default": 0,
           "default_json_serializable": true,
@@ -75807,6 +75845,175 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "CarriedLineV1": {
+            "additionalProperties": false,
+            "description": "A same-identity Line successor; exact-version enablement never transfers.",
+            "properties": {
+              "enablement": {
+                "const": "disabled",
+                "default": "disabled",
+                "title": "Enablement",
+                "type": "string"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "const": "line",
+                "default": "line",
+                "title": "Kind",
+                "type": "string"
+              },
+              "new_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Artifact Digest"
+              },
+              "new_procedure_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Procedure Digest"
+              },
+              "old_artifact_digest": {
+                "title": "Old Artifact Digest",
+                "type": "string"
+              },
+              "old_procedure_digest": {
+                "title": "Old Procedure Digest",
+                "type": "string"
+              },
+              "phase": {
+                "default": "validated",
+                "enum": [
+                  "planned",
+                  "validated"
+                ],
+                "title": "Phase",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "procedure",
+              "old_procedure_digest",
+              "old_artifact_digest"
+            ],
+            "title": "CarriedLineV1",
+            "type": "object"
+          },
+          "CarriedMandateV1": {
+            "additionalProperties": false,
+            "description": "A same-name propose successor, with all settle-only fields removed.",
+            "properties": {
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "const": "mandate",
+                "default": "mandate",
+                "title": "Kind",
+                "type": "string"
+              },
+              "loses_settle": {
+                "title": "Loses Settle",
+                "type": "boolean"
+              },
+              "new_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Artifact Digest"
+              },
+              "new_grant": {
+                "const": "propose",
+                "default": "propose",
+                "title": "New Grant",
+                "type": "string"
+              },
+              "new_procedure_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "New Procedure Digest"
+              },
+              "old_artifact_digest": {
+                "title": "Old Artifact Digest",
+                "type": "string"
+              },
+              "old_grant": {
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
+                "title": "Old Grant",
+                "type": "string"
+              },
+              "old_procedure_digest": {
+                "title": "Old Procedure Digest",
+                "type": "string"
+              },
+              "phase": {
+                "default": "validated",
+                "enum": [
+                  "planned",
+                  "validated"
+                ],
+                "title": "Phase",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "subject_creation_namespace_limitation": {
+                "default": false,
+                "title": "Subject Creation Namespace Limitation",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "identity",
+              "procedure",
+              "old_procedure_digest",
+              "old_artifact_digest",
+              "old_grant",
+              "loses_settle"
+            ],
+            "title": "CarriedMandateV1",
+            "type": "object"
+          },
           "ProviderBuildResolutionV1": {
             "additionalProperties": false,
             "description": "Which build a provider reference resolved to, and from what.",
@@ -75983,7 +76190,7 @@
           },
           "StoppedAutomationV1": {
             "additionalProperties": false,
-            "description": "A Line, Trigger or Mandate a re-pin retires: it pinned the moved definition's\nold version and cannot be carried to the new one, so its automation stops.\nAuthor it again over the moved definition to resume it.",
+            "description": "Automation retired with a retired definition; live Procedure successors\ninstead carry Lines disabled and Mandates propose-only.",
             "properties": {
               "identity": {
                 "title": "Identity",
@@ -76024,6 +76231,28 @@
             "default": false,
             "title": "Approval Required",
             "type": "boolean"
+          },
+          "automation_carries": {
+            "default": [],
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "line": "#/$defs/CarriedLineV1",
+                  "mandate": "#/$defs/CarriedMandateV1"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CarriedLineV1"
+                },
+                {
+                  "$ref": "#/$defs/CarriedMandateV1"
+                }
+              ]
+            },
+            "title": "Automation Carries",
+            "type": "array"
           },
           "carried_dependents": {
             "default": 0,
@@ -100841,7 +101070,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "A Line, Trigger or Mandate a re-pin retires: it pinned the moved definition's\nold version and cannot be carried to the new one, so its automation stops.\nAuthor it again over the moved definition to resume it.",
+        "description": "Automation retired with a retired definition; live Procedure successors\ninstead carry Lines disabled and Mandates propose-only.",
         "properties": {
           "identity": {
             "title": "Identity",
