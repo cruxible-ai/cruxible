@@ -31,6 +31,7 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import islice
 from typing import Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -1037,7 +1038,10 @@ class _ReadingPartitionIndex:
     entries: tuple[_IndexedReading, ...]
     by_key: dict[ReadingReplayKey, _IndexedReading]
     head: JournalPartitionHeadV1
+    # One representative plus an incremental record count: damaged history
+    # must not become a population copied or serialized on every page.
     unavailable: tuple[UnavailablePayload, ...] = ()
+    unavailable_count: int = 0
 
 
 _reading_index_memo: OrderedDict[tuple[str, str], _ReadingPartitionIndex] = OrderedDict()
@@ -1070,9 +1074,12 @@ def reading_partition_index(
     head = journal.read_head(stream, partition_id)
     key = (str(instance.root), partition_id)
     cached = memo_get(_reading_index_memo, key)
+    if cached is not None and cached.head == head:
+        return cached
     entries: list[_IndexedReading] = []
     prefix: tuple[str, ...] = ()
     unavailable: list[UnavailablePayload] = []
+    unavailable_count = 0
     if cached is not None and 0 < len(cached.digests) <= head.sequence:
         # The chain makes the cached last record's digest commit to the whole
         # cached prefix: when the retained record at that sequence still
@@ -1087,6 +1094,7 @@ def reading_partition_index(
             prefix = cached.digests
             entries.extend(cached.entries)
             unavailable.extend(cached.unavailable)
+            unavailable_count = cached.unavailable_count
     records = (
         journal.select_records(
             stream,
@@ -1103,7 +1111,9 @@ def reading_partition_index(
             continue
         entry = _parse_reading(instance, stored)
         if isinstance(entry, UnavailablePayload):
-            unavailable.append(entry)
+            unavailable_count += 1
+            if not unavailable:
+                unavailable.append(entry)
         else:
             entries.append(entry)
     by_key: dict[ReadingReplayKey, _IndexedReading] = {}
@@ -1117,6 +1127,7 @@ def reading_partition_index(
         by_key=by_key,
         head=head,
         unavailable=tuple(unavailable),
+        unavailable_count=unavailable_count,
     )
     memo_put(_reading_index_memo, key, index, capacity=_READING_INDEX_MEMO_CAPACITY)
     return index
@@ -1764,11 +1775,14 @@ def service_list_playbill_procedure_readings(
     # Only what this page serves is re-read through CAS: bounded by the page,
     # and enough that a warm index never vouches for a body it cannot show.
     unavailable_payloads = [item.digest for item in index.unavailable]
+    unavailable_reading_count = index.unavailable_count
     available_page = []
     for entry in page:
         verified = _verify_retained(instance, entry)
         if isinstance(verified, UnavailablePayload):
-            unavailable_payloads.append(verified.digest)
+            unavailable_reading_count += 1
+            if len(unavailable_payloads) < request.limit:
+                unavailable_payloads.append(verified.digest)
         else:
             available_page.append(entry)
     cursor = (
@@ -1781,7 +1795,7 @@ def service_list_playbill_procedure_readings(
         if truncated and page
         else None
     )
-    reading_unavailable = bool(unavailable_payloads)
+    reading_unavailable = unavailable_reading_count > 0
     contracts: list[ProcedureMeasurementContractStatus] = []
     for activation in activations:
         state = _contract_state(instance, journal, stream, activation)
@@ -1790,7 +1804,10 @@ def service_list_playbill_procedure_readings(
             observation=public_observation,
             observation_time=observation_time,
         )
-        unavailable_payloads.extend(item.digest for item in state.book.unavailable)
+        unavailable_payloads.extend(
+            item.digest
+            for item in islice(state.book.unavailable, request.limit - len(unavailable_payloads))
+        )
         contracts.append(
             ProcedureMeasurementContractStatus(
                 measurement_name=activation.measurement_name,
@@ -1818,6 +1835,7 @@ def service_list_playbill_procedure_readings(
         contracts=tuple(contracts),
         readings=tuple(_reading_summary(entry) for entry in available_page),
         unavailable_payloads=tuple(sorted(set(unavailable_payloads))),
+        unavailable_reading_count=unavailable_reading_count,
         truncated=truncated,
         cursor=cursor,
     )

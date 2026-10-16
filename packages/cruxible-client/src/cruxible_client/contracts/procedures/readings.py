@@ -379,7 +379,9 @@ class ProcedureReadingsResult(_StrictReadingWireModel):
     readings: tuple[ProcedureReadingSummary, ...]
     truncated: bool = False
     cursor: str | None = None
+    # At most the requested page size of representative unavailable digests.
     unavailable_payloads: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    unavailable_reading_count: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
 
     @field_validator("unavailable_payloads")
     @classmethod
