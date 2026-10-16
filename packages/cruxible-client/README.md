@@ -4022,7 +4022,7 @@ Import: `cruxible_client.authoring.sdk.ProjectionBlocks`. [Source](src/cruxible_
 
 ```text
 repin(
-    source: str | SourceRef,
+    file: str | SourceRef,
     block_id: str,
     *,
     claims: Sequence[str | ClaimRef] | None = None,

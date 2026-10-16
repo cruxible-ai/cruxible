@@ -122,7 +122,7 @@ class ProjectionRepinConflict(ProjectionRepinError):
         self.source_id = source_id
         self.block_id = block_id
         super().__init__(
-            f"block {block_id!r} in source {source_id!r} changed after it was proved "
+            f"block {block_id!r} in file {source_id!r} changed after it was proved "
             "rendered; re-run sync to re-prove it before converging"
         )
 
@@ -1461,7 +1461,7 @@ def repin_projection_block(
     )
     block = next((item for item in blocks if item.block_id == block_id), None)
     if block is None:
-        raise ProjectionRepinError(f"source {source_id!r} has no block {block_id!r}")
+        raise ProjectionRepinError(f"file {source_id!r} has no block {block_id!r}")
     if proved is not None and (
         block.body_digest != proved.body_digest or block.stamp != proved.stamp
     ):

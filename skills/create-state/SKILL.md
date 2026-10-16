@@ -171,7 +171,7 @@ cruxible query --name NAME
 
 For a table or list people read in a page, use a rendered projection block:
 write `<!-- cruxible:block:ID -->` and `<!-- /cruxible:block:ID -->` in a
-catalogued page, then `cruxible block repin SOURCE ID --query
+catalogued page, then `cruxible block repin FILE ID --query
 QueryDefinition:NAME --render`. For a summary only prose can give, write the
 prose between the markers and repin with `--claim CLM-…` for each Claim it
 summarizes. Both are reported by `next` when their backing state moves.

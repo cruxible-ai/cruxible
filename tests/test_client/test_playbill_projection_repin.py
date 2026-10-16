@@ -13,6 +13,7 @@ import pytest
 from cruxible_client import Cruxible
 from cruxible_client import contracts as api
 from cruxible_client.authoring.blocks import (
+    ProjectionRepinConflict,
     ProjectionRepinError,
     parse_projection_blocks,
     repin_projection_block,
@@ -398,8 +399,8 @@ def test_sdk_block_facade_bootstraps_at_its_active_coordinate(tmp_path: Path) ->
     )
 
     stamp = playbill.block.repin(
-        "corpus.runbook",
-        "summary",
+        file="corpus.runbook",
+        block_id="summary",
         claims=("CLM-first",),
         evaluation_time=NOW,
     )
@@ -891,3 +892,25 @@ def test_a_converging_sync_leaves_stale_prose_to_its_author(tmp_path: Path) -> N
     assert (item.outcome, item.reason) == ("stale", "block_backing_changed")
     assert source.read_bytes() == before
     assert len(client.observed) == 2
+
+
+def test_repin_missing_block_and_conflict_name_the_file(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    with pytest.raises(ProjectionRepinError, match="file 'corpus.runbook' has no block 'missing'"):
+        repin_projection_block(
+            _RepinClient(),  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            file="corpus.runbook",
+            block_id="missing",
+            evaluation_time=NOW,
+        )
+    conflict = ProjectionRepinConflict(source_id="corpus.runbook", block_id="summary")
+    assert "in file 'corpus.runbook' changed" in str(conflict)
+
+
+def test_create_state_teaches_file_repin_operand() -> None:
+    skill = Path(__file__).resolve().parents[2] / "skills/create-state/SKILL.md"
+    text = skill.read_text()
+    assert "cruxible block repin FILE ID" in text
+    assert "cruxible block repin SOURCE ID" not in text

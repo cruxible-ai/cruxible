@@ -1354,7 +1354,7 @@ def playbill_propose_file_bundle(
     check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         result = _proposal_validation_boundary(
-            "source bundle",
+            "file bundle",
             lambda: service_propose_playbill_file_bundle(
                 get_playbill_manager().get(instance_id),
                 bundle=bundle,

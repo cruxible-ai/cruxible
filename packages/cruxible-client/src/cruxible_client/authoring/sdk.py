@@ -4740,7 +4740,7 @@ class ProjectionBlocks:
 
     def repin(
         self,
-        source: str | SourceRef,
+        file: str | SourceRef,
         block_id: str,
         *,
         claims: Sequence[str | ClaimRef] | None = None,
@@ -4764,9 +4764,9 @@ class ProjectionBlocks:
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
-        source_id = _address(source, RefKind.SOURCE)
-        if isinstance(source, SourceRef):
-            self._playbill._assert_coordinate(source.coordinate)
+        file_id = _address(file, RefKind.SOURCE)
+        if isinstance(file, SourceRef):
+            self._playbill._assert_coordinate(file.coordinate)
         claim_refs: list[str] = []
         for claim in claims or ():
             if isinstance(claim, ClaimRef):
@@ -4785,7 +4785,7 @@ class ProjectionBlocks:
             self._playbill._client,
             self._playbill._instance_id,
             workspace=self._playbill._workspace_root,
-            file=source_id,
+            file=file_id,
             block_id=block_id,
             claims=claim_refs if claims is not None else None,
             queries=query_refs if queries is not None else None,
