@@ -2490,18 +2490,20 @@ class GitLedger:
     ) -> Mapping[str, tuple[bytes, str]]:
         """One tree object's immutable entries, sharing encoded write-side listings."""
 
-        with _ENCODED_TREES_LOCK:
-            encoded = _ENCODED_TREES.get(oid)
-            if encoded is not None:
-                _ENCODED_TREES.move_to_end(oid)
-                return encoded.entries
         key = (repository, oid)
         with _PARSED_TREES_LOCK:
             cached = _PARSED_TREES.get(key)
             if cached is not None:
                 _PARSED_TREES.move_to_end(key)
                 return cached
-        entries = self._tree_entries_of(oid)
+        with _ENCODED_TREES_LOCK:
+            encoded = _ENCODED_TREES.get(oid)
+            if encoded is not None:
+                _ENCODED_TREES.move_to_end(oid)
+        # A read that compares all children needs dict lookups. Materialize
+        # once per cold immutable object using the linear items iterator;
+        # returning the AVL map here makes a full comparison O(n log n).
+        entries = self._tree_entries_of(oid) if encoded is None else dict(encoded.entries.items())
         global _PARSED_TREE_ENTRIES
         with _PARSED_TREES_LOCK:
             if key not in _PARSED_TREES:
