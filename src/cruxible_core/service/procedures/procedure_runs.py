@@ -194,11 +194,11 @@ from cruxible_core.exhaust import (
     LocalJournalBackend,
 )
 from cruxible_core.exhaust.line_inbox import LineInboxStore
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.promotions import VerifiedExhaustRecordV1
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
     StoredProcedureJournalRecordV1,
-    parse_journal_payload,
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -1051,20 +1051,35 @@ def _exact_pin(value: ArtifactPin | ProcedurePinSlotRef) -> ArtifactPin:
     raise ExecutionError(f"accepted Procedure has an open slot {value.slot_name!r}")
 
 
+@dataclass(frozen=True)
+class _UnavailableLineAdmission:
+    """Authenticated admission identity whose binding cannot currently be read."""
+
+    stored: StoredProcedureJournalRecordV1
+
+    @property
+    def run_id(self) -> str:
+        run_id = self.stored.record.run_id
+        if run_id is None:
+            raise ExecutionError("Admission run identity is unavailable; restore its exhaust")
+        return run_id
+
+
 def _stored_line_admission(
     instance: PlaybillInstance, stored: Any
-) -> ProcedureRunAdmissionV5 | None:
+) -> ProcedureRunAdmissionV5 | _UnavailableLineAdmission | None:
     if stored.record.event_kind != "admission_bound":
         return None
-    payload = parse_journal_payload(
-        instance.body_store().read(
-            stored.record.payload_digest,
-            access=BodyAccessContext(
-                principal_id="line-occurrence-registry",
-                can_read_body=True,
-            ),
-        )
+    payload = read_payload(
+        instance.body_store(),
+        stored.record.payload_digest,
+        access=BodyAccessContext(
+            principal_id="line-occurrence-registry",
+            can_read_body=True,
+        ),
     )
+    if isinstance(payload, UnavailablePayload):
+        return _UnavailableLineAdmission(stored)
     if (
         not isinstance(payload, dict)
         or payload.get("tag") not in ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS
@@ -1084,11 +1099,11 @@ def _line_admissions(
     accepted_line: AcceptedLineSpec,
     *,
     occurrence_id: str | None = None,
-) -> tuple[ProcedureRunAdmissionV5, ...]:
+) -> tuple[ProcedureRunAdmissionV5 | _UnavailableLineAdmission, ...]:
     journal, _root = _journal(instance)
     stream = procedure_line_journal_stream(instance.descriptor.instance_id)
     partition = procedure_line_partition(accepted_line.line.identity)
-    admissions: list[ProcedureRunAdmissionV5] = []
+    admissions: list[ProcedureRunAdmissionV5 | _UnavailableLineAdmission] = []
     for stored in journal.select_records(
         stream,
         partition_id=partition,
@@ -1107,9 +1122,9 @@ def _line_admissions(
 # sequence read, that Trigger's latest admission). Admission records are
 # append-only, so the chain only ever reads what landed since; an entry lost to
 # eviction or a concurrent write only means reading from an earlier sequence.
-_TRIGGER_CHAINS: OrderedDict[tuple[str, str, str], tuple[int, ProcedureRunAdmissionV5 | None]] = (
-    OrderedDict()
-)
+_TRIGGER_CHAINS: OrderedDict[
+    tuple[str, str, str], tuple[int, ProcedureRunAdmissionV5 | _UnavailableLineAdmission | None]
+] = OrderedDict()
 _TRIGGER_CHAINS_CAPACITY = 4096
 
 
@@ -1117,7 +1132,7 @@ def _trigger_admissions(
     instance: PlaybillInstance,
     accepted_line: AcceptedLineSpec,
     trigger: ArtifactIdentity,
-) -> tuple[ProcedureRunAdmissionV5, ...]:
+) -> tuple[ProcedureRunAdmissionV5 | _UnavailableLineAdmission, ...]:
     """The latest occurrence one Trigger fired on this Line.
 
     A Line's admissions interleave every Trigger aimed at it, so a Trigger's
@@ -1139,8 +1154,16 @@ def _trigger_admissions(
     ):
         seen = max(seen, stored.record.sequence)
         admission = _stored_line_admission(instance, stored)
+        if isinstance(admission, _UnavailableLineAdmission):
+            # Its Trigger cannot be proven. Keep the chain incomplete until an
+            # explicit repair/restart, even if later known admissions arrive.
+            latest = admission
         binding = getattr(admission, "trigger_binding", None)
-        if binding is not None and binding.trigger == trigger:
+        if (
+            not isinstance(latest, _UnavailableLineAdmission)
+            and binding is not None
+            and binding.trigger == trigger
+        ):
             latest = admission
     memo_put(_TRIGGER_CHAINS, key, (seen, latest), capacity=_TRIGGER_CHAINS_CAPACITY)
     return () if latest is None else (latest,)
@@ -1150,7 +1173,7 @@ def _event_admission(
     instance: PlaybillInstance,
     accepted_line: AcceptedLineSpec,
     event: TriggerEventReference,
-) -> str | None:
+) -> str | _UnavailableLineAdmission | None:
     """The run a Trigger of this Line admitted on this exact event, if any."""
 
     journal, _root = _journal(instance)
@@ -1160,6 +1183,9 @@ def _event_admission(
         stream, partition_id=partition, event_kind="admission_bound", descending=True
     ):
         admission = _stored_line_admission(instance, stored)
+        if isinstance(admission, _UnavailableLineAdmission):
+            # Without the binding this event cannot be proved unadmitted.
+            return admission
         binding = getattr(admission, "trigger_binding", None)
         if admission is not None and binding is not None and binding.event == event:
             return admission.run_id
@@ -2089,6 +2115,39 @@ def _fold_terminal_egress(
     )
 
 
+def _unavailable_run_state(stored, *, admission=None) -> ProcedureRunStateV2:  # type: ignore[no-untyped-def]
+    """Keep the authenticated run identity, without inventing a replay or receipt."""
+    record = stored.record
+    return ProcedureRunStateV2(
+        run_id=record.run_id,
+        procedure_identity=(
+            admission.procedure_identity
+            if admission is not None
+            else ArtifactIdentity(kind="Procedure", name="unavailable")
+        ),
+        procedure_artifact_digest=record.procedure_artifact_digest,
+        bound_coordinate=(
+            admission.bound_coordinate if admission is not None else record.accepted_coordinate
+        ),
+        head_at_admission=(
+            admission.head_at_admission if admission is not None else record.accepted_coordinate
+        ),
+        lane="current" if admission is None else admission.lane,
+        evaluation_time=record.recorded_at if admission is None else admission.admitted_at,
+        status="operational_failed",
+        pending_inputs=(),
+        outcomes=(),
+        next_operation=ProcedureNextOperationV1(kind="terminal"),
+        terminal=ProcedureOperationalFailure(
+            code="replay_material_unavailable",
+            message="Run exhaust payload is unavailable.",
+            journal_coordinate=_journal_coordinate(stored),
+            details={"payload_digest": record.payload_digest, "availability": "unavailable"},
+            repair=served_repair_for_refusal("replay_material_unavailable"),
+        ),
+    )
+
+
 def _state_from_records(
     instance: PlaybillInstance,
     *,
@@ -2123,7 +2182,9 @@ def _state_from_records(
     terminal_egress: dict[str, ProcedureTerminalEgress] = {}
     children: list[ProcedureChildInvocation] = []
     for stored in records:
-        payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
+        payload = read_payload(bodies, stored.record.payload_digest, access=access)
+        if isinstance(payload, UnavailablePayload):
+            return _unavailable_run_state(stored, admission=admission)
         if (
             stored.record.event_kind == "child_invocation"
             and isinstance(payload, dict)
@@ -3897,6 +3958,8 @@ def _run_playbill_line(
         # A manual run on an event the enabled Line's automation already ran is
         # almost always a mistake; it runs again only when asked to.
         admitted = _event_admission(instance, accepted_line, event)
+        if isinstance(admitted, _UnavailableLineAdmission):
+            return _unavailable_run_state(admitted.stored)
         if admitted is not None:
             return _line_refusal_state(
                 accepted,
@@ -3953,6 +4016,8 @@ def _run_playbill_line(
     existing = next(
         iter(_line_admissions(instance, accepted_line, occurrence_id=occurrence_id)), None
     )
+    if isinstance(existing, _UnavailableLineAdmission):
+        return _unavailable_run_state(existing.stored)
     if existing is not None:
         # An occurrence admitted with an investigation or trigger binding (a V7
         # carrier, or a V9 carrying either) retries as itself; any other is done.
@@ -4554,6 +4619,21 @@ def load_playbill_procedure_run_grain(
     """Reconstruct one run's state and read back the grains its journal proves."""
 
     state = _state_from_records(instance, run_id=run_id)
+    if (
+        isinstance(state.terminal, ProcedureOperationalFailure)
+        and state.terminal.code == "replay_material_unavailable"
+    ):
+        return ProcedureRunGrainRecordV1(
+            state=state,
+            invocation_origin="actor",
+            occurrence_id=None,
+            attempt=1,
+            line_identity=None,
+            line_spec_digest=None,
+            finalized=False,
+            node_verdicts={},
+            selected_arms={},
+        )
     records = _records_for_run(instance, run_id)
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="procedure-run-grain", can_read_body=True)
@@ -4571,7 +4651,7 @@ def load_playbill_procedure_run_grain(
         kind = stored.record.event_kind
         if kind not in {"admission_bound", "node_fired", "branch_evaluated", "attempt_finalized"}:
             continue
-        payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
+        payload = read_payload(bodies, stored.record.payload_digest, access=access)
         if not isinstance(payload, dict):
             continue
         if kind == "admission_bound":
@@ -4679,9 +4759,10 @@ def service_recover_provider_invocations(
         starts: dict[str, ProviderInvocationStarted] = {}
         completed: dict[str, ProviderInvocationCompleted] = {}
         for stored in records:
-            payload = parse_journal_payload(
-                bodies.read(stored.record.payload_digest, access=access)
-            )
+            payload = read_payload(bodies, stored.record.payload_digest, access=access)
+            if isinstance(payload, UnavailablePayload):
+                admission = None
+                break
             if stored.record.event_kind == "admission_bound" and isinstance(payload, dict):
                 parsed_bound = parse_admission_payload(payload)
                 if isinstance(parsed_bound, ProcedureAdmissionBoundPayloadV5):

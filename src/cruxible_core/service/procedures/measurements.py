@@ -31,6 +31,7 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import islice
 from typing import Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -50,7 +51,6 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.errors import (
-    CasError,
     ClaimNotFoundError,
     CruxibleError,
     ExecutionError,
@@ -85,6 +85,7 @@ from cruxible_client.contracts.procedures.readings import (
     ProcedureReadingStatus,
     ProcedureReadingSummary,
 )
+from cruxible_client.contracts.procedures.results import ProcedureOperationalFailure
 from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import (
     QueryExecutionReceipt,
@@ -96,6 +97,7 @@ from cruxible_core.exhaust import (
     JournalStreamIdentityV1,
     LocalJournalBackend,
 )
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload, read_payload_bytes
 from cruxible_core.exhaust.records import (
     CLAIM_VERDICT_OBSERVATION_EVENT_KIND,
     QUERY_RECEIPT_EVENT_KIND,
@@ -103,7 +105,6 @@ from cruxible_core.exhaust.records import (
     JournalEventKindV1,
     JournalPartitionHeadV1,
     StoredProcedureJournalRecordV1,
-    parse_journal_payload,
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -1037,6 +1038,10 @@ class _ReadingPartitionIndex:
     entries: tuple[_IndexedReading, ...]
     by_key: dict[ReadingReplayKey, _IndexedReading]
     head: JournalPartitionHeadV1
+    # One representative plus an incremental record count: damaged history
+    # must not become a population copied or serialized on every page.
+    unavailable: tuple[UnavailablePayload, ...] = ()
+    unavailable_count: int = 0
 
 
 _reading_index_memo: OrderedDict[tuple[str, str], _ReadingPartitionIndex] = OrderedDict()
@@ -1045,10 +1050,10 @@ _reading_index_memo: OrderedDict[tuple[str, str], _ReadingPartitionIndex] = Orde
 def _parse_reading(
     instance: PlaybillInstance,
     stored: StoredProcedureJournalRecordV1,
-) -> _IndexedReading:
-    payload = parse_journal_payload(
-        instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
-    )
+) -> _IndexedReading | UnavailablePayload:
+    payload = read_payload(instance.body_store(), stored.record.payload_digest, access=_ACCESS)
+    if isinstance(payload, UnavailablePayload):
+        return payload
     try:
         reading = ProcedureReadingV1.model_validate(payload)
     except ValidationError as exc:
@@ -1069,8 +1074,12 @@ def reading_partition_index(
     head = journal.read_head(stream, partition_id)
     key = (str(instance.root), partition_id)
     cached = memo_get(_reading_index_memo, key)
+    if cached is not None and cached.head == head:
+        return cached
     entries: list[_IndexedReading] = []
     prefix: tuple[str, ...] = ()
+    unavailable: list[UnavailablePayload] = []
+    unavailable_count = 0
     if cached is not None and 0 < len(cached.digests) <= head.sequence:
         # The chain makes the cached last record's digest commit to the whole
         # cached prefix: when the retained record at that sequence still
@@ -1084,6 +1093,8 @@ def reading_partition_index(
         if len(last) == 1 and last[0].record_digest == cached.digests[-1]:
             prefix = cached.digests
             entries.extend(cached.entries)
+            unavailable.extend(cached.unavailable)
+            unavailable_count = cached.unavailable_count
     records = (
         journal.select_records(
             stream,
@@ -1098,33 +1109,40 @@ def reading_partition_index(
     for stored in records:
         if stored.record.event_kind != "procedure_reading":
             continue
-        entries.append(_parse_reading(instance, stored))
+        entry = _parse_reading(instance, stored)
+        if isinstance(entry, UnavailablePayload):
+            unavailable_count += 1
+            if not unavailable:
+                unavailable.append(entry)
+        else:
+            entries.append(entry)
     by_key: dict[ReadingReplayKey, _IndexedReading] = {}
     for entry in entries:
         replay = reading_replay_key(entry.reading)
         if replay is not None:
             by_key.setdefault(replay, entry)
     index = _ReadingPartitionIndex(
-        digests=digests, entries=tuple(entries), by_key=by_key, head=head
+        digests=digests,
+        entries=tuple(entries),
+        by_key=by_key,
+        head=head,
+        unavailable=tuple(unavailable),
+        unavailable_count=unavailable_count,
     )
     memo_put(_reading_index_memo, key, index, capacity=_READING_INDEX_MEMO_CAPACITY)
     return index
 
 
-def _verify_retained(instance: PlaybillInstance, entry: _IndexedReading) -> _IndexedReading:
-    """Re-read a reading's body through CAS before serving it from the warm index.
-
-    The journal frame authenticates the record; it does not prove the body
-    those bytes address is still present and intact. Every reading this
-    service returns or replays against is re-verified against its content
-    address, so a warm process answers exactly as a cold one would.
-    """
-
-    try:
-        instance.body_store().read(entry.stored.record.payload_digest, access=_ACCESS)
-    except CasError:
+def _verify_retained(
+    instance: PlaybillInstance, entry: _IndexedReading
+) -> _IndexedReading | UnavailablePayload:
+    """Verify only this served/replayed reading; lost exhaust is unavailable."""
+    payload = read_payload_bytes(
+        instance.body_store(), entry.stored.record.payload_digest, access=_ACCESS
+    )
+    if isinstance(payload, UnavailablePayload):
         memo_discard(_reading_index_memo, (str(instance.root), entry.stored.record.partition_id))
-        raise
+        return payload
     return entry
 
 
@@ -1358,7 +1376,7 @@ def service_measure_playbill_procedure(
             )
             state = _contract_state(instance, journal, stream, activation)
             written_now = False
-            if state.latest is None and eligibility.window == "open":
+            if not state.book.unavailable and state.latest is None and eligibility.window == "open":
                 evidence, receipts = _evaluate_evidence(
                     instance,
                     declaration=activation.declaration,
@@ -1438,12 +1456,25 @@ def service_measure_playbill_procedure(
                 else:
                     written_now = True
                     state = _contract_state(instance, journal, stream, activation)
-            status = _measurement_status(state.latest is not None, eligibility.window)
+            status = (
+                "unavailable"
+                if state.book.unavailable
+                else _measurement_status(state.latest is not None, eligibility.window)
+            )
             detail: str | None = None
             reading_status: ProcedureReadingStatus = "not_requested"
             reading_summary: ProcedureReadingSummary | None = None
-            if grain is not None:
-                if state.latest is None:
+            if state.book.unavailable:
+                reading_status = "unavailable"
+                detail = "Resolution exhaust payload is unavailable."
+            elif grain is not None:
+                if (
+                    isinstance(grain.state.terminal, ProcedureOperationalFailure)
+                    and grain.state.terminal.code == "replay_material_unavailable"
+                ):
+                    reading_status = "unavailable"
+                    detail = "Run exhaust payload is unavailable."
+                elif state.latest is None:
                     reading_status = "no_resolution"
                     detail = {
                         "pending": "the measurement window has not opened",
@@ -1523,7 +1554,7 @@ def _credit_reading(
     journal: LocalJournalBackend,
     stream: JournalStreamIdentityV1,
     partition_id: str,
-) -> tuple[ProcedureReadingStatus, ProcedureReadingSummary]:
+) -> tuple[ProcedureReadingStatus, ProcedureReadingSummary | None]:
     """Credit one grain exactly once.
 
     Lookup and append are one compare-and-set: the partition is indexed at a
@@ -1575,9 +1606,12 @@ def _credit_reading(
         index = reading_partition_index(
             instance, journal=journal, stream=stream, partition_id=partition_id
         )
+        if index.unavailable:
+            return "unavailable", None
         existing = None if replay is None else index.by_key.get(replay)
         if existing is not None:
-            _verify_retained(instance, existing)
+            if isinstance(_verify_retained(instance, existing), UnavailablePayload):
+                return "unavailable", None
             if _semantic_reading_payload(existing.reading) != _semantic_reading_payload(reading):
                 raise _refuse(
                     "measurement_reading_conflict",
@@ -1608,6 +1642,8 @@ def _credit_reading(
             # next pass replays it; otherwise the append is retried on the
             # new head.
             continue
+        if isinstance(stored, UnavailablePayload):
+            return "unavailable", None
         refreshed = reading_partition_index(
             instance, journal=journal, stream=stream, partition_id=partition_id
         )
@@ -1738,8 +1774,17 @@ def service_list_playbill_procedure_readings(
     page = page[: request.limit]
     # Only what this page serves is re-read through CAS: bounded by the page,
     # and enough that a warm index never vouches for a body it cannot show.
+    unavailable_payloads = [item.digest for item in index.unavailable]
+    unavailable_reading_count = index.unavailable_count
+    available_page = []
     for entry in page:
-        _verify_retained(instance, entry)
+        verified = _verify_retained(instance, entry)
+        if isinstance(verified, UnavailablePayload):
+            unavailable_reading_count += 1
+            if len(unavailable_payloads) < request.limit:
+                unavailable_payloads.append(verified.digest)
+        else:
+            available_page.append(entry)
     cursor = (
         _cursor(
             selection,
@@ -1750,6 +1795,7 @@ def service_list_playbill_procedure_readings(
         if truncated and page
         else None
     )
+    reading_unavailable = unavailable_reading_count > 0
     contracts: list[ProcedureMeasurementContractStatus] = []
     for activation in activations:
         state = _contract_state(instance, journal, stream, activation)
@@ -1757,6 +1803,10 @@ def service_list_playbill_procedure_readings(
             activation,
             observation=public_observation,
             observation_time=observation_time,
+        )
+        unavailable_payloads.extend(
+            item.digest
+            for item in islice(state.book.unavailable, request.limit - len(unavailable_payloads))
         )
         contracts.append(
             ProcedureMeasurementContractStatus(
@@ -1766,7 +1816,11 @@ def service_list_playbill_procedure_readings(
                 activation_id=activation.activation_id,
                 subject_grain=activation.subject_grain,
                 subject=activation.subject.address,
-                status=_measurement_status(state.latest is not None, eligibility.window),
+                status=(
+                    "unavailable"
+                    if state.book.unavailable or reading_unavailable
+                    else _measurement_status(state.latest is not None, eligibility.window)
+                ),
                 eligibility=eligibility,
                 resolution=_resolution_summary(state, written_now=False),
                 reading_count=counts.get(activation.contract_id, 0),
@@ -1779,7 +1833,9 @@ def service_list_playbill_procedure_readings(
         observation_coordinate=public_observation,
         observation_time=observation_time,
         contracts=tuple(contracts),
-        readings=tuple(_reading_summary(entry) for entry in page),
+        readings=tuple(_reading_summary(entry) for entry in available_page),
+        unavailable_payloads=tuple(sorted(set(unavailable_payloads))),
+        unavailable_reading_count=unavailable_reading_count,
         truncated=truncated,
         cursor=cursor,
     )
@@ -1802,7 +1858,7 @@ def load_retained_query_receipt(
     instance: PlaybillInstance,
     *,
     record_digest: str,
-) -> RetainedQueryEvidenceV1:
+) -> RetainedQueryEvidenceV1 | UnavailablePayload:
     """Resolve a ``query_receipt`` proof reference to its retained receipt bytes.
 
     A proof reference retains nothing by itself; the receipt lives in the
@@ -1817,9 +1873,9 @@ def load_retained_query_receipt(
             continue
         if stored.record.event_kind != QUERY_RECEIPT_EVENT_KIND:
             break
-        payload = parse_journal_payload(
-            instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
-        )
+        payload = read_payload(instance.body_store(), stored.record.payload_digest, access=_ACCESS)
+        if isinstance(payload, UnavailablePayload):
+            return payload
         try:
             receipt = QueryExecutionReceipt.model_validate(payload)
         except ValidationError as exc:
@@ -1832,7 +1888,7 @@ def load_retained_claim_verdict_observation(
     instance: PlaybillInstance,
     *,
     record_digest: str,
-) -> RetainedClaimVerdictObservationV1:
+) -> RetainedClaimVerdictObservationV1 | UnavailablePayload:
     """Resolve a Claim-statement resolution's ``journal_record`` proof to its account."""
 
     journal, stream = _query_receipt_journal(instance)
@@ -1841,9 +1897,9 @@ def load_retained_claim_verdict_observation(
             continue
         if stored.record.event_kind != CLAIM_VERDICT_OBSERVATION_EVENT_KIND:
             break
-        payload = parse_journal_payload(
-            instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
-        )
+        payload = read_payload(instance.body_store(), stored.record.payload_digest, access=_ACCESS)
+        if isinstance(payload, UnavailablePayload):
+            return payload
         try:
             account = ClaimVerdictObservationV1.model_validate(payload)
         except ValidationError as exc:

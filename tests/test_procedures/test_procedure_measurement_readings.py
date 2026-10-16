@@ -35,7 +35,6 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.errors import (
-    CasError,
     FormatError,
     ProjectionIntegrityError,
 )
@@ -1134,19 +1133,26 @@ def test_a_warm_index_never_vouches_for_a_body_cas_cannot_show(tmp_path: Path) -
     body_path.chmod(0o600)
     body_path.write_bytes(b"corrupted")
 
-    # Warm inspection and warm retry both refuse exactly as a cold process does.
-    with pytest.raises(CasError):
-        service_list_playbill_procedure_readings(
-            instance,
-            name=procedure.identity.name,
-            request=ProcedureReadingsRequest(),
-            evaluation_time=RECORD_AT,
-        )
-    with pytest.raises(CasError):
-        _measure(instance, procedure, run_id=run.run_id, names=("rows-present",))
+    unavailable = service_list_playbill_procedure_readings(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureReadingsRequest(),
+        evaluation_time=RECORD_AT,
+    )
+    assert unavailable.readings == ()
+    assert unavailable.unavailable_payloads == (stored.record.payload_digest,)
+    retried = _rows(_measure(instance, procedure, run_id=run.run_id, names=("rows-present",)))[
+        "rows-present"
+    ]
+    assert retried.reading_status == "unavailable"
+    assert retried.reading is None
     assert len(_reading_records(instance, procedure)) == 1
 
     body_path.write_bytes(original)
+    # Explicit repair/restart discards the incomplete derived partition index.
+    from cruxible_core.service.procedures.measurements import _reading_index_memo
+
+    _reading_index_memo.clear()
     restored = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,

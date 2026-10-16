@@ -166,8 +166,8 @@ from cruxible_core.exhaust import (
     ProcedureJournalRecordDraftV1,
     StoredProcedureJournalRecordV1,
     journal_payload_bytes,
-    parse_journal_payload,
 )
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.writer import note_invocation_start
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -1524,7 +1524,7 @@ def read_admission_material_body(
         metadata = bodies.metadata(member.body_digest, access=access)
     except Exception as exc:
         raise _OperationalFailure(
-            "admission_material_corrupt",
+            "replay_material_unavailable",
             details={**details, "body_digest": member.body_digest},
         ) from exc
     if not metadata.present:
@@ -1540,7 +1540,7 @@ def read_admission_material_body(
         return bodies.read(member.body_digest, access=access)
     except Exception as exc:  # pragma: no cover - metadata and read share verification
         raise _OperationalFailure(
-            "admission_material_corrupt",
+            "replay_material_unavailable",
             details={**details, "body_digest": member.body_digest},
         ) from exc
 
@@ -2700,6 +2700,12 @@ class ProcedureExecutor:
         if indexed is not None:
             if indexed.admission_binding_digest != admission.admission_binding_digest:
                 raise ExecutionError("run_id collides across distinct admission bindings")
+            if indexed.status == "failed" and indexed.final_payload_digest is None:
+                return ProcedureRunResultV1(
+                    run_id=admission.run_id,
+                    status="failed",
+                    receipt=self._receipt(admission, list(existing_records)),
+                )
             if indexed.status != "running":
                 return self._replay_completed(admission, existing_records)
             effect_state = (
@@ -4431,11 +4437,14 @@ class ProcedureExecutor:
         ]
         if len(admission_records) != 1:
             raise ExecutionError("nested receipt requires exactly one child admission")
-        admitted = parse_admission_payload(
-            parse_journal_payload(
-                self.bodies.read(admission_records[0].record.payload_digest, access=access)
+        payload = read_payload(
+            self.bodies, admission_records[0].record.payload_digest, access=access
+        )
+        if isinstance(payload, UnavailablePayload):
+            raise _OperationalFailure(
+                "replay_material_unavailable", details={"payload_digest": payload.digest}
             )
-        ).admission
+        admitted = parse_admission_payload(payload).admission
         if procedure_parent_binding(admitted) != context.binding:
             raise ExecutionError("nested receipt is not bound to this parent occurrence")
         if (
@@ -4447,9 +4456,11 @@ class ProcedureExecutor:
             or admitted.journal_partition_id != result.receipt.partition_id
         ):
             raise ExecutionError("nested receipt names another Procedure")
-        final = parse_journal_payload(
-            self.bodies.read(child_records[-1].record.payload_digest, access=access)
-        )
+        final = read_payload(self.bodies, child_records[-1].record.payload_digest, access=access)
+        if isinstance(final, UnavailablePayload):
+            raise _OperationalFailure(
+                "replay_material_unavailable", details={"payload_digest": final.digest}
+            )
         if child_records[-1].record.event_kind != "attempt_finalized" or not isinstance(
             final, dict
         ):
@@ -5001,6 +5012,9 @@ class ProcedureExecutor:
         )
         receipts: list[TerminalChildReceiptV1] = []
         manifests: dict[str, TerminalItemDependencyManifestV1] = {}
+        payloads: list[object] = []
+        item_drafts: list[tuple[str, str]] = []
+        recorded_at: list[datetime] = []
         for index, value in enumerate(values):
             tokens = base | item_tokens[index]
             item_key = terminal_item_key(
@@ -5021,10 +5035,7 @@ class ProcedureExecutor:
                 facts=state.facts,
                 outcomes=outcomes,
             )
-            stored = self._append_event(
-                admission,
-                records,
-                "item_dependencies",
+            payloads.append(
                 {
                     "tag": "playbill-procedure-item-dependencies-v1",
                     "manifest": manifest.model_dump(mode="json"),
@@ -5033,19 +5044,29 @@ class ProcedureExecutor:
                         "deployment_digest": admission.deployment_snapshot_digest,
                         "recorded_at": format_datetime(self.clock.now()),
                     },
-                },
+                }
             )
+            # Preserve the per-item clock reads and their order from single appends.
+            recorded_at.append(self.clock.now())
+            item_drafts.append((item_key, derived.manifest_digest))
+            manifests[item_key] = manifest
+        group = self._append_events(
+            admission,
+            records,
+            "item_dependencies",
+            payloads,
+            recorded_at=recorded_at,
+        )
+        for index, (stored, (item_key, manifest_digest)) in enumerate(zip(group, item_drafts)):
             receipts.append(
                 TerminalChildReceiptV1(
                     child_index=index,
                     item_key=item_key,
-                    # The derived facts already digested this exact manifest.
-                    manifest_digest=derived.manifest_digest,
+                    manifest_digest=manifest_digest,
                     record_digest=stored.record_digest,
                     sequence=stored.record.sequence,
                 )
             )
-            manifests[item_key] = manifest
         return tuple(receipts), tuple(values), manifests, selected
 
     def _planned_external_occurrence(
@@ -5695,6 +5716,79 @@ class ProcedureExecutor:
             return
         raise ExecutionError(f"unsupported repeat operation {body.operation!r}")
 
+    def _append_events(
+        self,
+        admission: ProcedureRunAdmissionV1,
+        records: list[StoredProcedureJournalRecordV1],
+        event_kind: JournalEventKindV1,
+        payloads: list[object],
+        *,
+        recorded_at: list[datetime],
+    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        """Reserve, publish and append one terminal's item records as a group."""
+        if not payloads:
+            return ()
+        payload_bytes = [journal_payload_bytes(payload) for payload in payloads]
+        reservations = [
+            make_run_reservation(
+                instance_id=admission.instance_id,
+                partition_id=admission.journal_partition_id,
+                event_kind=event_kind,
+                run_id=admission.run_id,
+                admission_binding_digest=admission.admission_binding_digest,
+                body_digest=self.bodies.digest_bytes(content).tagged,
+            )
+            for content in payload_bytes
+        ]
+        with self.material_reservations.locked():
+            group_id = self.material_reservations.reserve_many_locked(reservations)
+            metadata = self.bodies.store_many(payload_bytes, journal_payload=True)
+            head = self.journal.read_head(admission.journal_stream, admission.journal_partition_id)
+            drafts = [
+                ProcedureJournalRecordDraftV1(
+                    stream=admission.journal_stream,
+                    partition_id=admission.journal_partition_id,
+                    event_kind=event_kind,
+                    accepted_coordinate=admission.accepted_coordinate,
+                    procedure_artifact_digest=admission.procedure_artifact_digest,
+                    definition_digest=admission.definition_digest,
+                    run_id=admission.run_id,
+                    line_spec_digest=admission.line_spec_digest,
+                    occurrence_id=admission.occurrence_id,
+                    attempt=admission.attempt,
+                    admission_binding_digest=admission.admission_binding_digest,
+                    payload_digest=item.digest,
+                    actor_context=admission.actor_context,
+                    recorded_at=when,
+                )
+                for item, when in zip(metadata, recorded_at)
+            ]
+            try:
+                group = self.journal.append_many(
+                    drafts,
+                    expected_head=head,
+                    fencing_token=self.fencing_token,
+                )
+            except JournalError as exc:
+                raise ProcedureBoundaryRefused(
+                    _journal_refusal_code(exc),
+                    "Procedure journal append refused.",
+                ) from exc
+            if len(group) != len(reservations) or any(
+                stored.record.payload_digest != reservation.body_digest
+                or stored.record.event_kind != reservation.intended_event_kind
+                or stored.record.run_id != reservation.run_id
+                or stored.record.admission_binding_digest != reservation.admission_binding_digest
+                or stored.record.stream != admission.journal_stream
+                or stored.record.partition_id != admission.journal_partition_id
+                for stored, reservation in zip(group, reservations)
+            ):
+                raise ExecutionError("journal append did not reproduce its material reservations")
+            self.material_reservations.release_locked(group_id)
+        records.extend(group)
+        self.run_index.apply_records(group)
+        return group
+
     def _append_event(
         self,
         admission: ProcedureRunAdmissionV1,
@@ -5832,9 +5926,13 @@ class ProcedureExecutor:
                 },
             )
         access = BodyAccessContext(principal_id="procedure-run-replay", can_read_body=True)
-        payload = parse_journal_payload(
-            self.bodies.read(run_records[-1].record.payload_digest, access=access)
-        )
+        payload = read_payload(self.bodies, run_records[-1].record.payload_digest, access=access)
+        if isinstance(payload, UnavailablePayload):
+            return ProcedureRunResultV1(
+                run_id=admission.run_id,
+                status="failed",
+                receipt=self._receipt(admission, run_records),
+            )
         if not isinstance(payload, dict):
             raise ExecutionError("attempt-finalized payload is not an object")
         receipt = self._receipt(admission, run_records)

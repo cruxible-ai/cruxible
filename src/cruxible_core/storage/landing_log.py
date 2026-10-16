@@ -490,7 +490,7 @@ class LandingLog:
         finally:
             os.close(pending)
 
-    def ensure_landed(self, digest: str) -> None:
+    def ensure_landed(self, digest: str, *, sync: bool = True) -> None:
         """Log an object the store holds but the log does not name as present.
 
         A body first stored as a journal payload lands unlogged; stored again as
@@ -500,7 +500,7 @@ class LandingLog:
         head = self.head()
         if self.present(digest, identity=head.identity, sequence=head.sequence):
             return
-        with self.operation(digest, "store"):
+        with self.operation(digest, "store", sync=sync):
             pass
 
     # -- operations -----------------------------------------------------------
@@ -536,7 +536,9 @@ class LandingLog:
         return digest.removeprefix("sha256:")
 
     @contextmanager
-    def operation(self, digest: str, kind: Literal["store", "erase"]) -> Iterator[None]:
+    def operation(
+        self, digest: str, kind: Literal["store", "erase"], *, sync: bool = True
+    ) -> Iterator[None]:
         """Publish an intent, run the object change, then publish its completion.
 
         Holds a locked pending marker throughout. When the change raises, the
@@ -554,7 +556,7 @@ class LandingLog:
                 try:
                     yield
                 finally:
-                    self._settle(digest, pending, completion=_COMPLETION[kind])
+                    self._settle(digest, pending, completion=_COMPLETION[kind], sync=sync)
             finally:
                 os.close(marker)
         finally:
@@ -575,7 +577,9 @@ class LandingLog:
             # Reconciled away between create and lock: take a fresh marker.
             os.close(marker)
 
-    def _settle(self, digest: str, pending: int, *, completion: LandingKind | None) -> None:
+    def _settle(
+        self, digest: str, pending: int, *, completion: LandingKind | None, sync: bool = True
+    ) -> None:
         """Publish an operation's completion, then drop its marker (the caller holds its lock).
 
         The completion names what the object is now; ``None`` reads it first.
@@ -584,7 +588,7 @@ class LandingLog:
         present = self._store._object_status(digest) is not None
         if completion is None or (completion == "stored") != present:
             completion = "stored" if present else "erased"
-        self._append(completion, digest, sync=True)
+        self._append(completion, digest, sync=sync)
         with _INDEXES_LOCK:
             _saw(str(self._store._algorithm_root), digest, completion)
         try:

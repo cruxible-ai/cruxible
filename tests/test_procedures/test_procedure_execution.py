@@ -1796,7 +1796,7 @@ def test_admission_material_manifest_is_sorted_and_missing_is_typed(tmp_path) ->
     body_path.write_bytes(b"corrupt")
     with pytest.raises(Exception) as corrupt_exc:
         execution_module.read_admission_material_body(reopened, retained_optional)
-    assert getattr(corrupt_exc.value, "code") == "admission_material_corrupt"
+    assert getattr(corrupt_exc.value, "code") == "replay_material_unavailable"
 
     with pytest.raises(ValueError, match="never_materialize"):
         ProcedureAdmissionMaterialMember(

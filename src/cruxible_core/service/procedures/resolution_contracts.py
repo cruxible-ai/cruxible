@@ -44,6 +44,7 @@ from cruxible_client.contracts.resolution_contracts import (
     resolution_contract_path,
 )
 from cruxible_core.compiler.compiler import artifact_codec_for_compiler
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload_bytes
 from cruxible_core.exhaust.records import ProcedureJournalRecordV1, parse_journal_payload
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -185,11 +186,11 @@ def read_capture_event(
         )
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="trigger-binding", can_read_body=True)
-    if not bodies.metadata(record.payload_digest, access=access).present:
+    raw = read_payload_bytes(bodies, record.payload_digest, access=access)
+    if isinstance(raw, UnavailablePayload):
         raise TriggerCaptureRefused(
-            "trigger_capture_unavailable", "The exact trigger event payload is no longer retained."
+            "trigger_capture_unavailable", "The exact trigger event payload is unavailable."
         )
-    raw = bodies.read(record.payload_digest, access=access)
     try:
         payload = parse_journal_payload(raw)
     except JournalIntegrityError as exc:

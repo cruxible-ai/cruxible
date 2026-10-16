@@ -73,7 +73,7 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _exclusive_canonical_write(path: Path, payload: bytes) -> None:
+def _exclusive_canonical_write(path: Path, payload: bytes, *, durable: bool = True) -> None:
     descriptor: int | None = None
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -83,7 +83,8 @@ def _exclusive_canonical_write(path: Path, payload: bytes) -> None:
             if written <= 0:  # pragma: no cover - defensive OS contract
                 raise ProposalIntegrityError("proposal evidence write made no progress")
             view = view[written:]
-        os.fsync(descriptor)
+        if durable:
+            os.fsync(descriptor)
     except FileExistsError:
         try:
             descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -95,7 +96,8 @@ def _exclusive_canonical_write(path: Path, payload: bytes) -> None:
             # An interrupted writer may have written every byte without reaching
             # its fsync. Retry proves and flushes the same opened inode before
             # derived publication, then flushes the directory below as usual.
-            os.fsync(descriptor)
+            if durable:
+                os.fsync(descriptor)
         except OSError as exc:
             raise ProposalIntegrityError(
                 "existing proposal evidence could not be persisted"
@@ -105,7 +107,8 @@ def _exclusive_canonical_write(path: Path, payload: bytes) -> None:
     finally:
         if descriptor is not None:
             os.close(descriptor)
-    _fsync_directory(path.parent)
+    if durable:
+        _fsync_directory(path.parent)
 
 
 @dataclass(frozen=True)
@@ -322,6 +325,7 @@ class ProposalEvidenceStore:
             _exclusive_canonical_write(
                 directory / self._item_reason_name(record.path),
                 canonical_bytes(record.model_dump(mode="json")) + b"\n",
+                durable=False,
             )
         for directory in sorted(directories):
             _fsync_directory(directory)

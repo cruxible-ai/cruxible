@@ -39,7 +39,8 @@ from cruxible_client.contracts.procedures.results import (
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_core.exhaust import LocalJournalBackend
 from cruxible_core.exhaust.journal_index import RunLocator, RunLocatorKey
-from cruxible_core.exhaust.records import JournalStreamIdentityV1, parse_journal_payload
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
+from cruxible_core.exhaust.records import JournalStreamIdentityV1
 from cruxible_core.procedures.execution import parse_admission_payload, procedure_line_partition
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.operational_viewer import (
@@ -71,6 +72,8 @@ def _stream(instance: PlaybillInstance) -> JournalStreamIdentityV1:
 def final_status(payload: object) -> RunStatus:
     """The served run status an ``attempt_finalized`` payload records."""
 
+    if isinstance(payload, UnavailablePayload):
+        return "operational_failed"
     raw = payload.get("status") if isinstance(payload, Mapping) else None
     if raw == "succeeded":
         return "succeeded"
@@ -88,14 +91,21 @@ def run_row(instance: PlaybillInstance, locator: RunLocator) -> RunRow:
     """One located run as a row, reading its admission and (if any) final payloads."""
 
     bodies = instance.body_store()
-    admission = parse_admission_payload(
-        parse_journal_payload(bodies.read(locator.admission_payload_digest, access=_ACCESS))
-    ).admission
+    payload = read_payload(bodies, locator.admission_payload_digest, access=_ACCESS)
+    if isinstance(payload, UnavailablePayload):
+        started = parse_datetime(locator.admitted_at)
+        assert started is not None
+        return RunRow(
+            run=locator.run_id,
+            procedure="unavailable",
+            status="operational_failed",
+            started_at=started,
+            nodes_done=locator.nodes_done,
+        )
+    admission = parse_admission_payload(payload).admission
     status: RunStatus = "running"
     if locator.final_payload_digest is not None:
-        status = final_status(
-            parse_journal_payload(bodies.read(locator.final_payload_digest, access=_ACCESS))
-        )
+        status = final_status(read_payload(bodies, locator.final_payload_digest, access=_ACCESS))
     line = getattr(admission, "line_identity", None)
     started = parse_datetime(locator.admitted_at)
     assert started is not None
@@ -193,7 +203,7 @@ def _graph(
 
 
 def _payload(instance: PlaybillInstance, digest: str) -> object:
-    return parse_journal_payload(instance.body_store().read(digest, access=_ACCESS))
+    return read_payload(instance.body_store(), digest, access=_ACCESS)
 
 
 def _admission(instance: PlaybillInstance, run_id: str) -> object | None:
@@ -205,9 +215,12 @@ def _admission(instance: PlaybillInstance, run_id: str) -> object | None:
     locators, _more = journal.index.run_locators(_stream(instance), limit=1, run_id=run_id)
     if not locators:
         return None
-    return parse_admission_payload(
-        _payload(instance, locators[0].admission_payload_digest)
-    ).admission
+    payload = _payload(instance, locators[0].admission_payload_digest)
+    return (
+        None
+        if isinstance(payload, UnavailablePayload)
+        else parse_admission_payload(payload).admission
+    )
 
 
 def _arming_run(instance: PlaybillInstance, run_id: str, admission: object) -> str | None:
@@ -322,7 +335,25 @@ def procedure_run_card(
     assert journal is not None
     (locator,) = locators
     stream = _stream(instance)
-    admission = parse_admission_payload(_payload(instance, locator.admission_payload_digest))
+    admission_payload = _payload(instance, locator.admission_payload_digest)
+    if isinstance(admission_payload, UnavailablePayload):
+        from cruxible_core.service.procedures.procedure_runs import (
+            service_get_playbill_procedure_run,
+        )
+
+        state = service_get_playbill_procedure_run(instance, run_id=run_id)
+        started = parse_datetime(locator.admitted_at)
+        assert started is not None
+        return GetProcedureRunCard(
+            run=run_id,
+            procedure="unavailable",
+            status="operational_failed",
+            nodes_done=locator.nodes_done,
+            nodes_total=0,
+            started_at=started,
+            terminal=state.terminal,
+        )
+    admission = parse_admission_payload(admission_payload)
     bound = admission.admission
     started = parse_datetime(locator.admitted_at)
     assert started is not None

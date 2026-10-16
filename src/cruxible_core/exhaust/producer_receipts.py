@@ -40,7 +40,8 @@ from cruxible_client.contracts.workspace_file import (
     source_read_receipt_digest,
 )
 from cruxible_core.exhaust import LocalJournalBackend
-from cruxible_core.exhaust.records import StoredProcedureJournalRecordV1, parse_journal_payload
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
+from cruxible_core.exhaust.records import StoredProcedureJournalRecordV1
 from cruxible_core.procedures.egress import (
     ProcedureProducerReceiptV1,
     TerminalEgressReceiptV2,
@@ -410,9 +411,15 @@ class JournalProducerReceiptResolver:
                 continue
             self._current_run = record.run_id or ""
             try:
-                payload = parse_journal_payload(
-                    self._bodies.read(record.payload_digest, access=self._access)
-                )
+                payload = read_payload(self._bodies, record.payload_digest, access=self._access)
+                if isinstance(payload, UnavailablePayload):
+                    self._note(
+                        record_digest=stored.record_digest,
+                        event_kind=record.event_kind,
+                        candidate_digest=None,
+                        message="exhaust payload unavailable",
+                    )
+                    continue
             except (KeyError, OSError, TypeError, CruxibleError, ValueError) as exc:
                 self._malformed(
                     record_digest=stored.record_digest,

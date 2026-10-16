@@ -16,8 +16,8 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_core.exhaust import (
     StoredProcedureJournalRecordV1,
-    parse_journal_payload,
 )
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 
 IndexedProcedureRunStatusV1 = Literal[
@@ -134,6 +134,50 @@ class ProcedureRunIndex:
             terminal_egress_prepared_count=int(row["terminal_egress_prepared_count"]),
             terminal_egress_resolved_count=int(row["terminal_egress_resolved_count"]),
         )
+
+    def apply_records(self, records: tuple[StoredProcedureJournalRecordV1, ...]) -> None:
+        """Advance a running run past one ordered group of item dependencies.
+
+        These records only advance the cursor: validate the group in memory,
+        then one read, one update and one commit regardless of group size.
+        """
+        if not records:
+            return
+        first, last = records[0].record, records[-1].record
+        if first.run_id is None or first.admission_binding_digest is None:
+            raise ExecutionError("Procedure run exhaust lacks a run or admission binding")
+        previous = None
+        for stored in records:
+            record = stored.record
+            if (
+                record.run_id != first.run_id
+                or record.admission_binding_digest != first.admission_binding_digest
+                or record.stream != first.stream
+                or record.partition_id != first.partition_id
+                or record.event_kind != "item_dependencies"
+                or (
+                    previous is not None
+                    and (
+                        record.sequence != previous.record.sequence + 1
+                        or record.previous_record_digest != previous.record_digest
+                    )
+                )
+            ):
+                raise ExecutionError("Procedure item dependency group is inconsistent")
+            previous = stored
+        with self._conn:
+            existing = self.get(first.run_id)
+            if (
+                existing is None
+                or existing.status != "running"
+                or existing.admission_binding_digest != first.admission_binding_digest
+                or first.sequence <= existing.last_sequence
+            ):
+                raise ExecutionError("Procedure item dependency group cannot extend this run")
+            self._conn.execute(
+                "UPDATE procedure_run_index SET last_sequence = ? WHERE run_id = ?",
+                (last.sequence, first.run_id),
+            )
 
     def apply_record(
         self,
@@ -297,12 +341,21 @@ class ProcedureRunIndex:
         )
         self._conn.commit()
         for stored in records:
-            self.apply_record(
-                stored,
-                payload=parse_journal_payload(
-                    bodies.read(stored.record.payload_digest, access=access)
-                ),
-            )
+            payload = read_payload(bodies, stored.record.payload_digest, access=access)
+            if isinstance(payload, UnavailablePayload):
+                # A failed derived entry cannot re-execute a run whose effect
+                # completion may have been lost. Its service read reports the
+                # exact unavailable payload from the authenticated records.
+                first, last = records[0].record, records[-1].record
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO procedure_run_index "
+                    "(run_id,admission_binding_digest,status,first_sequence,last_sequence) "
+                    "VALUES (?,?,'failed',?,?)",
+                    (run_id, first.admission_binding_digest, first.sequence, last.sequence),
+                )
+                self._conn.commit()
+                return
+            self.apply_record(stored, payload=payload)
 
 
 __all__ = [

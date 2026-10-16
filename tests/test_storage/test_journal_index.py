@@ -7,7 +7,7 @@ import pytest
 from cruxible_client.contracts.errors import JournalIntegrityError
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.journal_index import JournalIndex
-from tests.test_storage.test_journal_backends import _activate, _append, _backend, _stream
+from tests.test_storage.test_journal_backends import _activate, _append, _backend, _draft, _stream
 
 
 def test_index_rebuild_and_warm_exact_reads(tmp_path: Path, monkeypatch) -> None:
@@ -37,16 +37,12 @@ def test_append_response_lost_before_index_update_is_recovered(tmp_path: Path, m
     backend = _backend(tmp_path, "journal")
     _activate(backend)
     first = _append(backend, "first")
-    original_sync = JournalIndex.sync
 
-    def crash_after_write(self, *args, recover_tail=False):
-        # The writer's own pre-append tail recovery runs; the post-write update crashes.
-        if recover_tail:
-            return original_sync(self, *args, recover_tail=True)
+    def crash_after_write(self, *args, **kwargs):
         raise RuntimeError("crash")
 
     with monkeypatch.context() as patch:
-        patch.setattr(JournalIndex, "sync", crash_after_write)
+        patch.setattr(JournalIndex, "sync_appended", crash_after_write)
         with pytest.raises(RuntimeError, match="crash"):
             _append(backend, "second")
     reopened = LocalJournalBackend(backend.root)
@@ -318,17 +314,13 @@ def test_catching_up_reads_only_the_records_since_the_last_sync(
     with monkeypatch.context() as patch:
         # Appends whose post-write index update never ran (another process's
         # append the index has not reached yet).
-        original_sync = JournalIndex.sync
-
-        def pre_append_only(self, *args, recover_tail=False):
-            if recover_tail:
-                return original_sync(self, *args, recover_tail=True)
-            return None
-
-        patch.setattr(JournalIndex, "sync", pre_append_only)
+        patch.setattr(JournalIndex, "sync_appended", lambda *args, **kwargs: None)
         patch.setattr(JournalIndex, "mark_dirty", lambda self, *args: None)
-        for index in range(3):
-            _append(backend, f"unsynced-{index}")
+        backend.append_many(
+            tuple(_draft(f"unsynced-{index}") for index in range(3)),
+            expected_head=backend.read_head(_stream(), "runs-2026-08"),
+            fencing_token="writer-a",
+        )
     with sqlite3.connect(backend.index.path) as connection:
         indexed = connection.execute("SELECT count(*) FROM records").fetchone()[0]
     missing = 13 - indexed

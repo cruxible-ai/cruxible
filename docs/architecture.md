@@ -186,3 +186,37 @@ Tests follow the same ownership under `tests/test_<domain>/`; shared fixtures
 live in `tests/core_support/`. Frozen format fixtures remain in `tests/goldens/`.
 Internal package relocation does not rename wire operations, managed-state
 paths, or signed format identifiers.
+
+### Operational journal publication
+
+A terminal publishes its item-dependency records as one fenced append group.
+The records retain their individual sequence numbers, digests and hash chain.
+One reservation sidecar names the group's CAS payloads before they are written;
+the sidecar is removed only after the complete group is appended and indexed.
+The journal remains authoritative and its SQLite indexes are rebuildable.
+
+Operational journal frames, payload bodies and reservation sidecars are
+best-effort exhaust: they have no per-item fsync. A crash can lose recent
+payloads while their authenticated journal records remain. Service reads classify
+those records as unavailable; run reads return `replay_material_unavailable`,
+reading inspection reports an incremental `unavailable_reading_count` and at
+most the requested page size of representative `unavailable_payloads`, and affected measurement results
+say `unavailable`. Recovery preserves leases and does not re-drive an effect
+whose completion may have been lost. A retained admission still blocks another
+admission when its binding payload is lost; an unknown event binding refuses
+with `replay_material_unavailable`. An incomplete inbox stops before dependent
+transitions and refuses reads and dispositions with `cruxible.inbox.unavailable`;
+`next` reports its unknown volume as a repair. Restore its payload and rebuild
+the inbox projection to resume. Direct body-byte reads still refuse.
+
+Before advancing main, acceptance flushes the changed artifacts' transitive CAS
+citation closure (including Capture material and promoted payloads) and namespace
+parents. Linux uses one `syncfs` on the instance filesystem; other platforms
+flush each not-yet-durable cited body and touched directory once, alongside the
+existing Git-object flushes. A failed barrier leaves main unmoved. The process
+remembers durable bodies so repeated citations do not repeat body fsyncs. A new
+publication of a lost body clears that digest's durability under the barrier
+lock, so the recreated inode acquires durability again. This
+work follows changed members and their citations, never the stored population.
+After repairing missing exhaust, rebuild its incomplete derived partition index
+(or restart) to restore that partition's readings and resolution view.

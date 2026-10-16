@@ -25,8 +25,8 @@ from cruxible_core.exhaust import (
     JournalStreamIdentityV1,
     ProcedureExhaustWriter,
     StoredProcedureJournalRecordV1,
-    parse_journal_payload,
 )
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.records import JournalPartitionHeadV1
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -534,7 +534,7 @@ def append_procedure_reading(
     ]
     | None = None,
     expected_head: JournalPartitionHeadV1 | None = None,
-) -> StoredProcedureJournalRecordV1:
+) -> StoredProcedureJournalRecordV1 | UnavailablePayload:
     """Append idempotently in the frozen instance/Procedure/actor/key domain.
 
     ``replay_index`` lets a producer that has already parsed the partition hand
@@ -569,9 +569,10 @@ def append_procedure_reading(
         for stored in writer.journal.all_records(stream, partition_id):
             if stored.record.event_kind != "procedure_reading":
                 continue
-            existing = ProcedureReadingV1.model_validate(
-                parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
-            )
+            payload = read_payload(bodies, stored.record.payload_digest, access=access)
+            if isinstance(payload, UnavailablePayload):
+                return payload
+            existing = ProcedureReadingV1.model_validate(payload)
             if reading_replay_key(existing) != replay:
                 continue
             return _replay_existing(existing, stored, reading=reading)

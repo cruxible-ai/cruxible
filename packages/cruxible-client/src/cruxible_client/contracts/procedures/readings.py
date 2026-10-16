@@ -51,6 +51,7 @@ ProcedureMeasurementRefusalCode: TypeAlias = Literal[
 ]
 
 ProcedureMeasurementStatus: TypeAlias = Literal[
+    "unavailable",
     # The observation instant precedes check_at; nothing was evaluated.
     "pending",
     # The window is open and no resolution stands yet: `procedure measure` evaluates it.
@@ -62,6 +63,7 @@ ProcedureMeasurementStatus: TypeAlias = Literal[
 ]
 
 ProcedureReadingStatus: TypeAlias = Literal[
+    "unavailable",
     # No run was named; the resolution alone was produced or found.
     "not_requested",
     # A reading was appended for this run and grain.
@@ -377,6 +379,16 @@ class ProcedureReadingsResult(_StrictReadingWireModel):
     readings: tuple[ProcedureReadingSummary, ...]
     truncated: bool = False
     cursor: str | None = None
+    # At most the requested page size of representative unavailable digests.
+    unavailable_payloads: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    unavailable_reading_count: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+
+    @field_validator("unavailable_payloads")
+    @classmethod
+    def _unavailable(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for digest in value:
+            Sha256Value.from_tagged(digest)
+        return value
 
     @field_validator("procedure_artifact_digest")
     @classmethod

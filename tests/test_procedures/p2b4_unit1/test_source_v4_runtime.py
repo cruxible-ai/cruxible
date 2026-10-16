@@ -597,7 +597,7 @@ def test_capture_reservation_precedes_the_first_body_write(
         admission=prepared.admission,
     )
 
-    def fail_store(_content: bytes):  # type: ignore[no-untyped-def]
+    def fail_store(_content: bytes, *, best_effort: bool = False):  # type: ignore[no-untyped-def]
         raise CasError("simulated body-store loss")
 
     monkeypatch.setattr(fixture.bodies, "store", fail_store)

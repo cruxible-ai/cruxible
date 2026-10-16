@@ -1,4 +1,4 @@
-"""Storage-neutral journal protocol and durable local append-only backend."""
+"""Storage-neutral journal protocol and fenced local append-only exhaust."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -110,12 +110,10 @@ def _atomic_write(path: Path, content: bytes, *, mode: int = 0o600) -> None:
             if written <= 0:  # pragma: no cover - defensive OS contract
                 raise JournalError("journal metadata write made no progress")
             view = view[written:]
-        os.fsync(descriptor)
         os.close(descriptor)
         descriptor = -1
         os.replace(temporary_path, path)
         os.chmod(path, mode)
-        _fsync_directory(path.parent)
     except BaseException:
         if descriptor >= 0:
             os.close(descriptor)
@@ -244,6 +242,10 @@ class LocalJournalBackend:
             raise JournalError("journal streams directory is not trustworthy")
         os.chmod(streams, 0o700)
         self._streams_root = streams.resolve(strict=True)
+        self._heads: dict[
+            tuple[str, str], tuple[JournalPartitionHeadV1, tuple[int, ...] | None]
+        ] = {}
+        self._partitions: dict[tuple[str, str], tuple[Path, tuple[int, ...]]] = {}
 
     def _partition_directory(
         self,
@@ -255,6 +257,15 @@ class LocalJournalBackend:
         keys = _partition_keys(stream, partition_id)
         stream_directory = self._streams_root / keys.stream_directory
         partition_directory = stream_directory / keys.partition_directory
+        cache_key = (keys.stream_directory, partition_id)
+        cached = self._partitions.get(cache_key)
+        if cached is not None:
+            try:
+                stamp = self._partition_stamp(partition_directory)
+            except OSError:
+                stamp = ()
+            if stamp == cached[1]:
+                return cached[0]
         if create:
             stream_directory.mkdir(mode=0o700, exist_ok=True)
             partition_directory.mkdir(mode=0o700, exist_ok=True)
@@ -272,7 +283,40 @@ class LocalJournalBackend:
                 expected=keys.identity,
                 create=create,
             )
+            self._partitions[cache_key] = (
+                partition_directory,
+                self._partition_stamp(partition_directory),
+            )
         return partition_directory
+
+    @staticmethod
+    def _partition_stamp(directory: Path) -> tuple[int, ...]:
+        # Also catch replacement of the stream parent (including a symlink).
+        parent = directory.parent.lstat()
+        own = directory.lstat()
+        identity = (directory / "identity.json").lstat()
+        return (
+            parent.st_dev,
+            parent.st_ino,
+            parent.st_mode,
+            own.st_dev,
+            own.st_ino,
+            own.st_mode,
+            identity.st_dev,
+            identity.st_ino,
+            identity.st_mode,
+            identity.st_size,
+            identity.st_mtime_ns,
+            identity.st_ctime_ns,
+        )
+
+    @staticmethod
+    def _log_stamp(path: Path) -> tuple[int, ...] | None:
+        try:
+            value = path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
 
     @staticmethod
     def _verify_or_initialize_identity(
@@ -406,19 +450,29 @@ class LocalJournalBackend:
             recover_tail=recover_tail,
         )
 
+    @journal_locked
     def read_head(
         self,
         stream: JournalStreamIdentityV1,
         partition_id: str,
     ) -> JournalPartitionHeadV1:
+        directory = self._partition_directory(stream, partition_id, create=False)
+        cached = self._heads.get((_identity_key(stream), partition_id))
+        stamp = self._log_stamp(directory / "records.log")
+        if cached is not None and cached[1] == stamp:
+            return cached[0]
+        # A reader cannot truncate a tail. Only append may retain this head.
         return self.index.head(stream, partition_id)
 
     def _writer_state(
         self,
         stream: JournalStreamIdentityV1,
         partition_id: str,
+        *,
+        directory: Path | None = None,
     ) -> JournalWriterStateV1 | None:
-        directory = self._partition_directory(stream, partition_id, create=False)
+        if directory is None:
+            directory = self._partition_directory(stream, partition_id, create=False)
         if not directory.exists():
             return None
         path = directory / "writer.json"
@@ -438,6 +492,7 @@ class LocalJournalBackend:
 
         return self._writer_state(stream, partition_id)
 
+    @journal_locked
     def activate_writer(
         self,
         stream: JournalStreamIdentityV1,
@@ -463,6 +518,7 @@ class LocalJournalBackend:
         _atomic_write(directory / "writer.json", canonical_bytes(state.model_dump(mode="json")))
         return state
 
+    @journal_locked
     def fence_writer(
         self,
         stream: JournalStreamIdentityV1,
@@ -484,7 +540,6 @@ class LocalJournalBackend:
         _atomic_write(directory / "writer.json", canonical_bytes(fenced.model_dump(mode="json")))
         return fenced
 
-    @journal_locked
     def append(
         self,
         draft: ProcedureJournalRecordDraftV1,
@@ -492,65 +547,126 @@ class LocalJournalBackend:
         expected_head: JournalPartitionHeadV1,
         fencing_token: str,
     ) -> StoredProcedureJournalRecordV1:
-        if expected_head.stream != draft.stream or expected_head.partition_id != draft.partition_id:
+        return self.append_many((draft,), expected_head=expected_head, fencing_token=fencing_token)[
+            0
+        ]
+
+    @journal_locked
+    def append_many(
+        self,
+        drafts: Sequence[ProcedureJournalRecordDraftV1],
+        *,
+        expected_head: JournalPartitionHeadV1,
+        fencing_token: str,
+    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        """Append one fenced group. Exhaust is atomic at publication, best-effort on disk.
+
+        Work follows this group's records. A changed log stamp falls back to
+        authenticated suffix catch-up; only a cold/replaced log needs a rebuild.
+        """
+        if not drafts:
+            return ()
+        stream, partition_id = expected_head.stream, expected_head.partition_id
+        if any(draft.stream != stream or draft.partition_id != partition_id for draft in drafts):
             raise JournalConflictError("append expected head names another partition")
-        directory = self._partition_directory(
-            draft.stream,
-            draft.partition_id,
-            create=True,
-        )
-        # Readers never truncate; the writer discards a crash tail before extending.
-        self.index.sync(draft.stream, draft.partition_id, recover_tail=True)
-        records = self.select_records(
-            draft.stream, partition_id=draft.partition_id, descending=True, limit=1
-        )
-        current = self.read_head(draft.stream, draft.partition_id)
-        writer = self._writer_state(draft.stream, draft.partition_id)
-        if writer is None or not writer.active or writer.fencing_token != fencing_token:
-            raise JournalConflictError("append requires the current active fencing token")
-
-        # A retried append against its old expected head reproduces the prior result.
-        if (
-            records
-            and current.sequence == expected_head.sequence + 1
-            and records[-1].record.previous_record_digest == expected_head.record_digest
-            and _record_matches_draft(records[-1].record, draft)
-        ):
-            return records[-1]
-        if current != expected_head:
-            raise JournalConflictError("append expected head is stale or forked")
-
-        record = ProcedureJournalRecordV1.bind(
-            draft,
-            sequence=current.sequence + 1,
-            previous_record_digest=current.record_digest,
-        )
-        stored = StoredProcedureJournalRecordV1.bind_stored(record)
-        body = canonical_bytes(stored.model_dump(mode="json"))
-        if len(body) > _MAX_RECORD_BYTES:
-            raise JournalError("journal record exceeds the frozen local frame limit")
-        frame = len(body).to_bytes(_FRAME_HEADER_BYTES, "big") + body
-        self.index.mark_dirty(draft.stream, draft.partition_id)
+        directory = self._partition_directory(stream, partition_id, create=True)
         path = directory / "records.log"
-        descriptor = os.open(
-            path,
-            os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        try:
-            view = memoryview(frame)
-            while view:
-                written = os.write(descriptor, view)
-                if written <= 0:  # pragma: no cover - defensive OS contract
-                    raise JournalError("journal append made no progress")
-                view = view[written:]
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        os.chmod(path, 0o600)
-        _fsync_directory(directory)
-        self.index.sync(draft.stream, draft.partition_id)
-        return stored
+        cache_key = (_identity_key(stream), partition_id)
+        stamp = self._log_stamp(path)
+        cached = self._heads.get(cache_key)
+        index = self.index
+        # Hold one index transaction across dirtying, append and in-memory indexing.
+        with index.connection() as conn:
+            if cached is not None and cached[1] == stamp:
+                current = cached[0]
+            else:
+                index._sync(conn, stream, partition_id, recover_tail=True, directory=directory)
+                current = index.head(stream, partition_id)
+                stamp = self._log_stamp(path)
+            writer = self._writer_state(stream, partition_id, directory=directory)
+            if writer is None or not writer.active or writer.fencing_token != fencing_token:
+                raise JournalConflictError("append requires the current active fencing token")
+            stored: list[StoredProcedureJournalRecordV1] = []
+            if current != expected_head:
+                count = current.sequence - expected_head.sequence
+                if count < 1 or count > len(drafts):
+                    raise JournalConflictError("append expected head is stale or forked")
+                prior = self.select_records(
+                    stream,
+                    partition_id=partition_id,
+                    first_sequence=expected_head.sequence + 1,
+                    last_sequence=current.sequence,
+                )
+                previous = expected_head.record_digest
+                for item, draft in zip(prior, drafts):
+                    if item.record.previous_record_digest != previous or not _record_matches_draft(
+                        item.record, draft
+                    ):
+                        raise JournalConflictError("append expected head is stale or forked")
+                    previous = item.record_digest
+                if len(prior) != count:
+                    raise JournalConflictError("append expected head is stale or forked")
+                stored.extend(prior)
+            frames: list[bytes] = []
+            appended: list[tuple[int, int, StoredProcedureJournalRecordV1]] = []
+            offset = 0 if stamp is None else stamp[2]
+            for draft in drafts[len(stored) :]:
+                record = ProcedureJournalRecordV1.bind(
+                    draft,
+                    sequence=current.sequence + 1,
+                    previous_record_digest=current.record_digest,
+                )
+                item = StoredProcedureJournalRecordV1.bind_stored(record)
+                body = canonical_bytes(item.model_dump(mode="json"))
+                if len(body) > _MAX_RECORD_BYTES:
+                    raise JournalError("journal record exceeds the frozen local frame limit")
+                # The exact bytes were just bound and encoded here. Retain a
+                # detached value so later reads verify the coordinate/chain but
+                # never parse this immutable frame again or seal caller state.
+                _FRAME_PARSES.parse(body, "journal-frame", None, lambda: item.model_copy(deep=True))
+                frame = len(body).to_bytes(_FRAME_HEADER_BYTES, "big") + body
+                frames.append(frame)
+                appended.append((offset, len(frame), item))
+                offset += len(frame)
+                stored.append(item)
+                current = JournalPartitionHeadV1(
+                    stream=stream,
+                    partition_id=partition_id,
+                    sequence=record.sequence,
+                    record_digest=item.record_digest,
+                )
+            if not appended:
+                return tuple(stored)
+            index.mark_dirty(stream, partition_id)
+            descriptor = os.open(
+                path,
+                os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                view = memoryview(b"".join(frames))
+                while view:
+                    written = os.write(descriptor, view)
+                    if written <= 0:  # pragma: no cover
+                        raise JournalError("journal append made no progress")
+                    view = view[written:]
+                os.fchmod(descriptor, 0o600)
+            finally:
+                os.close(descriptor)
+            after = self._log_stamp(path)
+            index.sync_appended(
+                conn,
+                stream,
+                partition_id,
+                appended,
+                before=stamp,
+                after=after,
+                directory=directory,
+            )
+        # Consume only after commit: an interrupted transaction leaves a catch-up marker.
+        index.clear_dirty(stream, partition_id)
+        self._heads[cache_key] = (current, after)
+        return tuple(stored)
 
     def read_exact_range(
         self,

@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.errors import JournalIntegrityError
 from cruxible_client.contracts.temporal import format_datetime
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.exhaust.records import (
     JournalPartitionHeadV1,
     JournalStreamIdentityV1,
@@ -33,6 +35,7 @@ from cruxible_core.exhaust.records import (
     journal_stream_strings,
 )
 from cruxible_core.indexes.resident import ResidentConnections
+from cruxible_core.indexes.sql_batch import insert_rows
 
 if TYPE_CHECKING:
     from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -307,13 +310,89 @@ class JournalIndex:
             yield conn
 
     def mark_dirty(self, stream: JournalStreamIdentityV1, partition_id: str) -> None:
-        from cruxible_core.exhaust.backends import _atomic_write, _fsync_directory
+        from cruxible_core.exhaust.backends import _atomic_write
 
         with _LOCK:
             self.dirty.mkdir(mode=0o700, exist_ok=True)
             name, value = _dirty_marker(stream, partition_id)
             _atomic_write(self.dirty / name, value)
-            _fsync_directory(self.backend.root)
+
+    def clear_dirty(self, stream: JournalStreamIdentityV1, partition_id: str) -> None:
+        name, _ = _dirty_marker(stream, partition_id)
+        (self.dirty / name).unlink(missing_ok=True)
+
+    def sync_appended(
+        self,
+        conn: sqlite3.Connection,
+        stream: JournalStreamIdentityV1,
+        partition_id: str,
+        frames: list[tuple[int, int, StoredProcedureJournalRecordV1]],
+        *,
+        before: tuple[int, ...] | None,
+        after: tuple[int, ...] | None,
+        directory: Path,
+    ) -> None:
+        """Index the just-bound group, only if the log proves the exact extension."""
+        first, _, _ = frames[0]
+        end = frames[-1][0] + frames[-1][1]
+        prior = conn.execute(
+            "SELECT end_offset,sequence,digest FROM partitions WHERE stream=? AND partition_id=?",
+            (_key(stream), partition_id),
+        ).fetchone()
+        record = frames[0][2].record
+        if (
+            after is None
+            or after[2] != end
+            or (before is not None and before[:2] != after[:2])
+            or (prior is None and (first != 0 or record.sequence != 1))
+            or (
+                prior is not None
+                and (
+                    prior[0] != first
+                    or prior[1] != record.sequence - 1
+                    or prior[2] != record.previous_record_digest
+                )
+            )
+        ):
+            self._sync(conn, stream, partition_id, directory=directory)
+            raise JournalIntegrityError("journal changed during fenced append")
+        rows = []
+        for offset, size, stored in frames:
+            item = stored.record
+            rows.append(
+                (
+                    _key(stream),
+                    partition_id,
+                    item.sequence,
+                    offset,
+                    size,
+                    stored.record_digest,
+                    item.previous_record_digest,
+                    item.event_kind,
+                    item.run_id,
+                    item.occurrence_id,
+                    item.payload_digest,
+                    format_datetime(item.recorded_at),
+                )
+            )
+        insert_rows(
+            conn,
+            "records(stream,partition_id,sequence,offset,size,digest,previous,"
+            "event_kind,run_id,occurrence_id,payload_digest,recorded_at)",
+            rows,
+        )
+        last = frames[-1][2]
+        conn.execute(
+            "INSERT OR REPLACE INTO partitions VALUES(?,?,?,?,?,?)",
+            (
+                _key(stream),
+                partition_id,
+                end,
+                last.record.sequence,
+                last.record_digest,
+                ":".join(map(str, after)),
+            ),
+        )
 
     def _sync(
         self,
@@ -322,10 +401,12 @@ class JournalIndex:
         partition_id: str,
         *,
         recover_tail: bool = False,
+        directory: Path | None = None,
     ) -> None:
         """Index complete frames; only a locked writer may discard a crash tail."""
 
-        directory = self.backend._partition_directory(stream, partition_id, create=False)
+        if directory is None:
+            directory = self.backend._partition_directory(stream, partition_id, create=False)
         log = directory / "records.log"
         if not log.exists():
             return
@@ -814,7 +895,6 @@ class JournalIndex:
         here, once each, from their payloads. An id no retained start names is
         absent from the answer.
         """
-        from cruxible_core.exhaust.records import parse_journal_payload
         from cruxible_core.storage.cas import BodyAccessContext
 
         access = BodyAccessContext(principal_id="provider-recovery", can_read_body=True)
@@ -832,9 +912,12 @@ class JournalIndex:
                     break
                 for row in pending:
                     stored = self.read_row(row)
-                    payload = parse_journal_payload(
-                        bodies.read(stored.record.payload_digest, access=access)
-                    )
+                    payload = read_payload(bodies, stored.record.payload_digest, access=access)
+                    if isinstance(payload, UnavailablePayload):
+                        conn.execute(
+                            "DELETE FROM invocation_pending WHERE record_id=?", (row["id"],)
+                        )
+                        continue
                     if not isinstance(payload, dict) or not isinstance(
                         payload.get("invocation_id"), str
                     ):
@@ -876,7 +959,6 @@ class JournalIndex:
         Metadata catch-up is bounded independently of the result page. A caller
         must not report absence while selector coverage is incomplete.
         """
-        from cruxible_core.exhaust.records import parse_journal_payload
         from cruxible_core.storage.cas import BodyAccessContext
 
         access = BodyAccessContext(principal_id="trigger-discovery", can_read_body=True)
@@ -891,9 +973,9 @@ class JournalIndex:
             ).fetchall()
             for row in fresh[:1024]:
                 stored = self.read_row(row)
-                payload = parse_journal_payload(
-                    bodies.read(stored.record.payload_digest, access=access)
-                )
+                payload = read_payload(bodies, stored.record.payload_digest, access=access)
+                if isinstance(payload, UnavailablePayload):
+                    continue
                 if (
                     not isinstance(payload, dict)
                     or payload.get("tag") != "playbill-procedure-produced-capture-v1"

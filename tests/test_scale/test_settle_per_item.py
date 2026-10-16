@@ -34,7 +34,13 @@ Counted on the measuring thread only:
   root (a resident index connection opened once per process is not per item);
 - ``sql_statements``: statements SQLite ran on those connections (one per
   execution, so ``executemany`` counts every row, and each trigger firing
-  counts once), whenever the connection was opened.
+  counts once), whenever the connection was opened;
+- ``fsyncs`` and ``file_opens``: whole-settle observations. ``non_acceptance_fsyncs`` excludes the
+  acceptance batch and ledger Git-object flushes (reported separately);
+- ``journal_fsyncs``, ``journal_file_opens``, ``journal_appends``: the complete
+  terminal item group, including its reservations and CAS publication. The
+  group has no fsyncs, at most two opens per new body (one file and its shard),
+  and one journal append regardless of the number of items.
 """
 
 from __future__ import annotations
@@ -58,7 +64,9 @@ from cruxible_client.contracts import candidates, canonical
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
-from cruxible_core.ledger import recovery
+from cruxible_core.exhaust.backends import LocalJournalBackend
+from cruxible_core.ledger import activation, recovery
+from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.proposals import settlement
 from tests.core_support import _pc_c_support
 from tests.core_support._subject_kind_support import core_assigned
@@ -88,7 +96,13 @@ PER_ITEM = {
     "encodes": 140,
     "encoded_bytes": 100 * 1024,
     "sql_connects": 0.25,
-    "sql_statements": 48,
+    "sql_statements": 35,
+    "non_acceptance_fsyncs": 0.1,
+    "journal_fsyncs": 0,
+    # One payload file plus one shard handle per body; the small-N slope also
+    # includes the difference in shard collisions between the two batches.
+    "journal_file_opens": 2.5,
+    "journal_appends": 0.1,
 }
 #: A small settle after a large one: at most this times one after a small one...
 LARGE_PARENT_RATIO = 1.25
@@ -99,6 +113,9 @@ FLAT_SLACK = {
     "encoded_bytes": 8 * 1024,
     "sql_connects": 2,
     "sql_statements": 16,
+    "journal_fsyncs": 0,
+    "journal_file_opens": 16,
+    "journal_appends": 1,
 }
 
 _FAN_OUT = {"items": f"$steps.{fixtures.SOURCE_ALIAS}.content.json.proposals"}
@@ -110,12 +127,82 @@ class _Counts:
     def __init__(self) -> None:
         self.counts: Counter[str] = Counter()
         self.thread: int | None = None
+        self.in_item_group = False
+        self.in_acceptance_flush = False
 
     def measuring(self) -> bool:
         return self.thread is not None and threading.get_ident() == self.thread
 
 
 _COUNTS = _Counts()
+
+
+def _open_event(event: str, args: tuple[object, ...]) -> None:
+    if event == "open" and _COUNTS.measuring():
+        _COUNTS.counts["file_opens"] += 1
+        if _COUNTS.in_item_group:
+            _COUNTS.counts["journal_file_opens"] += 1
+
+
+sys.addaudithook(_open_event)
+
+
+def _flushing(original: Callable[..., Any]) -> Callable[..., Any]:
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        if _COUNTS.measuring():
+            _COUNTS.counts["fsyncs"] += 1
+            if _COUNTS.in_acceptance_flush:
+                _COUNTS.counts["acceptance_fsyncs"] += 1
+            else:
+                frame = sys._getframe(1)
+                while frame is not None and not frame.f_code.co_filename.endswith("/ledger/git.py"):
+                    frame = frame.f_back
+                category = "git_fsyncs" if frame is not None else "non_acceptance_fsyncs"
+                _COUNTS.counts[category] += 1
+            if _COUNTS.in_item_group:
+                _COUNTS.counts["journal_fsyncs"] += 1
+        return original(*args, **kwargs)
+
+    return counted
+
+
+@contextmanager
+def _journal_counted() -> Iterator[None]:
+    original = ProcedureExecutor._append_events
+    append = LocalJournalBackend.append_many
+    flush = activation.flush_acceptance
+
+    def barrier(self: Any, *args: Any, **kwargs: Any) -> Any:
+        _COUNTS.in_acceptance_flush = True
+        try:
+            return flush(self, *args, **kwargs)
+        finally:
+            _COUNTS.in_acceptance_flush = False
+
+    def group(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if not _COUNTS.measuring():
+            return original(self, *args, **kwargs)
+        _COUNTS.in_item_group = True
+        try:
+            return original(self, *args, **kwargs)
+        finally:
+            _COUNTS.in_item_group = False
+
+    def append_many(self: Any, drafts: Any, **kwargs: Any) -> Any:
+        if _COUNTS.measuring() and _COUNTS.in_item_group and drafts:
+            _COUNTS.counts["journal_appends"] += 1
+            _COUNTS.counts["journal_records"] += len(drafts)
+        return append(self, drafts, **kwargs)
+
+    activation.flush_acceptance = barrier
+    ProcedureExecutor._append_events = group
+    LocalJournalBackend.append_many = append_many
+    try:
+        yield
+    finally:
+        activation.flush_acceptance = flush
+        ProcedureExecutor._append_events = original
+        LocalJournalBackend.append_many = append
 
 
 def _encoding(original: Callable[[object], bytes]) -> Callable[[object], bytes]:
@@ -192,6 +279,7 @@ def _counted() -> Iterator[Counter[str]]:
         candidates.dependency_proof_order,
         canonical.composed_canonical_bytes,
         hashlib.sha256,
+        os.fsync,
     ]
     wrappers = {
         id(originals[0]): _encoding(originals[0]),
@@ -199,6 +287,7 @@ def _counted() -> Iterator[Counter[str]]:
         id(originals[2]): _encoding(originals[2]),
         id(originals[3]): _composing(originals[3]),
         id(originals[4]): _hashing(originals[4]),
+        id(originals[5]): _flushing(originals[5]),
     }
     by_wrapper = {id(wrapper): original for original, wrapper in zip(originals, wrappers.values())}
     sites: list[tuple[dict[str, Any], str, Any]] = []
@@ -269,7 +358,7 @@ def _settle(world: Any, first: int, count: int, batch: int) -> Counter[str]:
     (root / fixtures.RELATIVE_PATH).write_bytes(
         canonical.canonical_bytes({**fixtures.ADVISORY, "proposals": proposals})
     )
-    with _counted() as counts:
+    with _counted() as counts, _journal_counted():
         state = settle_support.run_settle(
             instance, root, line, now=fixtures.NOW + timedelta(minutes=10 * (batch + 1))
         )
@@ -316,9 +405,23 @@ def test_a_settles_work_per_item_stays_at_its_floor(
         _forget_parsed_receipts()
         after_large = _settle(world, 4 * N, N, 3)
 
+    assert small["journal_records"] == N
+    assert large["journal_records"] == 2 * N
+    assert small["journal_appends"] == large["journal_appends"] == 1
     slope = {name: (large[name] - small[name]) / N for name in PER_ITEM}
+    observed = {
+        name: (large[name] - small[name]) / N
+        for name in (
+            "fsyncs",
+            "file_opens",
+            "acceptance_fsyncs",
+            "git_fsyncs",
+            "non_acceptance_fsyncs",
+        )
+    }
     report = (
-        f"per item {slope}; small {dict(small)}; large {dict(large)}; "
+        f"per item {slope}; observed whole settle {observed}; "
+        f"small {dict(small)}; large {dict(large)}; "
         f"after large {dict(after_large)}"
     )
     destination = os.environ.get("CRUXIBLE_PER_ITEM_REPORT")

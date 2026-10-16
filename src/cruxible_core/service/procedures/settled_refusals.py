@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
-from cruxible_core.exhaust.records import parse_journal_payload
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.proposals.refusal_index import SettledCursor, SettledDelivery
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -92,7 +92,7 @@ def count_settled_refusals_step(
 def _settled_delivery(journal, stream, stored, bodies) -> SettledDelivery | None:  # type: ignore[no-untyped-def]
     """The settled delivery one ``terminal_egress`` record reports, if it reports one."""
 
-    payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=_ACCESS))
+    payload = read_payload(bodies, stored.record.payload_digest, access=_ACCESS)
     if not isinstance(payload, dict):
         return None
     receipt = payload.get("receipt")
@@ -115,9 +115,10 @@ def _settled_delivery(journal, stream, stored, bodies) -> SettledDelivery | None
     )
     if not admissions:
         return None
-    admission = parse_admission_payload(
-        parse_journal_payload(bodies.read(admissions[0].record.payload_digest, access=_ACCESS))
-    ).admission
+    payload = read_payload(bodies, admissions[0].record.payload_digest, access=_ACCESS)
+    if isinstance(payload, UnavailablePayload):
+        return None
+    admission = parse_admission_payload(payload).admission
     line_identity = getattr(admission, "line_identity", None)
     line_spec_digest = getattr(admission, "line_spec_digest", None)
     if line_identity is None or line_spec_digest is None:
