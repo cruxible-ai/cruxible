@@ -40433,6 +40433,17 @@
                 "title": "Journal Record Digest",
                 "type": "string"
               },
+              "last_disposition": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ResolutionDispositionSummary"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "note": {
                 "anyOf": [
                   {
@@ -40878,6 +40889,63 @@
             "title": "ProcedureReadingSummary",
             "type": "object"
           },
+          "ResolutionDispositionSummary": {
+            "additionalProperties": false,
+            "properties": {
+              "disposition_id": {
+                "title": "Disposition Id",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Reason"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "reviewer_id": {
+                "title": "Reviewer Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "verdict": {
+                "enum": [
+                  "upheld",
+                  "overturned"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "disposition_id",
+              "resolution_id",
+              "sequence",
+              "verdict",
+              "reviewer_id",
+              "recorded_at",
+              "reason"
+            ],
+            "title": "ResolutionDispositionSummary",
+            "type": "object"
+          },
           "SemanticAddress": {
             "additionalProperties": false,
             "description": "Stable meaning identity, independent of source-line presentation.",
@@ -41086,6 +41154,25 @@
             "default": null
           }
         },
+        "review": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "review",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureMeasurementReview"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "status": {
           "has_default": false,
           "has_default_factory": false,
@@ -41263,6 +41350,17 @@
                 "title": "Journal Record Digest",
                 "type": "string"
               },
+              "last_disposition": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ResolutionDispositionSummary"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "note": {
                 "anyOf": [
                   {
@@ -41341,6 +41439,141 @@
               "written_now"
             ],
             "title": "ProcedureMeasurementResolutionSummary",
+            "type": "object"
+          },
+          "ProcedureMeasurementReview": {
+            "additionalProperties": false,
+            "properties": {
+              "contract_id": {
+                "title": "Contract Id",
+                "type": "string"
+              },
+              "history": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ResolutionDispositionSummary"
+                },
+                "title": "History",
+                "type": "array"
+              },
+              "history_total": {
+                "default": 0,
+                "minimum": 0,
+                "title": "History Total",
+                "type": "integer"
+              },
+              "history_truncated": {
+                "default": false,
+                "title": "History Truncated",
+                "type": "boolean"
+              },
+              "last_disposition": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ResolutionDispositionSummary"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "latest_resolution_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Latest Resolution Id"
+              },
+              "measurement_name": {
+                "title": "Measurement Name",
+                "type": "string"
+              },
+              "standing_resolution_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Standing Resolution Id"
+              },
+              "unavailable": {
+                "default": false,
+                "title": "Unavailable",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "measurement_name",
+              "contract_id",
+              "latest_resolution_id",
+              "standing_resolution_id"
+            ],
+            "title": "ProcedureMeasurementReview",
+            "type": "object"
+          },
+          "ResolutionDispositionSummary": {
+            "additionalProperties": false,
+            "properties": {
+              "disposition_id": {
+                "title": "Disposition Id",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Reason"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "reviewer_id": {
+                "title": "Reviewer Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "verdict": {
+                "enum": [
+                  "upheld",
+                  "overturned"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "disposition_id",
+              "resolution_id",
+              "sequence",
+              "verdict",
+              "reviewer_id",
+              "recorded_at",
+              "reason"
+            ],
+            "title": "ResolutionDispositionSummary",
             "type": "object"
           },
           "SemanticAddress": {
@@ -41424,6 +41657,17 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/ProcedureMeasurementResolutionSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureMeasurementReview"
               },
               {
                 "type": "null"
@@ -41736,6 +41980,25 @@
             "type": "string"
           }
         },
+        "last_disposition": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "last_disposition",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolutionDispositionSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "note": {
           "default": null,
           "default_json_serializable": true,
@@ -41868,6 +42131,65 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "ResolutionDispositionSummary": {
+            "additionalProperties": false,
+            "properties": {
+              "disposition_id": {
+                "title": "Disposition Id",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Reason"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "reviewer_id": {
+                "title": "Reviewer Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "verdict": {
+                "enum": [
+                  "upheld",
+                  "overturned"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "disposition_id",
+              "resolution_id",
+              "sequence",
+              "verdict",
+              "reviewer_id",
+              "recorded_at",
+              "reason"
+            ],
+            "title": "ResolutionDispositionSummary",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "The standing resolution for one activation, with its retrievable record.",
         "properties": {
@@ -41891,6 +42213,17 @@
           "journal_record_digest": {
             "title": "Journal Record Digest",
             "type": "string"
+          },
+          "last_disposition": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolutionDispositionSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "note": {
             "anyOf": [
@@ -41983,6 +42316,282 @@
         "sequence",
         "verdict",
         "written_now"
+      ]
+    },
+    "ProcedureMeasurementReview": {
+      "fields": {
+        "contract_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "contract_id",
+          "required": true,
+          "schema": {
+            "title": "Contract Id",
+            "type": "string"
+          }
+        },
+        "history": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "history",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ResolutionDispositionSummary"
+            },
+            "title": "History",
+            "type": "array"
+          }
+        },
+        "history_total": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "history_total",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "History Total",
+            "type": "integer"
+          }
+        },
+        "history_truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "history_truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "History Truncated",
+            "type": "boolean"
+          }
+        },
+        "last_disposition": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "last_disposition",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolutionDispositionSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "latest_resolution_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "latest_resolution_id",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Resolution Id"
+          }
+        },
+        "measurement_name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "measurement_name",
+          "required": true,
+          "schema": {
+            "title": "Measurement Name",
+            "type": "string"
+          }
+        },
+        "standing_resolution_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "standing_resolution_id",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Standing Resolution Id"
+          }
+        },
+        "unavailable": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "unavailable",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Unavailable",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ResolutionDispositionSummary": {
+            "additionalProperties": false,
+            "properties": {
+              "disposition_id": {
+                "title": "Disposition Id",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Reason"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "reviewer_id": {
+                "title": "Reviewer Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "verdict": {
+                "enum": [
+                  "upheld",
+                  "overturned"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "disposition_id",
+              "resolution_id",
+              "sequence",
+              "verdict",
+              "reviewer_id",
+              "recorded_at",
+              "reason"
+            ],
+            "title": "ResolutionDispositionSummary",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "contract_id": {
+            "title": "Contract Id",
+            "type": "string"
+          },
+          "history": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ResolutionDispositionSummary"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "history_total": {
+            "default": 0,
+            "minimum": 0,
+            "title": "History Total",
+            "type": "integer"
+          },
+          "history_truncated": {
+            "default": false,
+            "title": "History Truncated",
+            "type": "boolean"
+          },
+          "last_disposition": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolutionDispositionSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "latest_resolution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Resolution Id"
+          },
+          "measurement_name": {
+            "title": "Measurement Name",
+            "type": "string"
+          },
+          "standing_resolution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Standing Resolution Id"
+          },
+          "unavailable": {
+            "default": false,
+            "title": "Unavailable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "measurement_name",
+          "contract_id",
+          "latest_resolution_id",
+          "standing_resolution_id"
+        ],
+        "title": "ProcedureMeasurementReview",
+        "type": "object"
+      },
+      "required_fields": [
+        "contract_id",
+        "latest_resolution_id",
+        "measurement_name",
+        "standing_resolution_id"
       ]
     },
     "ProcedureMeasurementRow": {
@@ -42294,6 +42903,17 @@
               "journal_record_digest": {
                 "title": "Journal Record Digest",
                 "type": "string"
+              },
+              "last_disposition": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ResolutionDispositionSummary"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "note": {
                 "anyOf": [
@@ -42619,6 +43239,63 @@
               "actor_id"
             ],
             "title": "ProcedureReadingSummary",
+            "type": "object"
+          },
+          "ResolutionDispositionSummary": {
+            "additionalProperties": false,
+            "properties": {
+              "disposition_id": {
+                "title": "Disposition Id",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Reason"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "reviewer_id": {
+                "title": "Reviewer Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "verdict": {
+                "enum": [
+                  "upheld",
+                  "overturned"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "disposition_id",
+              "resolution_id",
+              "sequence",
+              "verdict",
+              "reviewer_id",
+              "recorded_at",
+              "reason"
+            ],
+            "title": "ResolutionDispositionSummary",
             "type": "object"
           },
           "SemanticAddress": {
@@ -49186,6 +49863,17 @@
                 ],
                 "default": null
               },
+              "review": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureMeasurementReview"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "status": {
                 "enum": [
                   "unavailable",
@@ -49313,6 +50001,17 @@
                 "title": "Journal Record Digest",
                 "type": "string"
               },
+              "last_disposition": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ResolutionDispositionSummary"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "note": {
                 "anyOf": [
                   {
@@ -49391,6 +50090,84 @@
               "written_now"
             ],
             "title": "ProcedureMeasurementResolutionSummary",
+            "type": "object"
+          },
+          "ProcedureMeasurementReview": {
+            "additionalProperties": false,
+            "properties": {
+              "contract_id": {
+                "title": "Contract Id",
+                "type": "string"
+              },
+              "history": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ResolutionDispositionSummary"
+                },
+                "title": "History",
+                "type": "array"
+              },
+              "history_total": {
+                "default": 0,
+                "minimum": 0,
+                "title": "History Total",
+                "type": "integer"
+              },
+              "history_truncated": {
+                "default": false,
+                "title": "History Truncated",
+                "type": "boolean"
+              },
+              "last_disposition": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ResolutionDispositionSummary"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "latest_resolution_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Latest Resolution Id"
+              },
+              "measurement_name": {
+                "title": "Measurement Name",
+                "type": "string"
+              },
+              "standing_resolution_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Standing Resolution Id"
+              },
+              "unavailable": {
+                "default": false,
+                "title": "Unavailable",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "measurement_name",
+              "contract_id",
+              "latest_resolution_id",
+              "standing_resolution_id"
+            ],
+            "title": "ProcedureMeasurementReview",
             "type": "object"
           },
           "ProcedureReadingSummary": {
@@ -49639,6 +50416,63 @@
             "title": "ProcedureReadingSummary",
             "type": "object"
           },
+          "ResolutionDispositionSummary": {
+            "additionalProperties": false,
+            "properties": {
+              "disposition_id": {
+                "title": "Disposition Id",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Reason"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "reviewer_id": {
+                "title": "Reviewer Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "verdict": {
+                "enum": [
+                  "upheld",
+                  "overturned"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "disposition_id",
+              "resolution_id",
+              "sequence",
+              "verdict",
+              "reviewer_id",
+              "recorded_at",
+              "reason"
+            ],
+            "title": "ResolutionDispositionSummary",
+            "type": "object"
+          },
           "SemanticAddress": {
             "additionalProperties": false,
             "description": "Stable meaning identity, independent of source-line presentation.",
@@ -49776,6 +50610,285 @@
         "procedure_artifact_digest",
         "procedure_identity",
         "readings"
+      ]
+    },
+    "ProcedureResolutionDispositionRequest": {
+      "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "resolution_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "resolution_id",
+          "required": true,
+          "schema": {
+            "pattern": "^RSR-[0-9a-f]{32}$",
+            "title": "Resolution Id",
+            "type": "string"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "enum": [
+              "upheld",
+              "overturned"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "resolution_id": {
+            "pattern": "^RSR-[0-9a-f]{32}$",
+            "title": "Resolution Id",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "upheld",
+              "overturned"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resolution_id",
+          "verdict",
+          "reason"
+        ],
+        "title": "ProcedureResolutionDispositionRequest",
+        "type": "object"
+      },
+      "required_fields": [
+        "reason",
+        "resolution_id",
+        "verdict"
+      ]
+    },
+    "ProcedureResolutionDispositionResult": {
+      "fields": {
+        "disposition": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "disposition",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ResolutionDispositionSummary"
+          }
+        },
+        "standing_resolution_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "standing_resolution_id",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Standing Resolution Id"
+          }
+        },
+        "written_now": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "written_now",
+          "required": true,
+          "schema": {
+            "title": "Written Now",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ResolutionDispositionSummary": {
+            "additionalProperties": false,
+            "properties": {
+              "disposition_id": {
+                "title": "Disposition Id",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Reason"
+              },
+              "recorded_at": {
+                "format": "date-time",
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "resolution_id": {
+                "title": "Resolution Id",
+                "type": "string"
+              },
+              "reviewer_id": {
+                "title": "Reviewer Id",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "verdict": {
+                "enum": [
+                  "upheld",
+                  "overturned"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "disposition_id",
+              "resolution_id",
+              "sequence",
+              "verdict",
+              "reviewer_id",
+              "recorded_at",
+              "reason"
+            ],
+            "title": "ResolutionDispositionSummary",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "$ref": "#/$defs/ResolutionDispositionSummary"
+          },
+          "standing_resolution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Standing Resolution Id"
+          },
+          "written_now": {
+            "title": "Written Now",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "disposition",
+          "standing_resolution_id",
+          "written_now"
+        ],
+        "title": "ProcedureResolutionDispositionResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "disposition",
+        "standing_resolution_id",
+        "written_now"
       ]
     },
     "ProcedureRunAttribution": {
@@ -96743,6 +97856,159 @@
       "required_fields": [
         "contracts",
         "coordinate"
+      ]
+    },
+    "ResolutionDispositionSummary": {
+      "fields": {
+        "disposition_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "disposition_id",
+          "required": true,
+          "schema": {
+            "title": "Disposition Id",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "recorded_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "recorded_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          }
+        },
+        "resolution_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "resolution_id",
+          "required": true,
+          "schema": {
+            "title": "Resolution Id",
+            "type": "string"
+          }
+        },
+        "reviewer_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reviewer_id",
+          "required": true,
+          "schema": {
+            "title": "Reviewer Id",
+            "type": "string"
+          }
+        },
+        "sequence": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "sequence",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "enum": [
+              "upheld",
+              "overturned"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition_id": {
+            "title": "Disposition Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "resolution_id": {
+            "title": "Resolution Id",
+            "type": "string"
+          },
+          "reviewer_id": {
+            "title": "Reviewer Id",
+            "type": "string"
+          },
+          "sequence": {
+            "minimum": 1,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "verdict": {
+            "enum": [
+              "upheld",
+              "overturned"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "disposition_id",
+          "resolution_id",
+          "sequence",
+          "verdict",
+          "reviewer_id",
+          "recorded_at",
+          "reason"
+        ],
+        "title": "ResolutionDispositionSummary",
+        "type": "object"
+      },
+      "required_fields": [
+        "disposition_id",
+        "reason",
+        "recorded_at",
+        "resolution_id",
+        "reviewer_id",
+        "sequence",
+        "verdict"
       ]
     },
     "ReviewedMember": {

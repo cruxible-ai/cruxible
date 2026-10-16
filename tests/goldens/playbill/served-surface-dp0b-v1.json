@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-16:small-bugs",
-    "surface_digest": "sha256:e4b98ad112a2345b7942b3be89ed684312796530b8b6f42b2225188c9090ef6f"
+    "register_entry": "2026-10-16:resolution-overturn",
+    "surface_digest": "sha256:abdc5cb41a77f18f9687020329869fef4fa90317639e7fbc9a8a8eee02a95223"
   },
   "surface": {
     "cli_leaves": [
@@ -555,6 +555,13 @@
       },
       {
         "client_operations": [
+          "dispose_procedure_resolution"
+        ],
+        "command": "procedure dispose",
+        "delegate": "cruxible_core.cli.commands.playbill.procedure_dispose"
+      },
+      {
+        "client_operations": [
           "measure_procedure"
         ],
         "command": "procedure measure",
@@ -818,6 +825,7 @@
       "playbill_predict",
       "playbill_prediction_list",
       "playbill_prepare_approval",
+      "playbill_procedure_dispose",
       "playbill_procedure_measure",
       "playbill_procedure_readiness",
       "playbill_procedure_readings",
@@ -1277,7 +1285,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetRequest",
         "request_schema_digest": "sha256:4e586eff4c46deaab9a880742e32ab17847633d48b2e10b189ba408c0b612444",
         "response_model": "cruxible_client.contracts.get_reads.GetResult",
-        "response_schema_digest": "sha256:66ff887115626326ca2b414b5b640abdacb0748b52f9e4ff0667151c15e489a9"
+        "response_schema_digest": "sha256:0671509312fcd61e69006d9010e9721b8a20b5f06405ad6cdda9a16b2377355a"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.get_batch",
@@ -1289,7 +1297,7 @@
         "request_model": "cruxible_client.contracts.get_reads.GetBatchRequest",
         "request_schema_digest": "sha256:69a1ae48ed31c6179f0291b15f74e053f4413a1e2442674e02e75c9ccfd35f09",
         "response_model": "cruxible_client.contracts.get_reads.GetBatchResult",
-        "response_schema_digest": "sha256:658d9c092ef63f95ae531f5075a3f261d3f6f0c3bacf2ad0844fc84424e2d936"
+        "response_schema_digest": "sha256:1580e35211c152c703bbd13de7e0e574e91463f5759b258bbfa72e75f507a4b8"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.head",
@@ -1649,7 +1657,7 @@
         "request_model": "cruxible_client.contracts.procedures.readings.ProcedureMeasureRequest",
         "request_schema_digest": "sha256:747e5194740b001ccf63b26ca4278226a6dfbc222c108b9958469962d76fd32d",
         "response_model": "cruxible_client.contracts.procedures.readings.ProcedureMeasureResult",
-        "response_schema_digest": "sha256:36b174c4a54b9140693f7f1123bb09165846b92ecd742a65b171ba0bf6995d04"
+        "response_schema_digest": "sha256:69e689dfe9a5c03edfd209e733461855aae9bb0b6e71072eef3b2e7375b90cd8"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.procedure_readiness",
@@ -1673,7 +1681,19 @@
         "request_model": "cruxible_client.contracts.procedures.readings.ProcedureReadingsRequest",
         "request_schema_digest": "sha256:934160c455d6d73c3a7c185df756bf1234c342bb8551189f108264fadee79941",
         "response_model": "cruxible_client.contracts.procedures.readings.ProcedureReadingsResult",
-        "response_schema_digest": "sha256:b85e76d99d56447317e15b0550586c090115c416cf6e31fd2facf86decb18cca"
+        "response_schema_digest": "sha256:2dc1de6a40f2e8e08c5e22591eb4eb5d1e12afb28620f28aeb85a84055b0ed01"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.procedure_dispose",
+        "facade_operations": [
+          "playbill_procedure_dispose"
+        ],
+        "method": "POST",
+        "path": "/api/v1/{instance_id}/procedures/{name}/resolution-dispositions",
+        "request_model": "cruxible_client.contracts.procedures.dispositions.ProcedureResolutionDispositionRequest",
+        "request_schema_digest": "sha256:032a31ad3815ad51f7c90d717d4f82af4ed774d95fd7e4eea6df063f86c6f557",
+        "response_model": "cruxible_client.contracts.procedures.dispositions.ProcedureResolutionDispositionResult",
+        "response_schema_digest": "sha256:6e0308b176d2dd829feeb3d22801d6914c3b1b93978b8c786948f96e336e93af"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.run_procedure",
@@ -2295,7 +2315,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_get",
         "input_schema_digest": "sha256:70b0158c3923b0cf4df8b6a2e862044c563860674e6ecd93df61950b4136efcc",
         "name": "cruxible_get",
-        "output_schema_digest": "sha256:30e8806687935a549a7844f36ed3221a2a8533a65679f51374abcb3aa0d2d3af",
+        "output_schema_digest": "sha256:a2f7023b6f8f6a369f48f7a9ee3ab078a4d005009406f394c59c2a4ebe1b78d9",
         "permission": "READ_ONLY"
       },
       {
@@ -2505,12 +2525,22 @@
       },
       {
         "client_operations": [
+          "dispose_procedure_resolution"
+        ],
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_dispose",
+        "input_schema_digest": "sha256:d09aed14d9ec0e36c8482516cb719eae991df4ca0bbc2c2379cc680aa3ddb50d",
+        "name": "cruxible_procedure_dispose",
+        "output_schema_digest": "sha256:2263a4d98dc47b516c0e3755660c0cf89ef29be903ee6f8cf2b803ba3fb1a72c",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "client_operations": [
           "measure_procedure"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_measure",
         "input_schema_digest": "sha256:ce11a90fb7f2daacf6d863c02ce6a7ad4af463e3e6e2db04b09d8bb614b3067b",
         "name": "cruxible_procedure_measure",
-        "output_schema_digest": "sha256:5c8236231c3b3b8a5dc65c6fcfcaaf57ebeec0a77f2500d747051551c20d85f4",
+        "output_schema_digest": "sha256:16ed91479458d32c34053217ff9b77de95b7c5356aefa893b190a654870bd4ce",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -2520,7 +2550,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_procedure_readings",
         "input_schema_digest": "sha256:e41ce4e6c2ab5ea98ab40cd85bc49a3ab7774d4eb17dfc8a22ec201812262831",
         "name": "cruxible_procedure_readings",
-        "output_schema_digest": "sha256:857deda643921fc872c507467ca9163f3f8c927d0640855c408435d50090f1ec",
+        "output_schema_digest": "sha256:7f5e8fe587c55f62ca458f9b4c43ee3a4628aa0ea3834374a027e1d79311969d",
         "permission": "READ_ONLY"
       },
       {
