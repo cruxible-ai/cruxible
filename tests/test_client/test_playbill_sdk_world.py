@@ -112,6 +112,14 @@ class _WorldClient:
     def __init__(self) -> None:
         self.coordinate = _COORDINATE
         self.subject_list_calls = 0
+        self.subject_get_requests: list[Any] = []
+        self.subjects = {
+            "sec.package/cryptography": "live",
+            "sec.vulnerability/cve-2026-69247": "live",
+            "dev.batch/p2c": "live",
+            "dev.batch/retired_batch": "retired",
+        }
+        self.subject_spellings: dict[str, str] = {}
         self.claim_type_list_calls = 0
         self.claim_type_coordinates: list[Any] = []
         self.claim_reads: list[str] = []
@@ -177,12 +185,7 @@ class _WorldClient:
         """Every Subject as (kind, id, lifecycle)."""
 
         self.subject_list_calls += 1
-        return [
-            ("sec.package", "cryptography", "live"),
-            ("sec.vulnerability", "cve-2026-69247", "live"),
-            ("dev.batch", "p2c", "live"),
-            ("dev.batch", "retired_batch", "retired"),
-        ]
+        return [(*ref.split("/", 1), lifecycle) for ref, lifecycle in self.subjects.items()]
 
     def _claim_view(self, _instance_id: str, identity: str, **_values: Any) -> Any:
         self.claim_reads.append(identity)
@@ -296,6 +299,29 @@ class _WorldClient:
         coordinate = request.at or self.coordinate
         if request.detail == "why":
             return _proof_result(request.ref, "subject", None, coordinate, why=request.ref)
+        if "/" in request.ref and request.detail == "summary":
+            from cruxible_client.contracts.errors import ReadRefusalError
+            from cruxible_client.contracts.get_reads import GetCoordinate, GetResult, GetSubjectCard
+
+            self.subject_get_requests.append(request)
+            ref = self.subject_spellings.get(request.ref, request.ref)
+            if ref not in self.subjects:
+                raise ReadRefusalError("cruxible.get.ref_not_found", f"No Subject {ref}")
+            return GetResult(
+                ref=ref,
+                kind="subject",
+                detail="summary",
+                card=GetSubjectCard(
+                    subject=ref,
+                    kind=ref.split("/", 1)[0],
+                    lifecycle=self.subjects[ref],
+                    claims=(),
+                    incoming_count=0,
+                ),
+                coordinate=GetCoordinate(git_oid=coordinate.git_oid[:12], generation=1),
+                accepted_coordinate=coordinate,
+                evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
+            )
         if request.ref.startswith("ClaimType:"):
             view: Any = self._claim_type_view(
                 instance_id, request.ref.removeprefix("ClaimType:"), at=request.at
@@ -645,31 +671,103 @@ def test_a_non_enum_schema_validates_its_constructor_before_the_wire(
         world.sec.vuln.affects_package("sec.package/cryptography")
 
 
-def test_a_kind_loads_its_subjects_only_when_one_is_first_asked_for(
+def test_a_subject_lookup_resolves_only_that_subject_and_caches_it(
     connection: tuple[Cruxible, _WorldClient],
 ) -> None:
-    """A thousand-Subject world must cost the vocabulary and nothing else."""
-
     playbill, client = connection
     world = playbill.world()
 
     assert client.claim_type_list_calls == 1
     assert client.subject_queries == []
+    assert client.subject_get_requests == []
 
-    # The first ask reads every kind's Subjects once: one value-free query each.
-    assert world.sec.package.cryptography.address == "sec.package/cryptography"
-    assert client.subject_queries == ["dev.batch", "sec.package", "sec.vulnerability"]
+    package = world.sec.package.cryptography
+    assert package.address == "sec.package/cryptography"
+    assert [r.ref for r in client.subject_get_requests] == [package.address]
+    assert world.sec.package["cryptography"] is package
+    assert "cryptography" in world.sec.package
+    assert client.subject_queries == []
+    assert len(client.subject_get_requests) == 1
 
-    # A second kind, and a second read of the first, are answered from what the
-    # first ask already resolved.
     assert world.dev.batch["p2c"].address == "dev.batch/p2c"
-    assert world.sec.package["cryptography"].address == "sec.package/cryptography"
-    assert len(client.subject_queries) == 3
+    assert len(client.subject_get_requests) == 2
+    assert client.subject_queries == []
 
-    # A retired Subject leaves the world it was retired out of.
+    # Enumeration pages only the kind explicitly asked for; it keeps handles.
+    assert world.sec.package.subject_ids == ("cryptography",)
+    assert world.sec.package["cryptography"] is package
+    assert tuple(world.sec.package) == (package,)
+    assert len(world.sec.package) == 1
+    assert client.subject_queries == ["sec.package"]
     assert world.dev.batch.subject_ids == ("p2c",)
+    assert client.subject_queries == ["sec.package", "dev.batch"]
     with pytest.raises(AbsentSubject):
         world.dev.batch["retired_batch"]
+    assert "retired_batch" not in world.dev.batch
+    assert None not in world.dev.batch
+    assert 1 not in world.dev.batch
+
+
+def test_alias_and_key_spellings_share_a_canonical_handle_without_adding_inventory_entries(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+    client.subject_spellings = {
+        "sec.package/Crypto Alias": "sec.package/cryptography",
+        "sec.package/crypto-key": "sec.package/cryptography",
+    }
+    world = playbill.world()
+    package = world.sec.package["Crypto Alias"]
+    assert world.sec.package["cryptography"] is package
+    assert world.sec.package["Crypto Alias"] is package
+    assert "Crypto Alias" in world.sec.package
+    assert client.subject_queries == []
+    assert len(client.subject_get_requests) == 1
+
+    # Even a complete canonical inventory cannot prove an alias/key is absent.
+    assert world.sec.package.subject_ids == ("cryptography",)
+    assert world.sec.package["crypto-key"] is package
+    assert "crypto-key" in world.sec.package
+    assert tuple(world.sec.package) == (package,)
+    assert len(world.sec.package) == 1
+    assert len(client.subject_get_requests) == 2
+
+
+def test_missing_and_retired_lookups_are_cached_without_listing_a_kind(
+    connection: tuple[Cruxible, _WorldClient],
+) -> None:
+    playbill, client = connection
+    world = playbill.world()
+    for name in ("missing", "retired_batch"):
+        with pytest.raises(AbsentSubject) as absent:
+            world.dev.batch[name]
+        assert absent.value.subject_id == name
+        assert absent.value.coordinate == world.coordinate
+        assert name not in world.dev.batch
+    assert len(client.subject_get_requests) == 2
+    assert client.subject_queries == []
+
+
+def test_a_lookup_preserves_ambiguous_and_unrelated_server_refusals(
+    connection: tuple[Cruxible, _WorldClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    playbill, client = connection
+    world = playbill.world()
+    refusal = ReadRefusalError(
+        "cruxible.get.ref_ambiguous", "several Subjects", candidates=("one", "two")
+    )
+
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise refusal
+
+    monkeypatch.setattr(client, "get", refuse)
+    with pytest.raises(ReadRefusalError) as raised:
+        world.dev.batch["ambiguous"]
+    assert raised.value is refusal
+    assert world._subject_lookups == {}
+    assert world._subject_cache == {}
 
 
 @pytest.mark.parametrize(
@@ -709,8 +807,8 @@ def test_an_incomplete_subject_listing_refuses_and_caches_nothing(
     client.subject_pages = stuck
     world = playbill.world()
     with pytest.raises(WorldStructureError, match=refusal):
-        world.sec.package["a"]
-    assert world._subjects_loaded is False
+        tuple(world.sec.package)
+    assert world._subjects_loaded == set()
     assert world._subject_cache == {}
 
 
@@ -725,7 +823,7 @@ def test_a_subject_listing_row_must_state_its_lifecycle(
         receipt=client._receipt(request),
     )
     with pytest.raises(WorldStructureError, match="lifecycle"):
-        playbill.world().sec.package["a"]
+        tuple(playbill.world().sec.package)
 
 
 def test_the_facade_remains_pinned_when_the_live_orientation_moves(

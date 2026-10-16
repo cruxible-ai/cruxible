@@ -1,6 +1,7 @@
 """Which Subjects a World knows, against a real daemon: live, complete, at one coordinate.
 
-A World lists Subjects through the served ``query`` verb. These run the SDK
+A World resolves individual Subjects through ``get`` and lists a kind only on
+explicit enumeration through ``query``. These run the SDK
 over an in-process HTTP app on a real instance, because what is under test is
 what the service's queries bind: retired Subject shells, and the server's
 result ceiling.
@@ -102,6 +103,32 @@ def test_a_world_does_not_resurrect_a_retired_subject(pb: Cruxible) -> None:
     with pytest.raises(AbsentSubject) as absent:
         items["wi-3"]
     assert absent.value.subject_id == "wi-3"
+
+
+def test_direct_lookup_refuses_a_retired_subject_before_any_inventory(pb: Cruxible) -> None:
+    items = pb.world().project.work_item
+    with pytest.raises(AbsentSubject) as absent:
+        items["wi-3"]
+    assert absent.value.subject_id == "wi-3"
+    assert "wi-3" not in items
+    assert "wi-1" in items
+
+
+def test_alias_of_a_live_subject_wins_over_a_retired_id_even_after_enumeration(
+    pb: Cruxible,
+) -> None:
+    assert (
+        pb.changes(because="Merged the retired item.")
+        .add(f"{KIND}/wi-2", "semantic.alias", "wi-3")
+        .write()
+        .status
+        == "accepted"
+    )
+    items = pb.world().project.work_item
+    assert items.subject_ids == ("wi-1", "wi-2")
+    assert items["wi-3"] is items["wi-2"]
+    assert "wi-3" in items
+    assert len(items) == 2
 
 
 def test_query_lists_live_subjects_and_marks_retired_ones_on_request(pb: Cruxible) -> None:
@@ -285,6 +312,37 @@ def test_a_define_run_again_lands_on_its_subject_and_expect_new_refuses(typed: C
     assert taken.address == f"{DECISION}/ship-it-{key_digest_hex(['ship-it'])[:8]}"
 
 
+def test_world_lookup_resolves_alias_and_single_key_and_keeps_the_read_coordinate(
+    typed: Cruxible,
+) -> None:
+    draft = typed.world().dev.decision.define("Ship It Now", title="Ship")
+    assert draft.write(because="Decided.").status == "accepted"
+    assert draft.address is not None
+    assert (
+        typed.changes(because="Name it for readers.")
+        .add(draft.address, "semantic.alias", "Launch Decision")
+        .write()
+        .status
+        == "accepted"
+    )
+    world = typed.world()
+    decisions = world.dev.decision
+    by_key = decisions["SHIP IT NOW"]
+    assert by_key.address == draft.address
+    assert decisions["Launch Decision"] is by_key
+    assert decisions["ship-it-now"] is by_key
+    assert "Launch Decision" in decisions
+    assert decisions.subject_ids == ("ship-it-now",)
+    assert tuple(decisions) == (by_key,)
+    assert len(decisions) == 1
+
+    assert by_key.set(title="Shipped", because="Completed.").status == "accepted"
+    # The lookup remains at the World's coordinate even for an uncached alias.
+    assert decisions["launch decision"] is by_key
+    assert [claim.value for claim in by_key.title] == ["Ship"]
+    assert typed.get(by_key, detail="history", field="title").coordinate == world.coordinate
+
+
 def test_a_hint_key_two_subjects_hold_is_ambiguous_to_define(typed: Cruxible) -> None:
     from cruxible_client.contracts.errors import WriteRefusalError
 
@@ -296,6 +354,14 @@ def test_a_hint_key_two_subjects_hold_is_ambiguous_to_define(typed: Cruxible) ->
     with pytest.raises(WriteRefusalError) as refused:
         typed.world().dev.note.define("SAME").write(because="Which one?")
     assert refused.value.error_code == "cruxible.subject.key_ambiguous"
+
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    items = typed.world().dev.note
+    for lookup in (lambda: items["SAME"], lambda: "SAME" in items):
+        with pytest.raises(ReadRefusalError) as ambiguous:
+            lookup()
+        assert ambiguous.value.error_code == "cruxible.get.ref_ambiguous"
 
 
 def test_the_sdk_reads_a_subject_s_whole_field_history_across_pages(

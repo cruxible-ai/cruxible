@@ -900,7 +900,7 @@ class KindNamespace:
 
     def __getitem__(self, subject_id: str) -> WorldSubject:
         kind = self._require_kind()
-        found = self._subjects().get(subject_id)
+        found = self._world._subject_of(kind, subject_id)
         if found is None:
             raise AbsentSubject(
                 subject_kind=kind,
@@ -910,7 +910,10 @@ class KindNamespace:
         return found
 
     def __contains__(self, subject_id: object) -> bool:
-        return isinstance(subject_id, str) and subject_id in self._subjects()
+        return (
+            isinstance(subject_id, str)
+            and self._world._subject_of(self._require_kind(), subject_id) is not None
+        )
 
     def __iter__(self) -> Iterator[WorldSubject]:
         return iter(self._subjects().values())
@@ -993,6 +996,7 @@ class World:
         "_root",
         "_row_cache",
         "_subject_cache",
+        "_subject_lookups",
         "_subjects_loaded",
         "_view_cache",
         "unstructured_predicates",
@@ -1010,7 +1014,8 @@ class World:
         self._coordinate = coordinate
         self._root = root
         self._subject_cache: dict[str, dict[str, WorldSubject]] = {}
-        self._subjects_loaded = False
+        self._subject_lookups: dict[tuple[str, str], WorldSubject | None] = {}
+        self._subjects_loaded: set[str] = set()
         self._row_cache: dict[str, tuple[Mapping[str, object], ...]] = {}
         self._claim_cache: dict[tuple[str, str | None], tuple[ClaimView, ...]] = {}
         self._view_cache: dict[str, ClaimView] = {}
@@ -1522,39 +1527,75 @@ class World:
             f"{subject_kind!r}; it admits: {spelled}"
         )
 
-    def _subjects_of(self, subject_kind: str) -> Mapping[str, WorldSubject]:
+    def _subject_of(self, subject_kind: str, subject_id: str) -> WorldSubject | None:
+        """Resolve one id, alias or key at this World's coordinate, once per spelling."""
+
+        from cruxible_client.contracts.errors import ReadRefusalError
+        from cruxible_client.contracts.get_reads import GetSubjectCard
+
         self._assert_current()
-        if not self._subjects_loaded:
-            self._load_subjects()
-        return self._subject_cache.get(subject_kind, {})
+        # Canonical live ids always win over aliases and keys, including when
+        # an explicit inventory read already populated this kind's cache.
+        subjects = self._subject_cache.get(subject_kind, {})
+        if subject_id in subjects:
+            return subjects[subject_id]
+        lookup = (subject_kind, subject_id)
+        if lookup in self._subject_lookups:
+            return self._subject_lookups[lookup]
+        try:
+            result = self._playbill._get(
+                f"{subject_kind}/{subject_id}", "summary", None, self._coordinate
+            )
+        except ReadRefusalError as exc:
+            if exc.error_code != "cruxible.get.ref_not_found":
+                raise
+            self._subject_lookups[lookup] = None
+            return None
+        card = result.card
+        if (
+            result.kind != "subject"
+            or not isinstance(card, GetSubjectCard)
+            or card.kind != subject_kind
+            or not card.subject.startswith(subject_kind + "/")
+            or card.subject != result.ref
+            or card.lifecycle not in ("live", "retired")
+        ):
+            raise WorldStructureError(
+                "Subject lookup did not return the requested kind and lifecycle"
+            )
+        found = None
+        if card.lifecycle == "live":
+            canonical_id = card.subject.split("/", 1)[1]
+            subjects = self._subject_cache.setdefault(subject_kind, {})
+            found = subjects.get(canonical_id)
+            if found is None:
+                found = subjects[canonical_id] = WorldSubject(
+                    address=card.subject, coordinate=self._coordinate, _world=self
+                )
+        self._subject_lookups[lookup] = found
+        return found
 
-    def _load_subjects(self) -> None:
-        """Read every live Subject of every kind, complete, at this World's coordinate.
+    def _subjects_of(self, subject_kind: str) -> Mapping[str, WorldSubject]:
+        """Read a complete kind only for explicit enumeration, never for a lookup."""
 
-        One value-free ``query`` per kind lists Subjects ordered by ID, and
-        asks for retired ones too (marked by ``lifecycle``) so every listed
-        row is one the evaluator bound. A page continues by its cursor; an
-        answer the server capped continues as a new window after the last ID
-        it listed. Anything else that stops short -- a truncated answer with
-        neither a cursor nor a cap, a cursor or window that does not advance,
-        a row without its lifecycle -- refuses, and nothing is cached: a
-        partial inventory would call an accepted Subject absent.
-        """
-
-        loaded: dict[str, dict[str, WorldSubject]] = {}
-        for subject_kind in self._kind_paths():
-            loaded[subject_kind] = {
-                subject_id: WorldSubject(
+        self._assert_current()
+        if subject_kind not in self._subjects_loaded:
+            # Finish every page before installing the inventory. Keep handles
+            # already resolved by id/alias/key, in the inventory's id order.
+            ids = self._live_subject_ids(subject_kind)
+            previous = self._subject_cache.get(subject_kind, {})
+            self._subject_cache[subject_kind] = {
+                subject_id: previous[subject_id]
+                if subject_id in previous
+                else WorldSubject(
                     address=f"{subject_kind}/{subject_id}",
                     coordinate=self._coordinate,
                     _world=self,
                 )
-                for subject_id in self._live_subject_ids(subject_kind)
+                for subject_id in ids
             }
-        for subject_kind, subjects in loaded.items():
-            if subjects:
-                self._subject_cache[subject_kind] = subjects
-        self._subjects_loaded = True
+            self._subjects_loaded.add(subject_kind)
+        return self._subject_cache[subject_kind]
 
     def _live_subject_ids(self, subject_kind: str) -> list[str]:
         from cruxible_client.contracts.compact_query import (
