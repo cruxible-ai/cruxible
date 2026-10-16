@@ -283,7 +283,20 @@ class _WorldClient:
         )
 
     def get_batch(self, instance_id: str, *, request: Any) -> Any:
-        from cruxible_client.contracts.get_reads import GetBatchResult
+        from cruxible_client.contracts.get_reads import GetBatchResult, GetRequest
+
+        if request.detail == "summary":
+            self.subject_get_requests.append(request)
+            return GetBatchResult(
+                coordinate=request.at or self.coordinate,
+                results=tuple(
+                    self.get(
+                        instance_id,
+                        request=GetRequest(ref=ref, detail=request.detail, at=request.at),
+                    )
+                    for ref in request.refs
+                ),
+            )
 
         by_ref = {f"ClaimType:{view.predicate}": view for view in self._listing.claim_types}
         coordinate = self._listing.coordinate
@@ -303,7 +316,6 @@ class _WorldClient:
             from cruxible_client.contracts.errors import ReadRefusalError
             from cruxible_client.contracts.get_reads import GetCoordinate, GetResult, GetSubjectCard
 
-            self.subject_get_requests.append(request)
             spelling = request.ref.removeprefix("Subject:")
             ref = self.subject_spellings.get(spelling, spelling)
             if ref not in self.subjects:
@@ -684,7 +696,7 @@ def test_a_subject_lookup_resolves_only_that_subject_and_caches_it(
 
     package = world.sec.package.cryptography
     assert package.address == "sec.package/cryptography"
-    assert [r.ref for r in client.subject_get_requests] == [f"Subject:{package.address}"]
+    assert [r.refs for r in client.subject_get_requests] == [(f"Subject:{package.address}",)]
     assert client.subject_get_requests[0].subject_suggestions is False
     assert world.sec.package["cryptography"] is package
     assert "cryptography" in world.sec.package
@@ -764,10 +776,37 @@ def test_a_lookup_preserves_ambiguous_and_unrelated_server_refusals(
     def refuse(*args: Any, **kwargs: Any) -> Any:
         raise refusal
 
-    monkeypatch.setattr(client, "get", refuse)
+    monkeypatch.setattr(client, "get_batch", refuse)
     with pytest.raises(ReadRefusalError) as raised:
         world.dev.batch["ambiguous"]
     assert raised.value is refusal
+    assert world._subject_lookups == {}
+    assert world._subject_cache == {}
+
+
+@pytest.mark.parametrize("batch_coordinate", [_COORDINATE, _MOVED_COORDINATE])
+def test_subject_lookup_refuses_inconsistent_or_unrequested_batch_coordinates(
+    connection: tuple[Cruxible, _WorldClient],
+    monkeypatch: pytest.MonkeyPatch,
+    batch_coordinate: api.AcceptedCoordinate,
+) -> None:
+    playbill, client = connection
+    world = playbill.world()
+    original = client.get_batch
+
+    def moved(*args: Any, **kwargs: Any) -> Any:
+        batch = original(*args, **kwargs)
+        (result,) = batch.results
+        return batch.model_copy(
+            update={
+                "coordinate": batch_coordinate,
+                "results": (result.model_copy(update={"accepted_coordinate": _MOVED_COORDINATE}),),
+            }
+        )
+
+    monkeypatch.setattr(client, "get_batch", moved)
+    with pytest.raises(ValueError, match="accepted coordinate|requested coordinate"):
+        world.dev.batch["p2c"]
     assert world._subject_lookups == {}
     assert world._subject_cache == {}
 

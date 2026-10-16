@@ -1,7 +1,7 @@
 """Which Subjects a World knows, against a real daemon: live, complete, at one coordinate.
 
-A World resolves individual Subjects through ``get`` and lists a kind only on
-explicit enumeration through ``query``. These run the SDK
+A World resolves individual Subjects through the internal get batch and lists
+a kind only on explicit enumeration through ``query``. These run the SDK
 over an in-process HTTP app on a real instance, because what is under test is
 what the service's queries bind: retired Subject shells, and the server's
 result ceiling.
@@ -349,7 +349,7 @@ def _assert_cached_json_lookup(cx: Cruxible, kind: str, spelling: str, address: 
     world = cx.world()
     assert cx.get(f"Subject:{kind}/{spelling}").value.subject == address
     items = world.kind(kind)
-    with patch.object(cx._client, "get", wraps=cx._client.get) as get:
+    with patch.object(cx._client, "get_batch", wraps=cx._client.get_batch) as get:
         subject = items[spelling]
         assert subject.address == address
         assert spelling in items
@@ -357,7 +357,8 @@ def _assert_cached_json_lookup(cx: Cruxible, kind: str, spelling: str, address: 
         assert items[address.split("/", 1)[1]] is subject
         assert get.call_count == 1
         request = get.call_args.kwargs["request"]
-        assert request.ref == f"Subject:{kind}/{spelling}"
+        assert request.refs == (f"Subject:{kind}/{spelling}",)
+        assert request.subject_suggestions is False
         assert request.at == world.coordinate
 
 
@@ -423,7 +424,7 @@ def test_first_absent_world_lookup_has_flat_server_work_at_two_instance_sizes(
         with monkeypatch.context() as scoped:
             scoped.setattr(get_module, "_names_of", counted_names)
             scoped.setattr(TypedStateReader, "envelopes", counted_envelopes)
-            with patch.object(typed._client, "get", wraps=typed._client.get) as get:
+            with patch.object(typed._client, "get_batch", wraps=typed._client.get_batch) as get:
                 with pytest.raises(AbsentSubject) as absent:
                     items["never-accepted"]
                 assert str(absent.value) == str(
@@ -441,11 +442,19 @@ def test_first_absent_world_lookup_has_flat_server_work_at_two_instance_sizes(
     assert measured == [(0, 0, 1), (0, 0, 1)], measured
 
 
-def test_ordinary_sdk_get_keeps_nearest_subject_suggestions(typed: Cruxible) -> None:
+@pytest.mark.parametrize("reader", ["sdk", "low_level", "batch"])
+def test_ordinary_sdk_get_keeps_nearest_subject_suggestions(typed: Cruxible, reader: str) -> None:
     from cruxible_client.contracts.errors import ReadRefusalError
+    from cruxible_client.contracts.get_reads import GetBatchRequest, GetRequest
 
     with pytest.raises(ReadRefusalError) as missing:
-        typed.get(f"Subject:{KIND}/wi-4")
+        ref = f"Subject:{KIND}/wi-4"
+        if reader == "sdk":
+            typed.get(ref)
+        elif reader == "low_level":
+            typed._client.get(typed._instance_id, request=GetRequest(ref=ref))
+        else:
+            typed._client.get_batch(typed._instance_id, request=GetBatchRequest(refs=(ref,)))
     assert missing.value.error_code == "cruxible.get.ref_not_found"
     assert f"{KIND}/wi-1" in missing.value.candidates
     assert missing.value.repair is not None

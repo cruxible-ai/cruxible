@@ -2758,6 +2758,7 @@ def service_playbill_get(
     request: GetRequest,
     access: BodyAccessContext,
     viewer: OperationalViewer | None = None,
+    subject_suggestions: bool = True,
 ) -> GetResult:
     """Resolve one reference and answer it at one ``detail`` level.
 
@@ -2765,6 +2766,8 @@ def service_playbill_get(
     values, so every caller reads them as text. ``viewer`` is the
     authenticated reader: a Line or run card names a runtime arming
     credential only to that credential or an admin (``None`` sees none).
+    Only the SDK-internal batch reader may disable ``subject_suggestions``;
+    ordinary public get always keeps its nearest-name repair suggestions.
     """
 
     continuation, at = _history_continuation(instance, request)
@@ -2775,7 +2778,7 @@ def service_playbill_get(
         coordinate,
         request.ref,
         surface=request.surface,
-        subject_suggestions=request.subject_suggestions,
+        subject_suggestions=subject_suggestions,
     )
     if resolved.kind == "proposal":
         # Proposals are operational state, read only as of the current head;

@@ -1543,12 +1543,9 @@ class World:
         if lookup in self._subject_lookups:
             return self._subject_lookups[lookup]
         try:
-            result = self._playbill._get(
+            result = self._playbill._get_subject(
                 f"Subject:{subject_kind}/{subject_id}",
-                "summary",
-                None,
                 self._coordinate,
-                subject_suggestions=False,
             )
         except ReadRefusalError as exc:
             if exc.error_code != "cruxible.get.ref_not_found":

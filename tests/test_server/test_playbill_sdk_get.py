@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from cruxible_client.authoring.sdk import ClaimView, Cruxible
 from cruxible_client.authoring.sdk_types import ClaimRef, ClaimTypeRef, RefKind, SubjectRef
@@ -41,6 +43,17 @@ def _sdk(client: TestClient, instance_id: str, tmp_path: Path) -> Cruxible:
         workspace=workspace,
         clock=lambda: datetime(2026, 8, 16, 21, tzinfo=UTC),
     )
+
+
+def test_public_get_request_keeps_world_lookup_control_internal() -> None:
+    from cruxible_core.server.routes.playbill import get_by_ref
+
+    assert get_type_hints(get_by_ref)["req"] is GetRequest
+    assert "subject_suggestions" not in GetRequest.model_json_schema()["properties"]
+    ordinary = GetRequest(ref="Subject:project.work_item/wi-42")
+    assert "subject_suggestions" not in ordinary.model_dump(mode="json")
+    with pytest.raises(ValidationError, match="subject_suggestions"):
+        GetRequest.model_validate({**ordinary.model_dump(), "subject_suggestions": False})
 
 
 def test_get_resolves_strings_and_typed_refs_directly(

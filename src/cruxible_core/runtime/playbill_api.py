@@ -2818,6 +2818,14 @@ def _operational_viewer(instance_id: str) -> OperationalViewer:
 def playbill_get(instance_id: str, *, request: GetRequest) -> GetResult:
     """One governed thing by reference; a Document body needs body-read permission."""
 
+    return _playbill_get(instance_id, request=request)
+
+
+def _playbill_get(
+    instance_id: str, *, request: GetRequest, subject_suggestions: bool = True
+) -> GetResult:
+    """Shared get execution; only the internal batch may suppress Subject suggestions."""
+
     from cruxible_client.contracts.claim_types import claim_type_path
     from cruxible_client.contracts.query.definitions import query_definition_path
     from cruxible_core.service.discovery.get import service_playbill_get
@@ -2838,6 +2846,7 @@ def playbill_get(instance_id: str, *, request: GetRequest) -> GetResult:
             ),
         ),
         viewer=_operational_viewer(instance_id),
+        subject_suggestions=subject_suggestions,
     )
     read_at = result.accepted_coordinate
     assert read_at is not None
@@ -2876,7 +2885,7 @@ def playbill_get_batch(instance_id: str, *, request: GetBatchRequest) -> GetBatc
     results: list[GetResult] = []
     pinned: contracts.AcceptedCoordinate | str | None = request.at
     for ref in request.refs:
-        result = playbill_get(
+        result = _playbill_get(
             instance_id,
             request=GetRequest(
                 ref=ref,
@@ -2886,6 +2895,7 @@ def playbill_get_batch(instance_id: str, *, request: GetBatchRequest) -> GetBatc
                 surface=request.surface,
                 full_coordinate=True,
             ),
+            subject_suggestions=request.subject_suggestions,
         )
         pinned = result.accepted_coordinate
         results.append(result)

@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-15:world-lookup",
-    "surface_digest": "sha256:f58d12e2eb00d9ae55e4640c7002d3e825f8b8432a989045cd32634e8ac7ce4e"
+    "surface_digest": "sha256:1d1af973c4c24f14585d9220fcc980494dbed284faa526bef79bdf6351f600d2"
   },
   "surface": {
     "cli_leaves": [
@@ -1239,7 +1239,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/get",
         "request_model": "cruxible_client.contracts.get_reads.GetRequest",
-        "request_schema_digest": "sha256:42c190c94762abaa8677c992a955b8b9fee7c56b9baa8be9a11023cb178d8580",
+        "request_schema_digest": "sha256:4e586eff4c46deaab9a880742e32ab17847633d48b2e10b189ba408c0b612444",
         "response_model": "cruxible_client.contracts.get_reads.GetResult",
         "response_schema_digest": "sha256:c650fec483e9f26357c17b8e96b86b6efd5731964b61a3ed4ccadc140ec09ff0"
       },
@@ -1251,7 +1251,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/get-batch",
         "request_model": "cruxible_client.contracts.get_reads.GetBatchRequest",
-        "request_schema_digest": "sha256:bbc6653e3c8d20543593902bcbaf191c2eee907a27af7fbcd5838653b74eed26",
+        "request_schema_digest": "sha256:69a1ae48ed31c6179f0291b15f74e053f4413a1e2442674e02e75c9ccfd35f09",
         "response_model": "cruxible_client.contracts.get_reads.GetBatchResult",
         "response_schema_digest": "sha256:65aedb84bb47a1ecfe1d63f7370c5436ea46d2c9289db76d62859967d3af6d11"
       },

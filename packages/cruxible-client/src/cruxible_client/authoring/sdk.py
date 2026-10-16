@@ -4235,6 +4235,26 @@ class Cruxible:
                     )
         return values
 
+    def _get_subject(self, ref: str, coordinate: AcceptedCoordinate) -> GetResult:
+        """World's indexed Subject lookup, through the SDK-internal batch contract."""
+
+        requested = self._read_at(coordinate)
+        batch = self._client.get_batch(
+            self._instance_id,
+            request=GetBatchRequest(
+                refs=(ref,),
+                detail="summary",
+                at=requested,
+                evaluation_time=datetime.fromisoformat(self._evaluation_time()),
+                subject_suggestions=False,
+            ),
+        )
+        (result,) = batch.results
+        if result.accepted_coordinate != batch.coordinate:
+            raise ValueError("the Subject lookup returned inconsistent accepted coordinates")
+        self._observe_read(_get_coordinate(result), expected=requested)
+        return result
+
     def _get(
         self,
         ref: str,
@@ -4243,7 +4263,6 @@ class Cruxible:
         coordinate: AcceptedCoordinate | None,
         *,
         field: str | None = None,
-        subject_suggestions: bool = True,
     ) -> GetResult:
         requested = self._read_at(coordinate)
         request = GetRequest(
@@ -4257,7 +4276,6 @@ class Cruxible:
             # The SDK pins every read, so it asks for the full coordinate
             # that summary answers otherwise leave out.
             full_coordinate=True,
-            subject_suggestions=subject_suggestions,
         )
         result = self._client.get(self._instance_id, request=request)
         self._observe_read(_get_coordinate(result), expected=requested)

@@ -2377,8 +2377,9 @@ Python keyword and member collisions.
 `kind[id]` (and `id in kind`) resolves just that kind's requested ID, alias,
 or single-key spelling through the daemon and caches the result at the World's
 coordinate. These typed lookups use an explicit `Subject:` reference (including
-aliases and keys ending in `.json`) and disable whole-instance nearest-name
-suggestions, so a first miss also reads only the identity indexes. Ordinary
+aliases and keys ending in `.json`) through the SDK-internal batch reader,
+which disables whole-instance nearest-name suggestions for these lookups, so a
+first miss also reads only the identity indexes. Ordinary
 `cx.get` calls retain their suggestions. Repeated spellings and the resolved
 canonical ID share a handle.
 Missing or retired Subjects raise `AbsentSubject` on indexing and answer false
