@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-16:files-catalog",
-    "surface_digest": "sha256:d44039e574592ee1e0f8dc1938f37233aec2922841ccd6b198fa703dcfb78104"
+    "surface_digest": "sha256:e248e89b016df8d30034c9b91364f3de24434e59464f7b9536a2b3f84889b755"
   },
   "surface": {
     "cli_leaves": [
@@ -986,7 +986,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/blocks/depublish",
         "request_model": "cruxible_core.server.playbill_request_models.BlockDepublishRequest",
-        "request_schema_digest": "sha256:dca54fe8e70fa0ec33895c5876b503efd29786679f9114cd287f85447728ac63",
+        "request_schema_digest": "sha256:9368c62b01b3fdf411e5f8353437f80dfc93ba66299d0773ca39e3e3338d60f3",
         "response_model": "cruxible_client.contracts.BlockDepublishResult",
         "response_schema_digest": "sha256:cf764312fd27fe1498996ce33fb363d7268f5eee06986c1078aed02bfbb893a6"
       },
@@ -2035,7 +2035,7 @@
           "depublish_block"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_depublish",
-        "input_schema_digest": "sha256:43dac070a8153993bb006ffd4f0a3b70f79989d5f40c4dcecc2bd86b6fbc6032",
+        "input_schema_digest": "sha256:5951a8c2084356a669a782ea31fab3bd0d1c26702a3d12300ea34530fa43fb2b",
         "name": "cruxible_block_depublish",
         "output_schema_digest": "sha256:7bf2b6e9b55535e79f601d6f3c006da7356a3fa19d8794e1b513d60f5fcf633a",
         "permission": "GOVERNED_WRITE"
