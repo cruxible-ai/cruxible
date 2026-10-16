@@ -189,7 +189,12 @@ def test_restricted_filters_have_flat_sql_work_and_match_full_load(
                 "claims": tuple(row for row in whole.claims if row.subject_path in selected.paths),
             }
         )
-        kwargs = {"evaluation_time": NOW, "parameters": parameters, "budgets": BUDGET}
+        kwargs = {
+            "coordinate": whole.coordinate,
+            "evaluation_time": NOW,
+            "parameters": parameters,
+            "budgets": BUDGET,
+        }
         actual = evaluate_claim_query(
             accepted_query(query), facts=scoped, entry_paths=selected.paths, **kwargs
         )
@@ -259,7 +264,12 @@ def test_disjunction_branches_keep_the_same_incoming_candidates(
             "claims": tuple(row for row in whole.claims if row.subject_path in selected.paths),
         }
     )
-    kwargs = {"evaluation_time": NOW, "parameters": parameters, "budgets": BUDGET}
+    kwargs = {
+        "coordinate": whole.coordinate,
+        "evaluation_time": NOW,
+        "parameters": parameters,
+        "budgets": BUDGET,
+    }
     actual = evaluate_claim_query(
         accepted_query(query), facts=scoped, entry_paths=selected.paths, **kwargs
     )
