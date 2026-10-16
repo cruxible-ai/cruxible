@@ -1821,7 +1821,8 @@ resolve differently refuses `cruxible.authoring.identity_reference_unstable`
 (put the identity change and the reference in separate sets). Authors never
 predict a rendered id, composite keys included. The SDK takes the same
 reference as `subject=` or `value=`:
-`SubjectKeyReference(subject_kind=..., key={...})` from
+`SubjectKeyReference(subject_kind="sec.package", key="Demo")` for a one-key
+kind, or `SubjectKeyReference(subject_kind=..., key={...})` for a composite kind, from
 `cruxible_client.contracts.subject_kinds`.
 
 Naming a Subject by text resolves the same way on every route (reads, writes,
@@ -1833,8 +1834,7 @@ holders `key_ambiguous`. A creation skips the id steps: its text is a key, so a
 coincidental id never resolves it. For example, with `dev.decision/original`
 holding the alias `other name` and `dev.decision/other-name` holding the key
 `other name`, a reference to `other name` (a write's `dev.decision/other name`,
-a Procedure Claim item's `{"subject_kind": "dev.decision", "key": {"slug":
-"other name"}}`) names `original`, and so does a creation by that key: it
+a Procedure Claim item's `{"subject_kind": "dev.decision", "key": "other name"}`) names `original`, and so does a creation by that key: it
 reuses `original` and creates nothing.
 
 A Procedure terminal's Claim items name Subjects by key the same way, and are

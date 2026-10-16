@@ -226,3 +226,28 @@ def test_depublish_names_the_stored_file_identity() -> None:
     assert schema["properties"]["file_id"]["description"] == (
         "The stored projection file identity; the file and catalog entry need not still exist."
     )
+
+
+def test_bare_key_reference_schema_agrees_across_sdk_cli_http_and_mcp() -> None:
+    from pydantic import TypeAdapter
+
+    from cruxible_client.contracts.authoring.inputs import AuthoringInput
+    from cruxible_client.contracts.subject_kinds import SubjectKeyReference
+    from cruxible_core.server.playbill_request_models import AuthoringInputCompileRequest
+
+    expected = SubjectKeyReference.model_json_schema()
+    schemas = [
+        TypeAdapter(AuthoringInput).json_schema(),  # CLI's input adapter
+        AuthoringInputCompileRequest.model_json_schema(),
+        _schemas()["cruxible_authoring_compile"].inputSchema,
+        _schemas()["cruxible_authoring_submit"].inputSchema,
+    ]
+    for schema in schemas:
+        reference = schema["$defs"]["SubjectKeyReference"]
+        assert reference == expected
+        assert {part["type"] for part in reference["properties"]["key"]["anyOf"]} == {
+            "object",
+            "string",
+            "integer",
+            "boolean",
+        }

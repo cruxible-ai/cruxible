@@ -285,3 +285,22 @@ def test_a_claim_names_its_subject_and_value_by_kind_and_key(pb, batch):
         for item in compiled.reference_expectations
         if item.payload_path in {"statement.subject", "statement.object.address"}
     ]
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_sdk_claim_accepts_bare_subject_and_object_keys(pb, batch):
+    from cruxible_client.contracts.subject_kinds import SubjectKeyReference
+
+    target = pb.changes(rationale="Observed") if batch else pb
+    draft = target.claim(
+        subject=SubjectKeyReference(subject_kind="sec.vuln", key="CVE-2026-0001"),
+        predicate="sec.vuln.affects_package",
+        value=SubjectKeyReference(subject_kind="sec.package", key="Demo"),
+        role="observation",
+        rationale="Observed package.",
+        self_source="package affected",
+    )
+    compiled = draft._compiled() if batch else draft
+    payload = compiled.payload.members[0] if batch else compiled.payload
+    assert payload.statement.subject.subject_key_reference == ("sec.vuln", "CVE-2026-0001")
+    assert payload.statement.object.address.subject_key_reference == ("sec.package", "Demo")

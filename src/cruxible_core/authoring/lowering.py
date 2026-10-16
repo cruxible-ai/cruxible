@@ -235,6 +235,7 @@ from cruxible_client.contracts.subject_kinds import (
     SubjectKindKeys,
     SubjectKindMinted,
     distinct_holder_id,
+    key_reference_mapping,
     key_value_problem,
     live_subject_kind,
     minted_subject_id,
@@ -877,9 +878,30 @@ def canonical_authored_claims(payload: _PayloadT, read: Callable[[str], bytes | 
             )
         return forms[predicate]
 
+    declared_kinds: dict[str, SubjectKind | None] = {}
+
+    def mapped_reference(address: SemanticAddress) -> SemanticAddress:
+        reference = address.subject_key_reference
+        if reference is None or isinstance(reference[1], dict):
+            return address
+        kind, given = reference
+        if kind not in declared_kinds:
+            path = subject_kind_path(kind)
+            content = read(path)
+            declared_kinds[kind] = _declared_in_change(
+                kind,
+                members=cast(tuple[AuthoringChangeSetMember, ...], members),
+                base_tree={} if content is None else {path: content},
+            )
+        declared = declared_kinds[kind]
+        if declared is None or len(declared.keys) != 1:
+            return address  # lowering supplies the typed refusal and mapping repair
+        return SemanticAddress.subject_key(kind, key_reference_mapping(declared, given))
+
     def canonical(member: object) -> object:
         if not isinstance(member, ClaimAuthoringPayloadV1):
             return member
+        member = cast(ClaimAuthoringPayloadV1, _with_landed_addresses(member, mapped_reference))
         value = member.statement.object
         if not isinstance(value, LiteralClaimObject):
             return member
@@ -3995,17 +4017,22 @@ def _key_reference_paths(
                     repair_description="Name the Subject as kind/id.",
                 )
             try:
+                given = key_reference_mapping(declared, given)
                 key = canonical_key(declared, given, claim_type=claim_type_of)
-            except SubjectKeyInvalid as exc:
+            except (SubjectKeyInvalid, ValueError) as exc:
                 _refuse(
                     "cruxible.subject.key_invalid",
                     element,
                     f"{kind}: {exc}",
                     repair_kind="replace_key",
                     repair_description=(
-                        f"Give one value for each key of {kind}: " + ", ".join(declared.keys)
+                        f"Give a key mapping for {kind}: "
+                        + repr({predicate: "<value>" for predicate in declared.keys})
                     ),
-                    replacement={"keys": list(declared.keys)},
+                    replacement={
+                        "keys": list(declared.keys),
+                        "key": {predicate: "<value>" for predicate in declared.keys},
+                    },
                 )
             values = tuple(given.values())
             single = (
@@ -4128,15 +4155,16 @@ def _with_landed_addresses(
     if not isinstance(member, ClaimAuthoringPayloadV1):
         return member
     statement = member.statement
+    subject = landed(statement.subject)
     value = statement.object
     if isinstance(value, SubjectClaimObject):
-        value = SubjectClaimObject(address=landed(value.address))
+        target = landed(value.address)
+        if target != value.address:
+            value = SubjectClaimObject(address=target)
+    if subject == statement.subject and value is statement.object:
+        return member
     return member.model_copy(
-        update={
-            "statement": statement.model_copy(
-                update={"subject": landed(statement.subject), "object": value}
-            )
-        }
+        update={"statement": statement.model_copy(update={"subject": subject, "object": value})}
     )
 
 

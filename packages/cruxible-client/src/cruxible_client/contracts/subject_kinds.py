@@ -527,12 +527,16 @@ class SubjectKeyReference(_StrictSubjectKindModel):
     A Procedure item names a Subject this way when the run has a key value but no
     id: it resolves through the key index (and the aliases) to the existing
     Subject, or to the Subject an item of the same terminal creates with that
-    key. ``key`` maps each key ClaimType (by predicate, or by its last name
-    under the kind) to its value; it is canonicalized by each key's form.
+    key. ``key`` is the bare value for a one-key kind, or maps each key ClaimType
+    (by predicate, or by its last name under the kind) to its value. Both use
+    the key's canonical form and lower to the same governed mapping.
     """
 
     subject_kind: str
-    key: dict[str, SubjectKeyValue] = Field(min_length=1, max_length=MAX_KEY_PARTS)
+    key: (
+        Annotated[dict[str, SubjectKeyValue], Field(min_length=1, max_length=MAX_KEY_PARTS)]
+        | SubjectKeyValue
+    )
 
     @field_validator("subject_kind")
     @classmethod
@@ -541,14 +545,33 @@ class SubjectKeyReference(_StrictSubjectKindModel):
             raise ValueError("subject_kind is not a canonical Subject kind")
         return value
 
-    @field_validator("key")
+    @field_validator("key", mode="before")
     @classmethod
-    def _key(cls, value: dict[str, SubjectKeyValue]) -> dict[str, SubjectKeyValue]:
-        for item in value.values():
+    def _key(cls, value: object) -> object:
+        for item in value.values() if isinstance(value, dict) else (value,):
             problem = key_value_problem(item)
             if problem is not None:
                 raise ValueError(problem)
         return value
+
+
+def key_reference_mapping(
+    subject_kind: SubjectKind, key: Mapping[str, object] | SubjectKeyValue
+) -> dict[str, object]:
+    """Expand a bare reference at the boundary; preserve existing mapping bytes.
+
+    The short key name is the ordinary authoring spelling. A composite kind
+    requires a mapping, with every declared part named in the repair.
+    """
+
+    if isinstance(key, Mapping):
+        return dict(key)
+    if len(subject_kind.keys) != 1:
+        shape = {predicate: "<value>" for predicate in subject_kind.keys}
+        raise ValueError(f"a bare key value names only a one-key kind; give key={shape!r}")
+    predicate = subject_kind.keys[0]
+    prefix = subject_kind.subject_kind + "."
+    return {predicate.removeprefix(prefix): key}
 
 
 def key_predicate(subject_kind: SubjectKind, name: str) -> str | None:
@@ -616,6 +639,7 @@ __all__ = [
     "SubjectIdUnassignable",
     "SubjectKeyPart",
     "SubjectKeyReference",
+    "key_reference_mapping",
     "SubjectKeyValue",
     "SubjectKind",
     "SubjectKindFormatError",
