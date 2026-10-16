@@ -228,6 +228,10 @@ even when its package version is lower. Signing-key and capture-declaration chan
 do not change registration order. Retiring the newest build makes the previous
 live build the default; builds registered in the same generation require an
 explicit build name until the tie is resolved. Explicit build names select that build.
+These rules also apply to retained single-path Providers: changing signing keys
+or Capture declarations preserves their runtime build's original registration order.
+A Blueprint instance moving between legacy and contract registrations binds each
+slot to the exact registration pinned by its selected build.
 `cruxible provider move NAME --to newest|BUILD` moves Procedures as a governed
 change with its own preview. `cruxible provider retire NAME/BUILD` is refused
 while live definitions pin it and retains its runtime environment after retirement.

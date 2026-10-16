@@ -1224,6 +1224,8 @@ unchanged (a preview, which has no files, compares wheel and lock). Provider ins
 version, wheel hash and lock hash or image digest; it excludes host materialization.
 Pins remain exact. Bare names in new authoring resolve to the live build registered
 most recently, even for a downgrade; an explicit build name chooses that build.
+Signing-key and Capture-declaration successors preserve a build's original
+registration order, including legacy single-path builds.
 Existing single-path Providers remain readable without a rewrite, and
 `cruxible-builtin` keeps its single path.
 

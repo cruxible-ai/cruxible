@@ -1147,6 +1147,10 @@ provider_interface(interface: str, *, provider: str | None=None) -> ProviderBind
 ```
 
 Discovers one accepted interface and selects one registered implementation.
+An explicit bare provider name requires its unique newest build to fit the
+selected contract. Otherwise `ProviderSelectionError` names the newest build(s)
+and exact older fitting builds; pass an exact build identity to select one.
+Discovery's implementation rows carry `newest` and `newest_builds` for this choice.
 
 **Conditions and effects:** No matching/unique interface, absent provider, or ambiguous implementation refuses. Does not install or authorize execution.
 

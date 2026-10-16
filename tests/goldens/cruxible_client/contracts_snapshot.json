@@ -74620,6 +74620,14 @@
                 "title": "Newest",
                 "type": "boolean"
               },
+              "newest_builds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Newest Builds",
+                "type": "array"
+              },
               "provider_artifact_digest": {
                 "title": "Provider Artifact Digest",
                 "type": "string"
@@ -74792,6 +74800,22 @@
             "type": "boolean"
           }
         },
+        "newest_builds": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "newest_builds",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Newest Builds",
+            "type": "array"
+          }
+        },
         "provider_artifact_digest": {
           "has_default": false,
           "has_default_factory": false,
@@ -74838,6 +74862,14 @@
             "default": true,
             "title": "Newest",
             "type": "boolean"
+          },
+          "newest_builds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Newest Builds",
+            "type": "array"
           },
           "provider_artifact_digest": {
             "title": "Provider Artifact Digest",
