@@ -282,3 +282,64 @@ def test_compare_and_set_refuses_a_competing_judgment(measured, monkeypatch):
     with pytest.raises(ResolutionDispositionRefused) as refused:
         _dispose(instance, procedure, first)
     assert refused.value.error_code == "cruxible.resolution.conflict"
+
+
+@pytest.mark.parametrize("operation", ["summary", "history", "retry"])
+def test_warm_get_and_exact_retry_do_flat_work_at_two_review_history_sizes(
+    tmp_path, monkeypatch, operation
+):
+    from cruxible_core.procedures import resolution as module
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    def work(size):
+        instance, _, procedure = _world(tmp_path / str(size))
+        first = _measure(instance, procedure, names=("rows-present",)).rows[0].resolution
+        for sequence in range(size):
+            _dispose(instance, procedure, first, "overturned" if sequence % 2 else "upheld")
+
+        def request():
+            if operation == "retry":
+                return _dispose(instance, procedure, first, "overturned")
+            return service_playbill_get(
+                instance,
+                request=GetRequest(
+                    ref=f"Procedure:{procedure.identity.name}",
+                    detail=operation,
+                    limit=1 if operation == "history" else None,
+                ),
+                access=BodyAccessContext(principal_id="reviewer", can_read_body=True),
+            )
+
+        request()  # Consume outstanding completion/suffix changes before measuring.
+        counts = {"stat": 0, "read": 0, "detach": 0}
+        identity = ContentAddressedBodyStore.file_identity
+        read = ContentAddressedBodyStore.read
+        loads = module.pickle.loads
+
+        def stat(*args, **kwargs):
+            counts["stat"] += 1
+            return identity(*args, **kwargs)
+
+        def body_read(*args, **kwargs):
+            counts["read"] += 1
+            return read(*args, **kwargs)
+
+        def detach(*args, **kwargs):
+            counts["detach"] += 1
+            return loads(*args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ContentAddressedBodyStore, "file_identity", stat)
+            patch.setattr(ContentAddressedBodyStore, "read", body_read)
+            patch.setattr(module.pickle, "loads", detach)
+            result = request()
+        if operation == "retry":
+            assert result.written_now is False
+        else:
+            rows = (result.card if operation == "summary" else result.history).measurement_reviews
+            reviewed = next(row for row in rows if row.measurement_name == "rows-present")
+            assert reviewed.history_total == size
+        assert counts["stat"] == 0
+        return counts
+
+    assert work(2) == work(8)
