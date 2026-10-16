@@ -1555,8 +1555,8 @@ Line then accepts only that Source's exact CaptureContract event, and every
 Trigger aimed at it must fire on it.
 
 Authoring refuses `exhaust_tap` with `cruxible.procedure.node_not_served`; no run path
-admits it yet. Retained artifacts still parse and verify. A Procedure always pins exact providers (only a Blueprint leaves slots
-open), so the Line pins exactly what the Procedure names.
+admits it yet. Retained artifacts still parse and verify. A Procedure always
+pins exact providers (only a Blueprint leaves slots open), so the Line pins exactly what the Procedure names.
 ``acquisition_policy`` is required only when the Procedure has Source
 nodes. ``parameters`` is the Procedure's input record; lowering checks it
 against the Procedure's input contract. ``max_authority`` (observe,
@@ -3429,19 +3429,52 @@ different stable graph identity. Edges use node identities. Steps fall through
 in order unless a forward `next`/Guard branch is supplied. Terminals have no
 successor. Every consumed alias must exist on every path reaching its consumer.
 
-| Step | Behavior | Special requirement |
+Sequence supports exactly these 11 step kinds:
+
+| Graph kind | Sequence step | Served lane / requirements |
 |---|---|---|
-| StateTap | Named accepted query read bound at admission | No dynamic query depending on a provider output later in the run |
-| Source | Acquisition through selected provider/interface | Capture contract and admitted acquisition policy |
-| Call | Contracted operation | Bound provider; applicable effect policy and authority |
-| Transform | Closed deterministic transformation | Matching declared contracts and typed transform spec |
-| Project | Explicit output construction | Fields satisfy output contract |
-| Guard | Forward routing or refusal | on_false defaults to `$abort`; on_true defaults to continuation |
-| EmitCapture | Register output evidence, end path | Served through accepted Lines |
-| PostInbox | Post items, as they are, to the Line inbox; end path | Served through accepted Lines; observe authority; `max_items` caps one run |
-| ProposeChangeSet | Submit governed candidate templates, end path | Served through Lines with mandate/authority; does not accept |
-| SettleChangeSet | Settle candidate templates under the one covering settle mandate, end path | Served through Lines; falls back as that mandate declares |
-| Halt | End path without successful return value | No successor |
+| `state_tap` | `StateTap` | Direct or Line; named query binds at admission, before provider outputs exist |
+| `source` | `Source` | Direct or Line; bound provider/interface, CaptureContract and acquisition policy |
+| `call` | `Call` | Direct or Line; bound provider/interface and applicable effect policy/authority |
+| `transform` | `Transform` | Direct or Line; closed transform spec and matching Contracts |
+| `project` | `Project` | Direct or Line; explicit fields satisfy output Contract |
+| `guard` | `Guard` | Direct or Line; forward branches, false defaults to `$abort` |
+| `halt` | `Halt` | Direct or Line; ends without a successful value |
+| `emit_capture` | `EmitCapture` | Line only; registers evidence and ends the path |
+| `post_inbox` | `PostInbox` | Line only; observe authority, bounded `max_items`, ends the path |
+| `propose_change_set` | `ProposeChangeSet` | Line only; covering mandate/authority, submits without accepting |
+| `settle_change_set` | `SettleChangeSet` | Line only; effective authority and one covering settle mandate with its declared fallback |
+
+The remaining graph kinds have no Sequence step:
+
+| Graph kind absent from Sequence | Raw graph model | Served lane / requirements |
+|---|---|---|
+| `state_claim` | `ClaimTapNode` | Direct or Line; exact ClaimType and named Subject, bounded selection |
+| `repeat` | `RepeatNode` | Transform-only body: direct or Line; provider-bearing body: Line only; bounded attempts |
+| `select` | `SelectNode` | Direct or Line; join mutually exclusive producers |
+| `constant` | `ConstantNode` | Direct or Line; literal record, dollar-prefixed strings remain data |
+| `return` | `ReturnNode` | Direct or Line; explicit typed successful leaf |
+| `invoke` | `InvokeNode` | Direct or Line subject to the child's closure and terminal authority |
+| `exhaust_tap` | `ExhaustTapNode` | No lane yet; fresh authoring refuses `cruxible.procedure.node_not_served` |
+
+For the six served kinds absent from Sequence, use the raw typed
+`ProcedureInput` from `cruxible_client.authoring.inputs`: supply graph-format-6
+node records in `definition.nodes`, declare `contracts`, then call
+`cx.procedure(definition=input).prepare()` or `.submit()`. The corresponding
+node models in `cruxible_client.contracts.procedures.models` specify each
+record's fields; the daemon resolves authoring references and validates the
+resulting `ProcedureDefinition` through the same compiler. Use symbolic
+`accepted` / `candidate` references and `carried_contract` references in fresh
+inputs; exact artifact pins and digests belong to accepted graphs. The tagless
+wire fallback is that same `ProcedureInput` JSON via `authoring compile` or
+`authoring submit --dry-run`. This adds no execution implementation.
+
+Sequence's global `returns` alias and a returning value-producing leaf remain
+available, but there is no explicit `Return` step. These six missing step
+classes are planned for the kit-authoring phase; they are not Sequence support
+today. `exhaust_tap` has no runnable fallback, including on a Line; retained
+artifacts still read and verify. Open provider slots belong to a Blueprint,
+which must be instantiated before running.
 
 Sequence Contracts must be owner-carried Contract definitions; accepted references
 are refused by this frontend. Previous()
@@ -3460,19 +3493,18 @@ Every definition is graph format 6.
 
 | Run surface | Availability |
 |---|---|
-| Direct run (`Procedure.run`) | state_tap, state_claim, transform, project, guard, repeat, select, constant, return, invoke, halt, source and call nodes |
+| Direct run (`Procedure.run`) | state_tap, state_claim, transform, project, guard, select, constant, return, halt, source and call; transform-only repeat; invoke subject to child closure/authority |
 | Accepted Line (`cx.line(name).run()`) | Adds authorized emit_capture, post_inbox, propose_change_set and settle_change_set paths; a Repeat whose body calls a provider also runs only on a Line |
-| Nowhere | exhaust_tap; open slots belong only to a Blueprint |
+| No lane yet | exhaust_tap is retained but fresh authoring refuses `cruxible.procedure.node_not_served`; a Line cannot enable it |
 
 `cx.get(f"Procedure:{name}")` reports which of these applies as `runnable`
 (`direct`, `line` or `unsupported`) with the nodes behind it.
 
-Bounded Repeat is available in shared ProcedureInput but has no Sequence step
-class. Current Sequence has no general value-merge, nested invoke, recursion, or
-parallel execution. Python source compiles through `@procedure` /
-`ProcedureSource` in `cruxible_client.authoring.source`, not through Sequence. StateTap binds at admission;
-Source requests can depend on prior runtime outputs. Graph legality does not
-promise availability in every run lane.
+The tables above distinguish graph capabilities from Sequence support.
+Python source compiles through `@procedure` / `ProcedureSource` in
+`cruxible_client.authoring.source`, with its own supported subset. StateTap
+binds at admission; Source requests can depend on prior runtime outputs.
+Graph legality does not promise availability in every run lane.
 
 `Procedure.run` admits a new invocation. Read its retained status by run ID via
 `ProcedureRun.refresh`; do not use fresh invocation as a generic historical
