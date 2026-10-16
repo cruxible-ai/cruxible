@@ -3792,6 +3792,12 @@ A `none` is factual only inside a complete boundary, so a span whose health is
 `partial`, `stale`, `denied`, or `unavailable` prints that health and its reason
 codes rather than reading as an absence.
 
+If a span mixes an exact citation with an indistinguishable repeated cited
+window, resolution refuses with `cruxible.coverage.occurrence_ambiguous`
+(HTTP 409). Its candidates and repair name the duplicate byte ranges. Make
+the cited text distinguishable at those occurrences before resolving again.
+An ambiguity-only span remains a candidate answer with no occurrence bound.
+
 `--all --view manifest` renders the coverage manifest over every bound file:
 epoch, health, completeness, and the sources a `none` would have been factual
 inside.

@@ -42,7 +42,9 @@ from collections.abc import Sequence
 from typing import Literal
 
 from cruxible_client.contracts.discovery import DiscoveryMatchBasisKind
+from cruxible_client.contracts.errors import ReadRefusalError
 from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.source_references import CoverageDescriptor
 from cruxible_core.coverage.contracts import (
     COVERAGE_HEALTH_PROVES_FRESHNESS,
@@ -197,7 +199,6 @@ def _resolve_span_v3(
         )
 
     cards: list[CoverageCardV2] = []
-    ambiguous = 0
     withheld = False
     visible_local: list[EvidenceCitationV2] = []
     for citation in index.by_logical_source(span.source):
@@ -248,7 +249,6 @@ def _resolve_span_v3(
                 )
                 continue
             if duplicates[occurrence.observed_commitment_digest] > 1:
-                ambiguous += 1
                 cards.append(
                     _card(
                         "candidate",
@@ -304,8 +304,34 @@ def _resolve_span_v3(
     if omitted:
         health = weakest_health(health, "partial")
         reasons.add("card_budget_exceeded")
-    if ambiguous and not any(card.match_state == "candidate" for card in kept):
-        ambiguous = 0
+    ambiguous_cards = tuple(card for card in kept if "occurrence_ambiguous" in card.reason_codes)
+    ambiguous = len(ambiguous_cards)
+    if ambiguous and coverage_span_match_state(card.match_state for card in kept) == "exact":
+        # An exact citation beside an ambiguous one cannot make the whole span
+        # exact. Nor may we relabel a verified unique citation just to satisfy
+        # the span validator. Refuse this mixed answer with the retained
+        # ambiguous locations, rather than constructing an invalid result.
+        locations = tuple(
+            sorted(
+                {
+                    f"{span.source.plane}:{span.source.identity} bytes "
+                    f"{card.line_overlay.start_byte}:{card.line_overlay.end_byte}"
+                    for card in ambiguous_cards
+                    if card.line_overlay is not None
+                }
+            )
+        )
+        raise ReadRefusalError(
+            "cruxible.coverage.occurrence_ambiguous",
+            "the observed source contains indistinguishable cited windows",
+            http_status=409,
+            candidates=locations,
+            repair=RepairOperation(operation="cruxible.coverage.resolve"),
+            repair_line=(
+                "Disambiguate the cited text at these occurrences, then resolve coverage again: "
+                + ", ".join(locations)
+            ),
+        )
 
     allowed_ids = {
         association.reference.citation_id
