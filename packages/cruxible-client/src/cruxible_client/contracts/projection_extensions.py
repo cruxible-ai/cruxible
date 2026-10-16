@@ -9,11 +9,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cruxible_client.contracts.artifacts import parse_artifact_identity
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -84,6 +85,18 @@ class _NormalizedProjectionValue:
 
     def __init__(self, value: object) -> None:
         object.__setattr__(self, "value", _freeze_normalized(normalize_projection_value(value)))
+
+    def __copy__(self) -> _NormalizedProjectionValue:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _NormalizedProjectionValue:
+        memo[id(self)] = self
+        return self
+
+    def __reduce__(self) -> tuple[type[_NormalizedProjectionValue], tuple[CanonicalValue]]:
+        # FrozenDict deliberately unpickles as a mutable dict. Re-enter the
+        # validating constructor, so an unpickled carrier owns frozen values.
+        return (_NormalizedProjectionValue, (self.value,))
 
 
 def _freeze_normalized(value: CanonicalValue) -> CanonicalValue:
@@ -219,6 +232,19 @@ class ProjectionFactDeclaration(_StrictProjectionModel):
         return value
 
 
+@lru_cache(maxsize=16384)
+def _qualified_subject_identity(value: str) -> str:
+    # A fact needs the qualified string, not a second ArtifactIdentity model.
+    # Use the very same field validators as that model (and the same first
+    # colon split as parse_artifact_identity); keep no parallel grammar.
+    kind, separator, name = value.partition(":")
+    if not separator:
+        raise ValueError("artifact identity must be kind-qualified")
+    ArtifactIdentity._kind(kind)
+    ArtifactIdentity._name(name)
+    return value
+
+
 class ProjectionFact(_StrictProjectionModel):
     """One typed normalized fact emitted for a semantic subject."""
 
@@ -242,13 +268,11 @@ class ProjectionFact(_StrictProjectionModel):
         if _IDENTIFIER_RE.fullmatch(value):
             return value
         try:
-            parsed = parse_artifact_identity(value)
+            _qualified_subject_identity(value)
         except ValueError as exc:
             raise ValueError(
                 "projection fact subject_identity must be canonical and kind-qualified"
             ) from exc
-        if parsed.qualified != value:
-            raise ValueError("projection fact subject_identity must be canonically rendered")
         return value
 
     @field_validator("fact_key")

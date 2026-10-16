@@ -1042,6 +1042,7 @@ def parse_projection_tree(
                             records=accepted_change_sets,
                             coordinate=coordinate,
                             accepted_coordinates=accepted_coordinates,
+                            carry_values=carry_members,
                         )
                     )
                 continue
@@ -1142,6 +1143,7 @@ def parse_projection_tree(
                             records=accepted_change_sets,
                             coordinate=coordinate,
                             accepted_coordinates=accepted_coordinates,
+                            carry_values=carry_members,
                         )
                     )
                 continue
@@ -1276,6 +1278,7 @@ def parse_projection_tree(
                             records=accepted_change_sets,
                             coordinate=coordinate,
                             accepted_coordinates=accepted_coordinates,
+                            carry_values=carry_members,
                         )
                     )
                 continue
@@ -1906,6 +1909,7 @@ def parse_projection_tree(
                             records=accepted_change_sets,
                             coordinate=coordinate,
                             accepted_coordinates=accepted_coordinates,
+                            carry_values=carry_members,
                         )
                     )
                 continue
@@ -2002,6 +2006,7 @@ def parse_projection_tree(
                             records=accepted_change_sets,
                             coordinate=coordinate,
                             accepted_coordinates=accepted_coordinates,
+                            carry_values=carry_members,
                         )
                     )
                 continue
@@ -2130,6 +2135,7 @@ def parse_projection_tree(
                             records=accepted_change_sets,
                             coordinate=coordinate,
                             accepted_coordinates=accepted_coordinates,
+                            carry_values=carry_members,
                         )
                     )
                 continue
@@ -2411,14 +2417,11 @@ def parse_projection_tree(
                             records=accepted_change_sets,
                             coordinate=coordinate,
                             accepted_coordinates=accepted_coordinates,
+                            carry_values=carry_members,
                             claim_attestations=law_evidence.verified_attestations,
                         )
                     )
-                    semantic_facts.extend(
-                        explanation_facts
-                        if carry_members
-                        else [deepcopy(fact) for fact in explanation_facts]
-                    )
+                    semantic_facts.extend(explanation_facts)
                     if law_evidence.verdict_result is None:
                         raise ProjectionFormatError(
                             f"accepted PC-C Claim has no verdict result: {path}"

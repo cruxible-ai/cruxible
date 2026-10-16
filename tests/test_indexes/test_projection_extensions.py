@@ -257,3 +257,55 @@ def test_carried_projection_subtrees_own_their_values_and_normalize_once(monkeyp
     for refused in (1.5, {"$unknown": "value"}, {"$digest": "bad"}):
         with pytest.raises(ProjectionFormatError):
             module.normalized_projection_value(refused)
+
+
+def test_normalized_carriers_stay_owned_after_copy_and_pickle():
+    import copy
+    import pickle
+    from dataclasses import replace
+
+    from cruxible_client.contracts.projection_extensions import normalized_projection_value
+
+    carried = normalized_projection_value({"nested": [{"value": "original"}]})
+    for restored in (
+        copy.copy(carried),
+        copy.deepcopy(carried),
+        pickle.loads(pickle.dumps(carried)),
+    ):
+        value = normalize_projection_value(restored)
+        assert value == {"nested": [{"value": "original"}]}
+        with pytest.raises(TypeError):
+            value["nested"][0]["value"] = "changed"
+    with pytest.raises(ProjectionFormatError):
+        replace(carried, value=1.5)
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "Claim:CLM-" + "a" * 32,
+        "Subject:project.work_item/wi-42",
+        "Thing:a:b/c",
+        "Bad Kind:name",
+        "Thing:a//b",
+        "Thing:trailing/",
+        "Thing:e\u0301",
+    ],
+)
+def test_fact_identity_validation_equals_the_full_identity_contract(identity):
+    from cruxible_client.contracts.artifacts import parse_artifact_identity
+
+    values = dict(
+        schema_id="test.identity",
+        schema_version=1,
+        subject_identity=identity,
+        fact_key="value",
+        value=None,
+    )
+    try:
+        expected = parse_artifact_identity(identity)
+    except ValueError:
+        with pytest.raises((ValueError, ProjectionFormatError)):
+            ProjectionFact(**values)
+    else:
+        assert ProjectionFact(**values).subject_identity == expected.qualified

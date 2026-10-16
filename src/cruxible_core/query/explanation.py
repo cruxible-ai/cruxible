@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -19,6 +20,7 @@ from cruxible_client.contracts.content_memo import is_sealed, request_derive, se
 from cruxible_client.contracts.governance import governance_identifier
 from cruxible_client.contracts.projection_extensions import (
     ProjectionFact,
+    normalize_projection_value,
     normalized_projection_value,
 )
 
@@ -372,6 +374,7 @@ def accepted_artifact_explanation_facts(
     coordinate: ProjectionCoordinateContext,
     accepted_coordinates: Mapping[int, AcceptedGenerationCoordinate],
     claim_attestations: tuple[VerifiedClaimAttestationV1, ...] | None = None,
+    carry_values: bool = False,
 ) -> tuple[ProjectionFact, ...]:
     """Compile explanation facts only when a stored change set binds exact bytes.
 
@@ -408,14 +411,31 @@ def accepted_artifact_explanation_facts(
         law_identifier=member.law_identifier,
         coordinate=coordinate,
     )
-    coverage = CoverageBinding(
-        coverage="containing_change_set",
-        subject_path=artifact_path,
-        signed_payload_digest=record.candidate_digest,
-        proof_ref=shared.proof,
-    )
-    coverage_value = coverage.projection_value(coordinate)
-    coverage_value["proof_ref"] = shared.proof_value
+    if carry_values:
+        # The selected member path and candidate are already validated. The
+        # final ProjectionFact validates their normalized projection shape;
+        # avoid a throwaway coverage contract on the compiler-owned path.
+        coverage_value = {
+            "coverage": "containing_change_set",
+            "proof_ref": shared.proof_value,
+            "signed_payload_digest": {"$digest": record.candidate_digest},
+            "subject_path": {"$path": normalize_ledger_path(artifact_path)},
+        }
+    else:
+        coverage = CoverageBinding(
+            coverage="containing_change_set",
+            subject_path=artifact_path,
+            signed_payload_digest=record.candidate_digest,
+            proof_ref=shared.proof,
+        )
+        coverage_value = coverage.projection_value(coordinate)
+
+    def fact_value(value: object) -> object:
+        # Read adapters promise caller-owned mutable JSON. Detach values before
+        # constructing their one final fact; compiler-owned rows keep the
+        # normalized subtrees. Only the explicit cold/read path walks them.
+        return value if carry_values else deepcopy(normalize_projection_value(value))
+
     history = [
         {
             "candidate_digest": {"$digest": item.candidate_digest},
@@ -432,58 +452,64 @@ def accepted_artifact_explanation_facts(
             schema_version=1,
             subject_identity=subject_identity,
             fact_key="accepted_governance",
-            value=shared.governance_value,
+            value=fact_value(shared.governance_value),
         ),
         ProjectionFact(
             schema_id=f"cruxible.{artifact_family}.provenance",
             schema_version=1,
             subject_identity=subject_identity,
             fact_key="accepted_source",
-            value={
-                "actor_id": record.actor_binding.actor_id,
-                "artifact_digest": {"$digest": artifact_digest},
-                "basis": [shared.replay_value],
-                "input_digest": {"$digest": input_digest},
-                "source_compilation_digest": (
-                    {"$digest": record.actor_binding.source_compilation_digest}
-                    if record.actor_binding.source_compilation_digest is not None
-                    else None
-                ),
-            },
+            value=fact_value(
+                {
+                    "actor_id": record.actor_binding.actor_id,
+                    "artifact_digest": {"$digest": artifact_digest},
+                    "basis": [shared.replay_value],
+                    "input_digest": {"$digest": input_digest},
+                    "source_compilation_digest": (
+                        {"$digest": record.actor_binding.source_compilation_digest}
+                        if record.actor_binding.source_compilation_digest is not None
+                        else None
+                    ),
+                }
+            ),
         ),
         ProjectionFact(
             schema_id=f"cruxible.{artifact_family}.attestation_coverage",
             schema_version=1,
             subject_identity=subject_identity,
             fact_key="accepted_approvals",
-            value={
-                "attestations": list(shared.attestations),
-                "basis": [*shared.common_basis, *shared.cryptographic_basis],
-                "coverage_binding": coverage_value,
-                **(
-                    {
-                        "claim_attestations": [
-                            item.model_dump(mode="json") for item in claim_attestations
-                        ]
-                    }
-                    if claim_attestations is not None
-                    else {}
-                ),
-            },
+            value=fact_value(
+                {
+                    "attestations": list(shared.attestations),
+                    "basis": [*shared.common_basis, *shared.cryptographic_basis],
+                    "coverage_binding": coverage_value,
+                    **(
+                        {
+                            "claim_attestations": [
+                                item.model_dump(mode="json") for item in claim_attestations
+                            ]
+                        }
+                        if claim_attestations is not None
+                        else {}
+                    ),
+                }
+            ),
         ),
         ProjectionFact(
             schema_id=f"cruxible.{artifact_family}.history",
             schema_version=1,
             subject_identity=subject_identity,
             fact_key="ledger_history",
-            value={
-                "basis": [shared.replay_value],
-                "history": history,
-                "predecessor_digest": (
-                    {"$digest": predecessor_digest} if predecessor_digest is not None else None
-                ),
-                "proof_ref": shared.proof_value,
-            },
+            value=fact_value(
+                {
+                    "basis": [shared.replay_value],
+                    "history": history,
+                    "predecessor_digest": (
+                        {"$digest": predecessor_digest} if predecessor_digest is not None else None
+                    ),
+                    "proof_ref": shared.proof_value,
+                }
+            ),
         ),
     )
 
@@ -498,6 +524,7 @@ def accepted_document_explanation_facts(
     records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     coordinate: ProjectionCoordinateContext,
     accepted_coordinates: Mapping[int, AcceptedGenerationCoordinate],
+    carry_values: bool = False,
 ) -> tuple[ProjectionFact, ...]:
     """Retain the frozen Family-1 Document projection shape through an adapter."""
 
@@ -511,6 +538,7 @@ def accepted_document_explanation_facts(
         records=records,
         coordinate=coordinate,
         accepted_coordinates=accepted_coordinates,
+        carry_values=carry_values,
     )
 
 

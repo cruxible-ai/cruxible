@@ -27,7 +27,7 @@ def test_carried_explanation_equals_cold_and_keys_every_coordinate_field(tmp_pat
         git_oid=accepted.git_oid,
         semantic_root=accepted.semantic_root,
         generation_root=accepted.generation_root,
-        compiler_digest=accepted.compiler_digest,
+        compiler_digest=accepted.compiler.rule_digest,
     )
     law = next(iter(record.law_digests))
     kwargs = dict(record_path=record_path, law_identifier=law, coordinate=coordinate)
