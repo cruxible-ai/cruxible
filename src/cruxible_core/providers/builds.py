@@ -27,11 +27,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderBuildSummaryV1,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    parse_provider_interface,
-    provider_interface_digest,
     provider_interface_id_of,
-    provider_interface_path,
-    provider_interface_registrations_prefix,
 )
 from cruxible_client.contracts.providers import (
     ProviderFormatError,
@@ -44,10 +40,6 @@ from cruxible_client.contracts.providers import (
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.derived.derived_state import paths_with_prefix
 from cruxible_core.errors import RequestRefusedError
-
-#: A registration order for an artifact not yet accepted (same change set):
-#: after everything accepted.
-_UNACCEPTED = 1 << 62
 
 
 @dataclass(frozen=True)
@@ -79,31 +71,6 @@ def tree_provider_builds(tree: Mapping[str, bytes], name: str) -> tuple[BuildRow
                 artifact_digest=provider_digest(provider).tagged,
                 live=provider.lifecycle.state == "live",
                 version=None if runtime is None else runtime.distribution.version,
-            )
-        )
-    return tuple(rows)
-
-
-def tree_interface_registrations(
-    tree: Mapping[str, bytes], interface_id: str
-) -> tuple[BuildRow, ...]:
-    """Every registration of ``interface_id`` in ``tree`` (contract paths and single path)."""
-
-    rows = []
-    for path in (
-        *paths_with_prefix(tree, provider_interface_registrations_prefix(interface_id)),
-        provider_interface_path(interface_id),
-    ):
-        content = tree.get(path)
-        if content is None:
-            continue
-        registration = parse_provider_interface(content, path=path)
-        rows.append(
-            BuildRow(
-                identity=registration.identity.qualified,
-                path=path,
-                artifact_digest=provider_interface_digest(registration).tagged,
-                live=registration.lifecycle.state == "live",
             )
         )
     return tuple(rows)
