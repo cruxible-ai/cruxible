@@ -94,9 +94,10 @@ N = 12
 #: before resident index connections and one-statement-per-table writes).
 PER_ITEM = {
     "claim_parses": 1,
-    # Stage 5 target is 15 (floor report); rounds 1+2 reached 87.2. This ceiling
-    # only stops regressions until the remaining churn lands (round 3).
-    "model_builds": 90,
+    # Stage 5 target remains 15. Round 3 removes repeated admission, address,
+    # proof and explanation construction; keep the observed ceiling strict.
+    "model_builds": 67,
+    "projection_normalizations": 180,
     "sha256": 40,
     "encodes": 140,
     "encoded_bytes": 100 * 1024,

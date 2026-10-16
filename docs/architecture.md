@@ -153,6 +153,15 @@ cache keys all of these by path, codec and exact bytes. Changed bytes derive a
 new member. Generation-dependent revisions, verdicts and explanation proofs
 are compiled for the accepting coordinate. Carried rows are checked against
 fresh derivation in tests; cold reconstruction remains the projection oracle.
+An accepting record's proof, governance basis and approval values are normalized
+once per law and accepting coordinate inside the request. Final member rows
+compose these owned immutable subtrees without traversing them again; standalone
+reconstruction returns detached rows. Mutable record copies take the cold path.
+Evidence admission similarly carries only eligible answers, keyed by the complete
+policy bytes and all derived admission inputs. A changed policy, role,
+subject binding, attestation grade or derivation input asks a new question;
+refused answers are evaluated again. Dependency proofs and query bindings share
+only their complete scalar values, and all request derivations expire together.
 
 A successful activation also carries the evaluator's semantic-manifest and
 dependency proof tries to the exact accepted Git OID. The next write updates
