@@ -557,14 +557,18 @@ class ContentAddressedBodyStore:
                     os.close(descriptor)
             if landed is None or self.digest_bytes(landed[1]).tagged != digest:
                 raise CasError("CAS body did not land as written")
-            try:
-                os.link(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
-            except FileExistsError:
-                self._verified_bytes(digest)
-                return False
-            except OSError as exc:
-                raise CasError("CAS body could not be stored durably") from exc
-            self._remember_landed(directory, name, digest, landed[2])
+            # Publication and the barrier share a lock: durability belongs to
+            # this inode, not to an earlier publication of the same digest.
+            with self._durability_lock:
+                try:
+                    os.link(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+                except FileExistsError:
+                    self._verified_bytes(digest)
+                    return False
+                except OSError as exc:
+                    raise CasError("CAS body could not be stored durably") from exc
+                self._durable.discard(digest)
+                self._remember_landed(directory, name, digest, landed[2])
             return True
         finally:
             try:

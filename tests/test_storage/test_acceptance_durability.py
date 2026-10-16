@@ -188,3 +188,32 @@ def test_failed_acceptance_barrier_never_moves_main(tmp_path, monkeypatch):
         pass
     assert attempted
     assert instance.accepted_coordinate() == before
+
+
+@pytest.mark.parametrize("publication", ["batch", "journal", "ordinary"])
+def test_republished_body_acquires_its_own_durability(tmp_path, monkeypatch, publication):
+    store = ContentAddressedBodyStore(tmp_path)
+    content = b"repair the same content"
+    digest = store.store(content).digest
+    assert digest in store._durable
+    store._path(digest).unlink()
+    flushed = []
+    real = os.fsync
+
+    def flush(fd):
+        metadata = os.fstat(fd)
+        if stat.S_ISREG(metadata.st_mode):
+            flushed.append(metadata.st_ino)
+        real(fd)
+
+    monkeypatch.setattr(os, "fsync", flush)
+    if publication == "batch":
+        store.store_many([content], journal_payload=True)
+    else:
+        store.store(content, journal_payload=publication == "journal")
+    if publication != "ordinary":
+        assert digest not in store._durable
+        store.flush_cited((digest,), filesystem=False)
+    assert flushed == [store._path(digest).stat().st_ino]
+    store.flush_cited((digest,), filesystem=False)
+    assert len(flushed) == 1
