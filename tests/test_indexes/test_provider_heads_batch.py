@@ -177,10 +177,14 @@ def test_domain_removal_aggregates_across_parameter_chunks():
 
 @pytest.mark.usefixtures("contracted_demo")
 def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
-    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.procedures.artifacts import (
         procedure_artifact_digest,
         render_procedure,
+    )
+    from cruxible_client.contracts.procedures.blueprints import (
+        blueprint_digest,
+        instantiate_blueprint,
     )
     from cruxible_core.compiler.compiler import (
         PROVIDER_BUILDS_COMPILER,
@@ -191,11 +195,14 @@ def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
     from tests.test_providers.test_legacy_blueprint_build_move import legacy_blueprint_move
     from tests.test_scale.test_provider_build_install import _instance
 
-    _old, _new, _bp, procedure, path, tree, _move = legacy_blueprint_move()
+    old, _new, blueprint, _procedure, path, tree, _move = legacy_blueprint_move()
     del tree[path]
     procedures = [
-        procedure.model_copy(
-            update={"identity": ArtifactIdentity(kind="Procedure", name=f"batch.p{i}")}
+        instantiate_blueprint(
+            blueprint,
+            blueprint_artifact_digest=blueprint_digest(blueprint).tagged,
+            name=f"batch.p{i}",
+            providers={"lookup": old},
         )
         for i in range(20)
     ]
