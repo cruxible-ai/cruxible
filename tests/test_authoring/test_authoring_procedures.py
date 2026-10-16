@@ -1541,3 +1541,21 @@ def test_authoring_no_change_comparison_keeps_lifecycle_and_policy_changes(tmp_p
         ).intent
         changed = lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
         assert not changed.idempotent and len(changed.changed_members) == 1
+
+
+@pytest.mark.parametrize("in_change_set", [False, True])
+def test_exhaust_tap_refuses_at_compile_and_preflight(tmp_path: Path, in_change_set: bool) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    definition = _triage_definition()
+    definition["nodes"][0] = {"kind": "exhaust_tap", "node_id": "exhaust"}
+    payload = _payload(definition)
+    if in_change_set:
+        payload = ChangeSetAuthoringPayload(members=(payload,))
+    compiled = coordinator.compile(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP)
+    for result in (compiled, coordinator.preflight(compiled.certificate.intent_id, actor=actor)):
+        assert result.verdict == "refused"
+        diagnostic = result.frontier.diagnostics[0]
+        assert diagnostic.code == "cruxible.procedure.node_not_served"
+        assert diagnostic.offending_element.endswith("definition.nodes[0]")
+        assert "no run lane serves it yet" in diagnostic.message
+        assert "Line binding cannot enable it" in diagnostic.repairs[0].description

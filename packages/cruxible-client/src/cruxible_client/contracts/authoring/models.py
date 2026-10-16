@@ -924,7 +924,7 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     by name, the way a ProcedureMandate member names its Procedure, and
     lowering resolves both into the exact digest pins the LineSpec carries. A
     budget left unset lowers to the Procedure's own hard caps. The acquisition
-    policy is required only when the Procedure acquires (has Source or exhaust
+    policy is required only when the Procedure acquires (has Source
     nodes); a pure-compute Line pins none. ``parameters`` is the Procedure's
     input record, checked against its input Contract when the Line lowers.
     When the Line runs is not its own: Triggers aim at it. ``trigger_input``

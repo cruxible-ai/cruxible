@@ -62,7 +62,7 @@ from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.models import ProcedureHardCaps
+from cruxible_client.contracts.procedures.models import ExhaustTapNode, ProcedureHardCaps
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
     validate_change_set_rationale,
@@ -561,6 +561,27 @@ class AuthoringInputError(FormatError, ValueError):
         return self.code
 
 
+def refuse_unserved_procedure_nodes(
+    definition: dict[str, object], *, field_path: str = "definition"
+) -> None:
+    """Check only the graph being authored; retained artifact parsers stay unchanged."""
+
+    nodes = definition.get("nodes")
+    if not isinstance(nodes, list | tuple):
+        return
+    for index, node in enumerate(nodes):
+        if isinstance(node, ExhaustTapNode) or (
+            isinstance(node, dict) and node.get("kind") == "exhaust_tap"
+        ):
+            raise AuthoringInputError(
+                "cruxible.procedure.node_not_served",
+                f"{field_path}.nodes[{index}]",
+                "The exhaust_tap capability is retained, but no run lane serves it yet.",
+                "Use served node kinds for this Procedure; author exhaust_tap when a lane "
+                "supports it. A Line binding cannot enable it.",
+            )
+
+
 def _subject_address(shorthand: str | SubjectKeyReference, *, field_path: str) -> SemanticAddress:
     if isinstance(shorthand, SubjectKeyReference):
         # Resolved when the change set is lowered (key, alias, creation member).
@@ -839,6 +860,8 @@ def _blueprint_payload(value: BlueprintInput) -> BlueprintAuthoringPayload:
 def _procedure_payload(
     value: ProcedureInput,
 ) -> ProcedureAuthoringPayload:
+    if not value.retire:
+        refuse_unserved_procedure_nodes(value.definition, field_path="input.definition")
     contracts = tuple(
         sorted(
             (

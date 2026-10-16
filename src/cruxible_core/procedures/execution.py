@@ -3707,7 +3707,7 @@ class ProcedureExecutor:
             if node.as_ not in state.outputs:
                 raise _RunRefusal(
                     "line_binding_required",
-                    "An exhaust_tap input is admitted only under a Line binding.",
+                    "No run lane serves exhaust_tap yet; a Line binding cannot enable it.",
                     node_id=node.node_id,
                 )
             self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)

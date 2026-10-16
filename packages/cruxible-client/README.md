@@ -1554,8 +1554,8 @@ caps as its budget unless one is given.
 Line then accepts only that Source's exact CaptureContract event, and every
 Trigger aimed at it must fire on it.
 
-Lowering refuses a Procedure with an `exhaust_tap` node, which no run path
-admits. A Procedure always pins exact providers (only a Blueprint leaves slots
+Authoring refuses `exhaust_tap` with `cruxible.procedure.node_not_served`; no run path
+admits it yet. Retained artifacts still parse and verify. A Procedure always pins exact providers (only a Blueprint leaves slots
 open), so the Line pins exactly what the Procedure names.
 ``acquisition_policy`` is required only when the Procedure has Source
 nodes. ``parameters`` is the Procedure's input record; lowering checks it
