@@ -40,6 +40,8 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("instance", "rebuild-next"): "active",
     ("body", "store"): "active",
     ("provider", "install"): "active",
+    ("provider", "move"): "active",
+    ("provider", "retire"): "active",
     ("kit", "add"): "active",
     ("kit", "remove"): "active",
     ("ledger", "set-mirror"): "active",

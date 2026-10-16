@@ -67,38 +67,50 @@ from cruxible_client.contracts.projection import AcceptedCoordinate as ServedCoo
 from cruxible_client.contracts.provider_installation import (
     ProviderInstallRequest,
     ProviderInstallResult,
+    ProviderRepinV1,
     ProviderWheelObject,
+    StoppedAutomationV1,
 )
 from cruxible_client.contracts.provider_interfaces import (
     parse_provider_interface,
     provider_interface_digest,
+    provider_interface_id_of,
     provider_interface_path,
 )
 from cruxible_client.contracts.providers import (
     ProviderAny,
-    ProviderLocalDistributionPin,
     ProviderV2,
     parse_provider,
+    parse_provider_build_name,
     provider_digest,
+    provider_path,
 )
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.claims.artifact_references import (
+    ProviderBuildMove,
+    ProviderBuildMoveRefused,
     move_references,
     referenced_digests,
     referenced_identities,
 )
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDisposition,
     ClaimTypeMigrationError,
-    ClaimTypeMigrationInventoryItemV1,
-    build_dependent_closure_candidate,
     dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
+from cruxible_core.derived.derived_state import fork_tree, paths_with_prefix
 from cruxible_core.errors import ConfigError, DataValidationError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS, genesis_seed_files
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+from cruxible_core.providers.build_moves import (
+    Mover,
+    SettledMoves,
+    build_move,
+    live_triggers_of,
+    settle_changes,
+)
+from cruxible_core.providers.builds import indexed_move_pinners, tree_provider_builds
 from cruxible_core.providers.package_inspection import (
     InspectedProviderPackage,
     inspect_provider_package,
@@ -155,7 +167,7 @@ def _builtin_refusals(tree: Mapping[str, bytes], contents: Mapping[str, bytes]) 
             if not _builtin(pin.target.kind, pin.target.name, pin.artifact_digest):
                 continue
             held_path = (
-                f"providers/{pin.target.name}.json"
+                provider_path(pin.target.name)
                 if pin.target.kind == "Provider"
                 else provider_interface_path(pin.target.name)
             )
@@ -381,15 +393,26 @@ def _bundled_provider_pins(
             "Provider", pin.target.name, pin.artifact_digest
         ):
             continue
-        package = bundled.get(pin.target.name)
+        name = parse_provider_build_name(pin.target.name).name
+        package = bundled.get(name)
         if package is None:
             raise RequestRefusedError(
                 "cruxible.kit.provider_not_bundled",
-                f"{path} pins Provider {pin.target.name}, which this kit does not bundle; "
+                f"{path} pins Provider {name}, which this kit does not bundle; "
                 "bundle its package (kit build --provider DIR)",
                 repair=RepairOperation(operation="cruxible.kit.build"),
             )
-        provider_path_here = f"providers/{pin.target.name}.json"
+        if package.provider.build != pin.target.name:
+            raise RequestRefusedError(
+                "cruxible.kit.provider_build_differs",
+                f"{path} pins {pin.target.qualified}, another wheel and lock build "
+                "than the bundled "
+                f"{package.provider.package} {package.provider.version} "
+                f"({package.provider.build}); move it to the bundled build "
+                f"(provider move {name}) or bundle the build it pins",
+                repair=RepairOperation(operation="cruxible.provider.move"),
+            )
+        provider_path_here = provider_path(pin.target.name)
         held = tree_providers.get(provider_path_here)
         provider = (
             None
@@ -588,8 +611,8 @@ def _read_receipt(
 
 
 def _receipts(instance: PlaybillInstance, tree: Mapping[str, bytes]) -> Iterator[KitReceipt]:
-    for path in sorted(tree):
-        if path.startswith("documents/kit-") and path.endswith(".json"):
+    for path in paths_with_prefix(tree, "documents/kit-"):
+        if path.endswith(".json"):
             kit_id = path.removeprefix("documents/kit-").removesuffix(".json")
             found = _receipt_at(instance, path, tree[path], kit_id)
             if found is not None:
@@ -823,6 +846,12 @@ def _settle_dropped(
     """
 
     retiring_with_dependents: set[str] = set()
+    # Dependents are counted on the tree this change leaves: a definition the
+    # release replaces in the same change and that no longer pins the dropped
+    # one is not its dependent.
+    after = fork_tree(tree)
+    for path, content in diff.writes.items():
+        after[path] = content
     for path in sorted(installed):
         if path in keep_paths:
             continue
@@ -834,20 +863,19 @@ def _settle_dropped(
             continue
         identity = state.identity.qualified
         previously = kept.get(path)
-        dependent_paths = set(_live_dependents(tree, state.identity, path))
+        dependent_paths = set(_live_dependents(after, state.identity, path))
         consumers = (
-            _evidence_rule_consumers(tree, state)
+            _evidence_rule_consumers(after, state)
             if state.identity.kind == "CaptureContract"
             else ()
         )
         for consumer_path, consumer in consumers:
             dependent_paths.add(consumer_path)
-            dependent_paths |= _live_dependents(tree, consumer, consumer_path)
+            dependent_paths |= _live_dependents(after, consumer, consumer_path)
         dependent_paths.discard(path)
         dependents = len(dependent_paths)
-        if consumers:
-            # Counted here in full; the pin-closure recount must not shrink it.
-            diff.semantic_counts[identity] = dependents
+        # Counted against the post-diff tree, including semantic consumers.
+        diff.semantic_counts[identity] = dependents
         named_retire = identity in retire_dependents
         if identity in keep or (
             not named_retire
@@ -899,84 +927,127 @@ def _settle_dependents(
     diff: _Diff,
     *,
     retire_with: set[str],
-) -> tuple[dict[str, bytes], list[str]]:
+    connection: Any,
+    movers: tuple[Mover, ...] = (),
+    moves: Mapping[str, ProviderBuildMove] | None = None,
+    keep_build: frozenset[str] = frozenset(),
+) -> SettledMoves:
     """Every write, plus one successor for each accepted dependent they change.
 
     A normal change set owes the closure of what it changes: every live artifact
     pinning a replaced or retired kit definition takes a successor in the same
     generation, carried (re-pinned) to the kit's final definitions, or retired
-    with a definition the request retires together with its dependents. The plan
+    with a definition the request retires together with its dependents. Each
+    live Procedure bound to another build of a provider the kit ships moves to
+    the kit's build (``movers``), unless ``keep_build`` names it. A Line,
+    Trigger or Mandate over a replaced or moved Procedure is stopped. The plan
     counts each definition's dependents rather than listing them.
     """
 
-    changed = {path: content for path, content in diff.writes.items() if path in tree}
-    if not changed:
-        return dict(diff.writes), []
-    roots: dict[str, ArtifactIdentity] = {}
-    for path in sorted(changed):
-        identity = _artifact_state(path, tree[path]).identity
-        roots[identity.qualified] = identity
-    fixed = frozenset(diff.writes)
-    try:
-        # Each changed definition's complete reverse closure, on its own: a
-        # dependent reached through several definitions counts for each, and
-        # belongs to the retirement closure of every one it reaches.
-        closures = {
-            name: dependent_closure_inventory(tree, roots=(identity,), fixed_paths=fixed)
-            for name, identity in roots.items()
-        }
-    except ClaimTypeMigrationError as error:
-        return dict(diff.writes), [str(error)]
-    union: dict[str, ClaimTypeMigrationInventoryItemV1] = {}
-    for name in roots:
-        for item in closures[name]:
-            union.setdefault(item.path, item)
-    if not union:
-        return dict(diff.writes), []
-    inventory = tuple(union[path] for path in sorted(union))
-    counts = {name: len(items) for name, items in closures.items() if items}
-    retiring = {item.path for name in retire_with for item in closures.get(name, ())}
-    refused = []
-    dispositions = []
-    for item in inventory:
-        if item.path in retiring and "retire" in item.permitted_dispositions:
-            dispositions.append(
-                ClaimTypeDependentDisposition(
-                    identity=item.identity,
-                    disposition="retire",
-                    claim_retirement_reason="was-rescinded"
-                    if item.artifact_kind == "claim"
-                    else None,
+    settled = settle_changes(
+        tree,
+        writes=diff.writes,
+        connection=connection,
+        movers=movers,
+        moves=moves,
+        keep=keep_build,
+        retire_with=frozenset(retire_with),
+    )
+    if not settled.refused:
+        diff.plan[:] = [
+            item.model_copy(update={"dependent_count": settled.counts[item.identity]})
+            if item.identity in settled.counts and item.identity not in diff.semantic_counts
+            else item
+            for item in diff.plan
+        ]
+    return settled
+
+
+def _kit_movers(
+    connection: Any,
+    tree: Mapping[str, bytes],
+    providers: tuple[KitProvider, ...],
+    writes: Mapping[str, bytes],
+) -> tuple[Mover, ...]:
+    """Each live Procedure bound to another build of a provider the kit ships.
+
+    The release's own definitions it replaces already pin the kit's build; every
+    other live pinner (the kit's kept ones, and the user's) moves to it.
+    O(affected live Procedure pins), from the maintained name reverse-pin index.
+    """
+
+    found = []
+    for provider in providers:
+        for identity, path, source in indexed_move_pinners(
+            connection,
+            provider.provider_id,
+            f"Provider:{provider.build}",
+            (),
+            procedures_only=True,
+        ):
+            if path in writes and _artifact_state(path, writes[path]).lifecycle.state != "live":
+                continue
+            kind, _, name = identity.partition(":")
+            found.append(
+                Mover(
+                    identity=ArtifactIdentity(kind=kind, name=name),
+                    path=path,
+                    from_build=source.partition(":")[2],
+                    to_build=provider.build,
                 )
             )
-        elif "successor" in item.permitted_dispositions:
-            dispositions.append(
-                ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
+    return tuple(sorted(found, key=lambda item: (item.identity.qualified, item.from_build)))
+
+
+def _kit_moves(
+    tree: Mapping[str, bytes], movers: tuple[Mover, ...]
+) -> dict[str, ProviderBuildMove]:
+    moves: dict[str, ProviderBuildMove] = {}
+    for mover in movers:
+        key = f"Provider:{mover.from_build}"
+        if key not in moves:
+            try:
+                moves[key] = build_move(tree, mover.from_build, mover.to_build)
+            except ProviderBuildMoveRefused:
+                continue
+    return moves
+
+
+def _planned_stops(
+    connection: Any,
+    tree: Mapping[str, bytes],
+    roots: tuple[ArtifactIdentity, ...],
+    fixed: frozenset[str],
+) -> tuple[StoppedAutomationV1, ...]:
+    """The Lines, Mandates and Triggers a change over ``roots`` would stop, read
+    before the change can be evaluated (a preview whose providers are not installed)."""
+
+    stops: dict[str, StoppedAutomationV1] = {}
+    for root in roots:
+        try:
+            items = dependent_closure_inventory(tree, roots=(root,), fixed_paths=fixed)
+        except ClaimTypeMigrationError:
+            continue
+        for item in items:
+            if item.artifact_kind not in {"line", "procedure-mandate"}:
+                continue
+            stops.setdefault(
+                item.identity.qualified,
+                StoppedAutomationV1(
+                    identity=item.identity.qualified,
+                    kind="line" if item.artifact_kind == "line" else "mandate",
+                    stopped_by=item.triggering_identity.qualified,
+                ),
             )
-        else:
-            refused.append(
-                f"{item.identity.qualified} cannot be carried to "
-                f"{item.triggering_identity.qualified}"
-            )
-    if refused:
-        return dict(diff.writes), refused
-    try:
-        settled, _normalized = build_dependent_closure_candidate(
-            tree=tree,
-            changed=changed,
-            inventory=inventory,
-            dispositions=tuple(dispositions),
-            move_graphs=True,
-        )
-    except ClaimTypeMigrationError as error:
-        return dict(diff.writes), [str(error)]
-    diff.plan[:] = [
-        item.model_copy(update={"dependent_count": counts[item.identity]})
-        if item.identity in counts and item.identity not in diff.semantic_counts
-        else item
-        for item in diff.plan
-    ]
-    return {**settled, **diff.writes}, []
+            if item.artifact_kind == "line":
+                for trigger, _path in live_triggers_of(connection, item.identity.qualified):
+                    stops.setdefault(
+                        trigger,
+                        StoppedAutomationV1(
+                            identity=trigger, kind="trigger", stopped_by=item.identity.qualified
+                        ),
+                    )
+    return tuple(stops[key] for key in sorted(stops))
 
 
 def _held_by_other_kits(
@@ -1064,6 +1135,8 @@ def _submit(
     installed_version: str | None = None,
     provenance: KitProvenance | None = None,
     providers: tuple[KitProviderStep, ...] = (),
+    repins: tuple[ProviderRepinV1, ...] = (),
+    stops: tuple[StoppedAutomationV1, ...] = (),
 ) -> KitChangeResult:
     assert mode.head is not None
     base = mode.head
@@ -1072,6 +1145,8 @@ def _submit(
         "installed_version": installed_version,
         "provenance": provenance,
         "providers": providers,
+        "repins": repins,
+        "stops": stops,
     }
     body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
     shell = DocumentShell(
@@ -1179,13 +1254,15 @@ def _provider_here(
     provider: KitProvider,
     inspected: InspectedProviderPackage | None = None,
 ) -> tuple[_ProviderState, str | None, str | None]:
-    """Whether this bundled build is the live Provider here: (state, digest, version).
+    """Whether this bundled build is live here: (state, digest, version).
 
-    Without ``inspected`` (the staged files, resolved for this host) only the
-    wheel and lock are compared; with it, the whole dependency closure is.
+    The build is its own artifact (``provider.build``), read at its exact path:
+    another build of the provider never counts. ``differs`` is this build
+    materialized here with another dependency closure; it is only known with
+    ``inspected`` (the staged files, resolved for this host).
     """
 
-    path = f"providers/{provider.provider_id}.json"
+    path = provider_path(provider.build)
     raw = tree.get(path)
     if raw is None:
         return "missing", None, None
@@ -1195,18 +1272,12 @@ def _provider_here(
         return "retired", digest, None
     if not isinstance(held, ProviderV2):
         return "differs", digest, None
-    runtime = held.runtime_artifact
-    same = (
-        isinstance(runtime.distribution, ProviderLocalDistributionPin)
-        and runtime.distribution.sha256 == provider.wheel.sha256
-        and runtime.local_env is not None
-        and runtime.local_env.lock_sha256 == provider.lock.sha256
-        and (inspected is None or _build_difference(held, inspected) is None)
-    )
-    return ("installed" if same else "differs"), digest, runtime.distribution.version
+    same = inspected is None or _build_difference(held, inspected) is None
+    return ("installed" if same else "differs"), digest, held.runtime_artifact.distribution.version
 
 
 def _default_implementers(
+    connection: Any,
     tree: Mapping[str, bytes],
     provider: KitProvider,
     contents: Mapping[str, bytes],
@@ -1218,33 +1289,28 @@ def _default_implementers(
     installed here), each of its interfaces the kit carries is live here as the
     kit carries it, and some live Provider implements each one on that
     registration. Interfaces the package also implements that the kit
-    does not carry decide nothing.
+    does not carry decide nothing. The implementers come from the pin index
+    (who pins each registration), never a walk of every Provider.
     """
 
     needed = tuple(
-        interface_id
-        for interface_id in provider.interfaces
-        if provider_interface_path(interface_id) in contents
+        path
+        for path in sorted(contents)
+        if path.startswith("provider-interfaces/")
+        and provider_interface_id_of(_artifact_state(path, contents[path]).identity.name)
+        in provider.interfaces
     )
     if provider.delivery != "index" or not needed:
         return ()
     for path, content in contents.items():
         if path.startswith("procedures/") and any(
-            pin.target.kind == "Provider" and pin.target.name == provider.provider_id
+            pin.target.kind == "Provider"
+            and parse_provider_build_name(pin.target.name).name == provider.provider_id
             for pin in _artifact_state(path, content).pins
         ):
             return ()
-    live = [
-        held
-        for path in tree
-        if path.startswith("providers/")
-        and path.endswith(".json")
-        and isinstance(held := parse_provider(tree[path], path=path), ProviderV2)
-        and held.lifecycle.state == "live"
-    ]
     found: set[str] = set()
-    for interface_id in needed:
-        path = provider_interface_path(interface_id)
+    for path in needed:
         held_bytes = tree.get(path)
         if held_bytes is None:
             return ()
@@ -1255,15 +1321,14 @@ def _default_implementers(
             return ()
         artifact_digest = provider_interface_digest(registration).tagged
         implementers = {
-            held.identity.name
-            for held in live
-            if any(
-                pin.role == "provider-interface" and pin.artifact_digest == artifact_digest
-                for pin in held.pins
-            )
-            and any(
-                item.interface_digest == registration.interface_digest
-                for item in held.implementations
+            str(row[0]).removeprefix("Provider:")
+            for row in connection.execute(
+                "SELECT DISTINCT p.source_identity FROM main.pins p "
+                "JOIN main.providers r ON r.identity=p.source_identity "
+                "WHERE p.target_identity=? AND p.target_digest=? "
+                "AND p.edge_kind='required_pin' AND p.pin_role='provider-interface' "
+                "AND r.lifecycle='live' AND r.provider_name<>?",
+                (registration.identity.qualified, artifact_digest, provider.provider_id),
             )
         }
         if not implementers:
@@ -1273,6 +1338,7 @@ def _default_implementers(
 
 
 def _provider_steps(
+    connection: Any,
     tree: Mapping[str, bytes],
     manifest: KitManifest,
     inspected: Mapping[str, InspectedProviderPackage] | None = None,
@@ -1281,26 +1347,29 @@ def _provider_steps(
 ) -> tuple[list[KitProviderStep], list[KitProvider]]:
     """One step per provider package, and the ones still to install.
 
-    A different build of a bundled provider is refused rather than replaced:
-    replacing a Provider owes a successor of every live Procedure pinning it,
-    which an install does not carry, and the build here may serve Procedures
-    outside the kit. The operator decides that change with provider install.
-    An index default another live Provider stands in for is not installed.
+    The kit names one exact build per provider. Installing it adds that build
+    beside any other build of the provider here, so another installed build
+    never blocks: its Procedures move to the kit's build in the kit's change
+    (``repins``). An index default another live Provider stands in for is not
+    installed.
     """
 
     steps = []
     missing = []
     for provider in manifest.providers:
-        state, _digest, version = _provider_here(
+        state, _digest, _version = _provider_here(
             tree, provider, None if inspected is None else inspected.get(provider.provider_id)
         )
         named = {
             "provider_id": provider.provider_id,
             "package": provider.package,
             "version": provider.version,
+            "build": provider.build,
         }
         implementers = (
-            () if state == "installed" else _default_implementers(tree, provider, contents)
+            ()
+            if state == "installed"
+            else _default_implementers(connection, tree, provider, contents)
         )
         if state == "installed":
             steps.append(KitProviderStep(**named, action="unchanged"))
@@ -1333,14 +1402,12 @@ def _provider_steps(
                 KitProviderStep(
                     **named,
                     action="blocked",
-                    detail=f"Provider {provider.provider_id} is retired here; installing the "
-                    "kit would restore it"
+                    detail=f"build {provider.build} is retired here; installing the kit "
+                    "would restore it"
                     if state == "retired"
-                    else f"another build of {provider.provider_id} ({version}) is installed "
-                    f"here (wheel, lock or dependency closure); the kit bundles "
-                    f"{provider.package} {provider.version} ({provider.wheel.sha256[:19]}). "
-                    "Replace it with provider install, carrying the Procedures that pin it, "
-                    "then add the kit again",
+                    else f"build {provider.build} is installed here with another dependency "
+                    "closure than the kit bundles (cruxible.provider.build_rematerialized); "
+                    "the same wheel and lock name one build",
                 )
             )
     return steps, missing
@@ -1355,7 +1422,12 @@ def _early_refusals(
     downgrade: bool,
     installed_version: str | None,
 ) -> list[str]:
-    """Refusals the current state decides, checked before any provider installs."""
+    """Refusals the current state decides, checked before any provider installs.
+
+    A carried interface registration names one contract, so it is either live
+    here byte for byte or not here at all: it never conflicts with another
+    package's.
+    """
 
     refused = _ownership_conflicts(instance, tree, manifest)
     refused.extend(_builtin_refusals(tree, contents))
@@ -1364,17 +1436,6 @@ def _early_refusals(
             f"release {manifest.version} is older than installed {installed_version}; "
             "pass allow_downgrade (--allow-downgrade) to install it"
         )
-    for path, content in sorted(contents.items()):
-        held = tree.get(path)
-        if (
-            path.startswith("provider-interfaces/")
-            and held is not None
-            and (_without_lifecycle(json.loads(held)) != _without_lifecycle(json.loads(content)))
-        ):
-            refused.append(
-                f"{path} here differs from what the kit's bundled provider registers; it "
-                "came from another package, so the kit cannot take it over"
-            )
     return refused
 
 
@@ -1466,12 +1527,12 @@ def _provider_remap(
     manifest: KitManifest,
     inspected: Mapping[str, InspectedProviderPackage] | None = None,
 ) -> dict[str, str]:
-    """Release Provider pin digest -> the digest of the bundled build installed here.
+    """Release Provider pin digest -> the digest of the same build installed here.
 
-    A Provider's digest includes the environment its package materialized in
-    (platform, machine, Python), so it differs between hosts while its
-    implementation digests (interface, entrypoint, wheel sha256) do not: a
-    release Procedure's Provider pin moves to the same build installed here.
+    A build's identity names its wheel and lock, so it is the same on every host;
+    its digest includes the environment the host materialized (platform,
+    machine, Python), so a release Procedure's pin keeps its identity and moves
+    to the digest held here.
     """
 
     held = {}
@@ -1480,7 +1541,7 @@ def _provider_remap(
             tree, provider, None if inspected is None else inspected.get(provider.provider_id)
         )
         if state == "installed" and digest is not None:
-            held[provider.provider_id] = digest
+            held[provider.build] = digest
     remap: dict[str, str] = {}
     for path, content in contents.items():
         for pin in _artifact_state(path, content).pins:
@@ -1592,7 +1653,10 @@ def _add_kit(
                 "interfaces); rebuild the kit with kit build",
                 repair=RepairOperation(operation="cruxible.kit.build"),
             )
-    steps, missing = _provider_steps(tree, manifest, inspected, contents=contents)
+    with instance.bind_accepted_projection(mode.head) as projection:
+        steps, missing = _provider_steps(
+            projection.typed.connection, tree, manifest, inspected, contents=contents
+        )
     described: dict[str, object] = {
         "transition": transition,
         "installed_version": installed_version,
@@ -1719,14 +1783,106 @@ def _add_kit(
         kept=kept,
     )
     blocked.extend(_foreign_takeovers(instance, tree, manifest.kit_id, diff))
-    blocked.extend(
-        f"{item.path} here differs from what the kit's bundled provider registers; it came "
-        "from another package, so the kit cannot take it over"
-        for item in diff.plan
-        if item.action == "replace" and item.path.startswith("provider-interfaces/")
+    # Each live Procedure on another build of a provider the kit ships moves to
+    # the kit's build in this same change; a satisfied index default installs no
+    # build, so nothing moves for it.
+    shipped = tuple(
+        provider
+        for provider, step in zip(manifest.providers, steps, strict=True)
+        if step.action != "satisfied"
     )
-    writes, refused = _settle_dependents(tree, diff, retire_with=retire_with)
-    blocked.extend(refused)
+    assert mode.head is not None
+    with instance.bind_accepted_projection(mode.head) as projection:
+        connection = projection.typed.connection
+        movers = _kit_movers(connection, tree, shipped, diff.writes)
+        if awaiting_install:
+            # The kit's builds are not installed yet, so nothing can be moved or
+            # evaluated: the preview names what the change will move and stop.
+            repins = tuple(
+                ProviderRepinV1(
+                    identity=mover.identity.qualified,
+                    from_build=mover.from_build,
+                    to_build=mover.to_build,
+                    action="kept",
+                    reason="keep_build",
+                )
+                if mover.identity.qualified in request.keep_build
+                else ProviderRepinV1(
+                    identity=mover.identity.qualified,
+                    from_build=mover.from_build,
+                    to_build=mover.to_build,
+                    action="successor",
+                )
+                for mover in movers
+            )
+            changed_roots = tuple(
+                _artifact_state(path, tree[path]).identity for path in diff.writes if path in tree
+            )
+            stops = _planned_stops(
+                connection,
+                tree,
+                (
+                    *changed_roots,
+                    *(
+                        mover.identity
+                        for mover in movers
+                        if mover.identity.qualified not in request.keep_build
+                    ),
+                ),
+                frozenset(diff.writes),
+            )
+            writes: dict[str, bytes] = dict(diff.writes)
+        else:
+            moves = _kit_moves(tree, movers)
+            for mover in movers:
+                if (
+                    mover.identity.qualified not in request.keep_build
+                    or mover.path not in diff.writes
+                ):
+                    continue
+                try:
+                    backward = build_move(tree, mover.to_build, mover.from_build)
+                    payload = move_references(
+                        mover.path,
+                        json.loads(diff.writes[mover.path]),
+                        {},
+                        {backward.source.target.qualified: backward},
+                    )
+                    content, _digest = _render(mover.path, payload)
+                    if _without_lifecycle(payload) == _without_lifecycle(
+                        json.loads(tree[mover.path])
+                    ):
+                        diff.writes.pop(mover.path)
+                        _digest = _artifact_state(mover.path, tree[mover.path]).artifact_digest
+                    else:
+                        diff.writes[mover.path] = content
+                    release_digest = _artifact_state(
+                        mover.path, contents[mover.path]
+                    ).artifact_digest
+                    diff.installed[release_digest] = _digest
+                    diff.content[mover.path] = kit_content_digest(payload)
+                except ProviderBuildMoveRefused as exc:
+                    blocked.append(f"{mover.identity.qualified}: cannot keep its build: {exc}")
+            settled = _settle_dependents(
+                tree,
+                diff,
+                retire_with=retire_with,
+                connection=connection,
+                movers=movers,
+                moves=moves,
+                keep_build=frozenset(request.keep_build),
+            )
+            blocked.extend(settled.refused)
+            blocked.extend(
+                f"{item.identity} cannot move to {item.to_build}: {item.reason}"
+                for item in settled.repins
+                if item.action == "refused"
+            )
+            writes = settled.writes if not settled.refused else dict(diff.writes)
+            repins = tuple(settled.repins)
+            stops = tuple(settled.stops)
+    described["repins"] = repins
+    described["stops"] = stops
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
     if blocked:
         return KitChangeResult(
@@ -1738,6 +1894,12 @@ def _add_kit(
             coordinate=mode.coordinate,
             **described,  # type: ignore[arg-type]
         )
+
+    for artifact in manifest.artifacts:
+        if artifact.path in writes:
+            state = _artifact_state(artifact.path, writes[artifact.path])
+            diff.installed[artifact.artifact_digest] = state.artifact_digest
+            diff.content[artifact.path] = kit_content_digest(json.loads(writes[artifact.path]))
 
     def entries(paths: set[str]) -> tuple[KitInstalledArtifact, ...]:
         return tuple(
@@ -1898,52 +2060,67 @@ def _remove_kit(
 def service_kit_status(instance: PlaybillInstance) -> KitStatus:
     """Installed kits with the paths edited since install (by content, lineage apart)."""
 
-    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    coordinate = instance.accepted_coordinate()
+    tree = instance.immutable_tree_at(coordinate.git_oid)
     kits = []
-    for receipt in _receipts(instance, tree):
-        if not receipt.artifacts:
-            continue
-        drifted = tuple(
-            entry.path
-            for entry in receipt.artifacts
-            if entry.path not in tree
-            or _installed_content(entry, tree) != kit_content_digest(json.loads(tree[entry.path]))
-        )
-        providers = []
-        held = {
-            entry.path: tree[entry.path]
-            for entry in (*receipt.artifacts, *receipt.carried)
-            if entry.path in tree
-        }
-        for provider in receipt.providers:
-            state, _digest, version = _provider_here(tree, provider)
-            if state != "installed" and _default_implementers(tree, provider, held):
-                shown: Literal["installed", "differs", "satisfied", "missing"] = "satisfied"
-            else:
-                shown = "missing" if state == "retired" else state
-            providers.append(
-                KitProviderStatus(
-                    provider_id=provider.provider_id,
-                    package=provider.package,
-                    version=provider.version,
-                    wheel_sha256=provider.wheel.sha256,
-                    delivery=provider.delivery,
-                    state=shown,
-                    installed_version=version if state == "differs" else None,
-                )
-            )
-        kits.append(
-            InstalledKit(
-                kit_id=receipt.kit_id,
-                version=receipt.version,
-                content_digest=receipt.content_digest,
-                source=receipt.source,
-                drifted=drifted,
-                provenance=receipt.provenance,
-                kept=receipt.kept,
-                providers=tuple(providers),
-            )
-        )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        for receipt in _receipts(instance, tree):
+            if not receipt.artifacts:
+                continue
+            kits.append(_installed_kit(connection, tree, receipt))
     from cruxible_core.service.kit_resume import kit_resume_statuses
 
     return KitStatus(kits=tuple(kits), resumes=kit_resume_statuses(instance))
+
+
+def _installed_kit(connection: Any, tree: Mapping[str, bytes], receipt: KitReceipt) -> InstalledKit:
+    """One installed kit's status: drifted paths and each provider build here."""
+
+    drifted = tuple(
+        entry.path
+        for entry in receipt.artifacts
+        if entry.path not in tree
+        or _installed_content(entry, tree) != kit_content_digest(json.loads(tree[entry.path]))
+    )
+    providers = []
+    held = {
+        entry.path: tree[entry.path]
+        for entry in (*receipt.artifacts, *receipt.carried)
+        if entry.path in tree
+    }
+    for provider in receipt.providers:
+        state, _digest, version = _provider_here(tree, provider)
+        others = [
+            row
+            for row in tree_provider_builds(tree, provider.provider_id)
+            if row.live and row.identity != f"Provider:{provider.build}"
+        ]
+        if state != "installed" and _default_implementers(connection, tree, provider, held):
+            shown: Literal["installed", "differs", "satisfied", "missing"] = "satisfied"
+        elif state in {"missing", "retired"} and others:
+            # The kit's build is not live, another build of it is.
+            shown, version = "differs", max(row.version or "" for row in others) or None
+        else:
+            shown = "missing" if state == "retired" else state
+        providers.append(
+            KitProviderStatus(
+                provider_id=provider.provider_id,
+                package=provider.package,
+                version=provider.version,
+                wheel_sha256=provider.wheel.sha256,
+                delivery=provider.delivery,
+                state=shown,
+                installed_version=version if shown == "differs" else None,
+            )
+        )
+    return InstalledKit(
+        kit_id=receipt.kit_id,
+        version=receipt.version,
+        content_digest=receipt.content_digest,
+        source=receipt.source,
+        drifted=drifted,
+        provenance=receipt.provenance,
+        kept=receipt.kept,
+        providers=tuple(providers),
+    )

@@ -30,11 +30,12 @@ def insert_rows(
     rows: Sequence[Sequence[Any]],
     *,
     verb: str = "INSERT",
+    suffix: str = "",
 ) -> None:
     """``{verb} INTO {into} VALUES (...),(...)``: every row, in order, a chunk per statement.
 
     ``into`` is the table and, when needed, its column list. All rows have the
-    width of the first.
+    width of the first. ``suffix`` appends a caller-owned conflict clause.
     """
 
     if not rows:
@@ -43,7 +44,7 @@ def insert_rows(
     marks = "(" + ",".join("?" * width) + ")"
     for part in _chunks(rows, max(1, MAX_PARAMETERS // width)):
         connection.execute(
-            f"{verb} INTO {into} VALUES " + ",".join(marks for _ in part),
+            f"{verb} INTO {into} VALUES " + ",".join(marks for _ in part) + suffix,
             [value for row in part for value in row],
         )
 
@@ -82,4 +83,28 @@ def execute_in(
         connection.execute(sql.format(",".join("?" * len(part))), (*prefix, *part))
 
 
-__all__ = ["MAX_PARAMETERS", "execute_in", "insert_rows", "select_in"]
+def execute_values(
+    connection: sqlite3.Connection,
+    sql: str,
+    rows: Sequence[Sequence[Any]],
+) -> list[Any]:
+    """Bind rows to a ``VALUES {}`` relation, chunked; return any selected rows.
+
+    Callers aggregate duplicate keys before updates so a key occurs in one chunk.
+    """
+    if not rows:
+        return []
+    width = len(rows[0])
+    marks = "(" + ",".join("?" * width) + ")"
+    found: list[Any] = []
+    for part in _chunks(rows, max(1, MAX_PARAMETERS // width)):
+        found.extend(
+            connection.execute(
+                sql.format(",".join(marks for _ in part)),
+                [value for row in part for value in row],
+            ).fetchall()
+        )
+    return found
+
+
+__all__ = ["MAX_PARAMETERS", "execute_in", "execute_values", "insert_rows", "select_in"]

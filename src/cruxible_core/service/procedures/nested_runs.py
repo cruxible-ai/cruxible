@@ -328,7 +328,9 @@ class ServedNestedProcedureRunner:
                 None
                 if operator is None
                 else lambda: operator.invoker_for(
-                    self.instance, accepted_oid=self.coordinate.git_oid
+                    self.instance,
+                    accepted_oid=self.coordinate.git_oid,
+                    pins=accepted.procedure.pins,
                 )
             ),
             acquisition_policy=policy,

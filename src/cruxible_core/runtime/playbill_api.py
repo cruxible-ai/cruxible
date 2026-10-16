@@ -98,6 +98,10 @@ from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
     ProviderInstallResult,
+    ProviderMoveRequest,
+    ProviderMoveResult,
+    ProviderRetireRequest,
+    ProviderRetireResult,
 )
 from cruxible_client.contracts.query.definitions import query_definition_path
 from cruxible_client.contracts.repairs import RepairOperation
@@ -264,6 +268,10 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_playbill_procedure_readiness,
     service_run_playbill_line,
     service_run_playbill_procedure,
+)
+from cruxible_core.service.procedures.provider_builds import (
+    service_move_provider,
+    service_retire_provider,
 )
 from cruxible_core.service.procedures.provider_installation import (
     ExpectedProviderBuild,
@@ -821,6 +829,36 @@ def playbill_provider_install(
                 manager.get(instance_id),
                 operator=manager.provider_runtime_operator(),
                 request=request,
+                actor_id=_actor_id(instance_id),
+                timestamp=canonical_candidate_timestamp(utc_now()),
+            ),
+        )
+
+
+def playbill_provider_retire(
+    instance_id: str, request: ProviderRetireRequest
+) -> ProviderRetireResult:
+    check_permission("cruxible_provider_retire", instance_id=instance_id)
+    with change_entry(request.dry_run, "derived"):
+        return _proposal_validation_boundary(
+            "provider retirement",
+            lambda: service_retire_provider(
+                get_playbill_manager().get(instance_id),
+                request,
+                actor_id=_actor_id(instance_id),
+                timestamp=canonical_candidate_timestamp(utc_now()),
+            ),
+        )
+
+
+def playbill_provider_move(instance_id: str, request: ProviderMoveRequest) -> ProviderMoveResult:
+    check_permission("cruxible_provider_move", instance_id=instance_id)
+    with change_entry(request.dry_run, "derived"):
+        return _proposal_validation_boundary(
+            "provider move",
+            lambda: service_move_provider(
+                get_playbill_manager().get(instance_id),
+                request,
                 actor_id=_actor_id(instance_id),
                 timestamp=canonical_candidate_timestamp(utc_now()),
             ),

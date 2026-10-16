@@ -157,6 +157,8 @@ operator acts with no MCP tool.
 |---|---|---|
 | `cruxible_provider_list` | List provider packages from the configured daemon repository, each with its version and the provider interface IDs it implements | `READ_ONLY` |
 | `cruxible_provider_install` | Install a provider package by name (from the configured repository, else the provider index) or from staged wheel and lock digests, and register its interfaces and Provider; lands at once when the approval policy requires no approval, otherwise stops at `awaiting_approval`; grants no execution permission | `ADMIN` |
+| `cruxible_provider_move` | Move Procedures to an exact build or the most recently registered live build; preview re-pins and stopped automation | `GOVERNED_WRITE` |
+| `cruxible_provider_retire` | Retire an exact build with no live pinners, retaining its runtime environment | `ADMIN` |
 
 ## Kits
 

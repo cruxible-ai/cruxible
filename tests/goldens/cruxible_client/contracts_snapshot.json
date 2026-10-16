@@ -26108,6 +26108,16 @@
     },
     "InstalledProvider": {
       "fields": {
+        "build": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "build",
+          "required": true,
+          "schema": {
+            "title": "Build",
+            "type": "string"
+          }
+        },
         "interfaces": {
           "has_default": false,
           "has_default_factory": false,
@@ -26119,6 +26129,19 @@
             },
             "title": "Interfaces",
             "type": "array"
+          }
+        },
+        "newest": {
+          "default": true,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "newest",
+          "required": false,
+          "schema": {
+            "default": true,
+            "title": "Newest",
+            "type": "boolean"
           }
         },
         "package": {
@@ -26139,6 +26162,19 @@
             ],
             "default": null,
             "title": "Package"
+          }
+        },
+        "pinned_by": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pinned_by",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Pinned By",
+            "type": "integer"
           }
         },
         "provider": {
@@ -26174,14 +26210,23 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "One live Provider at the accepted head: what is installed here, and what it implements.",
+        "description": "One live provider build at the accepted head: what it runs and implements.",
         "properties": {
+          "build": {
+            "title": "Build",
+            "type": "string"
+          },
           "interfaces": {
             "items": {
               "type": "string"
             },
             "title": "Interfaces",
             "type": "array"
+          },
+          "newest": {
+            "default": true,
+            "title": "Newest",
+            "type": "boolean"
           },
           "package": {
             "anyOf": [
@@ -26194,6 +26239,11 @@
             ],
             "default": null,
             "title": "Package"
+          },
+          "pinned_by": {
+            "default": 0,
+            "title": "Pinned By",
+            "type": "integer"
           },
           "provider": {
             "title": "Provider",
@@ -26214,12 +26264,14 @@
         },
         "required": [
           "provider",
-          "interfaces"
+          "interfaces",
+          "build"
         ],
         "title": "InstalledProvider",
         "type": "object"
       },
       "required_fields": [
+        "build",
         "interfaces",
         "provider"
       ]
@@ -72988,6 +73040,418 @@
         "withdrawn_at"
       ]
     },
+    "ProviderBuildResolutionV1": {
+      "fields": {
+        "artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Artifact Digest",
+            "type": "string"
+          }
+        },
+        "considered": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "considered",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderBuildSummaryV1"
+            },
+            "title": "Considered",
+            "type": "array"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "requested": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "requested",
+          "required": true,
+          "schema": {
+            "title": "Requested",
+            "type": "string"
+          }
+        },
+        "resolved": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "resolved",
+          "required": true,
+          "schema": {
+            "title": "Resolved",
+            "type": "string"
+          }
+        },
+        "rule": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rule",
+          "required": true,
+          "schema": {
+            "enum": [
+              "exact",
+              "most_recently_registered"
+            ],
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-provider-build-resolution-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-provider-build-resolution-v1",
+            "default": "cruxible-provider-build-resolution-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "version": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "version",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ProviderBuildSummaryV1": {
+            "additionalProperties": false,
+            "description": "One build of a provider name, as resolution and the build verbs see it.",
+            "properties": {
+              "build": {
+                "title": "Build",
+                "type": "string"
+              },
+              "newest": {
+                "default": false,
+                "title": "Newest",
+                "type": "boolean"
+              },
+              "pinned_by": {
+                "default": 0,
+                "title": "Pinned By",
+                "type": "integer"
+              },
+              "state": {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-provider-build-summary-v1",
+                "default": "cruxible-provider-build-summary-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Version"
+              }
+            },
+            "required": [
+              "build",
+              "state"
+            ],
+            "title": "ProviderBuildSummaryV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Which build a provider reference resolved to, and from what.",
+        "properties": {
+          "artifact_digest": {
+            "title": "Artifact Digest",
+            "type": "string"
+          },
+          "considered": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderBuildSummaryV1"
+            },
+            "title": "Considered",
+            "type": "array"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "requested": {
+            "title": "Requested",
+            "type": "string"
+          },
+          "resolved": {
+            "title": "Resolved",
+            "type": "string"
+          },
+          "rule": {
+            "enum": [
+              "exact",
+              "most_recently_registered"
+            ],
+            "title": "Rule",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-provider-build-resolution-v1",
+            "default": "cruxible-provider-build-resolution-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "requested",
+          "rule",
+          "resolved",
+          "artifact_digest",
+          "coordinate"
+        ],
+        "title": "ProviderBuildResolutionV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_digest",
+        "coordinate",
+        "requested",
+        "resolved",
+        "rule"
+      ]
+    },
+    "ProviderBuildSummaryV1": {
+      "fields": {
+        "build": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "build",
+          "required": true,
+          "schema": {
+            "title": "Build",
+            "type": "string"
+          }
+        },
+        "newest": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "newest",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Newest",
+            "type": "boolean"
+          }
+        },
+        "pinned_by": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pinned_by",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Pinned By",
+            "type": "integer"
+          }
+        },
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "enum": [
+              "live",
+              "retired"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-provider-build-summary-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-provider-build-summary-v1",
+            "default": "cruxible-provider-build-summary-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "version": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "version",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One build of a provider name, as resolution and the build verbs see it.",
+        "properties": {
+          "build": {
+            "title": "Build",
+            "type": "string"
+          },
+          "newest": {
+            "default": false,
+            "title": "Newest",
+            "type": "boolean"
+          },
+          "pinned_by": {
+            "default": 0,
+            "title": "Pinned By",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "live",
+              "retired"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-provider-build-summary-v1",
+            "default": "cruxible-provider-build-summary-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "build",
+          "state"
+        ],
+        "title": "ProviderBuildSummaryV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "build",
+        "state"
+      ]
+    },
     "ProviderCatalog": {
       "fields": {
         "detail": {
@@ -73061,14 +73525,23 @@
         "$defs": {
           "InstalledProvider": {
             "additionalProperties": false,
-            "description": "One live Provider at the accepted head: what is installed here, and what it implements.",
+            "description": "One live provider build at the accepted head: what it runs and implements.",
             "properties": {
+              "build": {
+                "title": "Build",
+                "type": "string"
+              },
               "interfaces": {
                 "items": {
                   "type": "string"
                 },
                 "title": "Interfaces",
                 "type": "array"
+              },
+              "newest": {
+                "default": true,
+                "title": "Newest",
+                "type": "boolean"
               },
               "package": {
                 "anyOf": [
@@ -73081,6 +73554,11 @@
                 ],
                 "default": null,
                 "title": "Package"
+              },
+              "pinned_by": {
+                "default": 0,
+                "title": "Pinned By",
+                "type": "integer"
               },
               "provider": {
                 "title": "Provider",
@@ -73101,7 +73579,8 @@
             },
             "required": [
               "provider",
-              "interfaces"
+              "interfaces",
+              "build"
             ],
             "title": "InstalledProvider",
             "type": "object"
@@ -73492,6 +73971,26 @@
     },
     "ProviderInstallResult": {
       "fields": {
+        "build": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "build",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Build"
+          }
+        },
         "candidate_digest": {
           "default": null,
           "default_json_serializable": true,
@@ -73768,6 +74267,18 @@
         },
         "additionalProperties": false,
         "properties": {
+          "build": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Build"
+          },
           "candidate_digest": {
             "anyOf": [
               {
@@ -74193,6 +74704,19 @@
                 "title": "Implementation Digest",
                 "type": "string"
               },
+              "newest": {
+                "default": true,
+                "title": "Newest",
+                "type": "boolean"
+              },
+              "newest_builds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Newest Builds",
+                "type": "array"
+              },
               "provider_artifact_digest": {
                 "title": "Provider Artifact Digest",
                 "type": "string"
@@ -74352,6 +74876,35 @@
             "type": "string"
           }
         },
+        "newest": {
+          "default": true,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "newest",
+          "required": false,
+          "schema": {
+            "default": true,
+            "title": "Newest",
+            "type": "boolean"
+          }
+        },
+        "newest_builds": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "newest_builds",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Newest Builds",
+            "type": "array"
+          }
+        },
         "provider_artifact_digest": {
           "has_default": false,
           "has_default_factory": false,
@@ -74393,6 +74946,19 @@
           "implementation_digest": {
             "title": "Implementation Digest",
             "type": "string"
+          },
+          "newest": {
+            "default": true,
+            "title": "Newest",
+            "type": "boolean"
+          },
+          "newest_builds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Newest Builds",
+            "type": "array"
           },
           "provider_artifact_digest": {
             "title": "Provider Artifact Digest",
@@ -74584,6 +75150,673 @@
         "state"
       ]
     },
+    "ProviderMoveRequest": {
+      "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{12,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The coordinate a preview answered with: its git oid, or for a change to operational state its state digest (either may be shortened to a unique prefix of 12+ hex characters). A commit carrying it refuses cruxible.preview.state_moved if that state moved since. Required to commit a change that cannot be undone.",
+            "title": "At"
+          }
+        },
+        "dry_run": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dry_run",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "true: run every check up to the commit and write nothing, answering with a would_* status; false: commit. Omitted: this operation's default (a change derived across several artifacts, or one that cannot be undone, previews).",
+            "title": "Dry Run"
+          }
+        },
+        "only": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "only",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Only",
+            "type": "array"
+          }
+        },
+        "provider": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider",
+          "required": true,
+          "schema": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "to": {
+          "default": "newest",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "to",
+          "required": false,
+          "schema": {
+            "default": "newest",
+            "title": "To",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Move the live definitions pinning other builds of one provider to one build,\nas one governed change: each moves to the build's exact implementation of\nthe contract it uses, and its dependents are carried with it.",
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{12,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The coordinate a preview answered with: its git oid, or for a change to operational state its state digest (either may be shortened to a unique prefix of 12+ hex characters). A commit carrying it refuses cruxible.preview.state_moved if that state moved since. Required to commit a change that cannot be undone.",
+            "title": "At"
+          },
+          "dry_run": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "true: run every check up to the commit and write nothing, answering with a would_* status; false: commit. Omitted: this operation's default (a change derived across several artifacts, or one that cannot be undone, previews).",
+            "title": "Dry Run"
+          },
+          "only": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Only",
+            "type": "array"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "to": {
+            "default": "newest",
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "title": "ProviderMoveRequest",
+        "type": "object"
+      },
+      "required_fields": [
+        "provider"
+      ]
+    },
+    "ProviderMoveResult": {
+      "fields": {
+        "approval_required": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "approval_required",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Approval Required",
+            "type": "boolean"
+          }
+        },
+        "carried_dependents": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "carried_dependents",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "title": "Carried Dependents",
+            "type": "integer"
+          }
+        },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "moved": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "moved",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderRepinV1"
+            },
+            "title": "Moved",
+            "type": "array"
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "provider": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider",
+          "required": true,
+          "schema": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "unchanged",
+              "would_propose",
+              "would_block",
+              "proposed",
+              "accepted",
+              "blocked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "stops": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "stops",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/StoppedAutomationV1"
+            },
+            "title": "Stops",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "cruxible-provider-move-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-provider-move-result-v1",
+            "default": "cruxible-provider-move-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "to": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ProviderBuildResolutionV1"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ProviderBuildResolutionV1": {
+            "additionalProperties": false,
+            "description": "Which build a provider reference resolved to, and from what.",
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "considered": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ProviderBuildSummaryV1"
+                },
+                "title": "Considered",
+                "type": "array"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "requested": {
+                "title": "Requested",
+                "type": "string"
+              },
+              "resolved": {
+                "title": "Resolved",
+                "type": "string"
+              },
+              "rule": {
+                "enum": [
+                  "exact",
+                  "most_recently_registered"
+                ],
+                "title": "Rule",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-provider-build-resolution-v1",
+                "default": "cruxible-provider-build-resolution-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Version"
+              }
+            },
+            "required": [
+              "requested",
+              "rule",
+              "resolved",
+              "artifact_digest",
+              "coordinate"
+            ],
+            "title": "ProviderBuildResolutionV1",
+            "type": "object"
+          },
+          "ProviderBuildSummaryV1": {
+            "additionalProperties": false,
+            "description": "One build of a provider name, as resolution and the build verbs see it.",
+            "properties": {
+              "build": {
+                "title": "Build",
+                "type": "string"
+              },
+              "newest": {
+                "default": false,
+                "title": "Newest",
+                "type": "boolean"
+              },
+              "pinned_by": {
+                "default": 0,
+                "title": "Pinned By",
+                "type": "integer"
+              },
+              "state": {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-provider-build-summary-v1",
+                "default": "cruxible-provider-build-summary-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Version"
+              }
+            },
+            "required": [
+              "build",
+              "state"
+            ],
+            "title": "ProviderBuildSummaryV1",
+            "type": "object"
+          },
+          "ProviderRepinV1": {
+            "additionalProperties": false,
+            "description": "One live definition moved (or not) from a provider build to another.",
+            "properties": {
+              "action": {
+                "enum": [
+                  "successor",
+                  "kept",
+                  "refused"
+                ],
+                "title": "Action",
+                "type": "string"
+              },
+              "from_build": {
+                "title": "From Build",
+                "type": "string"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "contract_changed",
+                      "not_movable",
+                      "keep_build"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "tag": {
+                "const": "cruxible-provider-repin-v1",
+                "default": "cruxible-provider-repin-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "to_build": {
+                "title": "To Build",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "from_build",
+              "to_build",
+              "action"
+            ],
+            "title": "ProviderRepinV1",
+            "type": "object"
+          },
+          "StoppedAutomationV1": {
+            "additionalProperties": false,
+            "description": "A Line, Trigger or Mandate a re-pin retires: it pinned the moved definition's\nold version and cannot be carried to the new one, so its automation stops.\nAuthor it again over the moved definition to resume it.",
+            "properties": {
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "line",
+                  "trigger",
+                  "mandate"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "stopped_by": {
+                "title": "Stopped By",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-stopped-automation-v1",
+                "default": "cruxible-stopped-automation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "kind",
+              "stopped_by"
+            ],
+            "title": "StoppedAutomationV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "approval_required": {
+            "default": false,
+            "title": "Approval Required",
+            "type": "boolean"
+          },
+          "carried_dependents": {
+            "default": 0,
+            "title": "Carried Dependents",
+            "type": "integer"
+          },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "moved": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ProviderRepinV1"
+            },
+            "title": "Moved",
+            "type": "array"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "unchanged",
+              "would_propose",
+              "would_block",
+              "proposed",
+              "accepted",
+              "blocked"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stops": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/StoppedAutomationV1"
+            },
+            "title": "Stops",
+            "type": "array"
+          },
+          "tag": {
+            "const": "cruxible-provider-move-result-v1",
+            "default": "cruxible-provider-move-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "to": {
+            "$ref": "#/$defs/ProviderBuildResolutionV1"
+          }
+        },
+        "required": [
+          "provider",
+          "to",
+          "status"
+        ],
+        "title": "ProviderMoveResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "provider",
+        "status",
+        "to"
+      ]
+    },
     "ProviderOperationReadiness": {
       "fields": {
         "installed": {
@@ -74722,6 +75955,517 @@
         "interfaces",
         "name",
         "version"
+      ]
+    },
+    "ProviderRepinV1": {
+      "fields": {
+        "action": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "action",
+          "required": true,
+          "schema": {
+            "enum": [
+              "successor",
+              "kept",
+              "refused"
+            ],
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "from_build": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "from_build",
+          "required": true,
+          "schema": {
+            "title": "From Build",
+            "type": "string"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "title": "Identity",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "contract_changed",
+                  "not_movable",
+                  "keep_build"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          }
+        },
+        "tag": {
+          "default": "cruxible-provider-repin-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-provider-repin-v1",
+            "default": "cruxible-provider-repin-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "to_build": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "to_build",
+          "required": true,
+          "schema": {
+            "title": "To Build",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One live definition moved (or not) from a provider build to another.",
+        "properties": {
+          "action": {
+            "enum": [
+              "successor",
+              "kept",
+              "refused"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "from_build": {
+            "title": "From Build",
+            "type": "string"
+          },
+          "identity": {
+            "title": "Identity",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "contract_changed",
+                  "not_movable",
+                  "keep_build"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "tag": {
+            "const": "cruxible-provider-repin-v1",
+            "default": "cruxible-provider-repin-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "to_build": {
+            "title": "To Build",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "from_build",
+          "to_build",
+          "action"
+        ],
+        "title": "ProviderRepinV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "action",
+        "from_build",
+        "identity",
+        "to_build"
+      ]
+    },
+    "ProviderRetireRequest": {
+      "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{12,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The coordinate a preview answered with: its git oid, or for a change to operational state its state digest (either may be shortened to a unique prefix of 12+ hex characters). A commit carrying it refuses cruxible.preview.state_moved if that state moved since. Required to commit a change that cannot be undone.",
+            "title": "At"
+          }
+        },
+        "build": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "build",
+          "required": true,
+          "schema": {
+            "title": "Build",
+            "type": "string"
+          }
+        },
+        "dry_run": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dry_run",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "true: run every check up to the commit and write nothing, answering with a would_* status; false: commit. Omitted: this operation's default (a change derived across several artifacts, or one that cannot be undone, previews).",
+            "title": "Dry Run"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Retire one provider build: new authoring and unpinned references stop\nresolving to it. Refused while any live definition pins it; its runtime\nenvironment stays, so what ran on it stays replayable.",
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{12,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The coordinate a preview answered with: its git oid, or for a change to operational state its state digest (either may be shortened to a unique prefix of 12+ hex characters). A commit carrying it refuses cruxible.preview.state_moved if that state moved since. Required to commit a change that cannot be undone.",
+            "title": "At"
+          },
+          "build": {
+            "title": "Build",
+            "type": "string"
+          },
+          "dry_run": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "true: run every check up to the commit and write nothing, answering with a would_* status; false: commit. Omitted: this operation's default (a change derived across several artifacts, or one that cannot be undone, previews).",
+            "title": "Dry Run"
+          }
+        },
+        "required": [
+          "build"
+        ],
+        "title": "ProviderRetireRequest",
+        "type": "object"
+      },
+      "required_fields": [
+        "build"
+      ]
+    },
+    "ProviderRetireResult": {
+      "fields": {
+        "approval_required": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "approval_required",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Approval Required",
+            "type": "boolean"
+          }
+        },
+        "build": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "build",
+          "required": true,
+          "schema": {
+            "title": "Build",
+            "type": "string"
+          }
+        },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "pinned_by": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pinned_by",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Pinned By",
+            "type": "array"
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "would_retire",
+              "retired",
+              "proposed",
+              "blocked",
+              "would_block",
+              "unchanged"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-provider-retire-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-provider-retire-result-v1",
+            "default": "cruxible-provider-retire-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "approval_required": {
+            "default": false,
+            "title": "Approval Required",
+            "type": "boolean"
+          },
+          "build": {
+            "title": "Build",
+            "type": "string"
+          },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "pinned_by": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Pinned By",
+            "type": "array"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "status": {
+            "enum": [
+              "would_retire",
+              "retired",
+              "proposed",
+              "blocked",
+              "would_block",
+              "unchanged"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-provider-retire-result-v1",
+            "default": "cruxible-provider-retire-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "build",
+          "status"
+        ],
+        "title": "ProviderRetireResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "build",
+        "status"
       ]
     },
     "ProviderWheelObject": {
@@ -98975,6 +100719,100 @@
       "required_fields": [
         "digest",
         "subject"
+      ]
+    },
+    "StoppedAutomationV1": {
+      "fields": {
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "title": "Identity",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "line",
+              "trigger",
+              "mandate"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "stopped_by": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "stopped_by",
+          "required": true,
+          "schema": {
+            "title": "Stopped By",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-stopped-automation-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-stopped-automation-v1",
+            "default": "cruxible-stopped-automation-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "A Line, Trigger or Mandate a re-pin retires: it pinned the moved definition's\nold version and cannot be carried to the new one, so its automation stops.\nAuthor it again over the moved definition to resume it.",
+        "properties": {
+          "identity": {
+            "title": "Identity",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "line",
+              "trigger",
+              "mandate"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "stopped_by": {
+            "title": "Stopped By",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-stopped-automation-v1",
+            "default": "cruxible-stopped-automation-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "kind",
+          "stopped_by"
+        ],
+        "title": "StoppedAutomationV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "identity",
+        "kind",
+        "stopped_by"
       ]
     },
     "TerminalSettlementEvidence": {

@@ -23,7 +23,8 @@ from .canonical import Sha256Value, canonical_digest
 from .change_control import DryRun, PreviewAt
 from .get_reads import GetCoordinate
 from .projection import AcceptedCoordinate
-from .provider_installation import ProviderWheelObject
+from .provider_installation import ProviderRepinV1, ProviderWheelObject, StoppedAutomationV1
+from .providers import provider_build_key_of
 
 KIT_MANIFEST_FILE = "cruxible-kit.json"
 KIT_ARTIFACT_DIRECTORY = "artifacts"
@@ -229,6 +230,25 @@ class KitProvider(_Strict):
                 "files: its path dependencies come from the index that serves it"
             )
         return self
+
+    @property
+    def build(self) -> str:
+        """The exact build this package registers: ``<provider_id>/<build key>``.
+
+        The key covers the wheel and its lock, never how a host materializes
+        them, so the kit names the same build on every host.
+        """
+
+        return (
+            f"{self.provider_id}/"
+            + provider_build_key_of(
+                provider_id=self.provider_id,
+                distribution_name=self.package,
+                distribution_version=self.version,
+                distribution_sha256=self.wheel.sha256,
+                lock_sha256=self.lock.sha256,
+            ).value
+        )
 
     def files(self) -> tuple[KitProviderFile, ...]:
         """The files the kit carries for this package (none for an index default)."""
@@ -622,6 +642,10 @@ class KitAddRequest(_Strict):
     retire_dependents: tuple[str, ...] = ()
     #: Install a release older than the installed one.
     allow_downgrade: bool = False
+    #: Procedures (``Procedure:acme.triage``) to keep on the provider build they
+    #: pin. Every other live Procedure bound to a provider the kit ships moves to
+    #: the build the kit ships, in the same change set.
+    keep_build: tuple[str, ...] = ()
     #: A kit install is derived across many artifacts, so it previews by default.
     dry_run: DryRun = None
     at: PreviewAt = None
@@ -644,6 +668,15 @@ class KitAddRequest(_Strict):
             if not separator or not kind or not name:
                 raise ValueError(f"{info.field_name} names a definition as KIND:NAME")
         return _sorted_unique(value, label=str(info.field_name))
+
+    @field_validator("keep_build")
+    @classmethod
+    def _keep_build(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for identity in value:
+            kind, separator, name = identity.partition(":")
+            if not separator or kind != "Procedure" or not name:
+                raise ValueError("keep_build names a Procedure as Procedure:NAME")
+        return _sorted_unique(value, label="keep_build")
 
 
 class KitRemoveRequest(_Strict):
@@ -682,8 +715,9 @@ KitTransition = Literal["install", "upgrade", "downgrade", "reinstall"]
 #: is installed), ``install`` (installed and registered now), ``would_install``
 #: (a preview), ``awaiting_approval`` (its install proposal needs approval),
 #: ``satisfied`` (an index default not installed: another live Provider here
-#: implements its interfaces), ``blocked`` (a different build of it is
-#: installed, or its install refused).
+#: implements its interfaces), ``blocked`` (this build is retired here, or its
+#: install refused). Another installed build of the provider never blocks: the
+#: kit's build installs beside it.
 KitProviderAction = Literal[
     "unchanged", "install", "would_install", "awaiting_approval", "satisfied", "blocked"
 ]
@@ -694,6 +728,9 @@ class KitProviderStep(_Strict):
     package: str
     version: str
     action: KitProviderAction
+    #: The exact build the kit ships (``<provider_id>/<build key>``). Installing
+    #: it adds a build: other builds of the provider stay installed.
+    build: str | None = None
     #: The install proposal, when it awaits approval or was refused.
     proposal_id: str | None = None
     detail: str | None = None
@@ -732,6 +769,12 @@ class KitChangeResult(_Strict):
     #: The bundled provider packages, installed before the definitions.
     providers: tuple[KitProviderStep, ...] = ()
     plan: tuple[KitPathPlan, ...] = ()
+    #: Each live Procedure bound to another build of a provider the kit ships,
+    #: moved to the kit's build in this change set (or kept, with keep_build).
+    repins: tuple[ProviderRepinV1, ...] = ()
+    #: The Lines, Triggers and Mandates those re-pins stop: each pinned a moved
+    #: Procedure's old version, so it is retired with this change.
+    stops: tuple[StoppedAutomationV1, ...] = ()
     detail: str | None = None
     #: The accepted coordinate this change was evaluated at.
     coordinate: GetCoordinate | None = None

@@ -284,7 +284,20 @@ OWNER_CODECS = (
         ),
     ),
     OwnerCodec(
-        "provider", "Provider", "providers", parse_provider, (("control_domain", "TEXT NOT NULL"),)
+        "provider",
+        "Provider",
+        "providers",
+        parse_provider,
+        (
+            ("control_domain", "TEXT NOT NULL"),
+            # Every build of one name shares ``provider_name``; ``build_key`` is
+            # NULL for a single-path Provider (the built-in, or one registered
+            # before builds), which is itself one build of its name.
+            ("provider_name", "TEXT NOT NULL"),
+            ("build_key", "TEXT"),
+            ("distribution_version", "TEXT"),
+            ("registration_sequence", "INTEGER NOT NULL"),
+        ),
     ),
     OwnerCodec(
         "provider-interface",
@@ -295,6 +308,9 @@ OWNER_CODECS = (
             ("interface_id", "TEXT NOT NULL"),
             ("interface_digest", "TEXT NOT NULL"),
             ("effect_class", "TEXT NOT NULL"),
+            # NULL for a single-path (v1/v2) registration.
+            ("contract_key", "TEXT"),
+            ("registration_sequence", "INTEGER NOT NULL"),
         ),
     ),
     OwnerCodec(
@@ -496,6 +512,10 @@ def schema_sql() -> str:
             "CREATE INDEX claims_by_predicate ON claims(predicate,lifecycle,path)",
             "CREATE INDEX claims_by_object_subject ON claims(object_path,identity) WHERE object_kind='subject'",
             "CREATE INDEX provider_interfaces_by_interface ON provider_interfaces(interface_digest,identity)",
+            "CREATE INDEX provider_interfaces_by_id ON provider_interfaces(interface_id,identity)",
+            # The builds of one provider name: newest-build resolution and the
+            # build verbs read one name's rows, never every Provider.
+            "CREATE INDEX providers_by_name ON providers(provider_name,identity)",
             "CREATE INDEX lines_by_identity_digest ON lines(identity_digest,identity)",
             "CREATE INDEX triggers_by_target ON triggers(target_kind,target,identity) WHERE lifecycle='live'",
             "CREATE INDEX procedure_mandates_by_procedure ON procedure_mandates(procedure_identity,procedure_digest,valid_from_us,identity) WHERE lifecycle='live'",
@@ -517,7 +537,9 @@ def schema_sql() -> str:
             "CREATE INDEX subject_keys_by_key ON subject_keys(kind,key_encoding,subject_path)",
         ]
     )
-    return ";\n".join(statements) + ";\n"
+    from cruxible_core.indexes.provider_heads import SCHEMA_SQL as PROVIDER_HEADS_SQL
+
+    return ";\n".join(statements) + ";\n" + PROVIDER_HEADS_SQL
 
 
 def _claim_fields(claim: Any) -> dict[str, SQLValue]:
@@ -630,6 +652,12 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
         )
     if owner.kind == "blueprint":
         result["slot_count"] = len(source.definition.pin_slots)
+    if owner.kind == "provider":
+        runtime = getattr(source, "runtime_artifact", None)
+        result["distribution_version"] = None if runtime is None else runtime.distribution.version
+        result["registration_sequence"] = 0
+    if owner.kind == "provider-interface":
+        result["registration_sequence"] = 0
     if owner.kind in ("line", "procedure-mandate"):
         result.update(
             procedure_identity=source.procedure.target.qualified,
@@ -878,6 +906,24 @@ def insert_owners(
         )
         ordinal[pin.source_identity] = index + 1
     insert_rows(connection, "pins", pins)
+    pinners: list[tuple[SQLValue, ...]] = []
+    for pin in parsed.pins:
+        source = sources.get(pin.source_identity)
+        if (
+            source is not None
+            and pin.source_identity.startswith(("Procedure:", "Blueprint:"))
+            and source.lifecycle.state == "live"
+            and pin.target_identity.startswith("Provider:")
+        ):
+            pinners.append(
+                (
+                    pin.source_identity,
+                    pin.target_identity,
+                    pin.target_digest,
+                    pin.target_identity.removeprefix("Provider:").partition("/")[0],
+                ),
+            )
+    insert_rows(connection, "provider_pinners", pinners)
     consumed: list[tuple[SQLValue, ...]] = []
     for row in parsed.envelopes:
         if row.kind != "claim":

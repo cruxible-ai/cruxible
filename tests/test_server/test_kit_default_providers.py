@@ -30,7 +30,10 @@ from cruxible_client.contracts.kits import (
     KitProviderFile,
 )
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.provider_interfaces import render_provider_interface
+from cruxible_client.contracts.provider_interfaces import (
+    provider_interface_path,
+    render_provider_interface,
+)
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.kits import read_kit_directory, write_kit_directory
 from cruxible_core.cli.provider_wheels import stage_kit_provider_directory
@@ -44,7 +47,7 @@ from tests.test_server.test_kit_providers import _add, _client, _install, _tree
 CONTRACT = "acme.web"
 POLICY = "acme.intake"
 BLUEPRINT = "acme.fetch"
-INTERFACE_PATH = "provider-interfaces/web.fetch.json"
+INTERFACE_PATH = provider_interface_path(web_fetch_interface_registration().identity.name)
 API_JSON = ("source_kind=api_json;access=*;page_weight=*", "web-fetch-api-json")
 STATIC_LIGHT = ("source_kind=static_html;access=*;page_weight=light", "web-fetch-static-light")
 STATIC_MEDIUM = ("source_kind=static_html;access=*;page_weight=medium", "web-fetch-static-medium")
@@ -302,7 +305,8 @@ def test_a_fresh_consumer_installs_the_default_provider_by_name(
         tree = _tree(consumer)
         assert tree[INTERFACE_PATH] == release.contents()[INTERFACE_PATH]
         held = parse_provider(
-            tree["providers/fetch-default.json"], path="providers/fetch-default.json"
+            tree[f"providers/{release.manifest.providers[0].build}.json"],
+            path=f"providers/{release.manifest.providers[0].build}.json",
         )
         assert held.runtime_artifact.distribution.sha256 == provider.wheel.sha256  # type: ignore[attr-defined]
         (status,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
@@ -318,7 +322,8 @@ def test_a_fresh_consumer_installs_the_default_provider_by_name(
         _install(consumer, alternative)
         assert _tree(consumer)[INTERFACE_PATH] == tree[INTERFACE_PATH]
         assert sorted(
-            item["provider_identity"] for item in _web_fetch_entry(consumer)["providers"]
+            item["provider_identity"].partition("/")[0]
+            for item in _web_fetch_entry(consumer)["providers"]
         ) == ["Provider:fetch-alt", "Provider:fetch-default"]
         _instantiate_and_refuse(consumer)
     finally:

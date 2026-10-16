@@ -31,6 +31,7 @@ from cruxible_client.contracts.kits import (
     KitProvider,
     KitResumeStatus,
 )
+from cruxible_client.contracts.providers import provider_path
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_core.errors import CoreError
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -46,8 +47,10 @@ _WAITING: dict[str, bool] = {}
 _RESUMING: ContextVar[bool] = ContextVar("cruxible_kit_resuming", default=False)
 
 
-def _provider_path(provider_id: str) -> str:
-    return f"providers/{provider_id}.json"
+def _provider_path(provider: KitProvider) -> str:
+    """The exact build path a waited install lands (one per build, never shared)."""
+
+    return provider_path(provider.build)
 
 
 def _key(instance: PlaybillInstance) -> str:
@@ -115,7 +118,7 @@ def record_kit_resume(
         connection.executemany(
             "INSERT INTO kit_resume_waits (provider_path,kit_id,provider_id) VALUES (?,?,?)",
             [
-                (_provider_path(provider.provider_id), manifest.kit_id, provider.provider_id)
+                (_provider_path(provider), manifest.kit_id, provider.provider_id)
                 for provider in waiting_on
             ],
         )

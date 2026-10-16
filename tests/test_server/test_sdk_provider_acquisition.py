@@ -32,7 +32,6 @@ from cruxible_client.contracts.provider_interfaces import (
     render_provider_interface,
 )
 from cruxible_client.contracts.providers import (
-    ProviderV2,
     provider_digest,
     provider_expected_implementation_records,
     provider_manifest_digest,
@@ -47,6 +46,7 @@ from cruxible_core.providers.web_fetch import (
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.core_support._p2b1_support import provider_v2
 from tests.core_support._pc_c_support import capture_contract
+from tests.support.provider_builds import as_build
 from tests.test_procedures import test_procedure_source_runs as source
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
@@ -57,7 +57,7 @@ def web_provider(registration, selectors=None):
     # The provider-runtime 0.2.x manifest still declares input buckets; they are
     # inert. By default, the ones the registration's (inert) proofs name.
     if selectors is None:
-        selectors = {proof.fixture_id: proof.selector for proof in registration.conformance_proofs}
+        selectors = {}
     template = provider_v2()
     implementation = template.runtime_artifact.manifest.implementations[0].model_copy(
         update={
@@ -94,7 +94,7 @@ def web_provider(registration, selectors=None):
             ),
         }
     )
-    return ProviderV2.model_validate(provider.model_dump(mode="json"))
+    return as_build(provider)
 
 
 def acquisition_result():
@@ -211,7 +211,7 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
     proposal = source.submit_member_candidate(
         instance,
         members={
-            provider_interface_path(registration.interface_id): render_provider_interface(
+            provider_interface_path(registration.identity.name): render_provider_interface(
                 registration
             ),
             provider_path(provider.identity.name): render_provider(provider),
@@ -319,7 +319,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     proposal = source.submit_member_candidate(
         instance,
         members={
-            provider_interface_path(registration.interface_id): render_provider_interface(
+            provider_interface_path(registration.identity.name): render_provider_interface(
                 registration
             ),
             provider_path(provider.identity.name): render_provider(provider),

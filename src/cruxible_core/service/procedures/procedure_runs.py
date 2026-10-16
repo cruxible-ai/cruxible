@@ -512,6 +512,7 @@ class ProviderRuntimeOperatorProtocol(Protocol):
         instance: PlaybillInstance,
         *,
         accepted_oid: str,
+        pins: Sequence[ArtifactPin] = (),
     ) -> ProviderRuntimeInvokerProtocol: ...
 
     def admit_line_provider(
@@ -1015,31 +1016,9 @@ def _line_catalogs(
     dict[str, AcceptedProvider],
     dict[str, AcceptedProviderInterfaceRegistration],
 ]:
-    providers: dict[str, AcceptedProvider] = {}
-    interfaces: dict[str, AcceptedProviderInterfaceRegistration] = {}
-    with instance.bind_accepted_projection(coordinate) as projection:
-        for pin in dict.fromkeys(pins):
-            if pin.target.kind not in {"Provider", "ProviderInterface"}:
-                continue
-            table = "providers" if pin.target.kind == "Provider" else "provider_interfaces"
-            row = projection.typed.connection.execute(
-                f"SELECT path FROM {table} "
-                "WHERE identity=? AND artifact_digest=? AND lifecycle='live'",
-                (pin.target.qualified, pin.artifact_digest),
-            ).fetchone()
-            if row is None:
-                continue
-            source = projection.typed.source(pin.target.qualified)
-            assert source is not None
-            if pin.target.kind == "Provider":
-                providers[pin.artifact_digest] = AcceptedProvider(
-                    path=row[0], provider=source, artifact_digest=pin.artifact_digest
-                )
-            else:
-                interfaces[pin.artifact_digest] = AcceptedProviderInterfaceRegistration(
-                    path=row[0], registration=source, artifact_digest=pin.artifact_digest
-                )
-    return providers, interfaces
+    from cruxible_core.runtime.provider_runtime import pinned_provider_catalogs
+
+    return pinned_provider_catalogs(instance, coordinate, pins)
 
 
 def _assert_line_closure_complete(
@@ -3368,6 +3347,7 @@ def service_run_playbill_procedure(
                 else lambda: provider_runtime_operator.invoker_for(
                     instance,
                     accepted_oid=coordinate.git_oid,
+                    pins=accepted.procedure.pins,
                 )
             ),
             acquisition_policy=acquisition_policy,
@@ -4485,6 +4465,7 @@ def _run_playbill_line(
                     else lambda: provider_runtime_operator.invoker_for(
                         instance,
                         accepted_oid=coordinate.git_oid,
+                        pins=accepted.procedure.pins,
                     )
                 ),
                 acquisition_policy=line_policy,

@@ -63,8 +63,11 @@ from cruxible_client.contracts.laws import (
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     PROCEDURE_V2_ACCEPTANCE_LAW,
     PROVIDER_ACCEPTANCE_LAW,
+    PROVIDER_BUILD_ACCEPTANCE_LAW,
+    PROVIDER_BUILDS_UPGRADE_LAW,
     PROVIDER_CONTRACT_UPGRADE_LAW,
     PROVIDER_INTERFACE_ACCEPTANCE_LAW,
+    PROVIDER_INTERFACE_CONTRACT_ACCEPTANCE_LAW,
     PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
     PROVIDER_PACKAGE_UPGRADE_LAW,
     PROVIDER_V2_ACCEPTANCE_LAW,
@@ -102,6 +105,7 @@ from cruxible_core.compiler.compiler import (
     PC_DF2_COMPILER,
     PC_E1_COMPILER,
     PC_HR_COMPILER,
+    PROVIDER_BUILDS_COMPILER,
     PROVIDER_CONTRACT_COMPILER,
     PROVIDER_PACKAGE_COMPILER,
     RESOLUTION_COMPILER,
@@ -121,6 +125,20 @@ LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        PROVIDER_BUILD_ACCEPTANCE_LAW,
+        "cruxible.provider.v4",
+        "cruxible-provider-v4",
+        1,
+        "sha256:526170687d3add19411e11fc7d9cc7e74c7a6305e1ad564a8ba8b5c5c30de05f",
+    ),
+    (
+        PROVIDER_INTERFACE_CONTRACT_ACCEPTANCE_LAW,
+        "cruxible.provider-interface.v3",
+        "cruxible-provider-interface-v3",
+        1,
+        "sha256:be41c347c1b65a83d6de74c963bbb4c4f67c7f4e5b3074a26267e77c935b315e",
+    ),
     (
         LINE_V6_ACCEPTANCE_LAW,
         "playbill.line.v6",
@@ -365,6 +383,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        PROVIDER_BUILDS_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        12,
+        "sha256:2548edb368ebe9229c0aa480337ac109cd7a1644dfbf77acc0d2aeb4a6a6e2d7",
+    ),
     (
         GOVERNED_TRIGGERS_UPGRADE_LAW,
         "playbill.compiler-upgrade.v1",
@@ -780,7 +805,10 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         SUBJECT_IDENTITY_COMPILER.rule_digest
         == "sha256:29c8c866159d449c28320d49ad9f6f400aa40bb923c2334f34db74aec4b59f22"
     )
-    assert current_compiler_coordinate() == SUBJECT_IDENTITY_COMPILER
+    assert PROVIDER_BUILDS_COMPILER.rule_digest == (
+        "sha256:8b1fc4c429fbbdc9eee3915dc3c22af64fdbdba3465795ceb270b01371f899bd"
+    )
+    assert current_compiler_coordinate() == PROVIDER_BUILDS_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -823,7 +851,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 33
+    current_revision = 34
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -921,8 +949,9 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "authority-verbs-settle-mandates-v1",
         "governed-triggers-v1",
         "subject-identity-v1",
+        "provider-builds-v1",
     )
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "subject-identity-v1"
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "provider-builds-v1"
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
@@ -932,7 +961,8 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
     every trigger is a governed Trigger artifact and a Line no longer embeds one.
     The October 9 identity review ruling (E-b F-005/F-006) authorizes revision 33
     alone: SubjectKinds, and the candidate boundary holding every new Subject to
-    its kind's rule. Historical admission bytes and compiler rules remain unchanged.
+    its kind's rule. The October 15 multi-build ruling authorizes revision 34.
+    Historical admission bytes and compiler rules remain unchanged.
     """
 
     from cruxible_core.compiler.compiler import (
@@ -940,5 +970,5 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 32
-    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "subject-identity-v1"
+    assert len(COMPILER_REVISION_LABELS) == 33
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "provider-builds-v1"

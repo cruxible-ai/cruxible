@@ -23,7 +23,7 @@ import pytest
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
-    ProviderInterfaceRegistration,
+    ProviderInterfaceContract,
     evaluate_provider_interface_law,
     parse_provider_interface,
     provider_external_interface_definition_digest,
@@ -220,17 +220,12 @@ def test_a_package_whose_bucket_metadata_was_refused_reads_registers_and_is_acce
     ]
 
     (registration,) = document.interface_registrations()
-    assert isinstance(registration, ProviderInterfaceRegistration)
-    path = provider_interface_path(registration.interface_id)
+    assert isinstance(registration, ProviderInterfaceContract)
+    path = provider_interface_path(registration.identity.name)
     content = render_provider_interface(registration)
     assert parse_provider_interface(content, path=path) == registration
-    # Only claims naming a shipped fixture become proof records; none is judged.
-    shipped = {row["fixture_id"] for row in metadata["fixtures"]}
-    assert [(proof.selector, proof.fixture_id) for proof in registration.conformance_proofs] == [
-        (selector, fixture_id)
-        for selector, fixture_id in sorted(metadata["bucket_conformance"].items())
-        if fixture_id in shipped
-    ]
+    assert not hasattr(registration, "conformance_proofs")
+    assert not hasattr(registration, "classifier_code")
     law = evaluate_provider_interface_law(registration, path=path, predecessor=None)
     assert law.verdict == "accepted", law.diagnostics
 

@@ -133,7 +133,7 @@ def inspect_provider_package(
         return InspectedProviderPackage(
             provider=_kit_provider(document, pin, locked, dependency_pins, registrations),
             interfaces={
-                provider_interface_path(item.interface_id): render_provider_interface(item)
+                provider_interface_path(item.identity.name): render_provider_interface(item)
                 for item in registrations
             },
             pin_key=None,
@@ -154,7 +154,7 @@ def inspect_provider_package(
     return InspectedProviderPackage(
         provider=_kit_provider(document, pin, locked, dependency_pins, registrations),
         interfaces={
-            provider_interface_path(item.interface_id): render_provider_interface(item)
+            provider_interface_path(item.identity.name): render_provider_interface(item)
             for item in registrations
         },
         pin_key=resolved.pin_key,

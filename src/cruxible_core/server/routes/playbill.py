@@ -50,6 +50,10 @@ from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
     ProviderInstallResult,
+    ProviderMoveRequest,
+    ProviderMoveResult,
+    ProviderRetireRequest,
+    ProviderRetireResult,
 )
 from cruxible_client.contracts.write import (
     RetireRequest,
@@ -239,6 +243,16 @@ def provider_catalog(instance_id: str) -> ProviderCatalog:
 @router.post("/{instance_id}/providers/install", response_model=ProviderInstallResult)
 def provider_install(instance_id: str, request: ProviderInstallRequest) -> ProviderInstallResult:
     return playbill_api.playbill_provider_install(resolve_server_instance_id(instance_id), request)
+
+
+@router.post("/{instance_id}/providers/retire", response_model=ProviderRetireResult)
+def provider_retire(instance_id: str, request: ProviderRetireRequest) -> ProviderRetireResult:
+    return playbill_api.playbill_provider_retire(resolve_server_instance_id(instance_id), request)
+
+
+@router.post("/{instance_id}/providers/move", response_model=ProviderMoveResult)
+def provider_move(instance_id: str, request: ProviderMoveRequest) -> ProviderMoveResult:
+    return playbill_api.playbill_provider_move(resolve_server_instance_id(instance_id), request)
 
 
 @router.post("/{instance_id}/kits/build", response_model=KitBuildResult)

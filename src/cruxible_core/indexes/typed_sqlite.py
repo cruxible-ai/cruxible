@@ -252,6 +252,16 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
                 coordinates={},
             ),
         )
+        from cruxible_core.indexes.provider_heads import (
+            cold_provider_source,
+            refresh_provider_heads,
+        )
+
+        refresh_provider_heads(
+            expected,
+            sources,
+            historical_source=cold_provider_source(repository, accepted.git_oid, sources),
+        )
         from cruxible_core.indexes.subject_identity import refresh_subject_keys
 
         refresh_subject_keys(expected)
@@ -262,6 +272,10 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             "claim_type_names",
             "vocabulary_terms",
             "subject_keys",
+            "provider_registration_order",
+            "provider_heads",
+            "provider_control_domains",
+            "provider_pinners",
             *(owner.table for owner in OWNER_CODECS),
         ):
             info = expected.execute(f"PRAGMA table_info({table})").fetchall()
@@ -373,6 +387,7 @@ def replace_rows(
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
     bodies: Any = None,
     whole_checks: bool = True,
+    historical_provider_source: Callable[[str, int], bytes | None] | None = None,
 ) -> None:
     from cruxible_core.indexes.subject_identity import refresh_subject_keys
 
@@ -404,6 +419,11 @@ def replace_rows(
             connection, "SELECT path,identity,kind FROM artifact_lookup WHERE path IN ({})", changed
         )
     )
+    from cruxible_core.indexes.provider_heads import remove_provider_domains
+
+    remove_provider_domains(
+        connection, [identity for _path, identity, kind in replaced if kind == "provider"]
+    )
     owners: list[tuple[str, str]] = [
         ("Claim", identity) for _path, identity, kind in replaced if kind == "claim"
     ]
@@ -420,7 +440,7 @@ def replace_rows(
     if owners:
         remove_owner_citations(connection, owners)
     identities = [identity for _path, identity, _kind in replaced]
-    for table in ("pins", "claim_type_names", "vocabulary_terms"):
+    for table in ("provider_pinners", "pins", "claim_type_names", "vocabulary_terms"):
         execute_in(connection, f"DELETE FROM {table} WHERE source_identity IN ({{}})", identities)
     execute_in(
         connection,
@@ -435,6 +455,9 @@ def replace_rows(
     insert_owners(
         connection, parsed=parsed, blobs=sources, codec=codec, resolve_digest=resolve_digest
     )
+    from cruxible_core.indexes.provider_heads import refresh_provider_heads
+
+    refresh_provider_heads(connection, sources, historical_source=historical_provider_source)
     if not changed:
         refresh_subject_keys(connection)
     else:
@@ -521,8 +544,14 @@ def initialize(
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA user_version={PROJECTION_STORAGE_SCHEMA_VERSION}")
         connection.executescript(complete_schema_sql())
+        from cruxible_core.indexes.provider_heads import cold_provider_source
+        from cruxible_core.indexes.sqlite import _source_repository
+
         replace_rows(
             connection,
+            historical_provider_source=cold_provider_source(
+                _source_repository(request.repository_path), request.git_oid, sources
+            ),
             request=request,
             parsed=parsed,
             sources=sources,

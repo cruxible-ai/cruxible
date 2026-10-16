@@ -268,6 +268,12 @@ from cruxible_client.contracts.provider_installation import (
     InstalledProvider as InstalledProvider,
 )
 from cruxible_client.contracts.provider_installation import (
+    ProviderBuildResolutionV1 as ProviderBuildResolutionV1,
+)
+from cruxible_client.contracts.provider_installation import (
+    ProviderBuildSummaryV1 as ProviderBuildSummaryV1,
+)
+from cruxible_client.contracts.provider_installation import (
     ProviderCatalog as ProviderCatalog,
 )
 from cruxible_client.contracts.provider_installation import (
@@ -277,13 +283,27 @@ from cruxible_client.contracts.provider_installation import (
     ProviderInstallResult as ProviderInstallResult,
 )
 from cruxible_client.contracts.provider_installation import (
+    ProviderMoveRequest as ProviderMoveRequest,
+)
+from cruxible_client.contracts.provider_installation import ProviderMoveResult as ProviderMoveResult
+from cruxible_client.contracts.provider_installation import (
     ProviderOperationReadiness as ProviderOperationReadiness,
 )
 from cruxible_client.contracts.provider_installation import (
     ProviderPackageSummary as ProviderPackageSummary,
 )
+from cruxible_client.contracts.provider_installation import ProviderRepinV1 as ProviderRepinV1
+from cruxible_client.contracts.provider_installation import (
+    ProviderRetireRequest as ProviderRetireRequest,
+)
+from cruxible_client.contracts.provider_installation import (
+    ProviderRetireResult as ProviderRetireResult,
+)
 from cruxible_client.contracts.provider_installation import (
     ProviderWheelObject as ProviderWheelObject,
+)
+from cruxible_client.contracts.provider_installation import (
+    StoppedAutomationV1 as StoppedAutomationV1,
 )
 from cruxible_client.contracts.read_values import TruncatedText as TruncatedText
 from cruxible_client.contracts.read_values import WholeValueRead as WholeValueRead
@@ -2002,6 +2022,10 @@ class ProviderInterfaceImplementation(BaseModel):
     provider_identity: str
     provider_artifact_digest: str
     implementation_digest: str
+    #: The most recently registered live build of its provider name.
+    newest: bool = True
+    #: Exact head(s) of this provider name, including builds on other contracts.
+    newest_builds: tuple[str, ...] = ()
 
 
 class ProviderInterfaceEntry(BaseModel):

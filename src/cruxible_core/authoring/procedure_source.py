@@ -49,11 +49,15 @@ from cruxible_client.contracts.procedures.source_requests import (
 )
 from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
 from cruxible_client.contracts.provider_interfaces import (
+    PROVIDER_INTERFACE_REGISTRATION_TYPES,
+    ProviderInterfaceContract,
     ProviderInterfaceRegistrationV1,
     provider_interface_digest,
 )
 from cruxible_client.contracts.providers import ProviderV2, provider_digest
 from cruxible_client.contracts.query.definitions import QueryDefinition, query_definition_digest
+from cruxible_core.errors import RequestRefusedError
+from cruxible_core.providers.builds import BuildResolver, pinned_interface
 
 if TYPE_CHECKING:
     from cruxible_core.indexes.evaluated_state import EvaluationRows
@@ -81,7 +85,15 @@ def source_ontology_names(text: str) -> frozenset[str]:
     return frozenset(names)
 
 
-def resolve_indexed_source(request: ProcedureSourceRequest, rows: EvaluationRows) -> CompiledSource:
+def resolve_indexed_source(
+    request: ProcedureSourceRequest,
+    rows: EvaluationRows,
+    *,
+    builds: BuildResolver | None = None,
+) -> CompiledSource:
+    """``builds`` resolves a bare provider name (or interface id) a selection names
+    to the most recently registered live build; without it names are exact."""
+
     identities, kinds = rows.claim_type_names(source_ontology_names(request.text))
     sources: dict[str, Any] = {}
 
@@ -95,6 +107,29 @@ def resolve_indexed_source(request: ProcedureSourceRequest, rows: EvaluationRows
         lookup=lookup,
         claim_types=(lookup(identity) for identity in identities),
         subject_kinds=kinds,
+        resolve_name=None if builds is None else builds.resolve,
+    )
+
+
+def accepted_build_resolver(instance: Any, coordinate: Any, rows: EvaluationRows) -> BuildResolver:
+    """A resolver over the accepted rows at one authoring coordinate."""
+
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+    from cruxible_core.providers.builds import (
+        BuildResolver,
+        indexed_exact_provider,
+        indexed_interface_registrations,
+        indexed_provider_builds,
+    )
+
+    served = AcceptedCoordinate.from_internal(coordinate)
+    return BuildResolver(
+        provider_rows=lambda name: indexed_provider_builds(rows.connection, name),
+        interface_rows=lambda interface_id: indexed_interface_registrations(
+            rows.connection, interface_id
+        ),
+        exact_provider=lambda identity: indexed_exact_provider(rows.connection, identity),
+        coordinate=served,
     )
 
 
@@ -108,8 +143,14 @@ def resolve_source(
         "cruxible.procedure-source.v1", "cruxible.procedure-source.v2"
     ] = "cruxible.procedure-source.v2",
     retained_terminal_capability: Literal[1, 2, 3] | None = None,
+    resolve_name: Callable[[str, str], str] | None = None,
 ) -> CompiledSource:
-    """Resolve and compile source; capability is derived unless reproducing a retained one."""
+    """Resolve and compile source; capability is derived unless reproducing a retained one.
+
+    ``resolve_name(kind, name)`` turns a bare provider name or interface id into
+    the exact identity it names (new authoring); a retained Procedure's names
+    are already exact, so verification passes none.
+    """
 
     def fail(message: str) -> NoReturn:
         raise SourceCompileError(
@@ -126,14 +167,29 @@ def resolve_source(
             )
         )
 
-    def require(kind: str, name: str, type_: type[T]) -> T:
+    def accepted(kind: str, name: str, types: tuple[type, ...]) -> Any:
         identity = name if name.startswith(kind + ":") else kind + ":" + name
+        if resolve_name is not None and kind in {"Provider", "ProviderInterface"}:
+            try:
+                identity = resolve_name(kind, identity.partition(":")[2])
+            except RequestRefusedError as exc:
+                fail(str(exc))
         artifact = lookup(identity)
-        if not isinstance(artifact, type_):
+        if not isinstance(artifact, types):
             fail(f"{identity} is not uniquely accepted at the selected authoring base")
         if hasattr(artifact, "lifecycle") and artifact.lifecycle.state != "live":
             fail(f"{identity} is retired")
         return artifact
+
+    def require(kind: str, name: str, type_: type[T]) -> T:
+        artifact: T = accepted(kind, name, (type_,))
+        return artifact
+
+    def require_interface(name: str) -> ProviderInterfaceRegistrationV1 | ProviderInterfaceContract:
+        registration: ProviderInterfaceRegistrationV1 | ProviderInterfaceContract = accepted(
+            "ProviderInterface", name, PROVIDER_INTERFACE_REGISTRATION_TYPES
+        )
+        return registration
 
     child_shapes: dict[str, tuple[bool, int]] = {}
 
@@ -173,9 +229,12 @@ def resolve_source(
     for name, selected in request.bindings.items():
         if isinstance(selected, SourceProviderSelection):
             provider = require("Provider", selected.provider, ProviderV2)
-            interface = require(
-                "ProviderInterface", selected.interface, ProviderInterfaceRegistrationV1
-            )
+            # A selected Provider binds one registration per interface id: the
+            # interface it names is that one, whichever contract it is.
+            interface_name = selected.interface.removeprefix("ProviderInterface:")
+            if "/" not in interface_name:
+                interface_name = pinned_interface(provider, interface_name) or interface_name
+            interface = require_interface(interface_name)
             implementations = [
                 item
                 for item in provider.implementations
@@ -197,9 +256,7 @@ def resolve_source(
                 operation=read_provider_operation_contract(interface.interface_bytes_hex),
             )
         elif isinstance(selected, SourceSlotSelection):
-            interface = require(
-                "ProviderInterface", selected.interface, ProviderInterfaceRegistrationV1
-            )
+            interface = require_interface(selected.interface)
             bindings[name] = SourceSlotBinding(
                 interface=interface.identity.name,
                 interface_version=provider_interface_digest(interface).tagged,

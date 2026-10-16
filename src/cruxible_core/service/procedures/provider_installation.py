@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from pydantic import TypeAdapter
+
 from cruxible_client.contracts.canonical import canonical_bytes, canonical_digest
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ProposalIntegrityError
@@ -31,28 +32,28 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
-    ProviderInterfaceRegistrationV1,
+    ProviderInterfaceContract,
     parse_provider_interface,
     provider_interface_digest,
     provider_interface_path,
     render_provider_interface,
 )
 from cruxible_client.contracts.providers import (
-    AcceptedProvider,
     Provider,
     ProviderAny,
+    ProviderBuild,
     ProviderLocalDistributionPin,
     evaluate_provider_law,
     parse_provider,
-    provider_digest,
     provider_path,
     render_provider,
 )
 from cruxible_client.contracts.repairs import (
     HandEditInstruction,
     HandEditRepair,
+    RepairOperation,
 )
-from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER
+from cruxible_core.compiler.compiler import PROVIDER_BUILDS_COMPILER
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError, RequestRefusedError
 from cruxible_core.governance.seed_artifacts.workspace_file import (
@@ -115,20 +116,35 @@ def _repository_projects(operator: ProviderRuntimeOperator) -> dict[str, Path]:
 
 
 def installed_providers(instance: PlaybillInstance) -> tuple[InstalledProvider, ...]:
-    """Every live Provider at the accepted head, by name, with what it implements."""
+    """Every live provider build at the accepted head, with what it implements.
 
+    One row per build: several builds of a name can be live, and ``newest``
+    marks the one new authoring resolves a bare name to.
+    """
+
+    from cruxible_core.providers.builds import live_pinners
+
+    coordinate = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        rows = connection.execute(
+            "SELECT p.identity,p.path,p.artifact_digest,p.provider_name,p.distribution_version,"
+            "coalesce(h.identity=p.identity AND h.ambiguous=0,0) FROM main.providers p "
+            "LEFT JOIN main.provider_heads h ON h.provider_name=p.provider_name "
+            "WHERE p.lifecycle='live' ORDER BY p.provider_name,p.identity"
+        ).fetchall()
+        contents = {row[1]: projection.typed.member_bytes(row[1]) for row in rows}
+        pinned = {row[0]: len(live_pinners(connection, row[0], row[2])) for row in rows}
     installed = []
-    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        rows = tuple(projection.typed.envelopes(kind="provider"))
-        contents = {row.path: projection.typed.member_bytes(row.path) for row in rows}
-    for path in sorted(contents, key=lambda item: item.encode("utf-8")):
+    for identity, path, _digest, name, _version, is_newest in rows:
         provider = parse_provider(contents[path], path=path)
-        if provider.lifecycle.state != "live":
-            continue
         distribution = getattr(getattr(provider, "runtime_artifact", None), "distribution", None)
         installed.append(
             InstalledProvider(
-                provider=provider.identity.name,
+                provider=name,
+                build=provider.identity.name,
+                newest=bool(is_newest),
+                pinned_by=pinned[identity],
                 package=None if distribution is None else distribution.name,
                 version=None if distribution is None else distribution.version,
                 interfaces=tuple(
@@ -361,20 +377,18 @@ def _refuse_built_in_interfaces(
 
 def _interface_bindings(
     tree: Mapping[str, bytes], document: PackageRegistrationDocumentV1
-) -> tuple[tuple[ProviderInterfaceRegistrationV1, bool], ...]:
-    """Each exported interface's registration here, and whether it is already live.
+) -> tuple[tuple[ProviderInterfaceContract, bool], ...]:
+    """Each exported interface's contract registration, and whether it is already live.
 
-    The contract owns the ProviderInterface, not the implementation: a live
-    registration of the same definition (an equal interface digest, in any
-    format) is the one a package binds, so a second implementation installs
-    onto it and its Provider pins that exact artifact.
-    Otherwise the package proposes its registration (core's, for a definition
-    core owns), as a successor where another definition is live under the id.
+    A registration is one contract, named by its contract key: a build binds the
+    registration of the contract it implements when one is live here, and
+    adds it otherwise. Nothing replaces a registration, so another build's
+    pins never break.
     """
 
-    result: list[tuple[ProviderInterfaceRegistrationV1, bool]] = []
+    result: list[tuple[ProviderInterfaceContract, bool]] = []
     for desired in document.interface_registrations():
-        path = provider_interface_path(desired.interface_id)
+        path = provider_interface_path(desired.identity.name)
         current_bytes = tree.get(path)
         if current_bytes is None:
             result.append((desired, False))
@@ -382,66 +396,62 @@ def _interface_bindings(
         current = parse_provider_interface(current_bytes, path=path)
         if current.lifecycle.state != "live":
             raise ProposalIntegrityError("install cannot silently restore a retired interface")
-        if current.interface_digest == desired.interface_digest:
-            result.append((current, True))
-            continue
-        result.append(
-            (
-                desired.model_copy(
-                    update={
-                        "lifecycle": ArtifactLifecycle(
-                            predecessor_digest=provider_interface_digest(current).tagged
-                        )
-                    }
-                ),
-                False,
-            )
-        )
+        assert isinstance(current, ProviderInterfaceContract)
+        result.append((current, True))
     return tuple(result)
 
 
 def _accepted(
-    registration: ProviderInterfaceRegistrationV1,
+    registration: ProviderInterfaceContract,
 ) -> AcceptedProviderInterfaceRegistration:
     return AcceptedProviderInterfaceRegistration(
-        path=provider_interface_path(registration.interface_id),
+        path=provider_interface_path(registration.identity.name),
         registration=registration,
         artifact_digest=provider_interface_digest(registration).tagged,
     )
 
 
 def _refuse_unproven_provider(
-    provider: Provider,
-    predecessor: ProviderAny | None,
-    interfaces: tuple[ProviderInterfaceRegistrationV1, ...],
+    provider: ProviderBuild,
+    interfaces: tuple[ProviderInterfaceContract, ...],
+    sibling_control_domains: frozenset[str],
 ) -> None:
     """The Provider law, before anything is proposed, against the registrations it binds.
 
     A package bound onto a registration it did not build must implement that
-    registration's exact definition and effect class: a disagreement is refused
-    here, typed, rather than as a blocked proposal.
+    registration's exact definition and effect class, and a new build joins its
+    name's control domain: a disagreement is refused here, typed, rather than
+    as a blocked proposal.
     """
 
     path = provider_path(provider.identity.name)
     law = evaluate_provider_law(
         provider,
         path=path,
-        predecessor=None
-        if predecessor is None
-        else AcceptedProvider(
-            path=path, provider=predecessor, artifact_digest=provider_digest(predecessor).tagged
-        ),
+        predecessor=None,
         interface_registrations={item.identity.qualified: _accepted(item) for item in interfaces},
+        sibling_control_domains=sibling_control_domains,
     )
     if law.verdict == "accepted":
         return
     diagnostic = law.diagnostics[0]
+    if diagnostic.code == "cruxible.provider.control_domain_differs":
+        raise RequestRefusedError(
+            diagnostic.code,
+            diagnostic.message,
+            repair=HandEditRepair(
+                hand_edit=HandEditInstruction(
+                    target="the install request's control_domain (--control-domain)",
+                    required_change="Install the build under its name's control domain.",
+                )
+            ),
+        )
     raise RequestRefusedError(
         diagnostic.code,
-        f"{provider.identity.name} cannot bind the registrations live here: {diagnostic.message}",
+        f"{provider.provider_name} cannot bind the registrations live here: {diagnostic.message}",
         repair=HandEditRepair(
             hand_edit=HandEditInstruction(
-                target=f"the {provider.identity.name} package manifest",
+                target=f"the {provider.provider_name} package manifest",
                 required_change=(
                     "Implement the exact interface definition and effect class the live "
                     "ProviderInterface registration carries "
@@ -452,12 +462,30 @@ def _refuse_unproven_provider(
     )
 
 
+def _carried_from_newest(
+    instance: PlaybillInstance, tree: Mapping[str, bytes], name: str, accepted_oid: str
+) -> ProviderAny | None:
+    """The most recently registered live build of ``name``: a new build carries its
+    independently governed signing keys and capture declarations."""
+
+    from cruxible_core.providers.builds import indexed_newest_provider
+
+    coordinate = instance.coordinate_for_oid(accepted_oid)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        chosen = indexed_newest_provider(projection.typed.connection, name)
+    return None if chosen is None else parse_provider(tree[chosen.path], path=chosen.path)
+
+
 def _definition_changes(
     instance: PlaybillInstance,
     document: PackageRegistrationDocumentV1,
     provider: Provider,
     accepted_oid: str,
-) -> tuple[Mapping[str, bytes], tuple[str, ...]]:
+) -> tuple[Mapping[str, bytes], tuple[str, ...], ProviderBuild]:
+    """The paths an install adds: the build's own path and any contract
+    registration not live yet. No existing Provider or registration is written,
+    so no live definition owes a successor and the install never strands one."""
+
     tree = instance.immutable_tree_at(accepted_oid)
     candidate = fork_tree(tree)
     changed = []
@@ -465,52 +493,102 @@ def _definition_changes(
     for registration, live in bindings:
         if live:
             continue
-        path = provider_interface_path(registration.interface_id)
+        path = provider_interface_path(registration.identity.name)
         candidate[path] = render_provider_interface(registration)
         changed.append(path)
     interfaces = tuple(registration for registration, _live in bindings)
-    assert isinstance(provider.runtime_artifact.distribution, ProviderLocalDistributionPin)
-    assert provider.runtime_artifact.local_env is not None
-    desired_provider = document.provider_definition(
-        distribution=provider.runtime_artifact.distribution,
-        local_env=provider.runtime_artifact.local_env,
+    runtime = provider.runtime_artifact
+    assert isinstance(runtime.distribution, ProviderLocalDistributionPin)
+    assert runtime.local_env is not None
+    desired = document.provider_definition(
+        distribution=runtime.distribution,
+        local_env=runtime.local_env,
         control_domain=provider.control_domain,
-        interfaces=tuple(interfaces),
+        interfaces=interfaces,
     )
-    path = provider_path(provider.identity.name)
+    path = provider_path(desired.identity.name)
     current_bytes = tree.get(path)
-    current_provider: ProviderAny | None = None
     if current_bytes is not None:
-        current_provider = parse_provider(current_bytes, path=path)
-        if current_provider.lifecycle.state != "live":
-            raise ProposalIntegrityError("install cannot silently restore a retired Provider")
-        # Package updates replace implementation metadata, preserving independently
-        # governed signing and capture configuration.
-        desired_provider = desired_provider.model_copy(
+        current = parse_provider(current_bytes, path=path)
+        if current.lifecycle.state != "live":
+            raise RequestRefusedError(
+                "cruxible.provider.build_retired",
+                f"build {desired.identity.name} is retired here; installing it again would "
+                "restore it silently",
+                repair=RepairOperation(operation="cruxible.provider.list"),
+            )
+        governed = {"lifecycle", "signing_keys", "capture_contract_digests", "upstream_provenance"}
+        if current.model_dump(exclude={*governed, "pins"}) != desired.model_dump(
+            exclude={*governed, "pins"}
+        ) or [pin for pin in current.pins if pin.role == "provider-interface"] != list(
+            desired.pins
+        ):
+            # One wheel and lock name one build on every host; a different
+            # environment here for the same build is not a new build.
+            raise RequestRefusedError(
+                "cruxible.provider.build_rematerialized",
+                f"build {desired.identity.name} is installed here with another runtime "
+                "(environment or interface bindings); the same wheel and lock name one build",
+                repair=HandEditRepair(
+                    hand_edit=HandEditInstruction(
+                        target=f"the {desired.provider_name} package",
+                        required_change="Publish a new version to install a different build.",
+                    )
+                ),
+            )
+        return candidate, tuple(sorted(changed)), desired
+    carried = _carried_from_newest(instance, tree, desired.provider_name, accepted_oid)
+    if carried is not None:
+        # Independently governed signing and capture configuration follows the
+        # name from its most recent build to the new one.
+        desired = desired.model_copy(
             update={
-                "signing_keys": current_provider.signing_keys,
-                "capture_contract_digests": current_provider.capture_contract_digests,
-                "upstream_provenance": current_provider.upstream_provenance,
+                "signing_keys": carried.signing_keys,
+                "capture_contract_digests": carried.capture_contract_digests,
+                "upstream_provenance": carried.upstream_provenance,
+                "pins": tuple(
+                    sorted(
+                        (
+                            *desired.pins,
+                            *(pin for pin in carried.pins if pin.role == "capture-contract"),
+                        ),
+                        key=lambda pin: (
+                            pin.role.encode("utf-8"),
+                            pin.target.qualified.encode("utf-8"),
+                        ),
+                    )
+                ),
             }
         )
-        if current_provider.model_dump(exclude={"lifecycle"}) == desired_provider.model_dump(
-            exclude={"lifecycle"}
-        ):
-            desired_provider = Provider.model_validate(current_provider.model_dump())
-        else:
-            desired_provider = desired_provider.model_copy(
-                update={
-                    "lifecycle": ArtifactLifecycle(
-                        predecessor_digest=provider_digest(current_provider).tagged
-                    )
-                }
+        desired = ProviderBuild.model_validate(desired.model_dump(mode="json"))
+    with instance.bind_accepted_projection(instance.coordinate_for_oid(accepted_oid)) as projection:
+        siblings = frozenset(
+            row[0]
+            for row in projection.typed.connection.execute(
+                "SELECT control_domain FROM main.provider_control_domains WHERE provider_name=?",
+                (desired.provider_name,),
             )
-    raw = render_provider(desired_provider)
-    if raw != current_bytes:
-        _refuse_unproven_provider(desired_provider, current_provider, interfaces)
-        candidate[path] = raw
-        changed.append(path)
-    return candidate, tuple(sorted(changed))
+        )
+    _refuse_unproven_provider(desired, interfaces, siblings)
+    candidate[path] = render_provider(desired)
+    changed.append(path)
+    return candidate, tuple(sorted(changed)), desired
+
+
+_PREPARED_PROVIDER: TypeAdapter[ProviderAny] = TypeAdapter(ProviderAny)
+
+
+def _prepared_provider(value: object) -> Provider:
+    """A retained preparation's Provider, in whichever format it was written.
+
+    Only its runtime pins, implementations and control domain are read: the
+    build an install proposes is always derived again from the package document.
+    """
+
+    provider = _PREPARED_PROVIDER.validate_python(value)
+    if not isinstance(provider, Provider):
+        raise ConfigError("a retained provider preparation names no package runtime")
+    return provider
 
 
 def _repository_fingerprint(operator: ProviderRuntimeOperator, package: str) -> str:
@@ -574,9 +652,9 @@ def service_install_provider(
 
     instance.require_writable()
     enforce_customer_code_execution_supported()
-    if instance.accepted_coordinate().compiler != SUBJECT_IDENTITY_COMPILER:
+    if instance.accepted_coordinate().compiler != PROVIDER_BUILDS_COMPILER:
         raise ConfigError(
-            "provider installation requires the current compiler; "
+            "provider installation requires the provider-builds compiler; "
             "run cruxible compiler upgrade first"
         )
     source: str | dict[str, str] | None = None
@@ -699,13 +777,16 @@ def _preview_installation(
         )
     saved = json.loads(prepared_path.read_bytes())
     document = PackageRegistrationDocumentV1.model_validate(saved["document"])
-    provider = Provider.model_validate(saved["provider"])
+    provider = _prepared_provider(saved["provider"])
     _refuse_built_in_interfaces(instance, document, mode.head.git_oid)
-    candidate_tree, changed = _definition_changes(instance, document, provider, mode.head.git_oid)
+    candidate_tree, changed, build = _definition_changes(
+        instance, document, provider, mode.head.git_oid
+    )
     if not changed:
         return ProviderInstallResult(
             installation_id=identifier,
-            provider_id=provider.identity.name,
+            provider_id=build.provider_name,
+            build=build.identity.name,
             status="would_install",
             installed=True,
             registered=True,
@@ -733,7 +814,8 @@ def _preview_installation(
     )
     return ProviderInstallResult(
         installation_id=identifier,
-        provider_id=provider.identity.name,
+        provider_id=build.provider_name,
+        build=build.identity.name,
         status="would_install",
         installed=True,
         registered=False,
@@ -768,7 +850,7 @@ def _install_locked(
     if prepared_path.exists():
         saved = json.loads(prepared_path.read_bytes())
         document = PackageRegistrationDocumentV1.model_validate(saved["document"])
-        provider = Provider.model_validate(saved["provider"])
+        provider = _prepared_provider(saved["provider"])
         configured = ProviderDeploymentConfigV1.model_validate(saved["deployment"])
         # If publication completed before a crash updating prepared.json, reuse
         # the newer operational proof. Never downgrade it to the cached V1 proof.
@@ -794,7 +876,7 @@ def _install_locked(
             # A retained preparation of this listing: its lock is the one checked.
             assert provider.runtime_artifact.local_env is not None
             _refuse_unexpected_build(
-                provider.identity.name,
+                provider.provider_name,
                 "an embedded lock",
                 provider.runtime_artifact.local_env.lock_sha256,
                 expected_build.lock_sha256,
@@ -872,7 +954,7 @@ def _install_locked(
     # against the registrations it binds.
     base = instance.accepted_coordinate()
     _refuse_built_in_interfaces(instance, document, base.git_oid)
-    candidate_tree, changed = _definition_changes(instance, document, provider, base.git_oid)
+    candidate_tree, changed, build = _definition_changes(instance, document, provider, base.git_oid)
     operator.register_deployment(configured)
     if rewrite_prepared:
         _write(
@@ -912,7 +994,8 @@ def _install_locked(
             ):
                 return ProviderInstallResult(
                     installation_id=identifier,
-                    provider_id=provider.identity.name,
+                    provider_id=build.provider_name,
+                    build=build.identity.name,
                     status="blocked",
                     installed=True,
                     registered=False,
@@ -974,7 +1057,8 @@ def _install_locked(
         )
     return ProviderInstallResult(
         installation_id=identifier,
-        provider_id=provider.identity.name,
+        provider_id=build.provider_name,
+        build=build.identity.name,
         status="blocked"
         if activation_blocked
         else "awaiting_approval"

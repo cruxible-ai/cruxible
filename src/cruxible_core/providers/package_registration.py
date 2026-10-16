@@ -16,27 +16,22 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
 from cruxible_client.contracts.provider_interfaces import (
     ProviderBucketConformanceFixture,
-    ProviderBucketConformanceFixtureProof,
     ProviderClassifierCode,
-    ProviderInterfaceRegistration,
-    ProviderInterfaceRegistrationV1,
-    provider_bucket_fixture_digest,
-    provider_bucket_fixture_set_digest,
-    provider_bucket_vocabulary_digest,
+    ProviderInterfaceContract,
+    provider_interface_contract,
     provider_interface_digest,
-    provider_package_classifier_digest,
     provider_vocabulary_document,
 )
 from cruxible_client.contracts.providers import (
-    Provider,
+    ProviderBuild,
     ProviderLocalDistributionPin,
     ProviderLocalEnvBackendPin,
     ProviderRuntimeArtifactPayload,
     ProviderRuntimeManifest,
+    provider_build_key,
     provider_expected_implementation_records,
     provider_manifest_digest,
 )
-from cruxible_core.providers.web_fetch import core_owned_interface_registration
 
 
 class _Strict(BaseModel):
@@ -45,7 +40,9 @@ class _Strict(BaseModel):
 
 class PackageInterfaceExportV1(_Strict):
     """One exported interface. Its vocabulary, classifier and fixtures are the
-    provider-runtime 0.2.x package format's bucket data: carried, never judged."""
+    provider-runtime 0.2.x package format's bucket data: read so the package
+    parses, and nothing else -- no registration carries them, so a package that
+    changes only them (or its code) registers byte-identical interfaces."""
 
     interface_id: str
     interface_digest: str
@@ -94,27 +91,28 @@ class PackageRegistrationDocumentV1(_Strict):
                 raise ValueError("runtime requirement does not match a declared implementation")
         return self
 
-    def interface_registrations(self) -> tuple[ProviderInterfaceRegistrationV1, ...]:
-        """The registration installing this package proposes for each exported interface.
+    def interface_registrations(self) -> tuple[ProviderInterfaceContract, ...]:
+        """The contract registration each exported interface binds.
 
-        A definition core owns (``web.fetch``) registers as core's registration of
-        it, whatever the package ships alongside the definition: the contract, not
-        the implementation, owns the ProviderInterface, so every implementation of
-        it binds the same artifact. Any other definition registers as the package
-        exports it. A package's vocabulary, classifier and fixtures travel as inert
-        registration data; nothing executes the classifier.
+        A registration is the contract alone -- the definition bytes, their digest
+        and the effect class -- named by its contract key, so every package
+        implementing one contract (core's ``web.fetch`` among them) binds the
+        same registration, and none carries the package's bucket data.
         """
 
-        result: list[ProviderInterfaceRegistrationV1] = []
+        result: list[ProviderInterfaceContract] = []
         for exported in sorted(self.interfaces, key=lambda item: item.interface_id.encode()):
             interface_bytes = self._checked_definition(exported)
-            core = core_owned_interface_registration(exported.interface_digest)
-            if core is None:
-                result.append(self._package_registration(exported, interface_bytes))
-                continue
-            if core.interface_bytes_hex != interface_bytes:
-                raise ValueError("package definition differs from core's under its digest")
-            result.append(core)
+            effect_class = exported.definition["effect_class"]
+            result.append(
+                provider_interface_contract(
+                    interface_id=exported.interface_id,
+                    interface_bytes_hex=interface_bytes,
+                    interface_digest_domain="cruxible.interface.stub.v1",
+                    interface_digest=exported.interface_digest,
+                    effect_class="none" if effect_class == "pure" else effect_class,
+                )
+            )
         return tuple(result)
 
     def _checked_definition(self, exported: PackageInterfaceExportV1) -> str:
@@ -137,73 +135,17 @@ class PackageRegistrationDocumentV1(_Strict):
         read_provider_operation_contract(interface_bytes)
         return interface_bytes
 
-    def _package_registration(
-        self, exported: PackageInterfaceExportV1, interface_bytes: str
-    ) -> ProviderInterfaceRegistration:
-        implementation = next(
-            item
-            for item in self.manifest.implementations
-            if item.interface_id == exported.interface_id
-        )
-        fixtures = {fixture.fixture_id: fixture for fixture in exported.fixtures}
-        if len(fixtures) != len(exported.fixtures):
-            raise ValueError("package fixtures must have unique identities")
-        # The manifest's selector -> fixture claims, carried as proof records
-        # where the package ships the fixture a claim names; a claim naming no
-        # shipped fixture has no bytes to record and is left out. Nothing checks
-        # a selector, a bucket or a claim's coverage.
-        proofs = []
-        for selector, fixture_id in sorted(implementation.bucket_conformance.items()):
-            fixture = fixtures.get(fixture_id)
-            if fixture is None:
-                continue
-            proofs.append(
-                ProviderBucketConformanceFixtureProof(
-                    selector=selector,
-                    fixture_id=fixture_id,
-                    fixture_digest=provider_bucket_fixture_digest(fixture),
-                    measured_bucket_id=fixture.measured_bucket_id,
-                )
-            )
-        fixture_set_digest = provider_bucket_fixture_set_digest(tuple(proofs))
-        vocabulary = {**exported.vocabulary, "status": "accepted"}
-        vocabulary_bytes = canonical_bytes(vocabulary).hex()
-        effect_class = exported.definition["effect_class"]
-        return ProviderInterfaceRegistration(
-            identity=ArtifactIdentity(kind="ProviderInterface", name=exported.interface_id),
-            interface_id=exported.interface_id,
-            interface_bytes_hex=interface_bytes,
-            interface_digest_domain="cruxible.interface.stub.v1",
-            interface_digest=exported.interface_digest,
-            vocabulary_bytes_hex=vocabulary_bytes,
-            vocabulary_digest=provider_bucket_vocabulary_digest(vocabulary_bytes),
-            classifier_identity=exported.classifier_identity,
-            classifier_version=exported.classifier_version,
-            classifier_code=exported.classifier_code,
-            classifier_digest=provider_package_classifier_digest(
-                classifier_identity=exported.classifier_identity,
-                classifier_version=exported.classifier_version,
-                conformance_fixture_set_digest=fixture_set_digest,
-                code=exported.classifier_code,
-            ),
-            conformance_fixture_set_digest=fixture_set_digest,
-            conformance_proofs=tuple(proofs),
-            conformance_fixtures=tuple(
-                sorted(exported.fixtures, key=lambda item: item.fixture_id.encode())
-            ),
-            effect_class="none" if effect_class == "pure" else effect_class,
-        )
-
     def provider_definition(
         self,
         *,
         distribution: ProviderLocalDistributionPin,
         local_env: ProviderLocalEnvBackendPin,
         control_domain: str,
-        interfaces: tuple[ProviderInterfaceRegistrationV1, ...],
-    ) -> Provider:
-        """The Provider pinning ``interfaces``: the registration each exported
-        interface binds here (the package's, core's, or one already live)."""
+        interfaces: tuple[ProviderInterfaceContract, ...],
+    ) -> ProviderBuild:
+        """The provider build pinning ``interfaces``: the contract registration each
+        exported interface binds. Its identity names the build
+        (``<provider_id>/<build key>``), so it installs beside other builds."""
 
         expected = {item.interface_id: item.interface_digest for item in self.interfaces}
         if (
@@ -219,8 +161,11 @@ class PackageRegistrationDocumentV1(_Strict):
             distribution=distribution,
             local_env=local_env,
         )
-        return Provider(
-            identity=ArtifactIdentity(kind="Provider", name=payload.provider_id),
+        return ProviderBuild(
+            identity=ArtifactIdentity(
+                kind="Provider",
+                name=f"{payload.provider_id}/{provider_build_key(payload).value}",
+            ),
             control_domain=control_domain,
             signing_keys=(),
             capture_contract_digests=(),

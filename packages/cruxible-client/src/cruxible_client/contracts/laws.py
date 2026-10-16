@@ -697,6 +697,16 @@ SUBJECT_IDENTITY_UPGRADE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-compiler-upgrade-v1",
     current=False,
 )
+# Revision 12 (to compiler revision 34, provider builds). Existing single-path
+# Providers and registrations stay readable as builds; nothing held is refused.
+PROVIDER_BUILDS_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=12
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
 AUTHORITY_VERBS_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=9
@@ -803,6 +813,23 @@ PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="provider-interface",
     artifact_tag="playbill-provider-interface-v2",
 )
+# One provider build per artifact (compiler revision 34): a build is added beside
+# the other builds of its name and never replaced; a contract registration is
+# added beside the other contracts of its interface id and never replaced.
+PROVIDER_BUILD_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.provider.v4", "cruxible-provider-v4", semantic_revision=1
+    ),
+    artifact_kind="provider",
+    artifact_tag="cruxible-provider-v4",
+)
+PROVIDER_INTERFACE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "cruxible.provider-interface.v3", "cruxible-provider-interface-v3", semantic_revision=1
+    ),
+    artifact_kind="provider-interface",
+    artifact_tag="cruxible-provider-interface-v3",
+)
 PROVIDER_PACKAGE_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=3
@@ -825,6 +852,9 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         PROVIDER_V3_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
+        PROVIDER_BUILD_ACCEPTANCE_LAW,
+        PROVIDER_INTERFACE_CONTRACT_ACCEPTANCE_LAW,
+        PROVIDER_BUILDS_UPGRADE_LAW,
         PROVIDER_PACKAGE_UPGRADE_LAW,
         RESOURCE_BUDGET_UPGRADE_LAW,
         SDK_SOURCE_UPGRADE_LAW,

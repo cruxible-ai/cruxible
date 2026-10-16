@@ -622,11 +622,16 @@ def check_provider_node_contract(
     # Package registrations, and core's built-in workspace.file registration over
     # the same package bytes, retain the provider contract bytes. Those bytes
     # spell a no-effect operation "pure"; the governed effect class is "none".
-    from cruxible_client.contracts.provider_interfaces import ProviderInterfaceRegistration
+    from cruxible_client.contracts.provider_interfaces import (
+        ProviderInterfaceContract,
+        ProviderInterfaceRegistration,
+    )
     from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_V2_DIGEST
 
     if declared_effect == "pure" and (
-        isinstance(interface.registration, ProviderInterfaceRegistration)
+        isinstance(
+            interface.registration, ProviderInterfaceRegistration | ProviderInterfaceContract
+        )
         or interface.registration.interface_digest == WORKSPACE_FILE_INTERFACE_V2_DIGEST
     ):
         declared_effect = "none"

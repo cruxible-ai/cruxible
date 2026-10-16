@@ -210,6 +210,34 @@ edited since install with `--keep-local-edits`. The kit's record notes what
 you kept on purpose, so later upgrades do not ask again while the release's
 version is unchanged.
 
+A kit add installs the builds the release ships and re-pins every live Procedure
+bound to those provider names, including your own Procedures, to the release's
+exact builds in the definitions change set. The preview lists each re-pin and
+every Line, Trigger and Mandate it stops (retires). Author that automation again
+over the moved Procedure to resume it. To keep a Procedure on its current build,
+pass `--keep-build Procedure:NAME` (repeatable). Procedures using other providers
+are unaffected. Old builds stay installed and runnable; kit add neither retires
+nor lists them.
+
+Provider builds have identities `Provider:NAME/BUILD`, where BUILD is a hash of
+the wheel and lock or image, excluding the host environment. Contract registrations
+are shared by builds implementing the same interface contract. Installing a
+build adds it alongside earlier builds; existing exact pins stay put. New
+authoring by bare provider name chooses the live build registered most recently,
+even when its package version is lower. Signing-key and capture-declaration changes
+do not change registration order. Retiring the newest build makes the previous
+live build the default; builds registered in the same generation require an
+explicit build name until the tie is resolved. Explicit build names select that build.
+These rules also apply to retained single-path Providers: changing signing keys
+or Capture declarations preserves their runtime build's original registration order.
+A Blueprint instance moving between legacy and contract registrations binds each
+slot to the exact registration pinned by its selected build.
+`cruxible provider move NAME --to newest|BUILD` moves Procedures as a governed
+change with its own preview. `cruxible provider retire NAME/BUILD` is refused
+while live definitions pin it and retains its runtime environment after retirement.
+Legacy single-path Providers remain readable without a rewrite; `cruxible-builtin`
+keeps its single path.
+
 A definition the release dropped is retired when nothing depends on it. When
 something does, it stays live until you decide: `--keep IDENTITY` keeps it,
 and `--retire-dependents IDENTITY` retires it together with its dependents.

@@ -226,7 +226,33 @@ SUBJECT_IDENTITY_ARTIFACT_KINDS = ArtifactKindRegistry(
         ),
     )
 )
-_REVISION_32_AND_LATER = (GOVERNED_TRIGGERS_ARTIFACT_KINDS, SUBJECT_IDENTITY_ARTIFACT_KINDS)
+
+
+# Revision 34: several builds per provider name, one contract registration per
+# interface contract. Both forms of each path are registered: a single-path
+# Provider or registration (the built-in, and every one registered before
+# builds) stays one build of its name.
+def _with_build_paths(entry: ArtifactPathKind) -> ArtifactPathKind:
+    if entry.kind == "provider":
+        return ArtifactPathKind(
+            "provider", re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$")
+        )
+    if entry.kind == "provider-interface":
+        return ArtifactPathKind(
+            "provider-interface",
+            re.compile(r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$"),
+        )
+    return entry
+
+
+PROVIDER_BUILDS_ARTIFACT_KINDS = ArtifactKindRegistry(
+    tuple(_with_build_paths(entry) for entry in SUBJECT_IDENTITY_ARTIFACT_KINDS.entries())
+)
+_REVISION_32_AND_LATER = (
+    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
+    SUBJECT_IDENTITY_ARTIFACT_KINDS,
+    PROVIDER_BUILDS_ARTIFACT_KINDS,
+)
 _REVISION_31_AND_LATER = (AUTHORITY_VERBS_ARTIFACT_KINDS, *_REVISION_32_AND_LATER)
 
 
@@ -688,6 +714,7 @@ def parse_projection_tree(
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                     SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                    PROVIDER_BUILDS_ARTIFACT_KINDS,
                 ) and (
                     runtime_policy.result_bytes_cap is not None
                     or runtime_policy.repeat_attempts_cap is not None
@@ -1150,6 +1177,7 @@ def parse_projection_tree(
                         GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                         SUBJECT_IDENTITY_ARTIFACT_KINDS,
                         SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                        PROVIDER_BUILDS_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(
@@ -1272,6 +1300,7 @@ def parse_projection_tree(
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                     SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                    PROVIDER_BUILDS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Provider v3 requires the provider-package compiler"
@@ -1388,6 +1417,7 @@ def parse_projection_tree(
                 continue
             if kind == "provider-interface":
                 from cruxible_client.contracts.provider_interfaces import (
+                    ProviderInterfaceContract,
                     ProviderInterfaceRegistration,
                     parse_provider_interface,
                     provider_interface_digest,
@@ -1410,6 +1440,7 @@ def parse_projection_tree(
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                     SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                    PROVIDER_BUILDS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "ProviderInterface v2 requires the provider-package compiler"
@@ -1447,20 +1478,25 @@ def parse_projection_tree(
                     )
                     for pin in registration.pins
                 )
+                registration_fact = ProjectionFact(
+                    schema_id="cruxible.provider_interface.registration",
+                    schema_version=1,
+                    subject_identity=identity,
+                    fact_key="registration",
+                    value={
+                        "artifact_digest": {"$digest": artifact_digest},
+                        "effect_class": registration.effect_class,
+                        "interface_digest": {"$digest": registration.interface_digest},
+                        "lifecycle": registration.lifecycle.model_dump(mode="json"),
+                    },
+                )
+                if isinstance(registration, ProviderInterfaceContract):
+                    # A contract registration carries no bucket data.
+                    semantic_facts.append(registration_fact)
+                    continue
                 semantic_facts.extend(
                     (
-                        ProjectionFact(
-                            schema_id="cruxible.provider_interface.registration",
-                            schema_version=1,
-                            subject_identity=identity,
-                            fact_key="registration",
-                            value={
-                                "artifact_digest": {"$digest": artifact_digest},
-                                "effect_class": registration.effect_class,
-                                "interface_digest": {"$digest": registration.interface_digest},
-                                "lifecycle": registration.lifecycle.model_dump(mode="json"),
-                            },
-                        ),
+                        registration_fact,
                         ProjectionFact(
                             schema_id="cruxible.provider_interface.vocabulary",
                             schema_version=1,
@@ -1571,6 +1607,7 @@ def parse_projection_tree(
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                     SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                    PROVIDER_BUILDS_ARTIFACT_KINDS,
                 ) and _requires_resource_budgets(resources.model_dump(mode="json")):
                     raise ProjectionFormatError(
                         "resource mandate budgets require compiler revision 26"
@@ -1639,6 +1676,7 @@ def parse_projection_tree(
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                     GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                     SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                    PROVIDER_BUILDS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError("graph-v6 Procedures require compiler revision 27")
                 if (
@@ -1660,6 +1698,7 @@ def parse_projection_tree(
                         GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                         SUBJECT_IDENTITY_ARTIFACT_KINDS,
                         SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                        PROVIDER_BUILDS_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError("source-v2 requires compiler revision 29")
@@ -1991,6 +2030,7 @@ def parse_projection_tree(
                         GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                         SUBJECT_IDENTITY_ARTIFACT_KINDS,
                         SUBJECT_IDENTITY_ARTIFACT_KINDS,
+                        PROVIDER_BUILDS_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(

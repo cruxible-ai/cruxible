@@ -150,8 +150,10 @@ class ProcedureSource:
             # Discovery names the interface qualified (``ProviderInterface:<name>``);
             # a slot declares its bare name.
             if name in self.slots and isinstance(value, ProviderBinding):
-                served = value.interface.removeprefix("ProviderInterface:")
-                if served != self.slots[name]:
+                # A registration names its interface id and, for a contract
+                # registration, its contract key (``<id>/<key>``).
+                served = value.interface.removeprefix("ProviderInterface:").partition("/")[0]
+                if served != self.slots[name].partition("/")[0]:
                     raise ValueError(
                         f"Slot {name!r} declares interface {self.slots[name]!r}; "
                         f"the binding serves {served!r}"

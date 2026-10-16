@@ -85,6 +85,10 @@ from cruxible_client.contracts.provider_installation import (
     ProviderCatalog,
     ProviderInstallRequest,
     ProviderInstallResult,
+    ProviderMoveRequest,
+    ProviderMoveResult,
+    ProviderRetireRequest,
+    ProviderRetireResult,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
@@ -282,6 +286,24 @@ def handle_playbill_provider_install(
     )
 
 
+def handle_playbill_provider_retire(
+    instance_id: str, request: ProviderRetireRequest
+) -> ProviderRetireResult:
+    return _daemon_call(
+        lambda client: client.retire_provider(instance_id, request),
+        operation_name="cruxible_provider_retire",
+    )
+
+
+def handle_playbill_provider_move(
+    instance_id: str, request: ProviderMoveRequest
+) -> ProviderMoveResult:
+    return _daemon_call(
+        lambda client: client.move_provider(instance_id, request),
+        operation_name="cruxible_provider_move",
+    )
+
+
 def handle_playbill_kit_build(instance_id: str, request: KitBuildRequest) -> KitBuildResult:
     return _daemon_call(
         lambda client: client.build_kit(instance_id, request), operation_name="cruxible_kit_build"
@@ -306,6 +328,7 @@ def handle_playbill_kit_add(
     keep: Sequence[str] = (),
     keep_local_edits: bool = False,
     retire_dependents: Sequence[str] = (),
+    keep_build: Sequence[str] = (),
     allow_downgrade: bool = False,
     dry_run: bool | None = None,
     at: str | None = None,
@@ -344,6 +367,7 @@ def handle_playbill_kit_add(
                 keep=tuple(sorted(set(keep))),
                 keep_local_edits=keep_local_edits,
                 retire_dependents=tuple(sorted(set(retire_dependents))),
+                keep_build=tuple(sorted(set(keep_build))),
                 allow_downgrade=allow_downgrade,
                 dry_run=dry_run,
                 at=at,

@@ -96,7 +96,15 @@ def accept_blueprint_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # 
     The caller must have the demo interface contracted (``contracted_demo``).
     """
 
-    instance, owner = initialize_local(tmp_path)
+    from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER
+
+    # This world exercises retained single-path Providers registered before builds.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(
+            "cruxible_core.runtime.instance.current_compiler_coordinate",
+            lambda: SUBJECT_IDENTITY_COMPILER,
+        )
+        instance, owner = initialize_local(tmp_path)
     interface = accepted_interface()
     provider = accepted_provider()
     blueprint = _blueprint()

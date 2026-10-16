@@ -1,17 +1,11 @@
-"""Core's frozen web.fetch definitions and the registrations it owns of them.
+"""Core's frozen web.fetch definitions and the contract registration of each.
 
 Core owns the ``web.fetch`` contract: each definition revision it knows (v2, and
-v3 as ``cruxible-provider-web`` 0.2.x ships it) has one compiler-owned
-registration. A package implementing one of these definitions installs onto that
-registration (``PackageRegistrationDocumentV1.interface_registrations``), so any
-implementation of the contract binds the same ProviderInterface artifact and a
-Blueprint slot typed by it takes any of them.
-
-The registrations are checked-in bytes (``web-fetch-registration-v2.json`` and
-``-v3.json``), reproduced exactly by every daemon and pinned by artifact digest.
-They are V1 registrations, so they still carry the bucket vocabulary, classifier
-identity and conformance proofs core once ran; that data is inert. Core runs no
-classifier, and nothing reads the vocabulary for anything served.
+v3 as ``cruxible-provider-web`` 0.2.x ships it) is a contract, and its
+registration is the contract alone (``ProviderInterfaceContract``), named by
+its contract key. Every package implementing one of these definitions binds that
+same registration, so any implementation of the contract binds the same
+ProviderInterface artifact and a Blueprint slot typed by it takes any of them.
 
 This is not an installed Provider or a grant. A deployment still accepts its own
 exact implementation and runtime closure.
@@ -28,11 +22,9 @@ from typing import Any, Final
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import WEB_FETCH_V3_INTERFACE_DIGEST
 from cruxible_client.contracts.provider_interfaces import (
-    ProviderInterfaceRegistrationV1,
-    parse_provider_interface,
+    ProviderInterfaceContract,
     provider_external_interface_definition_digest,
-    provider_interface_digest,
-    provider_interface_path,
+    provider_interface_contract,
 )
 
 #: The v2 operation definition, as core first froze it.
@@ -101,53 +93,23 @@ if any(
     for digest, definition in _DEFINITIONS.items()
 ):  # pragma: no cover - import-time guard on checked-in bytes
     raise RuntimeError("a web.fetch interface definition drifted from its frozen digest")
-#: Interface digest -> core's frozen registration of that definition, by file and
-#: artifact digest. Append-only: an accepted registration is pinned forever.
-_REGISTRATIONS: Mapping[str, tuple[str, str]] = {
-    WEB_FETCH_INTERFACE_V2_DIGEST: (
-        "web-fetch-registration-v2.json",
-        "sha256:f1a74eaf84d95b23e18070e55ca5f35901432869bab93c5202def745fcc98970",
-    ),
-    WEB_FETCH_INTERFACE_DIGEST: (
-        "web-fetch-registration-v3.json",
-        "sha256:f6302734bbe87d342144d0444e136ca71e9cd899e12a5d6ea121ba4d97d9681c",
-    ),
-}
-
-
-@cache
-def _frozen_registration(interface_digest: str) -> ProviderInterfaceRegistrationV1:
-    """Parse one checked-in registration once per process and prove its identity."""
-
-    filename, artifact_digest = _REGISTRATIONS[interface_digest]
-    registration = parse_provider_interface(
-        files("cruxible_core.providers").joinpath(filename).read_bytes(),
-        path=provider_interface_path("web.fetch"),
-    )
-    definition = _DEFINITIONS[interface_digest]
-    if (
-        type(registration) is not ProviderInterfaceRegistrationV1
-        or registration.interface_digest != interface_digest
-        or registration.interface_bytes_hex != canonical_bytes(dict(definition)).hex()
-        or provider_interface_digest(registration).tagged != artifact_digest
-    ):  # pragma: no cover - guard on checked-in bytes
-        raise RuntimeError("a web.fetch registration drifted from its frozen digest")
-    return registration
 
 
 def web_fetch_interface_registration(
     interface_digest: str = WEB_FETCH_INTERFACE_DIGEST,
-) -> ProviderInterfaceRegistrationV1:
-    """Core's registration of one web.fetch definition revision (v3 by default)."""
+) -> ProviderInterfaceContract:
+    """The contract registration of one web.fetch definition revision (v3 by default)."""
 
-    return _frozen_registration(interface_digest)
+    return _registration(interface_digest)
 
 
-def core_owned_interface_registration(
-    interface_digest: str,
-) -> ProviderInterfaceRegistrationV1 | None:
-    """Core's registration of a definition it owns, or None for any other digest."""
-
-    if interface_digest not in WEB_FETCH_INTERFACE_DIGESTS:
-        return None
-    return web_fetch_interface_registration(interface_digest)
+@cache
+def _registration(interface_digest: str) -> ProviderInterfaceContract:
+    definition = _DEFINITIONS[interface_digest]
+    return provider_interface_contract(
+        interface_id="web.fetch",
+        interface_bytes_hex=canonical_bytes(dict(definition)).hex(),
+        interface_digest_domain=_INTERFACE_DOMAIN,
+        interface_digest=interface_digest,
+        effect_class="external_read",
+    )

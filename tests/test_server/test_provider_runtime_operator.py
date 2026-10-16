@@ -131,17 +131,35 @@ from tests.test_server.test_playbill_line_run_refusals import (
 
 
 def _indexed_instance(tree: dict[str, bytes]) -> SimpleNamespace:
-    """Unit double for the selected member reader, without a whole-tree API."""
-    rows = tuple(
-        SimpleNamespace(
-            path=path, kind=("provider" if path.startswith("providers/") else "provider-interface")
-        )
-        for path in tree
+    """Unit double for the pinned-version reader: one row per exact (identity, digest)."""
+    from cruxible_client.contracts.provider_interfaces import (
+        parse_provider_interface,
+        provider_interface_digest,
     )
+    from cruxible_client.contracts.providers import parse_provider, provider_digest
+
+    sources: dict[str, object] = {}
+    rows: dict[tuple[str, str], str] = {}
+    for path, content in tree.items():
+        if path.startswith("providers/"):
+            provider = parse_provider(content, path=path)
+            digest = provider_digest(provider).tagged
+            source: object = provider
+        else:
+            provider = parse_provider_interface(content, path=path)
+            digest = provider_interface_digest(provider).tagged
+            source = provider
+        sources[provider.identity.qualified] = source
+        if provider.lifecycle.state == "live":
+            rows[(provider.identity.qualified, digest)] = path
+
+    def execute(_sql: str, parameters: tuple[str, str]) -> SimpleNamespace:
+        path = rows.get(parameters)
+        return SimpleNamespace(fetchone=lambda: None if path is None else (path,))
+
     typed = SimpleNamespace(
-        envelopes=lambda *, kind: tuple(row for row in rows if row.kind == kind),
-        prefetch_members=lambda paths: None,
-        member_bytes=lambda path: tree[path],
+        connection=SimpleNamespace(execute=execute),
+        source=lambda identity: sources.get(identity),
     )
     return SimpleNamespace(
         coordinate_for_oid=lambda oid: oid,
@@ -398,7 +416,22 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     assert recovery.recovered == ()
     assert recovery.removed == ()
     assert recovery.could_not_clean == ()
-    invoker = operator.invoker_for(instance, accepted_oid="a" * 40)  # type: ignore[arg-type]
+    invoker = operator.invoker_for(  # type: ignore[arg-type]
+        instance,
+        accepted_oid="a" * 40,
+        pins=(
+            ArtifactPin(
+                role="provider",
+                target=accepted_provider.provider.identity,
+                artifact_digest=accepted_provider.artifact_digest,
+            ),
+            ArtifactPin(
+                role="provider-interface",
+                target=interface.registration.identity,
+                artifact_digest=interface.artifact_digest,
+            ),
+        ),
+    )
     admitted_binding = operator.driver.bind(
         accepted_provider,
         interface,
@@ -970,12 +1003,41 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
             }
         ).model_dump(mode="python")
     )
+    from tests.support.provider_builds import as_build
+
+    provider = as_build(provider)
     accepted_provider = AcceptedProvider(
         path=provider_path(provider.identity.name),
         provider=provider,
         artifact_digest=provider_digest(provider).tagged,
     )
     deployment_digest = _digest("served-line-deployment")
+    # Package builds require a retained installation verification. This
+    # operator-owned fixture uses the v1 record matching its historical v2 seal.
+    from cruxible_core.providers.provider_local_runtime import (
+        ProviderInstallationVerificationV1,
+        _deployment_identity,
+    )
+
+    local_deployment = LocalProviderDeploymentV1(
+        deployment_digest=deployment_digest,
+        distribution_path=distribution,
+        lock_path=lock,
+        environment_path=materialization,
+        environment_manifest_path=seal,
+        environment_pin_key="linux-cp311+engine",
+        interpreter_path=interpreter,
+        provider_runtime_version="1.0.0",
+    )
+    verification = ProviderInstallationVerificationV1(
+        deployment_identity_digest=_deployment_identity(local_deployment),
+        distribution_digest=_sha256_file(distribution),
+        lock_digest=_sha256_file(lock),
+        materialization_digest=materialization_digest,
+        environment_manifest_digest=_sha256_file(seal),
+        provider_runtime_version="1.0.0",
+        entrypoints=tuple(item.entrypoint for item in provider.implementations),
+    )
     config_path = state_root / PROVIDER_RUNTIME_CONFIG_PATH
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_bytes(
@@ -995,6 +1057,7 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
                         "environment_pin_key": "linux-cp311+engine",
                         "interpreter_path": str(interpreter.relative_to(state_root)),
                         "provider_runtime_version": "1.0.0",
+                        "installation_verification": verification.model_dump(mode="json"),
                     }
                 ],
             }

@@ -172,7 +172,9 @@ class _CrashingBuiltin(BuiltinProviderInvoker):
 class _BuiltinOperator:
     """The real admission and dispatch, with a built-in that crashes mid-call."""
 
-    def invoker_for(self, instance: object, *, accepted_oid: str) -> BuiltinDispatchingInvoker:
+    def invoker_for(
+        self, instance: object, *, accepted_oid: str, pins: object = ()
+    ) -> BuiltinDispatchingInvoker:
         return BuiltinDispatchingInvoker(delegate=None, builtin=_CrashingBuiltin())
 
     def admit_line_provider(

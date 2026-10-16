@@ -960,12 +960,15 @@ body.
 
 ~~~text
 cruxible provider list [--json]
+cruxible provider move NAME --to newest|BUILD [--only Procedure:NAME]...
+  [--dry-run|--commit] [--at OID] [--json]
+cruxible provider retire NAME/BUILD [--dry-run|--commit] [--at OID] [--json]
 cruxible provider install NAME[==VERSION] | WHEEL [--lock FILE]
   [--dependency WHEEL]... [--extra NAME]... [--control-domain NAME] [--reverify]
   [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
-`provider list` names every live Provider installed here (the built-in
+`provider list` names every live Provider build installed here (the built-in
 `cruxible-builtin` included) with its package, version and the interfaces it
 implements, then the packages a configured provider repository offers.
 
@@ -997,8 +1000,9 @@ nothing parses a selector, matches a bucket, requires a fixture for a selector
 or runs the classifier; an occurrence admits every input that passes the
 interface's input contract. What
 a provider cannot serve, it refuses itself with a typed refusal. A different
-definition under the same interface id is proposed as a successor, which every
-live Provider and Procedure pinning the old registration must follow. Cruxible
+definition under the same interface id adds a contract registration alongside
+the old one. New registrations contain the contract alone; classifier and
+vocabulary data stays in package metadata. Cruxible
 owns the `web.fetch` contract (definitions v2 and v3, the one
 `cruxible-provider-web` 0.2.x ships): a package implementing either installs onto
 Cruxible's own registration of it, whatever the package itself ships, so every
@@ -1033,6 +1037,7 @@ and `POST /{instance}/providers/install`.
 cruxible kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
   --out KIT_DIR [--provider PACKAGE_DIR]... [--default-provider PACKAGE_DIR]... [--json]
 cruxible kit add KIT [--source TEXT] [--keep IDENTITY]... [--keep-local-edits]
+  [--keep-build Procedure:NAME]...
   [--retire-dependents IDENTITY]... [--allow-downgrade]
   [--dry-run|--commit] [--at OID] [--json]
 cruxible kit pull REFERENCE --out DIR [--layout] [--json]
@@ -1214,16 +1219,31 @@ built-in held differently, a disallowed downgrade, a carried interface held
 differently) before installing anything; after installing it refuses
 `cruxible.kit.provider_not_installed` unless every bundled Provider is live. A
 package already installed from the same wheel, lock and dependency closure is
-unchanged (a preview, which has no files, compares wheel and lock). Another installed build of a bundled provider is
-refused (`blocked`) rather than replaced: replacing a Provider owes a successor
-of every live Procedure pinning it, which an install does not carry, and the
-build may serve Procedures outside the kit; replace it deliberately with
-`provider install` and add the kit again. A Provider digest names the
-environment its package materialized in (platform, machine, Python and markers),
-so a release Procedure's Provider pin moves to the build installed here; its
-implementation digests (interface, entrypoint, wheel sha256) are the same
-everywhere. A carried ProviderInterface this instance holds differently blocks
-the change.
+unchanged (a preview, which has no files, compares wheel and lock). Provider installs add builds at `providers/NAME/BUILD.json`, with exact identities
+`Provider:NAME/BUILD`. A build key covers its provider name, normalized distribution,
+version, wheel hash and lock hash or image digest; it excludes host materialization.
+Pins remain exact. Bare names in new authoring resolve to the live build registered
+most recently, even for a downgrade; an explicit build name chooses that build.
+Signing-key and Capture-declaration successors preserve a build's original
+registration order, including legacy single-path builds.
+Existing single-path Providers remain readable without a rewrite, and
+`cruxible-builtin` keeps its single path.
+
+`kit add` installs the release's builds and re-pins every live Procedure on those
+provider names (the kit's and your own) to the exact shipped build in the definitions
+change set. Its preview lists every re-pin and every Line, Trigger and Mandate
+it stops by retiring them. Author those again over the moved Procedure to resume.
+Pass `--keep-build Procedure:NAME` (repeatable) to keep a Procedure's current build.
+Other Procedures stay as they are. Old builds remain installed; kit add neither
+reports nor retires them.
+
+`provider move NAME --to newest|BUILD` previews by default and moves definitions
+and their dependents as one governed change. `--only` narrows the definitions moved.
+Its preview names re-pins and stopped automation; `--commit --at OID` submits it.
+It requires **GOVERNED_WRITE**. `provider retire NAME/BUILD` requires **ADMIN**,
+previews by default, refuses while live definitions pin it, and keeps its runtime
+environment. Retired builds are hidden from new authoring. No command here collects
+old environments.
 
 `status` lists installed kits, the kit paths edited locally, the divergences kept
 on purpose, where each release was built, and each provider package with its

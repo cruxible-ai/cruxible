@@ -854,8 +854,7 @@ class LocalProviderExecutionDriver:
             (
                 pin
                 for pin in provider.pins
-                if pin.target.kind == "ProviderInterface"
-                and pin.target.name == registration.interface_id
+                if pin.target.kind == "ProviderInterface" and pin.target == registration.identity
             ),
             None,
         )

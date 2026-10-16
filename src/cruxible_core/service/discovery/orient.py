@@ -247,7 +247,7 @@ def interface_row(item: AcceptedProviderInterface) -> OrientInterface:
     # vocabulary is historical classifier data and describes nothing served.
     description = definition.get("description") if isinstance(definition, Mapping) else None
     return OrientInterface(
-        name=registration.interface_id,
+        name=item.name or registration.interface_id,
         description=_first_sentence(description) if isinstance(description, str) else None,
         input=_contract_fields(sides.get("input"), stub=stub),
         output=_contract_fields(sides.get("output"), stub=stub),
