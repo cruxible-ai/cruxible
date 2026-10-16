@@ -3551,6 +3551,11 @@ when there are more than `--limit`. `--at` reads an earlier accepted generation.
 `--json` returns the whole structured answer, including the coordinate and
 generation.
 
+`cruxible get Provider:NAME` opens the newest live build listed by `provider list`;
+`Provider:NAME/BUILD` or its artifact path opens that exact build, including a
+retired build. Tied newest registrations refuse with their build references and
+a `provider list` repair. Provider reads support `summary`, `history` and `proof`.
+
 When the current Git worktree holds this instance's floor (see
 [floor](#floor)), orient also reports
 `floor: {at, generations_behind}`: the accepted Git OID the floor was exported
