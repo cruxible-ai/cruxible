@@ -8930,26 +8930,39 @@
           },
           "SubjectKeyReference": {
             "additionalProperties": false,
-            "description": "A Subject named by its kind's key: the one holding it, or the one a change creates.\n\nA Procedure item names a Subject this way when the run has a key value but no\nid: it resolves through the key index (and the aliases) to the existing\nSubject, or to the Subject an item of the same terminal creates with that\nkey. ``key`` maps each key ClaimType (by predicate, or by its last name\nunder the kind) to its value; it is canonicalized by each key's form.",
+            "description": "A Subject named by its kind's key: the one holding it, or the one a change creates.\n\nA Procedure item names a Subject this way when the run has a key value but no\nid: it resolves through the key index (and the aliases) to the existing\nSubject, or to the Subject an item of the same terminal creates with that\nkey. ``key`` is the bare value for a one-key kind, or maps each key ClaimType\n(by predicate, or by its last name under the kind) to its value. Both use\nthe key's canonical form and lower to the same governed mapping.",
             "properties": {
               "key": {
-                "additionalProperties": {
-                  "anyOf": [
-                    {
-                      "type": "string"
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
                     },
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "boolean"
-                    }
-                  ]
-                },
-                "maxProperties": 8,
-                "minProperties": 1,
-                "title": "Key",
-                "type": "object"
+                    "maxProperties": 8,
+                    "minProperties": 1,
+                    "type": "object"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Key"
               },
               "subject_kind": {
                 "title": "Subject Kind",

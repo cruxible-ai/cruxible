@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-16:files-catalog",
-    "surface_digest": "sha256:e248e89b016df8d30034c9b91364f3de24434e59464f7b9536a2b3f84889b755"
+    "register_entry": "2026-10-16:key-refs",
+    "surface_digest": "sha256:6181cfbbab01fa9277ae0fbfb968a0d0e61f91dbf083e524dbc0bb6671da2243"
   },
   "surface": {
     "cli_leaves": [
@@ -888,7 +888,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/authoring/compile",
         "request_model": "types.UnionType[cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequestV1,cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequest,cruxible_core.server.playbill_request_models.AuthoringInputCompileRequest]",
-        "request_schema_digest": "sha256:fdf4e9f37bfe8d33569037beed62995af11d1d1a7def577d3b25fd58bc59d84e",
+        "request_schema_digest": "sha256:17a1cfd9e753bc4f90cda46cc563841b609999e6f0f5b9b222fae05e242f490e",
         "response_model": "cruxible_client.contracts.AuthoringPreflightResult",
         "response_schema_digest": "sha256:98f02256f7f35f2e4d3fa0970a75d2a2cd0b5495ba326bdfaab4208359381a01"
       },
@@ -962,7 +962,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/authoring/submit",
         "request_model": "types.UnionType[cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequest,cruxible_core.server.playbill_request_models.AuthoringInputSubmitRequest]",
-        "request_schema_digest": "sha256:cb5dd51d967e6ae6df4b8450832d2cf611d128e4254400ef0fd13e4342a60854",
+        "request_schema_digest": "sha256:937af1120cbd3e1cca8cdba25687d0eaec91de98a6a9e3d18e582769e9c8c13c",
         "response_model": "types.UnionType[cruxible_client.contracts.AuthoringSubmitResultRecord,cruxible_client.contracts.AuthoringPreflightResult]",
         "response_schema_digest": "sha256:7165122265c4e43da907565c4d2fd04b0fa83b48dcdcf486b4d321ef1df5d0f1"
       },
@@ -1956,7 +1956,7 @@
           "compile_authoring"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_bind",
-        "input_schema_digest": "sha256:a8aeff300739ead8ca532d920b748c4d45d7daab9b95a25519a875d9e8613402",
+        "input_schema_digest": "sha256:abe703d5c80239a82a5b77fa9d62dacd17fe6a481e20af5091f98f626f53e32a",
         "name": "cruxible_authoring_bind",
         "output_schema_digest": "sha256:553b8b9d89adebd76a8435cd4dc9b999bc615f0d82edbfa58028a7e2d02ee821",
         "permission": "GOVERNED_WRITE"
@@ -1966,7 +1966,7 @@
           "compile_authoring_input"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_compile",
-        "input_schema_digest": "sha256:97d0125b6bb47bfdaba4b113139fe5e947a18af3b389a41d0ee6e5dbb4804826",
+        "input_schema_digest": "sha256:c2f0fd091c97ae0a2a7b9eafb388819f1850c04ac98bdcf8e47eacaa2b89a4a8",
         "name": "cruxible_authoring_compile",
         "output_schema_digest": "sha256:553b8b9d89adebd76a8435cd4dc9b999bc615f0d82edbfa58028a7e2d02ee821",
         "permission": "GOVERNED_WRITE"
@@ -1976,7 +1976,7 @@
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_example",
         "input_schema_digest": "sha256:ce1c337e300b8287fb28b36227c53ea8b448e8852550326a8a273b4ef901aed5",
         "name": "cruxible_authoring_example",
-        "output_schema_digest": "sha256:b706983ff5896d406598cdd3b70c83829b3a6e9ea7fed4b59bc3b7ce20b8608e",
+        "output_schema_digest": "sha256:d24e0648fd7e125babccb7093c05207f61bb541faff925bf10f187b314369e4f",
         "permission": "READ_ONLY"
       },
       {
@@ -2025,7 +2025,7 @@
           "submit_authoring_intent"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_authoring_submit",
-        "input_schema_digest": "sha256:9b0e746f9af7abd2bee924950801801973aa4c8c9e471ececa39b510af6555dd",
+        "input_schema_digest": "sha256:029b7d7bcf365f28ea25588ca153b5408a3206bab57b8ddce019b7ed5b0929c8",
         "name": "cruxible_authoring_submit",
         "output_schema_digest": "sha256:1c41358b1be47f49d4d2f3f887c1303bde6de5c77e1b2932c6da5c57136977b3",
         "permission": "GOVERNED_WRITE"

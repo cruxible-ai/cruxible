@@ -160,7 +160,7 @@ EOF
 When a mixed authoring change set creates a Subject and states a real fact
 about it, name a one-key Subject as `sec.package/Demo Key`, or use
 `{"subject_kind": "sec.package", "key": "Demo Key"}` for a Claim subject or
-Subject-valued object. Core resolves same-set creations and applies the key
+Subject-valued object. Cruxible resolves same-set creations and applies the key
 ClaimType's canonical form. Composite keys require a mapping of their parts.
 Keep the real fact in the change: a creation already supplies its key Claims.
 
