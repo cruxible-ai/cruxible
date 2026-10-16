@@ -6,6 +6,7 @@ import math
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
@@ -18,6 +19,7 @@ from cruxible_client.contracts.canonical import (
     Sha256Value,
     normalize_ledger_path,
 )
+from cruxible_client.contracts.content_memo import FrozenDict, FrozenList
 from cruxible_client.contracts.errors import ProjectionFormatError
 
 ProjectionFactClassification = Literal["semantic"]
@@ -74,6 +76,36 @@ def _normalized_timestamp(value: datetime | str) -> str:
     return utc.isoformat(timespec=timespec).replace("+00:00", "Z")
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class _NormalizedProjectionValue:
+    """An owned, normalized subtree; its constructor never trusts raw values."""
+
+    value: CanonicalValue
+
+    def __init__(self, value: object) -> None:
+        object.__setattr__(self, "value", _freeze_normalized(normalize_projection_value(value)))
+
+
+def _freeze_normalized(value: CanonicalValue) -> CanonicalValue:
+    if isinstance(value, dict):
+        return FrozenDict({key: _freeze_normalized(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return FrozenList(_freeze_normalized(item) for item in value)
+    return value
+
+
+def normalized_projection_value(value: object) -> _NormalizedProjectionValue:
+    """Normalize and own a subtree once, for composition into compiler rows.
+
+    ProjectionFact still validates each row's schema, key and identity. Only
+    this constructor can introduce a carried value, after the ordinary cold
+    normalizer accepts it; no mutable caller-owned container is retained.
+    """
+    if type(value) is _NormalizedProjectionValue:
+        return value
+    return _NormalizedProjectionValue(value)
+
+
 def normalize_projection_value(value: object, *, location: str = "$") -> CanonicalValue:
     """Normalize the reference assembler's closed, language-neutral value set.
 
@@ -82,6 +114,8 @@ def normalize_projection_value(value: object, *, location: str = "$") -> Canonic
     never silently change their meaning. Floats are always refused.
     """
 
+    if type(value) is _NormalizedProjectionValue:
+        return value.value
     if value is None or isinstance(value, bool):
         return value
     if isinstance(value, int):

@@ -15,10 +15,15 @@ from cruxible_client.contracts.canonical import (
     Sha256Value,
     normalize_ledger_path,
 )
+from cruxible_client.contracts.content_memo import is_sealed, request_derive, seal
 from cruxible_client.contracts.governance import governance_identifier
-from cruxible_client.contracts.projection_extensions import ProjectionFact
+from cruxible_client.contracts.projection_extensions import (
+    ProjectionFact,
+    normalized_projection_value,
+)
 
 if TYPE_CHECKING:
+    from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
     from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 
 AttestationCoverage = Literal[
@@ -219,6 +224,120 @@ class CoverageBinding(_StrictExplanationModel):
         }
 
 
+@dataclass(frozen=True, slots=True)
+class _SharedExplanation:
+    proof: LedgerProofReference
+    proof_value: object
+    replay_value: object
+    governance_value: object
+    common_basis: tuple[object, ...]
+    attestations: tuple[object, ...]
+    cryptographic_basis: tuple[object, ...]
+
+
+def _shared_explanation(
+    record: ChangeSetRecordAnyVersion,
+    *,
+    record_path: str,
+    law_identifier: str,
+    coordinate: ProjectionCoordinateContext,
+) -> _SharedExplanation:
+    """One record/law/accepting-coordinate fact set, shared by its members."""
+
+    def derive() -> _SharedExplanation:
+        law_digest = record.law_digests[law_identifier]
+        proof = LedgerProofReference(
+            change_set_path=record_path,
+            changeset_digest=record.changeset_digest,
+            candidate_digest=record.candidate_digest,
+        )
+        authority = BasisRelation(
+            kind="authority_ruled",
+            proof_ref=proof,
+            law_identifier=law_identifier,
+            law_digest=law_digest,
+        )
+        replay = BasisRelation(kind="replay_verified", proof_ref=proof)
+        proof_value = normalized_projection_value(proof.projection_value(coordinate))
+        authority_raw = authority.projection_value(coordinate)
+        authority_raw["proof_ref"] = proof_value
+        replay_raw = replay.projection_value(coordinate)
+        replay_raw["proof_ref"] = proof_value
+        authority_value = normalized_projection_value(authority_raw)
+        replay_value = normalized_projection_value(replay_raw)
+        common_basis = (authority_value, replay_value)
+        attestations: list[object] = []
+        cryptographic_basis: list[object] = []
+        for submission in record.approvals:
+            digest = approval_digest(submission.attestation).tagged
+            attestations.append(
+                normalized_projection_value(
+                    {
+                        "attestation_digest": {"$digest": digest},
+                        "key_history_ref": {
+                            "principal_path": {
+                                "$path": f"principals/{submission.attestation.signer_id}.json"
+                            },
+                            "semantic_root": {
+                                "$digest": submission.attestation.signing_semantic_root
+                            },
+                        },
+                        "signer_id": submission.attestation.signer_id,
+                        "submitted_by": submission.submitted_by,
+                    }
+                )
+            )
+            raw = BasisRelation(
+                kind="cryptographically_committed",
+                proof_ref=proof,
+                attestation_digest=digest,
+            ).projection_value(coordinate)
+            raw["proof_ref"] = proof_value
+            cryptographic_basis.append(normalized_projection_value(raw))
+        governance_value = normalized_projection_value(
+            {
+                "activation_policy": record.activation_policy,
+                "approval_requirements": [
+                    item.model_dump(mode="json") for item in record.approval_requirements
+                ],
+                "basis": list(common_basis),
+                "law_digest": {"$digest": law_digest},
+                "law_identifier": law_identifier,
+                "required_tier": record.required_tier,
+            }
+        )
+        seal(proof)
+        return _SharedExplanation(
+            proof,
+            proof_value,
+            replay_value,
+            governance_value,
+            common_basis,
+            tuple(attestations),
+            tuple(cryptographic_basis),
+        )
+
+    # The record itself owns its complete immutable inputs. Copies and mutable
+    # records take the cold path; every coordinate field joins the key.
+    if not is_sealed(record):
+        return derive()
+    return request_derive(
+        (
+            "query.explanation.shared",
+            record.changeset_digest,
+            record_path,
+            law_identifier,
+            coordinate.instance_id,
+            coordinate.git_object_format,
+            coordinate.git_oid,
+            coordinate.semantic_root,
+            coordinate.generation_root,
+            coordinate.compiler_digest,
+        ),
+        derive,
+    )
+
+
 def _record_for_current_artifact(
     records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     *,
@@ -252,6 +371,7 @@ def accepted_artifact_explanation_facts(
     records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     coordinate: ProjectionCoordinateContext,
     accepted_coordinates: Mapping[int, AcceptedGenerationCoordinate],
+    claim_attestations: tuple[VerifiedClaimAttestationV1, ...] | None = None,
 ) -> tuple[ProjectionFact, ...]:
     """Compile explanation facts only when a stored change set binds exact bytes.
 
@@ -282,49 +402,20 @@ def accepted_artifact_explanation_facts(
         compiler_digest=accepting.compiler_digest,
     )
     member = next(member for member in record.members if member.path == artifact_path)
-    law_digest = record.law_digests[member.law_identifier]
-    proof = LedgerProofReference(
-        change_set_path=record_path,
-        changeset_digest=record.changeset_digest,
-        candidate_digest=record.candidate_digest,
-    )
-    authority_basis = BasisRelation(
-        kind="authority_ruled",
-        proof_ref=proof,
+    shared = _shared_explanation(
+        record,
+        record_path=record_path,
         law_identifier=member.law_identifier,
-        law_digest=law_digest,
+        coordinate=coordinate,
     )
-    replay_basis = BasisRelation(kind="replay_verified", proof_ref=proof)
     coverage = CoverageBinding(
         coverage="containing_change_set",
         subject_path=artifact_path,
         signed_payload_digest=record.candidate_digest,
-        proof_ref=proof,
+        proof_ref=shared.proof,
     )
-    attestations = []
-    cryptographic_basis = []
-    for submission in record.approvals:
-        digest = approval_digest(submission.attestation).tagged
-        attestations.append(
-            {
-                "attestation_digest": {"$digest": digest},
-                "key_history_ref": {
-                    "principal_path": {
-                        "$path": f"principals/{submission.attestation.signer_id}.json"
-                    },
-                    "semantic_root": {"$digest": submission.attestation.signing_semantic_root},
-                },
-                "signer_id": submission.attestation.signer_id,
-                "submitted_by": submission.submitted_by,
-            }
-        )
-        cryptographic_basis.append(
-            BasisRelation(
-                kind="cryptographically_committed",
-                proof_ref=proof,
-                attestation_digest=digest,
-            ).projection_value(coordinate)
-        )
+    coverage_value = coverage.projection_value(coordinate)
+    coverage_value["proof_ref"] = shared.proof_value
     history = [
         {
             "candidate_digest": {"$digest": item.candidate_digest},
@@ -335,27 +426,13 @@ def accepted_artifact_explanation_facts(
         for path, item in records
         if any(candidate_member.path == artifact_path for candidate_member in item.members)
     ]
-    common_basis = [
-        authority_basis.projection_value(coordinate),
-        replay_basis.projection_value(coordinate),
-    ]
     return (
         ProjectionFact(
             schema_id=f"cruxible.{artifact_family}.governance",
             schema_version=1,
             subject_identity=subject_identity,
             fact_key="accepted_governance",
-            value={
-                "activation_policy": record.activation_policy,
-                "approval_requirements": [
-                    requirement.model_dump(mode="json")
-                    for requirement in record.approval_requirements
-                ],
-                "basis": common_basis,
-                "law_digest": {"$digest": law_digest},
-                "law_identifier": member.law_identifier,
-                "required_tier": record.required_tier,
-            },
+            value=shared.governance_value,
         ),
         ProjectionFact(
             schema_id=f"cruxible.{artifact_family}.provenance",
@@ -365,7 +442,7 @@ def accepted_artifact_explanation_facts(
             value={
                 "actor_id": record.actor_binding.actor_id,
                 "artifact_digest": {"$digest": artifact_digest},
-                "basis": [replay_basis.projection_value(coordinate)],
+                "basis": [shared.replay_value],
                 "input_digest": {"$digest": input_digest},
                 "source_compilation_digest": (
                     {"$digest": record.actor_binding.source_compilation_digest}
@@ -380,9 +457,18 @@ def accepted_artifact_explanation_facts(
             subject_identity=subject_identity,
             fact_key="accepted_approvals",
             value={
-                "attestations": attestations,
-                "basis": [*common_basis, *cryptographic_basis],
-                "coverage_binding": coverage.projection_value(coordinate),
+                "attestations": list(shared.attestations),
+                "basis": [*shared.common_basis, *shared.cryptographic_basis],
+                "coverage_binding": coverage_value,
+                **(
+                    {
+                        "claim_attestations": [
+                            item.model_dump(mode="json") for item in claim_attestations
+                        ]
+                    }
+                    if claim_attestations is not None
+                    else {}
+                ),
             },
         ),
         ProjectionFact(
@@ -391,12 +477,12 @@ def accepted_artifact_explanation_facts(
             subject_identity=subject_identity,
             fact_key="ledger_history",
             value={
-                "basis": [replay_basis.projection_value(coordinate)],
+                "basis": [shared.replay_value],
                 "history": history,
                 "predecessor_digest": (
                     {"$digest": predecessor_digest} if predecessor_digest is not None else None
                 ),
-                "proof_ref": proof.projection_value(coordinate),
+                "proof_ref": shared.proof_value,
             },
         ),
     )

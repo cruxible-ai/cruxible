@@ -208,3 +208,52 @@ def test_assembler_implementation_is_nonlogical_build_metadata(tmp_path: Path) -
     assert canonical_logical_export(alternate) == exported
     assert projection_logical_digest(alternate) == projection_logical_digest(original)
     assert physical_file_digest(alternate) != physical_file_digest(original)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        True,
+        3,
+        "e\u0301",
+        Decimal("1.2300"),
+        {"$timestamp": "2026-08-11T08:30:00-04:00"},
+        {"$digest": "sha256:" + "a" * 64},
+        {"z": [{"a": "e\u0301"}, {"$decimal": "-0.00"}], "a": 1},
+    ],
+)
+def test_carried_projection_subtrees_equal_cold_normalization(raw):
+    from cruxible_client.contracts.projection_extensions import normalized_projection_value
+
+    carried = normalized_projection_value(raw)
+    assert normalize_projection_value(
+        {"one": carried, "two": [carried]}
+    ) == normalize_projection_value({"one": raw, "two": [raw]})
+
+
+def test_carried_projection_subtrees_own_their_values_and_normalize_once(monkeypatch):
+    from cruxible_client.contracts import projection_extensions as module
+
+    raw = {"array": [{"value": "e\u0301"}]}
+    carried = module.normalized_projection_value(raw)
+    expected = module.normalize_projection_value(raw)
+    raw["array"][0]["value"] = "changed"
+    calls = []
+    normalize = module.normalize_projection_value
+
+    def counted(value, **kwargs):
+        calls.append(value)
+        return normalize(value, **kwargs)
+
+    monkeypatch.setattr(module, "normalize_projection_value", counted)
+    result = module.normalize_projection_value({"one": carried, "two": carried})
+    assert result == {"one": expected, "two": expected}
+    assert len(calls) == 3  # container and two carried roots; no subtree walks
+    with pytest.raises(TypeError):
+        result["one"]["array"][0]["value"] = "changed"
+    with pytest.raises(TypeError):
+        result["one"]["array"].append("changed")
+    for refused in (1.5, {"$unknown": "value"}, {"$digest": "bad"}):
+        with pytest.raises(ProjectionFormatError):
+            module.normalized_projection_value(refused)

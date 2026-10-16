@@ -2387,19 +2387,6 @@ def parse_projection_tree(
                     1,
                     classification="semantic",
                 ):
-                    explanation_facts = list(
-                        accepted_artifact_explanation_facts(
-                            artifact_family="claim",
-                            subject_identity=identity,
-                            artifact_path=path,
-                            input_digest=input_digest,
-                            artifact_digest=artifact_digest,
-                            predecessor_digest=predecessor_digest,
-                            records=accepted_change_sets,
-                            coordinate=coordinate,
-                            accepted_coordinates=accepted_coordinates,
-                        )
-                    )
                     raw_result = _current_member_law_result(
                         accepted_change_sets,
                         path=path,
@@ -2413,20 +2400,25 @@ def parse_projection_tree(
                             f"accepted Claim has no exact law evidence: {path}"
                         )
                     law_evidence = parse_claim_law_evidence(raw_claim_evidence)
-                    for index, fact in enumerate(explanation_facts):
-                        if fact.schema_id != "cruxible.claim.attestation_coverage":
-                            continue
-                        if not isinstance(fact.value, dict):
-                            raise ProjectionFormatError(
-                                "Claim attestation coverage projection is malformed"
-                            )
-                        value = dict(fact.value)
-                        value["claim_attestations"] = [
-                            item.model_dump(mode="json")
-                            for item in law_evidence.verified_attestations
-                        ]
-                        explanation_facts[index] = fact.model_copy(update={"value": value})
-                    semantic_facts.extend(explanation_facts)
+                    explanation_facts = list(
+                        accepted_artifact_explanation_facts(
+                            artifact_family="claim",
+                            subject_identity=identity,
+                            artifact_path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                            predecessor_digest=predecessor_digest,
+                            records=accepted_change_sets,
+                            coordinate=coordinate,
+                            accepted_coordinates=accepted_coordinates,
+                            claim_attestations=law_evidence.verified_attestations,
+                        )
+                    )
+                    semantic_facts.extend(
+                        explanation_facts
+                        if carry_members
+                        else [deepcopy(fact) for fact in explanation_facts]
+                    )
                     if law_evidence.verdict_result is None:
                         raise ProjectionFormatError(
                             f"accepted PC-C Claim has no verdict result: {path}"
