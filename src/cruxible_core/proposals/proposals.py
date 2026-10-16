@@ -4875,6 +4875,12 @@ def _multi_member_evidence(
 
     law_evidence: list[MemberLawEvaluation] = []
     members: list[CandidateMemberLawEvidence] = []
+    evaluation_coordinate = LawEvaluationCoordinate(
+        git_oid=current.git_oid,
+        semantic_root=current.semantic_root,
+        generation_root=current.generation_root,
+        compiler_digest=current.compiler.rule_digest,
+    )
     for item in accepted:
         proofs = closure.proofs_for(item.path)
         evidence = MemberLawEvaluation(
@@ -4882,12 +4888,7 @@ def _multi_member_evidence(
             law_identifier=item.law_identifier,
             law_digest=item.law_digest,
             evaluation_time=timestamp,
-            evaluation_coordinate=LawEvaluationCoordinate(
-                git_oid=current.git_oid,
-                semantic_root=current.semantic_root,
-                generation_root=current.generation_root,
-                compiler_digest=current.compiler.rule_digest,
-            ),
+            evaluation_coordinate=evaluation_coordinate,
             dependency_proof_refs=proofs,
             policy_digests=item.policy_digests,
             query_receipt_digests=item.query_receipt_digests,

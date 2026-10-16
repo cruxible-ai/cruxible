@@ -37,3 +37,36 @@ def test_cached_identities_and_addresses_are_immutable_and_copies_are_independen
             parse_artifact_identity("missing-kind")
         with pytest.raises(ValueError):
             SemanticAddress.whole_artifact("../outside.json")
+
+
+def test_public_coordinates_are_reused_by_all_four_scalar_values():
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.projection import AcceptedCoordinate
+
+    internal = SimpleNamespace(
+        git_oid="1" * 64,
+        semantic_root="sha256:" + "2" * 64,
+        generation_root="sha256:" + "3" * 64,
+        compiler=SimpleNamespace(rule_digest="sha256:" + "4" * 64),
+    )
+    first = AcceptedCoordinate.from_internal(internal)
+    assert AcceptedCoordinate.from_internal(internal) is first
+    assert first == AcceptedCoordinate.model_validate(first.model_dump(mode="json"))
+    for field in ("git_oid", "semantic_root", "generation_root", "compiler_digest"):
+        replacement = "5" * 64 if field == "git_oid" else "sha256:" + "5" * 64
+        changed = first.model_copy(update={field: replacement})
+        other = SimpleNamespace(
+            git_oid=changed.git_oid,
+            semantic_root=changed.semantic_root,
+            generation_root=changed.generation_root,
+            compiler=SimpleNamespace(rule_digest=changed.compiler_digest),
+        )
+        assert AcceptedCoordinate.from_internal(other) == changed
+        assert AcceptedCoordinate.from_internal(other) is not first
+    with pytest.raises(ValidationError):
+        first.git_oid = "6" * 64
+    internal.git_oid = "invalid"
+    for _ in range(2):
+        with pytest.raises(ValidationError):
+            AcceptedCoordinate.from_internal(internal)

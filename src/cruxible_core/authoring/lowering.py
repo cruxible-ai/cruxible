@@ -146,6 +146,7 @@ from cruxible_client.contracts.claims import (
     render_claim,
     resolve_cited_source_window,
 )
+from cruxible_client.contracts.content_memo import request_derive, seal
 from cruxible_client.contracts.declared_blocks import (
     projection_window_intersecting,
     stamped_projection_windows,
@@ -421,10 +422,13 @@ def _capture_contract_at_base(
             ),
         )
     contract = parse_capture_contract(base_tree[path], path=path)
-    accepted = AcceptedCaptureContract(
-        path=path,
-        contract=contract,
-        artifact_digest=capture_contract_digest(contract).tagged,
+    accepted = request_derive(
+        ("core.accepted_capture_contract", path, base_tree[path]),
+        lambda: AcceptedCaptureContract(
+            path=path,
+            contract=contract,
+            artifact_digest=capture_contract_digest(contract).tagged,
+        ),
     )
     if accepted.artifact_digest != contract_digest:
         _refuse(
@@ -1335,6 +1339,18 @@ def _refuse_evidence_from_projection(
     )
 
 
+def _claim_pin(*, role: str, target: ArtifactIdentity, artifact_digest: str) -> ArtifactPin:
+    def derive() -> ArtifactPin:
+        value = ArtifactPin(role=role, target=target, artifact_digest=artifact_digest)
+        if not seal(value):
+            raise TypeError("a carried Claim pin must be immutable")
+        return value
+
+    return request_derive(
+        ("core.claim_pin", role, target.kind, target.name, artifact_digest), derive
+    )
+
+
 def _lower_claim(
     instance: PlaybillInstance,
     *,
@@ -1782,17 +1798,17 @@ def _lower_claim(
         ),
     )
     pins = [
-        ArtifactPin(
+        _claim_pin(
             role="capture-contract",
             target=contract.identity,
             artifact_digest=capture_contract_digest(contract).tagged,
         ),
-        ArtifactPin(
+        _claim_pin(
             role="claim-type",
             target=claim_type.identity,
             artifact_digest=claim_type_digest(claim_type).tagged,
         ),
-        ArtifactPin(
+        _claim_pin(
             role="subject",
             target=subject_identity,
             artifact_digest=subject_digest_value,
@@ -1808,7 +1824,7 @@ def _lower_claim(
             "Procedure",
         }:
             pins.append(
-                ArtifactPin(
+                _claim_pin(
                     role=producer_identity.kind.casefold(),
                     target=producer_identity,
                     artifact_digest=producer_digest_value,
@@ -1816,7 +1832,7 @@ def _lower_claim(
             )
     if object_referent is not None:
         pins.append(
-            ArtifactPin(
+            _claim_pin(
                 role="object-subject",
                 target=object_referent[0],
                 artifact_digest=object_referent[1],

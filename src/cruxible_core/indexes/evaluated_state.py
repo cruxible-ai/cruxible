@@ -17,7 +17,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from cruxible_client.contracts.candidates import DependencyProofReference
-from cruxible_client.contracts.canonical import canonical_bytes, file_digest, is_candidate_card_path
+from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    canonical_bytes,
+    file_digest,
+    is_candidate_card_path,
+)
 from cruxible_client.contracts.documents import DocumentArtifactAdapter
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.claims.closure import (
@@ -242,12 +247,18 @@ class EvaluationRows:
             f"SELECT kind,format_tag,artifact_digest FROM {self.table('artifact_lookup')} WHERE path=?",
             path,
         )
-        if row[0] == "attestation":
+        if self.reader.codec == CURRENT_ARTIFACT_CODEC or row[0] == "attestation":
             from cruxible_core.claims.closure import parse_dependency_artifact
 
             state = parse_dependency_artifact(path, self.source_bytes(path))
-            assert state is not None
+            if state is None or (
+                state.artifact_kind,
+                state.artifact_tag,
+                state.artifact_digest,
+            ) != tuple(row):
+                raise ProjectionIntegrityError("dependency state differs from its selected owner")
             return state
+        # Frozen older codecs keep their existing interpretation.
         source = OWNER_BY_KIND[row[0]].parse(
             self.source_bytes(path), path=path, codec=self.reader.codec
         )
@@ -274,12 +285,15 @@ class EvaluationRows:
         )
 
     def outgoing(self, path: str) -> tuple[Any, ...]:
-        state = self.states.get(path)
-        return (
-            ()
-            if state is None
-            else _outgoing_edges(state, states=self.states, paths_by_identity=self.identities)
-        )
+        def compute() -> tuple[Any, ...]:
+            state = self.states.get(path)
+            return (
+                ()
+                if state is None
+                else _outgoing_edges(state, states=self.states, paths_by_identity=self.identities)
+            )
+
+        return self._memo(("outgoing", path), compute)
 
     def incoming(self, path: str) -> tuple[Any, ...]:
         state = self.states.get(path)

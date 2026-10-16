@@ -1317,10 +1317,19 @@ class TypedStateReader:
         row = self.envelope(identity)
         if row is None or row.kind not in OWNER_BY_KIND:
             return None
-        if row.kind == "attestation":
+        from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
+
+        if self.codec == CURRENT_ARTIFACT_CODEC or row.kind == "attestation":
             from cruxible_core.claims.closure import parse_dependency_artifact
 
-            return parse_dependency_artifact(row.path, self.member_bytes(row.path))
+            state = parse_dependency_artifact(row.path, self.member_bytes(row.path))
+            if state is None or (
+                state.artifact_kind,
+                state.artifact_tag,
+                state.artifact_digest,
+            ) != (row.kind, row.format_tag, row.artifact_digest):
+                raise ProjectionIntegrityError("dependency state differs from its selected owner")
+            return state
         source = OWNER_BY_KIND[row.kind].parse(
             self.member_bytes(row.path), path=row.path, codec=self.codec
         )

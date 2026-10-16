@@ -57,6 +57,7 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     parse_claim,
 )
+from cruxible_client.contracts.content_memo import request_derive, seal
 from cruxible_client.contracts.documents import (
     DocumentArtifactAdapter,
     document_digest,
@@ -162,7 +163,14 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
 
 def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyStateV1 | None:
     """Read exact selected bytes; retain no second global artifact payload cache."""
-    return _parse_dependency_artifact(path, content)
+
+    def derive() -> ArtifactDependencyStateV1 | None:
+        value = _parse_dependency_artifact(path, content)
+        if value is not None and not seal(value):
+            raise TypeError("dependency state must be deeply immutable")
+        return value
+
+    return request_derive(("core.dependency_state", path, content), derive)
 
 
 def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyStateV1 | None:
