@@ -292,6 +292,14 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
     # Measurement doors. A declaration, run, or subject that does not fit is
     # repaired by inspecting what stands (the readings door is read-only) or
     # by re-running the evaluation once the named fault is corrected.
+    "cruxible.resolution.unknown": RepairOperation(operation="cruxible.procedure.readings"),
+    "cruxible.resolution.already_disposed": RepairOperation(
+        operation="cruxible.procedure.readings"
+    ),
+    "cruxible.resolution.not_latest": RepairOperation(operation="cruxible.procedure.readings"),
+    "cruxible.resolution.contract_closed": RepairOperation(operation="cruxible.procedure.readings"),
+    "cruxible.resolution.unavailable": RepairOperation(operation="cruxible.procedure.readings"),
+    "cruxible.resolution.conflict": RepairOperation(operation="cruxible.procedure.readings"),
     "measurement_not_declared": RepairOperation(operation="cruxible.procedure.readings"),
     "measurement_run_mismatch": RepairOperation(operation="cruxible.procedure.readings"),
     "measurement_subject_absent": RepairOperation(operation="cruxible.procedure.readings"),

@@ -177,7 +177,18 @@ their standing:
 ```bash
 cruxible procedure measure NAME --run-id RUN-…
 cruxible procedure readings NAME
+cruxible procedure dispose NAME RESOLUTION_ID --verdict upheld --reason "Evidence checked."
 ```
+
+Find resolution IDs in measure/readings or `get Procedure:NAME`. A reviewer can
+record `upheld` or `overturned` with a reason under `GOVERNED_WRITE`; Cruxible
+records the authenticated principal and the judgment without interpreting it.
+The full-profile MCP tool is `cruxible_procedure_dispose`; the SDK method is
+`cx.accepted_procedure(NAME).dispose_resolution(ID, verdict=..., reason=...)`.
+An exact retry reuses the judgment. Get/history retain reviewer, reason and
+verdict. Overturn reopens the latest answer's contract; measure can resolve it
+again inside the original window, while expired windows stay expired. `next`
+does not invent judgments or automatically remeasure.
 
 A completed run does not prove the Procedure worked, and a failed run does not
 disprove it; the measurement's verdict comes from its evidence.

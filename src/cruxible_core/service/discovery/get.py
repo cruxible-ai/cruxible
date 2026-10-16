@@ -114,6 +114,7 @@ from cruxible_client.contracts.get_reads import (
 from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
+from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.read_values import TruncatedText, summary_value, whole_value_read
@@ -1616,6 +1617,34 @@ def _pin_name(binding: Any) -> str:
     return f"slot:{getattr(binding, 'slot_name', '?')}"
 
 
+def _procedure_reviews(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    history_limit: int = 0,
+) -> tuple[ProcedureMeasurementReview, ...]:
+    from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+    from cruxible_core.service.procedures.resolution_dispositions import (
+        procedure_measurement_reviews,
+    )
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        procedure = projection.typed.source(resolved.identity)
+        row = projection.typed.envelope(resolved.identity)
+    assert procedure is not None and row is not None
+    return procedure_measurement_reviews(
+        instance,
+        accepted=AcceptedProcedure(
+            path=resolved.path or f"procedures/{_name(resolved.identity)}.json",
+            procedure=procedure,
+            artifact_digest=row.artifact_digest,
+        ),
+        observation=coordinate,
+        history_limit=history_limit,
+    )
+
+
 def _procedure_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -1643,6 +1672,7 @@ def _procedure_card(
             "cruxible.procedure.track_record", identity=resolved.identity
         )
     return GetProcedureCard(
+        measurement_reviews=_procedure_reviews(instance, coordinate, resolved),
         procedure=_name(resolved.identity),
         description=definition.description,
         lifecycle=readiness.artifact.lifecycle.state,
@@ -2380,7 +2410,12 @@ def _history(
         if truncated and page
         else None
     )
-    return GetHistory(revisions=shown), truncated, next_cursor
+    reviews = (
+        _procedure_reviews(instance, coordinate, resolved, history_limit=min(limit, 50))
+        if resolved.kind == "procedure"
+        else ()
+    )
+    return GetHistory(revisions=shown, measurement_reviews=reviews), truncated, next_cursor
 
 
 def _history_field(
@@ -3000,6 +3035,8 @@ def service_playbill_get(
         live = LIVE_CARD_FIELDS.get(resolved.kind)
         if live is not None:
             fields["live"] = live_view(instance, live)
+        elif isinstance(card, GetProcedureCard) and card.measurement_reviews:
+            fields["live"] = live_view(instance, ("measurement_reviews",))
     elif request.detail == "evidence":
         fields["evidence"] = _claim_evidence(
             instance, coordinate, resolved, evaluation_time=evaluation_time, content=content
@@ -3029,6 +3066,8 @@ def service_playbill_get(
             continuation=continuation,
             content=content,
         )
+        if resolved.kind == "procedure" and fields["history"].measurement_reviews:
+            fields["live"] = live_view(instance, ("history.measurement_reviews",))
     elif request.detail == "proof":
         fields["proof"] = _proof(
             instance,

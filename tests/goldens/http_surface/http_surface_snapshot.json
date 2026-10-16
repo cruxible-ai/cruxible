@@ -219,6 +219,9 @@
   "/api/v1/{instance_id}/procedures/{name}/readings": {
     "POST": "ProcedureReadingsResult"
   },
+  "/api/v1/{instance_id}/procedures/{name}/resolution-dispositions": {
+    "POST": "ProcedureResolutionDispositionResult"
+  },
   "/api/v1/{instance_id}/procedures/{name}/runs": {
     "POST": "ProcedureRunState"
   },

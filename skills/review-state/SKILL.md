@@ -98,6 +98,7 @@ cruxible orient --section lines
 cruxible get Line:NAME           # Triggers, enablements, pending work, recent runs
 cruxible orient --section runs
 cruxible procedure readings NAME # measurement standing, when measurements are declared
+cruxible procedure dispose NAME RESOLUTION_ID --verdict overturned --reason "Review finding."
 cruxible kit status              # edited definitions, kept divergences, newer releases
 ```
 

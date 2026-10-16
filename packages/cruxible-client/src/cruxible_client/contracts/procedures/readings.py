@@ -24,6 +24,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical
+from cruxible_client.contracts.procedures.dispositions import (
+    ProcedureMeasurementReview,
+    ResolutionDispositionSummary,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -133,6 +137,7 @@ class ProcedureMeasurementResolutionSummary(_StrictReadingWireModel):
     tag: Literal["playbill-procedure-measurement-resolution-summary-v1"] = (
         "playbill-procedure-measurement-resolution-summary-v1"
     )
+    last_disposition: ResolutionDispositionSummary | None = None
     resolution_id: str
     contract_id: str
     sequence: int = Field(ge=1)
@@ -334,6 +339,7 @@ class ProcedureMeasurementContractStatus(_StrictReadingWireModel):
     status: ProcedureMeasurementStatus
     eligibility: ProcedureMeasurementEligibility
     resolution: ProcedureMeasurementResolutionSummary | None = None
+    review: ProcedureMeasurementReview | None = None
     reading_count: int = Field(ge=0)
 
 

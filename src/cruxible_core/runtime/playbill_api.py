@@ -2203,6 +2203,30 @@ def playbill_procedure_measure(
     )
 
 
+def playbill_procedure_dispose(
+    instance_id: str,
+    name: str,
+    *,
+    request: contracts.ProcedureResolutionDispositionRequest,
+) -> contracts.ProcedureResolutionDispositionResult:
+    """Record the reviewing principal's upheld/overturned judgment and reason."""
+    from cruxible_core.service.procedures.resolution_dispositions import (
+        service_dispose_procedure_resolution,
+    )
+
+    check_permission("cruxible_procedure_dispose", instance_id=instance_id)
+    actor_context = _write_actor_context(instance_id)
+    if actor_context is None:
+        raise AuthenticationError("Resolution review requires an authenticated actor identity")
+    return service_dispose_procedure_resolution(
+        get_playbill_manager().get(instance_id),
+        name=name,
+        request=request,
+        actor_context=actor_context,
+        recorded_at=actor_context.timestamp,
+    )
+
+
 def playbill_procedure_readings(
     instance_id: str,
     name: str,

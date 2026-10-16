@@ -136,9 +136,9 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # added `inbox list|get|ack|dismiss|link`; incremental next added `instance rebuild-next`;
     # `action run` adds one more; `files add|remove` add two and `curation observe` left;
     # `authoring rebase` and `claim recover-attestation` left.
-    # Multi-build adds provider move and provider retire.
-    assert len(leaf_claims) == 108, (
-        f"expected 108 Cruxible/host leaf commands, found {len(leaf_claims)}"
+    # Multi-build adds provider move and provider retire; measurement review adds procedure dispose.
+    assert len(leaf_claims) == 109, (
+        f"expected 109 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

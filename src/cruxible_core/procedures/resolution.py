@@ -6,9 +6,10 @@ import hashlib
 import pickle
 import re
 import threading
+import weakref
 from collections import OrderedDict, defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Literal, Protocol
@@ -32,7 +33,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.claims import claim_path, claim_statement_address
-from cruxible_client.contracts.errors import ExecutionError
+from cruxible_client.contracts.errors import ExecutionError, JournalConflictError
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.measurements import (
@@ -53,11 +54,12 @@ from cruxible_core.exhaust import (
     ProcedureExhaustWriter,
     StoredProcedureJournalRecordV1,
 )
-from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
+from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload, read_payload_bytes
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.graph_digests import cached_node_digests
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
+from cruxible_core.storage.landing_log import LandingHead
 
 ResolutionVerdictV1 = Literal["satisfied", "contradicted", "indeterminate"]
 ResolutionSettlementVerdictV2 = Literal["satisfied", "contradicted"]
@@ -1383,8 +1385,8 @@ class _ResolutionFold:
     resolution, per resolution its disposition count and last verdict, keyed
     lookups by resolution ID. Values are kept pickled and every read hands out
     a fresh copy, so no caller can change what a later one sees. Every map is
-    persistent: extending by new records shares the rest. ``payloads`` holds the
-    CAS file identity of every payload the fold was derived from.
+    persistent: extending by new records shares the rest. Payload availability is
+    maintained separately from sequenced CAS changes, indexed by affected book.
 
     Why the latest non-overturned resolution is the contract's last one or
     none: a later resolution is admitted only once its predecessor's last
@@ -1397,10 +1399,11 @@ class _ResolutionFold:
     counts: PersistentMap[int]
     last: PersistentMap[str]
     resolutions: PersistentMap[tuple[str, bytes]]
-    dispositions: PersistentMap[tuple[int, str]]
+    dispositions: PersistentMap[tuple[int, str, bytes]]
     records: PersistentMap[bytes]
     event_kinds: frozenset[str]
-    payloads: PersistentMap[tuple[int, ...] | None]
+    review_counts: PersistentMap[int]
+    reviews: PersistentMap[bytes]
     unavailable: tuple[UnavailablePayload, ...] = ()
 
     @classmethod
@@ -1414,7 +1417,8 @@ class _ResolutionFold:
             PersistentMap(),
             PersistentMap(),
             frozenset(),
-            PersistentMap(),
+            review_counts=PersistentMap(),
+            reviews=PersistentMap(),
         )
 
     def extend(
@@ -1433,11 +1437,11 @@ class _ResolutionFold:
                 head_digest=None if head is None else head.record_digest,
             )
         counts, last, resolutions = self.counts, self.last, self.resolutions
-        dispositions, kept, kinds, payloads = (
+        review_counts, reviews = self.review_counts, self.reviews
+        dispositions, kept, kinds = (
             self.dispositions,
             self.records,
             self.event_kinds,
-            self.payloads,
         )
         for stored in records:
             kind = stored.record.event_kind
@@ -1446,9 +1450,6 @@ class _ResolutionFold:
             if kind not in _RESOLUTION_EVENTS:
                 continue
             digest = stored.record.payload_digest
-            # The identity is taken before the read: a file changed after it was
-            # verified then shows a different identity at the next validation.
-            identity = bodies.file_identity(digest)
             payload = read_payload(bodies, digest, access=_REPLAY_ACCESS)
             if isinstance(payload, UnavailablePayload):
                 return replace(
@@ -1457,7 +1458,6 @@ class _ResolutionFold:
                     head_digest=None if head is None else head.record_digest,
                     unavailable=(payload,),
                 )
-            payloads = payloads.set(digest, identity)
             try:
                 if kind == "resolution":
                     resolution = _parse_resolution(payload)
@@ -1492,11 +1492,17 @@ class _ResolutionFold:
                         raise ExecutionError(
                             "an answered overturn cannot be revised on an older resolution"
                         )
-                    count = dispositions.get(disposition.resolution_id, (0, ""))[0]
+                    count = dispositions.get(disposition.resolution_id, (0, "", b""))[0]
                     if disposition.sequence != count + 1:
                         raise ExecutionError("resolution disposition sequence is discontinuous")
                     dispositions = dispositions.set(
-                        disposition.resolution_id, (count + 1, disposition.verdict)
+                        disposition.resolution_id,
+                        (count + 1, disposition.verdict, _frozen(disposition)),
+                    )
+                    review_sequence = review_counts.get(target.contract_id, 0) + 1
+                    review_counts = review_counts.set(target.contract_id, review_sequence)
+                    reviews = reviews.set(
+                        f"{target.contract_id}:{review_sequence}", _frozen(disposition)
                     )
             except ValueError as exc:
                 raise ExecutionError("resolution exhaust payload is invalid") from exc
@@ -1509,41 +1515,9 @@ class _ResolutionFold:
             dispositions=dispositions,
             records=kept,
             event_kinds=kinds,
-            payloads=payloads,
+            review_counts=review_counts,
+            reviews=reviews,
         )
-
-    def payloads_hold(self, bodies: ContentAddressedBodyStore) -> _ResolutionFold:
-        """This fold, once every payload it rests on is still what was read.
-
-        One identity check per payload: unchanged, the bytes it was derived from
-        are still there. A payload whose file changed is read and verified again,
-        reporting the partition unavailable when bytes are missing or damaged;
-        verified, the fold stands (the address is the content).
-        The identity remembered for it is the one taken before that verified
-        read, never a stat after it: a file replaced after the read then shows a
-        different identity and is verified again, so no unverified bytes are
-        ever blessed.
-        """
-        moved: dict[str, tuple[int, ...] | None] = {}
-        for digest, identity in self.payloads.items():
-            current = bodies.file_identity(digest)
-            if current is not None and current == identity:
-                continue
-            payload = read_payload(bodies, digest, access=_REPLAY_ACCESS)
-            if isinstance(payload, UnavailablePayload):
-                return replace(
-                    _ResolutionFold.empty(),
-                    head_sequence=self.head_sequence,
-                    head_digest=self.head_digest,
-                    unavailable=(payload,),
-                )
-            moved[digest] = current
-        if not moved:
-            return self
-        payloads = self.payloads
-        for digest, identity in moved.items():
-            payloads = payloads.set(digest, identity)
-        return replace(self, payloads=payloads)
 
 
 def _frozen(value: object) -> bytes:
@@ -1570,11 +1544,27 @@ class ResolutionBookView:
         return None if resolution_id is None else self.resolution_by_id(resolution_id)
 
     def disposition_count(self, resolution_id: str) -> int:
-        return self._fold.dispositions.get(resolution_id, (0, ""))[0]
+        return self._fold.dispositions.get(resolution_id, (0, "", b""))[0]
 
     def last_disposition_verdict(self, resolution_id: str) -> str | None:
         state = self._fold.dispositions.get(resolution_id)
         return None if state is None else state[1]
+
+    def last_disposition(self, resolution_id: str) -> ProcedureResolutionDispositionV1 | None:
+        state = self._fold.dispositions.get(resolution_id)
+        return None if state is None else pickle.loads(state[2])
+
+    def review_count(self, contract_id: str) -> int:
+        return self._fold.review_counts.get(contract_id, 0)
+
+    def review_history(
+        self, contract_id: str, *, limit: int
+    ) -> tuple[ProcedureResolutionDispositionV1, ...]:
+        count = self.review_count(contract_id)
+        return tuple(
+            pickle.loads(self._fold.reviews[f"{contract_id}:{sequence}"])
+            for sequence in range(count, max(0, count - limit), -1)
+        )
 
     def resolution_by_id(
         self, resolution_id: str
@@ -1598,8 +1588,71 @@ class ResolutionBookView:
         return kind in self._fold.event_kinds
 
 
+@dataclass(eq=False)
+class _CachedResolutionFold:
+    fold: _ResolutionFold
+    bodies: _ResolutionBodyChanges
+    changed: set[str] = field(default_factory=set)
+    blocked: PersistentMap[UnavailablePayload] = field(default_factory=PersistentMap)
+    unavailable: tuple[UnavailablePayload, ...] = ()
+    subscriptions: dict[str, weakref.WeakSet[_CachedResolutionFold]] = field(default_factory=dict)
+
+
+class _ResolutionBodyChanges:
+    """One CAS suffix cursor, with payload-to-book subscriptions.
+
+    A clean request reads only the landing head. Each new completion visits
+    only books using that digest; each such book rechecks only changed inputs.
+    Weak subscriptions expire with entries in the bounded book cache.
+    """
+
+    def __init__(self, head: LandingHead) -> None:
+        self.head = head
+        self.users: weakref.WeakValueDictionary[str, weakref.WeakSet[_CachedResolutionFold]] = (
+            weakref.WeakValueDictionary()
+        )
+
+    def catch_up(self, bodies: ContentAddressedBodyStore, head: LandingHead) -> None:
+        if head.sequence == self.head.sequence:
+            return
+        for row in bodies.landings.after(
+            self.head.sequence, through=head.sequence, identity=head.identity
+        ):
+            if not row.intent:
+                for book in self.users.get(row.digest, ()):
+                    book.changed.add(row.digest)
+        self.head = head
+
+    def subscribe(
+        self,
+        cached: _CachedResolutionFold,
+        records: tuple[StoredProcedureJournalRecordV1, ...],
+        bodies: ContentAddressedBodyStore,
+    ) -> None:
+        for stored in records:
+            if stored.record.event_kind not in _RESOLUTION_EVENTS:
+                continue
+            digest = stored.record.payload_digest
+            # Journal payloads initially bypass the evidence landing log. Enrol
+            # each newly consumed input once, so byte verification/sweeps can
+            # publish damage and repairs for it as for other retained bodies.
+            log = bodies.landings
+            head = log.head()
+            if log.last_completion(digest, identity=head.identity, sequence=head.sequence) is None:
+                log.ensure_landed(digest)
+                head = log.head()
+            # Consume enrolment before subscribing the new input: its verified
+            # fold read below covers this completion, without a second read on
+            # the next clean request. Existing subscribers still see changes.
+            self.catch_up(bodies, head)
+            users = self.users.setdefault(digest, weakref.WeakSet())
+            users.add(cached)
+            cached.subscriptions[digest] = users
+
+
 _BOOK_CAPACITY = 256
-_BOOKS: OrderedDict[tuple[object, ...], _ResolutionFold] = OrderedDict()
+_BOOKS: OrderedDict[tuple[object, ...], _CachedResolutionFold] = OrderedDict()
+_BODY_CHANGES: OrderedDict[str, _ResolutionBodyChanges] = OrderedDict()
 _BOOKS_LOCK = threading.Lock()
 
 
@@ -1610,24 +1663,19 @@ def resolution_book_at_head(
     *,
     bodies: ContentAddressedBodyStore,
 ) -> tuple[ResolutionBookView, JournalPartitionHeadV1 | None]:
-    """One contract partition's resolution answers through its current head.
+    """Incremental journal fold with change-driven CAS availability.
 
-    This process keeps the fold it last made for a partition (keyed by journal,
-    CAS, stream, partition and the activation's content digest) with the head it
-    reached. A later call first checks that every payload the fold rests on is
-    still the file that was read (``payloads_hold``), then extends it with only
-    the records after that head, read through the journal index (each new frame
-    verified against its indexed predecessor). A head that does not extend the
-    kept one, or a journal without an index, folds the whole partition. The
-    returned view shares the immutable fold; values it hands out are copies.
+    Cold books validate the whole partition. Warm books consume journal and
+    landing-log suffixes only. CAS completions invalidate just their subscribed
+    books/inputs; a damaged book stays unavailable until repair, when a failed
+    cold fold may be rebuilt. No request stats the retained payload population.
     """
-
     partition_id = resolution_contract_partition_id(activation)
     activations = {activation.contract_id: activation}
     read_head = getattr(journal, "read_head", None)
     select = getattr(journal, "select_records", None)
     all_records = getattr(journal, "all_records")
-    if read_head is None or select is None or not hasattr(bodies, "file_identity"):
+    if read_head is None or select is None:
         whole = _ResolutionFold.empty().extend(
             tuple(all_records(stream, partition_id)),
             activations=activations,
@@ -1635,57 +1683,96 @@ def resolution_book_at_head(
             head=None,
         )
         return ResolutionBookView(whole), None
-    head: JournalPartitionHeadV1 = read_head(stream, partition_id)
     key = (
         str(getattr(journal, "root", id(journal))),
-        str(getattr(bodies, "root", id(bodies))),
+        str(bodies.root),
         stream.instance_id,
         stream.journal_family,
         stream.stream_id,
         partition_id,
-        # The activation every record is checked against, by content.
         hashlib.sha256(canonical_bytes(activation.model_dump(mode="json"))).hexdigest(),
     )
+    # Serialize publication of the fold and its dependency subscriptions. No
+    # journal/accepted-state lock is acquired here beyond ordinary indexed reads.
     with _BOOKS_LOCK:
-        held = _BOOKS.get(key)
-        if held is not None:
-            _BOOKS.move_to_end(key)
-    fold: _ResolutionFold | None = None
-    if held is not None and 0 < held.head_sequence <= head.sequence:
-        if held.head_sequence == head.sequence:
-            if held.head_digest == head.record_digest:
-                fold = held.payloads_hold(bodies)
+        head: JournalPartitionHeadV1 = read_head(stream, partition_id)
+        landing_head = bodies.landings.head()
+        root = str(bodies.root)
+        changes = _BODY_CHANGES.get(root)
+        if (
+            changes is None
+            or changes.head.identity != landing_head.identity
+            or changes.head.sequence > landing_head.sequence
+        ):
+            changes = _ResolutionBodyChanges(landing_head)
+            _BODY_CHANGES[root] = changes
+        changes.catch_up(bodies, landing_head)
+        _BODY_CHANGES.move_to_end(root)
+        while len(_BODY_CHANGES) > _BOOK_CAPACITY:
+            _BODY_CHANGES.popitem(last=False)
+        cached = _BOOKS.get(key)
+        if cached is None or cached.bodies is not changes:
+            cached = _CachedResolutionFold(_ResolutionFold.empty(), changes)
         else:
-            added = tuple(
-                select(
-                    stream,
-                    partition_id=partition_id,
-                    first_sequence=held.head_sequence + 1,
-                    last_sequence=head.sequence,
+            for digest in cached.changed:
+                payload = read_payload_bytes(bodies, digest, access=_REPLAY_ACCESS)
+                if isinstance(payload, UnavailablePayload):
+                    cached.blocked = cached.blocked.set(digest, payload)
+                else:
+                    cached.blocked = cached.blocked.delete(digest)
+            if cached.changed:
+                # Keep the single unavailable witness supplied by the old fold.
+                # Choosing it costs a tree seek only when damage/repair changes;
+                # clean refusals reuse it without enumerating damaged inputs.
+                cached.unavailable = (
+                    (next(iter(cached.blocked.values())),) if cached.blocked else ()
                 )
-            )
-            if (
-                len(added) == head.sequence - held.head_sequence
-                and added[0].record.previous_record_digest == held.head_digest
-                and added[-1].record_digest == head.record_digest
-            ):
-                fold = held.payloads_hold(bodies).extend(
-                    added, activations=activations, bodies=bodies, head=head
-                )
-    if fold is None:
-        fold = _ResolutionFold.empty().extend(
-            tuple(all_records(stream, partition_id)[: head.sequence]),
-            activations=activations,
-            bodies=bodies,
-            head=head,
-        )
-    if head.sequence > 0:
-        with _BOOKS_LOCK:
-            _BOOKS[key] = fold
+            cached.changed.clear()
+        fold = cached.fold
+        if not cached.blocked:
+            added = None
+            if not fold.unavailable and 0 < fold.head_sequence <= head.sequence:
+                if fold.head_sequence == head.sequence:
+                    if fold.head_digest == head.record_digest:
+                        added = ()
+                else:
+                    suffix = tuple(
+                        select(
+                            stream,
+                            partition_id=partition_id,
+                            first_sequence=fold.head_sequence + 1,
+                            last_sequence=head.sequence,
+                        )
+                    )
+                    if (
+                        len(suffix) == head.sequence - fold.head_sequence
+                        and suffix[0].record.previous_record_digest == fold.head_digest
+                        and suffix[-1].record_digest == head.record_digest
+                    ):
+                        added = suffix
+            if added is None:
+                # Cold/replaced journal or repair of an unavailable cold fold.
+                fold = _ResolutionFold.empty()
+                added = tuple(all_records(stream, partition_id)[: head.sequence])
+            changes.subscribe(cached, added, bodies)
+            fold = fold.extend(added, activations=activations, bodies=bodies, head=head)
+            cached.fold = fold
+            for item in fold.unavailable:
+                cached.blocked = cached.blocked.set(item.digest, item)
+            cached.unavailable = fold.unavailable
+        if head.sequence > 0:
+            _BOOKS[key] = cached
             _BOOKS.move_to_end(key)
             while len(_BOOKS) > _BOOK_CAPACITY:
                 _BOOKS.popitem(last=False)
-    return ResolutionBookView(fold), head
+        if cached.blocked:
+            fold = replace(
+                _ResolutionFold.empty(),
+                head_sequence=head.sequence,
+                head_digest=head.record_digest,
+                unavailable=cached.unavailable,
+            )
+        return ResolutionBookView(fold), head
 
 
 def append_procedure_resolution(
@@ -1746,11 +1833,18 @@ def append_resolution_disposition(
     resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
     disposition: ProcedureResolutionDispositionV1,
     stream: JournalStreamIdentityV1,
+    expected_head: JournalPartitionHeadV1 | None = None,
 ) -> StoredProcedureJournalRecordV1:
     partition_id = resolution_contract_partition_id(activation)
     if disposition.resolution_id != resolution.resolution_id:
         raise ExecutionError("resolution disposition names another resolution")
     book, _head = resolution_book_at_head(writer.journal, stream, activation, bodies=writer.bodies)
+    # Validate against the immutable book at the caller's decision head. A
+    # competitor landing before this reread is a CAS conflict, before semantic
+    # checks can misclassify its valid new sequence/latest answer as corruption.
+    # A competitor landing after this reread is caught by writer.append's CAS.
+    if expected_head is not None and _head != expected_head:
+        raise JournalConflictError("resolution disposition expected head is stale or substituted")
     if book.unavailable:
         raise ExecutionError("resolution exhaust payload is unavailable")
     stored_resolution = book.resolution_by_id(resolution.resolution_id)
@@ -1771,6 +1865,7 @@ def append_resolution_disposition(
         actor_context=disposition.reviewer_actor_context,
         recorded_at=disposition.recorded_at,
         payload=disposition.model_dump(mode="json"),
+        expected_head=expected_head,
     )
 
 

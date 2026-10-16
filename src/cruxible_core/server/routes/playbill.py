@@ -1182,6 +1182,20 @@ def procedure_measure(
 
 
 @router.post(
+    "/{instance_id}/procedures/{name}/resolution-dispositions",
+    response_model=contracts.ProcedureResolutionDispositionResult,
+)
+def procedure_dispose(
+    instance_id: str,
+    name: str,
+    req: contracts.ProcedureResolutionDispositionRequest,
+) -> contracts.ProcedureResolutionDispositionResult:
+    return playbill_api.playbill_procedure_dispose(
+        resolve_server_instance_id(instance_id), name, request=req
+    )
+
+
+@router.post(
     "/{instance_id}/procedures/{name}/readings",
     response_model=contracts.ProcedureReadingsResult,
 )

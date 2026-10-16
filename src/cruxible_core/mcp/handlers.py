@@ -1381,6 +1381,17 @@ def handle_playbill_procedure_measure(
     )
 
 
+def handle_playbill_procedure_dispose(
+    instance_id: str,
+    name: str,
+    request: contracts.ProcedureResolutionDispositionRequest,
+) -> contracts.ProcedureResolutionDispositionResult:
+    return _daemon_call(
+        lambda client: client.dispose_procedure_resolution(instance_id, name, request=request),
+        operation_name="cruxible_procedure_dispose",
+    )
+
+
 def handle_playbill_procedure_readings(
     instance_id: str,
     name: str,

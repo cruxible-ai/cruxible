@@ -1325,6 +1325,22 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_procedure_dispose(
+        instance_id: InstanceId = None,
+        *,
+        name: str,
+        request: contracts.ProcedureResolutionDispositionRequest,
+    ) -> contracts.ProcedureResolutionDispositionResult:
+        """Record your upheld/overturned judgment and reason on a measurement resolution.
+
+        Find resolution_id in procedure readings or get Procedure:NAME. Core
+        records your judgment; overturn reopens the latest answer's contract.
+        """
+        return handlers.handle_playbill_procedure_dispose(
+            require_instance_id(instance_id), name, request
+        )
+
+    @_tool
     def cruxible_procedure_readings(
         instance_id: InstanceId = None,
         *,

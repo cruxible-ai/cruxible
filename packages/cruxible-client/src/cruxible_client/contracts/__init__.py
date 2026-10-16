@@ -208,6 +208,18 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureNodeSupport,
     ProcedureRunnable,
 )
+from cruxible_client.contracts.procedures.dispositions import (
+    ProcedureMeasurementReview as ProcedureMeasurementReview,
+)
+from cruxible_client.contracts.procedures.dispositions import (
+    ProcedureResolutionDispositionRequest as ProcedureResolutionDispositionRequest,
+)
+from cruxible_client.contracts.procedures.dispositions import (
+    ProcedureResolutionDispositionResult as ProcedureResolutionDispositionResult,
+)
+from cruxible_client.contracts.procedures.dispositions import (
+    ResolutionDispositionSummary as ResolutionDispositionSummary,
+)
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasurementContractStatus as ProcedureMeasurementContractStatus,
 )

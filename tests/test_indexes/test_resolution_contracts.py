@@ -63,7 +63,7 @@ from cruxible_core.procedures.resolution import (
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import ChangeActorBinding
-from cruxible_core.storage.cas import ContentAddressedBodyStore
+from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from tests.core_support._subject_kind_support import declare_created_kinds, world_history
 from tests.core_support._support import client_material, initialize_local
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK, accepted_procedure
@@ -588,10 +588,19 @@ def _same_answers(view, book, activation) -> None:  # type: ignore[no-untyped-de
             item.resolution_id
         )
         dispositions = book.dispositions.get(item.resolution_id, [])
+        assert view.last_disposition(item.resolution_id) == (
+            dispositions[-1] if dispositions else None
+        )
         assert view.disposition_count(item.resolution_id) == len(dispositions)
         assert view.last_disposition_verdict(item.resolution_id) == (
             dispositions[-1].verdict if dispositions else None
         )
+
+    all_reviews = [
+        review for item in resolutions for review in book.dispositions.get(item.resolution_id, [])
+    ]
+    assert view.review_count(contract) == len(all_reviews)
+    assert view.review_history(contract, limit=3) == tuple(reversed(all_reviews[-3:]))
 
 
 def test_a_resolution_book_extends_from_its_last_head_and_equals_a_full_replay(
@@ -669,7 +678,7 @@ def _assert_unavailable_as_a_replay(  # type: ignore[no-untyped-def]
 
 @pytest.mark.parametrize("damage", ["erase", "corrupt", "same_bytes_new_file"])
 def test_a_kept_fold_refuses_exactly_as_a_replay_after_payload_damage(tmp_path, damage) -> None:
-    """Review F-002: the kept fold is reused only while every payload it rests on holds."""
+    """Sequenced erase/damage changes invalidate only their subscribed books."""
 
     from cruxible_core.procedures.resolution import resolution_book_at_head
 
@@ -689,6 +698,8 @@ def test_a_kept_fold_refuses_exactly_as_a_replay_after_payload_damage(tmp_path, 
     else:
         path.unlink()
         path.write_bytes(b"{}" if damage == "corrupt" else original)
+        # The evidence sweep/direct verification publishes out-of-band damage.
+        bodies.availability(digest)
     if damage == "same_bytes_new_file":
         view, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
         replayed = _replayed(activation, journal, bodies, stream, partition_id)
@@ -707,7 +718,7 @@ def test_a_kept_fold_refuses_exactly_as_a_replay_after_payload_damage(tmp_path, 
 def test_a_fixed_append_and_lookup_cost_the_same_at_two_history_sizes(
     tmp_path, monkeypatch
 ) -> None:
-    """Review F-005: no copy or search grows with the partition; only identity checks do."""
+    """All work for a fixed append and lookup is independent of retained history."""
 
     from cruxible_core.procedures import resolution as module
     from cruxible_core.procedures.resolution import resolution_book_at_head
@@ -740,25 +751,21 @@ def test_a_fixed_append_and_lookup_cost_the_same_at_two_history_sizes(
             patch.setattr(module.pickle, "loads", counted_loads)
             _answer(activation, writer, stream, history + 1, overturn=False)
             view, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
-            assert view.latest_non_overturned(activation.contract_id) is not None
+            latest = view.latest_non_overturned(activation.contract_id)
+            assert latest is not None
+            assert view.last_disposition(latest.resolution_id) is None
+            assert len(view.review_history(activation.contract_id, limit=1)) == 1
         return counts["read"], counts["loads"], counts["stat"]
 
     small, large = work(2, "small"), work(6, "large")
-    # Payload reads and value detachments are fixed by the change.
-    assert small[:2] == large[:2], (small, large)
-    # The validity check is one identity stat per retained payload (reported in Cost).
-    assert large[2] > small[2]
+    assert small == large, (small, large)
+    assert small[2] == 0
 
 
-def test_payload_revalidation_never_remembers_an_unverified_file_identity(
+def test_damage_landing_after_verified_read_invalidates_the_next_book(
     tmp_path, monkeypatch
 ) -> None:
-    """Review F-008: a file replaced right after its verified read is never blessed.
-
-    The fold must remember the identity taken before the verified read; a later
-    call, with no writer running, reads the damaged payload unavailable as a replay
-    does, and the next append refuses.
-    """
+    """A sweep finding damage after a verified read is consumed on the next call."""
 
     from cruxible_core.procedures.resolution import resolution_book_at_head
 
@@ -772,15 +779,16 @@ def test_payload_revalidation_never_remembers_an_unverified_file_identity(
     )
     path = bodies._path(digest)
     original = path.read_bytes()
-    path.unlink()
-    path.write_bytes(original)  # A valid replacement forces revalidation.
+    assert bodies.erase(digest)
+    bodies.store(original)  # Sequenced restoration forces changed-input verification.
     read = bodies.read
 
     def replaced_after_verified_read(asked, *, access):  # type: ignore[no-untyped-def]
         content = read(asked, access=access)
         if asked == digest:
             path.unlink()
-            path.write_bytes(b"{}")  # The pathname changes after the verified read.
+            path.write_bytes(b"{}")  # Damage after the verified read.
+            assert bodies.availability(digest) == "corrupt"
         return content
 
     with monkeypatch.context() as patch:
@@ -789,3 +797,131 @@ def test_payload_revalidation_never_remembers_an_unverified_file_identity(
     _assert_unavailable_as_a_replay(
         activation, journal, bodies, stream, partition_id, writer, digest
     )
+
+
+def test_cas_changes_only_visit_affected_books_and_repair_without_a_history_scan(
+    tmp_path, monkeypatch
+):
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    activation, journal, bodies, stream, partition, writer = _resolution_partition(tmp_path)
+    for sequence in range(1, 7):
+        _answer(activation, writer, stream, sequence, overturn=True)
+    second = accepted_procedure(
+        _accepted().procedure.definition.model_copy(update={"name": "other-measured"}),
+        activation_policy="snapshot",
+    )
+    other = derive_resolution_activations(
+        second, accepted_coordinate=_coordinate(), activated_at=NOW
+    )[2]
+    other_partition = resolution_contract_partition_id(other)
+    journal.activate_writer(
+        stream,
+        other_partition,
+        fencing_token="writer",
+        expected_head=journal.read_head(stream, other_partition),
+    )
+    _answer(other, writer, stream, 1, overturn=False)
+    view, _ = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    resolution_book_at_head(journal, stream, other, bodies=bodies)
+    digest = view.resolution_record(
+        view.latest_resolution(activation.contract_id).resolution_id
+    ).record.payload_digest
+    original = bodies.read(
+        digest, access=BodyAccessContext(principal_id="test", can_read_body=True)
+    )
+    assert bodies.erase(digest)
+    reads = []
+    read = bodies.read
+
+    def counted_read(asked, *, access):
+        reads.append(asked)
+        return read(asked, access=access)
+
+    def no_rebuild(*args, **kwargs):
+        pytest.fail("A warm fold walked journal history.")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(bodies, "read", counted_read)
+        patch.setattr(journal, "all_records", no_rebuild)
+        unaffected, _ = resolution_book_at_head(journal, stream, other, bodies=bodies)
+        assert not unaffected.unavailable and reads == []
+        damaged, _ = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+        assert damaged.unavailable and reads == [digest]
+        # The unavailable book is maintained too; no repeated payload checks.
+        resolution_book_at_head(journal, stream, activation, bodies=bodies)
+        assert reads == [digest]
+        bodies.store(original)
+        restored, _ = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+        assert not restored.unavailable and reads == [digest, digest]
+        assert restored.resolution_count(activation.contract_id) == 6
+    _same_answers(restored, _replayed(activation, journal, bodies, stream, partition), activation)
+
+
+def test_stale_disposition_head_is_a_conflict_but_bad_sequence_is_integrity_failure(tmp_path):
+    from cruxible_client.contracts.errors import JournalConflictError
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    activation, journal, bodies, stream, partition, writer = _resolution_partition(tmp_path)
+    first = _answer(activation, writer, stream, 1, overturn=False)
+    _, before = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    disposition = build_resolution_disposition(
+        first,
+        sequence=1,
+        verdict="upheld",
+        reviewer_actor_context=_actor("reviewer"),
+        recorded_at=NOW + timedelta(seconds=11),
+        note="Checked.",
+    )
+    append_resolution_disposition(
+        writer,
+        activation=activation,
+        resolution=first,
+        disposition=disposition,
+        stream=stream,
+        expected_head=before,
+    )
+    with pytest.raises(JournalConflictError):
+        append_resolution_disposition(
+            writer,
+            activation=activation,
+            resolution=first,
+            disposition=disposition,
+            stream=stream,
+            expected_head=before,
+        )
+    with pytest.raises(ExecutionError, match="sequence is discontinuous"):
+        append_resolution_disposition(
+            writer,
+            activation=activation,
+            resolution=first,
+            disposition=disposition.model_copy(update={"sequence": 4}),
+            stream=stream,
+            expected_head=journal.read_head(stream, partition),
+        )
+
+
+@pytest.mark.parametrize("history", [2, 8])
+def test_unavailable_book_retains_one_witness_without_rechecking_damaged_history(
+    tmp_path, monkeypatch, history
+):
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    activation, journal, bodies, stream, partition, writer = _resolution_partition(tmp_path)
+    for sequence in range(1, history + 1):
+        _answer(activation, writer, stream, sequence, overturn=True)
+    resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    for record in journal.all_records(stream, partition):
+        if record.record.event_kind == "resolution":
+            assert bodies.erase(record.record.payload_digest)
+    damaged, _ = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    assert len(damaged.unavailable) == 1
+    assert damaged.latest_resolution(activation.contract_id) is None
+
+    def no_read(*args, **kwargs):
+        pytest.fail("A clean unavailable-book lookup rechecked a payload.")
+
+    monkeypatch.setattr(bodies, "read", no_read)
+    monkeypatch.setattr(bodies, "file_identity", no_read)
+    repeated, _ = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    assert repeated.unavailable == damaged.unavailable

@@ -249,6 +249,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "run's exact grain. Retrying replays the standing answer; pending and expired windows "
         "write nothing."
     ),
+    "cruxible_procedure_dispose": (
+        "Record your upheld or overturned judgment and reason on the latest measurement "
+        "resolution, attributed to your authenticated principal. Find its resolution_id "
+        "in procedure readings or get Procedure:NAME. Exact retries reuse the judgment; "
+        "overturn clears the standing answer without extending its measurement window."
+    ),
     "cruxible_procedure_readings": (
         "Use when you need each measurement's standing (pending, expired, resolved) and the "
         "retained exact-grain readings that credit real runs. Read-only and paginated."

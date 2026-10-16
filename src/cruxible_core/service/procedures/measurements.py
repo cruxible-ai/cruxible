@@ -465,8 +465,12 @@ def _resolution_summary(
 ) -> ProcedureMeasurementResolutionSummary | None:
     if state.latest is None or state.latest_record is None:
         return None
+    from cruxible_core.service.procedures.resolution_dispositions import disposition_summary
+
     resolution = state.latest
+    disposition = state.book.last_disposition(resolution.resolution_id)
     return ProcedureMeasurementResolutionSummary(
+        last_disposition=None if disposition is None else disposition_summary(disposition),
         resolution_id=resolution.resolution_id,
         contract_id=resolution.contract_id,
         sequence=resolution.sequence,
@@ -1731,6 +1735,8 @@ def service_list_playbill_procedure_readings(
 ) -> ProcedureReadingsResult:
     """Bounded, read-only inspection of contract standing and retained readings."""
 
+    from cruxible_core.service.procedures.resolution_dispositions import measurement_review
+
     selection = _selection_digest(request)
     continuation = (
         None if not request.cursor else _parse_cursor(request.cursor, selection=selection)
@@ -1823,6 +1829,7 @@ def service_list_playbill_procedure_readings(
                 ),
                 eligibility=eligibility,
                 resolution=_resolution_summary(state, written_now=False),
+                review=measurement_review(state.book, activation),
                 reading_count=counts.get(activation.contract_id, 0),
             )
         )
