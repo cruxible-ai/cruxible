@@ -129,8 +129,14 @@ def _delivered(instance, state):  # type: ignore[no-untyped-def]
     return egress
 
 
-def test_a_subject_item_creates_by_key_and_a_claim_item_names_it_by_key(tmp_path: Path) -> None:
-    instance, owner, root, line = subject_world(tmp_path, (subject_item(), keyed_claim_item()))
+@pytest.mark.parametrize("bare", [False, True])
+def test_a_subject_item_creates_by_key_and_a_claim_item_names_it_by_key(
+    tmp_path: Path, bare: bool
+) -> None:
+    template = keyed_claim_item()
+    if bare:
+        template["statement"]["subject"]["key"] = "click"  # type: ignore[index]
+    instance, owner, root, line = subject_world(tmp_path, (subject_item(), template))
 
     egress = _delivered(instance, delivery.run_line(instance, root, line))
 

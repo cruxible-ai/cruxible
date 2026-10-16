@@ -339,7 +339,11 @@ def _creation_address(value: object) -> SemanticAddress | None:
 def _key_reference_text(value: SubjectKeyReference) -> str:
     """How a key reference reads in a program stamp: ``kind{key part=value, ...}``."""
 
-    parts = ", ".join(f"{name}={part!r}" for name, part in sorted(value.key.items()))
+    parts = (
+        ", ".join(f"{name}={part!r}" for name, part in sorted(value.key.items()))
+        if isinstance(value.key, dict)
+        else repr(value.key)
+    )
     return f"{value.subject_kind}{{{parts}}}"
 
 

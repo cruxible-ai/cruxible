@@ -66,6 +66,12 @@ Or author it in Python: a `Sequence` of steps from
 implementation. A definition that leaves a provider slot open is a Blueprint,
 which never runs; instantiate it to get a Procedure.
 
+In a v3 Claim proposal item, name a one-key Subject with
+`{"subject_kind": "sec.package", "key": "$item.package"}`. The same reference
+works for a Subject-valued object (`kind: "subject_key"`, `subject: {...}`).
+For a composite key, map each part by name. A matching Subject item in the
+terminal creates or reuses the Subject; the Claim item states the real fact.
+
 Check, then submit:
 
 ```bash

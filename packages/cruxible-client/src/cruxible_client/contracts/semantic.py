@@ -67,10 +67,10 @@ _SUBJECT_KEY_MAX_PARTS = 8
 _SUBJECT_KEY_MAX_BYTES = 8192
 
 
-def subject_key_selector_value(key: Mapping[str, object]) -> str:
+def subject_key_selector_value(key: Mapping[str, object] | str | int | bool) -> str:
     """The one spelling of a key a ``subject-key-v1`` selector carries: canonical JSON."""
 
-    return canonical_bytes(dict(key)).decode("utf-8")
+    return canonical_bytes(dict(key) if isinstance(key, Mapping) else key).decode("utf-8")
 
 
 def _validate_subject_key(value: str) -> str:
@@ -78,6 +78,15 @@ def _validate_subject_key(value: str) -> str:
         key = json.loads(value)
     except ValueError as exc:
         raise ValueError("subject-key-v1 selector must be a JSON object of key parts") from exc
+    # Bare input is expanded to the existing mapping at the authoring boundary,
+    # before a valid intent's identity or digest is minted.
+    if isinstance(key, str | int | bool) and not isinstance(key, float):
+        if (
+            len(value.encode("utf-8")) > _SUBJECT_KEY_MAX_BYTES
+            or subject_key_selector_value(key) != value
+        ):
+            raise ValueError("subject-key-v1 selector must be the key's canonical JSON")
+        return value
     if (
         not isinstance(key, dict)
         or not 1 <= len(key) <= _SUBJECT_KEY_MAX_PARTS
@@ -199,7 +208,9 @@ class SemanticAddress(_StrictSemanticModel):
         )
 
     @classmethod
-    def subject_key(cls, subject_kind: str, key: Mapping[str, object]) -> "SemanticAddress":
+    def subject_key(
+        cls, subject_kind: str, key: Mapping[str, object] | str | int | bool
+    ) -> "SemanticAddress":
         """The Subject of ``subject_kind`` that ``key`` names, resolved when lowered."""
 
         return cls(
@@ -210,13 +221,13 @@ class SemanticAddress(_StrictSemanticModel):
         )
 
     @property
-    def subject_key_reference(self) -> tuple[str, dict[str, object]] | None:
+    def subject_key_reference(self) -> tuple[str, dict[str, object] | str | int | bool] | None:
         """``(kind, key)`` of a ``subject-key-v1`` address; None for any other."""
 
         if self.selector.scheme != "subject-key-v1":
             return None
         kind = self.artifact_path.removeprefix("subject-kinds/").removesuffix(".json")
-        return kind, dict(json.loads(self.selector.value))
+        return kind, json.loads(self.selector.value)
 
     @classmethod
     def claim_statement(cls, artifact_path: str) -> "SemanticAddress":

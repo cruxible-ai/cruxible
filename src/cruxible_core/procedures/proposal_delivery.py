@@ -100,6 +100,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import (
     SubjectKeyPart,
     SubjectKeyReference,
+    key_reference_mapping,
     live_subject_kind,
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
@@ -806,21 +807,23 @@ class _SubjectKeys:
 
     def address(self, reference: SubjectKeyReference) -> SemanticAddress:
         kind = reference.subject_kind
+        declared = live_subject_kind(self.base_tree, kind)
         try:
-            key = self.key(kind, reference.key)
-        except SubjectKeyInvalid as exc:
+            given = key_reference_mapping(declared, reference.key) if declared is not None else {}
+            key = self.key(kind, given)
+        except (SubjectKeyInvalid, ValueError) as exc:
             raise _key_refusal(f"{kind}: {exc}", code="cruxible.subject.key_invalid") from exc
         if key is None:
             raise _key_refusal(
                 f"{kind} has no declared keys, so no Subject of it is named by key.",
                 code="cruxible.subject.key_invalid",
             )
-        values = tuple(reference.key.values())
+        values = tuple(given.values())
         single = values[0] if len(key) == 1 and len(values) == 1 else None
         frozen = _KeyedReference(
             kind=kind,
             key=key,
-            spelled=dict(reference.key),
+            spelled=given,
             single_text=single if isinstance(single, str) else None,
         )
         self.references.append(frozen)

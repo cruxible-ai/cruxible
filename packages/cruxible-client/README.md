@@ -2967,10 +2967,17 @@ A Subject named by its kind's key, as a Claim's `subject=` or a Subject-valued
 holder (none refuses `key_missing`, several `key_ambiguous`). No id is
 predicted, composite keys included.
 
+For a one-key kind, use `SubjectKeyReference(subject_kind="sec.package",
+key="Demo")`. A composite kind requires a mapping such as
+`key={"release": "R1", "cve": "CVE-2021-44228"}`; a bare value refuses with
+a repair naming every part. Bare references expand to the existing mapping
+before intent identities and digests are computed, and key values use the
+same declared canonical forms as mapping references.
+
 | Field | Type | Default / construction |
 |---|---|---|
 | `subject_kind` | `str` | `Required` |
-| `key` | `dict[str, str \| int \| bool]` | `Required` (key ClaimType or its last name -> value) |
+| `key` | `dict[str, str \| int \| bool] \| str \| int \| bool` | `Required` (bare value for a one-key kind; mapping for composite keys) |
 
 <a id="api-pendingclaimtyperef"></a>
 

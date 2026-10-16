@@ -235,6 +235,7 @@ from cruxible_client.contracts.subject_kinds import (
     SubjectKindKeys,
     SubjectKindMinted,
     distinct_holder_id,
+    key_reference_mapping,
     key_value_problem,
     live_subject_kind,
     minted_subject_id,
@@ -877,9 +878,30 @@ def canonical_authored_claims(payload: _PayloadT, read: Callable[[str], bytes | 
             )
         return forms[predicate]
 
+    declared_kinds: dict[str, SubjectKind | None] = {}
+
+    def mapped_reference(address: SemanticAddress) -> SemanticAddress:
+        reference = address.subject_key_reference
+        if reference is None or isinstance(reference[1], dict):
+            return address
+        kind, given = reference
+        if kind not in declared_kinds:
+            path = subject_kind_path(kind)
+            content = read(path)
+            declared_kinds[kind] = _declared_in_change(
+                kind,
+                members=cast(tuple[AuthoringChangeSetMember, ...], members),
+                base_tree={} if content is None else {path: content},
+            )
+        declared = declared_kinds[kind]
+        if declared is None or len(declared.keys) != 1:
+            return address  # lowering supplies the typed refusal and mapping repair
+        return SemanticAddress.subject_key(kind, key_reference_mapping(declared, given))
+
     def canonical(member: object) -> object:
         if not isinstance(member, ClaimAuthoringPayloadV1):
             return member
+        member = cast(ClaimAuthoringPayloadV1, _with_landed_addresses(member, mapped_reference))
         value = member.statement.object
         if not isinstance(value, LiteralClaimObject):
             return member
@@ -1410,6 +1432,8 @@ def _lower_claim(
             key_paths = _key_reference_paths(
                 instance, base=base, base_tree=base_tree, members=(payload,), creations={}
             ).paths
+        payload = _with_keys_landed(payload, key_paths)
+    elif key_paths:
         payload = _with_keys_landed(payload, key_paths)
     payload = _with_aliases_resolved(instance, base, base_tree, payload)
     candidate_base_tree, dependency_paths = _install_claim_dependencies(
@@ -3920,9 +3944,8 @@ def _with_keys_landed(
     """The Claim with each Subject it names by key named by the path that key resolved to."""
 
     def landed(address: SemanticAddress) -> SemanticAddress:
-        if address.selector.scheme != "subject-key-v1":
-            return address
-        return SemanticAddress.whole_artifact(key_paths[_key_slot(address)])
+        path = key_paths.get(_key_slot(address))
+        return address if path is None else SemanticAddress.whole_artifact(path)
 
     statement = payload.statement
     subject = landed(statement.subject)
@@ -3963,7 +3986,23 @@ def _key_reference_paths(
         for index, member in enumerate(members)
         for field, address in _subject_key_addresses(member)
     ]
-    if not references:
+    text_references = [
+        (index, field, address)
+        for index, member in enumerate(members)
+        if isinstance(member, ClaimAuthoringPayloadV1)
+        for field, address in (
+            ("statement.subject", member.statement.subject),
+            *(
+                (("statement.object.address", member.statement.object.address),)
+                if isinstance(member.statement.object, SubjectClaimObject)
+                else ()
+            ),
+        )
+        if creations
+        and address.selector.scheme == "artifact-v1"
+        and address.artifact_path.startswith("subjects/")
+    ]
+    if not references and not text_references:
         return KeyReferences(paths={})
     created: dict[tuple[str, str], str] = {}
     for creation in creations.values():
@@ -3974,9 +4013,47 @@ def _key_reference_paths(
         return _claim_type_in_change(predicate, members=members, base_tree=base_tree)
 
     frozen: dict[tuple[str, str], tuple[str, KeyTuple, str | None, str]] = {}
+    text_paths: dict[tuple[str, str], str] = {}
     with instance.bind_accepted_projection(base) as projection:
         connection = projection.typed.connection
         view = IdentityView(connection, key_reader=tree_key_reader(base_tree))
+
+        # Match creation assignment's change-local identity effects, including
+        # aliases that make a creation reuse an existing Subject. Only genuinely
+        # new Subjects gain a key here: alias reuse leaves the held key unchanged.
+        def text_key(kind: str, text: str) -> KeyTuple | None:
+            declared = _declared_in_change(kind, members=members, base_tree=base_tree)
+            if declared is None or len(declared.keys) != 1:
+                return None
+            try:
+                return canonical_key(declared, {declared.keys[0]: text}, claim_type=claim_type_of)
+            except SubjectKeyInvalid:
+                return None
+
+        created_view = IdentityView(
+            connection,
+            members_identity_overlay(connection, members=members, base_tree=base_tree),
+            key_reader=text_key,
+        )
+        for creation in creations.values():
+            if not creation.resolved:
+                created_view.add_creation(creation.path, creation.key)
+        for index, field, address in text_references:
+            kind, _, rest = address.artifact_path.removeprefix("subjects/").partition("/")
+            resolution = created_view.resolve(kind, rest.removesuffix(".json"))
+            if resolution.ambiguous:
+                _refuse(
+                    "cruxible.subject.key_ambiguous"
+                    if resolution.via == "key"
+                    else "cruxible.authoring.alias_ambiguous",
+                    f"members[{index}].{field}" if len(members) > 1 else field,
+                    f"{kind} reference names several Subjects: " + ", ".join(resolution.candidates),
+                    repair_kind="replace_subject",
+                    repair_description="Name one of the listed Subjects as kind/id.",
+                    replacement={"candidates": list(resolution.candidates)},
+                )
+            if resolution.path is not None:
+                text_paths[_key_slot(address)] = resolution.path
         for index, field, address in references:
             slot = _key_slot(address)
             if slot in frozen:
@@ -3995,17 +4072,22 @@ def _key_reference_paths(
                     repair_description="Name the Subject as kind/id.",
                 )
             try:
+                given = key_reference_mapping(declared, given)
                 key = canonical_key(declared, given, claim_type=claim_type_of)
-            except SubjectKeyInvalid as exc:
+            except (SubjectKeyInvalid, ValueError) as exc:
                 _refuse(
                     "cruxible.subject.key_invalid",
                     element,
                     f"{kind}: {exc}",
                     repair_kind="replace_key",
                     repair_description=(
-                        f"Give one value for each key of {kind}: " + ", ".join(declared.keys)
+                        f"Give a key mapping for {kind}: "
+                        + repr({predicate: "<value>" for predicate in declared.keys})
                     ),
-                    replacement={"keys": list(declared.keys)},
+                    replacement={
+                        "keys": list(declared.keys),
+                        "key": {predicate: "<value>" for predicate in declared.keys},
+                    },
                 )
             values = tuple(given.values())
             single = (
@@ -4051,6 +4133,8 @@ def _key_reference_paths(
         }
 
         def landed(address: SemanticAddress) -> SemanticAddress:
+            if _key_slot(address) in text_paths:
+                return SemanticAddress.whole_artifact(text_paths[_key_slot(address)])
             if address.selector.scheme == "subject-key-v1":
                 return SemanticAddress.whole_artifact(frozen[_key_slot(address)][3])
             if address.selector.scheme == "subject-creation-v1":
@@ -4074,7 +4158,7 @@ def _key_reference_paths(
             single_member=len(members) == 1,
         )
     return KeyReferences(
-        paths={slot: item[3] for slot, item in frozen.items()},
+        paths={**text_paths, **{slot: item[3] for slot, item in frozen.items()}},
         frozen=tuple(
             (index, field, address, *frozen[_key_slot(address)])
             for index, field, address in references
@@ -4128,15 +4212,16 @@ def _with_landed_addresses(
     if not isinstance(member, ClaimAuthoringPayloadV1):
         return member
     statement = member.statement
+    subject = landed(statement.subject)
     value = statement.object
     if isinstance(value, SubjectClaimObject):
-        value = SubjectClaimObject(address=landed(value.address))
+        target = landed(value.address)
+        if target != value.address:
+            value = SubjectClaimObject(address=target)
+    if subject == statement.subject and value is statement.object:
+        return member
     return member.model_copy(
-        update={
-            "statement": statement.model_copy(
-                update={"subject": landed(statement.subject), "object": value}
-            )
-        }
+        update={"statement": statement.model_copy(update={"subject": subject, "object": value})}
     )
 
 
