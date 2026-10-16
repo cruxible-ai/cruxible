@@ -649,11 +649,28 @@ def test_a_returned_resolution_never_reaches_the_kept_fold(tmp_path) -> None:
     assert kept == replayed.latest_non_overturned(activation.contract_id)
 
 
+def _assert_unavailable_as_a_replay(  # type: ignore[no-untyped-def]
+    activation, journal, bodies, stream, partition_id, writer, digest
+) -> None:
+    """Damaged exhaust reads unavailable, never absent: the kept fold answers as a
+    full replay does, and no append proceeds on it (durability-policy-1015)."""
+
+    from cruxible_core.exhaust.payloads import UnavailablePayload
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    replayed = _replayed(activation, journal, bodies, stream, partition_id)
+    view, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    assert replayed.unavailable == (UnavailablePayload(digest),)
+    assert view.unavailable == replayed.unavailable
+    _same_answers(view, replayed, activation)
+    with pytest.raises(ExecutionError, match="unavailable"):
+        _answer(activation, writer, stream, 2, overturn=False)
+
+
 @pytest.mark.parametrize("damage", ["erase", "corrupt", "same_bytes_new_file"])
 def test_a_kept_fold_refuses_exactly_as_a_replay_after_payload_damage(tmp_path, damage) -> None:
     """Review F-002: the kept fold is reused only while every payload it rests on holds."""
 
-    from cruxible_client.contracts.errors import CasError
     from cruxible_core.procedures.resolution import resolution_book_at_head
 
     activation, journal, bodies, stream, partition_id, writer = _resolution_partition(tmp_path)
@@ -681,14 +698,9 @@ def test_a_kept_fold_refuses_exactly_as_a_replay_after_payload_damage(tmp_path, 
         replayed = _replayed(activation, journal, bodies, stream, partition_id)
         _same_answers(view, replayed, activation)
         return
-    with pytest.raises(CasError) as replayed:
-        _replayed(activation, journal, bodies, stream, partition_id)
-    with pytest.raises(CasError) as kept:
-        resolution_book_at_head(journal, stream, activation, bodies=bodies)
-    assert str(kept.value) == str(replayed.value)
-    # An append after the damage refuses too, as the full replay before it did.
-    with pytest.raises(CasError):
-        _answer(activation, writer, stream, 2, overturn=False)
+    _assert_unavailable_as_a_replay(
+        activation, journal, bodies, stream, partition_id, writer, digest
+    )
     assert first.sequence == 1
 
 
@@ -744,11 +756,10 @@ def test_payload_revalidation_never_remembers_an_unverified_file_identity(
     """Review F-008: a file replaced right after its verified read is never blessed.
 
     The fold must remember the identity taken before the verified read; a later
-    call, with no writer running, refuses the damaged object as a replay does,
-    and so does the next append.
+    call, with no writer running, reads the damaged payload unavailable as a replay
+    does, and the next append refuses.
     """
 
-    from cruxible_client.contracts.errors import CasError
     from cruxible_core.procedures.resolution import resolution_book_at_head
 
     activation, journal, bodies, stream, partition_id, writer = _resolution_partition(tmp_path)
@@ -775,10 +786,6 @@ def test_payload_revalidation_never_remembers_an_unverified_file_identity(
     with monkeypatch.context() as patch:
         patch.setattr(bodies, "read", replaced_after_verified_read)
         resolution_book_at_head(journal, stream, activation, bodies=bodies)
-    with pytest.raises(CasError) as replayed:
-        _replayed(activation, journal, bodies, stream, partition_id)
-    with pytest.raises(CasError) as kept:
-        resolution_book_at_head(journal, stream, activation, bodies=bodies)
-    assert str(kept.value) == str(replayed.value)
-    with pytest.raises(CasError):
-        _answer(activation, writer, stream, 2, overturn=False)
+    _assert_unavailable_as_a_replay(
+        activation, journal, bodies, stream, partition_id, writer, digest
+    )
