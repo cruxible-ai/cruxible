@@ -1705,6 +1705,7 @@ class GitLedger:
         """Forget one generation's marker: it is on main, or it was collected."""
 
         self._validate_oid(oid)
+        _batch_reader(self.path).store.release_oid(oid)
         marker = self._in_flight_directory() / oid
         if marker.exists():
             marker.unlink()
@@ -1730,6 +1731,8 @@ class GitLedger:
 
         directory = self._in_flight_directory()
         for name in markers:
+            if _OID_RE.fullmatch(name):
+                _batch_reader(self.path).store.release_oid(name)
             (directory / name).unlink(missing_ok=True)
         if markers:
             _fsync_directory(directory)
