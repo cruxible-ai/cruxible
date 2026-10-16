@@ -5036,7 +5036,10 @@ class Line:
 
         ``event`` is the retained Capture event a Line whose Procedure takes an
         event input runs on; an event the enabled Line already admitted refuses
-        unless ``repeat=True``.
+        unless ``repeat=True``. ``occurrence_id`` only asserts this admission's
+        identity, which includes the daemon evaluation instant; it cannot select
+        pending work. Use ``line.dispatch(occurrence_id=...)`` for a retained
+        pending occurrence shown by ``line.evaluate()`` or ``cx.get(line.ref)``.
 
         Next: ``run.succeeded`` and ``run.result``, or ``cx.get(f"ProcedureRun:{run.run_id}")``.
         """

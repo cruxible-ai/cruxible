@@ -6855,7 +6855,14 @@ def dispatch_line(
     type=PayloadFile(),
     help="Exact accepted ResolutionContract reference JSON/YAML (- for stdin).",
 )
-@click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")
+@click.option(
+    "--occurrence-id",
+    default=None,
+    help=(
+        "Assert this admission's daemon-derived id; manual ids include its instant. "
+        "Use line dispatch --occurrence-id to select retained pending work."
+    ),
+)
 @click.option(
     "--evaluation-time",
     default=None,

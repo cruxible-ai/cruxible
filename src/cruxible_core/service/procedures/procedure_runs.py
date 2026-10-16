@@ -3977,6 +3977,10 @@ def _run_playbill_line(
         if trigger is not None and is_timed
         else None,
     )
+    # Dispatch asserts the retained pending tick/event it is about to admit.
+    # Keep that integrity check: admitting a different occurrence would leave
+    # the named pending work unfulfilled. Manual identities include this run's
+    # daemon instant, so the derived id is never advice for a later manual retry.
     if request.occurrence_id is not None and request.occurrence_id != occurrence_id:
         return _line_refusal_state(
             accepted,
@@ -3986,7 +3990,14 @@ def _run_playbill_line(
             evaluation_time=evaluation_time,
             code="occurrence_id_mismatch",
             message="The asserted occurrence id differs from the daemon-derived occurrence.",
-            details={"derived_occurrence_id": occurrence_id, "repair": "Retry with this id."},
+            details={
+                "derived_occurrence_id": occurrence_id,
+                "repair": (
+                    "Use cruxible line dispatch with a retained pending occurrence id "
+                    "from line evaluate or get Line:NAME. Manual occurrence ids include "
+                    "the daemon evaluation instant and cannot select pending work."
+                ),
+            },
         )
     if next_due is not None and evaluation_time < next_due:
         return _line_refusal_state(

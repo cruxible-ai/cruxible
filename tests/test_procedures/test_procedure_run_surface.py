@@ -1763,6 +1763,14 @@ def test_an_asserted_occurrence_the_daemon_did_not_derive_refuses(
     assert result.terminal.code == "occurrence_id_mismatch"
     derived = result.terminal.details["derived_occurrence_id"]  # type: ignore[index]
     assert derived != _line_digest("occurrence-the-caller-chose")
+    later_id, _ = procedure_run_service._line_occurrence(  # noqa: SLF001
+        accepted_line, evaluation_time=READ_TIME + timedelta(seconds=1)
+    )
+    assert derived != later_id
+    repair = result.terminal.details["repair"]
+    assert "cruxible line dispatch" in repair
+    assert "Retry with this id" not in repair
+    assert result.terminal.repair.operation == "cruxible.line.dispatch"
 
 
 def test_an_unaccepted_line_identity_refuses_before_any_authority_read(

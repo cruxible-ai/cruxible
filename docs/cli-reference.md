@@ -2229,6 +2229,10 @@ cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit N] [--js
 
 `enable`, `disable` and `run` are the normal flow; `evaluate` and `dispatch`
 recover what automation missed, and `cruxible next` points to them.
+Manual `run --occurrence-id` only asserts the id derived at admission, including
+that admission's daemon evaluation instant. A later retry derives a different
+manual id. Select retained pending work with `line dispatch --occurrence-id ID`,
+using an id shown by `line evaluate` or `get Line:NAME`.
 `evaluate --dispatch` does both in one command: it evaluates every page of the
 range (following `--cursor` itself, with the same `--until`), then dispatches
 each occurrence that evaluation made pending, one by one, and reports both

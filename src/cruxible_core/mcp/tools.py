@@ -1444,6 +1444,8 @@ def register_tools(
 
         ``event`` is the event input for a Line whose Procedure takes one;
         ``repeat`` runs an event its Triggers already admitted again.
+        ``occurrence_id`` asserts this admission, including its daemon instant;
+        use line_dispatch to select a retained pending occurrence.
         """
         return handlers.handle_playbill_line_run(
             require_instance_id(instance_id),
