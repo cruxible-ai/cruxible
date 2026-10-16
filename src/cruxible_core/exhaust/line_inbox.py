@@ -676,6 +676,7 @@ def _same_decision(current: InboxDisposition | None, new: InboxDisposition) -> b
 
 __all__ = [
     "InboxItemNotFound",
+    "InboxUnavailable",
     "InboxPageEntry",
     "InboxPosting",
     "LineInboxStore",

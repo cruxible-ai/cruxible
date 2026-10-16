@@ -1059,7 +1059,10 @@ class _UnavailableLineAdmission:
 
     @property
     def run_id(self) -> str:
-        return self.stored.record.run_id
+        run_id = self.stored.record.run_id
+        if run_id is None:
+            raise ExecutionError("Admission run identity is unavailable; restore its exhaust")
+        return run_id
 
 
 def _stored_line_admission(
