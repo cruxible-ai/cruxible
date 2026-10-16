@@ -15,7 +15,7 @@ import tempfile
 import threading
 import zlib
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from cruxible_client.contracts.errors import GitError
@@ -241,40 +241,48 @@ class PackStore:
             return location is not None and location[0].with_suffix(".pending").exists()
 
     def info(self, oid: str) -> tuple[str, int] | None:
-        """Read headers only; metadata never hashes or inflates an object's body."""
-        try:
-            return self._info(oid)
-        except (OSError, ValueError, IndexError, struct.error, zlib.error, GitError):
-            if self.is_pending(oid):
-                return None
-            raise
+        return self.infos((oid,))[oid]
+
+    def infos(self, oids: Sequence[str]) -> dict[str, tuple[str, int] | None]:
+        """Read headers only, discovering/validating the pack directory once per batch."""
+        if not oids:
+            return {}
+        with self.lock:
+            self._discover(len(oids[0]) // 2)
+            result: dict[str, tuple[str, int] | None] = {}
+            for oid in oids:
+                try:
+                    result[oid] = self._info(oid)
+                except (OSError, ValueError, IndexError, struct.error, zlib.error, GitError):
+                    if not self.is_pending(oid):
+                        raise
+                    result[oid] = None
+            return result
 
     def _info(self, oid: str) -> tuple[str, int] | None:
-        with self.lock:
-            width = len(oid) // 2
-            self._discover(width)
-            location = self.locations.get(oid)
-            if location is not None:
-                return self._info_at(*location, width=width, depth=0)
-            loose = self.repository / "objects" / oid[:2] / oid[2:]
-            try:
-                with loose.open("rb") as stream:
-                    inflater = zlib.decompressobj()
-                    header = bytearray()
-                    while b"\x00" not in header and len(header) < 128:
-                        chunk = inflater.unconsumed_tail or stream.read(64)
-                        if not chunk:
-                            break
-                        header.extend(inflater.decompress(chunk, 1))
-            except FileNotFoundError:
-                return ("tree", 0) if oid in _EMPTY_TREES else None
-            raw_kind, separator, raw_size = bytes(header).partition(b"\x00")[0].partition(b" ")
-            if b"\x00" not in header or not separator or raw_kind.decode() not in _CODES:
-                raise GitError("malformed loose Git object header")
-            size = int(raw_size)
-            if size < 0:
-                raise GitError("malformed loose Git object size")
-            return raw_kind.decode(), size
+        width = len(oid) // 2
+        location = self.locations.get(oid)
+        if location is not None:
+            return self._info_at(*location, width=width, depth=0)
+        loose = self.repository / "objects" / oid[:2] / oid[2:]
+        try:
+            with loose.open("rb") as stream:
+                inflater = zlib.decompressobj()
+                header = bytearray()
+                while b"\x00" not in header and len(header) < 128:
+                    chunk = inflater.unconsumed_tail or stream.read(64)
+                    if not chunk:
+                        break
+                    header.extend(inflater.decompress(chunk, 1))
+        except FileNotFoundError:
+            return ("tree", 0) if oid in _EMPTY_TREES else None
+        raw_kind, separator, raw_size = bytes(header).partition(b"\x00")[0].partition(b" ")
+        if b"\x00" not in header or not separator or raw_kind.decode() not in _CODES:
+            raise GitError("malformed loose Git object header")
+        size = int(raw_size)
+        if size < 0:
+            raise GitError("malformed loose Git object size")
+        return raw_kind.decode(), size
 
     def _info_at(self, path: Path, offset: int, *, width: int, depth: int) -> tuple[str, int]:
         if depth > 128:

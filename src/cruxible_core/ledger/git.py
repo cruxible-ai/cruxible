@@ -3364,8 +3364,9 @@ class _BatchBlobReader:
 
     def object_info(self, oids: Sequence[str]) -> dict[str, tuple[str, int] | None]:
         pending = getattr(self._transaction, "pending", None) or {}
+        stored = self.store.infos([oid for oid in oids if oid not in pending])
         return {
-            oid: (pending[oid][0], len(pending[oid][1])) if oid in pending else self.store.info(oid)
+            oid: (pending[oid][0], len(pending[oid][1])) if oid in pending else stored[oid]
             for oid in oids
         }
 

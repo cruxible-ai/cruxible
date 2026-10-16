@@ -120,3 +120,28 @@ def test_damaged_advisory_pack_is_absent_without_hiding_durable_objects(tmp_path
     assert fresh.read(advisory_oid) is None
     assert fresh.read(durable_oid) == ("blob", b"durable")
     fresh.close()
+
+
+def test_metadata_batch_checks_pack_directory_once(tmp_path, monkeypatch):
+    import hashlib
+
+    store = PackStore(tmp_path)
+    (tmp_path / "objects/pack").mkdir(parents=True)
+    objects = {}
+    for i in range(100):
+        body = str(i).encode()
+        oid = hashlib.sha256(f"blob {len(body)}\x00".encode() + body).hexdigest()
+        objects[oid] = ("blob", body)
+    store.write(objects)
+    calls = []
+    discover = store._discover
+
+    def observe(width):
+        calls.append(width)
+        return discover(width)
+
+    monkeypatch.setattr(store, "_discover", observe)
+    assert store.infos(tuple(objects)) == {
+        oid: ("blob", len(body)) for oid, (_, body) in objects.items()
+    }
+    assert calls == [32]
