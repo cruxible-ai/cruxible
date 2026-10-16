@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.floor import workspace_advertisement as advertisement_module
 from cruxible_core.floor.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
@@ -176,16 +175,20 @@ def test_advertisement_ignores_executable_workspace_git_config(tmp_path: Path) -
     assert not uploadpack_marker.exists()
 
 
+@pytest.mark.parametrize("relative", [False, True])
 def test_advertisement_refuses_instead_of_ssh_command_without_execution(
     tmp_path: Path,
+    relative: bool,
 ) -> None:
     workspace, ledger = _repositories(tmp_path, "sha1")
     daemon_uid_marker = tmp_path / "daemon-uid"
+    raw_url = f"../{ledger.name}" if relative else str(ledger.resolve())
+    _git(workspace, "config", "remote.cruxible-ledger.url", raw_url)
     _git(
         workspace,
         "config",
         "url.ssh://attacker.invalid/x.insteadOf",
-        str(ledger.resolve()),
+        raw_url,
     )
     _git(
         workspace,
@@ -202,46 +205,6 @@ def test_advertisement_refuses_instead_of_ssh_command_without_execution(
 
     assert result.status == "failed"
     assert result.failure_code == "remote_conflict"
-    assert not daemon_uid_marker.exists()
-
-
-def test_protocol_gate_blocks_execution_if_effective_url_check_is_bypassed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, ledger = _repositories(tmp_path, "sha1")
-    daemon_uid_marker = tmp_path / "daemon-uid"
-    _git(
-        workspace,
-        "config",
-        "url.ssh://attacker.invalid/x.insteadOf",
-        str(ledger.resolve()),
-    )
-    _git(
-        workspace,
-        "config",
-        "core.sshCommand",
-        f"/bin/sh -c 'id > {daemon_uid_marker}'",
-    )
-    monkeypatch.setattr(
-        advertisement_module,
-        "_effective_remote_urls",
-        lambda _workspace: subprocess.CompletedProcess(
-            (),
-            0,
-            f"{ledger.resolve()}\n".encode(),
-            b"",
-        ),
-    )
-
-    result = advertise_workspace_refs(
-        workspace_root=workspace,
-        ledger_path=ledger,
-        ledger_object_format="sha1",
-    )
-
-    assert result.status == "failed"
-    assert result.failure_code == "fetch_failed"
     assert not daemon_uid_marker.exists()
 
 
@@ -286,43 +249,17 @@ def test_git_environment_drops_ambient_execution_configuration(
     }
     for name, value in ambient.items():
         monkeypatch.setenv(name, value)
-    observed: list[dict[str, str]] = []
-    commands: list[tuple[str, ...]] = []
-    real_run = subprocess.run
 
-    def observe(*args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        observed.append(dict(kwargs["env"]))
-        commands.append(tuple(args[0]))  # type: ignore[arg-type]
-        return real_run(*args, **kwargs)  # type: ignore[arg-type,return-value]
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("workspace advertisement spawned a process")
 
-    monkeypatch.setattr(advertisement_module.subprocess, "run", observe)
-
+    monkeypatch.setattr(subprocess, "run", forbidden)
     result = advertise_workspace_refs(
         workspace_root=workspace,
         ledger_path=ledger,
         ledger_object_format="sha1",
     )
-
     assert result.status == "updated"
-    assert observed
-    fetch_commands = tuple(command for command in commands if "fetch" in command)
-    assert len(fetch_commands) == 1
-    assert "--no-recurse-submodules" in fetch_commands[0]
-    for environment in observed:
-        assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
-        assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
-        assert not (
-            {
-                "GIT_CONFIG_COUNT",
-                "GIT_CONFIG_KEY_0",
-                "GIT_CONFIG_VALUE_0",
-                "GIT_DIR",
-                "GIT_WORK_TREE",
-                "GIT_SSH_COMMAND",
-                "GIT_EXTERNAL_DIFF",
-            }
-            & environment.keys()
-        )
 
 
 def test_non_utf8_git_config_output_is_a_typed_remote_conflict(tmp_path: Path) -> None:
@@ -340,7 +277,7 @@ def test_non_utf8_git_config_output_is_a_typed_remote_conflict(tmp_path: Path) -
     assert result.failure_code == "remote_conflict"
 
 
-def test_advertisement_reports_git_unavailable(
+def test_advertisement_needs_no_git_executable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace, ledger = _repositories(tmp_path, "sha1")
@@ -352,8 +289,7 @@ def test_advertisement_reports_git_unavailable(
         ledger_object_format="sha1",
     )
 
-    assert result.status == "failed"
-    assert result.failure_code == "git_unavailable"
+    assert result.status == "updated"
 
 
 def test_advertisement_is_total_for_unexpected_failures(
@@ -544,3 +480,212 @@ def test_advertisement_never_prunes_the_authors_own_notes(tmp_path: Path) -> Non
     )
 
     assert _git(workspace, "notes", "--ref=refs/notes/commits", "show", head) == "mine"
+
+
+def test_linked_worktree_uses_common_config_objects_and_refs(tmp_path):
+    workspace, ledger = _repositories(tmp_path, "sha256")
+    linked = tmp_path / "linked"
+    _git(workspace, "worktree", "add", "-b", "linked", str(linked))
+    _git(ledger, "pack-refs", "--all")
+    _git(ledger, "repack", "-a", "-d")
+    result = advertise_workspace_refs(
+        workspace_root=linked, ledger_path=ledger, ledger_object_format="sha256"
+    )
+    assert result.status == "updated"
+    assert _git(linked, "rev-parse", "refs/remotes/cruxible-ledger/accepted") == _git(
+        ledger, "rev-parse", "main"
+    )
+    _git(linked, "fsck", "--strict", "--no-dangling")
+
+
+def test_advertisement_keeps_unicode_local_urls_git_readable(tmp_path):
+    directory = tmp_path / "café"
+    directory.mkdir()
+    workspace, ledger = _repositories(directory, "sha1")
+    result = advertise_workspace_refs(
+        workspace_root=workspace, ledger_path=ledger, ledger_object_format="sha1"
+    )
+    assert result.status == "updated"
+    assert _git(workspace, "config", "--get", "remote.cruxible-ledger.url") == str(ledger)
+
+
+def test_config_publication_cleanup_preserves_the_next_writers_lock(tmp_path, monkeypatch):
+    from cruxible_core.floor.workspace_advertisement import _config, _configure_remote
+
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    common = workspace / ".git"
+    config = common / "config"
+    lock = common / "config.lock"
+    real_replace = os.replace
+    successor_fd = None
+
+    def publish(source, destination):
+        nonlocal successor_fd
+        real_replace(source, destination)
+        if Path(destination) == config:
+            successor_fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            os.write(successor_fd, b"successor config\n")
+
+    monkeypatch.setattr(os, "replace", publish)
+    try:
+        _configure_remote(common, _config(config), str(ledger.resolve()), workspace)
+        assert successor_fd is not None
+        assert lock.read_bytes() == b"successor config\n"
+        assert lock.stat().st_ino == os.fstat(successor_fd).st_ino
+        with pytest.raises(FileExistsError):
+            os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    finally:
+        if successor_fd is not None:
+            os.close(successor_fd)
+        lock.unlink(missing_ok=True)
+
+
+def _subject_ledger(tmp_path, object_format, size):
+    from cruxible_core.governance.keys import generate_daemon_key
+    from cruxible_core.ledger.git import GitLedger
+    from tests.core_support._projection_support import subject_bytes
+
+    tmp_path.mkdir()
+    key = generate_daemon_key(tmp_path / "credentials")
+    signers = tmp_path / "allowed"
+    signers.write_bytes(b"daemon " + key.public_key_path.read_bytes())
+    ledger = GitLedger.initialize(
+        tmp_path / "ledger.git",
+        object_format=object_format,
+        signing_key_path=key.private_key_path,
+        allowed_signers_path=signers,
+    )
+    tree = {f"subjects/project.work_item/s{i}.json": subject_bytes(f"s{i}") for i in range(size)}
+    base = ledger.create_signed_genesis(tree, timestamp="2026-10-15T12:00:00Z")
+    ledger.set_main_genesis(base)
+    workspace = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", f"--object-format={object_format}", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    return workspace, ledger, base, tree
+
+
+def _change_one_subject(ledger, base, *, subject_id="s0", sequence=1):
+    from cruxible_core.derived.derived_state import SnapshotTree
+    from tests.core_support._projection_support import subject_bytes
+
+    root = SnapshotTree(ledger.blob_refs_at(base))
+    root._commit_oid = base
+    edit = root.fork()
+    edit[f"subjects/project.work_item/{subject_id}.json"] = subject_bytes(subject_id, retired=True)
+    with ledger.request_pack(), ledger.activation_lock():
+        generation = ledger.create_signed_generation(
+            edit.snapshot(),
+            parent_oid=base,
+            sequence=sequence,
+            timestamp="2026-10-15T12:01:00Z",
+            message="Retire one Subject",
+        )
+        with ledger.prepared_generation_note(generation, b"descriptor\n") as publish_note:
+            assert ledger.compare_and_set_main(generation, expected_oid=base)
+            publish_note()
+    return generation
+
+
+@pytest.mark.parametrize("object_format", ("sha1", "sha256"))
+@pytest.mark.parametrize("coalesced", (False, True))
+def test_warm_workspace_transfer_work_is_change_sized(
+    tmp_path,
+    monkeypatch,
+    object_format,
+    coalesced,
+):
+    from cruxible_core.floor import workspace_advertisement as advertisement
+    from cruxible_core.ledger.git import _batch_reader
+    from tests.core_support._projection_support import subject_bytes
+
+    counts = []
+    for size in (80, 800):
+        workspace, ledger, base, tree = _subject_ledger(tmp_path / str(size), object_format, size)
+        assert (
+            advertise_workspace_refs(
+                workspace_root=workspace,
+                ledger_path=ledger.path,
+                ledger_object_format=object_format,
+            ).status
+            == "updated"
+        )
+        generation = _change_one_subject(ledger, base)
+        if coalesced:
+            generation = _change_one_subject(ledger, generation, subject_id="s1", sequence=2)
+        work = {"metadata": 0, "children": 0, "parsed_children": 0}
+        writer = _batch_reader(workspace / ".git").store
+        real_infos = writer.infos
+        real_frontier = advertisement._tree_transfer_frontier
+        real_entries = advertisement._tree_entries
+
+        def infos(oids):
+            work["metadata"] += len(oids)
+            return real_infos(oids)
+
+        def frontier(oid):
+            result = real_frontier(oid)
+            if result is not None:
+                work["children"] += len(result.children)
+            return result
+
+        def entries(*args, **kwargs):
+            result = real_entries(*args, **kwargs)
+            if result is not None:
+                work["parsed_children"] += len(result)
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(writer, "infos", infos)
+            patch.setattr(advertisement, "_tree_transfer_frontier", frontier)
+            patch.setattr(advertisement, "_tree_entries", entries)
+            result = advertise_workspace_refs(
+                workspace_root=workspace,
+                ledger_path=ledger.path,
+                ledger_object_format=object_format,
+            )
+        assert result.status == "updated"
+        counts.append(work)
+        assert _git(workspace, "rev-parse", "refs/remotes/cruxible-ledger/accepted") == generation
+        assert _git(workspace, "show", f"{generation}:subjects/project.work_item/s0.json") == (
+            subject_bytes("s0", retired=True).decode().strip()
+        )
+        unchanged = f"subjects/project.work_item/s{size - 1}.json"
+        assert (
+            _git(workspace, "show", f"{generation}:{unchanged}") == tree[unchanged].decode().strip()
+        )
+        _git(workspace, "fsck", "--strict", "--no-dangling")
+    assert counts[0] == counts[1], counts
+    assert 0 < counts[1]["children"] < 20, counts
+    assert counts[1]["parsed_children"] == 0, counts
+    assert counts[1]["metadata"] < 64, counts
+
+
+@pytest.mark.parametrize("object_format", ("sha1", "sha256"))
+@pytest.mark.parametrize("evicted", (False, True))
+def test_workspace_transfer_recovers_without_a_warm_baseline(
+    tmp_path,
+    monkeypatch,
+    object_format,
+    evicted,
+):
+    from cruxible_core.floor import workspace_advertisement as advertisement
+
+    workspace, ledger, base, tree = _subject_ledger(tmp_path / "source", object_format, 8)
+    generation = _change_one_subject(ledger, base)
+    if evicted:
+        monkeypatch.setattr(advertisement, "_tree_transfer_frontier", lambda _oid: None)
+    # First attachment has neither the parent nor any unchanged child. A source
+    # change record alone must not be mistaken for a complete dependency list.
+    assert (
+        advertise_workspace_refs(
+            workspace_root=workspace, ledger_path=ledger.path, ledger_object_format=object_format
+        ).status
+        == "updated"
+    )
+    assert _git(workspace, "rev-parse", "refs/remotes/cruxible-ledger/accepted") == generation
+    path = "subjects/project.work_item/s7.json"
+    assert _git(workspace, "show", f"{generation}:{path}") == tree[path].decode().strip()
+    _git(workspace, "fsck", "--strict", "--no-dangling")

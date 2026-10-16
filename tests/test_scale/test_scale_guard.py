@@ -815,6 +815,17 @@ def test_route_work_does_not_grow_with_the_instance(
     )
 
 
+@pytest.mark.parametrize(
+    "route",
+    ["write.create", "write.revise", "write.create.typed", "cold.write", "procedure.settle"],
+)
+def test_write_routes_spawn_no_git(session: Session, route: str) -> None:
+    if route in session.failed:
+        raise session.failed[route]
+    for size, measurement in session.measured[route].items():
+        assert measurement["git_spawns"] == 0, (route, size, measurement["git_spawns"])
+
+
 def test_a_subject_history_page_grows_only_in_the_rows_that_locate_it(session: Session) -> None:
     """6 vs 60 of the Subject's own revisions, one page of five: only locating grows.
 

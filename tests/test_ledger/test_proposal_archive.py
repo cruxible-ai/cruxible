@@ -46,14 +46,13 @@ def test_archive_cas_failure_does_not_delete_review_branch(repos, monkeypatch, a
         local.archive_proposal_commits((candidate,))
     local.retain_proposal_review("sha256:" + "a" * 64, candidate)
     competitor = commit(local, "competing archive")
-    original = local._git
+    original = local._update_refs
 
-    def race(args, **kwargs):
-        if args == ["update-ref", "--stdin"]:
-            original(["update-ref", ARCHIVE, competitor])
-        return original(args, **kwargs)
+    def race(commands):
+        local._git(["update-ref", ARCHIVE, competitor])
+        return original(commands)
 
-    monkeypatch.setattr(local, "_git", race)
+    monkeypatch.setattr(local, "_update_refs", race)
     with pytest.raises(GitError):
         local.replace_proposal_review_refs({})
     assert local.mirror_refs()[PROPOSAL] == candidate

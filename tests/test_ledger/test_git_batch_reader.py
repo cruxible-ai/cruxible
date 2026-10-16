@@ -43,7 +43,7 @@ def test_resident_reader_matches_git_and_is_shared_across_handles(tmp_path, monk
         ledger.path, signing_key_path=tmp_path / "k", allowed_signers_path=tmp_path / "s"
     )
     assert other.read_blobs(list(reversed(oids))) == dict(zip(oids, contents, strict=True))
-    assert len([args for args in spawned if "cat-file" in args]) == 1
+    assert len([args for args in spawned if "cat-file" in args]) == 0
 
 
 def test_missing_object_refuses_and_the_next_read_recovers(tmp_path):
@@ -84,13 +84,13 @@ def test_tree_writes_check_only_members_the_accepted_parent_lacks(tmp_path, monk
     successor = {**base, "claims/c.json": b"c"}
     expected = ledger._write_tree(successor)
     stored: list[set[str]] = []
-    store = ledger._store_loose_objects
+    store = ledger._store_objects
 
     def counted(objects):
         stored.append({oid for oid, (kind, _body) in objects.items() if kind == "blob"})
         return store(objects)
 
-    monkeypatch.setattr(ledger, "_store_loose_objects", counted)
+    monkeypatch.setattr(ledger, "_store_objects", counted)
     assert ledger._write_tree(successor, accepted_parent=parent) == expected
     # Only the member the accepted parent lacks is stored.
     assert stored == [{ledger._blob_oid(b"c")}]

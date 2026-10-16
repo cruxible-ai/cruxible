@@ -174,8 +174,25 @@ record references is deleted under it.
 - **Line coverage.** An idle Line's coverage that moved only in time advances
   the dispatch projection and is not journaled.
 - **The ledger.** Every ref, note and archived proposal is kept. Objects are
-  written loose; every 64 accepted generations the daemon packs them
-  (`repack -a -d`), packs refs and writes the commit-graph, off the
+  staged in one in-process request pack/index pair. Proposal refs and notes
+  publish in authority order without a durable flush. Acceptance prepares the
+  generation note objects and durably seals the complete pair before publishing
+  main, importing the target's pending pack when preparation used an earlier
+  request, then publishes the note ref after the winning main CAS. Changed refs
+  are durable before releasing the activation lock. Retention objects are
+  prepared in that pack before acceptance; their refs
+  still publish in retirement order. Interrupted
+  pre-acceptance publications are advisory and may need re-proposal. Commit signatures use Ed25519 SSHSIG compatible with `git verify-commit`;
+  ref leases use Git's files-backend lockfile protocol. Publishing a ref,
+  packed-refs or config lock consumes its pathname; cleanup closes the original
+  descriptor without unlinking a successor's lock. Reads support loose
+  objects and Git's delta-compressed packs. Warm workspace advertisement carries
+  the tree writer's changed-child frontier and visits it only after checking the
+  destination or current transfer batch has its baseline, including when a
+  refresh coalesces generations. Cold attachment, missing baselines and evicted
+  frontiers use full reachable-object traversal. Every 64 accepted generations the
+  daemon consolidates packs (`repack -a -d`), packs refs and writes the
+  commit-graph, off the
   acceptance path, and at start, before serving, it also prunes unreachable
   loose objects, the one step that is safe only while no writer is in flight.
 

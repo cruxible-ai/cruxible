@@ -18,6 +18,8 @@ def _clear_caches() -> None:
     ledger_git._TREE_LISTINGS.clear()
     ledger_git._TREE_CHANGES.clear()
     ledger_git._COMMIT_ROOTS.clear()
+    ledger_git._ENCODED_TREES.clear()
+    ledger_git._ENCODED_TREE_ENTRIES = 0
 
 
 @pytest.fixture(params=("sha1", "sha256"))
@@ -153,8 +155,9 @@ def test_a_file_that_becomes_a_directory_is_a_deletion_plus_additions(
 
 def _forge_subtree(ledger: GitLedger, subtree: str, body: bytes) -> None:
     loose = ledger.path / "objects" / subtree[:2] / subtree[2:]
-    assert loose.is_file()
-    loose.chmod(0o644)
+    loose.parent.mkdir(exist_ok=True)
+    if loose.exists():
+        loose.chmod(0o644)
     loose.write_bytes(zlib.compress(b"tree %d\x00" % len(body) + body))
 
 
