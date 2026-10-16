@@ -1954,9 +1954,9 @@ class GitLedger:
         """List unreachable commits while excluding in-process pack publication.
 
         Git scans the whole object store, so callers reserve this for recovery
-        or explicit inspection. Provisional packs reuse a pathname: the pack
-        and index renames are individually atomic, but the pair is not. Hold
-        the same lock as publication and targeted removal until Git exits.
+        or explicit inspection. Immutable, index-last publication is safe for
+        independent Git readers. Keep this scan serialized with targeted loser
+        removal, which deliberately deletes unreachable objects fsck inventories.
         """
 
         with _batch_reader(self.path).store.lock:
