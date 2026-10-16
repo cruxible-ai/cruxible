@@ -59,8 +59,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
-from cruxible_client.contracts import candidates, canonical
+from cruxible_client.contracts import candidates, canonical, claims, projection_extensions
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
@@ -92,6 +93,8 @@ N = 12
 #: statements per item here (a 400-item settle ran 155 per item, 5.3 connects,
 #: before resident index connections and one-statement-per-table writes).
 PER_ITEM = {
+    "claim_parses": 1,
+    "model_builds": 15,
     "sha256": 40,
     "encodes": 140,
     "encoded_bytes": 100 * 1024,
@@ -108,6 +111,10 @@ PER_ITEM = {
 LARGE_PARENT_RATIO = 1.25
 #: ...plus this, for ids, paths and shard directories one item longer or deeper.
 FLAT_SLACK = {
+    "claim_parses": 2,
+    "model_builds": 24,
+    "digest_validations": 24,
+    "projection_normalizations": 32,
     "sha256": 16,
     "encodes": 16,
     "encoded_bytes": 8 * 1024,
@@ -135,6 +142,50 @@ class _Counts:
 
 
 _COUNTS = _Counts()
+
+
+@contextmanager
+def _objects_counted() -> Iterator[None]:
+    """Count real cold work, including Pydantic entry points, on this thread.
+
+    Memo hits are deliberately absent. Model construction includes direct
+    constructors, validation, copies and unchecked construction, as in the
+    census; a shortcut through model_construct cannot hide the work.
+    """
+    models = {
+        getattr(BaseModel, name).__code__
+        for name in (
+            "__init__",
+            "model_validate",
+            "model_validate_json",
+            "model_copy",
+            "model_construct",
+        )
+    }
+    codes = {
+        claims._parse_claim.__code__: "claim_parses",
+        canonical._valid_sha256_hex.__wrapped__.__code__: "digest_validations",
+        projection_extensions.normalize_projection_value.__code__: "projection_normalizations",
+    }
+    previous = sys.getprofile()
+
+    def count(frame: Any, event: str, arg: Any) -> None:
+        if event != "call" or not _COUNTS.measuring():
+            return
+        code = frame.f_code
+        if code in models:
+            _COUNTS.counts["model_builds"] += 1
+            value = frame.f_locals.get("self", frame.f_locals.get("cls"))
+            name = value.__name__ if isinstance(value, type) else type(value).__name__
+            _COUNTS.counts["model:" + name] += 1
+        elif code in codes:
+            _COUNTS.counts[codes[code]] += 1
+
+    sys.setprofile(count)
+    try:
+        yield
+    finally:
+        sys.setprofile(previous)
 
 
 def _open_event(event: str, args: tuple[object, ...]) -> None:
@@ -358,7 +409,7 @@ def _settle(world: Any, first: int, count: int, batch: int) -> Counter[str]:
     (root / fixtures.RELATIVE_PATH).write_bytes(
         canonical.canonical_bytes({**fixtures.ADVISORY, "proposals": proposals})
     )
-    with _counted() as counts, _journal_counted():
+    with _counted() as counts, _journal_counted(), _objects_counted():
         state = settle_support.run_settle(
             instance, root, line, now=fixtures.NOW + timedelta(minutes=10 * (batch + 1))
         )
@@ -417,6 +468,8 @@ def test_a_settles_work_per_item_stays_at_its_floor(
             "acceptance_fsyncs",
             "git_fsyncs",
             "non_acceptance_fsyncs",
+            "digest_validations",
+            "projection_normalizations",
         )
     }
     report = (
@@ -427,10 +480,68 @@ def test_a_settles_work_per_item_stays_at_its_floor(
     destination = os.environ.get("CRUXIBLE_PER_ITEM_REPORT")
     if destination:
         Path(destination).write_text(report + "\n")
-    for name, ceiling in PER_ITEM.items():
-        assert slope[name] <= ceiling, f"{name} grew to {slope[name]:.1f} per item: {report}"
+    violations = [
+        f"{name} grew to {slope[name]:.1f} per item (ceiling {ceiling})"
+        for name, ceiling in PER_ITEM.items()
+        if slope[name] > ceiling
+    ]
     for name, slack in FLAT_SLACK.items():
-        assert after_large[name] <= small[name] * LARGE_PARENT_RATIO + slack, (
-            f"{name}: a small settle after a large one cost {after_large[name]} against "
-            f"{small[name]} after a small one: {report}"
+        if after_large[name] > small[name] * LARGE_PARENT_RATIO + slack:
+            violations.append(
+                f"{name}: after large {after_large[name]} against after small {small[name]}"
+            )
+    assert not violations, f"{violations}: {report}"
+
+
+def test_a_small_commit_after_a_large_one_does_not_encode_the_parent_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from cruxible_core.runtime import instance as instance_module
+    from tests.core_support._support import initialize_local
+    from tests.test_authoring.test_authoring_change_set_intents import (
+        _accept,
+        _change_set,
+        _claim,
+        _coordinator,
+    )
+    from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    prepare = instance_module.prepare_generation
+    measured: list[Counter[str]] = []
+
+    def counted_prepare(*args: Any, **kwargs: Any) -> Any:
+        with _counted() as counts, _objects_counted():
+            result = prepare(*args, **kwargs)
+        measured.append(Counter(counts))
+        return result
+
+    monkeypatch.setattr(instance_module, "prepare_generation", counted_prepare)
+
+    def commit(first: int, count: int) -> Counter[str]:
+        payload = _change_set(
+            *(_claim(qualifier=f"parent-size-{i}") for i in range(first, first + count))
+        )
+        _forget_parsed_receipts()
+        intent = coordinator.create(
+            actor=actor, payload=payload, canonical_timestamp=TIMESTAMP
+        ).intent
+        before = len(measured)
+        _accept(instance, owner, coordinator, intent.intent_id, actor)
+        assert len(measured) == before + 1
+        return measured[-1]
+
+    commit(0, 1)
+    small = commit(1, 1)
+    commit(2, 2 * N)
+    after_large = commit(2 + 2 * N, 1)
+    for name in ("encodes", "encoded_bytes", "claim_parses"):
+        assert after_large[name] <= small[name] * LARGE_PARENT_RATIO + FLAT_SLACK[name], (
+            name,
+            small,
+            after_large,
         )
