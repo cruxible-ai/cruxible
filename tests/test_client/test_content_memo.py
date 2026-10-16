@@ -711,3 +711,18 @@ def test_statement_address_carrier_keeps_validation_and_subclass_behavior():
         pass
 
     assert type(Address.claim_statement(path)) is Address
+
+
+def test_subject_identity_comparison_preserves_the_exact_contract_type():
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.subjects import SubjectShell
+
+    class ExtendedIdentity(ArtifactIdentity):
+        pass
+
+    with pytest.raises(ValueError, match="Subject identity must equal"):
+        SubjectShell(
+            identity=ExtendedIdentity(kind="Subject", name="work/item"),
+            subject_kind="work",
+            subject_id="item",
+        )

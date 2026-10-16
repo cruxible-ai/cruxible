@@ -113,7 +113,8 @@ class SubjectShell(_StrictSubjectModel):
     @model_validator(mode="after")
     def _identity_matches_referent(self) -> "SubjectShell":
         if (
-            self.identity.kind != "Subject"
+            type(self.identity) is not ArtifactIdentity
+            or self.identity.kind != "Subject"
             or self.identity.name != f"{self.subject_kind}/{self.subject_id}"
         ):
             raise ValueError("Subject identity must equal Subject:<subject_kind>/<subject_id>")

@@ -223,10 +223,11 @@ class SemanticAddress(_StrictSemanticModel):
         if cls is SemanticAddress and type(artifact_path) is str:
             from cruxible_client.contracts.content_memo import request_derive
 
-            return request_derive(
+            address: SemanticAddress = request_derive(
                 ("semantic.claim_statement", artifact_path),
                 lambda: _claim_statement_address(artifact_path),
             )
+            return address
         return cls(
             artifact_path=artifact_path,
             selector=SemanticSelector(scheme="claim-statement-v1", value=""),
