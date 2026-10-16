@@ -387,7 +387,7 @@ def replace_rows(
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
     bodies: Any = None,
     whole_checks: bool = True,
-    historical_provider_source: Callable[[str, int], bytes] | None = None,
+    historical_provider_source: Callable[[str, int], bytes | None] | None = None,
 ) -> None:
     from cruxible_core.indexes.subject_identity import refresh_subject_keys
 

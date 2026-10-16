@@ -72,7 +72,7 @@ def registration_key(content: bytes, path: str) -> str:
 
 def cold_provider_source(
     repository: Any, head_oid: str, sources: Mapping[str, bytes]
-) -> Callable[[str, int], bytes]:
+) -> Callable[[str, int], bytes | None]:
     """Cold reconstruction only: locate exact historical legacy runtime bytes.
 
     This one walk is O(retained generations); ordinary deltas supply their own bytes.
@@ -86,15 +86,13 @@ def cold_provider_source(
     coordinates = {latest: head_oid}
     oldest = latest
 
-    def read(path: str, sequence: int) -> bytes:
+    def read(path: str, sequence: int) -> bytes | None:
         nonlocal oldest
         while sequence not in coordinates:
             coordinates[oldest - 1] = repository.parent_of(coordinates[oldest])
             oldest -= 1
         raw = repository.blob_at(coordinates[sequence], path)
-        if raw is None:
-            raise ValueError(f"historical Provider {path} at {sequence} is absent")
-        return raw
+        return None if raw is None else bytes(raw)
 
     return read
 
@@ -103,9 +101,22 @@ def refresh_provider_heads(
     connection: sqlite3.Connection,
     sources: Mapping[str, bytes],
     *,
-    historical_source: Callable[[str, int], bytes] | None = None,
+    historical_source: Callable[[str, int], bytes | None] | None = None,
 ) -> None:
     # sources is the accepted delta (the entire source only at cold construction).
+    if historical_source is not None:
+        # Genesis has no change record. Seed its legacy runtime/contract keys
+        # before folding recorded occurrences, so metadata cannot re-register it.
+        for path in sources:
+            if path.count("/") != 1 or not path.startswith(("providers/", "provider-interfaces/")):
+                continue
+            original = historical_source(path, 0)
+            if original is not None:
+                connection.execute(
+                    "INSERT INTO provider_registration_order VALUES (?,?,0) ON CONFLICT(path,digest) "
+                    "DO UPDATE SET sequence=0",
+                    (path, registration_key(original, path)),
+                )
     for path, content in sources.items():
         if not path.startswith("changesets/"):
             continue
@@ -138,7 +149,10 @@ def refresh_provider_heads(
                             "cold legacy registration reconstruction needs historical bytes"
                         )
                     raw = historical_source(member.path, record.sequence)
-                assert raw is not None
+                if raw is None:
+                    raise ValueError(
+                        f"historical registration {member.path} at {record.sequence} is absent"
+                    )
                 digest = registration_key(raw, member.path)
             connection.execute(
                 "INSERT INTO provider_registration_order VALUES (?,?,?) ON CONFLICT(path,digest) "
@@ -154,6 +168,10 @@ def refresh_provider_heads(
             "SELECT sequence FROM provider_registration_order WHERE path=? AND digest=?",
             (path, key),
         ).fetchone()
+        if sequence is None:
+            connection.execute(
+                "INSERT INTO provider_registration_order VALUES (?,?,0)", (path, key)
+            )
         connection.execute(
             "UPDATE provider_interfaces SET registration_sequence=? WHERE path=?",
             (0 if sequence is None else sequence[0], path),
