@@ -610,11 +610,12 @@ class LocalJournalBackend:
             frames: list[bytes] = []
             appended: list[tuple[int, int, StoredProcedureJournalRecordV1]] = []
             offset = 0 if stamp is None else stamp[2]
+            sequence, previous_digest = current.sequence, current.record_digest
             for draft in drafts[len(stored) :]:
                 record = ProcedureJournalRecordV1.bind(
                     draft,
-                    sequence=current.sequence + 1,
-                    previous_record_digest=current.record_digest,
+                    sequence=sequence + 1,
+                    previous_record_digest=previous_digest,
                 )
                 item = StoredProcedureJournalRecordV1.bind_stored(record)
                 body = canonical_bytes(item.model_dump(mode="json"))
@@ -629,14 +630,18 @@ class LocalJournalBackend:
                 appended.append((offset, len(frame), item))
                 offset += len(frame)
                 stored.append(item)
-                current = JournalPartitionHeadV1(
-                    stream=stream,
-                    partition_id=partition_id,
-                    sequence=record.sequence,
-                    record_digest=item.record_digest,
-                )
+                sequence, previous_digest = record.sequence, item.record_digest
             if not appended:
                 return tuple(stored)
+            # Intermediate heads are not published or returned. The bound
+            # records already validate every sequence and predecessor; build
+            # only the group's final head, after its whole chain is known.
+            current = JournalPartitionHeadV1(
+                stream=stream,
+                partition_id=partition_id,
+                sequence=sequence,
+                record_digest=previous_digest,
+            )
             index.mark_dirty(stream, partition_id)
             descriptor = os.open(
                 path,
