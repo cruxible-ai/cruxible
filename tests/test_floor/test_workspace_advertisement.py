@@ -175,16 +175,20 @@ def test_advertisement_ignores_executable_workspace_git_config(tmp_path: Path) -
     assert not uploadpack_marker.exists()
 
 
+@pytest.mark.parametrize("relative", [False, True])
 def test_advertisement_refuses_instead_of_ssh_command_without_execution(
     tmp_path: Path,
+    relative: bool,
 ) -> None:
     workspace, ledger = _repositories(tmp_path, "sha1")
     daemon_uid_marker = tmp_path / "daemon-uid"
+    raw_url = f"../{ledger.name}" if relative else str(ledger.resolve())
+    _git(workspace, "config", "remote.cruxible-ledger.url", raw_url)
     _git(
         workspace,
         "config",
         "url.ssh://attacker.invalid/x.insteadOf",
-        str(ledger.resolve()),
+        raw_url,
     )
     _git(
         workspace,

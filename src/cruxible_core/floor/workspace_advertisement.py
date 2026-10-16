@@ -183,11 +183,20 @@ def _configure_remote(
         raise ValueError("remote_conflict")
     # We copy from the supplied local repository, never from config. Refuse a
     # transport rewrite anyway: later human `git fetch` must not inherit it.
-    for section, key, value in rows:
-        if section.startswith('url "') and key == "insteadof" and expected.startswith(value):
-            rewritten = section[5:-1] + expected[len(value) :]
-            if not _local_url_matches(workspace, rewritten, expected):
-                raise ValueError("remote_conflict")
+    rewrites = [
+        (value, section[5:-1])
+        for section, key, value in rows
+        if section.startswith('url "') and key == "insteadof"
+    ]
+    for raw_url in urls or [expected]:
+        matches = [
+            (prefix, replacement) for prefix, replacement in rewrites if raw_url.startswith(prefix)
+        ]
+        if matches:
+            prefix, replacement = max(matches, key=lambda row: len(row[0]))
+            raw_url = replacement + raw_url[len(prefix) :]
+        if not _local_url_matches(workspace, raw_url, expected):
+            raise ValueError("remote_conflict")
     desired = {
         "fetch": [_ACCEPTED_REFSPEC, _PROPOSAL_REFSPEC],
         "tagopt": ["--no-tags"],
