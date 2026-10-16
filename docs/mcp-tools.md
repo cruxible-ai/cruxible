@@ -298,6 +298,10 @@ names it instead. Every new Subject's kind needs a `subject_kind` (keyed
 `subject-kind` prints one, and the CLI reference's "Subject kinds and creation"
 gives the full rule. `approval_policy` and `procedure_runtime_policy` parse
 as members but a change set refuses them; send each as its own singleton input.
+A one-key reference can use `{"subject_kind": "sec.package", "key": "Demo"}`;
+composite keys name each part in a mapping. Claim subjects and Subject-valued
+objects can also name a same-set creation as `sec.package/Demo`; core applies
+the key's canonical form and the usual reference ambiguity rules.
 There is no second batch tool.
 A `claim_type_succession` member succeeds an accepted ClaimType and dispositions
 its whole reverse-pin closure in the same generation, so vocabulary evolution

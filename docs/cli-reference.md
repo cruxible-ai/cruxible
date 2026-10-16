@@ -1825,6 +1825,13 @@ reference as `subject=` or `value=`:
 kind, or `SubjectKeyReference(subject_kind=..., key={...})` for a composite kind, from
 `cruxible_client.contracts.subject_kinds`.
 
+In an authoring change set, `sec.package/Demo Key` also resolves a Subject
+a `subject` member of that set creates with key `"Demo Key"`. The key
+ClaimType's canonical form applies, so spelling and case need not match the
+assigned id. This works for both Claim subjects and Subject-valued objects;
+an unknown reference keeps the repair to add its Subject to the same set.
+Composite keys still use a mapping.
+
 Naming a Subject by text resolves the same way on every route (reads, writes,
 queries, creations): an exact live id, then an alias, then the canonical key
 (none, one, several), then an exact retired id. An alias sits before the key
