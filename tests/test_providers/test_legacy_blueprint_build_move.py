@@ -71,7 +71,7 @@ def legacy_blueprint_move(source=False):
 
 @pytest.mark.usefixtures("contracted_demo")
 @pytest.mark.parametrize("source", [False, True])
-def test_legacy_blueprint_move_binds_the_registration_of_the_new_build(source):
+def test_legacy_blueprint_move_binds_the_registration_of_the_new_build(source, tmp_path, request):
     old, new, bp, proc, path, tree, move = legacy_blueprint_move(source)
     moved = parse_procedure(
         _reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}), path=path
@@ -95,7 +95,10 @@ def test_legacy_blueprint_move_binds_the_registration_of_the_new_build(source):
         interface_digest=accepted_interface().registration.interface_digest,
         effect_class=accepted_interface().registration.effect_class,
     )
-    LocalProviderExecutionDriver._bound_result(
+    from tests.test_providers.test_provider_local_driver import _fake_interpreter
+
+    interpreter = _fake_interpreter(tmp_path / "provider-python")
+    bound = LocalProviderExecutionDriver._bound_result(
         AcceptedProvider(
             path=provider_path(new.identity.name),
             provider=new,
@@ -107,12 +110,46 @@ def test_legacy_blueprint_move_binds_the_registration_of_the_new_build(source):
             artifact_digest=contract.artifact_digest,
         ),
         moved.definition.nodes[0].implementation_digest,
-        SimpleNamespace(deployment_digest="sha256:" + "f" * 64),
+        SimpleNamespace(deployment_digest="sha256:" + "f" * 64, interpreter_path=interpreter),
         entrypoint="demo.runtime:Provider",
-        endpoints=(),
+        endpoints=("https://example.test",),
         materialization_digest="sha256:" + "e" * 64,
         environment_manifest_digest="sha256:" + "d" * 64,
     )
+    import shutil
+
+    from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlan
+    from cruxible_core.providers.provider_local_runtime import ProviderSecretResolverRegistry
+    from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
+    from cruxible_core.providers.provider_runtime_contract import (
+        ProviderRuntimeBudgetsV1,
+        ProviderRuntimeRunContextV1,
+    )
+    from tests.support.invocation_ids import unique_invocation_id
+    from tests.support.short_temporary_root import short_temporary_directory
+
+    control = short_temporary_directory("moved-provider-")
+    request.addfinalizer(lambda: shutil.rmtree(control, ignore_errors=True))
+    context = ProviderRuntimeRunContextV1(
+        protocol_version="1.0",
+        run_id="RUN-moved-legacy",
+        interface_id=registration.interface_id,
+        interface_digest=registration.interface_digest,
+        implementation_digest=moved.definition.nodes[0].implementation_digest,
+        entrypoint="demo.runtime:Provider",
+        input={"value": "after-move"},
+        input_bucket="small",
+        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=16384),
+    )
+    outcome = LocalProviderExecutionDriver().invoke(
+        bound,
+        context,
+        secret_plan=ProviderSecretResolutionPlan(),
+        secret_resolvers=ProviderSecretResolverRegistry(()),
+        invocation_id=unique_invocation_id(),
+        process_leases=ProviderProcessLeaseStore(tmp_path / "leases", control_root=control),
+    )
+    assert outcome.envelope.output == {"echo": "after-move"}
     assert parse_procedure(render_procedure(moved), path=path) == moved
     if source:
         binding = moved.definition.source.bindings["lookup"]
@@ -232,6 +269,7 @@ def test_unmoved_blueprint_slot_keeps_its_exact_registration():
     first["next"] = "held"
     raw["nodes"].insert(1, second)
     raw["pin_slots"].append({**raw["pin_slots"][0], "slot_name": "held"})
+    raw["pin_slots"].sort(key=lambda item: item["slot_name"])
     definition = ProcedureDefinition.model_validate(raw)
     bp = bp.model_copy(
         update={
