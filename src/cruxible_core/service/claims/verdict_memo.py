@@ -14,9 +14,8 @@ at the same coordinate, so this remembers it. It is a cache and nothing else:
   accepted coordinate, the exact Claim set, and the head of the body store's
   landing log, which moves when an evidence body arrives or any body leaves
   (deciding whether a capture can be replayed now) but not for journal-record
-  payloads. The log sees bodies arrive and leave, not a body rewritten in
-  place, so each entry also keeps the file identity of every body-store object
-  its verdicts read and is served only while all of them hold (one stat each).
+  payloads. Verification records damage and repair in that same log; reads
+  never re-check body files to validate a remembered answer.
   A positioned read keys on its recorded landing and re-observation positions
   instead of the live heads, so it answers only for the snapshot it read.
   Accepted attestations are bound by the coordinate; pending door attestations
@@ -54,9 +53,9 @@ def verdict_input_fingerprint(instance: object) -> str | None:
     move for journal-record payloads (run records, Line dispatch coverage,
     settlements), which are reachable only through the record that names them,
     appended after the body lands. This is a writer-owned availability signal,
-    not a proof against in-place tampering with body bytes; the body
-    fingerprints kept with each remembered derivation cover that, and they
-    record a consulted body's absence too. An unreadable log disables reuse
+    not a per-read file integrity check. Verification records missing/corrupt
+    bodies and repairs as sequenced completions in the same log, so later
+    reads invalidate from those records. An unreadable log disables reuse
     entirely: two failed observations must never form a reusable key.
 
     Inside a positioned read (``storage.read_positions.reading_at``) body

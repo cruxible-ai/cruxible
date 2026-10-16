@@ -548,22 +548,6 @@ _CURATION = (
     "(curation_detectors.py:182 _curation_history_index) and every dependency artifact "
     "(claims/closure.py:417), via service/discovery/curation.py:738"
 )
-_CURATION_BODIES = (
-    "audit#2 (post-v1, beta; dev.roadmap_item/curation-incremental-detection): curation's "
-    "unscoped facts ask every cited Capture's replay availability (curation/"
-    "curation_detectors.py:1279 -> service/discovery/query.py:639 build_accepted_query_facts "
-    "-> :182 _fact_row); each misses the availability memo, which positioned reads never "
-    "fill (service/evidence/evidence.py:782), so each Capture is derived twice to bracket "
-    "its file identities (:815, :838), reading its envelope each time (:876)"
-)
-_FLAG_BODY_STATS = (
-    "new: a kind query's rendered Claims re-check the file identity of every body their "
-    "verdicts consulted, one shard-directory open each: the availability memo's check "
-    "(service/evidence/evidence.py:810 via :565 snapshot, from "
-    "service/discovery/claim_status.py:247) and the remembered slot's fingerprints "
-    "(evidence.py:753 body_fingerprints_hold, from claim_status.py:371), via "
-    "service/discovery/read_flags.py:163 claim_reads from compact_query.py:1033 render"
-)
 _NAMED_FACTS = (
     "new: a named query builds facts over every Claim of its predicates and every Subject "
     "before its budget truncates (service/discovery/query.py:626 build_accepted_query_facts "
@@ -637,7 +621,6 @@ GROWS: dict[str, dict[str, str]] = {
             "sql_statements",
             "git_blob_reads",
         ),
-        "cas_body_reads": _CURATION_BODIES,
         "sql_vm_steps": (
             "audit#2: each curation detection walks the whole history index from its start "
             "(SELECT * FROM artifact_versions WHERE occurrence_sequence<=? ORDER BY ..., "
@@ -655,7 +638,6 @@ GROWS: dict[str, dict[str, str]] = {
             "filters (service/discovery/query.py:362 _reachable_subject_paths, :542-549 via "
             "compact_query.py:1286 live_facts)"
         ),
-        "file_opens": _FLAG_BODY_STATS,
     },
     "read.query.named": {
         # Its digests no longer grow after the encode-once batch (measured XPASS).
@@ -663,7 +645,6 @@ GROWS: dict[str, dict[str, str]] = {
             _NAMED_FACTS,
             "claim_parses",
             "canonical_encodes",
-            "file_opens",
             "sql_statements",
             "git_blob_reads",
         ),
@@ -689,7 +670,7 @@ GROWS: dict[str, dict[str, str]] = {
     "procedure.settle": {
         # Its encodes and digests no longer grow after the encode-once batch
         # (measured XPASS).
-        **_grows(_SETTLE, "claim_parses", "file_opens", "git_blob_reads"),
+        **_grows(_SETTLE, "claim_parses", "git_blob_reads"),
         **_grows(
             "settle's SQL work grows on the merged tree after perf B (statements 3,011 -> 4,523 at "
             "10x); attribution owed by dev.roadmap_item/settle-cost-after-batch-a",

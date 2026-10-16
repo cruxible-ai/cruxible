@@ -47,9 +47,6 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.captures import (
-    parse_capture_envelope,
-)
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claims import (
     claim_path,
@@ -84,7 +81,9 @@ from cruxible_core.proposals.proposals import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.identity import require_authoring_principal
+from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import dry_run_bodies
+from cruxible_core.storage.read_positions import read_request, unpositioned_operation
 
 AUTHORING_REBASE_DOMAIN = "playbill-authoring-rebase-v1"
 
@@ -311,6 +310,7 @@ class AuthoringIntentCoordinator:
         require_authoring_principal(self.instance, actor.actor_id)
         with (
             dry_run_bodies(),
+            read_request(self.instance),
             detached_history_reads(),
             self.instance.capture_verification_request(),
         ):
@@ -406,6 +406,7 @@ class AuthoringIntentCoordinator:
             raise RuntimeError("preflight transition omitted its result")
         return updated.last_preflight
 
+    @unpositioned_operation
     def _compute_and_bind_preflight(
         self,
         intent_id: str,
@@ -413,6 +414,8 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
         prepared: PreparedEvaluationScope | None = None,
     ) -> tuple[ComputedPreflight, AuthoringIntentV1]:
+        # This persists a preflight and lands its lowered evidence. Unlike an
+        # in-memory preview, it must see those new bodies even inside a read.
         current = self.store.get(intent_id, actor_id=actor.actor_id)
         computed = compute_preflight(self.instance, intent=current, actor=actor, prepared=prepared)
         if computed.result.verdict == "refused":
@@ -671,14 +674,10 @@ class AuthoringIntentCoordinator:
         ):
             return None
         try:
-            envelope = parse_capture_envelope(
-                self.instance.body_store().read(
-                    payload.source.capture_digest,
-                    access=BodyAccessContext(
-                        principal_id="playbill-authoring",
-                        can_read_body=True,
-                    ),
-                )
+            envelope = capture_envelope(
+                self.instance.body_store(),
+                payload.source.capture_digest,
+                access=BodyAccessContext(principal_id="playbill-authoring", can_read_body=True),
             )
             with self.instance.bind_accepted_projection(coordinate) as projection:
                 path = projection.citations.capture_contract_path(envelope.capture_contract_digest)
@@ -850,6 +849,7 @@ class AuthoringIntentCoordinator:
                 actor_id=actor_id,
             )
 
+    @unpositioned_operation
     def submit(
         self,
         intent_id: str,

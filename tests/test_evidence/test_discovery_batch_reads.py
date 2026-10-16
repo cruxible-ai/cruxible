@@ -268,4 +268,6 @@ def test_remembered_replay_availability_follows_the_consulted_cas_files(tmp_path
     assert available(instance, capture, readers={}) is True
     # ...while removing the retained Capture body is observed without a new generation.
     instance.body_store()._path(capture).unlink()
+    assert available(instance, capture, readers={}) is True
+    assert instance.body_store().availability(capture) == "missing"
     assert available(instance, capture, readers={}) is False

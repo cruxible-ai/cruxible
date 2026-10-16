@@ -36,6 +36,7 @@ from cruxible_core.derived.derived_state import SnapshotTree
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.phase_timing import timed_phase
+from cruxible_core.storage.read_positions import PositionedBodies
 
 # Bounds are retained serialized/tree bytes, not a claim about Python heap size.
 MAX_ENTRIES = 4
@@ -131,7 +132,7 @@ def reuse_lowering(
     entry = cache.get(key)
     if entry is not None:
         store = instance.body_store()
-        if all(store.verify(digest) for digest in entry.bodies):
+        if all(PositionedBodies(store).verify(digest) for digest in entry.bodies):
             # Fresh nested containers prevent downstream mutation poisoning reuse.
             return copy.deepcopy(entry.lowered)
         # Missing generated bodies are recreated by normal lowering. Corrupt CAS

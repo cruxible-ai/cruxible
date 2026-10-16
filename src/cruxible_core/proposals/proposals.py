@@ -367,6 +367,7 @@ from cruxible_core.query.engine import (
 )
 from cruxible_core.runtime.phase_timing import timed_operation, timed_phase
 from cruxible_core.storage.preview_fence import refuse_write_while_previewing
+from cruxible_core.storage.read_positions import unpositioned_operation
 
 if TYPE_CHECKING:
     from cruxible_core.evidence.attestation_verification import CaptureContractVersions
@@ -5694,6 +5695,7 @@ class ProposalService:
 
     @timed_operation("propose")
     @timed_phase("admission")
+    @unpositioned_operation
     def submit(
         self,
         *,

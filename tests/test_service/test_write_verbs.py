@@ -1158,10 +1158,10 @@ def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
     assert "longer handle" in (caught.value.repair_line or "")
 
 
-def test_a_handle_in_a_crowded_shard_stops_at_the_work_limit(
+def test_a_handle_ignores_unindexed_files_in_a_crowded_shard(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Almost nothing in the shard matches the full prefix, and the scan still stops."""
+    """Handle lookup answers from the envelope index; unrelated files cost no probes."""
 
     shard = instance.body_store().root / "sha256" / "ab"
     shard.mkdir(exist_ok=True)
@@ -1176,7 +1176,7 @@ def test_a_handle_in_a_crowded_shard_stops_at_the_work_limit(
             _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "CAP-abffffffffff"}),
         )
     )
-    assert refusal.code == "cruxible.write.capture_scan_exhausted"
+    assert refusal.code == "cruxible.write.capture_not_found"
     scan = instance.body_store().scan("abffffffffff", budget=500, nearest=8)
     assert not scan.complete and scan.examined <= 500 and len(scan.nearest) <= 8
 

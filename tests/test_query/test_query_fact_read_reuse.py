@@ -149,6 +149,7 @@ def test_new_readers_and_public_builds_observe_changed_capture_availability(tmp_
     original = path.read_bytes()
     path.unlink()
     assert reader.build() == before
+    assert store.availability(capture.capture_digest) == "missing"
     after = query._AcceptedQueryFactsRead(instance, coordinate=coordinate).build()
     assert not after.claims[0].captures[0].current_replay_available
     assert query.build_accepted_query_facts(instance, coordinate=coordinate) == after

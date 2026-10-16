@@ -55,6 +55,12 @@ from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
 )
 from cruxible_core.service.floor.floor import service_export_playbill_floor
+from cruxible_core.storage.read_positions import (
+    body_present,
+    current_positions,
+    read_positions,
+    reading_at,
+)
 from tests.core_support._subject_kind_support import declare_created_kinds, world_history
 from tests.core_support._support import client_material, initialize_local
 from tests.test_claims.test_claims import _claim_type, _subject
@@ -203,6 +209,33 @@ def test_preflight_is_deterministic_and_binds_the_current_coordinate(tmp_path: P
     assert first.certificate.accepted_coordinate.git_oid == instance.accepted_coordinate().git_oid
     assert first.certificate.payload_digest == intent.payload_digest
     assert first.certificate.certificate_digest.startswith("sha256:")
+
+
+def test_persisted_preflight_sees_its_new_evidence_and_restores_the_enclosing_read(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload(),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    store = instance.body_store()
+    digest = store.digest_bytes(b"status: ready\n").tagged
+    positions = read_positions(instance)
+    assert body_present(store, digest) is False
+
+    with reading_at(positions):
+        result = coordinator.preflight(intent.intent_id, actor=actor)
+        assert result.verdict == "passed", result.frontier
+        assert current_positions() == positions
+        # The write saw its own new bodies; the enclosing read still excludes them.
+        assert body_present(store, digest) is False
+
+    assert body_present(store, digest) is True
 
 
 def test_subject_claim_object_requires_matching_type_and_existing_allowed_subject(

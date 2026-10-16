@@ -41,7 +41,6 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, ty
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     parse_capture_contract,
-    parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import (
@@ -89,6 +88,8 @@ from cruxible_core.proposals.proposals import (
     validate_proposal_tree,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.storage.capture_metadata import capture_envelope
+from cruxible_core.storage.read_positions import PositionedBodies
 
 
 @dataclass(frozen=True)
@@ -208,14 +209,13 @@ def _existing_capture_contract_matches_reference(
     ):
         return False
     try:
-        envelope = parse_capture_envelope(
-            instance.body_store().read(
-                value["capture_digest"],
-                access=BodyAccessContext(
-                    principal_id="playbill-authoring",
-                    can_read_body=True,
-                ),
-            )
+        envelope = capture_envelope(
+            instance.body_store(),
+            value["capture_digest"],
+            access=BodyAccessContext(
+                principal_id="playbill-authoring",
+                can_read_body=True,
+            ),
         )
         contract = parse_capture_contract(artifact_content, path=artifact_path)
     except (CruxibleError, ValueError):
@@ -984,9 +984,9 @@ def compute_preflight(
                         proposed_tree=proposed_tree,
                         current=current,
                         bodies=(
-                            instance.body_store()
+                            PositionedBodies(instance.body_store())
                             if prepared is None
-                            else prepared.bodies(instance.body_store())
+                            else prepared.bodies(PositionedBodies(instance.body_store()))
                         ),
                         timestamp=intent.canonical_timestamp,
                         rebased=base.git_oid != current.git_oid,

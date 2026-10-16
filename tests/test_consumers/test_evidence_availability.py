@@ -347,6 +347,9 @@ def test_a_positioned_read_reads_a_damaged_envelope_as_unavailable(
         path.unlink()
     else:
         _rewrite_in_place(path, keep_mtime=False)
+    assert instance.body_store().availability(capture) == (
+        "missing" if damage == "deleted" else "corrupt"
+    )
     with reading_at(read_positions(instance)):
         assert verdict_evidence._current_replay_available(instance, capture, readers={}) is False
         # The fold answers the same for the damaged body.

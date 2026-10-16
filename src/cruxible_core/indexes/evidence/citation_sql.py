@@ -34,6 +34,7 @@ from cruxible_core.evidence.citation_relations import (
     external_source_relation_subject,
 )
 from cruxible_core.indexes.sql_batch import execute_in, insert_rows, select_in
+from cruxible_core.storage.capture_metadata import capture_envelope
 
 OwnerKind = Literal["Claim", "attestation"]
 OwnerExists = Callable[[str, str], bool]
@@ -379,7 +380,7 @@ class CitationReader:
     ) -> CaptureEnvelopeAny:
         envelope = envelopes.get(digest)
         if envelope is None:
-            envelope = parse_capture_envelope(bodies.read(digest, access=access))
+            envelope = capture_envelope(bodies, digest, access=access)
             if capture_digest(envelope).tagged != digest:
                 raise ProjectionFormatError("citation Capture differs from its exact envelope")
             envelopes[digest] = envelope

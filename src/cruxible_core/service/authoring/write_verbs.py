@@ -36,7 +36,7 @@ import base64
 import json
 import shlex
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -79,7 +79,6 @@ from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CONTRACT_ID,
     classify_capture_reuse,
     foreign_source_capture_contract,
-    parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
@@ -196,7 +195,9 @@ from cruxible_core.service.discovery.query_vocabulary import (
 )
 from cruxible_core.service.identity import require_authoring_principal
 from cruxible_core.service.read_refusals import nearest, resolve_read_coordinate
+from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.read_positions import read_request, unpositioned_operation
 
 _AUTHORABLE_ROLES = ("normative", "observation", "environment_binding")
 # The contracts a Claim's own authoring produces; they never satisfy `captured`.
@@ -2724,8 +2725,8 @@ def _used_contract(
     if planned.capture is None:
         return None
     try:
-        envelope = parse_capture_envelope(
-            instance.body_store().read(planned.capture, access=_VALUE_READ_ACCESS)
+        envelope = capture_envelope(
+            instance.body_store(), planned.capture, access=_VALUE_READ_ACCESS
         )
     except (CruxibleError, ValueError):
         return None
@@ -3024,6 +3025,7 @@ def _coordinator(
 
 
 @timed_operation("write")
+@unpositioned_operation
 @projection_request
 def service_playbill_write(
     instance: PlaybillInstance,
@@ -3050,7 +3052,11 @@ def service_playbill_write(
     # opens.
     # One Capture verification context for the whole write: planning, lowering,
     # preflight, admission and an activation in the same call.
-    with preview_guards(request.dry_run), instance.capture_verification_request():
+    with (
+        preview_guards(request.dry_run),
+        read_request(instance) if request.dry_run else nullcontext(),
+        instance.capture_verification_request(),
+    ):
         outcome = _service_write(instance, request=request, caller=caller)
         if request.full_coordinate and outcome.accepted_coordinate is None:
             pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)

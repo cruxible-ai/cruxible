@@ -153,6 +153,7 @@ from cruxible_core.service.read_refusals import (
     nearest,
     resolve_read_coordinate,
 )
+from cruxible_core.storage.read_positions import positioned_read
 
 LIST_NAME = "query"
 COMPACT_QUERY_MAX_RESULTS = QUERY_ANSWER_MAX_RESULTS
@@ -2453,6 +2454,7 @@ def _decode_cursor(cursor: str, *, selection: str) -> _QueryCursor:
     )
 
 
+@positioned_read
 def service_playbill_query(
     instance: PlaybillInstance,
     *,

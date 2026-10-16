@@ -89,8 +89,20 @@ credentials](concepts.md#principals-and-credentials).
 
 On-disk integrity checks (content hashes, read-back verification on store, a
 periodic evidence sweep) protect against accidents: crashes, partial writes,
-media errors and stray edits. A body found missing or damaged is recorded, and
-reads report the evidence that depends on it as unavailable rather than failing;
+media errors and stray edits. `get`, `query`, `orient`, coverage and write
+previews take body presence from the landing index at the read's recorded
+position. They do not stat or hash body files to decide availability. Capture
+metadata is parsed from verified bytes once per content id; later metadata
+reads reuse it while the index says the body is available. When updating a
+changed Claim, the facts worker checks its consulted bodies' file identities
+and verifies those that differ from their last verified identities before
+persisting sweep baselines. Missing or corrupt bodies receive sequenced damage
+records even when availability or metadata was reused from memory. Preview-generated
+bodies are held in memory and are available to that preview. Persistent
+preflight, proposal admission, generation preparation and recovery use live
+operational positions even when invoked inside a read; returning restores the
+enclosing read's positions. A body found
+missing or damaged is recorded, and reads report the evidence that depends on it as unavailable rather than failing;
 reading the damaged bytes themselves still refuses. These checks are not a
 security boundary, since a process running as the daemon's user can rewrite its
 files. Security against agents comes from isolation (agents talk to the daemon,

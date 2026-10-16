@@ -200,14 +200,12 @@ class SubjectPart:
 
 
 def body_available(instance: PlaybillInstance, digest: str) -> bool:
-    """Whether the body store holds ``digest`` intact, as a read would find it.
-
-    ``verify`` re-hashes only a file whose identity changed since it was last
-    verified, so an unchanged body costs one stat.
-    """
+    """Presence at the read's landing position, including recorded damage."""
 
     try:
-        return instance.body_store().verify(digest)
+        from cruxible_core.storage.read_positions import PositionedBodies
+
+        return PositionedBodies(instance.body_store()).verify(digest)
     except (CruxibleError, OSError, ValueError):
         return False
 
