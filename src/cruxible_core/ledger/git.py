@@ -374,6 +374,11 @@ class GitLedger:
                 raise GitError("daemon commit signing failed") from exc
         oid = self._object_oid("commit", body)
         self._store_loose_objects({oid: ("commit", body)})
+        repository = _repository_key(self.path)
+        for sized in (True, False):
+            listing = _remembered_listing(repository, tree_oid, with_sizes=sized)
+            if listing is not None:
+                _remember_listing(repository, oid, listing)
         return oid
 
     def _blob_oid(self, content: bytes) -> str:
@@ -2429,7 +2434,9 @@ class GitLedger:
         entries = self._directory_entries(oid, directory)
         return () if entries is None else tuple(entries)
 
-    def _directory_entries(self, oid: str, directory: str) -> dict[str, tuple[bytes, str]] | None:
+    def _directory_entries(
+        self, oid: str, directory: str
+    ) -> Mapping[str, tuple[bytes, str]] | None:
         """One directory's own tree entries, read down its path; None if it is absent.
 
         Only the tree objects on the path are read, so the cost follows the
@@ -2458,9 +2465,14 @@ class GitLedger:
 
     def _parsed_tree(
         self, repository: tuple[str, int, int], oid: str
-    ) -> dict[str, tuple[bytes, str]]:
-        """One tree object's entries, remembered by object ID; callers must not mutate it."""
+    ) -> Mapping[str, tuple[bytes, str]]:
+        """One tree object's immutable entries, sharing encoded write-side listings."""
 
+        with _ENCODED_TREES_LOCK:
+            encoded = _ENCODED_TREES.get(oid)
+            if encoded is not None:
+                _ENCODED_TREES.move_to_end(oid)
+                return encoded.entries
         key = (repository, oid)
         with _PARSED_TREES_LOCK:
             cached = _PARSED_TREES.get(key)
@@ -2583,7 +2595,9 @@ class GitLedger:
             repository = _repository_key(self.path)
             for requested in paths:
                 directory, _separator, name = requested.rpartition("/")
-                entries: dict[str, tuple[bytes, str]] | None = self._parsed_tree(repository, root)
+                entries: Mapping[str, tuple[bytes, str]] | None = self._parsed_tree(
+                    repository, root
+                )
                 for part in directory.split("/") if directory else ():
                     found = entries.get(part) if entries is not None else None
                     entries = (

@@ -579,6 +579,7 @@ def test_a_forged_tree_under_a_verified_head_checkpoint_is_never_served(tmp_path
         ledger_git._TREE_LISTINGS,
         ledger_git._TREE_CHANGES,
         ledger_git._COMMIT_ROOTS,
+        ledger_git._ENCODED_TREES,
     ):
         cache.clear()
 

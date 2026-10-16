@@ -18,6 +18,8 @@ def _clear_caches() -> None:
     ledger_git._TREE_LISTINGS.clear()
     ledger_git._TREE_CHANGES.clear()
     ledger_git._COMMIT_ROOTS.clear()
+    ledger_git._ENCODED_TREES.clear()
+    ledger_git._ENCODED_TREE_ENTRIES = 0
 
 
 @pytest.fixture(params=("sha1", "sha256"))
