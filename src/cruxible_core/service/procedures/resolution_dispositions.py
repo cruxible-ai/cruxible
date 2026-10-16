@@ -143,61 +143,83 @@ def service_dispose_procedure_resolution(
         fenced = _FencedWriter(instance, journal)
         try:
             fenced.acquire(stream, resolution_contract_partition_id(activation))
-            # Read after acquiring the fence, then CAS this exact decision head.
-            book, head = resolution_book_at_head(
-                journal, stream, activation, bodies=instance.body_store()
-            )
-            if book.unavailable:
-                raise ResolutionDispositionRefused(
-                    "cruxible.resolution.unavailable",
-                    "Restore the unavailable resolution exhaust before reviewing it.",
-                )
-            latest = book.latest_resolution(activation.contract_id)
-            if latest is None or latest.resolution_id != request.resolution_id:
-                raise ResolutionDispositionRefused(
-                    "cruxible.resolution.not_latest", "Review the contract's latest answer."
-                )
-            previous = book.last_disposition(request.resolution_id)
-            if previous is not None and previous.verdict == request.verdict:
-                reviewer = previous.reviewer_actor_context
-                if previous.note != request.reason or any(
-                    getattr(reviewer, field) != getattr(actor_context, field)
-                    for field in ("actor_type", "actor_id", "org_id")
-                ):
+            # Lock order matches acceptance/Line admission: accepted state and
+            # ledger activation, then the append's material/journal locks. The
+            # writer fence above holds no journal lock across this section.
+            with instance.holding_accepted_head() as main:
+                live_coordinate = instance.accepted_coordinate()
+                if live_coordinate.git_oid != main:
                     raise ResolutionDispositionRefused(
-                        "cruxible.resolution.already_disposed",
-                        "The last judgment has this verdict with a different reason or reviewer.",
+                        "cruxible.resolution.conflict",
+                        "Accepted state advanced; refresh before reviewing again.",
                     )
+                with instance.bind_accepted_projection(live_coordinate) as projection:
+                    live = projection.typed.dependency_state(f"Procedure:{name}")
+                if live is None or live.lifecycle.state != "live":
+                    raise ResolutionDispositionRefused(
+                        "cruxible.resolution.contract_closed", "Procedure is not live."
+                    )
+                if live.artifact_digest != accepted.artifact_digest:
+                    raise ResolutionDispositionRefused(
+                        "cruxible.resolution.contract_closed",
+                        "Procedure revision has been replaced.",
+                    )
+                # Read after acquiring the fence, then CAS this exact decision head.
+                book, head = resolution_book_at_head(
+                    journal, stream, activation, bodies=instance.body_store()
+                )
+                if book.unavailable:
+                    raise ResolutionDispositionRefused(
+                        "cruxible.resolution.unavailable",
+                        "Restore the unavailable resolution exhaust before reviewing it.",
+                    )
+                latest = book.latest_resolution(activation.contract_id)
+                if latest is None or latest.resolution_id != request.resolution_id:
+                    raise ResolutionDispositionRefused(
+                        "cruxible.resolution.not_latest", "Review the contract's latest answer."
+                    )
+                previous = book.last_disposition(request.resolution_id)
+                if previous is not None and previous.verdict == request.verdict:
+                    reviewer = previous.reviewer_actor_context
+                    if previous.note != request.reason or any(
+                        getattr(reviewer, field) != getattr(actor_context, field)
+                        for field in ("actor_type", "actor_id", "org_id")
+                    ):
+                        raise ResolutionDispositionRefused(
+                            "cruxible.resolution.already_disposed",
+                            "The last judgment has this verdict with a different reason "
+                            "or reviewer.",
+                        )
+                    return ProcedureResolutionDispositionResult(
+                        disposition=disposition_summary(previous),
+                        standing_resolution_id=None
+                        if request.verdict == "overturned"
+                        else resolution.resolution_id,
+                        written_now=False,
+                    )
+                disposition = build_resolution_disposition(
+                    resolution,
+                    sequence=book.disposition_count(request.resolution_id) + 1,
+                    verdict=request.verdict,
+                    reviewer_actor_context=actor_context,
+                    recorded_at=recorded_at,
+                    note=request.reason,
+                )
+                append_resolution_disposition(
+                    fenced.writer,
+                    activation=activation,
+                    resolution=resolution,
+                    disposition=disposition,
+                    stream=stream,
+                    expected_head=head,
+                )
                 return ProcedureResolutionDispositionResult(
-                    disposition=disposition_summary(previous),
+                    disposition=disposition_summary(disposition),
                     standing_resolution_id=None
                     if request.verdict == "overturned"
                     else resolution.resolution_id,
-                    written_now=False,
+                    written_now=True,
                 )
-            disposition = build_resolution_disposition(
-                resolution,
-                sequence=book.disposition_count(request.resolution_id) + 1,
-                verdict=request.verdict,
-                reviewer_actor_context=actor_context,
-                recorded_at=recorded_at,
-                note=request.reason,
-            )
-            append_resolution_disposition(
-                fenced.writer,
-                activation=activation,
-                resolution=resolution,
-                disposition=disposition,
-                stream=stream,
-                expected_head=head,
-            )
-            return ProcedureResolutionDispositionResult(
-                disposition=disposition_summary(disposition),
-                standing_resolution_id=None
-                if request.verdict == "overturned"
-                else resolution.resolution_id,
-                written_now=True,
-            )
         except JournalConflictError as exc:
             raise ResolutionDispositionRefused(
                 "cruxible.resolution.conflict",

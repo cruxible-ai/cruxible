@@ -343,3 +343,73 @@ def test_warm_get_and_exact_retry_do_flat_work_at_two_review_history_sizes(
         return counts
 
     assert work(2) == work(8)
+
+
+@pytest.mark.parametrize("change", ["retire", "replace"])
+def test_dispose_revalidates_contract_changed_after_writer_fence(measured, monkeypatch, change):
+    from cruxible_core.service.procedures import resolution_dispositions as module
+
+    instance, owner, procedure, first = measured
+    activation, journal, stream, _, before = _book(instance, procedure)
+    acquire = module._FencedWriter.acquire
+
+    def close_after_fence(writer, *args):
+        acquire(writer, *args)
+        definition = procedure.definition
+        if change == "replace":
+            definition = definition.model_copy(
+                update={
+                    "budget": definition.budget.model_copy(
+                        update={"max_items": definition.budget.max_items - 1}
+                    )
+                }
+            )
+        changed = procedure.model_copy(
+            update={
+                "definition": definition,
+                "definition_digest": compute_procedure_definition_digest(definition).tagged,
+                "lifecycle": ArtifactLifecycle(
+                    state="retired" if change == "retire" else "live",
+                    predecessor_digest=procedure_artifact_digest(procedure).tagged,
+                ),
+            }
+        )
+        _activate_procedure(
+            instance, owner, changed, sequence=5, timestamp="2026-08-24T17:00:00.000000Z"
+        )
+
+    monkeypatch.setattr(module._FencedWriter, "acquire", close_after_fence)
+    with pytest.raises(ResolutionDispositionRefused) as refused:
+        _dispose(instance, procedure, first)
+    assert refused.value.error_code == "cruxible.resolution.contract_closed"
+    assert refused.value.http_status == 409
+    assert journal.read_head(stream, resolution_contract_partition_id(activation)) == before
+
+
+def test_disposition_append_keeps_the_accepted_head_hold(measured, monkeypatch):
+    from contextlib import contextmanager
+
+    from cruxible_core.service.procedures import resolution_dispositions as module
+
+    instance, _, procedure, first = measured
+    hold = instance.holding_accepted_head
+    append = module.append_resolution_disposition
+    holding = False
+
+    @contextmanager
+    def tracked_hold():
+        nonlocal holding
+        with hold() as head:
+            holding = True
+            try:
+                yield head
+            finally:
+                holding = False
+
+    def append_while_held(*args, **kwargs):
+        assert holding
+        return append(*args, **kwargs)
+
+    monkeypatch.setattr(instance, "holding_accepted_head", tracked_hold)
+    monkeypatch.setattr(module, "append_resolution_disposition", append_while_held)
+    assert _dispose(instance, procedure, first).written_now
