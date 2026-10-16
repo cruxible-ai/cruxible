@@ -146,3 +146,11 @@ def test_split_prefix_cuts_exactly_the_prefixed_keys_and_stays_balanced(seed: in
         }
     # The source is untouched.
     assert set(source) == keys
+
+
+@pytest.mark.parametrize("lower", ["", "a", "a/", "a0", "c", "zz"])
+def test_ordered_seek_yields_only_the_requested_suffix(lower):
+    source = {"a": 1, "a/b": 2, "a/c": 3, "b": 4, "z": 5}
+    root = PersistentMap(source)
+    assert list(root.iter_from(lower)) == [key for key in sorted(source) if key >= lower]
+    assert dict(root) == source

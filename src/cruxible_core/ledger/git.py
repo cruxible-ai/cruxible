@@ -3490,17 +3490,15 @@ def _listing_child_names(listing: _Listing, directory: str) -> tuple[str, ...]:
     if isinstance(listing, _PersistentListing):
         prefix = directory + "/" if directory else ""
         rows = listing.rows
-        if prefix:
-            _, rows = rows.split_prefix(prefix)
+        paths = rows.iter_from(prefix)
         persistent_names = []
-        while rows:
-            path = next(iter(rows))
+        while (path := next(paths, None)) is not None and path.startswith(prefix):
             name, separator, _ = path[len(prefix) :].partition("/")
             persistent_names.append(name)
             if separator:
-                rows, _ = rows.split_prefix(prefix + name + "/")
-            else:
-                rows = rows.delete(path)
+                # Seek past this subtree; file siblings advance the iterator
+                # directly, with no AVL deletion or path-copy per child.
+                paths = rows.iter_from(prefix + name + "0")
         return tuple(persistent_names)
     _positions, ordered = _listing_index(listing)
     prefix = directory + "/" if directory else ""
@@ -3627,12 +3625,16 @@ def _remembered_listing(
 
 
 def _remember_listing(repository: tuple[str, int, int], oid: str, listing: _Listing) -> None:
-    if not isinstance(listing, _PersistentListing):
-        listing = _PersistentListing(
-            PersistentMap((entry.path, entry) for entry in listing),
-            sized=listing[0].size is not None if listing else True,
-        )
-    key = (repository, oid, listing.sized)
+    # Whole-tree reads already materialize a sorted tuple. Keep it: eagerly
+    # rebuilding AVL nodes adds full-tree allocation to cold reads and full
+    # writes. Only the first delta needs a persistent seed;
+    # subsequent deltas share that seed through their commit/tree aliases.
+    sized = (
+        listing.sized
+        if isinstance(listing, _PersistentListing)
+        else (listing[0].size is not None if listing else True)
+    )
+    key = (repository, oid, sized)
     with _TREE_LISTINGS_LOCK:
         _TREE_LISTINGS[key] = listing
         _TREE_LISTINGS.move_to_end(key)

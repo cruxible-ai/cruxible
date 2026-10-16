@@ -99,3 +99,34 @@ def test_pack_file_work_is_constant_per_batch(tmp_path):
         assert len(calls) == 3
         calls.clear()
     assert not list((ledger.path / "objects").glob("[0-9a-f][0-9a-f]/*"))
+
+
+def test_persistent_child_listing_seeks_subtrees_without_deleting_rows(monkeypatch):
+    from cruxible_client.contracts.persistent import PersistentMap
+
+    rows = {
+        "a-file": b"a",
+        "a/one": b"1",
+        "a/two/deep": b"2",
+        "a0": b"0",
+        "b/one": b"b",
+    }
+    listing = git._PersistentListing(
+        PersistentMap(
+            (
+                path,
+                git.GitTreeEntry(
+                    path=path, mode="100644", object_type="blob", oid="a" * 64, size=len(body)
+                ),
+            )
+            for path, body in rows.items()
+        )
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("enumeration copied an AVL path per child")
+
+    monkeypatch.setattr(PersistentMap, "delete", forbidden)
+    assert git._listing_child_names(listing, "") == ("a-file", "a", "a0", "b")
+    assert git._listing_child_names(listing, "a") == ("one", "two")
+    assert git._listing_child_names(listing, "absent") == ()

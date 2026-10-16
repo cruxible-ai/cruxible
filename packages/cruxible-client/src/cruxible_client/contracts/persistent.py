@@ -221,6 +221,24 @@ class PersistentMap(Mapping[str, V]):
     def __iter__(self) -> Iterator[str]:
         return (node.key for node in _nodes(self._root))
 
+    def iter_from(self, lower: str) -> Iterator[str]:
+        """Iterate keys >= lower, seeking in O(log n), without copying nodes."""
+        stack: list[_Node[V]] = []
+        node = self._root
+        while node is not None:
+            if node.key >= lower:
+                stack.append(node)
+                node = node.left
+            else:
+                node = node.right
+        while stack:
+            node = stack.pop()
+            yield node.key
+            node = node.right
+            while node is not None:
+                stack.append(node)
+                node = node.left
+
     def __len__(self) -> int:
         return _size(self._root)
 
