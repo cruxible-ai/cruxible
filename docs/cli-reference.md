@@ -4085,7 +4085,7 @@ Both edit only the catalog file: commit it with Git.
 Old `sources.yaml` and `sources.local.yaml` filenames refuse with
 `cruxible.files.catalog_rename_required`. Rename them to `files.yaml` and
 `files.local.yaml` in the same directory, then retry. There are no old command
-names or fallback reads. Persisted `playbill-source-*` format tags stay unchanged.
+names or fallback reads. Persisted format tags stay unchanged.
 
 `files compile` reads the catalogued Documents' bytes client-side and writes a
 path-free bundle; `files check` reports each one's alignment (aligned,

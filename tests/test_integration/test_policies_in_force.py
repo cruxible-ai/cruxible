@@ -50,7 +50,7 @@ from tests.support.procedures import procedure_artifact
 from tests.test_indexes.test_projection_next import _accepted_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_integration.test_acquisition_policies import _policy, _rule
-from tests.test_service.test_typed_file_catalogs import _published_sources
+from tests.test_service.test_typed_source_catalogs import _published_sources
 
 # Each seeded builtin ClaimType's three embedded policies, in field-path order.
 _SEEDED_CLAIM_TYPE_POLICIES = [
