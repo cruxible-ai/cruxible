@@ -4018,8 +4018,9 @@ def _key_reference_paths(
         connection = projection.typed.connection
         view = IdentityView(connection, key_reader=tree_key_reader(base_tree))
 
-        # The index supplies the base; the overlay contains only this change's
-        # creations. Each key is indexed once, and each reference is a seek.
+        # Match creation assignment's change-local identity effects, including
+        # aliases that make a creation reuse an existing Subject. Only genuinely
+        # new Subjects gain a key here: alias reuse leaves the held key unchanged.
         def text_key(kind: str, text: str) -> KeyTuple | None:
             declared = _declared_in_change(kind, members=members, base_tree=base_tree)
             if declared is None or len(declared.keys) != 1:
@@ -4029,7 +4030,11 @@ def _key_reference_paths(
             except SubjectKeyInvalid:
                 return None
 
-        created_view = IdentityView(connection, key_reader=text_key)
+        created_view = IdentityView(
+            connection,
+            members_identity_overlay(connection, members=members, base_tree=base_tree),
+            key_reader=text_key,
+        )
         for creation in creations.values():
             if not creation.resolved:
                 created_view.add_creation(creation.path, creation.key)
