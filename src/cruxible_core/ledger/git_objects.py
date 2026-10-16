@@ -76,7 +76,11 @@ class PackStore:
             return
         locations: dict[str, tuple[Path, int]] = {}
         members: dict[Path, dict[str, int]] = {}
-        for index in self.directory.glob("*.idx"):
+        # On cold discovery, durable packs win duplicate-object locations.
+        for index in sorted(
+            self.directory.glob("*.idx"),
+            key=lambda item: not item.with_suffix(".pending").exists(),
+        ):
             data = index.read_bytes()
             if data[:8] != b"\xfftOc\x00\x00\x00\x02":
                 raise GitError("unsupported Git pack index version")
@@ -168,6 +172,8 @@ class PackStore:
                 mapped = self.maps.pop(replacing, None)
                 if mapped is not None:
                     mapped.close()
+            if not durable:
+                stem.with_suffix(".pending").touch(exist_ok=True)
             if keep:
                 # Git honors .keep even for an as-yet-unreferenced pack. Make
                 # the protection visible before either pack/index publication.
@@ -189,8 +195,10 @@ class PackStore:
                 replacing.with_suffix(".idx").unlink(missing_ok=True)
                 replacing.unlink(missing_ok=True)
                 replacing.with_suffix(".keep").unlink(missing_ok=True)
+                replacing.with_suffix(".pending").unlink(missing_ok=True)
                 self.members.pop(replacing, None)
             if durable:
+                stem.with_suffix(".pending").unlink(missing_ok=True)
                 _directory_sync(self.directory)
             for raw_oid, _, offset in rows:
                 self.locations[raw_oid.hex()] = (stem.with_suffix(".pack"), offset)
@@ -212,6 +220,13 @@ class PackStore:
             location = self.locations.get(oid)
             if location is not None:
                 self.release([location[0]])
+
+    def is_pending(self, oid: str) -> bool:
+        """Whether this object's pack still carries a best-effort publication marker."""
+        with self.lock:
+            self._discover(len(oid) // 2)
+            location = self.locations.get(oid)
+            return location is not None and location[0].with_suffix(".pending").exists()
 
     def info(self, oid: str) -> tuple[str, int] | None:
         """Read headers only; metadata never hashes or inflates an object's body."""
@@ -422,6 +437,7 @@ class PackStore:
                     mapped.close()
                 path.with_suffix(".keep").unlink(missing_ok=True)
                 path.with_suffix(".idx").unlink(missing_ok=True)
+                path.with_suffix(".pending").unlink(missing_ok=True)
                 path.unlink(missing_ok=True)
             _directory_sync(self.directory)
             self.stamp = None

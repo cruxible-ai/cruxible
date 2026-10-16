@@ -411,7 +411,8 @@ class GitLedger:
         if pending is None:
             reader.store.write(objects)
         else:
-            pending.update(objects)
+            sealed: set[str] = getattr(reader._transaction, "sealed", set())
+            pending.update((oid, value) for oid, value in objects.items() if oid not in sealed)
 
     def _tree_entries_of(self, tree_oid: str) -> dict[str, tuple[bytes, str]]:
         found = _batch_reader(self.path).objects((tree_oid,))[tree_oid]
@@ -712,6 +713,7 @@ class GitLedger:
         """
 
         self._validate_oid(base_tree)
+        _batch_reader(self.path).import_pending_pack(base_tree)
         shared = None if base_rows is None else edited_paths(tree, base_rows)
         base: _Listing | None = None
         if base_rows is not None and shared is not None:
@@ -804,6 +806,11 @@ class GitLedger:
         if not _PROPOSAL_REVIEW_REF_RE.fullmatch(ref):
             raise GitError("proposal review ref name is malformed")
         self._validate_oid(oid)
+        # Prepare the deterministic retention object in this same request pack.
+        # Its ref still publishes only when retirement later removes the review
+        # ref; preparing bytes does not change authority/publication order.
+        if getattr(_batch_reader(self.path)._transaction, "request", False):
+            self._archive_update((oid,))
         self._update_refs([f"update {ref} {oid}"])
 
     def proposal_refs(self) -> dict[str, str]:
@@ -1614,7 +1621,14 @@ class GitLedger:
         """Serialize activation/publication and targeted loser collection across processes."""
 
         with self._exclusive_lock("playbill-activation.lock"):
-            yield
+            try:
+                yield
+            finally:
+                reader = _batch_reader(self.path)
+                if getattr(reader._transaction, "request", False) and reader._transaction.accepted:
+                    # A successor must never rely on a predecessor whose pack
+                    # is still best effort. Finish before another writer enters.
+                    reader.seal()
 
     @contextmanager
     def approval_note_lock(self, candidate_digest: str) -> Iterator[None]:
@@ -3183,6 +3197,8 @@ class _BatchBlobReader:
             return
         self._transaction.pending = {}
         self._transaction.keeps = []
+        self._transaction.sealed = set()
+        self._transaction.retained_keeps = []
         self._transaction.retain = False
         self._transaction.request = True
         self._transaction.accepted = False
@@ -3195,27 +3211,62 @@ class _BatchBlobReader:
             yield
         finally:
             try:
-                # Even an exception after a winning CAS must finish durability;
-                # a failed advisory request has no accepted-state obligation.
-                self.flush(final=True)
                 if self._transaction.accepted:
-                    for path in sorted(self._transaction.files):
-                        try:
-                            fd = os.open(path, os.O_RDONLY)
-                        except FileNotFoundError:
-                            continue  # a later publication deleted this ref
-                        try:
-                            os.fsync(fd)
-                        finally:
-                            os.close(fd)
-                    for path in sorted(self._transaction.directories):
-                        _fsync_directory(path)
-                if self._transaction.accepted or not self._transaction.retain:
+                    self.seal()
+                else:
+                    self.flush(final=True)
+                self.store.release(self._transaction.retained_keeps)
+                if not self._transaction.retain:
                     self.release_keeps()
             finally:
                 self._transaction.pending = None
                 self._transaction.request = False
                 self._transaction.encoded = None
+                self._transaction.sealed = set()
+
+    def import_pending_pack(self, oid: str) -> None:
+        """Carry an earlier best-effort proposal's objects into its acceptance.
+
+        A pack is the prior request's change-sized frontier, not a recursive
+        listing of its accepted tree. Its durable accepted base needs no walk.
+        """
+        pending = getattr(self._transaction, "pending", None)
+        if pending is None or oid in pending or not self.store.is_pending(oid):
+            return
+        with self.store.lock:
+            path, _ = self.store.locations[oid]
+            for member in self.store.members[path]:
+                if member not in pending:
+                    value = self.store.read(member)
+                    if value is None:
+                        raise GitError("accepted proposal dependency is unavailable")
+                    pending[member] = value
+
+    def seal(self) -> None:
+        """Seal accepted objects/refs while the activation lock excludes successors."""
+        self.flush(final=True)
+        for path in sorted(self._transaction.files):
+            try:
+                fd = os.open(path, os.O_RDONLY)
+            except FileNotFoundError:
+                continue
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        for path in sorted(self._transaction.directories):
+            _fsync_directory(path)
+        self._transaction.sealed.update(self._transaction.pending)
+        self._transaction.pending.clear()
+        self._transaction.retained_keeps.extend(self._transaction.keeps)
+        self._transaction.keeps.clear()
+        self._transaction.files.clear()
+        self._transaction.directories.clear()
+        self._transaction.pack = None
+        self._transaction.encoded.clear()
+        self._transaction.staged_count = -1
+        self._transaction.accepted = False
+        self._transaction.retain = False
 
     @contextmanager
     def transaction(self) -> Iterator[None]:

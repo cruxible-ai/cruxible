@@ -165,6 +165,7 @@ def test_request_stages_one_pair_and_flushes_only_at_acceptance(ledger, monkeypa
             expected_ref_oid=None,
             message="Change one",
         )
+        ledger.retain_proposal_review("sha256:" + "a" * 64, proposal)
         ledger.write_proposal_note("evaluation", proposal, b"evaluation\n")
         assert not synced
         assert len(set(directory.glob("*.pack")) - before) == 1
@@ -179,11 +180,51 @@ def test_request_stages_one_pair_and_flushes_only_at_acceptance(ledger, monkeypa
             message="Accept one",
             extends_tree=tree,
         )
-        assert ledger.compare_and_set_main(generation, expected_oid=base)
-        ledger.write_generation_note(generation, b"descriptor\n")
+        with ledger.activation_lock():
+            assert ledger.compare_and_set_main(generation, expected_oid=base)
+            ledger.write_generation_note(generation, b"descriptor\n")
+        # The accepted pack is durable before a successor can acquire the lock.
+        assert len([path for path in synced if path.endswith(".pack")]) == 1
         ledger.replace_proposal_review_refs({})
     assert len(set(directory.glob("*.pack")) - before) == 1
     assert len([path for path in synced if path.endswith(".pack")]) == 1
     assert len([path for path in synced if path.endswith(".idx")]) == 1
     assert not list(directory.glob("*.keep"))
+    ledger._git(["fsck", "--strict", "--no-dangling"])
+
+
+def test_acceptance_carries_an_earlier_best_effort_proposal_pack(ledger):
+    from cruxible_core.ledger.git_objects import PackStore
+
+    base = ledger.create_signed_genesis({"one": b"base"}, timestamp="2026-10-15T12:00:00Z")
+    ledger.set_main_genesis(base)
+    with ledger.request_pack():
+        proposal, tree = ledger.create_proposal_commit(
+            {"one": b"earlier proposal"},
+            base_oid=base,
+            target_ref="refs/proposals/owner/later",
+            actor_id="owner",
+            timestamp="2026-10-15T12:01:00Z",
+            expected_ref_oid=None,
+            message="Change one later",
+        )
+        ledger.retain_proposal_review("sha256:" + "b" * 64, proposal)
+    provisional = next((ledger.path / "objects/pack").glob("*.pending")).with_suffix(".pack")
+    with ledger.request_pack(), ledger.activation_lock():
+        generation = ledger.create_signed_generation(
+            {"one": b"earlier proposal", "changesets/one": b"record"},
+            parent_oid=base,
+            sequence=1,
+            timestamp="2026-10-15T12:02:00Z",
+            message="Accept earlier proposal",
+            extends_tree=tree,
+        )
+        assert ledger.compare_and_set_main(generation, expected_oid=base)
+        ledger.write_generation_note(generation, b"descriptor\n")
+    # Losing the old advisory pair cannot lose any accepted dependency.
+    for suffix in (".pack", ".idx", ".pending"):
+        provisional.with_suffix(suffix).unlink()
+    fresh = PackStore(ledger.path)
+    assert fresh.read(ledger._blob_oid(b"earlier proposal")) == ("blob", b"earlier proposal")
+    fresh.close()
     ledger._git(["fsck", "--strict", "--no-dangling"])

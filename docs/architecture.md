@@ -164,7 +164,9 @@ record references is deleted under it.
 - **The ledger.** Every ref, note and archived proposal is kept. Objects are
   staged in one in-process request pack/index pair. Proposal refs and notes
   publish in authority order without a durable flush; acceptance seals and
-  flushes the pair and its changed refs before returning. Interrupted
+  flushes the pair and its changed refs before releasing the activation lock.
+  Retention objects are prepared in that pack before acceptance; their refs
+  still publish in retirement order. Interrupted
   pre-acceptance publications are advisory and may need re-proposal. Commit signatures use Ed25519 SSHSIG compatible with `git verify-commit`;
   ref leases use Git's files-backend lockfile protocol. Reads support loose
   objects and Git's delta-compressed packs. Every 64 accepted generations the
