@@ -49,6 +49,20 @@ def instance(tmp_path: Path) -> PlaybillInstance:
     return seed_write_surface(tmp_path)[0]
 
 
+@pytest.fixture
+def legacy_record_instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PlaybillInstance:
+    # The fake record reader emits retained ProviderV1 provenance. Seed that
+    # Provider before the compiler that closes new single-path registrations.
+    from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(
+            "cruxible_core.runtime.instance.current_compiler_coordinate",
+            lambda: SUBJECT_IDENTITY_COMPILER,
+        )
+        return seed_write_surface(tmp_path)[0]
+
+
 def _write(
     instance: PlaybillInstance,
     *changes: dict[str, Any],
@@ -992,8 +1006,9 @@ def _record_capture(
 
 
 def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subject(
-    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+    legacy_record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    instance = legacy_record_instance
     from cruxible_client.contracts.write import capture_handle
 
     admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
@@ -1014,10 +1029,11 @@ def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subje
 
 
 def test_contract_evidence_finds_an_uncited_self_asserted_capture(
-    instance: PlaybillInstance,
+    legacy_record_instance: PlaybillInstance,
 ) -> None:
     """A proposer-asserted contract's Capture needs no run: it is found by contract too."""
 
+    instance = legacy_record_instance
     from cruxible_client.contracts.write import capture_handle
     from tests.core_support._pc_c_support import capture_contract
     from tests.test_authoring.test_authoring_existing_capture import _self_asserted
@@ -1039,11 +1055,12 @@ def test_contract_evidence_finds_an_uncited_self_asserted_capture(
 
 
 def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
-    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+    legacy_record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only a canonical-value record: a refusal naming it, never 'capture it first'."""
 
     admit_legacy_v1_citations(monkeypatch)  # the fixture reader's v1 records
+    instance = legacy_record_instance
     from datetime import timedelta
 
     from cruxible_client.contracts.write import capture_handle
@@ -1085,10 +1102,11 @@ def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
 
 
 def test_contract_evidence_reads_indexes_not_the_body_store(
-    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+    legacy_record_instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A lookup by contract never walks the CAS: its size is not the lookup's limit."""
 
+    instance = legacy_record_instance
     from cruxible_client.contracts.write import capture_handle
     from cruxible_core.storage.cas import ContentAddressedBodyStore
 
