@@ -1,6 +1,8 @@
 """Git pack v2 / index v2 storage for SHA-1 and SHA-256 repositories.
 
-Writes publish a pack and its index together (index last); no per-object files.
+Published names are immutable and checksum-derived, including provisional packs.
+Writes publish protections first, the pack next, and its matching index last,
+before retiring the superseded pair under the store lock; no per-object files.
 A cold read indexes existing packs once. Our publications extend that index by
 just their new entries; external gc/repack changes trigger a cold rediscovery.
 """
@@ -172,25 +174,28 @@ class PackStore:
             index.extend(b"".join(struct.pack(">Q", offset) for offset in large))
             index.extend(checksum)
             index.extend(_hash(bytes(index), width))
-            # A request's best-effort publications replace one provisional
-            # pack/index pair. Entry offsets stay stable as objects append.
-            # Acceptance seals it under the final checksum-derived name.
-            stem = (
-                replacing.with_suffix("")
-                if replacing is not None and not durable
-                else self.directory / f"pack-{checksum.hex()}"
-            )
-            if replacing is not None:
-                mapped = self.maps.pop(replacing, None)
-                if mapped is not None:
-                    mapped.close()
-            if not durable:
+            # Git readers cannot acquire our lock. Never change bytes beneath
+            # an index they may already have discovered or mapped. A request
+            # still retains only its current cumulative object frontier.
+            stem = self.directory / f"pack-{checksum.hex()}"
+            path = stem.with_suffix(".pack")
+            existing = path.exists() and stem.with_suffix(".idx").exists()
+            if not durable and not existing:
                 stem.with_suffix(".pending").touch(exist_ok=True)
             if keep:
                 # Git honors .keep even for an as-yet-unreferenced pack. Make
                 # the protection visible before either pack/index publication.
                 stem.with_suffix(".keep").touch(exist_ok=True)
             for suffix, content in ((".pack", pack), (".idx", index)):
+                destination = stem.with_suffix(suffix)
+                if destination.exists():
+                    # The checksum names these exact bytes. Reuse an existing
+                    # pair (or a pack left before index publication) in place.
+                    # Acceptance must nevertheless synchronize advisory bytes.
+                    if durable:
+                        with destination.open("rb") as stream:
+                            os.fsync(stream.fileno())
+                    continue
                 fd, name = tempfile.mkstemp(prefix="tmp_pack_", dir=self.directory)
                 try:
                     with os.fdopen(fd, "wb") as stream:
@@ -199,26 +204,35 @@ class PackStore:
                         if durable:
                             os.fsync(stream.fileno())
                     os.chmod(name, 0o444)
-                    os.replace(name, stem.with_suffix(suffix))
+                    os.replace(name, destination)
                 finally:
                     if os.path.exists(name):
                         os.unlink(name)
-            if replacing is not None and replacing != stem.with_suffix(".pack"):
-                replacing.with_suffix(".idx").unlink(missing_ok=True)
-                replacing.unlink(missing_ok=True)
-                replacing.with_suffix(".keep").unlink(missing_ok=True)
-                replacing.with_suffix(".pending").unlink(missing_ok=True)
-                self.members.pop(replacing, None)
             if durable:
                 stem.with_suffix(".pending").unlink(missing_ok=True)
+                # Make the replacement durable BEFORE removing an older
+                # durable copy. Retirement need not survive a crash; a stale
+                # duplicate is safe. This remains one accepting directory sync.
                 _directory_sync(self.directory)
+            if replacing is not None and replacing != path:
+                # An identical pair may have been borrowed from an earlier
+                # durable batch. A subsequent advisory append cannot retire
+                # that batch's last durable copy. It belongs to ordinary Git
+                # compaction, not this request's provisional frontier.
+                if durable or replacing.with_suffix(".pending").exists():
+                    replacing.with_suffix(".idx").unlink(missing_ok=True)
+                    replacing.unlink(missing_ok=True)
+                    replacing.with_suffix(".pending").unlink(missing_ok=True)
+                    mapped = self.maps.pop(replacing, None)
+                    if mapped is not None:
+                        mapped.close()
+                    self.members.pop(replacing, None)
+                replacing.with_suffix(".keep").unlink(missing_ok=True)
             for raw_oid, _, offset in rows:
-                self.locations[raw_oid.hex()] = (stem.with_suffix(".pack"), offset)
-            self.members[stem.with_suffix(".pack")] = {
-                raw_oid.hex(): offset for raw_oid, _, offset in rows
-            }
+                self.locations[raw_oid.hex()] = (path, offset)
+            self.members[path] = {raw_oid.hex(): offset for raw_oid, _, offset in rows}
             self.stamp = _stamp(self.directory)
-            return stem.with_suffix(".pack")
+            return path
 
     def release(self, packs: list[Path]) -> None:
         with self.lock:

@@ -222,7 +222,20 @@ record references is deleted under it.
   ref leases use Git's files-backend lockfile protocol. Publishing a ref,
   packed-refs or config lock consumes its pathname; cleanup closes the original
   descriptor without unlinking a successor's lock. Reads support loose
-  objects and Git's delta-compressed packs. Warm workspace advertisement carries
+  objects and Git's delta-compressed packs. Published pack names are immutable
+  and derived from their contents. Each replacement publishes its pending/keep
+  protections first, its complete pack next, and its matching index last before
+  retiring the superseded pair. Identical pairs are reused without rewriting;
+  acceptance synchronizes their bytes and directory before main. An older
+  durable pair is retired only after its replacement is durable; an advisory
+  append to a reused durable pair leaves that older pair for Git compaction.
+  Unreachable-commit inspection holds the in-process pack store lock through
+  `git fsck`, excluding publication and
+  targeted loser removal, which can delete objects being inventoried. Independent
+  Git readers use the immutable publication protocol. The scan visits the whole
+  object store.
+  Recovery runs it only for unsettled generation markers or a missing initial
+  cleanup baseline; clean recovery skips it. Warm workspace advertisement carries
   the tree writer's changed-child frontier and visits it only after checking the
   destination or current transfer batch has its baseline, including when a
   refresh coalesces generations. Cold attachment, missing baselines and evicted

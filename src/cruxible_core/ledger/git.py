@@ -1951,13 +1951,20 @@ class GitLedger:
         return _batch_reader(self.path).object_info((oid,))[oid] is not None
 
     def unreachable_commits(self) -> tuple[str, ...]:
-        """List unreachable commit OIDs without pruning or mutating object storage."""
+        """List unreachable commits while excluding in-process pack publication.
 
-        rows = (
-            self._git(["fsck", "--unreachable", "--no-reflogs", "--no-progress"])
-            .decode()
-            .splitlines()
-        )
+        Git scans the whole object store, so callers reserve this for recovery
+        or explicit inspection. Immutable, index-last publication is safe for
+        independent Git readers. Keep this scan serialized with targeted loser
+        removal, which deliberately deletes unreachable objects fsck inventories.
+        """
+
+        with _batch_reader(self.path).store.lock:
+            rows = (
+                self._git(["fsck", "--unreachable", "--no-reflogs", "--no-progress"])
+                .decode()
+                .splitlines()
+            )
         commits: list[str] = []
         for row in rows:
             fields = row.split()
