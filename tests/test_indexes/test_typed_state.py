@@ -295,6 +295,7 @@ STORAGE_SCHEMA_DIGESTS = {
     16: "bdd063abc1729cf26f0b93993f163bac09f2770838f385a253f61816da7780db",
     17: "e23952289bc91d30a90d34f4935ecfba68f37520f9ead30eda49cef03c84c0c2",
     18: "cb8b96c82761da76303be7fa0ec0abce1132eedd60d04b66c6e00d43cde00ce0",
+    19: "e48e494cb19d088844d60fdeacbc7b28dedde68fa2be3fffc73fd72aeb97a87a",
 }
 
 
