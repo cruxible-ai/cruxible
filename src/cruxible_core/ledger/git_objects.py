@@ -183,6 +183,85 @@ class PackStore:
             if location is not None:
                 self.release([location[0]])
 
+    def info(self, oid: str) -> tuple[str, int] | None:
+        """Read headers only; metadata never hashes or inflates an object's body."""
+        with self.lock:
+            width = len(oid) // 2
+            self._discover(width)
+            location = self.locations.get(oid)
+            if location is not None:
+                return self._info_at(*location, width=width, depth=0)
+            loose = self.repository / "objects" / oid[:2] / oid[2:]
+            try:
+                with loose.open("rb") as stream:
+                    inflater = zlib.decompressobj()
+                    header = bytearray()
+                    while b"\x00" not in header and len(header) < 128:
+                        chunk = stream.read(64)
+                        if not chunk:
+                            break
+                        header.extend(inflater.decompress(chunk, 128 - len(header)))
+            except FileNotFoundError:
+                return ("tree", 0) if oid in _EMPTY_TREES else None
+            raw_kind, separator, raw_size = bytes(header).partition(b"\x00")[0].partition(b" ")
+            if b"\x00" not in header or not separator or raw_kind.decode() not in _CODES:
+                raise GitError("malformed loose Git object header")
+            size = int(raw_size)
+            if size < 0:
+                raise GitError("malformed loose Git object size")
+            return raw_kind.decode(), size
+
+    def _info_at(self, path: Path, offset: int, *, width: int, depth: int) -> tuple[str, int]:
+        if depth > 128:
+            raise GitError("Git pack delta chain exceeds limit")
+        mapped = self._mapping(path)
+        cursor = offset
+        byte = mapped[cursor]
+        cursor += 1
+        kind, size, shift = (byte >> 4) & 7, byte & 15, 4
+        while byte & 128:
+            byte = mapped[cursor]
+            cursor += 1
+            size |= (byte & 127) << shift
+            shift += 7
+        if kind in _KINDS:
+            return _KINDS[kind], size
+        if kind == 6:
+            byte = mapped[cursor]
+            cursor += 1
+            distance = byte & 127
+            while byte & 128:
+                byte = mapped[cursor]
+                cursor += 1
+                distance = ((distance + 1) << 7) | (byte & 127)
+            base_path, base_offset = path, offset - distance
+        elif kind == 7:
+            base_oid = mapped[cursor : cursor + width].hex()
+            cursor += width
+            base = self.locations.get(base_oid)
+            if base is None:
+                raise GitError("Git pack delta base is unavailable")
+            base_path, base_offset = base
+        else:
+            raise GitError("unsupported Git pack object type")
+        # Delta streams begin with base-size and result-size varints. Only
+        # these bounded header bytes are inflated, never the delta payload.
+        header = zlib.decompressobj().decompress(mapped[cursor : cursor + 64], 32)
+        position = 0
+        sizes = []
+        for _ in range(2):
+            value = shift = 0
+            while True:
+                byte = header[position]
+                position += 1
+                value |= (byte & 127) << shift
+                shift += 7
+                if not byte & 128:
+                    break
+            sizes.append(value)
+        base_kind, _ = self._info_at(base_path, base_offset, width=width, depth=depth + 1)
+        return base_kind, sizes[1]
+
     def read(self, oid: str) -> tuple[str, bytes] | None:
         try:
             return self._read(oid)

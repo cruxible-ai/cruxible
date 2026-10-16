@@ -28,6 +28,9 @@ def test_pack_index_is_git_readable_fsck_clean_and_reads_git_deltas(tmp_path, al
     assert {
         ledger._blob_oid(body): fresh.read(ledger._blob_oid(body))[1] for body in tree.values()
     } == {ledger._blob_oid(body): body for body in tree.values()}
+    assert {
+        ledger._blob_oid(body): fresh.info(ledger._blob_oid(body)) for body in tree.values()
+    } == {ledger._blob_oid(body): ("blob", len(body)) for body in tree.values()}
     fresh.close()
 
 
@@ -48,3 +51,28 @@ def test_corrupted_packed_payload_is_refused(tmp_path):
     pack.write_bytes(raw.replace(b"file-name", b"fake-name"))
     with pytest.raises(GitError):
         PackStore(ledger.path).read(root)
+
+
+def test_metadata_does_not_read_or_hash_payloads(tmp_path, monkeypatch):
+    import hashlib
+    import zlib
+
+    store = PackStore(tmp_path)
+    (tmp_path / "objects/pack").mkdir(parents=True)
+    body = b"large body" * 100_000
+    oid = hashlib.sha256(b"blob " + str(len(body)).encode() + b"\x00" + body).hexdigest()
+    store.write({oid: ("blob", body)})
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("metadata loaded an object payload")
+
+    monkeypatch.setattr(store, "read", forbidden)
+    monkeypatch.setattr(store, "_at", forbidden)
+    assert store.info(oid) == ("blob", len(body))
+    # Loose headers still answer even when the payload is absent/corrupt.
+    loose_oid = "f" * 64
+    loose = tmp_path / "objects" / loose_oid[:2] / loose_oid[2:]
+    loose.parent.mkdir()
+    loose.write_bytes(zlib.compress(b"blob 100000000\x00truncated"))
+    assert store.info(loose_oid) == ("blob", 100000000)
+    assert store.info("e" * 64) is None

@@ -1868,7 +1868,7 @@ class GitLedger:
 
     def object_exists(self, oid: str) -> bool:
         self._validate_oid(oid)
-        return _batch_reader(self.path).objects((oid,))[oid] is not None
+        return _batch_reader(self.path).object_info((oid,))[oid] is not None
 
     def unreachable_commits(self) -> tuple[str, ...]:
         """List unreachable commit OIDs without pruning or mutating object storage."""
@@ -3219,9 +3219,10 @@ class _BatchBlobReader:
         return found[1]
 
     def object_info(self, oids: Sequence[str]) -> dict[str, tuple[str, int] | None]:
+        pending = getattr(self._transaction, "pending", None) or {}
         return {
-            oid: None if value is None else (value[0], len(value[1]))
-            for oid, value in self.objects(oids).items()
+            oid: (pending[oid][0], len(pending[oid][1])) if oid in pending else self.store.info(oid)
+            for oid in oids
         }
 
     def objects(self, oids: Sequence[str]) -> dict[str, tuple[str, bytes] | None]:
