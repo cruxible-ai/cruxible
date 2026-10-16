@@ -567,19 +567,19 @@ def _subject_ledger(tmp_path, object_format, size):
     return workspace, ledger, base, tree
 
 
-def _change_one_subject(ledger, base):
+def _change_one_subject(ledger, base, *, subject_id="s0", sequence=1):
     from cruxible_core.derived.derived_state import SnapshotTree
     from tests.core_support._projection_support import subject_bytes
 
     root = SnapshotTree(ledger.blob_refs_at(base))
     root._commit_oid = base
     edit = root.fork()
-    edit["subjects/project.work_item/s0.json"] = subject_bytes("s0", retired=True)
+    edit[f"subjects/project.work_item/{subject_id}.json"] = subject_bytes(subject_id, retired=True)
     with ledger.request_pack(), ledger.activation_lock():
         generation = ledger.create_signed_generation(
             edit.snapshot(),
             parent_oid=base,
-            sequence=1,
+            sequence=sequence,
             timestamp="2026-10-15T12:01:00Z",
             message="Retire one Subject",
         )
@@ -590,7 +590,13 @@ def _change_one_subject(ledger, base):
 
 
 @pytest.mark.parametrize("object_format", ("sha1", "sha256"))
-def test_warm_workspace_transfer_work_is_change_sized(tmp_path, monkeypatch, object_format):
+@pytest.mark.parametrize("coalesced", (False, True))
+def test_warm_workspace_transfer_work_is_change_sized(
+    tmp_path,
+    monkeypatch,
+    object_format,
+    coalesced,
+):
     from cruxible_core.floor import workspace_advertisement as advertisement
     from cruxible_core.ledger.git import _batch_reader
     from tests.core_support._projection_support import subject_bytes
@@ -607,6 +613,8 @@ def test_warm_workspace_transfer_work_is_change_sized(tmp_path, monkeypatch, obj
             == "updated"
         )
         generation = _change_one_subject(ledger, base)
+        if coalesced:
+            generation = _change_one_subject(ledger, generation, subject_id="s1", sequence=2)
         work = {"metadata": 0, "children": 0, "parsed_children": 0}
         writer = _batch_reader(workspace / ".git").store
         real_infos = writer.infos

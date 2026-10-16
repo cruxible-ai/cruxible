@@ -249,8 +249,8 @@ def _copy_objects(source: Path, target: Path, roots: tuple[str, ...]) -> None:
     """Copy the missing frontier; an existing object ends ancestry traversal.
 
     Warm refresh uses the source writer's changed children when the destination
-    already holds their baseline tree. Cold attachment, a lost baseline, or an
-    evicted source change record falls back to reachable-object traversal.
+    holds their baseline tree (or this batch already copied it). Cold attachment,
+    a lost baseline, or an evicted source change record falls back to traversal.
     """
     reader, writer = _batch_reader(source), _batch_reader(target).store
     objects: dict[str, tuple[str, bytes]] = {}
@@ -271,10 +271,13 @@ def _copy_objects(source: Path, target: Path, roots: tuple[str, ...]) -> None:
         elif kind == "tree":
             frontier = _tree_transfer_frontier(oid)
             if frontier is not None and (
-                frontier.base is None or writer.info(frontier.base) is not None
+                frontier.base is None
+                or frontier.base in objects
+                or writer.info(frontier.base) is not None
             ):
-                # Baseline presence proves the unchanged children were copied.
-                # Neither parse the rewritten full listing nor probe siblings.
+                # Earlier objects in this batch already queued their complete
+                # dependency closure. They are valid baselines too, so a warm
+                # advertiser may coalesce generations without scanning siblings.
                 pending.extend(frontier.children)
                 continue
             entries = _tree_entries(body, raw_length=len(oid) // 2)
