@@ -1763,7 +1763,10 @@ class GitLedger:
         """Forget one generation's marker: it is on main, or it was collected."""
 
         self._validate_oid(oid)
-        _batch_reader(self.path).store.release_oid(oid)
+        reader = _batch_reader(self.path)
+        reader.store.release_oid(oid)
+        if getattr(reader._transaction, "request", False):
+            reader._transaction.retain = False
         marker = self._in_flight_directory() / oid
         if marker.exists():
             marker.unlink()
@@ -1900,7 +1903,17 @@ class GitLedger:
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
-        packed_deleted = _batch_reader(self.path).store.remove(set(object_ids))
+        reader = _batch_reader(self.path)
+        packed_deleted = reader.store.remove(set(object_ids))
+        pending = getattr(reader._transaction, "pending", None)
+        if pending is not None:
+            for object_id in object_ids:
+                pending.pop(object_id, None)
+            # Repair may have replaced/removed the provisional pack. Never
+            # republish its collected members when the enclosing request exits.
+            if getattr(reader._transaction, "request", False):
+                reader._transaction.pack = None
+                reader._transaction.staged_count = -1
         deleted.extend(object_id for object_id in packed_deleted if object_id not in deleted)
         return tuple(deleted)
 

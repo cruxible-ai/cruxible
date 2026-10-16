@@ -228,3 +228,25 @@ def test_acceptance_carries_an_earlier_best_effort_proposal_pack(ledger):
     assert fresh.read(ledger._blob_oid(b"earlier proposal")) == ("blob", b"earlier proposal")
     fresh.close()
     ledger._git(["fsck", "--strict", "--no-dangling"])
+
+
+def test_request_exit_does_not_resurrect_a_collected_losing_generation(ledger):
+    base = ledger.create_signed_genesis({"one": b"base"}, timestamp="2026-10-15T12:00:00Z")
+    ledger.set_main_genesis(base)
+    with ledger.request_pack():
+        loser = ledger.create_signed_generation(
+            {"one": b"loser"},
+            parent_oid=base,
+            sequence=1,
+            timestamp="2026-10-15T12:01:00Z",
+            message="Losing generation",
+        )
+        # A failed CAS stages its objects before discovering that the lease lost.
+        from cruxible_core.ledger.git import _batch_reader
+
+        _batch_reader(ledger.path).flush()
+        assert loser in ledger.collect_unreachable_generation(loser)
+        ledger.settle_generation_in_flight(loser)
+        assert not ledger.object_exists(loser)
+    assert not ledger.object_exists(loser)
+    assert not list((ledger.path / "objects/pack").glob("*.keep"))
