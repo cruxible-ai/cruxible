@@ -35,6 +35,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderInvocationStarted,
 )
 from cruxible_client.contracts.provider_interfaces import (
+    ProviderInterfaceContract,
     evaluate_provider_interface_law,
     parse_provider_interface,
     provider_interface_digest,
@@ -154,9 +155,12 @@ def test_a_pre_removal_capture_keeps_its_measured_bucket_and_digest() -> None:
     assert evidence.input_bucket is not None
 
 
-def test_the_pinned_packages_lower_to_the_pre_removal_registrations() -> None:
-    """Core's own reader, with bucket data inert, lowers every package exactly as the
-    pre-removal core lowered the runtime's validated export of it."""
+def test_pinned_package_documents_survive_contract_only_registration() -> None:
+    """Read the same pinned exports, now registering their contract alone.
+
+    Historical registration bytes remain covered above; new registrations use
+    contract-qualified identities and intentionally differ from the old lowering.
+    """
 
     checkout = provider_checkout_path()
     if checkout is None:
@@ -175,11 +179,18 @@ def test_the_pinned_packages_lower_to_the_pre_removal_registrations() -> None:
             hashlib.sha256(canonical_bytes(document.model_dump(mode="json"))).hexdigest()
             == expected["document_sha256"]
         ), name
-        lowered = {
-            item.interface_id: {
-                "artifact_digest": provider_interface_digest(item).tagged,
-                "bytes_sha256": hashlib.sha256(render_provider_interface(item)).hexdigest(),
-            }
-            for item in document.interface_registrations()
-        }
-        assert lowered == expected["registrations"], name
+        registrations = document.interface_registrations()
+        assert {item.interface_id for item in registrations} == set(expected["registrations"])
+        exports = {item.interface_id: item for item in document.interfaces}
+        for item in registrations:
+            assert isinstance(item, ProviderInterfaceContract)
+            exported = exports[item.interface_id]
+            assert item.interface_digest == exported.interface_digest
+            assert bytes.fromhex(item.interface_bytes_hex) == canonical_bytes(exported.definition)
+            assert item.identity.name.startswith(item.interface_id + "/")
+            historical = expected["registrations"][item.interface_id]
+            assert provider_interface_digest(item).tagged != historical["artifact_digest"]
+            assert (
+                hashlib.sha256(render_provider_interface(item)).hexdigest()
+                != historical["bytes_sha256"]
+            )
