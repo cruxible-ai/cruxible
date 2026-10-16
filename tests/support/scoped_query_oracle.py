@@ -30,14 +30,27 @@ def _scoped_facts_answer_as_whole_facts(monkeypatch: pytest.MonkeyPatch) -> None
     def scoped_build(*args: Any, **kwargs: Any) -> Any:
         facts = build(*args, **kwargs)
         if kwargs.get("subject_kinds") is not None:
-            whole[id(facts)] = build(*args, **{**kwargs, "subject_kinds": None})
+            whole[id(facts)] = build(
+                *args, **{**kwargs, "subject_kinds": None, "entry_subject_paths": None}
+            )
         return facts
 
     def checked_evaluate(definition: Any, *, facts: Any, **kwargs: Any) -> Any:
         scoped = _outcome(lambda: evaluate(definition, facts=facts, **kwargs))
         reference = whole.pop(id(facts), None)
         if reference is not None:
-            assert scoped == _outcome(lambda: evaluate(definition, facts=reference, **kwargs))
+            assert scoped == _outcome(
+                lambda: evaluate(
+                    definition,
+                    facts=reference,
+                    **{
+                        **kwargs,
+                        "entry_paths": None,
+                        "entry_candidate_count": None,
+                        "canonical_forms": None,
+                    },
+                )
+            )
         if scoped[0] == "refused":
             return evaluate(definition, facts=facts, **kwargs)  # re-raise the same refusal
         return scoped[1]

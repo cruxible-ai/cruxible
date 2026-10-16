@@ -539,8 +539,9 @@ def schema_sql() -> str:
         ]
     )
     from cruxible_core.indexes.provider_heads import SCHEMA_SQL as PROVIDER_HEADS_SQL
+    from cruxible_core.indexes.query_selection import SCHEMA_SQL as QUERY_SELECTION_SQL
 
-    return ";\n".join(statements) + ";\n" + PROVIDER_HEADS_SQL
+    return ";\n".join(statements) + ";\n" + PROVIDER_HEADS_SQL + QUERY_SELECTION_SQL
 
 
 def _claim_fields(claim: Any) -> dict[str, SQLValue]:
@@ -1264,7 +1265,12 @@ class TypedStateReader:
                 parameters.extend(claim_predicates)
             predicates.append(
                 "(claim_identity,claim_artifact_digest) IN "
-                "(SELECT identity,artifact_digest FROM claims" + selected + ")"
+                "(SELECT identity,artifact_digest FROM claims"
+                # Literal indexes also start with predicate; keep this read on
+                # its dedicated predicate seek, independent of planner ties.
+                + (" INDEXED BY claims_by_predicate" if claim_predicates is not None else "")
+                + selected
+                + ")"
             )
         rows = self.connection.execute(
             "SELECT path,envelope_digest,artifact_digest FROM attestations "

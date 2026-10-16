@@ -58,6 +58,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.sql_batch import select_in
 from cruxible_core.indexes.subject_aliases import projection_connection, reference_resolver
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.query.engine import (
@@ -67,6 +68,7 @@ from cruxible_core.query.engine import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition
+from cruxible_core.service.discovery.query_pushdown import select_query_facts
 from cruxible_core.service.evidence.evidence import (
     ClaimReadHistoryIndex,
     ClaimReadSourceProtocol,
@@ -301,8 +303,10 @@ class _AcceptedQueryFactsRead:
         predicates: tuple[str, ...] | None = None,
         subject_kinds: tuple[str, ...] | None = None,
         consulted_bodies: dict[str, Any] | None = None,
+        entry_subject_paths: tuple[str, ...] | None = None,
     ) -> None:
         self._instance = instance
+        self._entry_subject_paths = entry_subject_paths
         self._consulted_bodies = consulted_bodies
         # A served query names every predicate and entry Subject kind it can
         # read; with both, only the Subjects it can reach are read and parsed.
@@ -343,8 +347,9 @@ class _AcceptedQueryFactsRead:
             row.object_subject_path for row in rows if row.object_subject_path is not None
         }
         if self._subject_paths_by_kind:
-            # ``_subject_paths`` holds every accepted Subject of an admitted kind;
-            # a named Subject of another kind is read only if it is accepted.
+            # ``_subject_paths`` holds the admitted entries (an indexed selection,
+            # or every Subject of the entry kinds); Claim referents are included
+            # separately, and never become extra entries in a selected evaluation.
             tree = self._tree
             assert tree is not None
             reachable = tuple(
@@ -399,6 +404,7 @@ class _AcceptedQueryFactsRead:
                         projection.typed.connection,
                         predicates=self._predicates,
                         live_only=not include_retired,
+                        subject_paths=self._entry_subject_paths,
                     )
                     self._claim_paths_live_only = not include_retired
                     # A scoped query over accepted bytes reaches Subjects by its
@@ -408,14 +414,32 @@ class _AcceptedQueryFactsRead:
                         self._scoped_subject_kinds is not None and self._source_tree is None
                     )
                     self._subject_paths = (
-                        _subject_paths_of_kinds(
+                        self._entry_subject_paths
+                        if self._entry_subject_paths is not None
+                        else _subject_paths_of_kinds(
                             projection.typed.connection, self._scoped_subject_kinds or ()
                         )
                         if self._subject_paths_by_kind
                         else tuple(row.path for row in projection.typed.envelopes(kind="subject"))
                     )
                     for value in projection.typed.claim_attestations(
-                        current_claims_only=True, claim_predicates=self._predicates
+                        current_claims_only=self._entry_subject_paths is None,
+                        claim_predicates=self._predicates
+                        if self._entry_subject_paths is None
+                        else None,
+                        claim_versions=(
+                            tuple(
+                                (str(row[0]), str(row[1]))
+                                for row in select_in(
+                                    projection.typed.connection,
+                                    "SELECT identity,artifact_digest FROM claims "
+                                    "WHERE path IN ({})",
+                                    self._claim_paths,
+                                )
+                            )
+                            if self._entry_subject_paths is not None
+                            else None
+                        ),
                     ):
                         self._attestations.setdefault(
                             (
@@ -424,21 +448,34 @@ class _AcceptedQueryFactsRead:
                             ),
                             [],
                         ).append(value)
-                    type_sql = (
-                        "SELECT DISTINCT t.path FROM claims c "
-                        "JOIN claim_types t ON t.identity=c.claim_type_identity WHERE 1"
-                    )
-                    type_values: tuple[str, ...] = ()
-                    if self._predicates is not None:
-                        type_sql += (
-                            " AND c.predicate IN (" + ",".join("?" for _ in self._predicates) + ")"
+                    if self._entry_subject_paths is not None:
+                        type_paths = tuple(
+                            claim_type_path(predicate) for predicate in self._predicates or ()
                         )
-                        type_values = self._predicates
-                    if not include_retired:
-                        type_sql += " AND c.lifecycle='live'"
-                    type_paths = tuple(
-                        row[0] for row in projection.typed.connection.execute(type_sql, type_values)
-                    )
+                    else:
+                        type_sql = (
+                            "SELECT DISTINCT t.path FROM claims c "
+                            + (
+                                "INDEXED BY claims_by_predicate "
+                                if self._predicates is not None
+                                else ""
+                            )
+                            + "JOIN claim_types t ON t.identity=c.claim_type_identity WHERE 1"
+                        )
+                        type_values: tuple[str, ...] = ()
+                        if self._predicates is not None:
+                            type_sql += (
+                                " AND c.predicate IN ("
+                                + ",".join("?" for _ in self._predicates)
+                                + ")"
+                            )
+                            type_values = self._predicates
+                        if not include_retired:
+                            type_sql += " AND c.lifecycle='live'"
+                        type_paths = tuple(
+                            row[0]
+                            for row in projection.typed.connection.execute(type_sql, type_values)
+                        )
                 if self._source_tree is None:
                     context.prefetch(
                         self._claim_paths
@@ -467,7 +504,10 @@ class _AcceptedQueryFactsRead:
             assert isinstance(self._instance, PlaybillInstance)
             with self._instance.bind_accepted_projection(self._coordinate) as projection:
                 self._claim_paths = _claim_paths(
-                    projection.typed.connection, predicates=self._predicates, live_only=False
+                    projection.typed.connection,
+                    predicates=self._predicates,
+                    live_only=False,
+                    subject_paths=self._entry_subject_paths,
                 )
             self._claim_paths_live_only = False
         tree = self._tree
@@ -567,7 +607,11 @@ class _AcceptedQueryFactsRead:
 
 
 def _claim_paths(
-    connection: Any, *, predicates: tuple[str, ...] | None, live_only: bool
+    connection: Any,
+    *,
+    predicates: tuple[str, ...] | None,
+    live_only: bool,
+    subject_paths: tuple[str, ...] | None = None,
 ) -> tuple[str, ...]:
     """Accepted Claim paths of the predicates (all when None), live ones when ``live_only``."""
 
@@ -578,10 +622,29 @@ def _claim_paths(
         values.extend(predicates)
     if live_only:
         where.append("lifecycle='live'")
+    if subject_paths is not None:
+        return tuple(
+            sorted(
+                str(row[0])
+                for row in select_in(
+                    connection,
+                    "SELECT path FROM claims INDEXED BY claims_by_subject_predicate WHERE "
+                    + " AND ".join(where)
+                    + " AND subject_path IN ({})",
+                    subject_paths,
+                    prefix=values,
+                )
+            )
+        )
     return tuple(
         str(row[0])
         for row in connection.execute(
-            "SELECT path FROM claims WHERE " + " AND ".join(where) + " ORDER BY path", values
+            "SELECT path FROM claims "
+            + ("INDEXED BY claims_by_predicate " if predicates is not None else "")
+            + "WHERE "
+            + " AND ".join(where)
+            + " ORDER BY path",
+            values,
         )
     )
 
@@ -618,6 +681,7 @@ def build_accepted_query_facts(
     predicates: tuple[str, ...] | None = None,
     subject_kinds: tuple[str, ...] | None = None,
     consulted_bodies: dict[str, Any] | None = None,
+    entry_subject_paths: tuple[str, ...] | None = None,
 ) -> ClaimQueryFactsV1:
     """Project accepted ledger state into the facts one evaluation may read.
 
@@ -628,7 +692,9 @@ def build_accepted_query_facts(
     referenced-predicate inventory so unrelated Claim and attestation bodies
     never enter the snapshot. General discovery callers leave it unrestricted.
     ``consulted_bodies`` receives the body-store objects the rows' availability
-    answers consulted, with the file identity each had.
+    answers consulted, with the file identity each had. ``entry_subject_paths``
+    narrows both entry shells and Claim subjects to a proven indexed selection;
+    the selected Claims' Subject referents remain available to the evaluator.
     """
 
     return _AcceptedQueryFactsRead(
@@ -638,6 +704,7 @@ def build_accepted_query_facts(
         predicates=predicates,
         subject_kinds=subject_kinds,
         consulted_bodies=consulted_bodies,
+        entry_subject_paths=entry_subject_paths,
     ).build(include_retired=include_retired)
 
 
@@ -773,6 +840,7 @@ def evaluate_accepted_query(
     parameters: Mapping[str, object] | None = None,
     budgets: QueryBudgets | None = None,
     facts: Callable[[], ClaimQueryFactsV1] | None = None,
+    live_subjects_only: bool = False,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
 ) -> ClaimQueryResult:
     """One dispatch for public reads and projection currency, with lazy Claim facts."""
@@ -815,12 +883,39 @@ def evaluate_accepted_query(
             parameters=parameters,
             budgets=budgets,
         )
-    return evaluate_claim_query(
-        definition,
-        resolve_reference=reference_resolver(
-            projection_connection(lambda: instance.bind_accepted_projection(coordinate))
-        ),
-        facts=facts()
+    selection = None
+    canonical_forms = None
+    if facts is None:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            selection = select_query_facts(
+                projection.typed.connection,
+                definition.query,
+                parameters=parameters,
+                budgets=budgets,
+                source=instance.immutable_tree_at(coordinate.git_oid),
+                live_subjects_only=live_subjects_only,
+            )
+            if selection is not None:
+                # Operand normalization historically comes from every live
+                # predicate row, even if this entry has no Claim of that type.
+                # Preserve that metadata with one indexed existence seek per
+                # declared predicate, without loading those rows' facts.
+                canonical_forms = {}
+                tree = instance.immutable_tree_at(coordinate.git_oid)
+                for predicate in definition.query.referenced_predicates:
+                    if (
+                        projection.typed.connection.execute(
+                            "SELECT 1 FROM claims WHERE predicate=? AND lifecycle='live' LIMIT 1",
+                            (predicate,),
+                        ).fetchone()
+                        is not None
+                    ):
+                        path = claim_type_path(predicate)
+                        form = effective_canonical_form(parse_claim_type(tree[path], path=path))
+                        if form:
+                            canonical_forms[predicate] = form
+    accepted_facts = (
+        facts()
         if facts
         else build_accepted_query_facts(
             instance,
@@ -828,11 +923,32 @@ def evaluate_accepted_query(
             external_readers=external_readers,
             predicates=definition.query.referenced_predicates,
             subject_kinds=definition.query.entry.subject_kinds,
+            entry_subject_paths=None if selection is None else selection.paths,
+        )
+    )
+    if live_subjects_only:
+        accepted_facts = accepted_facts.model_copy(
+            update={
+                "subjects": tuple(
+                    subject
+                    for subject in accepted_facts.subjects
+                    if subject.shell.lifecycle.state != "retired"
+                )
+            }
+        )
+    return evaluate_claim_query(
+        definition,
+        resolve_reference=reference_resolver(
+            projection_connection(lambda: instance.bind_accepted_projection(coordinate))
         ),
+        facts=accepted_facts,
         coordinate=coordinate,
         evaluation_time=evaluation_time,
         parameters=parameters,
         budgets=budgets,
+        entry_paths=None if selection is None else selection.paths,
+        entry_candidate_count=None if selection is None else selection.candidate_count,
+        canonical_forms=canonical_forms,
     )
 
 

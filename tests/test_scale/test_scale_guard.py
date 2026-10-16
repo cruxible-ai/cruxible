@@ -548,11 +548,6 @@ _CURATION = (
     "(curation_detectors.py:182 _curation_history_index) and every dependency artifact "
     "(claims/closure.py:417), via service/discovery/curation.py:738"
 )
-_NAMED_FACTS = (
-    "new: a named query builds facts over every Claim of its predicates and every Subject "
-    "before its budget truncates (service/discovery/query.py:626 build_accepted_query_facts "
-    "via :809 evaluate_accepted_query)"
-)
 _CITATIONS = (
     "audit#6: next with workspace sources builds unscoped facts and each Claim's law "
     "record and reads a Capture per citation (service/discovery/next.py:2870-2934 "
@@ -629,26 +624,6 @@ GROWS: dict[str, dict[str, str]] = {
             "non-unique prefix (indexes/history/history_index.py:686 via "
             "service/evidence/evidence.py:926, from service/discovery/query.py:493)"
         ),
-    },
-    "read.query.where": {
-        # Its digests no longer grow: each Subject shell is parsed once per content
-        # and sealed, so its digest is taken once per process (content_memo).
-        "git_blob_reads": (
-            "new: a kind query reads every Subject of the kind before its where "
-            "filters (service/discovery/query.py:362 _reachable_subject_paths, :542-549 via "
-            "compact_query.py:1286 live_facts)"
-        ),
-    },
-    "read.query.named": {
-        # Its digests no longer grow after the encode-once batch (measured XPASS).
-        **_grows(
-            _NAMED_FACTS,
-            "claim_parses",
-            "canonical_encodes",
-            "sql_statements",
-            "git_blob_reads",
-        ),
-        "sql_vm_steps": _NAMED_FACTS + _BLOB_READS + ", and " + _LAW_HEAD,
     },
     "read.next.workspace_sources": {"canonical_digests": _CITATIONS},
     # Its encodes no longer grow after the encode-once batch (measured XPASS).

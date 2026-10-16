@@ -102,13 +102,11 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import resolve_subject_ref
 from cruxible_core.indexes.typed_state import LIVE_SUBJECT_PREDICATE_CLAIMS_SQL
-from cruxible_core.query.backends import ClaimQueryFactsV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.listed_kinds import LISTED_KINDS, listed_kind_answer
 from cruxible_core.service.discovery.query import (
-    build_accepted_query_facts,
     evaluate_accepted_query,
 )
 from cruxible_core.service.discovery.query_values import (
@@ -1278,36 +1276,12 @@ def _compact_subject_query(
     )
     definition = _accepted(spec)
     with_retired = "retired" in request.status
-    live_facts = None
-    if not with_retired and not follows:
-        # With no follow, the kind's Subjects are the only bindings, so a
-        # retired one leaves the evaluated facts and never takes a place under
-        # the result ceiling. (A follow may reach a retired Subject as its
-        # target; those answers drop retired roots after evaluation instead.)
-
-        def live_facts() -> ClaimQueryFactsV1:
-            facts = build_accepted_query_facts(
-                instance,
-                coordinate=coordinate,
-                predicates=definition.query.referenced_predicates,
-                subject_kinds=definition.query.entry.subject_kinds,
-            )
-            return facts.model_copy(
-                update={
-                    "subjects": tuple(
-                        subject
-                        for subject in facts.subjects
-                        if subject.shell.lifecycle.state != "retired"
-                    )
-                }
-            )
-
     result = evaluate_accepted_query(
         instance,
         definition,
         coordinate=coordinate,
         evaluation_time=evaluation_time,
-        facts=live_facts,
+        live_subjects_only=not with_retired and not follows,
     )
     _refuse_engine(result)
     capped, cap_notes = _capped(result)
