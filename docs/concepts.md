@@ -362,7 +362,7 @@ default installed by name); installing grants no permission to run anything.
 In Python, `@procedure` from `cruxible_client.authoring.source` turns a
 decorated function into a `ProcedureSource`, compiled into the same governed
 graph; its `slots=` declare open slots by interface, and a source with
-unbound slots builds a Blueprint. See the [SDK v2 reference](sdk-v2-reference.md).
+unbound slots builds a Blueprint. See the [Procedure source reference](procedure-source.md).
 
 ## Lines, Triggers and mandates
 

@@ -1140,7 +1140,6 @@ class ClaimTypeAuthoringPayload(_StrictAuthoringModel):
 ClaimTypeSuccessionDisposition: TypeAlias = Literal[
     "successor",
     "retire",
-    "invalidation",
     "re_author",
 ]
 
@@ -1164,15 +1163,6 @@ class ClaimTypeSuccessionDependent(_StrictAuthoringModel):
     predecessor digest, which is what makes it a re-authoring of that Claim
     rather than a new one. There is no second spelling by member index: an index
     could only ever name the member this Claim ID already names.
-
-    `invalidation` parses and always refuses. It is the standalone route's
-    deprecated spelling of `retire`, answered there with a
-    `cruxible.claim_type.invalidation_deprecated` warning; change-set lowering
-    has no warning channel, so admitting it would coerce a deprecated word
-    silently. The word is carried here only so an author who knows the
-    standalone vocabulary gets a typed refusal naming the operator route
-    instead of an untyped parse failure. It emits no deprecation notice: this
-    surface never accepted it, so there is nothing to schedule for removal.
     """
 
     tag: Literal["playbill-claim-type-succession-dependent-v1"] = (

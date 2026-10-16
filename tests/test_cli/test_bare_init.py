@@ -472,7 +472,7 @@ def test_a_bare_init_owner_attests_a_claim_with_no_extra_variables(
             "SELECT identity FROM claims ORDER BY identity LIMIT 1"
         ).fetchone()
 
-    result = _run("claim", "attest", str(claim).removeprefix("Claim:"), "--support", "--json")
+    result = _run("claim", "attest", str(claim).removeprefix("Claim:"), "--support")
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout[result.stdout.index("{") :])

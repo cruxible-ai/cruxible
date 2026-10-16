@@ -5208,28 +5208,6 @@ def _stage_claim_type_succession(
     dependent's successor.
     """
 
-    for position, dependent in enumerate(member.dependents):
-        if dependent.disposition != "invalidation":
-            continue
-        _refuse(
-            "cruxible.authoring.claim_type_succession_disposition_deprecated",
-            f"dependents[{position}].disposition",
-            "`invalidation` is the standalone migration route's deprecated spelling of "
-            "`retire`. A change set refuses or accepts -- it has no warning channel to "
-            "answer a deprecated word with -- so say which retirement this is.",
-            repair_kind="replace_disposition",
-            repair_description=(
-                "Disposition this dependent `retire` with a claim_retirement_reason, or "
-                "run the succession through the operator route "
-                "`cruxible claim-type migrate`, which still tolerates the "
-                "deprecated word and warns."
-            ),
-            replacement={
-                "identity": dependent.identity.qualified,
-                "operator_route": "cruxible claim-type migrate",
-                "permitted_dispositions": ["re_author", "retire", "successor"],
-            },
-        )
     try:
         type_path, predecessor, successor = resolve_claim_type_succession(
             staged_tree,

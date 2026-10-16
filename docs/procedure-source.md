@@ -42,12 +42,12 @@ provider contracts, and execution surfaces remain in use.
 
 ## API coverage and availability
 
-SDK v2 extends the existing SDK with the additions below.
+Procedure source authoring extends the SDK with the additions below.
 The unchanged API is specified by the linked reference sections, including every
 signature, default, returned handle, input model, and HTTP-client operation.
 This document does not silently remove an existing operation.
 
-| Existing surface | v2 contract |
+| Existing surface | Source authoring contract |
 |---|---|
 | [Connection and state contexts](../packages/cruxible-client/README.md#connection-and-state-context) | Unchanged: instance selection, credentials, snapshots, refresh, connection ownership. |
 | [Knowledge authoring](../packages/cruxible-client/README.md#knowledge-authoring) and [changesets](../packages/cruxible-client/README.md#api-changesetdraft) | Same governed definitions and lifecycle. Structured Claim literals gain contract-derived record construction; existing scalar/enum vocabulary remains. |

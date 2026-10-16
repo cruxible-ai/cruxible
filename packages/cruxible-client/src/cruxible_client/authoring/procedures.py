@@ -444,7 +444,7 @@ def _schema(contract: CarriedContractInput) -> ContractSchema:
 class Sequence:
     """Compose forward steps; guards may name explicit forward branch targets.
 
-    ``bind(fetch=selection)`` returns a new blueprint. ``preview()`` is local;
+    ``bind(fetch=selection)`` returns a new bound Sequence. ``preview()`` is local;
     ``build()`` produces the shared ProcedureInput consumed by every surface.
     """
 

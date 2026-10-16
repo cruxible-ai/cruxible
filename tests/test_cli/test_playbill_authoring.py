@@ -163,8 +163,8 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
         "inst_authoring",
         "authoring",
     ]
-    compiled = runner.invoke(cli, [*common, "compile", str(payload), "--json"])
-    submitted = runner.invoke(cli, [*common, "submit", "--intent-id", INTENT_ID, "--json"])
+    compiled = runner.invoke(cli, [*common, "compile", str(payload)])
+    submitted = runner.invoke(cli, [*common, "submit", "--intent-id", INTENT_ID])
 
     assert compiled.exit_code == 0, compiled.output
     assert submitted.exit_code == 0, submitted.output
@@ -214,9 +214,9 @@ def test_cli_submit_takes_a_payload_directly_and_dry_run_saves_nothing(
         "submit",
     ]
 
-    direct = runner.invoke(cli, [*common, str(payload), "--json"])
-    onto = runner.invoke(cli, [*common, str(payload), "--intent-id", INTENT_ID, "--json"])
-    preview = runner.invoke(cli, [*common, str(payload), "--dry-run", "--json"])
+    direct = runner.invoke(cli, [*common, str(payload)])
+    onto = runner.invoke(cli, [*common, str(payload), "--intent-id", INTENT_ID])
+    preview = runner.invoke(cli, [*common, str(payload), "--dry-run"])
 
     assert direct.exit_code == 0, direct.output
     assert onto.exit_code == 0, onto.output
@@ -515,7 +515,6 @@ def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  #
             "authoring",
             "status",
             INTENT_ID,
-            "--json",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -998,7 +997,6 @@ def test_cli_bind_derives_observation_and_compiles(
             "status: ready",
             "--payload-file",
             str(payload_file),
-            "--json",
         ],
     )
 
@@ -1206,7 +1204,6 @@ def test_cli_bind_declared_block_refuses_every_role(
             "status: ready",
             "--payload-file",
             str(payload_file),
-            "--json",
         ],
     )
 

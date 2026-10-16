@@ -2,7 +2,7 @@
 
 `cruxible-client` is the Python client for a Cruxible daemon; `pip install
 cruxible` installs it together with the daemon, CLI and MCP server. This is an
-API reference. The [source authoring reference](../../docs/sdk-v2-reference.md)
+API reference. The [source authoring reference](../../docs/procedure-source.md)
 specifies authoring Procedures as Python source (`@procedure`,
 `ProcedureSource`), contract-derived records, typed query and run results, and
 child calls. Names and typed handles are authoring inputs; exact versions and
@@ -3216,18 +3216,6 @@ Import: `cruxible_client.authoring.sdk_types.Disposition`. [Source](src/cruxible
 | `CONTRADICT` | `'contradict'` |
 | `UNSURE` | `'unsure'` |
 
-<a id="api-audience"></a>
-
-## `Audience`
-
-Import: `cruxible_client.authoring.sdk_types.Audience`. [Source](src/cruxible_client/authoring/sdk_types.py)
-
-| Member | Value |
-|---|---|
-| `AGENT` | `'agent'` |
-| `HUMAN` | `'human'` |
-| `BOTH` | `'both'` |
-
 <a id="api-activationpolicy"></a>
 
 ## `ActivationPolicy`
@@ -3455,7 +3443,8 @@ successor. Every consumed alias must exist on every path reaching its consumer.
 | SettleChangeSet | Settle candidate templates under the one covering settle mandate, end path | Served through Lines; falls back as that mandate declares |
 | Halt | End path without successful return value | No successor |
 
-Contracts are accepted references or carried Contract definitions. Previous()
+Sequence Contracts must be owner-carried Contract definitions; accepted references
+are refused by this frontend. Previous()
 denotes the preceding value-producing output, or invocation input when first.
 Output(alias, path) selects a particular earlier output. Source.request and
 Call.input default to Previous(); Project.fields is explicit. Whole-output Call
@@ -3838,7 +3827,7 @@ input contract. Pass it as `Procedure.run(input=record)`; successful
 guards result access, and `.children` returns authorized child run handles.
 `cx.get("query:NAME")` shows a named query's parameters, and
 `cx.query(name=NAME, params=..., receipt="full")` returns its result with the
-replay receipt. See the [source authoring reference](../../docs/sdk-v2-reference.md)
+replay receipt. See the [source authoring reference](../../docs/procedure-source.md)
 for the exhaustive source syntax, arguments, validation, and execution boundaries.
 
 ### `Procedure.run`
@@ -6811,7 +6800,6 @@ include constructor/validator definitions for request and response contracts.
 | `AbsentSubject` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `AccessProfile` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ActivationPolicy` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
-| `Audience` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ArtifactIdentity` | `cruxible_client.contracts.artifacts` · [Source](src/cruxible_client/contracts/artifacts.py) |
 | `ArtifactLifecycle` | `cruxible_client.contracts.artifacts` · [Source](src/cruxible_client/contracts/artifacts.py) |
 | `ArtifactPin` | `cruxible_client.contracts.artifacts` · [Source](src/cruxible_client/contracts/artifacts.py) |
@@ -6877,7 +6865,7 @@ include constructor/validator definitions for request and response contracts.
 [Source](src/cruxible_client/authoring/source.py)
 
 Python source authoring of Procedures; the
-[source authoring reference](../../docs/sdk-v2-reference.md) specifies it in
+[source authoring reference](../../docs/procedure-source.md) specifies it in
 full.
 
 #### `procedure`

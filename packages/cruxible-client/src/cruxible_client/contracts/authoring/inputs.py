@@ -723,7 +723,7 @@ def _artifact_identity(value: str, *, field_path: str) -> ArtifactIdentity:
             "cruxible.authoring.accepted_target_invalid",
             field_path,
             "Accepted references use ArtifactKind:name.",
-            "Replace target with an identity returned by discover.",
+            "Replace target with an identity returned by orient or get.",
         )
     try:
         return ArtifactIdentity(kind=kind, name=name)
@@ -732,7 +732,7 @@ def _artifact_identity(value: str, *, field_path: str) -> ArtifactIdentity:
             "cruxible.authoring.accepted_target_invalid",
             field_path,
             "Accepted reference identity is not canonical.",
-            "Replace target with an identity returned by discover.",
+            "Replace target with an identity returned by orient or get.",
         ) from exc
 
 

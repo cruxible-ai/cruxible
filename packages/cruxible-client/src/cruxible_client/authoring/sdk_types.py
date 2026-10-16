@@ -335,12 +335,6 @@ class Disposition(str, Enum):
     UNSURE = "unsure"
 
 
-class Audience(str, Enum):
-    AGENT = "agent"
-    HUMAN = "human"
-    BOTH = "both"
-
-
 class ActivationPolicy(str, Enum):
     DRAIN = "drain"
     ABORT = "abort"
@@ -587,7 +581,6 @@ __all__ = [
     "AbsentSubject",
     "AccessProfile",
     "ActivationPolicy",
-    "Audience",
     "CallSite",
     "CanonicalValue",
     "CapabilityNotServed",

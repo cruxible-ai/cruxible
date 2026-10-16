@@ -347,7 +347,7 @@ def test_document_example_is_local_and_model_constructed(monkeypatch) -> None:
     )
     result = CliRunner().invoke(
         cli,
-        ["document", "propose", "--example", "document"],
+        ["document", "propose", "--template"],
     )
 
     assert result.exit_code == 0, result.output

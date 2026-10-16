@@ -2181,14 +2181,14 @@ def document_group() -> None:
 
 @document_group.command("propose")
 @click.option("--envelope", type=PayloadFile())
-@click.option("--example", type=click.Choice(["document"]))
+@click.option("--template", is_flag=True, help="Print a Document proposal template.")
 @click.option("--name", "proposal_name")
 @change_control_options
 @json_option
 @handle_errors
 def propose_document(
     envelope: str | None,
-    example: str | None,
+    template: bool,
     proposal_name: str | None,
     dry_run: bool | None,
     at: str | None,
@@ -2196,9 +2196,9 @@ def propose_document(
 ) -> None:
     """Use the sanctioned command-local Document proposal path."""
 
-    if (envelope is None) == (example is None):
-        raise click.UsageError("choose exactly one of --envelope or --example")
-    if example is not None:
+    if (envelope is None) == (not template):
+        raise click.UsageError("choose exactly one of --envelope or --template")
+    if template:
         if proposal_name is not None:
             raise click.UsageError("--name applies only when --envelope is supplied")
         _emit_json(document_example().model_dump(mode="json"))
@@ -2217,7 +2217,10 @@ def propose_document(
         ),
         command_name="cruxible document propose",
     )
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_proposal(result, result.lint)
 
 
 @playbill_group.group("capture")
@@ -3404,7 +3407,10 @@ def rotate_principal(
         dry_run=dry_run,
         at=at,
     )
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_proposal(result, result.lint)
 
 
 @principal_group.command("recover")
@@ -3431,7 +3437,10 @@ def recover_principal(
         dry_run=dry_run,
         at=at,
     )
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_proposal(result, result.lint)
 
 
 @principal_group.command("revoke")
@@ -3460,7 +3469,10 @@ def revoke_principal(
         )
 
     result = _server_call(call, command_name="cruxible principal revoke")
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_proposal(result, result.lint)
 
 
 @playbill_group.group("claim-type")
@@ -3516,7 +3528,7 @@ def propose_claim_type(
         if output_json:
             _emit_json(builtin_result.model_dump(mode="json"))
             return
-        _echo_claim_type_proposal(builtin_result, builtin_result.lint)
+        _echo_proposal(builtin_result, builtin_result.lint)
         return
     if envelope is not None:
         envelope_payload = _read_mapping(envelope)
@@ -3536,7 +3548,7 @@ def propose_claim_type(
         if output_json:
             _emit_json(envelope_result.model_dump(mode="json"))
             return
-        _echo_claim_type_proposal(envelope_result, envelope_result.lint)
+        _echo_proposal(envelope_result, envelope_result.lint)
         return
     assert input_path is not None
     try:
@@ -3564,13 +3576,13 @@ def propose_claim_type(
     if output_json:
         _emit_json(input_result.model_dump(mode="json"))
         return
-    _echo_claim_type_proposal(input_result.proposal, input_result.lint)
+    _echo_proposal(input_result.proposal, input_result.lint)
 
 
-def _echo_claim_type_proposal(
+def _echo_proposal(
     inspection: contracts.ProposalInspection, lint: contracts.ClaimTypeProposalLint | None
 ) -> None:
-    """A ClaimType proposal in a few lines; ``--json`` carries the whole record."""
+    """A proposal in a few lines; ``--json`` carries the whole record."""
 
     admission = inspection.proposal.get("admission") or {}
     evaluation = inspection.proposal.get("evaluation") or {}
@@ -3928,7 +3940,6 @@ def run_action(
         "evidence otherwise lapses after the ClaimType's unsure_hold_for (default 30 days)."
     ),
 )
-@json_option
 @handle_errors
 def attest_claim(
     claim_id: str,
@@ -3937,7 +3948,6 @@ def attest_claim(
     unsure: bool,
     note: str | None,
     valid_until: str | None,
-    output_json: bool,
 ) -> None:
     """Sign that this caller examined the current exact Claim.
 
@@ -4086,9 +4096,8 @@ def authoring_example_command(
 
 @authoring_group.command("get")
 @click.argument("intent_id")
-@json_option
 @handle_errors
-def get_authoring_intent(intent_id: str, output_json: bool) -> None:
+def get_authoring_intent(intent_id: str) -> None:
     """Read one of your authoring intents: payload, base, last preflight and status.
 
     With `authoring list`, this is how staged work is picked up again after the
@@ -4103,9 +4112,8 @@ def get_authoring_intent(intent_id: str, output_json: bool) -> None:
 
 
 @authoring_group.command("list")
-@json_option
 @handle_errors
-def list_pending_authoring_intents(output_json: bool) -> None:
+def list_pending_authoring_intents() -> None:
     """List your authoring intents that are still in progress, newest state each."""
 
     result = _server_call(
@@ -4122,9 +4130,8 @@ def list_pending_authoring_intents(output_json: bool) -> None:
     default=None,
     help="Revise this staged intent instead of creating one; the daemon keeps every revision.",
 )
-@json_option
 @handle_errors
-def compile_authoring(payload: str, intent_id: str | None, output_json: bool) -> None:
+def compile_authoring(payload: str, intent_id: str | None) -> None:
     """Stage PAYLOAD as an intent and run every check on it, without submitting.
 
     PAYLOAD is a tagless authoring input file, or - for stdin (`authoring
@@ -4172,7 +4179,6 @@ def compile_authoring(payload: str, intent_id: str | None, output_json: bool) ->
     type=click.Path(file_okay=False),
     help="The workspace whose file catalog names --file (default: this worktree).",
 )
-@json_option
 @handle_errors
 def bind_authoring_selection(
     source_path: str,
@@ -4181,7 +4187,6 @@ def bind_authoring_selection(
     occurrence: int | None,
     payload_file: str,
     workspace_root: str | None,
-    output_json: bool,
 ) -> None:
     """Bind a Claim to one exact anchor in a local file, then compile it.
 
@@ -4223,9 +4228,8 @@ def bind_authoring_selection(
 @authoring_group.command("preflight")
 @click.argument("intent_id")
 @brief_option
-@json_option
 @handle_errors
-def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: bool) -> None:
+def preflight_authoring_intent(intent_id: str, output_brief: bool) -> None:
     """Re-run every check on a staged intent.
 
     A refused intent whose base is behind the accepted head is checked again at
@@ -4272,7 +4276,6 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
 )
 @and_activate_option
 @brief_option
-@json_option
 @handle_errors
 def submit_authoring_intent(
     payload: str | None,
@@ -4280,7 +4283,6 @@ def submit_authoring_intent(
     dry_run: bool,
     and_activate: bool,
     output_brief: bool,
-    output_json: bool,
 ) -> None:
     """Compile, check and submit PAYLOAD as one proposal, or submit a staged intent.
 
@@ -4439,9 +4441,8 @@ def _submit_next_command(submitted: Any, *, activated: bool) -> str | None:
 
 @authoring_group.command("status")
 @click.argument("intent_id")
-@json_option
 @handle_errors
-def authoring_intent_status(intent_id: str, output_json: bool) -> None:
+def authoring_intent_status(intent_id: str) -> None:
     """Read what still separates an intent from acceptance.
 
     The answer names each remaining condition (a refusal to repair, an approval
@@ -5673,7 +5674,10 @@ def propose_compiler_upgrade(
         )
 
     result = _server_call(call, command_name="cruxible compiler upgrade")
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_proposal(result, result.lint)
 
 
 class _QueryCommand(click.Command):
@@ -6173,7 +6177,8 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
     default=None,
     help=(
         "Explicit ISO-8601 evaluation time; default: the instant the daemon admits the run. "
-        "Pass a run's evaluation_time to replay it."
+        "With the same current Procedure and matching input, an explicit time may reuse "
+        "a retained Source observation under its replayability and age policy."
     ),
 )
 @click.option(

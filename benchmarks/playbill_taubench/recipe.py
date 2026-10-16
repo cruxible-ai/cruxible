@@ -165,7 +165,9 @@ def run_cli(*args: str) -> str:
 
 
 def run_cli_json(*args: str) -> Any:
-    return json.loads(run_cli(*args, "--json"))
+    # Authoring emits its structured result without an output selector.
+    extra = () if args[:1] == ("authoring",) else ("--json",)
+    return json.loads(run_cli(*args, *extra))
 
 
 # -- step 1: stand up a served instance -------------------------------------

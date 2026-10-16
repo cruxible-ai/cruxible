@@ -14,7 +14,6 @@ from cruxible_core.server.playbill_request_models import (  # noqa: F401
     FileBundleRequest,
     FileProposeRequest,
     InitRequest,
-    PlaybillExplainRequest,
     ProposeDocumentRequest,
     ProposePrincipalRequest,
     ReviewRequest,

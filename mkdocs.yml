@@ -73,7 +73,7 @@ nav:
       - For AI agents: for-ai-agents.md
       - Kits: kits.md
   - Reference:
-      - Procedure source authoring: sdk-v2-reference.md
+      - Procedure source authoring: procedure-source.md
       - CLI reference: cli-reference.md
       - MCP tools: mcp-tools.md
       - Projection blocks: declared-blocks.md
