@@ -512,7 +512,17 @@ class GitLedger:
         body = b"".join(encoded)
         oid = self._object_oid("tree", body)
         written[oid] = ("tree", body)
-        _remember_encoded_tree(oid, _EncodedTree(entries.finish(), tuple(keys), tuple(encoded)))
+        # Transfer needs the same change record as tree encoding. Never derive
+        # this frontier later by comparing or visiting the unchanged siblings.
+        children = tuple(
+            entry[1]
+            for name in changed
+            if (entry := entries.get(name)) is not None and entry[0] != b"160000"
+        )
+        frontier = _TreeTransferFrontier(tree_oid, children) if oid != tree_oid else None
+        _remember_encoded_tree(
+            oid, _EncodedTree(entries.finish(), tuple(keys), tuple(encoded), frontier)
+        )
         return oid
 
     def _commit_changes_to_tree(
@@ -3004,10 +3014,17 @@ class GitLedger:
 
 
 @dataclass(frozen=True, slots=True)
+class _TreeTransferFrontier:
+    base: str | None
+    children: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _EncodedTree:
     entries: PersistentMap[tuple[bytes, str]]
     keys: tuple[bytes, ...]
     encoded: tuple[bytes, ...]
+    transfer: _TreeTransferFrontier | None = None
 
 
 _ENCODED_TREES: OrderedDict[str, _EncodedTree] = OrderedDict()
@@ -3026,6 +3043,16 @@ def _remember_encoded_tree(oid: str, listing: _EncodedTree) -> None:
         ):
             _, old = _ENCODED_TREES.popitem(last=False)
             _ENCODED_TREE_ENTRIES -= len(old.entries)
+
+
+def _tree_transfer_frontier(oid: str) -> _TreeTransferFrontier | None:
+    """The writer's changed children, available while its immutable seed is warm."""
+    with _ENCODED_TREES_LOCK:
+        cached = _ENCODED_TREES.get(oid)
+        if cached is not None:
+            _ENCODED_TREES.move_to_end(oid)
+            return cached.transfer
+    return None
 
 
 def _tree_entry_key(name: str, mode: bytes) -> bytes:

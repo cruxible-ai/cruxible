@@ -22,6 +22,7 @@ from cruxible_core.ledger.git import (
     _batch_reader,
     _files_backend_ref,
     _tree_entries,
+    _tree_transfer_frontier,
 )
 
 _REMOTE_NAME = "cruxible-ledger"
@@ -247,8 +248,9 @@ def _configure_remote(
 def _copy_objects(source: Path, target: Path, roots: tuple[str, ...]) -> None:
     """Copy the missing frontier; an existing object ends ancestry traversal.
 
-    Cold attachment visits reachable history once. Warm refresh follows only
-    newly advertised commits/notes and changed trees, stopping at copied objects.
+    Warm refresh uses the source writer's changed children when the destination
+    already holds their baseline tree. Cold attachment, a lost baseline, or an
+    evicted source change record falls back to reachable-object traversal.
     """
     reader, writer = _batch_reader(source), _batch_reader(target).store
     objects: dict[str, tuple[str, bytes]] = {}
@@ -267,6 +269,14 @@ def _copy_objects(source: Path, target: Path, roots: tuple[str, ...]) -> None:
                 if line.startswith((b"tree ", b"parent ")):
                     pending.append(line.split(b" ", 1)[1].decode("ascii"))
         elif kind == "tree":
+            frontier = _tree_transfer_frontier(oid)
+            if frontier is not None and (
+                frontier.base is None or writer.info(frontier.base) is not None
+            ):
+                # Baseline presence proves the unchanged children were copied.
+                # Neither parse the rewritten full listing nor probe siblings.
+                pending.extend(frontier.children)
+                continue
             entries = _tree_entries(body, raw_length=len(oid) // 2)
             if entries is None:
                 raise GitError("advertised tree is malformed")

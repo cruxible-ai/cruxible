@@ -538,3 +538,146 @@ def test_config_publication_cleanup_preserves_the_next_writers_lock(tmp_path, mo
         if successor_fd is not None:
             os.close(successor_fd)
         lock.unlink(missing_ok=True)
+
+
+def _subject_ledger(tmp_path, object_format, size):
+    from cruxible_core.governance.keys import generate_daemon_key
+    from cruxible_core.ledger.git import GitLedger
+    from tests.core_support._projection_support import subject_bytes
+
+    tmp_path.mkdir()
+    key = generate_daemon_key(tmp_path / "credentials")
+    signers = tmp_path / "allowed"
+    signers.write_bytes(b"daemon " + key.public_key_path.read_bytes())
+    ledger = GitLedger.initialize(
+        tmp_path / "ledger.git",
+        object_format=object_format,
+        signing_key_path=key.private_key_path,
+        allowed_signers_path=signers,
+    )
+    tree = {f"subjects/project.work_item/s{i}.json": subject_bytes(f"s{i}") for i in range(size)}
+    base = ledger.create_signed_genesis(tree, timestamp="2026-10-15T12:00:00Z")
+    ledger.set_main_genesis(base)
+    workspace = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", f"--object-format={object_format}", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    return workspace, ledger, base, tree
+
+
+def _change_one_subject(ledger, base):
+    from cruxible_core.derived.derived_state import SnapshotTree
+    from tests.core_support._projection_support import subject_bytes
+
+    root = SnapshotTree(ledger.blob_refs_at(base))
+    root._commit_oid = base
+    edit = root.fork()
+    edit["subjects/project.work_item/s0.json"] = subject_bytes("s0", retired=True)
+    with ledger.request_pack(), ledger.activation_lock():
+        generation = ledger.create_signed_generation(
+            edit.snapshot(),
+            parent_oid=base,
+            sequence=1,
+            timestamp="2026-10-15T12:01:00Z",
+            message="Retire one Subject",
+        )
+        with ledger.prepared_generation_note(generation, b"descriptor\n") as publish_note:
+            assert ledger.compare_and_set_main(generation, expected_oid=base)
+            publish_note()
+    return generation
+
+
+@pytest.mark.parametrize("object_format", ("sha1", "sha256"))
+def test_warm_workspace_transfer_work_is_change_sized(tmp_path, monkeypatch, object_format):
+    from cruxible_core.floor import workspace_advertisement as advertisement
+    from cruxible_core.ledger.git import _batch_reader
+    from tests.core_support._projection_support import subject_bytes
+
+    counts = []
+    for size in (80, 800):
+        workspace, ledger, base, tree = _subject_ledger(tmp_path / str(size), object_format, size)
+        assert (
+            advertise_workspace_refs(
+                workspace_root=workspace,
+                ledger_path=ledger.path,
+                ledger_object_format=object_format,
+            ).status
+            == "updated"
+        )
+        generation = _change_one_subject(ledger, base)
+        work = {"metadata": 0, "children": 0, "parsed_children": 0}
+        writer = _batch_reader(workspace / ".git").store
+        real_infos = writer.infos
+        real_frontier = advertisement._tree_transfer_frontier
+        real_entries = advertisement._tree_entries
+
+        def infos(oids):
+            work["metadata"] += len(oids)
+            return real_infos(oids)
+
+        def frontier(oid):
+            result = real_frontier(oid)
+            if result is not None:
+                work["children"] += len(result.children)
+            return result
+
+        def entries(*args, **kwargs):
+            result = real_entries(*args, **kwargs)
+            if result is not None:
+                work["parsed_children"] += len(result)
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(writer, "infos", infos)
+            patch.setattr(advertisement, "_tree_transfer_frontier", frontier)
+            patch.setattr(advertisement, "_tree_entries", entries)
+            result = advertise_workspace_refs(
+                workspace_root=workspace,
+                ledger_path=ledger.path,
+                ledger_object_format=object_format,
+            )
+        assert result.status == "updated"
+        counts.append(work)
+        assert _git(workspace, "rev-parse", "refs/remotes/cruxible-ledger/accepted") == generation
+        assert _git(workspace, "show", f"{generation}:subjects/project.work_item/s0.json") == (
+            subject_bytes("s0", retired=True).decode().strip()
+        )
+        unchanged = f"subjects/project.work_item/s{size - 1}.json"
+        assert (
+            _git(workspace, "show", f"{generation}:{unchanged}") == tree[unchanged].decode().strip()
+        )
+        _git(workspace, "fsck", "--strict", "--no-dangling")
+    assert counts[0] == counts[1], counts
+    assert 0 < counts[1]["children"] < 20, counts
+    assert counts[1]["parsed_children"] == 0, counts
+    assert counts[1]["metadata"] < 64, counts
+
+
+@pytest.mark.parametrize("object_format", ("sha1", "sha256"))
+@pytest.mark.parametrize("evicted", (False, True))
+def test_workspace_transfer_recovers_without_a_warm_baseline(
+    tmp_path,
+    monkeypatch,
+    object_format,
+    evicted,
+):
+    from cruxible_core.floor import workspace_advertisement as advertisement
+
+    workspace, ledger, base, tree = _subject_ledger(tmp_path / "source", object_format, 8)
+    generation = _change_one_subject(ledger, base)
+    if evicted:
+        monkeypatch.setattr(advertisement, "_tree_transfer_frontier", lambda _oid: None)
+    # First attachment has neither the parent nor any unchanged child. A source
+    # change record alone must not be mistaken for a complete dependency list.
+    assert (
+        advertise_workspace_refs(
+            workspace_root=workspace, ledger_path=ledger.path, ledger_object_format=object_format
+        ).status
+        == "updated"
+    )
+    assert _git(workspace, "rev-parse", "refs/remotes/cruxible-ledger/accepted") == generation
+    path = "subjects/project.work_item/s7.json"
+    assert _git(workspace, "show", f"{generation}:{path}") == tree[path].decode().strip()
+    _git(workspace, "fsck", "--strict", "--no-dangling")

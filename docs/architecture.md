@@ -173,7 +173,10 @@ record references is deleted under it.
   ref leases use Git's files-backend lockfile protocol. Publishing a ref,
   packed-refs or config lock consumes its pathname; cleanup closes the original
   descriptor without unlinking a successor's lock. Reads support loose
-  objects and Git's delta-compressed packs. Every 64 accepted generations the
+  objects and Git's delta-compressed packs. Warm workspace advertisement carries
+  the tree writer's changed-child frontier and visits it only after checking the
+  destination has its baseline. Cold attachment, missing baselines and evicted
+  frontiers use full reachable-object traversal. Every 64 accepted generations the
   daemon consolidates packs (`repack -a -d`), packs refs and writes the
   commit-graph, off the
   acceptance path, and at start, before serving, it also prunes unreachable
