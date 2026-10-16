@@ -2,13 +2,14 @@
 
 Selections are supersets: every Claim of each selected Subject is retained,
 including competitors. Unsupported filters keep the original full evaluation.
-Loops here grow with the declaration, supplied values, or matching index rows;
-only an unfiltered kind entry enumerates its kind (the requested result set).
+Loops here grow with the declaration, supplied values, or admitted index rows.
+Existing entry restrictions flow through each filter; conjunctions start with
+identity seeks, then value seeks, then kind selections.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, get_args
 
@@ -46,6 +47,13 @@ class QueryFactsSelection:
     paths: tuple[str, ...]
     # Present only when LIMIT was pushed past a plain entry's result budget.
     candidate_count: int | None = None
+
+
+@dataclass(frozen=True)
+class _FilterSelection:
+    apply: Callable[[set[str] | None], set[str]]
+    # Identity seeks precede scalar seeks and population-wide kind selections.
+    priority: int
 
 
 def select_query_facts(
@@ -92,17 +100,32 @@ def select_query_facts(
             )
         }
 
-    def leaf(filter_: QueryFilter) -> set[str] | None:
+    def plan_filter(filter_: QueryFilter) -> _FilterSelection | None:
         if isinstance(filter_, QueryConjunctionFilter | QueryDisjunctionFilter):
-            selections = [leaf(item) for item in filter_.filters]
-            if any(item is None for item in selections):
+            plans = [plan_filter(item) for item in filter_.filters]
+            if any(item is None for item in plans):
                 return None
-            complete = [item for item in selections if item is not None]
-            return (
-                set.intersection(*complete)
-                if isinstance(filter_, QueryConjunctionFilter)
-                else set.union(*complete)
-            )
+            complete = [item for item in plans if item is not None]
+            if isinstance(filter_, QueryConjunctionFilter):
+                complete.sort(key=lambda item: item.priority)
+
+                def conjunction(admissible: set[str] | None) -> set[str]:
+                    selected = admissible
+                    for plan in complete:
+                        selected = plan.apply(selected)
+                        if not selected:
+                            break
+                    assert selected is not None
+                    return selected
+
+                return _FilterSelection(conjunction, min(item.priority for item in complete))
+
+            def disjunction(admissible: set[str] | None) -> set[str]:
+                # Siblings share the incoming restriction, never each other's
+                # matches: otherwise OR would incorrectly become AND.
+                return set.union(*(item.apply(admissible) for item in complete))
+
+            return _FilterSelection(disjunction, max(item.priority for item in complete))
         if isinstance(filter_, QueryComparisonFilter):
             ref, other = filter_.left, filter_.right
             if isinstance(ref, QueryLiteralRef | QueryParameterRef):
@@ -154,19 +177,41 @@ def select_query_facts(
 
                 if operator == "ne":
                     return None
-                return paths_of_kinds(tuple(kind for kind in entry.subject_kinds if matches(kind)))
+                kinds = tuple(kind for kind in entry.subject_kinds if matches(kind))
+
+                def kind_paths(admissible: set[str] | None) -> set[str]:
+                    if admissible is None:
+                        return paths_of_kinds(kinds)
+                    return {path for path in admissible if path.split("/", 2)[1] in kinds}
+
+                return _FilterSelection(kind_paths, 2)
             if operator != "eq":
                 return None
-            return {
-                str(row[0])
-                for kind in entry.subject_kinds
-                for row in select_in(
-                    connection,
-                    "SELECT path FROM subjects WHERE subject_kind=? AND subject_id IN ({})",
-                    values,
-                    prefix=(kind,),
-                )
-            }
+
+            def identity_paths(admissible: set[str] | None) -> set[str]:
+                if admissible is not None:
+                    identifiers = set(values)
+                    return {
+                        str(row[0])
+                        for row in select_in(
+                            connection,
+                            "SELECT path,subject_id FROM subjects WHERE path IN ({})",
+                            tuple(admissible),
+                        )
+                        if row[1] in identifiers
+                    }
+                return {
+                    str(row[0])
+                    for kind in entry.subject_kinds
+                    for row in select_in(
+                        connection,
+                        "SELECT path FROM subjects WHERE subject_kind=? AND subject_id IN ({})",
+                        values,
+                        prefix=(kind,),
+                    )
+                }
+
+            return _FilterSelection(identity_paths, 0)
         if not isinstance(ref, QueryClaimValueRef) or operator != "eq":
             return None
         # Eliminated subjects must not contribute a refusal or hidden-verdict
@@ -210,17 +255,38 @@ def select_query_facts(
             else value
             for value in values
         ]
-        return {
-            str(row[0])
-            for row in select_in(
-                connection,
-                "SELECT subject_path FROM claims WHERE predicate=? AND literal_type=? "
-                f"AND {column} IN ({{}}) AND lifecycle='live'",
-                indexed,
-                prefix=(ref.predicate, scalar),
-            )
-            if str(row[0]).split("/", 2)[1] in entry.subject_kinds
-        }
+
+        def value_paths(admissible: set[str] | None) -> set[str]:
+            if admissible is not None:
+                allowed = set(indexed)
+                # Force the Subject/predicate seek: the unconstrained literal
+                # index would walk every matching Subject before intersecting.
+                return {
+                    str(row[0])
+                    for row in select_in(
+                        connection,
+                        f"SELECT subject_path,{column} FROM claims "
+                        "INDEXED BY claims_by_subject_predicate "
+                        "WHERE predicate=? AND literal_type=? AND lifecycle='live' "
+                        "AND subject_path IN ({})",
+                        tuple(admissible),
+                        prefix=(ref.predicate, scalar),
+                    )
+                    if row[1] in allowed
+                }
+            return {
+                str(row[0])
+                for row in select_in(
+                    connection,
+                    "SELECT subject_path FROM claims WHERE predicate=? AND literal_type=? "
+                    f"AND {column} IN ({{}}) AND lifecycle='live'",
+                    indexed,
+                    prefix=(ref.predicate, scalar),
+                )
+                if str(row[0]).split("/", 2)[1] in entry.subject_kinds
+            }
+
+        return _FilterSelection(value_paths, 1)
 
     selected: set[str] | None = None
     if entry.subject_id is not None:
@@ -236,9 +302,9 @@ def select_query_facts(
             )
         }
     if query.where is not None:
-        narrowed = leaf(query.where)
-        if narrowed is not None:
-            selected = narrowed if selected is None else selected & narrowed
+        plan = plan_filter(query.where)
+        if plan is not None:
+            selected = plan.apply(selected)
     effective = budgets or query.default_budgets
     plain_budget = (
         query.where is None
