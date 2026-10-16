@@ -46,6 +46,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     _line_occurrence,
     _stream,
     _trigger_admissions,
+    _UnavailableLineAdmission,
     line_trigger_pins,
     line_triggers,
     trigger_accepted_at,
@@ -467,6 +468,11 @@ def service_check_line_trigger(
                     for prior_admission in _trigger_admissions(
                         instance, accepted, trigger.trigger.identity
                     ):
+                        if isinstance(prior_admission, _UnavailableLineAdmission):
+                            raise ExecutionError(
+                                "Trigger admission payload is unavailable: "
+                                + prior_admission.stored.record.payload_digest
+                            )
                         cause = getattr(prior_admission, "trigger_binding", None)
                         if cause is not None and cause.generation is not None:
                             covered = max(covered, cause.generation)

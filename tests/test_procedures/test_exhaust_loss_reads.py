@@ -58,3 +58,60 @@ def test_run_read_and_recovery_report_lost_payload(tmp_path: Path, event: str, d
     index = ProcedureRunIndex(tmp_path / "run-index.sqlite")
     index.rebuild_run(state.run_id, records, bodies=bodies)
     assert index.get(state.run_id).status == "failed"
+
+
+def test_missing_admission_does_not_authorize_repeating_an_admitted_event(tmp_path):
+    from datetime import timedelta
+
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineEvaluateRequest
+    from cruxible_core.service.procedures.line_dispatch import (
+        service_dispatch_line,
+        service_evaluate_line,
+    )
+    from cruxible_core.service.procedures.procedure_runs import (
+        _TRIGGER_CHAINS,
+        _accepted_line_by_reference,
+        _line_admissions,
+        _trigger_admissions,
+        _UnavailableLineAdmission,
+        line_triggers,
+    )
+    from tests.test_procedures.test_manual_line_runs import manual_run
+    from tests.test_procedures.test_procedure_source_runs import NOW, _actor, _run
+    from tests.test_procedures.test_trigger_capture_inputs import event_from, world
+
+    instance, root, line = world(tmp_path)
+    actor = _actor(instance)
+    event = event_from(_run(instance, root)[0])
+    now = NOW + timedelta(seconds=2)
+    service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=NOW, until=now),
+        actor=actor,
+        now=now,
+    )
+    (dispatched,) = service_dispatch_line(
+        instance, line.identity.name, LineDispatchRequest(), actor=actor, now=now, caller_rung=2
+    ).items
+    assert dispatched.status == "admitted"
+    records = _records_for_run(instance, dispatched.run_id)
+    admission = next(row for row in records if row.record.event_kind == "admission_bound")
+    instance.body_store()._path(admission.record.payload_digest).unlink()
+    repeated = manual_run(instance, line, at=now + timedelta(seconds=1), event=event)
+    assert repeated.status == "operational_failed"
+    assert repeated.run_id == dispatched.run_id
+    assert repeated.terminal.code == "replay_material_unavailable"
+    assert len(_records_for_run(instance, dispatched.run_id)) == len(records)
+    accepted = _accepted_line_by_reference(
+        instance, coordinate=instance.accepted_coordinate(), reference=line.identity.name
+    )
+    (admitted,) = _line_admissions(instance, accepted, occurrence_id=admission.record.occurrence_id)
+    assert isinstance(admitted, _UnavailableLineAdmission)
+    assert admitted.run_id == dispatched.run_id
+    _TRIGGER_CHAINS.clear()
+    for trigger in line_triggers(instance, accepted, coordinate=instance.accepted_coordinate()):
+        (prior,) = _trigger_admissions(instance, accepted, trigger.trigger.identity)
+        assert isinstance(prior, _UnavailableLineAdmission)
+        (cached,) = _trigger_admissions(instance, accepted, trigger.trigger.identity)
+        assert cached is prior

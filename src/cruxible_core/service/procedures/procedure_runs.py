@@ -1051,9 +1051,20 @@ def _exact_pin(value: ArtifactPin | ProcedurePinSlotRef) -> ArtifactPin:
     raise ExecutionError(f"accepted Procedure has an open slot {value.slot_name!r}")
 
 
+@dataclass(frozen=True)
+class _UnavailableLineAdmission:
+    """Authenticated admission identity whose binding cannot currently be read."""
+
+    stored: StoredProcedureJournalRecordV1
+
+    @property
+    def run_id(self) -> str:
+        return self.stored.record.run_id
+
+
 def _stored_line_admission(
     instance: PlaybillInstance, stored: Any
-) -> ProcedureRunAdmissionV5 | None:
+) -> ProcedureRunAdmissionV5 | _UnavailableLineAdmission | None:
     if stored.record.event_kind != "admission_bound":
         return None
     payload = read_payload(
@@ -1064,6 +1075,8 @@ def _stored_line_admission(
             can_read_body=True,
         ),
     )
+    if isinstance(payload, UnavailablePayload):
+        return _UnavailableLineAdmission(stored)
     if (
         not isinstance(payload, dict)
         or payload.get("tag") not in ACQUISITION_ADMISSION_BOUND_PAYLOAD_TAGS
@@ -1083,11 +1096,11 @@ def _line_admissions(
     accepted_line: AcceptedLineSpec,
     *,
     occurrence_id: str | None = None,
-) -> tuple[ProcedureRunAdmissionV5, ...]:
+) -> tuple[ProcedureRunAdmissionV5 | _UnavailableLineAdmission, ...]:
     journal, _root = _journal(instance)
     stream = procedure_line_journal_stream(instance.descriptor.instance_id)
     partition = procedure_line_partition(accepted_line.line.identity)
-    admissions: list[ProcedureRunAdmissionV5] = []
+    admissions: list[ProcedureRunAdmissionV5 | _UnavailableLineAdmission] = []
     for stored in journal.select_records(
         stream,
         partition_id=partition,
@@ -1106,9 +1119,9 @@ def _line_admissions(
 # sequence read, that Trigger's latest admission). Admission records are
 # append-only, so the chain only ever reads what landed since; an entry lost to
 # eviction or a concurrent write only means reading from an earlier sequence.
-_TRIGGER_CHAINS: OrderedDict[tuple[str, str, str], tuple[int, ProcedureRunAdmissionV5 | None]] = (
-    OrderedDict()
-)
+_TRIGGER_CHAINS: OrderedDict[
+    tuple[str, str, str], tuple[int, ProcedureRunAdmissionV5 | _UnavailableLineAdmission | None]
+] = OrderedDict()
 _TRIGGER_CHAINS_CAPACITY = 4096
 
 
@@ -1116,7 +1129,7 @@ def _trigger_admissions(
     instance: PlaybillInstance,
     accepted_line: AcceptedLineSpec,
     trigger: ArtifactIdentity,
-) -> tuple[ProcedureRunAdmissionV5, ...]:
+) -> tuple[ProcedureRunAdmissionV5 | _UnavailableLineAdmission, ...]:
     """The latest occurrence one Trigger fired on this Line.
 
     A Line's admissions interleave every Trigger aimed at it, so a Trigger's
@@ -1138,8 +1151,16 @@ def _trigger_admissions(
     ):
         seen = max(seen, stored.record.sequence)
         admission = _stored_line_admission(instance, stored)
+        if isinstance(admission, _UnavailableLineAdmission):
+            # Its Trigger cannot be proven. Keep the chain incomplete until an
+            # explicit repair/restart, even if later known admissions arrive.
+            latest = admission
         binding = getattr(admission, "trigger_binding", None)
-        if binding is not None and binding.trigger == trigger:
+        if (
+            not isinstance(latest, _UnavailableLineAdmission)
+            and binding is not None
+            and binding.trigger == trigger
+        ):
             latest = admission
     memo_put(_TRIGGER_CHAINS, key, (seen, latest), capacity=_TRIGGER_CHAINS_CAPACITY)
     return () if latest is None else (latest,)
@@ -1149,7 +1170,7 @@ def _event_admission(
     instance: PlaybillInstance,
     accepted_line: AcceptedLineSpec,
     event: TriggerEventReference,
-) -> str | None:
+) -> str | _UnavailableLineAdmission | None:
     """The run a Trigger of this Line admitted on this exact event, if any."""
 
     journal, _root = _journal(instance)
@@ -1159,6 +1180,9 @@ def _event_admission(
         stream, partition_id=partition, event_kind="admission_bound", descending=True
     ):
         admission = _stored_line_admission(instance, stored)
+        if isinstance(admission, _UnavailableLineAdmission):
+            # Without the binding this event cannot be proved unadmitted.
+            return admission
         binding = getattr(admission, "trigger_binding", None)
         if admission is not None and binding is not None and binding.event == event:
             return admission.run_id
@@ -3931,6 +3955,8 @@ def _run_playbill_line(
         # A manual run on an event the enabled Line's automation already ran is
         # almost always a mistake; it runs again only when asked to.
         admitted = _event_admission(instance, accepted_line, event)
+        if isinstance(admitted, _UnavailableLineAdmission):
+            return _unavailable_run_state(admitted.stored)
         if admitted is not None:
             return _line_refusal_state(
                 accepted,
@@ -3987,6 +4013,8 @@ def _run_playbill_line(
     existing = next(
         iter(_line_admissions(instance, accepted_line, occurrence_id=occurrence_id)), None
     )
+    if isinstance(existing, _UnavailableLineAdmission):
+        return _unavailable_run_state(existing.stored)
     if existing is not None:
         # An occurrence admitted with an investigation or trigger binding (a V7
         # carrier, or a V9 carrying either) retries as itself; any other is done.
