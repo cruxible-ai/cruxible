@@ -242,10 +242,10 @@ class PackStore:
                     inflater = zlib.decompressobj()
                     header = bytearray()
                     while b"\x00" not in header and len(header) < 128:
-                        chunk = stream.read(64)
+                        chunk = inflater.unconsumed_tail or stream.read(64)
                         if not chunk:
                             break
-                        header.extend(inflater.decompress(chunk, 128 - len(header)))
+                        header.extend(inflater.decompress(chunk, 1))
             except FileNotFoundError:
                 return ("tree", 0) if oid in _EMPTY_TREES else None
             raw_kind, separator, raw_size = bytes(header).partition(b"\x00")[0].partition(b" ")
@@ -291,14 +291,17 @@ class PackStore:
             raise GitError("unsupported Git pack object type")
         # Delta streams begin with base-size and result-size varints. Only
         # these bounded header bytes are inflated, never the delta payload.
-        header = zlib.decompressobj().decompress(mapped[cursor : cursor + 64], 32)
-        position = 0
+        inflater = zlib.decompressobj()
+        compressed = mapped[cursor : cursor + 64]
         sizes = []
         for _ in range(2):
             value = shift = 0
             while True:
-                byte = header[position]
-                position += 1
+                decoded = inflater.decompress(compressed, 1)
+                compressed = inflater.unconsumed_tail
+                if not decoded or shift > 63:
+                    raise GitError("malformed Git delta header")
+                byte = decoded[0]
                 value |= (byte & 127) << shift
                 shift += 7
                 if not byte & 128:

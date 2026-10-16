@@ -74,5 +74,23 @@ def test_metadata_does_not_read_or_hash_payloads(tmp_path, monkeypatch):
     loose = tmp_path / "objects" / loose_oid[:2] / loose_oid[2:]
     loose.parent.mkdir()
     loose.write_bytes(zlib.compress(b"blob 100000000\x00truncated"))
+    inflated = bytearray()
+    real_inflater = zlib.decompressobj
+
+    class HeaderInflater:
+        def __init__(self):
+            self.inner = real_inflater()
+
+        @property
+        def unconsumed_tail(self):
+            return self.inner.unconsumed_tail
+
+        def decompress(self, data, limit):
+            output = self.inner.decompress(data, limit)
+            inflated.extend(output)
+            return output
+
+    monkeypatch.setattr(zlib, "decompressobj", HeaderInflater)
     assert store.info(loose_oid) == ("blob", 100000000)
+    assert inflated == b"blob 100000000\x00"
     assert store.info("e" * 64) is None
