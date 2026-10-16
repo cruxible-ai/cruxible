@@ -3558,6 +3558,11 @@ when there are more than `--limit`. `--at` reads an earlier accepted generation.
 `--json` returns the whole structured answer, including the coordinate and
 generation.
 
+`cruxible get Provider:NAME` opens the newest live build listed by `provider list`;
+`Provider:NAME/BUILD` or its artifact path opens that exact build, including a
+retired build. Tied newest registrations refuse with their build references and
+a `provider list` repair. Provider reads support `summary`, `history` and `proof`.
+
 When the current Git worktree holds this instance's floor (see
 [floor](#floor)), orient also reports
 `floor: {at, generations_behind}`: the accepted Git OID the floor was exported
@@ -3794,6 +3799,12 @@ A `none` is factual only inside a complete boundary, so a span whose health is
 `partial`, `stale`, `denied`, or `unavailable` prints that health and its reason
 codes rather than reading as an absence.
 
+If a span mixes an exact citation with an indistinguishable repeated cited
+window, resolution refuses with `cruxible.coverage.occurrence_ambiguous`
+(HTTP 409). Its candidates and repair name the duplicate byte ranges. Make
+the cited text distinguishable at those occurrences before resolving again.
+An ambiguity-only span remains a candidate answer with no occurrence bound.
+
 `--all --view manifest` renders the coverage manifest over every bound file:
 epoch, health, completeness, and the sources a `none` would have been factual
 inside.
@@ -3872,6 +3883,10 @@ readmission was (`context.accepted_as`) -- and `cruxible.proposal.readmit_not_st
 for an open or refused proposal. A stale ClaimType migration is not
 byte-rebased because its dependent inventory may have changed; run
 `cruxible claim-type migrate` again at the current head instead.
+
+A readmitted proposal that becomes stale can be readmitted again. Each link
+replays its retained tree from the base where that tree was evaluated; the
+original Procedure item reasons remain available in review and after acceptance.
 
 `proposal withdraw` is the terminal statement for the opposite case: an open (or
 stale) proposal that will never be activated, because a hard limit refuses its

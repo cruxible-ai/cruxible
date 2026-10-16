@@ -56,6 +56,7 @@ GetRefKind = Literal[
     "procedure_runtime_policy",
     "source_acquisition_policy",
     "provider_interface",
+    "provider",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
@@ -98,6 +99,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "procedure_runtime_policy": ("summary", "history", "proof"),
     "source_acquisition_policy": ("summary", "history", "proof"),
     "provider_interface": ("summary", "history", "proof"),
+    "provider": ("summary", "history", "proof"),
 }
 
 
@@ -471,6 +473,18 @@ class GetSourceAcquisitionPolicyCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class GetProviderCard(_StrictGetModel):
+    """One accepted Provider build, using the names shown by provider list."""
+
+    provider: str
+    build: str
+    package: str | None = None
+    version: str | None = None
+    state: Literal["live", "retired"]
+    interfaces: tuple[str, ...] = ()
+    next: tuple[str, ...] = ()
+
+
 class GetProviderInterfaceProvider(_StrictGetModel):
     provider: str
     implementation_digest: str
@@ -516,6 +530,7 @@ GetCard = (
     | GetProcedureRuntimePolicyCard
     | GetSourceAcquisitionPolicyCard
     | GetProviderInterfaceCard
+    | GetProviderCard
 )
 
 
@@ -828,6 +843,7 @@ __all__ = [
     "GetProcedureRuntimePolicyCard",
     "GetProcedureTrackRecord",
     "GetProviderInterfaceCard",
+    "GetProviderCard",
     "GetProviderInterfaceProvider",
     "GetProposalCard",
     "GetProposalRefusal",

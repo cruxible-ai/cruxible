@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import ReadRefusalError
 from cruxible_core.coverage.contracts import (
     COVERAGE_HEALTH_ABSENCE_IS_FACTUAL,
     COVERAGE_HEALTH_PROVES_FRESHNESS,
@@ -16,10 +17,12 @@ from cruxible_core.coverage.contracts import (
     COVERAGE_HEALTH_STATES,
     COVERAGE_MATCH_STATES,
     MATCH_STATE_PRECEDENCE,
+    CoverageCardBudget,
     CoverageCardV2,
     CoverageSelection,
     CoverageSpanRequestV1,
     CoverageSpanResultV3,
+    LogicalSourceIdentity,
     coverage_span_match_state,
 )
 from cruxible_core.coverage.resolver import resolve_coverage_v3
@@ -143,6 +146,67 @@ def test_selection_windowing_excludes_an_out_of_window_citation() -> None:
     assert span.match_state == "none"
     assert span.health == "complete"
     assert span.absence_is_factual is True
+
+
+@pytest.mark.parametrize("candidate_budget", [0, 1, 4])
+def test_duplicate_cited_window_beside_an_exact_window_refuses_with_occurrence_repair(
+    candidate_budget: int,
+) -> None:
+    source = LogicalSourceIdentity(plane="external", identity="reports.md")
+    short, long = b"Count large 2", b"Count large 22"
+    content = short + b"\n" + long + b"\n"
+    citations = index_v2(
+        capture(source, short, name="short"),
+        capture(source, long, name="long"),
+    )
+    snapshot = overlay(working(source, content), citations=citations)
+    arguments = dict(
+        index=citations,
+        overlay=snapshot,
+        access=profile(),
+        manifest=manifest_v2(citations, snapshot),
+    )
+    asked = request(source).model_copy(
+        update={"budget": CoverageCardBudget(max_candidate_cards_per_span=candidate_budget)}
+    )
+    if candidate_budget == 0:
+        # Clipped ambiguity remains a partial boundary, with no claim to have
+        # returned an ambiguous occurrence that was omitted from the answer.
+        span = resolve_coverage_v3(asked, **arguments).spans[0]
+        assert span.health == "partial"
+        assert span.omitted_card_count == 2
+        assert span.ambiguous_occurrence_count == 0
+        return
+
+    with pytest.raises(ReadRefusalError) as caught:
+        resolve_coverage_v3(asked, **arguments)
+
+    refusal = caught.value
+    assert refusal.error_code == "cruxible.coverage.occurrence_ambiguous"
+    assert refusal.http_status == 409
+    assert refusal.repair.operation == "cruxible.coverage.resolve"
+    assert set(refusal.candidates) <= {
+        "external:reports.md bytes 0:13",
+        "external:reports.md bytes 14:27",
+    }
+    assert len(refusal.candidates) == min(candidate_budget, 2)
+    if candidate_budget == 4:
+        assert refusal.candidates == (
+            "external:reports.md bytes 0:13",
+            "external:reports.md bytes 14:27",
+        )
+    assert all(location in refusal.repair_line for location in refusal.candidates)
+    # Exercise the same error envelope and SDK reconstruction as the HTTP
+    # boundary, so this refusal cannot regress to an internal server error.
+    from cruxible_client.errors import response_to_error
+    from cruxible_core.server.errors import error_to_response
+
+    status, body = error_to_response(refusal)
+    restored = response_to_error(status, body)
+    assert status == 409
+    assert isinstance(restored, ReadRefusalError)
+    assert restored.candidates == refusal.candidates
+    assert restored.repair == refusal.repair
 
 
 def test_card_and_span_laws_refuse_authority_equivalence_and_false_freshness() -> None:

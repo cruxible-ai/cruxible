@@ -1600,6 +1600,86 @@ def test_one_item_adds_a_value_to_a_many_valued_slot_that_already_holds_one(
     ]
 
 
+def test_readmission_chain_accepts_and_each_link_keeps_the_original_item_reason(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.service.proposals.proposals import (
+        service_playbill_proposal_status,
+        service_readmit_playbill_proposal,
+    )
+    from cruxible_core.service.proposals.review import service_review_playbill_proposal
+    from tests.core_support._retirement_support import activate_proposal
+    from tests.test_procedures.test_procedure_settlement_delivery import _predicate_claim_type
+
+    instance, owner, root, line, _procedure = proposal_world(tmp_path)
+    state = run_line(instance, root, line)
+    (egress,) = state.terminal_egress
+    pid = egress.proposal_id
+    assert pid is not None
+    (child,) = egress.children
+    original_reason = item_template()["rationale"]
+    original = instance.proposal_evidence().read_admission(pid)
+    operation = instance.proposal_evidence().item_reason_operation(original)
+    assert operation is not None
+
+    for index in range(2):
+        other = _predicate_claim_type(f"security.advisory.unrelated{index}")
+        fixtures._accept_more(
+            instance,
+            owner,
+            {claim_type_path(other.predicate): render_claim_type(other)},
+            name=f"unrelated{index}",
+        )
+        # Populate the proposal inventory at the new head before entering
+        # the read-only preview fence, as a normal status/review read does.
+        assert (
+            service_playbill_proposal_status(instance, proposal_id=pid).terminal_reason == "stale"
+        )
+        preview = service_readmit_playbill_proposal(
+            instance, proposal_id=pid, actor_id="owner", dry_run=True
+        )
+        assert preview.proposal.status == "would_propose"
+        readmitted = service_readmit_playbill_proposal(
+            instance, proposal_id=pid, actor_id="owner", dry_run=False
+        )
+        assert readmitted == service_readmit_playbill_proposal(
+            instance, proposal_id=pid, actor_id="owner", dry_run=False
+        )
+        admission = readmitted.proposal.proposal.admission
+        assert admission.readmits.source_proposal_id == pid
+        pid = admission.proposal_id
+        assert instance.proposal_evidence().item_reason_operation(admission) == operation
+        review = service_review_playbill_proposal(instance, proposal_id=pid, access=_READER)
+        assert review.item_reason_count == 1
+        (item,) = review.item_reasons
+        assert (item.path, item.reason, item.run_id, item.terminal) == (
+            child.path,
+            original_reason,
+            state.run_id,
+            "propose",
+        )
+
+    activate_proposal(instance, owner, pid)
+    claim_id = child.path.rsplit("/", 1)[-1].removesuffix(".json")
+    why = service_playbill_get(
+        instance, request=GetRequest(ref=claim_id, detail="why"), access=_READER
+    )
+    assert why.reason is not None
+    assert (why.reason.reason, why.reason.proposal, why.reason.run, why.reason.terminal) == (
+        original_reason,
+        pid,
+        state.run_id,
+        "propose",
+    )
+    evidence = service_playbill_get(
+        instance, request=GetRequest(ref=claim_id, detail="evidence"), access=_READER
+    )
+    assert evidence.evidence.rationale == original_reason
+    assert instance.proposal_evidence().read_admission(original.proposal_id) == original
+
+
 def test_two_items_for_one_single_valued_slot_still_refuse(tmp_path: Path) -> None:
     instance, _owner, root, line, _procedure = proposal_world(
         tmp_path, templates=(item_template(), _dated_item("A contending dated value."))

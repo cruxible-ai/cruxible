@@ -976,7 +976,16 @@ def _readmit(
         actor = AuthenticatedActor(actor_id=actor_id)
         request = ProposalAdmissionRequest(
             target_ref=_readmission_target_ref(actor_id, operation_digest),
-            proposed_base_oid=source.admission.proposed_base_oid,
+            # A successful admission retains its evaluated (possibly rebased)
+            # tree, which carries the records of its evaluated base. Replaying
+            # that tree against the original proposed base would treat those
+            # daemon-written records as authored edits on the next readmission.
+            # Refused admissions instead retain the original submitted tree.
+            proposed_base_oid=(
+                source.evaluation.evaluated_base_oid
+                if source.evaluation.evaluated_tree_oid is not None
+                else source.admission.proposed_base_oid
+            ),
             source_compilation_digest=operation_digest,
             claim_type_expansions=source.admission.claim_type_expansions,
         )

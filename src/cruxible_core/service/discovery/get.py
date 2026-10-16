@@ -92,6 +92,7 @@ from cruxible_client.contracts.get_reads import (
     GetProposalChange,
     GetProposalRefusal,
     GetProposedReason,
+    GetProviderCard,
     GetProviderInterfaceCard,
     GetProviderInterfaceProvider,
     GetQueryCard,
@@ -214,6 +215,7 @@ _TYPED_PREFIXES: Mapping[str, GetRefKind] = {
     "ProcedureRuntimePolicy": "procedure_runtime_policy",
     "SourceAcquisitionPolicy": "source_acquisition_policy",
     "ProviderInterface": "provider_interface",
+    "Provider": "provider",
 }
 # The projection's artifact kind for each reference kind, and back.
 _PROJECTION_KIND: Mapping[GetRefKind, str] = {
@@ -234,6 +236,7 @@ _PROJECTION_KIND: Mapping[GetRefKind, str] = {
     "procedure_runtime_policy": "procedure-runtime-policy",
     "source_acquisition_policy": "source-acquisition-policy",
     "provider_interface": "provider-interface",
+    "provider": "provider",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
 _QUALIFIER: Mapping[GetRefKind, str] = {
@@ -254,6 +257,7 @@ _QUALIFIER: Mapping[GetRefKind, str] = {
     "procedure_runtime_policy": "ProcedureRuntimePolicy",
     "source_acquisition_policy": "SourceAcquisitionPolicy",
     "provider_interface": "ProviderInterface",
+    "provider": "Provider",
 }
 _NAMED_KINDS: tuple[GetRefKind, ...] = (
     "document",
@@ -287,6 +291,7 @@ _DISPLAY_PREFIX: Mapping[GetRefKind, str] = {
     "procedure_runtime_policy": "ProcedureRuntimePolicy",
     "source_acquisition_policy": "SourceAcquisitionPolicy",
     "provider_interface": "ProviderInterface",
+    "provider": "Provider",
 }
 # The orient section that lists each operational kind, named by a refusal
 # that has no nearer candidate to offer.
@@ -662,6 +667,8 @@ def _resolve_typed(
         return _resolve_claim(projection, name.removeprefix("Claim:"), ref=ref, surface=surface)
     if kind == "claim_type":
         return _resolve_claim_type(projection, name, ref=ref, surface=surface)
+    if kind == "provider":
+        return _resolve_provider(projection, name, ref=ref)
     if kind == "subject":
         name = name.removeprefix("Subject:")
         # A Subject reference resolves in the common order -- exact live id,
@@ -722,6 +729,52 @@ def _resolve_typed(
         for item in nearest(name, names)
     )
     raise _not_found(what, ref, candidates, surface=surface, section=_ORIENT_SECTION.get(kind))
+
+
+def _resolve_provider(projection: Any, name: str, *, ref: str) -> ResolvedRef:
+    """Seek one exact build or the maintained newest live build of its name."""
+
+    from cruxible_core.errors import RequestRefusedError
+    from cruxible_core.providers.builds import (
+        indexed_exact_provider,
+        indexed_provider_builds,
+    )
+
+    connection = projection.typed.connection
+    repair = RepairOperation(operation="cruxible.provider.list")
+    if "/" in name:
+        row = indexed_exact_provider(connection, f"Provider:{name}")
+    else:
+        # Only one maintained head is needed on a successful read. Enumerate
+        # this name's builds only when refusing a tied registration, to name
+        # the exact references that repair the request.
+        from cruxible_core.providers.builds import indexed_newest_provider
+
+        try:
+            row = indexed_newest_provider(connection, name)
+        except RequestRefusedError as exc:
+            candidates = tuple(
+                item.identity for item in indexed_provider_builds(connection, name) if item.live
+            )
+            raise ReadRefusalError(
+                "cruxible.get.ref_ambiguous",
+                f"{ref!r} names builds registered together; name an exact build",
+                http_status=409,
+                candidates=candidates,
+                repair=repair,
+                repair_line="Run provider list, then get Provider:NAME/BUILD from its build column",
+                context={"ref": ref},
+            ) from exc
+    if row is None:
+        raise ReadRefusalError(
+            "cruxible.get.ref_not_found",
+            f"no accepted Provider {ref!r}",
+            http_status=404,
+            repair=repair,
+            repair_line="Run provider list, then get Provider:NAME or Provider:NAME/BUILD",
+            context={"ref": ref},
+        )
+    return ResolvedRef("provider", row.identity, row.identity, row.path)
 
 
 def _newest_interface(projection: Any, interface_id: str) -> str | None:
@@ -1479,6 +1532,31 @@ def _live_interface(
         repair=RepairOperation(operation="cruxible.orient", arguments={"section": "interfaces"}),
         repair_line='Run orient(section="interfaces") to list the live interfaces',
         context={"ref": resolved.display},
+    )
+
+
+def _provider_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: ReadSurface,
+) -> GetProviderCard:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        provider = projection.typed.source(resolved.identity)
+    assert provider is not None
+    runtime = getattr(provider, "runtime_artifact", None)
+    distribution = None if runtime is None else runtime.distribution
+    return GetProviderCard(
+        provider=provider.provider_name,
+        build=provider.identity.name,
+        package=None if distribution is None else distribution.name,
+        version=None if distribution is None else distribution.version,
+        state=provider.lifecycle.state,
+        interfaces=tuple(
+            sorted({item.interface_id for item in getattr(provider, "implementations", ())})
+        ),
+        next=(_render_get(surface, resolved.display, "proof"),),
     )
 
 
@@ -2710,6 +2788,7 @@ def _proof(
         "approval_policy",
         "procedure_runtime_policy",
         "source_acquisition_policy",
+        "provider",
     }:
         with instance.bind_accepted_projection(coordinate) as projection:
             source = projection.typed.source(resolved.identity)
@@ -2905,6 +2984,8 @@ def service_playbill_get(
             card = _acquisition_policy_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "provider_interface":
             card = _provider_interface_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "provider":
+            card = _provider_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "mandate":
             card = mandate_card(
                 instance,

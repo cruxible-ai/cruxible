@@ -39,6 +39,7 @@ _TABLES = {
     "resolution_contract": ("resolution_contracts", ""),
     "mandate": ("procedure_mandates", ""),
     "provider_interface": ("provider_interfaces", ""),
+    "provider": ("providers", ""),
     "source_acquisition_policy": ("source_acquisition_policies", ""),
 }
 _REF_FORMS = {
@@ -55,6 +56,7 @@ _REF_FORMS = {
     "resolution_contract": lambda identity: identity,
     "mandate": lambda identity: "Mandate:" + identity.removeprefix("ProcedureMandate:"),
     "provider_interface": lambda identity: identity,
+    "provider": lambda identity: identity,
     "source_acquisition_policy": lambda identity: identity,
 }
 

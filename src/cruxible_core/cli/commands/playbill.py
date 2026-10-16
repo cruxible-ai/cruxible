@@ -4987,7 +4987,8 @@ def get_by_ref(
     """Read one governed thing by reference, values first.
 
     REF is any reference form: CLM-... (or a unique prefix), kind/id, a predicate,
-    ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, an artifact
+    ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, Provider:NAME
+    or Provider:NAME/BUILD, an artifact
     path, a proposal id or prefix, or an operational reference: Line:<name> (or
     the Line identity digest next names), CAP-<12+ hex> or Capture:<digest>,
     ResolutionContract:<name>, Mandate:<name>.
