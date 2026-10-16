@@ -484,6 +484,7 @@ def initialize_projection_database(
     parsed: ParsedProjectionTree,
     assembler_implementation: str,
     sources: Mapping[str, bytes] | None = None,
+    repository: Any = None,
     bodies: Any = None,
     resolve_digest: Callable[[str], tuple[str, ...]] | None = None,
 ) -> dict[str, int]:
@@ -495,13 +496,16 @@ def initialize_projection_database(
     compiler = next(
         item for item in SUPPORTED_COMPILERS if item.rule_digest == request.compiler_digest
     )
+    if repository is None:
+        repository = _source_repository(request.repository_path)
     if sources is None:
-        sources = _source_repository(request.repository_path).read_tree(request.git_oid)
+        sources = repository.read_tree(request.git_oid)
     return initialize(
         path,
         request=request,
         parsed=parsed,
         sources=sources,
+        repository=repository,
         codec=artifact_codec_for_compiler(compiler),
         assembler_implementation=assembler_implementation,
         bodies=bodies,

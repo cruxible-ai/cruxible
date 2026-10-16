@@ -163,7 +163,9 @@ def _accepted_one_provider(
 
     provider = accepted_provider()
     interface = accepted_interface()
-    provider_pin = pin("provider", "Provider", "demo-provider", value=provider.artifact_digest)
+    provider_pin = pin(
+        "provider", "Provider", provider.provider.identity.name, value=provider.artifact_digest
+    )
     interface_pin = pin(
         "provider-interface",
         "ProviderInterface",

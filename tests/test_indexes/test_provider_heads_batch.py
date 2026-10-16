@@ -297,3 +297,62 @@ def test_pinner_replacement_is_batched_and_matches_cold_rows(tmp_path):
     assert instance.connection.execute("PRAGMA foreign_key_check").fetchall() == []
     instance.connection.close()
     cold.connection.close()
+
+
+def test_cold_provider_source_uses_supplied_memory_repository(tmp_path, monkeypatch):
+    from tests.core_support._projection_support import MemoryLedger
+
+    old = MemoryLedger(tmp_path / "old", {"providers/demo.json": b"old"}, oid_seed="old")
+    sources = {"providers/demo.json": b"new", "changesets/1.json": b"record"}
+    head = MemoryLedger(tmp_path / "head", sources)
+    monkeypatch.setattr(
+        provider_heads, "parse_change_set_record", lambda *a, **kw: SimpleNamespace(sequence=1)
+    )
+    monkeypatch.setattr(head, "parent_of", lambda oid: old.oid if oid == head.oid else None)
+    monkeypatch.setattr(head, "list_tree", old.list_tree)
+    monkeypatch.setattr(head, "read_blob", old.read_blob)
+    read = provider_heads.cold_provider_source(head, head.oid, sources)
+
+    assert read("providers/demo.json", 1) == b"new"
+    assert old.list_calls == 0
+    assert read("providers/demo.json", 0) == b"old"
+    assert read("providers/absent.json", 0) is None
+    assert old.list_calls == 1
+
+
+def test_cold_provider_source_has_no_ancestor_in_a_memory_snapshot(tmp_path, monkeypatch):
+    from tests.core_support._projection_support import MemoryLedger
+
+    sources = {"providers/demo.json": b"new", "changesets/1.json": b"record"}
+    repository = MemoryLedger(tmp_path / "snapshot", sources)
+    monkeypatch.setattr(
+        provider_heads, "parse_change_set_record", lambda *a, **kw: SimpleNamespace(sequence=1)
+    )
+    read = provider_heads.cold_provider_source(repository, repository.oid, sources)
+
+    assert read("providers/demo.json", 0) is None
+    assert read("providers/demo.json", 1) == b"new"
+    assert repository.list_calls == repository.read_calls == 0
+
+
+@pytest.mark.parametrize(
+    "mode,kind", [("120000", "blob"), ("100755", "blob"), ("160000", "commit")]
+)
+def test_cold_provider_source_refuses_non_plain_historical_members(
+    tmp_path, monkeypatch, mode, kind
+):
+    from cruxible_client.contracts.errors import GitError
+    from tests.core_support._projection_support import MemoryLedger
+
+    path = "providers/demo.json"
+    old = MemoryLedger(tmp_path / "old", {path: b"old"}, modes={path: (mode, kind)})
+    sources = {"changesets/1.json": b"record"}
+    monkeypatch.setattr(
+        provider_heads, "parse_change_set_record", lambda *a, **kw: SimpleNamespace(sequence=1)
+    )
+    monkeypatch.setattr(old, "parent_of", lambda oid: old.oid)
+    read = provider_heads.cold_provider_source(old, "head", sources)
+
+    with pytest.raises(GitError, match="unsupported"):
+        read(path, 0)
+    assert old.read_calls == 0

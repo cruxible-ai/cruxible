@@ -2049,7 +2049,7 @@ def _kit_resume_blocked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _package,
         _tree,
     )
-    from tests.test_server.test_kit_resume import _PROVIDER, _open_worlds, _release, _resumes
+    from tests.test_server.test_kit_resume import _open_worlds, _release, _resumes
 
     provider_checkout = _PROVIDER_CHECKOUT.get()
     opened = _open_worlds(root, monkeypatch, independent=False)
@@ -2069,7 +2069,9 @@ def _kit_resume_blocked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             actor_id="operator",
             waiting_on=staged.manifest.providers,
         )
-        kit_resume.resume_kits_after_activation(instance, (_PROVIDER,))
+        kit_resume.resume_kits_after_activation(
+            instance, (f"providers/{release.manifest.providers[0].build}.json",)
+        )
         # No approval round to run here: the resume's own commit lands at
         # once, the same self-resolving activation ``_add`` gets directly.
         (resumed,) = _resumes(consumer)
@@ -2085,7 +2087,9 @@ def _kit_resume_blocked(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             actor_id="operator",
             waiting_on=older_staged.manifest.providers,
         )
-        kit_resume.resume_kits_after_activation(instance, (_PROVIDER,))
+        kit_resume.resume_kits_after_activation(
+            instance, (f"providers/{release.manifest.providers[0].build}.json",)
+        )
         (blocked,) = _resumes(consumer)
         assert blocked.state == "blocked" and "older than installed" in (blocked.detail or "")
 

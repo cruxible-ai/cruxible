@@ -51,6 +51,7 @@ from tests.support.procedures import (
     RUN_WALL_CLOCK,
     accepted_procedure,
 )
+from tests.support.provider_builds import accepted_build
 
 _DEMO_INTERFACE_REGISTRATION = p2b1_support.interface_registration
 
@@ -61,7 +62,7 @@ def _definition() -> tuple[ProcedureDefinition, ArtifactPin, ArtifactPin]:
     provider_pin = pin(
         "provider",
         "Provider",
-        "demo-provider",
+        provider.provider.identity.name,
         value=provider.artifact_digest,
     )
     interface_pin = pin(
@@ -126,7 +127,7 @@ def _line() -> LineSpec:
     provider_pin = pin(
         "provider",
         "Provider",
-        "demo-provider",
+        provider.provider.identity.name,
         value=provider.artifact_digest,
     )
     procedure_pin = pin(
@@ -238,6 +239,10 @@ def test_real_proposal_path_closes_interface_provider_procedure_and_line(
     monkeypatch,
     contracted_demo: None,
 ) -> None:
+    monkeypatch.setattr(
+        __name__ + ".accepted_provider",
+        lambda: accepted_build(p2b1_support.provider_v2()),
+    )
     instance, _owner = initialize_local(tmp_path)
     interface = accepted_interface()
     provider = accepted_provider()
