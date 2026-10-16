@@ -181,7 +181,8 @@ def test_explicit_automation_conflict_refuses_instead_of_overwriting(tmp_path):
 
 
 @pytest.mark.parametrize("size", [3, 30])
-def test_cost_reads_only_re_pinned_procedures_dependents(tmp_path, monkeypatch, size):
+@pytest.mark.parametrize("affected", [False, True])
+def test_cost_reads_only_re_pinned_procedures_dependents(tmp_path, monkeypatch, size, affected):
     instance, line, procedure, owner = line_world(
         tmp_path, CadenceSchedule(interval_seconds=2), with_owner=True
     )
@@ -196,6 +197,8 @@ def test_cost_reads_only_re_pinned_procedures_dependents(tmp_path, monkeypatch, 
             "artifact_digest": procedure_artifact_digest(unrelated_procedure).tagged,
         }
     )
+    if affected:
+        pin = line.procedure
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree["procedures/unrelated.json"] = render_procedure(unrelated_procedure)
     tree.update(
@@ -228,10 +231,22 @@ def test_cost_reads_only_re_pinned_procedures_dependents(tmp_path, monkeypatch, 
 
     monkeypatch.setattr(SnapshotTree, "__getitem__", counted)
     monkeypatch.setattr(SnapshotTree, "__iter__", lambda _: pytest.fail("population walk"))
+    import cruxible_core.providers.build_moves as moves
+
+    carried_paths = []
+    carry = moves.carry_automation
+
+    def counted_carry(path, *args, **kwargs):
+        carried_paths.append(path)
+        return carry(path, *args, **kwargs)
+
+    monkeypatch.setattr(moves, "carry_automation", counted_carry)
     _, result = _settled(instance, procedure)
-    assert len(result.automation_carries) == 2
-    assert len(reads) <= 20, reads
-    assert not any("unrelated" in path for path in reads)
+    assert len(result.automation_carries) == (size + 2 if affected else 2)
+    assert len(carried_paths) == len(set(carried_paths))
+    assert len(reads) <= (20 + 8 * size if affected else 20), reads
+    if not affected:
+        assert not any("unrelated" in path for path in reads)
 
 
 def test_two_settle_mandates_propose_after_upgrade_until_explicit_regrant(tmp_path):
