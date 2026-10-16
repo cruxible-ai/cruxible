@@ -153,6 +153,14 @@ class GetRequest(_StrictGetModel):
     # Also answer the full four-digest accepted coordinate, which only
     # ``detail="proof"`` carries otherwise (the SDK pins reads with it).
     full_coordinate: bool = False
+    subject_suggestions: bool = Field(
+        default=True,
+        description=(
+            "Suggest nearest Subject names when resolution fails. False keeps an "
+            "absent Subject lookup bounded to the identity indexes. Other kinds "
+            "retain their ordinary suggestions."
+        ),
+    )
 
     @field_validator("at")
     @classmethod

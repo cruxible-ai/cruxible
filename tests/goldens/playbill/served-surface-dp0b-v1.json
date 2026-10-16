@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-15:multibuild-merge",
-    "surface_digest": "sha256:271a1b6c0a2247562dc54e8f536e3b8749babdd0a9836aaa895d09d25585b6aa"
+    "register_entry": "2026-10-15:world-lookup",
+    "surface_digest": "sha256:f58d12e2eb00d9ae55e4640c7002d3e825f8b8432a989045cd32634e8ac7ce4e"
   },
   "surface": {
     "cli_leaves": [
@@ -1239,7 +1239,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/get",
         "request_model": "cruxible_client.contracts.get_reads.GetRequest",
-        "request_schema_digest": "sha256:4e586eff4c46deaab9a880742e32ab17847633d48b2e10b189ba408c0b612444",
+        "request_schema_digest": "sha256:42c190c94762abaa8677c992a955b8b9fee7c56b9baa8be9a11023cb178d8580",
         "response_model": "cruxible_client.contracts.get_reads.GetResult",
         "response_schema_digest": "sha256:c650fec483e9f26357c17b8e96b86b6efd5731964b61a3ed4ccadc140ec09ff0"
       },

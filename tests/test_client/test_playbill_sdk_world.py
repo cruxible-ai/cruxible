@@ -685,6 +685,7 @@ def test_a_subject_lookup_resolves_only_that_subject_and_caches_it(
     package = world.sec.package.cryptography
     assert package.address == "sec.package/cryptography"
     assert [r.ref for r in client.subject_get_requests] == [f"Subject:{package.address}"]
+    assert client.subject_get_requests[0].subject_suggestions is False
     assert world.sec.package["cryptography"] is package
     assert "cryptography" in world.sec.package
     assert client.subject_queries == []

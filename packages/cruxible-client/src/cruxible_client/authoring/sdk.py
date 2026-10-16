@@ -4243,6 +4243,7 @@ class Cruxible:
         coordinate: AcceptedCoordinate | None,
         *,
         field: str | None = None,
+        subject_suggestions: bool = True,
     ) -> GetResult:
         requested = self._read_at(coordinate)
         request = GetRequest(
@@ -4256,6 +4257,7 @@ class Cruxible:
             # The SDK pins every read, so it asks for the full coordinate
             # that summary answers otherwise leave out.
             full_coordinate=True,
+            subject_suggestions=subject_suggestions,
         )
         result = self._client.get(self._instance_id, request=request)
         self._observe_read(_get_coordinate(result), expected=requested)

@@ -379,6 +379,79 @@ def test_single_key_ending_in_json_resolves_and_caches_a_subject(typed: Cruxible
     _assert_cached_json_lookup(typed, DECISION, "Report.json", draft.address)
 
 
+def test_first_absent_world_lookup_has_flat_server_work_at_two_instance_sizes(
+    typed: Cruxible, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.indexes.typed_state import TypedStateReader
+    from cruxible_core.service.discovery import get as get_module
+
+    original_names = get_module._names_of
+    original_envelopes = TypedStateReader.envelopes
+    names_materialized = 0
+    subject_rows = 0
+
+    def counted_names(projection, kind):
+        nonlocal names_materialized
+        names = original_names(projection, kind)
+        if kind == "subject":
+            names_materialized += len(names)
+        return names
+
+    def counted_envelopes(reader, **kwargs):
+        nonlocal subject_rows
+        rows = original_envelopes(reader, **kwargs)
+        subject_rows += sum(row.kind == "Subject" for row in rows)
+        return rows
+
+    measured = []
+    for size in (3, 23):
+        if size == 23:
+            # Grow both the queried kind and an unrelated kind, through one
+            # accepted change set. None of these are measured lookup work.
+            growing = typed.world()
+            drafts = [growing.project.work_item.define(f"extra-{i}") for i in range(10)]
+            drafts += [growing.dev.note.define(f"note-{i}") for i in range(10)]
+            assert (
+                growing.write(*drafts, because="Grow the lookup population.").status == "accepted"
+            )
+        instance = get_playbill_manager().get(typed._instance_id)
+        with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+            assert len(original_names(projection, "subject")) == size
+        world = typed.world()
+        items = world.project.work_item
+        names_materialized = subject_rows = 0
+        with monkeypatch.context() as scoped:
+            scoped.setattr(get_module, "_names_of", counted_names)
+            scoped.setattr(TypedStateReader, "envelopes", counted_envelopes)
+            with patch.object(typed._client, "get", wraps=typed._client.get) as get:
+                with pytest.raises(AbsentSubject) as absent:
+                    items["never-accepted"]
+                assert str(absent.value) == str(
+                    AbsentSubject(
+                        subject_kind=KIND,
+                        subject_id="never-accepted",
+                        coordinate=world.coordinate,
+                    )
+                )
+                assert "never-accepted" not in items
+                with pytest.raises(AbsentSubject):
+                    items["never-accepted"]
+                measured.append((names_materialized, subject_rows, get.call_count))
+                assert get.call_args.kwargs["request"].at == world.coordinate
+    assert measured == [(0, 0, 1), (0, 0, 1)], measured
+
+
+def test_ordinary_sdk_get_keeps_nearest_subject_suggestions(typed: Cruxible) -> None:
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    with pytest.raises(ReadRefusalError) as missing:
+        typed.get(f"Subject:{KIND}/wi-4")
+    assert missing.value.error_code == "cruxible.get.ref_not_found"
+    assert f"{KIND}/wi-1" in missing.value.candidates
+    assert missing.value.repair is not None
+    assert missing.value.repair.operation == "cruxible.get"
+
+
 def test_a_hint_key_two_subjects_hold_is_ambiguous_to_define(typed: Cruxible) -> None:
     from cruxible_client.contracts.errors import WriteRefusalError
 
