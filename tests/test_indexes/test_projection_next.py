@@ -878,6 +878,12 @@ def test_retired_claim_backing_requires_depublication_without_access_disclosure(
     assert row.repair.operation == "cruxible.block.depublish"
     assert row.repair.command == "cruxible block depublish corpus.runbook status"
     assert row.repair.required_change == "depublish_retired_backing_block"
+    assert row.repair.mcp_call == (
+        'cruxible_block_depublish(file_id="corpus.runbook", block_id="status")'
+    )
+    assert row.repair.sdk_call == (
+        'cx.block.depublish(file_id="corpus.runbook", block_id="status")'
+    )
 
     assert retired_request.workspace_observation is not None
     assert retired_request.workspace_observation.source_observations is not None

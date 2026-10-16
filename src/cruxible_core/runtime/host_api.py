@@ -630,7 +630,7 @@ def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
     raise ConfigError(
         f"Cruxible host {instance_id!r} still registers {len(registrations)} governed "
         f"block(s) in this workspace ({named}); detaching would leave markers no host "
-        "owns. Repair: run `cruxible block depublish <source> <block>` for each, "
+        "owns. Repair: run `cruxible block depublish <file_id> <block_id>` for each, "
         "then detach"
     )
 

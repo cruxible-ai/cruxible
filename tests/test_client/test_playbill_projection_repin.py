@@ -647,7 +647,9 @@ def test_sdk_block_depublish_releases_the_registration_through_the_daemon(tmp_pa
         client, instance_id="inst_projection", workspace=tmp_path, clock=lambda: NOW
     )
 
-    result = playbill.block.depublish("corpus.runbook", "summary", dry_run=True)
+    (tmp_path / "runbook.md").unlink()
+    (tmp_path / ".cruxible/files.yaml").unlink()
+    result = playbill.block.depublish(file_id="corpus.runbook", block_id="summary", dry_run=True)
 
     assert result.outcome == "depublished"
     assert calls == [

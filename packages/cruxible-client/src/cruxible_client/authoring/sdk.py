@@ -4824,7 +4824,7 @@ class ProjectionBlocks:
         instance, are detached; live blocks are refused. Edits pages only.
         ``dry_run`` reports what would change and edits nothing.
 
-        Next: ``cx.block.depublish(source, block)`` when the block is not coming back.
+        Next: ``cx.block.depublish(file_id, block)`` when the block is not coming back.
         """
 
         if not paths:
@@ -4839,7 +4839,7 @@ class ProjectionBlocks:
 
     def depublish(
         self,
-        source: str | SourceRef,
+        file_id: str | SourceRef,
         block_id: str,
         *,
         dry_run: bool | None = None,
@@ -4850,13 +4850,15 @@ class ProjectionBlocks:
         ``next`` reads that registration to call a removed marker a blocking
         row; releasing it edits no page and retires no backing. ``dry_run``
         previews; ``at`` pins a commit to the preview's coordinate.
+        ``file_id`` is the stored projection file identity; the file and catalog
+        entry need not still exist.
 
         Next: ``cx.block.detach(page)`` strips the markers if they remain.
         """
 
-        source_id = _address(source, RefKind.SOURCE)
+        file_id = _address(file_id, RefKind.SOURCE)
         return self._playbill._client.depublish_block(
-            self._playbill._instance_id, source_id, block_id, dry_run=dry_run, at=at
+            self._playbill._instance_id, file_id, block_id, dry_run=dry_run, at=at
         )
 
 

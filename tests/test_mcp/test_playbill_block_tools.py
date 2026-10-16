@@ -254,3 +254,42 @@ def test_a_page_edited_at_the_adapter_read_refuses_the_pinned_detach(
         )
     assert moved.value.error_code == "cruxible.preview.state_moved"
     assert page.read_bytes() == edited[0]
+
+
+def test_depublish_calls_the_daemon_by_file_id(
+    adapter: _RepinClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client import contracts
+    from tests.test_client.test_playbill_projection_repin import COORDINATE
+
+    calls = []
+
+    def depublish(instance_id, file_id, block_id, **kwargs):
+        calls.append((instance_id, file_id, block_id, kwargs))
+        return contracts.BlockDepublishResult(
+            source_id=file_id, block_id=block_id, outcome="would_depublish", coordinate=COORDINATE
+        )
+
+    monkeypatch.setattr(adapter, "depublish_block", depublish, raising=False)
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
+    (tmp_path / "runbook.md").unlink()
+    (tmp_path / ".cruxible/files.yaml").unlink()
+
+    async def exercise():
+        async with _protocol_session(create_server()) as session:
+            await session.initialize()
+            return await session.call_tool(
+                "cruxible_block_depublish",
+                {
+                    "instance_id": "inst_projection",
+                    "file_id": "corpus.runbook",
+                    "block_id": "summary",
+                    "dry_run": True,
+                },
+            )
+
+    result = _run(exercise())
+    assert not result.isError, result
+    assert calls == [
+        ("inst_projection", "corpus.runbook", "summary", {"dry_run": True, "at": None})
+    ]

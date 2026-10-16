@@ -503,3 +503,50 @@ def test_file_catalog_http_surface_has_no_sources_alias(
         assert client.post(f"/api/v1/{instance_id}/sources/{leaf}", json={}).status_code == 404
     for name in ("source_context", "check_source_bundle", "propose_source_bundle"):
         assert not hasattr(CruxibleClient, name)
+
+
+def test_depublish_uses_file_id_after_the_page_and_catalog_entry_disappear(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    from cruxible_core.authoring.registrations import registered_projection_blocks
+    from cruxible_core.server.playbill_request_models import BlockDepublishRequest
+    from tests.test_client.test_playbill_block_sync import _stamp
+    from tests.test_client.test_playbill_projection_repin import _workspace
+
+    schema = BlockDepublishRequest.model_json_schema()
+    assert set(schema["required"]) == {"file_id", "block_id"}
+    assert "source_id" not in schema["properties"]
+
+    client, instance_id, _ = playbill_http
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    page = _workspace(workspace)
+    stamp = _stamp()
+    stamp_bytes = stamp.model_dump_json()
+    declared = client.post(
+        f"/api/v1/{instance_id}/blocks/declare", json={"stamp": stamp.model_dump(mode="json")}
+    )
+    assert declared.status_code == 200, declared.text
+    page.unlink()
+    (workspace / ".cruxible/files.yaml").unlink()
+
+    endpoint = f"/api/v1/{instance_id}/blocks/depublish"
+    old = client.post(endpoint, json={"source_id": stamp.source_id, "block_id": stamp.block_id})
+    assert old.status_code == 422, old.text
+    payload = {"file_id": stamp.source_id, "block_id": stamp.block_id}
+    preview = client.post(endpoint, json={**payload, "dry_run": True})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["outcome"] == "would_depublish"
+    instance = get_playbill_manager().get(instance_id)
+    assert (stamp.source_id, stamp.block_id) in (registered_projection_blocks(instance) or {})
+
+    released = client.post(endpoint, json={**payload, "dry_run": False})
+    assert released.status_code == 200, released.text
+    assert released.json()["outcome"] == "depublished"
+    assert released.json()["source_id"] == stamp.source_id
+    assert "file_id" not in released.json()
+    assert registered_projection_blocks(instance) == {}
+    again = client.post(endpoint, json={**payload, "dry_run": False})
+    assert again.status_code == 200, again.text
+    assert again.json()["outcome"] == "already_depublished"
+    assert stamp.model_dump_json() == stamp_bytes

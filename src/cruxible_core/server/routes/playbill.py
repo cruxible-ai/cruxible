@@ -914,7 +914,7 @@ def depublish_playbill_block(
 ) -> contracts.BlockDepublishResult:
     return playbill_api.playbill_block_depublish(
         resolve_server_instance_id(instance_id),
-        req.source_id,
+        req.file_id,
         req.block_id,
         dry_run=req.dry_run,
         at=req.at,

@@ -5347,15 +5347,18 @@ def block_group() -> None:
 
 
 @block_group.command("depublish")
-@click.argument("source_id")
+@click.argument("file_id")
 @click.argument("block_id")
 @change_control_options
 @json_option
 @handle_errors
 def depublish_projection(
-    source_id: str, block_id: str, dry_run: bool | None, at: str | None, output_json: bool
+    file_id: str, block_id: str, dry_run: bool | None, at: str | None, output_json: bool
 ) -> None:
     """Release the declared registration that demands one page block.
+
+    FILE_ID is the stored projection file identity; the file and catalog entry
+    need not still exist.
 
     The registration is what `next` reads to decide a removed marker is a
     blocking row. Releasing it does not edit the page and does not touch the
@@ -5366,7 +5369,7 @@ def depublish_projection(
     result = _server_call(
         lambda client, instance_id: client.depublish_block(
             instance_id,
-            source_id,
+            file_id,
             block_id,
             dry_run=dry_run,
             at=at,

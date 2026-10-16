@@ -449,7 +449,7 @@ def _relative_path(root: Path, path: Path) -> str:
     try:
         return path.relative_to(root).as_posix()
     except ValueError as exc:
-        raise ProjectionSyncError(f"source path escapes workspace: {path}") from exc
+        raise ProjectionSyncError(f"file path escapes workspace: {path}") from exc
 
 
 def _result(items: Sequence[BlockSyncItem]) -> BlockSyncResult:
@@ -580,10 +580,10 @@ def _discover_source(
     content = b""
     try:
         if path.is_symlink():
-            raise ProjectionSyncError("source path must not be a symbolic link")
+            raise ProjectionSyncError("file path must not be a symbolic link")
         resolved = path.resolve(strict=True)
         if not resolved.is_relative_to(root) or not resolved.is_file():
-            raise ProjectionSyncError("source path escapes the workspace or is not a file")
+            raise ProjectionSyncError("file path escapes the workspace or is not a file")
     except (OSError, ProjectionSyncError) as exc:
         return None, BlockSyncItem(
             path=path.name or ".",
@@ -606,7 +606,7 @@ def _discover_source(
         )
         source_ids = {block.source_id for block in blocks}
         if len(source_ids) != 1:
-            raise ProjectionMarkerError("projection markers disagree on logical source")
+            raise ProjectionMarkerError("projection markers disagree on file identity")
         return next(iter(source_ids)), None
     except ProjectionMarkerError as exc:
         if inferred and not declares_projection_block(content):
@@ -1283,7 +1283,7 @@ def sync_projection_blocks(
             # byte outside them is untouched.
             final_by_id = {block.block_id: block for block in final_blocks}
             if set(replacements) & set(final_by_id):
-                raise ProjectionSyncError("detached projection markers remain in the source")
+                raise ProjectionSyncError("detached projection markers remain in the file")
             for index in changed_item_indexes:
                 items[index] = items[index].model_copy(
                     update={

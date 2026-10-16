@@ -273,7 +273,7 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_block_repin` | Stamp or refresh one projection block by its catalog `file` and `block`; the adapter computes the stamp, registers the block and records the page's declared blocks for block-churn detection; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
 | `cruxible_block_sync` | Check each projection block's backings (the CLI's `block sync --check`); edits no page | `READ_ONLY` |
 | `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
-| `cruxible_block_depublish` | Release the declaration that registers one page block | `GOVERNED_WRITE` |
+| `cruxible_block_depublish` | Release one block registration by `file_id`, the stored projection file identity; the file and catalog entry need not still exist | `GOVERNED_WRITE` |
 
 The daemon mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.

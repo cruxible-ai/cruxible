@@ -1151,7 +1151,7 @@ def handle_playbill_block_detach(
 
 def handle_playbill_block_depublish(
     instance_id: str,
-    source_id: str,
+    file_id: str,
     block_id: str,
     *,
     dry_run: bool | None = None,
@@ -1159,7 +1159,7 @@ def handle_playbill_block_depublish(
 ) -> contracts.BlockDepublishResult:
     return _daemon_call(
         lambda client: client.depublish_block(
-            instance_id, source_id, block_id, dry_run=dry_run, at=at
+            instance_id, file_id, block_id, dry_run=dry_run, at=at
         ),
         operation_name="cruxible_block_depublish",
     )

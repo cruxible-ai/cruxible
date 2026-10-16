@@ -2803,7 +2803,7 @@ cruxible block repin FILE BLOCK_ID [--claim ID]... [--query ID]...
   [--clear-claims] [--clear-queries] [--clear-artifacts] [--render] [--dry-run]
 cruxible block sync [PATH]... [--all] [--workspace-root DIR] [--check] [--json]
 cruxible block detach PATH... [--workspace-root DIR] [--dry-run|--commit] [--at DIGEST] [--json]
-cruxible block depublish SOURCE_ID BLOCK_ID [--dry-run|--commit] [--at OID] [--json]
+cruxible block depublish FILE_ID BLOCK_ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 Blocks are stamped, and nothing regenerates them on its own. The workflow: write
@@ -2819,8 +2819,8 @@ Subjects when the query projects none, and `_No rows._` when it returns none.
 
 ### Two kinds of governed passage
 
-A page is a **source**. Its bytes are captured, its capture is evidence, and a
-passage of it can be cited like any other evidence. What a page holds is one of
+A page can supply **evidence**: its captured bytes can back a cited passage.
+A projection page need never supply evidence. What a page holds is one of
 exactly two kinds of governed block, and they never overlap.
 
 A **source block** is ordinary prose the author wrote, made governed by a Claim
@@ -2962,7 +2962,9 @@ since that preview.
 
 ### Depublishing
 
-`block depublish SOURCE_ID BLOCK_ID` releases the registration that demands a
+`FILE_ID` is the stored projection file identity; the file and catalog entry need not still exist.
+
+`block depublish FILE_ID BLOCK_ID` releases the registration that demands a
 block's frame. Every block `block repin` declared is registered with the
 instance, and `cruxible next` reports a registered block whose marker is no
 longer in the file as blocking, correctly, until the block is meant to be

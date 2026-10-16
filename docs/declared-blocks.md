@@ -37,7 +37,7 @@ staleness, not derivation.
 
    The page must be catalogued in `.cruxible/files.yaml`
    (`cruxible files add status-page notes/status.md`); its entry name is the
-   block's source ID.
+   block's file identity.
 
 2. **Repin to stamp it.** Name what the block reflects:
 
@@ -64,8 +64,10 @@ staleness, not derivation.
    the passage reflects its backings again.
 
 5. **When the backings are gone**, take the block down in two steps.
-   `cruxible block depublish SOURCE_ID BLOCK_ID` releases the instance's
+   `cruxible block depublish FILE_ID BLOCK_ID` releases the instance's
    registration, so `next` stops asking for the block back; it edits no page.
+   `FILE_ID` is the stored projection file identity; the file and catalog entry
+   need not still exist.
    Then `cruxible block detach PATH` strips the markers and keeps the prose
    (it refuses a block that is still live), or remove them by hand.
 

@@ -1950,7 +1950,7 @@ def playbill_block_declare(
 
 def playbill_block_depublish(
     instance_id: str,
-    source_id: str,
+    file_id: str,
     block_id: str,
     *,
     dry_run: bool | None = None,
@@ -1964,7 +1964,7 @@ def playbill_block_depublish(
         instance = get_playbill_manager().get(instance_id)
         return service_depublish_playbill_block(
             instance,
-            source_id=source_id,
+            source_id=file_id,
             block_id=block_id,
             dry_run=dry_run,
             at=at,

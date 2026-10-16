@@ -219,3 +219,14 @@ def test_public_catalog_cli_cuts_old_names() -> None:
     assert propose.exit_code == 0
     assert "--file" in propose.output
     assert "--source" not in propose.output
+
+
+def test_depublish_help_names_the_stored_file_identity() -> None:
+    result = CliRunner().invoke(cli, ["block", "depublish", "--help"])
+    assert result.exit_code == 0
+    assert "FILE_ID BLOCK_ID" in result.output
+    assert "SOURCE_ID" not in result.output
+    assert (
+        "the stored projection file identity; the file and catalog entry need not still exist"
+        in " ".join(result.output.split())
+    )

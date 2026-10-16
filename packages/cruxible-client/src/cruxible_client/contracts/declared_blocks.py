@@ -424,7 +424,7 @@ class DeclaredBlockPageObservation(_StrictDeclaredBlockModel):
             raise ValueError("declared block summaries must be sorted and unique by block ID")
         for marker in self.marker_summaries:
             if marker.stamp.source_id != self.source_id:
-                raise ValueError("a declared block summary names a different source")
+                raise ValueError("a declared block summary names a different file")
             if marker.end_byte > self.byte_length:
                 raise ValueError("a declared block summary window escapes its page")
         notes = self.marker_notes
@@ -804,7 +804,7 @@ def _parse_projection_blocks(
     try:
         content.decode("utf-8")
     except UnicodeError as exc:
-        raise ProjectionMarkerError("projection source is not valid UTF-8") from exc
+        raise ProjectionMarkerError("projection file is not valid UTF-8") from exc
 
     check_projection_processing_bytes(
         len(content) + sum(len(v) for v in (manifests or {}).values())
@@ -852,7 +852,7 @@ def _parse_projection_blocks(
         assert opening is not None
         block_id = opening.group(1).decode("ascii")
         if block_id in seen:
-            raise ProjectionMarkerError(f"projection source repeats block identity {block_id!r}")
+            raise ProjectionMarkerError(f"projection file repeats block identity {block_id!r}")
         seen.add(block_id)
         if stamped is not None or compact is not None:
             stamp = (
@@ -865,12 +865,12 @@ def _parse_projection_blocks(
             if source_id is None:
                 source_id = stamp.source_id
             elif stamp.source_id != source_id:
-                raise ProjectionMarkerError("projection stamp source differs from its marker")
+                raise ProjectionMarkerError(
+                    "projection stamp file identity differs from its marker"
+                )
         elif allow_bootstrap:
             if source_id is None:
-                raise ProjectionMarkerError(
-                    "an unstamped bootstrap block cannot identify its logical source"
-                )
+                raise ProjectionMarkerError("an unstamped bootstrap block cannot identify its file")
             stamp = None
         else:
             raise ProjectionBootstrapUnstampedError(
@@ -889,7 +889,7 @@ def parse_projection_blocks(
     allow_bootstrap: bool = False,
     manifests: Mapping[str, bytes] | None = None,
 ) -> tuple[ParsedProjectionBlock, ...]:
-    """Parse one complete source using its known logical source identity."""
+    """Parse one complete file using the stamp's frozen ``source_id`` identity."""
 
     return _parse_projection_blocks(
         content,
@@ -902,11 +902,11 @@ def parse_projection_blocks(
 def discover_projection_blocks(
     content: bytes, *, manifests: Mapping[str, bytes] | None = None
 ) -> tuple[ParsedProjectionBlock, ...]:
-    """Parse stamped blocks while discovering their one logical source identity."""
+    """Parse stamped blocks while discovering their one stored file identity."""
 
     blocks = _parse_projection_blocks(content, source_id=None, manifests=manifests)
     if not blocks:
-        raise ProjectionMarkerError("source contains no stamped projection blocks")
+        raise ProjectionMarkerError("file contains no stamped projection blocks")
     return blocks
 
 

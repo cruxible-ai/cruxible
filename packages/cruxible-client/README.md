@@ -4075,10 +4075,11 @@ Strip retired blocks' markers from these pages, keeping each body as prose; live
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-depublish(source: str | SourceRef, block_id: str, *, dry_run: bool | None = None, at: str | None = None) -> api.BlockDepublishResult
+depublish(file_id: str | SourceRef, block_id: str, *, dry_run: bool | None = None, at: str | None = None) -> api.BlockDepublishResult
 ```
 
 Release the registration that demands one page block; edits no page and retires no backing.
+`file_id` is the stored projection file identity; the file and catalog entry need not still exist.
 
 ## Signing capabilities
 
@@ -5154,7 +5155,7 @@ detection; the block adapter calls it.
 ```text
 depublish_block(
     instance_id: str,
-    source_id: str,
+    file_id: str,
     block_id: str,
     *,
     dry_run: bool | None = None,
@@ -7008,7 +7009,7 @@ Mechanically frame accepted bytes and prove the one frozen marker grammar.
 parse_projection_blocks(content: 'bytes', *, source_id: 'str', allow_bootstrap: 'bool' = False, manifests: 'Mapping[str, bytes] | None' = None) -> 'tuple[ParsedProjectionBlock, ...]'
 ```
 
-Parse one complete source using its known logical source identity.
+Parse one complete file using the stamp's frozen `source_id` identity.
 
 #### `render_projection_opening`
 

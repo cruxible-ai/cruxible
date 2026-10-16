@@ -356,7 +356,7 @@ class CruxibleClient:
     def depublish_block(
         self,
         instance_id: str,
-        source_id: str,
+        file_id: str,
         block_id: str,
         *,
         dry_run: bool | None = None,
@@ -364,7 +364,7 @@ class CruxibleClient:
     ) -> contracts.BlockDepublishResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/blocks/depublish",
-            json={"source_id": source_id, "block_id": block_id, **_change_control(dry_run, at)},
+            json={"file_id": file_id, "block_id": block_id, **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.BlockDepublishResult)
 

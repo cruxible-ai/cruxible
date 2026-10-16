@@ -963,14 +963,22 @@ def register_tools(
     def cruxible_block_depublish(
         instance_id: InstanceId = None,
         *,
-        source_id: str,
+        file_id: Annotated[
+            str,
+            Field(
+                description=(
+                    "The stored projection file identity; the file and catalog entry "
+                    "need not still exist."
+                ),
+            ),
+        ],
         block_id: str,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.BlockDepublishResult:
         """Release the publication registration that demands one page block."""
         return handlers.handle_playbill_block_depublish(
-            require_instance_id(instance_id), source_id, block_id, dry_run=dry_run, at=at
+            require_instance_id(instance_id), file_id, block_id, dry_run=dry_run, at=at
         )
 
     @_tool

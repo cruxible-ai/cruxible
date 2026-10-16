@@ -252,7 +252,12 @@ class BlockDeclareRequest(_StrictPlaybillRequest):
 class BlockDepublishRequest(_StrictPlaybillRequest):
     """The page block whose publication registration is being released."""
 
-    source_id: str = Field(min_length=1)
+    file_id: str = Field(
+        min_length=1,
+        description=(
+            "The stored projection file identity; the file and catalog entry need not still exist."
+        ),
+    )
     block_id: str = Field(min_length=1)
     dry_run: DryRun = None
     at: PreviewAt = None

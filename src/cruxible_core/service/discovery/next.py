@@ -1165,7 +1165,7 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
     if operation == "cruxible.block.depublish" and text("source_id") and text("block_id"):
         return _mcp_call(
             "cruxible_block_depublish",
-            source_id=text("source_id"),
+            file_id=text("source_id"),
             block_id=text("block_id"),
         )
     if operation == "cruxible.block.repin" and text("source_id") and text("block_id"):
@@ -1291,7 +1291,11 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _sdk_call("cx.block.detach", *_repair_paths(values))
     if operation == "cruxible.block.depublish" and (source := text("source_id")):
         block = text("block_id")
-        return None if block is None else _sdk_call("cx.block.depublish", source, block)
+        return (
+            None
+            if block is None
+            else _sdk_call("cx.block.depublish", file_id=source, block_id=block)
+        )
     return None
 
 
