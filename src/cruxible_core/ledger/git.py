@@ -27,6 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from cruxible_client.contracts.canonical import CandidateDigest, normalize_manifest_paths
 from cruxible_client.contracts.errors import GitError
+from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.derived.derived_state import (
@@ -380,7 +381,7 @@ class GitLedger:
             descriptor, temporary = tempfile.mkstemp(prefix="tmp_obj_", dir=directory)
             try:
                 with os.fdopen(descriptor, "wb") as stream:
-                    stream.write(zlib.compress(header + body))
+                    stream.write(zlib.compress(header + body, level=0 if kind == "tree" else -1))
                     stream.flush()
                     os.fsync(stream.fileno())
                 os.chmod(temporary, 0o444)
@@ -404,6 +405,24 @@ class GitLedger:
             raise GitError(f"ledger tree object is malformed: {tree_oid}")
         return entries
 
+    def _encoded_tree(self, oid: str | None) -> _EncodedTree:
+        if oid is None:
+            return _EncodedTree(PersistentMap(), (), ())
+        with _ENCODED_TREES_LOCK:
+            cached = _ENCODED_TREES.get(oid)
+            if cached is not None:
+                _ENCODED_TREES.move_to_end(oid)
+                return cached
+        entries = self._tree_entries_of(oid)
+        ordered = sorted(entries, key=lambda name: _tree_entry_key(name, entries[name][0]))
+        result = _EncodedTree(
+            PersistentMap(entries),
+            tuple(_tree_entry_key(name, entries[name][0]) for name in ordered),
+            tuple(_encode_tree_entry(name, *entries[name]) for name in ordered),
+        )
+        _remember_encoded_tree(oid, result)
+        return result
+
     def _apply_to_tree(
         self,
         tree_oid: str | None,
@@ -419,7 +438,9 @@ class GitLedger:
         omits it. Returns None for an empty tree.
         """
 
-        entries = {} if tree_oid is None else self._tree_entries_of(tree_oid)
+        listing = self._encoded_tree(tree_oid)
+        entries = MapMutation(listing.entries)
+        changed: set[str] = set()
         files: dict[str, str | None] = {}
         subtrees: dict[str, dict[str, str | None]] = {}
         for path, oid in changes.items():
@@ -432,10 +453,12 @@ class GitLedger:
         # changed directory, then added files, so a path may turn from a file
         # into a directory (or back) within one change.
         for name, oid in files.items():
+            changed.add(name)
             current = entries.get(name)
             if oid is None and current is not None and current[0] != b"40000":
                 entries.pop(name)
         for name, nested in subtrees.items():
+            changed.add(name)
             current = entries.get(name)
             if current is not None and current[0] != b"40000":
                 raise GitError(f"ledger path is both a file and a directory: {name}")
@@ -445,6 +468,7 @@ class GitLedger:
             else:
                 entries[name] = (b"40000", child)
         for name, oid in files.items():
+            changed.add(name)
             if oid is None:
                 continue
             current = entries.get(name)
@@ -453,22 +477,23 @@ class GitLedger:
             entries[name] = (b"100644", oid)
         if not entries:
             return None
-        body = b"".join(
-            mode
-            + b" "
-            + name.encode("utf-8", errors="surrogateescape")
-            + b"\x00"
-            + bytes.fromhex(oid)
-            for name, (mode, oid) in sorted(
-                entries.items(),
-                key=lambda item: (
-                    item[0].encode("utf-8", errors="surrogateescape")
-                    + (b"/" if item[1][0] == b"40000" else b"")
-                ),
-            )
-        )
+        keys, encoded = list(listing.keys), list(listing.encoded)
+        for name in changed:
+            old = listing.entries.get(name)
+            if old is not None:
+                key = _tree_entry_key(name, old[0])
+                index = bisect.bisect_left(keys, key)
+                del keys[index]
+                del encoded[index]
+            new = entries.get(name)
+            if new is not None:
+                index = bisect.bisect_left(keys, _tree_entry_key(name, new[0]))
+                keys.insert(index, _tree_entry_key(name, new[0]))
+                encoded.insert(index, _encode_tree_entry(name, *new))
+        body = b"".join(encoded)
         oid = self._object_oid("tree", body)
         written[oid] = ("tree", body)
+        _remember_encoded_tree(oid, _EncodedTree(entries.finish(), tuple(keys), tuple(encoded)))
         return oid
 
     def _commit_changes_to_tree(
@@ -2774,6 +2799,41 @@ class GitLedger:
             environment=environment,
         )
         return result.stdout
+
+
+@dataclass(frozen=True, slots=True)
+class _EncodedTree:
+    entries: PersistentMap[tuple[bytes, str]]
+    keys: tuple[bytes, ...]
+    encoded: tuple[bytes, ...]
+
+
+_ENCODED_TREES: OrderedDict[str, _EncodedTree] = OrderedDict()
+_ENCODED_TREES_LOCK = threading.Lock()
+_ENCODED_TREE_ENTRIES = 0
+
+
+def _remember_encoded_tree(oid: str, listing: _EncodedTree) -> None:
+    global _ENCODED_TREE_ENTRIES
+    with _ENCODED_TREES_LOCK:
+        old = _ENCODED_TREES.pop(oid, None)
+        _ENCODED_TREE_ENTRIES += len(listing.entries) - (0 if old is None else len(old.entries))
+        _ENCODED_TREES[oid] = listing
+        while len(_ENCODED_TREES) > 1 and (
+            _ENCODED_TREE_ENTRIES > 400_000 or len(_ENCODED_TREES) > 4096
+        ):
+            _, old = _ENCODED_TREES.popitem(last=False)
+            _ENCODED_TREE_ENTRIES -= len(old.entries)
+
+
+def _tree_entry_key(name: str, mode: bytes) -> bytes:
+    return name.encode("utf-8", errors="surrogateescape") + (b"/" if mode == b"40000" else b"")
+
+
+def _encode_tree_entry(name: str, mode: bytes, oid: str) -> bytes:
+    return (
+        mode + b" " + name.encode("utf-8", errors="surrogateescape") + b"\x00" + bytes.fromhex(oid)
+    )
 
 
 def _tree_entries(body: bytes, *, raw_length: int) -> dict[str, tuple[bytes, str]] | None:

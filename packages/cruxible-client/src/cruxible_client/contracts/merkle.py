@@ -22,6 +22,9 @@ re-hashes only the touched leaves and the interior nodes above them.
 
 from __future__ import annotations
 
+import bisect
+import threading
+from collections import OrderedDict
 from collections.abc import (
     ItemsView,
     Iterable,
@@ -43,6 +46,8 @@ from cruxible_client.contracts.canonical import (
     MerkleNodeDigest,
     SemanticMerkleRoot,
     Sha256Value,
+    canonical_bytes,
+    canonical_list_digest,
     manifest_for_tree,
     normalize_ledger_path,
     normalize_manifest_paths,
@@ -294,19 +299,142 @@ def _root_value(root_node: MerkleNode, domains: MerkleDomainFamily[RootT]) -> Ro
     return typed_digest(domains.root_type, domains.root, {"node": root_node.digest.value})
 
 
+@dataclass(frozen=True, slots=True)
+class _InteriorListing:
+    keys: tuple[bytes, ...]
+    entries: tuple[bytes, ...]
+    segments: tuple[str, ...]
+    folded: PersistentMap[str]
+
+
+_INTERIOR_LISTINGS: OrderedDict[tuple[str, str], _InteriorListing] = OrderedDict()
+_INTERIOR_LOCK = threading.Lock()
+_INTERIOR_CAPACITY = 400_000
+_INTERIOR_ENTRIES = 0
+
+
+def _remember_interior(domain: str, digest: str, listing: _InteriorListing) -> None:
+    global _INTERIOR_ENTRIES
+    key = (domain, digest)
+    with _INTERIOR_LOCK:
+        old = _INTERIOR_LISTINGS.pop(key, None)
+        _INTERIOR_ENTRIES += len(listing.keys) - (0 if old is None else len(old.keys))
+        _INTERIOR_LISTINGS[key] = listing
+        while len(_INTERIOR_LISTINGS) > 1 and (
+            _INTERIOR_ENTRIES > _INTERIOR_CAPACITY or len(_INTERIOR_LISTINGS) > 4096
+        ):
+            _, old = _INTERIOR_LISTINGS.popitem(last=False)
+            _INTERIOR_ENTRIES -= len(old.keys)
+
+
+def _interior_listing(
+    node: MerkleNode | None,
+    nodes: Mapping[str, MerkleNode],
+    domains: MerkleDomainFamily[RootT],
+) -> _InteriorListing:
+    if node is None:
+        return _InteriorListing((), (), (), PersistentMap())
+    key = (domains.node, node.digest.value)
+    with _INTERIOR_LOCK:
+        cached = _INTERIOR_LISTINGS.get(key)
+        if cached is not None:
+            _INTERIOR_LISTINGS.move_to_end(key)
+            return cached
+    # Cold seed only: immutable directory versions need no validity scan.
+    segments = node.segments
+    listing = _InteriorListing(
+        tuple(segment.encode("utf-8") for segment in segments),
+        tuple(
+            canonical_bytes([segment, nodes[_join(node.prefix, segment)].digest.value])
+            for segment in segments
+        ),
+        segments,
+        PersistentMap((segment.casefold(), segment) for segment in segments),
+    )
+    _remember_interior(domains.node, node.digest.value, listing)
+    return listing
+
+
 def _interior_node(
     prefix: str,
     segments: Iterable[str],
     nodes: Mapping[str, MerkleNode],
     domains: MerkleDomainFamily[RootT],
 ) -> MerkleNode:
-    ordered = _sorted_segments(segments)
-    children = [(segment, nodes[_join(prefix, segment)].digest) for segment in ordered]
-    return MerkleNode(
-        prefix=prefix,
-        digest=_interior_digest(children, domains),
-        segments=tuple(ordered),
+    ordered = tuple(_sorted_segments(segments))
+    entries = tuple(
+        canonical_bytes([segment, nodes[_join(prefix, segment)].digest.value])
+        for segment in ordered
     )
+    digest = MerkleNodeDigest(canonical_list_digest(domains.node, "children", entries))
+    _remember_interior(
+        domains.node,
+        digest.value,
+        _InteriorListing(
+            tuple(segment.encode("utf-8") for segment in ordered),
+            entries,
+            ordered,
+            PersistentMap((segment.casefold(), segment) for segment in ordered),
+        ),
+    )
+    return MerkleNode(prefix=prefix, digest=digest, segments=ordered)
+
+
+class _InteriorEdit:
+    def __init__(self, listing: _InteriorListing) -> None:
+        # Pointer copies and the final join/hash are the frozen format's C byte
+        # floor. Python encodes/gathers only changed children.
+        self.keys = list(listing.keys)
+        self.entries = list(listing.entries)
+        self.segments = listing.segments
+        self.folded = listing.folded
+        self.changed: set[str] = set()
+
+    def set(self, prefix: str, segment: str, *, remove: bool = False) -> None:
+        key = segment.encode("utf-8")
+        index = bisect.bisect_left(self.keys, key)
+        present = index < len(self.keys) and self.keys[index] == key
+        if remove:
+            if present:
+                del self.keys[index]
+                del self.entries[index]
+                self.segments = self.segments[:index] + self.segments[index + 1 :]
+                self.folded = self.folded.delete(segment.casefold())
+            self.changed.discard(segment)
+        else:
+            if not present:
+                sibling = self.folded.get(segment.casefold())
+                if sibling is not None:
+                    raise CanonicalEncodingError(
+                        f"case-fold-colliding siblings refused below {prefix or '/'}: "
+                        f"{sibling!r} and {segment!r}"
+                    )
+                self.keys.insert(index, key)
+                self.entries.insert(index, b"")
+                self.segments = self.segments[:index] + (segment,) + self.segments[index:]
+                self.folded = self.folded.set(segment.casefold(), segment)
+            self.changed.add(segment)
+
+    def finish(
+        self, prefix: str, nodes: Mapping[str, MerkleNode], domains: MerkleDomainFamily[RootT]
+    ) -> MerkleNode:
+        for segment in self.changed:
+            index = bisect.bisect_left(self.keys, segment.encode("utf-8"))
+            self.entries[index] = canonical_bytes(
+                [segment, nodes[_join(prefix, segment)].digest.value]
+            )
+        digest = MerkleNodeDigest(canonical_list_digest(domains.node, "children", self.entries))
+        _remember_interior(
+            domains.node,
+            digest.value,
+            _InteriorListing(
+                tuple(self.keys),
+                tuple(self.entries),
+                self.segments,
+                self.folded,
+            ),
+        )
+        return MerkleNode(prefix=prefix, digest=digest, segments=self.segments)
 
 
 def _refuse_casefold_sibling(prefix: str, segment: str, siblings: Iterable[str]) -> None:
@@ -418,17 +546,17 @@ def update_merkle_tree(
         raise CanonicalEncodingError(f"merkle change set both updates and removes: {collisions}")
 
     nodes = _MerkleMutation(manifest.nodes)
-    dirty: dict[str, list[str]] = {}
+    dirty: dict[str, _InteriorEdit] = {}
 
-    def segments_of(prefix: str) -> list[str]:
+    def segments_of(prefix: str) -> _InteriorEdit:
         if prefix not in dirty:
             node = nodes.get(prefix)
             if node is None:
-                dirty[prefix] = []
+                dirty[prefix] = _InteriorEdit(_interior_listing(None, nodes, domains))
             elif node.is_leaf:
                 raise CanonicalEncodingError(f"path is both a member and a directory: {prefix!r}")
             else:
-                dirty[prefix] = list(node.segments)
+                dirty[prefix] = _InteriorEdit(_interior_listing(node, manifest.nodes, domains))
         return dirty[prefix]
 
     for path in sorted(deletions):
@@ -444,14 +572,19 @@ def update_merkle_tree(
             # surviving directory still commits to the child digest that moved.
             siblings = segments_of(prefix)
             if pruning:
-                if segment in siblings:
-                    siblings.remove(segment)
-                if siblings or prefix == ROOT_PREFIX:
+                siblings.set(prefix, segment, remove=True)
+                if siblings.keys or prefix == ROOT_PREFIX:
                     pruning = False
                 else:
                     # The directory emptied out and leaves with its last member.
                     nodes.pop(prefix, None)
                     dirty.pop(prefix, None)
+            if not pruning:
+                # A removed last child must stay removed; only surviving
+                # ancestor links need their digest replaced.
+                index = bisect.bisect_left(siblings.keys, segment.encode("utf-8"))
+                if index < len(siblings.keys) and siblings.keys[index] == segment.encode("utf-8"):
+                    siblings.changed.add(segment)
             child = prefix
 
     for path, member_digest in sorted(updates.items()):
@@ -462,14 +595,10 @@ def update_merkle_tree(
         prefix = ROOT_PREFIX
         for segment in segments[:-1]:
             siblings = segments_of(prefix)
-            if segment not in siblings:
-                _refuse_casefold_sibling(prefix, segment, siblings)
-                siblings.append(segment)
+            siblings.set(prefix, segment)
             prefix = _join(prefix, segment)
         siblings = segments_of(prefix)
-        if segments[-1] not in siblings:
-            _refuse_casefold_sibling(prefix, segments[-1], siblings)
-            siblings.append(segments[-1])
+        siblings.set(prefix, segments[-1])
         nodes[path] = MerkleNode(
             prefix=path,
             digest=_leaf_digest(path, member_digest, domains),
@@ -477,7 +606,7 @@ def update_merkle_tree(
         )
 
     for prefix in _bottom_up(dirty):
-        nodes[prefix] = _interior_node(prefix, dirty[prefix], nodes, domains)
+        nodes[prefix] = dirty[prefix].finish(prefix, nodes, domains)
     return MerkleTree(
         root=_root_value(nodes[ROOT_PREFIX], domains),
         nodes=nodes.finish(),
