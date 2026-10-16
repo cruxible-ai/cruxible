@@ -1,6 +1,7 @@
 """Which Subjects a World knows, against a real daemon: live, complete, at one coordinate.
 
-A World lists Subjects through the served ``query`` verb. These run the SDK
+A World resolves individual Subjects through the internal get batch and lists
+a kind only on explicit enumeration through ``query``. These run the SDK
 over an in-process HTTP app on a real instance, because what is under test is
 what the service's queries bind: retired Subject shells, and the server's
 result ceiling.
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -102,6 +104,32 @@ def test_a_world_does_not_resurrect_a_retired_subject(pb: Cruxible) -> None:
     with pytest.raises(AbsentSubject) as absent:
         items["wi-3"]
     assert absent.value.subject_id == "wi-3"
+
+
+def test_direct_lookup_refuses_a_retired_subject_before_any_inventory(pb: Cruxible) -> None:
+    items = pb.world().project.work_item
+    with pytest.raises(AbsentSubject) as absent:
+        items["wi-3"]
+    assert absent.value.subject_id == "wi-3"
+    assert "wi-3" not in items
+    assert "wi-1" in items
+
+
+def test_alias_of_a_live_subject_wins_over_a_retired_id_even_after_enumeration(
+    pb: Cruxible,
+) -> None:
+    assert (
+        pb.changes(because="Merged the retired item.")
+        .add(f"{KIND}/wi-2", "semantic.alias", "wi-3")
+        .write()
+        .status
+        == "accepted"
+    )
+    items = pb.world().project.work_item
+    assert items.subject_ids == ("wi-1", "wi-2")
+    assert items["wi-3"] is items["wi-2"]
+    assert "wi-3" in items
+    assert len(items) == 2
 
 
 def test_query_lists_live_subjects_and_marks_retired_ones_on_request(pb: Cruxible) -> None:
@@ -285,6 +313,154 @@ def test_a_define_run_again_lands_on_its_subject_and_expect_new_refuses(typed: C
     assert taken.address == f"{DECISION}/ship-it-{key_digest_hex(['ship-it'])[:8]}"
 
 
+def test_world_lookup_resolves_alias_and_single_key_and_keeps_the_read_coordinate(
+    typed: Cruxible,
+) -> None:
+    draft = typed.world().dev.decision.define("Ship It Now", title="Ship")
+    assert draft.write(because="Decided.").status == "accepted"
+    assert draft.address is not None
+    assert (
+        typed.changes(because="Name it for readers.")
+        .add(draft.address, "semantic.alias", "Launch Decision")
+        .write()
+        .status
+        == "accepted"
+    )
+    world = typed.world()
+    decisions = world.dev.decision
+    by_key = decisions["SHIP IT NOW"]
+    assert by_key.address == draft.address
+    assert decisions["Launch Decision"] is by_key
+    assert decisions["ship-it-now"] is by_key
+    assert "Launch Decision" in decisions
+    assert decisions.subject_ids == ("ship-it-now",)
+    assert tuple(decisions) == (by_key,)
+    assert len(decisions) == 1
+
+    assert by_key.set(title="Shipped", because="Completed.").status == "accepted"
+    # The lookup remains at the World's coordinate even for an uncached alias.
+    assert decisions["launch decision"] is by_key
+    assert [claim.value for claim in by_key.title] == ["Ship"]
+    assert typed.get(by_key, detail="history", field="title").coordinate == world.coordinate
+
+
+def _assert_cached_json_lookup(cx: Cruxible, kind: str, spelling: str, address: str) -> None:
+    # The generic resolver supports this explicit reference at the same pin.
+    world = cx.world()
+    assert cx.get(f"Subject:{kind}/{spelling}").value.subject == address
+    items = world.kind(kind)
+    with patch.object(cx._client, "get_batch", wraps=cx._client.get_batch) as get:
+        subject = items[spelling]
+        assert subject.address == address
+        assert spelling in items
+        assert items[spelling] is subject
+        assert items[address.split("/", 1)[1]] is subject
+        assert get.call_count == 1
+        request = get.call_args.kwargs["request"]
+        assert request.refs == (f"Subject:{kind}/{spelling}",)
+        assert request.subject_suggestions is False
+        assert request.at == world.coordinate
+
+
+def test_alias_ending_in_json_resolves_and_caches_a_subject(typed: Cruxible) -> None:
+    assert (
+        typed.changes(because="Name the report item.")
+        .add(f"{KIND}/wi-2", "semantic.alias", "item.json")
+        .write()
+        .status
+        == "accepted"
+    )
+    _assert_cached_json_lookup(typed, KIND, "item.json", f"{KIND}/wi-2")
+
+
+def test_single_key_ending_in_json_resolves_and_caches_a_subject(typed: Cruxible) -> None:
+    draft = typed.world().dev.decision.define("Report.json", title="Report")
+    assert draft.write(because="Record the report decision.").status == "accepted"
+    assert draft.address is not None
+    _assert_cached_json_lookup(typed, DECISION, "Report.json", draft.address)
+
+
+def test_first_absent_world_lookup_has_flat_server_work_at_two_instance_sizes(
+    typed: Cruxible, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.indexes.typed_state import TypedStateReader
+    from cruxible_core.service.discovery import get as get_module
+
+    original_names = get_module._names_of
+    original_envelopes = TypedStateReader.envelopes
+    names_materialized = 0
+    subject_rows = 0
+
+    def counted_names(projection, kind):
+        nonlocal names_materialized
+        names = original_names(projection, kind)
+        if kind == "subject":
+            names_materialized += len(names)
+        return names
+
+    def counted_envelopes(reader, **kwargs):
+        nonlocal subject_rows
+        rows = original_envelopes(reader, **kwargs)
+        subject_rows += sum(row.kind == "Subject" for row in rows)
+        return rows
+
+    measured = []
+    for size in (3, 23):
+        if size == 23:
+            # Grow both the queried kind and an unrelated kind, through one
+            # accepted change set. None of these are measured lookup work.
+            growing = typed.world()
+            drafts = [growing.project.work_item.define(f"extra-{i}") for i in range(10)]
+            drafts += [growing.dev.note.define(f"note-{i}") for i in range(10)]
+            assert (
+                growing.write(*drafts, because="Grow the lookup population.").status == "accepted"
+            )
+        instance = get_playbill_manager().get(typed._instance_id)
+        with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+            assert len(original_names(projection, "subject")) == size
+        world = typed.world()
+        items = world.project.work_item
+        names_materialized = subject_rows = 0
+        with monkeypatch.context() as scoped:
+            scoped.setattr(get_module, "_names_of", counted_names)
+            scoped.setattr(TypedStateReader, "envelopes", counted_envelopes)
+            with patch.object(typed._client, "get_batch", wraps=typed._client.get_batch) as get:
+                with pytest.raises(AbsentSubject) as absent:
+                    items["never-accepted"]
+                assert str(absent.value) == str(
+                    AbsentSubject(
+                        subject_kind=KIND,
+                        subject_id="never-accepted",
+                        coordinate=world.coordinate,
+                    )
+                )
+                assert "never-accepted" not in items
+                with pytest.raises(AbsentSubject):
+                    items["never-accepted"]
+                measured.append((names_materialized, subject_rows, get.call_count))
+                assert get.call_args.kwargs["request"].at == world.coordinate
+    assert measured == [(0, 0, 1), (0, 0, 1)], measured
+
+
+@pytest.mark.parametrize("reader", ["sdk", "low_level", "batch"])
+def test_ordinary_sdk_get_keeps_nearest_subject_suggestions(typed: Cruxible, reader: str) -> None:
+    from cruxible_client.contracts.errors import ReadRefusalError
+    from cruxible_client.contracts.get_reads import GetBatchRequest, GetRequest
+
+    with pytest.raises(ReadRefusalError) as missing:
+        ref = f"Subject:{KIND}/wi-4"
+        if reader == "sdk":
+            typed.get(ref)
+        elif reader == "low_level":
+            typed._client.get(typed._instance_id, request=GetRequest(ref=ref))
+        else:
+            typed._client.get_batch(typed._instance_id, request=GetBatchRequest(refs=(ref,)))
+    assert missing.value.error_code == "cruxible.get.ref_not_found"
+    assert f"{KIND}/wi-1" in missing.value.candidates
+    assert missing.value.repair is not None
+    assert missing.value.repair.operation == "cruxible.get"
+
+
 def test_a_hint_key_two_subjects_hold_is_ambiguous_to_define(typed: Cruxible) -> None:
     from cruxible_client.contracts.errors import WriteRefusalError
 
@@ -296,6 +472,14 @@ def test_a_hint_key_two_subjects_hold_is_ambiguous_to_define(typed: Cruxible) ->
     with pytest.raises(WriteRefusalError) as refused:
         typed.world().dev.note.define("SAME").write(because="Which one?")
     assert refused.value.error_code == "cruxible.subject.key_ambiguous"
+
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    items = typed.world().dev.note
+    for lookup in (lambda: items["SAME"], lambda: "SAME" in items):
+        with pytest.raises(ReadRefusalError) as ambiguous:
+            lookup()
+        assert ambiguous.value.error_code == "cruxible.get.ref_ambiguous"
 
 
 def test_the_sdk_reads_a_subject_s_whole_field_history_across_pages(

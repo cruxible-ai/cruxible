@@ -2374,6 +2374,20 @@ Python keyword and member collisions.
 | `kind.where(state="open", count__gt=3)` | CompactQuery; `.select(...)`, `.order_by(...)`, `.limit(n)`, `.run()` or iterate every page |
 | `world.stub()` | Generated type-stub source for this vocabulary |
 
+`kind[id]` (and `id in kind`) resolves just that kind's requested ID, alias,
+or single-key spelling through the daemon and caches the result at the World's
+coordinate. These typed lookups use an explicit `Subject:` reference (including
+aliases and keys ending in `.json`) through the SDK-internal batch reader,
+which disables whole-instance nearest-name suggestions for these lookups, so a
+first miss also reads only the identity indexes. Ordinary
+`cx.get` calls retain their suggestions. Repeated spellings and the resolved
+canonical ID share a handle.
+Missing or retired Subjects raise `AbsentSubject` on indexing and answer false
+for membership; an ambiguous alias or key keeps the daemon's refusal.
+Iteration, `len(kind)`, `kind.subject_ids`, and `dir(kind)` load every live Subject
+of that kind on demand, paging past server caps without listing other kinds.
+Aliases and keys do not add entries to that canonical inventory.
+
 `prefetch` installs only complete bounded selections. An exhausted budget,
 invalid coordinate, duplicate row, or non-advancing continuation refuses before
 a partial cache is installed. Current `ClaimView.value` is annotated `object`;

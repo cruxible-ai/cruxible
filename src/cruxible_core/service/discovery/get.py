@@ -406,6 +406,7 @@ def resolve_get_ref(
     ref: str,
     *,
     surface: ReadSurface = "mcp",
+    subject_suggestions: bool = True,
 ) -> ResolvedRef:
     """Resolve every reference form an agent sees to exactly one thing, or refuse."""
 
@@ -452,6 +453,7 @@ def resolve_get_ref(
                 ref=value,
                 surface=surface,
                 key_reader=_tree_key_reader(instance, coordinate),
+                subject_suggestions=subject_suggestions,
             )
     with instance.bind_accepted_projection(coordinate) as projection:
         if value.endswith(".json") and "/" in value:
@@ -470,6 +472,7 @@ def resolve_get_ref(
                 ref=value,
                 surface=surface,
                 key_reader=_tree_key_reader(instance, coordinate),
+                subject_suggestions=subject_suggestions,
             )
         return _resolve_bare(projection, value, surface=surface)
 
@@ -653,6 +656,7 @@ def _resolve_typed(
     ref: str,
     surface: ReadSurface,
     key_reader: Callable[[], KeyReader] | None = None,
+    subject_suggestions: bool = True,
 ) -> ResolvedRef:
     if kind == "claim":
         return _resolve_claim(projection, name.removeprefix("Claim:"), ref=ref, surface=surface)
@@ -677,6 +681,11 @@ def _resolve_typed(
             row = _envelope(projection, newest)
             if row is not None:
                 return ResolvedRef(kind, row.identity, _display(kind, row.identity), row.path)
+    if kind == "subject" and not subject_suggestions:
+        # World supplies its own AbsentSubject repair. Identity/alias/key
+        # resolution above already established absence; do not enumerate the
+        # instance just to compute names that this caller will discard.
+        raise _not_found("Subject", ref, (), surface=surface)
     names = _names_of(projection, kind)
     if kind == "subject":
         match = _SUBJECT.fullmatch(name)
@@ -2757,6 +2766,7 @@ def service_playbill_get(
     request: GetRequest,
     access: BodyAccessContext,
     viewer: OperationalViewer | None = None,
+    subject_suggestions: bool = True,
 ) -> GetResult:
     """Resolve one reference and answer it at one ``detail`` level.
 
@@ -2764,12 +2774,20 @@ def service_playbill_get(
     values, so every caller reads them as text. ``viewer`` is the
     authenticated reader: a Line or run card names a runtime arming
     credential only to that credential or an admin (``None`` sees none).
+    Only the SDK-internal batch reader may disable ``subject_suggestions``;
+    ordinary public get always keeps its nearest-name repair suggestions.
     """
 
     continuation, at = _history_continuation(instance, request)
     coordinate = resolve_read_coordinate(instance, at)
     evaluation_time = request.evaluation_time or utc_now()
-    resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)
+    resolved = resolve_get_ref(
+        instance,
+        coordinate,
+        request.ref,
+        surface=request.surface,
+        subject_suggestions=subject_suggestions,
+    )
     if resolved.kind == "proposal":
         # Proposals are operational state, read only as of the current head;
         # one response never mixes an older requested generation with it. (A

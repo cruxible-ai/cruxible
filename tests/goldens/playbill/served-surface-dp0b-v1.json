@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "durability-policy-1015",
-    "surface_digest": "sha256:133390781bb15ae142026899cf91a0feba7d06c74ee94571003d0c52604278e7"
+    "register_entry": "2026-10-15:world-lookup",
+    "surface_digest": "sha256:852406d485dde91fe6eada5f5d45f9bede3c84d48dca4a19ec4213061a2a8614"
   },
   "surface": {
     "cli_leaves": [
@@ -1251,7 +1251,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/get-batch",
         "request_model": "cruxible_client.contracts.get_reads.GetBatchRequest",
-        "request_schema_digest": "sha256:bbc6653e3c8d20543593902bcbaf191c2eee907a27af7fbcd5838653b74eed26",
+        "request_schema_digest": "sha256:69a1ae48ed31c6179f0291b15f74e053f4413a1e2442674e02e75c9ccfd35f09",
         "response_model": "cruxible_client.contracts.get_reads.GetBatchResult",
         "response_schema_digest": "sha256:65aedb84bb47a1ecfe1d63f7370c5436ea46d2c9289db76d62859967d3af6d11"
       },

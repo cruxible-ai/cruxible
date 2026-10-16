@@ -755,7 +755,8 @@ class GetBatchRequest(_StrictGetModel):
     """Several references read at one coordinate and one detail: an SDK-internal route.
 
     Agents call ``get`` once per reference; the SDK reads a whole vocabulary
-    (every ClaimType envelope, for ``world()``) in a few round trips with this.
+    (every ClaimType envelope, for ``world()``) in a few round trips with this,
+    and resolves individual World Subjects without population-wide suggestions.
     Every result answers the coordinate the first one resolved.
     """
 
@@ -765,6 +766,14 @@ class GetBatchRequest(_StrictGetModel):
     at: AcceptedCoordinate | str | None = None
     evaluation_time: datetime | None = None
     surface: ReadSurface = "sdk"
+    subject_suggestions: bool = Field(
+        default=True,
+        description=(
+            "SDK-internal: suggest nearest Subject names when resolution fails. "
+            "World sets false to bound absent Subject lookups to the identity "
+            "indexes. Other kinds retain their ordinary suggestions."
+        ),
+    )
 
 
 class GetBatchResult(_StrictGetModel):
