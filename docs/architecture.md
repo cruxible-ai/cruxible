@@ -127,6 +127,18 @@ copy of the other.
 Indexes, search engines or graph databases that accelerate reads are
 projections of accepted state and can be rebuilt from it.
 
+The write pipeline shares each Claim's sealed member: exact bytes, strict
+parsed model, digests and normalized intrinsic projection facts. The bounded
+cache keys all of these by path, codec and exact bytes. Changed bytes derive a
+new member. Generation-dependent revisions, verdicts and explanation proofs
+are compiled for the accepting coordinate. Carried rows are checked against
+fresh derivation in tests; cold reconstruction remains the projection oracle.
+
+Within a Capture verification request, a run's immutable journal proof closure
+is checked once at each CAS landing-log head. A recorded landing, erase or
+damage invalidates that proof. A separately opened verification context checks
+the retained proof bodies afresh.
+
 ## Retention
 
 One setting (`RetentionSettings`: 64 generations, 14 days) bounds what is kept

@@ -31,6 +31,7 @@ from cruxible_client.contracts.captures import (
     ProducerReceiptResolverProtocol,
     ProviderProducerReceiptResolution,
     VerifiedCaptureMemo,
+    _RequestCaptureProofEpoch,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.documents import BodyVerifierProtocol
@@ -129,6 +130,13 @@ class _ObservedReceipts:
         self.source, self.scope = source, scope
         # Verifications this evaluation finished itself, through its observed bodies.
         self._own: set[str] = set()
+
+    def _capture_proof_epoch(self) -> object | None:
+        return (
+            self.source._capture_proof_epoch()
+            if isinstance(self.source, _RequestCaptureProofEpoch)
+            else None
+        )
 
     def producer_receipt(
         self, digest: str, *, run_id: str

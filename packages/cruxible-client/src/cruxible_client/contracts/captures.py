@@ -1205,6 +1205,32 @@ class ProducerReceiptResolverProtocol(Protocol):
         ...
 
 
+@runtime_checkable
+class _RequestCaptureProofEpoch(Protocol):
+    """An optional request owner binds journal proof to recorded body changes."""
+
+    def _capture_proof_epoch(self) -> object | None: ...
+
+
+def _request_journal_proof_still_answers(
+    memo: VerifiedCaptureMemo,
+    resolver: ProducerReceiptResolverProtocol,
+    *,
+    require_production_proof: bool,
+) -> bool:
+    epoch = (
+        resolver._capture_proof_epoch() if isinstance(resolver, _RequestCaptureProofEpoch) else None
+    )
+    if epoch is not None and memo.derived.get("journal_proof_epoch") == epoch:
+        return not require_production_proof or memo.production_proven
+    proven = _journal_proof_still_answers(
+        memo, resolver, require_production_proof=require_production_proof
+    )
+    if proven and epoch is not None:
+        memo.derived["journal_proof_epoch"] = epoch
+    return proven
+
+
 CaptureProductionGap = Literal["no_production_record", "v1_envelope"]
 
 
@@ -2806,7 +2832,7 @@ def verify_capture(
                 producer_artifact_digests=producer_artifact_digests,
                 require_production_proof=require_production_proof,
             )
-            and _journal_proof_still_answers(
+            and _request_journal_proof_still_answers(
                 memo,
                 producer_receipt_resolver,
                 require_production_proof=require_production_proof,
@@ -2826,19 +2852,23 @@ def verify_capture(
         envelope.source, LedgerSourceReference
     ):
         executable = envelope.run_coordinate.executable_identity
-        producer_receipt_resolver.remember_verified(
-            VerifiedCaptureMemo(
-                capture_digest=digest,
-                envelope=envelope,
-                contract_digest=expected_contract,
-                executable_digest=(
-                    None
-                    if executable == contract.identity
-                    else (producer_artifact_digests or {}).get(executable.qualified)
-                ),
-                production_proven=require_production_proof,
-            )
+        verified = VerifiedCaptureMemo(
+            capture_digest=digest,
+            envelope=envelope,
+            contract_digest=expected_contract,
+            executable_digest=(
+                None
+                if executable == contract.identity
+                else (producer_artifact_digests or {}).get(executable.qualified)
+            ),
+            production_proven=require_production_proof,
         )
+        if isinstance(producer_receipt_resolver, _RequestCaptureProofEpoch):
+            epoch = producer_receipt_resolver._capture_proof_epoch()
+            if epoch is not None:
+                # The cold verification above just checked this exact proof.
+                verified.derived["journal_proof_epoch"] = epoch
+        producer_receipt_resolver.remember_verified(verified)
     return envelope
 
 

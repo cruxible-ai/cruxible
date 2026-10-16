@@ -340,7 +340,7 @@ def _count_run_lookups(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     calls = {"runs": 0, "journal": 0, "payloads": 0}
     original_run = producer_receipts.JournalProducerReceiptResolver._index_run
     original_all = producer_receipts.JournalProducerReceiptResolver.index_all
-    original_parse = producer_receipts.parse_journal_payload
+    original_parse = producer_receipts.read_payload
 
     def run(self, run_id):  # type: ignore[no-untyped-def]
         calls["runs"] += 1
@@ -351,13 +351,13 @@ def _count_run_lookups(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
             calls["journal"] += 1
         return original_all(self)
 
-    def parse(content):  # type: ignore[no-untyped-def]
+    def parse(*args, **kwargs):  # type: ignore[no-untyped-def]
         calls["payloads"] += 1
-        return original_parse(content)
+        return original_parse(*args, **kwargs)
 
     monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "_index_run", run)
     monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "index_all", full)
-    monkeypatch.setattr(producer_receipts, "parse_journal_payload", parse)
+    monkeypatch.setattr(producer_receipts, "read_payload", parse)
     return calls
 
 
@@ -545,7 +545,9 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
             payload=_citing(legacy, qualifier="legacy"),
             canonical_timestamp="2026-09-02T13:10:00.000000Z",
         ).intent
-        _activate(instance, coordinator.submit(accepted.intent_id, actor=_ACTOR))
+        submitted = coordinator.submit(accepted.intent_id, actor=_ACTOR)
+        assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+        _activate(instance, submitted)
         pending = coordinator.create(
             actor=_ACTOR,
             payload=_citing(legacy, qualifier="legacy-pending"),
