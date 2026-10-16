@@ -35,8 +35,8 @@ Counted on the measuring thread only:
 - ``sql_statements``: statements SQLite ran on those connections (one per
   execution, so ``executemany`` counts every row, and each trigger firing
   counts once), whenever the connection was opened;
-- ``fsyncs`` and ``file_opens``: whole-settle observations (acceptance still
-  retains its independent durable files; no zero-fsync whole-settle claim);
+- ``fsyncs`` and ``file_opens``: whole-settle observations. ``non_acceptance_fsyncs`` excludes the
+  acceptance batch and ledger Git-object flushes (reported separately);
 - ``journal_fsyncs``, ``journal_file_opens``, ``journal_appends``: the complete
   terminal item group, including its reservations and CAS publication. The
   group has no fsyncs, at most two opens per new body (one file and its shard),
@@ -68,6 +68,7 @@ from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.ledger import recovery
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.proposals import settlement
+from cruxible_core.storage.cas import ContentAddressedBodyStore
 from tests.core_support import _pc_c_support
 from tests.core_support._subject_kind_support import core_assigned
 from tests.test_procedures import test_procedure_proposal_delivery as proposal_support
@@ -97,6 +98,7 @@ PER_ITEM = {
     "encoded_bytes": 100 * 1024,
     "sql_connects": 0.25,
     "sql_statements": 35,
+    "non_acceptance_fsyncs": 0.1,
     "journal_fsyncs": 0,
     # One payload file plus one shard handle per body; the small-N slope also
     # includes the difference in shard collisions between the two batches.
@@ -127,6 +129,7 @@ class _Counts:
         self.counts: Counter[str] = Counter()
         self.thread: int | None = None
         self.in_item_group = False
+        self.in_acceptance_flush = False
 
     def measuring(self) -> bool:
         return self.thread is not None and threading.get_ident() == self.thread
@@ -149,6 +152,14 @@ def _flushing(original: Callable[..., Any]) -> Callable[..., Any]:
     def counted(*args: Any, **kwargs: Any) -> Any:
         if _COUNTS.measuring():
             _COUNTS.counts["fsyncs"] += 1
+            if _COUNTS.in_acceptance_flush:
+                _COUNTS.counts["acceptance_fsyncs"] += 1
+            else:
+                frame = sys._getframe(1)
+                while frame is not None and not frame.f_code.co_filename.endswith("/ledger/git.py"):
+                    frame = frame.f_back
+                category = "git_fsyncs" if frame is not None else "non_acceptance_fsyncs"
+                _COUNTS.counts[category] += 1
             if _COUNTS.in_item_group:
                 _COUNTS.counts["journal_fsyncs"] += 1
         return original(*args, **kwargs)
@@ -160,6 +171,14 @@ def _flushing(original: Callable[..., Any]) -> Callable[..., Any]:
 def _journal_counted() -> Iterator[None]:
     original = ProcedureExecutor._append_events
     append = LocalJournalBackend.append_many
+    flush = ContentAddressedBodyStore.flush_cited
+
+    def barrier(self: Any, *args: Any, **kwargs: Any) -> Any:
+        _COUNTS.in_acceptance_flush = True
+        try:
+            return flush(self, *args, **kwargs)
+        finally:
+            _COUNTS.in_acceptance_flush = False
 
     def group(self: Any, *args: Any, **kwargs: Any) -> Any:
         if not _COUNTS.measuring():
@@ -176,11 +195,13 @@ def _journal_counted() -> Iterator[None]:
             _COUNTS.counts["journal_records"] += len(drafts)
         return append(self, drafts, **kwargs)
 
+    ContentAddressedBodyStore.flush_cited = barrier
     ProcedureExecutor._append_events = group
     LocalJournalBackend.append_many = append_many
     try:
         yield
     finally:
+        ContentAddressedBodyStore.flush_cited = flush
         ProcedureExecutor._append_events = original
         LocalJournalBackend.append_many = append
 
@@ -389,7 +410,16 @@ def test_a_settles_work_per_item_stays_at_its_floor(
     assert large["journal_records"] == 2 * N
     assert small["journal_appends"] == large["journal_appends"] == 1
     slope = {name: (large[name] - small[name]) / N for name in PER_ITEM}
-    observed = {name: (large[name] - small[name]) / N for name in ("fsyncs", "file_opens")}
+    observed = {
+        name: (large[name] - small[name]) / N
+        for name in (
+            "fsyncs",
+            "file_opens",
+            "acceptance_fsyncs",
+            "git_fsyncs",
+            "non_acceptance_fsyncs",
+        )
+    }
     report = (
         f"per item {slope}; observed whole settle {observed}; "
         f"small {dict(small)}; large {dict(large)}; "

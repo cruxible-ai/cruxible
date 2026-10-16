@@ -268,7 +268,7 @@ def reserve_admission_material_body(
         existing = store._path(reservation.reservation_id).exists()
         store.reserve_locked(reservation)
         try:
-            metadata = bodies.store(content)
+            metadata = bodies.store(content, best_effort=True)
             if metadata.digest != reservation.body_digest:
                 raise ProcedureMaterialReservationError(
                     "CAS store did not reproduce its pending material reservation"
@@ -690,7 +690,7 @@ class ReservedCaptureStore:
         )
         with self._reservations.locked():
             self._reservations.reserve_locked(reservation)
-            metadata = self._bodies.store(content)
+            metadata = self._bodies.store(content, best_effort=True)
         if metadata.digest != reservation.body_digest:
             raise ExecutionError("reserved Capture material digest did not reproduce")
         if all(item.reservation_id != reservation.reservation_id for item in self.pending):

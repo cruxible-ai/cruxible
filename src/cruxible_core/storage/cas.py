@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import heapq
 import os
 import re
 import stat
+import sys
 import threading
 import weakref
 from collections import OrderedDict
@@ -116,6 +119,22 @@ def _ranked(closest: list[tuple[int, str]]) -> tuple[str, ...]:
     )
 
 
+def _sync_filesystem(descriptor: int) -> bool:
+    """Flush one filesystem on Linux; False only when syncfs is unsupported."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    syncfs = getattr(libc, "syncfs", None)
+    if syncfs is None:
+        return False
+    syncfs.argtypes = [ctypes.c_int]
+    syncfs.restype = ctypes.c_int
+    if syncfs(descriptor) != 0:
+        error = ctypes.get_errno()
+        if error in {errno.ENOSYS, errno.ENOTSUP}:
+            return False
+        raise OSError(error, os.strerror(error))
+    return True
+
+
 class ContentAddressedBodyStore:
     """Managed SHA-256 body store; storing bytes grants no canonical authority.
 
@@ -147,6 +166,8 @@ class ContentAddressedBodyStore:
             os.close(descriptor)
             raise CasError("CAS algorithm directory changed while it was opened")
         self._root_fd = descriptor
+        self._durable: set[str] = set()
+        self._durability_lock = threading.RLock()
         weakref.finalize(self, os.close, descriptor)
         # Opening the store mints the log over objects it does not yet name, and
         # settles any landing a writer left unfinished.
@@ -341,7 +362,9 @@ class ContentAddressedBodyStore:
         status = self._object_status(digest)
         return None if status is None else _file_identity(status)
 
-    def store(self, content: bytes, *, journal_payload: bool = False) -> CasObjectMetadata:
+    def store(
+        self, content: bytes, *, journal_payload: bool = False, best_effort: bool = False
+    ) -> CasObjectMetadata:
         """Durably store inert bytes, idempotently, under their exact digest.
 
         A new body is logged as a landing (``landings``), before the object is
@@ -355,7 +378,8 @@ class ContentAddressedBodyStore:
         if content.startswith(ENVELOPE_HEAD):
             self.capture_envelopes.note(digest.tagged, content)
         shard, name = self._names(digest.tagged)
-        directory = self._shard(shard, create=True, durable=not journal_payload)
+        durable = not (journal_payload or best_effort)
+        directory = self._shard(shard, create=True, durable=False)
         assert directory is not None
         try:
             os.fchmod(directory, 0o700)
@@ -365,24 +389,20 @@ class ContentAddressedBodyStore:
                 existing = None
             if existing is not None:
                 self._verified_bytes(digest.tagged)
+                if durable:
+                    self.flush_cited((digest.tagged,))
                 if not journal_payload:
-                    # A journal payload may have arrived without a flush. Promoting
-                    # it to evidence must retain the ordinary store's durability.
-                    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
-                    try:
-                        os.fsync(descriptor)
-                    finally:
-                        os.close(descriptor)
-                    os.fsync(directory)
                     # A retry after an interrupted landing: publish its completion;
                     # a body that arrived as a journal payload: log it now.
                     self.landings.reconcile(digest.tagged)
-                    self.landings.ensure_landed(digest.tagged)
+                    self.landings.ensure_landed(digest.tagged, sync=durable)
             elif journal_payload:
                 self._publish(directory, name, content, digest.tagged, durable=False)
             else:
-                with self.landings.operation(digest.tagged, "store"):
-                    self._publish(directory, name, content, digest.tagged)
+                with self.landings.operation(digest.tagged, "store", sync=durable):
+                    self._publish(directory, name, content, digest.tagged, durable=False)
+                    if durable:
+                        self.flush_cited((digest.tagged,))
         finally:
             os.close(directory)
         return CasObjectMetadata(
@@ -391,6 +411,57 @@ class ContentAddressedBodyStore:
             byte_length=len(content),
             redacted=False,
         )
+
+    def flush_cited(self, digests: Sequence[str]) -> None:
+        """One acceptance barrier over its cited bodies, never the stored population.
+
+        Linux syncfs covers the instance filesystem (including Git objects and
+        CAS ancestor entries). Other platforms flush each new body and touched
+        namespace once; Git already flushes its objects before main publication.
+        A failed barrier never marks a body durable and must leave main unmoved.
+        """
+        with self._durability_lock:
+            pending = tuple(dict.fromkeys(d for d in digests if d not in self._durable))
+            if sys.platform == "linux":
+                # Do not bless missing/corrupt citations even when syncfs succeeds.
+                for digest in pending:
+                    if not self.verify(digest):
+                        raise CasError("accepted citation is unavailable")
+                if _sync_filesystem(self._root_fd):
+                    self._durable.update(pending)
+                    return
+            shards: dict[str, list[str]] = {}
+            for digest in pending:
+                shard, name = self._names(digest)
+                shards.setdefault(shard, []).append(name)
+            for shard, names in shards.items():
+                directory = self._shard(shard)
+                if directory is None:
+                    raise CasError("accepted citation is unavailable")
+                try:
+                    for name in names:
+                        digest = "sha256:" + name
+                        if not self.verify(digest):
+                            raise CasError("accepted citation is unavailable")
+                        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+                        try:
+                            os.fsync(descriptor)
+                        finally:
+                            os.close(descriptor)
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+            if pending:
+                # shard -> algorithm -> cas -> instance; best-effort writes may
+                # have created any of these entries since the last barrier.
+                os.fsync(self._root_fd)
+                for path in (self.root, self.root.parent):
+                    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                    try:
+                        os.fsync(descriptor)
+                    finally:
+                        os.close(descriptor)
+            self._durable.update(pending)
 
     def store_many(
         self,
@@ -616,6 +687,7 @@ class ContentAddressedBodyStore:
         A record that cannot be written now is the evidence sweep's to write.
         """
 
+        self._durable.discard(digest)
         try:
             self.landings.note(digest, state, recheck=lambda: self._hashed_state(digest))
         except (CasError, OSError):
@@ -710,6 +782,7 @@ class ContentAddressedBodyStore:
             self.landings.reconcile(digest)
             return False
         self._verified_bytes(digest)
+        self._durable.discard(digest)
         shard, name = self._names(digest)
         directory = self._shard(shard)
         if directory is None:
