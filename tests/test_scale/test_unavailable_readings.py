@@ -66,7 +66,12 @@ def test_unavailable_reading_history_has_bounded_warm_work(tmp_path, monkeypatch
     assert result.unavailable_reading_count == population
     assert len(result.unavailable_payloads) == 1
     assert all(contract.status == "unavailable" for contract in result.contracts)
-    assert len(result.model_dump_json()) < 10000
+    without_unavailability = result.model_copy(
+        update={"unavailable_payloads": (), "unavailable_reading_count": 0}
+    )
+    # Contract summaries have their own fixed size. Measure the output added
+    # by damaged history, which must stay bounded at both population sizes.
+    assert len(result.model_dump_json()) - len(without_unavailability.model_dump_json()) < 200
 
     # Catch-up updates the count from one new record; unavailable metadata is
     # still one representative, with no historical unavailable-body traversal.

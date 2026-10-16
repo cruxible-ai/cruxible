@@ -214,6 +214,10 @@ def test_republished_body_acquires_its_own_durability(tmp_path, monkeypatch, pub
     if publication != "ordinary":
         assert digest not in store._durable
         store.flush_cited((digest,), filesystem=False)
-    assert flushed == [store._path(digest).stat().st_ino]
+    body_inode = store._path(digest).stat().st_ino
+    # Ordinary storage also flushes its landing log. Count this publication's
+    # body specifically, then ensure another barrier flushes nothing again.
+    assert flushed.count(body_inode) == 1
+    before = tuple(flushed)
     store.flush_cited((digest,), filesystem=False)
-    assert len(flushed) == 1
+    assert tuple(flushed) == before
