@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -181,6 +182,8 @@ class SemanticAddress(_StrictSemanticModel):
 
     @classmethod
     def whole_artifact(cls, artifact_path: str) -> "SemanticAddress":
+        if cls is SemanticAddress and type(artifact_path) is str:
+            return _whole_artifact_address(artifact_path)
         return cls(
             artifact_path=artifact_path,
             selector=SemanticSelector(scheme="artifact-v1", value=""),
@@ -315,6 +318,18 @@ class SourceMapping(_StrictSemanticModel):
         if value != ordered or len(identities) != len(value):
             raise ValueError("source mapping spans must be sorted and unique")
         return value
+
+
+@lru_cache(maxsize=16384)
+def _whole_artifact_address(artifact_path: str) -> SemanticAddress:
+    # These models hold strings only; freeze the entire tree before sharing it.
+    from cruxible_client.contracts.content_memo import seal
+
+    address = SemanticAddress(
+        artifact_path=artifact_path, selector=SemanticSelector(scheme="artifact-v1", value="")
+    )
+    seal(address)
+    return address
 
 
 def whole_body_mapping(artifact_path: str, content_digest: str, byte_length: int) -> SourceMapping:

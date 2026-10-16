@@ -12,6 +12,7 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from typing import ClassVar, TypeVar, cast
 
 from pydantic import BaseModel
@@ -25,6 +26,12 @@ CanonicalValue = CanonicalScalar | list["CanonicalValue"] | dict[str, "Canonical
 Manifest = dict[str, str]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+@lru_cache(maxsize=65536)
+def _valid_sha256_hex(value: str) -> bool:
+    """Validate each immutable hex value once, independently of its digest kind."""
+    return _SHA256_RE.fullmatch(value) is not None
 
 
 class ArtifactCodec(str, Enum):
@@ -481,7 +488,7 @@ class Sha256Value:
     kind: ClassVar[str] = "digest"
 
     def __post_init__(self) -> None:
-        if not _SHA256_RE.fullmatch(self.value):
+        if not _valid_sha256_hex(self.value):
             raise ValueError(f"{self.kind} must be 32 bytes of lowercase SHA-256 hex")
 
     @property
@@ -491,6 +498,7 @@ class Sha256Value:
         return f"{self.algorithm}:{self.value}"
 
     @classmethod
+    @lru_cache(maxsize=65536)
     def from_tagged(cls, value: str) -> "Sha256Value":
         prefix, separator, digest = value.partition(":")
         if separator != ":" or prefix != cls.algorithm:
