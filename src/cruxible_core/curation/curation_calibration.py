@@ -74,4 +74,5 @@ AUDIT_RANK_WEAKNESS_WEIGHT = 1
 AUDIT_RANK_STALENESS_WEIGHT = 1
 
 
-__all__ = [name for name in globals() if name.isupper()]
+# Import observers may attach metadata while another thread reloads this module.
+__all__ = [name for name in list(globals()) if name.isupper()]

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from inspect import signature
+from textwrap import dedent
 
 import click
 from annotated_types import Ge, Le
@@ -91,3 +94,59 @@ def test_client_audit_factor_bounds_mirror_core_calibration() -> None:
         AUDIT_WEAKNESS_BASE + AUDIT_WEAKNESS_SIGNAL_COUNT * AUDIT_WEAKNESS_SIGNAL_WEIGHT
     )
     assert _ge_bound("staleness") == AUDIT_STALENESS_BASE
+
+
+def test_calibration_exports_survive_concurrent_import_during_reload() -> None:
+    # A fresh interpreter isolates reload and tracing from pytest's imports.
+    # Pause after the comprehension's iterator exists, then let an importer
+    # attach metadata: iterating the live globals dict fails on its next step.
+    code = dedent("""
+        import dis
+        import importlib
+        import sys
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        name = 'cruxible_core.curation.curation_calibration'
+        calibration = importlib.import_module(name)
+        expected = set(calibration.__all__)
+        iterating = threading.Event()
+        mutated = threading.Event()
+
+        def trace(frame, event, arg):
+            if frame.f_code.co_filename != calibration.__file__:
+                return None
+            frame.f_trace_opcodes = True
+            if (event == 'opcode' and not iterating.is_set()
+                    and dis.opname[frame.f_code.co_code[frame.f_lasti]] == 'FOR_ITER'):
+                iterating.set()
+                assert mutated.wait(10), 'concurrent importer did not finish'
+            return trace
+
+        def reload_calibration():
+            sys.settrace(trace)
+            try:
+                return importlib.reload(calibration)
+            finally:
+                sys.settrace(None)
+
+        def import_calibration():
+            assert iterating.wait(10), 'reload never reached export iteration'
+            module = importlib.import_module(name)
+            module._concurrent_import_observer = object()
+            mutated.set()
+            return module
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            reloaded = workers.submit(reload_calibration)
+            imported = workers.submit(import_calibration)
+            assert reloaded.result(timeout=20) is imported.result(timeout=20)
+
+        assert iterating.is_set() and mutated.is_set()
+        assert set(calibration.__all__) == expected
+        assert all(name.isupper() for name in calibration.__all__)
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

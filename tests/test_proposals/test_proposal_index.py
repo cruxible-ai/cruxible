@@ -32,6 +32,59 @@ def _submit(instance, name, **kwargs):
     return submitted
 
 
+def test_submit_drains_advertiser_holding_index_writer(tmp_path, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import closing
+
+    instance, _ = initialize_local(tmp_path)
+    owner = instance._accepted_history_index
+    writer_entered = threading.Event()
+    settle_entered = threading.Event()
+    release_writer = threading.Event()
+    reconcile = instance._reconcile_proposal_review_refs
+    settle = instance.settled_workspace_advertisement
+
+    def blocked_reconcile():
+        with owner._lock:
+            writer = owner._write_connection()
+            writer.execute("BEGIN IMMEDIATE")
+            try:
+                writer_entered.set()
+                assert release_writer.wait(30), "test did not release the advertiser"
+            finally:
+                writer.rollback()
+        reconcile()
+
+    def observed_settle():
+        settle_entered.set()
+        return settle()
+
+    monkeypatch.setattr(instance, "_reconcile_proposal_review_refs", blocked_reconcile)
+    monkeypatch.setattr(instance, "settled_workspace_advertisement", observed_settle)
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        submission = workers.submit(_submit, instance, "one")
+        try:
+            assert writer_entered.wait(30), "submission did not queue the advertiser"
+            assert settle_entered.wait(30), "submission did not drain the advertiser"
+            assert not submission.done()
+            # Prove this is a real SQLite writer, the historical flake's cause.
+            with closing(sqlite3.connect(owner.path, timeout=0)) as foreign:
+                with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+                    foreign.execute("BEGIN IMMEDIATE")
+        finally:
+            release_writer.set()
+        first = submission.result(timeout=30)
+
+    # Once _submit returns, the tests' foreign writers can run immediately.
+    with closing(sqlite3.connect(owner.path, timeout=0)) as foreign:
+        foreign.execute("BEGIN IMMEDIATE")
+        foreign.rollback()
+    assert (
+        instance.proposal_evidence().read_admission(first.admission.proposal_id) == first.admission
+    )
+
+
 def _oracle(instance):
     # An unbound source store deliberately selects the independent cold verifier.
     expected = build_proposal_note_oracle(
