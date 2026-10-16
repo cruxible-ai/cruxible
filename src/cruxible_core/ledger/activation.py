@@ -223,29 +223,29 @@ class ActivationPublisher:
         ):
             pass
 
-        _checkpoint(MAIN_CAS, "before", crash_hook)
-        won = self.ledger.compare_and_set_main(
-            bundle.oid,
-            expected_oid=bundle.settlement.base_oid,
-        )
-        _checkpoint(MAIN_CAS, "after", crash_hook)
-        if not won:
-            _checkpoint(ORPHAN_CLEANUP, "before", crash_hook)
-            remove_exact_projection_build(projection, expected=projection.manifest)
-            self.ledger.collect_unreachable_generation(bundle.oid)
+        with self.ledger.prepared_generation_note(
+            bundle.oid, render_generation_descriptor(bundle.descriptor)
+        ) as publish_note:
+            _checkpoint(MAIN_CAS, "before", crash_hook)
+            won = self.ledger.compare_and_set_main(
+                bundle.oid,
+                expected_oid=bundle.settlement.base_oid,
+            )
+            _checkpoint(MAIN_CAS, "after", crash_hook)
+            if not won:
+                _checkpoint(ORPHAN_CLEANUP, "before", crash_hook)
+                remove_exact_projection_build(projection, expected=projection.manifest)
+                self.ledger.collect_unreachable_generation(bundle.oid)
+                self.ledger.settle_generation_in_flight(bundle.oid)
+                _checkpoint(ORPHAN_CLEANUP, "after", crash_hook)
+                return ActivationResult(status="lost_cas", accepted=None, projection=None)
+            # On main: reachable, so nothing is left for recovery to collect.
             self.ledger.settle_generation_in_flight(bundle.oid)
-            _checkpoint(ORPHAN_CLEANUP, "after", crash_hook)
-            return ActivationResult(status="lost_cas", accepted=None, projection=None)
-        # On main: reachable, so nothing is left for recovery to collect.
-        self.ledger.settle_generation_in_flight(bundle.oid)
 
-        accepted = verification_coordinate
-        _checkpoint(GENERATION_NOTE, "before", crash_hook)
-        self.ledger.write_generation_note(
-            bundle.oid,
-            render_generation_descriptor(bundle.descriptor),
-        )
-        _checkpoint(GENERATION_NOTE, "after", crash_hook)
+            accepted = verification_coordinate
+            _checkpoint(GENERATION_NOTE, "before", crash_hook)
+            publish_note()
+            _checkpoint(GENERATION_NOTE, "after", crash_hook)
 
         publish_serving_manifest(
             self.publication_directory,

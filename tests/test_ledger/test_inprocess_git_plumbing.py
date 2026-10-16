@@ -177,9 +177,12 @@ def test_request_stages_one_pair_and_flushes_only_at_acceptance(ledger, monkeypa
             message="Accept one",
             extends_tree=tree,
         )
-        with ledger.activation_lock():
+        with (
+            ledger.activation_lock(),
+            ledger.prepared_generation_note(generation, b"descriptor\n") as publish_note,
+        ):
             assert ledger.compare_and_set_main(generation, expected_oid=base)
-            ledger.write_generation_note(generation, b"descriptor\n")
+            publish_note()
         # The accepted pack is durable before a successor can acquire the lock.
         (accepted_pack,) = set(directory.glob("*.pack")) - before
         assert sync_count(accepted_pack) == 1
@@ -218,8 +221,9 @@ def test_acceptance_carries_an_earlier_best_effort_proposal_pack(ledger):
             message="Accept earlier proposal",
             extends_tree=tree,
         )
-        assert ledger.compare_and_set_main(generation, expected_oid=base)
-        ledger.write_generation_note(generation, b"descriptor\n")
+        with ledger.prepared_generation_note(generation, b"descriptor\n") as publish_note:
+            assert ledger.compare_and_set_main(generation, expected_oid=base)
+            publish_note()
     # Losing the old advisory pair cannot lose any accepted dependency.
     for suffix in (".pack", ".idx", ".pending"):
         provisional.with_suffix(suffix).unlink()
@@ -249,3 +253,81 @@ def test_request_exit_does_not_resurrect_a_collected_losing_generation(ledger):
         assert not ledger.object_exists(loser)
     assert not ledger.object_exists(loser)
     assert not list((ledger.path / "objects/pack").glob("*.keep"))
+
+
+@pytest.mark.parametrize("interrupted", (False, True))
+def test_main_rename_only_names_a_durable_complete_request(ledger, monkeypatch, interrupted):
+    """Inspect fresh readers at rename, before note publication or lock cleanup."""
+    import os
+    from pathlib import Path
+
+    from cruxible_core.ledger.git_objects import PackStore
+
+    base = ledger.create_signed_genesis({"one": b"base"}, timestamp="2026-10-15T12:00:00Z")
+    ledger.set_main_genesis(base)
+    synced = []
+    real_fsync, real_replace = os.fsync, os.replace
+    checkpoint = []
+
+    def identity(path):
+        stat = path.stat()
+        return stat.st_dev, stat.st_ino
+
+    def sync(fd):
+        stat = os.fstat(fd)
+        synced.append((stat.st_dev, stat.st_ino))
+        return real_fsync(fd)
+
+    class Interrupted(RuntimeError):
+        pass
+
+    def publish(source, destination):
+        real_replace(source, destination)
+        if Path(destination) != ledger.path / "refs/heads/main":
+            return
+        # Read the published target independently while the publishing stack is
+        # still at rename: request/activation finally blocks have not run.
+        target = Path(destination).read_text().strip()
+        fresh = PackStore(ledger.path)
+        try:
+            assert not fresh.is_pending(target)
+            assert fresh.read(target)[0] == "commit"
+            pack = fresh.locations[target][0]
+            assert identity(pack) in synced
+            assert identity(pack.with_suffix(".idx")) in synced
+            assert identity(pack.parent) in synced
+            assert fresh.read(ledger._blob_oid(b"changed")) == ("blob", b"changed")
+            assert fresh.read(ledger._blob_oid(b"descriptor\n")) == ("blob", b"descriptor\n")
+            assert ledger.read_generation_note(target) is None
+        finally:
+            fresh.close()
+        checkpoint.append(target)
+        if interrupted:
+            raise Interrupted("after main rename, before note ref")
+
+    monkeypatch.setattr(os, "fsync", sync)
+    monkeypatch.setattr(os, "replace", publish)
+
+    def accept():
+        with ledger.request_pack(), ledger.activation_lock():
+            generation = ledger.create_signed_generation(
+                {"one": b"changed"},
+                parent_oid=base,
+                sequence=1,
+                timestamp="2026-10-15T12:01:00Z",
+                message="Accept one",
+            )
+            with ledger.prepared_generation_note(generation, b"descriptor\n") as publish_note:
+                assert ledger.compare_and_set_main(generation, expected_oid=base)
+                publish_note()
+            return generation
+
+    if interrupted:
+        with pytest.raises(Interrupted):
+            accept()
+    else:
+        assert accept() == checkpoint[0]
+    assert checkpoint == [ledger.read_main()]
+    # System Git is also a fresh reader, including after interrupted publication.
+    assert ledger._git(["show", "refs/heads/main:one"]) == b"changed"
+    ledger._git(["fsck", "--strict", "--no-dangling"])

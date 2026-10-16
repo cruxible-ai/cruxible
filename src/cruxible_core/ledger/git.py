@@ -1288,6 +1288,10 @@ class GitLedger:
                     _lock, fd = locks[ref]
                     os.write(fd, (new + "\n").encode("ascii"))
                     sync_file(fd, self.path / ref)
+            if parsed.get("refs/heads/main", (None, None, None))[1] is not None:
+                # Authority must never name advisory bytes, even if publication
+                # is interrupted before the activation lock's final ref sync.
+                reader.flush(final=True, accepting=True)
             # Publish replacement roots before deletion; leases already proved.
             for ref, (operation, new, _expected) in parsed.items():
                 if new is not None:
@@ -1956,47 +1960,72 @@ class GitLedger:
         """
 
         self._validate_oid(oid)
-        ref = self._note_ref(kind)
         with self._note_lock():
-            head = self._resolve_ref(ref)
-            existing = self._read_note(kind, oid)
-            if existing is not None and not replace:
-                raise GitError("note already exists")
-            tree = None if head is None else self._commit_tree(head)
-            # Preserve Git's existing fanout, descending only the target path.
-            directory, remaining, path = tree, oid, ""
-            while directory is not None:
-                entries = self._encoded_tree(directory).entries
-                if remaining in entries:
-                    break
-                child = entries.get(remaining[:2])
-                if child is None or child[0] != b"40000":
-                    break
-                path += remaining[:2] + "/"
-                directory, remaining = child[1], remaining[2:]
-            if existing is None and not path:
-                path, remaining = oid[:2] + "/", oid[2:]
-            blob = self._blob_oid(content)
-            root = self._commit_changes_to_tree(tree, {path + remaining: blob}, {blob: content})
-            now = datetime.now(timezone.utc).isoformat()
-            environment = {
-                "GIT_AUTHOR_NAME": "cruxible-daemon",
-                "GIT_AUTHOR_EMAIL": "daemon@cruxible.invalid",
-                "GIT_COMMITTER_NAME": "cruxible-daemon",
-                "GIT_COMMITTER_EMAIL": "daemon@cruxible.invalid",
-                "GIT_AUTHOR_DATE": now,
-                "GIT_COMMITTER_DATE": now,
-            }
-            commit = self._create_commit(
-                root,
-                () if head is None else (head,),
-                f"Notes added by Cruxible ({kind})",
-                environment,
-            )
-            zero = "0" * len(commit)
-            self._update_refs([f"update {ref} {commit} {head or zero}"])
+            command = self._prepare_note(kind, oid, content, replace=replace)
+            self._update_refs([command])
         if self._read_note(kind, oid) != content:
             raise GitError(f"{kind} note did not persist exactly")
+
+    def _prepare_note(self, kind: str, oid: str, content: bytes, *, replace: bool) -> str:
+        """Build a note update under the caller's note lock, without publishing it."""
+        ref = self._note_ref(kind)
+        head = self._resolve_ref(ref)
+        existing = self._read_note(kind, oid)
+        if existing is not None and not replace:
+            raise GitError("note already exists")
+        tree = None if head is None else self._commit_tree(head)
+        # Preserve Git's existing fanout, descending only the target path.
+        directory, remaining, path = tree, oid, ""
+        while directory is not None:
+            entries = self._encoded_tree(directory).entries
+            if remaining in entries:
+                break
+            child = entries.get(remaining[:2])
+            if child is None or child[0] != b"40000":
+                break
+            path += remaining[:2] + "/"
+            directory, remaining = child[1], remaining[2:]
+        if existing is None and not path:
+            path, remaining = oid[:2] + "/", oid[2:]
+        blob = self._blob_oid(content)
+        root = self._commit_changes_to_tree(tree, {path + remaining: blob}, {blob: content})
+        now = datetime.now(timezone.utc).isoformat()
+        environment = {
+            "GIT_AUTHOR_NAME": "cruxible-daemon",
+            "GIT_AUTHOR_EMAIL": "daemon@cruxible.invalid",
+            "GIT_COMMITTER_NAME": "cruxible-daemon",
+            "GIT_COMMITTER_EMAIL": "daemon@cruxible.invalid",
+            "GIT_AUTHOR_DATE": now,
+            "GIT_COMMITTER_DATE": now,
+        }
+        commit = self._create_commit(
+            root,
+            () if head is None else (head,),
+            f"Notes added by Cruxible ({kind})",
+            environment,
+        )
+        return f"update {ref} {commit} {head or '0' * len(commit)}"
+
+    @contextmanager
+    def prepared_generation_note(self, oid: str, content: bytes) -> Iterator[Callable[[], None]]:
+        """Stage the descriptor before main; publish it only after the winning CAS.
+
+        Hold the note lease across preparation and publication, so the prepared
+        notes tree cannot overwrite another writer's update. All note objects
+        join the accepting request's single durable pack.
+        """
+        self._validate_oid(oid)
+        with _batch_reader(self.path).transaction(), self._note_lock():
+            command = self._prepare_note("generation", oid, content, replace=False)
+
+            def publish() -> None:
+                if self.read_main() != oid:
+                    raise GitError("generation note target is not the current main ref")
+                self._update_refs([command])
+                if self.read_generation_note(oid) != content:
+                    raise GitError("generation note did not persist exactly")
+
+            yield publish
 
     def _read_note(self, kind: str, oid: str) -> bytes | None:
         self._validate_oid(oid)
@@ -3217,6 +3246,7 @@ class _BatchBlobReader:
         self._transaction.accepted = False
         self._transaction.pack = None
         self._transaction.staged_count = -1
+        self._transaction.durable_count = -1
         self._transaction.encoded = {}
         self._transaction.files = set()
         self._transaction.directories = set()
@@ -3278,6 +3308,7 @@ class _BatchBlobReader:
         self._transaction.pack = None
         self._transaction.encoded.clear()
         self._transaction.staged_count = -1
+        self._transaction.durable_count = -1
         self._transaction.accepted = False
         self._transaction.retain = False
 
@@ -3303,22 +3334,28 @@ class _BatchBlobReader:
             self.store.release(keeps)
             keeps.clear()
 
-    def flush(self, *, final: bool = False) -> None:
+    def flush(self, *, final: bool = False, accepting: bool = False) -> None:
         pending = getattr(self._transaction, "pending", None)
         if not pending:
             return
         if getattr(self._transaction, "request", False):
-            if not final and len(pending) == getattr(self._transaction, "staged_count", -1):
+            durable_count = self._transaction.durable_count
+            durable = accepting or (final and self._transaction.accepted) or durable_count >= 0
+            if len(pending) == durable_count or (
+                not final and not durable and len(pending) == self._transaction.staged_count
+            ):
                 return
             path = self.store.write(
                 pending,
                 keep=True,
-                durable=final and self._transaction.accepted,
+                durable=durable,
                 replacing=self._transaction.pack,
                 encoded=self._transaction.encoded,
             )
             self._transaction.pack = path
             self._transaction.staged_count = len(pending)
+            if durable:
+                self._transaction.durable_count = len(pending)
             self._transaction.keeps[:] = [path] if path is not None else []
         else:
             path = self.store.write(pending, keep=True)
