@@ -5299,6 +5299,15 @@ def _echo_history(history: Any) -> None:
             click.echo(f"    reason: {_reason_text(revision.reason)}")
         for step in revision.next:
             click.echo(f"next: {step}")
+    for review in getattr(history, "measurement_reviews", ()):
+        click.echo(f"{review.measurement_name}: standing={review.standing_resolution_id or 'none'}")
+        for judgment in review.history:
+            click.echo(
+                f"  {judgment.resolution_id}: {judgment.verdict} by {judgment.reviewer_id} "
+                f"at {judgment.recorded_at.isoformat()}  reason: {judgment.reason}"
+            )
+        if review.history_truncated:
+            click.echo(f"  showing {len(review.history)} of {review.history_total} judgments")
     if history.kind != "subject":
         return
     by_field: dict[str, list[Any]] = {}
@@ -6299,6 +6308,41 @@ def procedure_measure(
             click.echo(f"  {row.detail}")
 
 
+@procedure_group.command("dispose")
+@click.argument("name")
+@click.argument("resolution_id")
+@click.option("--verdict", required=True, type=click.Choice(["upheld", "overturned"]))
+@click.option("--reason", required=True, help="Your review reason, recorded verbatim.")
+@click.option("--json", "output_json", is_flag=True, help="Emit the typed result as JSON.")
+@handle_errors
+def procedure_dispose(
+    name: str,
+    resolution_id: str,
+    verdict: Literal["upheld", "overturned"],
+    reason: str,
+    output_json: bool,
+) -> None:
+    """Record a judgment on the latest measurement answer; find IDs with readings or get."""
+    try:
+        request = contracts.ProcedureResolutionDispositionRequest(
+            resolution_id=resolution_id, verdict=verdict, reason=reason
+        )
+    except ValidationError as exc:
+        raise click.ClickException(validation_summary(exc)) from exc
+    result = _server_call(
+        lambda client, instance_id: client.dispose_procedure_resolution(
+            instance_id, name, request=request
+        ),
+        command_name="cruxible procedure dispose",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"{resolution_id}: {result.disposition.verdict} by {result.disposition.reviewer_id}")
+    click.echo(f"Reason: {result.disposition.reason}")
+    click.echo(f"Standing answer: {result.standing_resolution_id or 'none'}")
+
+
 @procedure_group.command("readings")
 @click.argument("name")
 @click.option("--run-id", default=None, help="Only readings crediting this run.")
@@ -6369,6 +6413,12 @@ def procedure_readings(
         if contract.resolution is not None:
             line += f" ({contract.resolution.verdict}, {contract.resolution.resolution_id})"
         click.echo(line)
+        if contract.review is not None and contract.review.last_disposition is not None:
+            review = contract.review.last_disposition
+            click.echo(
+                f"  {review.resolution_id}: {review.verdict} by {review.reviewer_id} "
+                f"reason: {review.reason}"
+            )
     for reading in result.readings:
         click.echo(
             f"{reading.reading_id} {reading.measurement_name} {reading.subject_grain} "

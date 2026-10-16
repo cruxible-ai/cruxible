@@ -3876,6 +3876,27 @@ Pending measurements are reported, not evaluated; a standing resolution
 is returned rather than re-derived; calling again with the same run
 replays the same reading.
 
+### `Procedure.dispose_resolution`
+
+```python
+cx.accepted_procedure("release-guard").dispose_resolution(
+    resolution_id, verdict="overturned", reason="Evidence omitted a failed region."
+)
+```
+
+Records an `upheld` or `overturned` reviewer judgment under `GOVERNED_WRITE`,
+attributed to the authenticated principal. Returns typed
+`ProcedureResolutionDispositionResult` with the original disposition on an exact
+retry, the standing answer ID (null after overturn), and `written_now`.
+Get/history and readings expose the disposition. Overturn allows a later measure
+to replace the answer inside its original window; it does not extend that window.
+Retired/replaced contracts, unknown IDs, older answers, unavailable books, or a
+same-verdict retry with a different reason/reviewer refuse.
+
+Transport: `CruxibleClient.dispose_procedure_resolution(instance_id, name,
+request=ProcedureResolutionDispositionRequest(...))`, over
+`POST /api/v1/{instance_id}/procedures/{name}/resolution-dispositions`.
+
 <a id="api-procedure-readings"></a>
 
 ### `Procedure.readings`

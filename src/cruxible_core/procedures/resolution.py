@@ -1397,10 +1397,12 @@ class _ResolutionFold:
     counts: PersistentMap[int]
     last: PersistentMap[str]
     resolutions: PersistentMap[tuple[str, bytes]]
-    dispositions: PersistentMap[tuple[int, str]]
+    dispositions: PersistentMap[tuple[int, str, bytes]]
     records: PersistentMap[bytes]
     event_kinds: frozenset[str]
     payloads: PersistentMap[tuple[int, ...] | None]
+    review_counts: PersistentMap[int]
+    reviews: PersistentMap[bytes]
     unavailable: tuple[UnavailablePayload, ...] = ()
 
     @classmethod
@@ -1415,6 +1417,8 @@ class _ResolutionFold:
             PersistentMap(),
             frozenset(),
             PersistentMap(),
+            review_counts=PersistentMap(),
+            reviews=PersistentMap(),
         )
 
     def extend(
@@ -1433,6 +1437,7 @@ class _ResolutionFold:
                 head_digest=None if head is None else head.record_digest,
             )
         counts, last, resolutions = self.counts, self.last, self.resolutions
+        review_counts, reviews = self.review_counts, self.reviews
         dispositions, kept, kinds, payloads = (
             self.dispositions,
             self.records,
@@ -1492,11 +1497,17 @@ class _ResolutionFold:
                         raise ExecutionError(
                             "an answered overturn cannot be revised on an older resolution"
                         )
-                    count = dispositions.get(disposition.resolution_id, (0, ""))[0]
+                    count = dispositions.get(disposition.resolution_id, (0, "", b""))[0]
                     if disposition.sequence != count + 1:
                         raise ExecutionError("resolution disposition sequence is discontinuous")
                     dispositions = dispositions.set(
-                        disposition.resolution_id, (count + 1, disposition.verdict)
+                        disposition.resolution_id,
+                        (count + 1, disposition.verdict, _frozen(disposition)),
+                    )
+                    review_sequence = review_counts.get(target.contract_id, 0) + 1
+                    review_counts = review_counts.set(target.contract_id, review_sequence)
+                    reviews = reviews.set(
+                        f"{target.contract_id}:{review_sequence}", _frozen(disposition)
                     )
             except ValueError as exc:
                 raise ExecutionError("resolution exhaust payload is invalid") from exc
@@ -1510,6 +1521,8 @@ class _ResolutionFold:
             records=kept,
             event_kinds=kinds,
             payloads=payloads,
+            review_counts=review_counts,
+            reviews=reviews,
         )
 
     def payloads_hold(self, bodies: ContentAddressedBodyStore) -> _ResolutionFold:
@@ -1570,11 +1583,27 @@ class ResolutionBookView:
         return None if resolution_id is None else self.resolution_by_id(resolution_id)
 
     def disposition_count(self, resolution_id: str) -> int:
-        return self._fold.dispositions.get(resolution_id, (0, ""))[0]
+        return self._fold.dispositions.get(resolution_id, (0, "", b""))[0]
 
     def last_disposition_verdict(self, resolution_id: str) -> str | None:
         state = self._fold.dispositions.get(resolution_id)
         return None if state is None else state[1]
+
+    def last_disposition(self, resolution_id: str) -> ProcedureResolutionDispositionV1 | None:
+        state = self._fold.dispositions.get(resolution_id)
+        return None if state is None else pickle.loads(state[2])
+
+    def review_count(self, contract_id: str) -> int:
+        return self._fold.review_counts.get(contract_id, 0)
+
+    def review_history(
+        self, contract_id: str, *, limit: int
+    ) -> tuple[ProcedureResolutionDispositionV1, ...]:
+        count = self.review_count(contract_id)
+        return tuple(
+            pickle.loads(self._fold.reviews[f"{contract_id}:{sequence}"])
+            for sequence in range(count, max(0, count - limit), -1)
+        )
 
     def resolution_by_id(
         self, resolution_id: str
@@ -1746,6 +1775,7 @@ def append_resolution_disposition(
     resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
     disposition: ProcedureResolutionDispositionV1,
     stream: JournalStreamIdentityV1,
+    expected_head: JournalPartitionHeadV1 | None = None,
 ) -> StoredProcedureJournalRecordV1:
     partition_id = resolution_contract_partition_id(activation)
     if disposition.resolution_id != resolution.resolution_id:
@@ -1771,6 +1801,7 @@ def append_resolution_disposition(
         actor_context=disposition.reviewer_actor_context,
         recorded_at=disposition.recorded_at,
         payload=disposition.model_dump(mode="json"),
+        expected_head=expected_head,
     )
 
 

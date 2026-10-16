@@ -588,10 +588,19 @@ def _same_answers(view, book, activation) -> None:  # type: ignore[no-untyped-de
             item.resolution_id
         )
         dispositions = book.dispositions.get(item.resolution_id, [])
+        assert view.last_disposition(item.resolution_id) == (
+            dispositions[-1] if dispositions else None
+        )
         assert view.disposition_count(item.resolution_id) == len(dispositions)
         assert view.last_disposition_verdict(item.resolution_id) == (
             dispositions[-1].verdict if dispositions else None
         )
+
+    all_reviews = [
+        review for item in resolutions for review in book.dispositions.get(item.resolution_id, [])
+    ]
+    assert view.review_count(contract) == len(all_reviews)
+    assert view.review_history(contract, limit=3) == tuple(reversed(all_reviews[-3:]))
 
 
 def test_a_resolution_book_extends_from_its_last_head_and_equals_a_full_replay(
@@ -740,7 +749,10 @@ def test_a_fixed_append_and_lookup_cost_the_same_at_two_history_sizes(
             patch.setattr(module.pickle, "loads", counted_loads)
             _answer(activation, writer, stream, history + 1, overturn=False)
             view, _head = resolution_book_at_head(journal, stream, activation, bodies=bodies)
-            assert view.latest_non_overturned(activation.contract_id) is not None
+            latest = view.latest_non_overturned(activation.contract_id)
+            assert latest is not None
+            assert view.last_disposition(latest.resolution_id) is None
+            assert len(view.review_history(activation.contract_id, limit=1)) == 1
         return counts["read"], counts["loads"], counts["stat"]
 
     small, large = work(2, "small"), work(6, "large")

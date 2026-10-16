@@ -319,6 +319,7 @@ Procedure has Source nodes.
 |---|---|---|
 | `cruxible_procedure_run` | Execute a directly runnable Procedure (`cruxible_get` shows `runnable: direct`) -- accepted-state reads, deterministic computation, and `source`/`call` occurrences through exactly pinned Providers -- at an explicit coordinate and time | `READ_ONLY` |
 | `cruxible_procedure_measure` | Evaluate due Procedure measurements from real evidence, persist the resolution, and credit one run's exact grain | `GOVERNED_WRITE` |
+| `cruxible_procedure_dispose` | Record an upheld/overturned measurement judgment with reason and authenticated reviewer attribution | `GOVERNED_WRITE` |
 | `cruxible_procedure_readings` | Inspect measurement standing and retained exact-grain readings (read-only, paginated) | `READ_ONLY` |
 | `cruxible_line_enable` | Enable a Line forward-only: its Triggers do nothing until then. The daemon admits what they match under the caller's credential, rechecked before each run, pinned to the current Line and Trigger versions. Needs governed write even for an observe-only Line; a proposing or settling Line needs a covering mandate. Repeating it unchanged returns `outcome: already_enabled`. Read it with `cruxible_get(ref="Line:NAME")`. | `GOVERNED_WRITE` |
 | `cruxible_line_disable` | Stop a Line admitting work on its own; admitted runs keep going. A stopped enablement returns `outcome: already_disabled`. | `GOVERNED_WRITE` |

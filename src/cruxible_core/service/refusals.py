@@ -15,6 +15,9 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.predictions import PredictionRefusalCode
+from cruxible_client.contracts.procedures.dispositions import (
+    ProcedureResolutionDispositionRefusalCode,
+)
 from cruxible_client.contracts.procedures.readings import ProcedureMeasurementRefusalCode
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalCode,
@@ -43,6 +46,9 @@ CLOSED_SERVED_REFUSAL_VOCABULARIES: dict[str, frozenset[str]] = {
     "procedure_operational_failure": frozenset(get_args(ProcedureOperationalFailureCode)),
     "procedure_internal_failure": frozenset(get_args(ProcedureInternalFailureCode)),
     "prediction_refusal": frozenset(get_args(PredictionRefusalCode)),
+    "resolution_disposition_refusal": frozenset(
+        get_args(ProcedureResolutionDispositionRefusalCode)
+    ),
     "procedure_measurement_refusal": frozenset(get_args(ProcedureMeasurementRefusalCode)),
 }
 

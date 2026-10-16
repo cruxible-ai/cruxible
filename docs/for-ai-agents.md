@@ -475,6 +475,25 @@ batch["rollout-healthy"].reading_status   # "recorded", "replayed", "no_resoluti
 page = proc.readings(measurements=("rollout-healthy",), limit=50)   # read-only
 ~~~
 
+Review a standing answer with a recorded reason:
+
+```python
+proc.dispose_resolution(batch["rollout-healthy"].resolution_id,
+                        verdict="overturned", reason="The evidence omitted a failed region.")
+```
+
+The CLI is `cruxible procedure dispose NAME RESOLUTION_ID --verdict overturned
+--reason TEXT`; MCP is `cruxible_procedure_dispose(name=NAME, request={"resolution_id":
+ID, "verdict": "overturned", "reason": TEXT})` in the full profile. Use `upheld`
+to confirm the answer. Core records your judgment without interpreting the reason.
+The authenticated reviewing principal is recorded; this requires `GOVERNED_WRITE`.
+An exact retry returns the original disposition. Changing the last verdict is
+allowed only on the latest answer of a live Procedure revision. Inspect
+`get Procedure:NAME` and its history for the recorded verdict, reviewer and reason;
+`readings` reports no standing answer after overturn, until a later due measure
+records a replacement. Expired windows stay expired. `next` does not invent review
+judgments or automatically remeasure.
+
 A pending or expired measurement reports and writes nothing; a due one gathers
 evidence and resolves, and the standing resolution answers every later call
 until it is overturned. A reading is minted only for the grain the run really

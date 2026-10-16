@@ -1491,6 +1491,20 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.ProcedureMeasureResult)
 
+    def dispose_procedure_resolution(
+        self,
+        instance_id: str,
+        name: str,
+        *,
+        request: contracts.ProcedureResolutionDispositionRequest,
+    ) -> contracts.ProcedureResolutionDispositionResult:
+        """Record an attributed reviewer judgment on a measurement resolution."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/procedures/{name}/resolution-dispositions",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.ProcedureResolutionDispositionResult)
+
     def list_procedure_readings(
         self,
         instance_id: str,

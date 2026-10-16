@@ -56,3 +56,64 @@ def test_readings_take_grain_evaluation_time_and_at_from_stdin(
     assert request.subject_grain == "node"
     assert request.evaluation_time.isoformat() == "2026-08-24T15:00:00+00:00"
     assert request.at.git_oid == "a" * 40
+
+
+def test_dispose_passes_the_typed_judgment_and_prints_the_result(monkeypatch):
+    from cruxible_core.cli.commands import _common
+
+    targets = []
+    monkeypatch.setattr(_common, "_echo_write_target", lambda mode, kwargs: targets.append(mode))
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.procedures.dispositions import (
+        ProcedureResolutionDispositionResult,
+        ResolutionDispositionSummary,
+    )
+
+    captured = {}
+    resolution_id = "RSR-" + "a" * 32
+    result = ProcedureResolutionDispositionResult(
+        disposition=ResolutionDispositionSummary(
+            disposition_id="RSD-" + "b" * 32,
+            resolution_id=resolution_id,
+            sequence=1,
+            verdict="overturned",
+            reviewer_id="reviewer",
+            recorded_at=datetime.now(UTC),
+            reason="Missing evidence.",
+        ),
+        standing_resolution_id=None,
+        written_now=True,
+    )
+
+    def dispose(instance_id, name, *, request):
+        captured.update(name=name, request=request)
+        return result
+
+    monkeypatch.setattr(
+        playbill_commands,
+        "_server_call",
+        lambda call, **kwargs: call(SimpleNamespace(dispose_procedure_resolution=dispose), "inst"),
+    )
+    output = CliRunner().invoke(
+        cli,
+        [
+            "procedure",
+            "dispose",
+            "triage",
+            resolution_id,
+            "--verdict",
+            "overturned",
+            "--reason",
+            "Missing evidence.",
+        ],
+    )
+    assert output.exit_code == 0, output.output
+    assert "overturned by reviewer" in output.output and "Standing answer: none" in output.output
+    assert captured["request"].reason == "Missing evidence." and captured["name"] == "triage"
+    assert targets == ["active"]
+    refused = CliRunner().invoke(
+        cli,
+        ["procedure", "dispose", "triage", resolution_id, "--verdict", "upheld", "--reason", " "],
+    )
+    assert refused.exit_code != 0 and "reason" in refused.output

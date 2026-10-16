@@ -30,6 +30,7 @@ from cruxible_client.contracts.operational_reads import (
     GetResolutionContractCard,
     LiveView,
 )
+from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.repairs import ServedRepair
 
@@ -310,6 +311,9 @@ class GetProcedureNode(_StrictGetModel):
 
 
 class GetProcedureCard(_StrictGetModel):
+    measurement_reviews: tuple[ProcedureMeasurementReview, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
     procedure: str
     description: str | None = Field(default=None, exclude_if=_omit_none)
     #: A retired Procedure stays readable; nothing runs or measures it.
@@ -646,6 +650,9 @@ class GetHistory(_StrictGetModel):
 
     kind: Literal["revisions"] = "revisions"
     revisions: tuple[GetRevision, ...]
+    measurement_reviews: tuple[ProcedureMeasurementReview, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
 
 class _GetFieldEvent(_StrictGetModel):

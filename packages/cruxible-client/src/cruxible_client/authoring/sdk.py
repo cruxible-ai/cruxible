@@ -5248,6 +5248,29 @@ class Procedure:
         self._playbill._observe_read(result.observation_coordinate, expected=requested)
         return _measurement_batch(result)
 
+    def dispose_resolution(
+        self,
+        resolution_id: str,
+        *,
+        verdict: Literal["upheld", "overturned"],
+        reason: str,
+    ) -> api.ProcedureResolutionDispositionResult:
+        """Record your judgment on this Procedure's latest measurement answer.
+
+        Find the ID with measure(), readings(), or get. The same verdict,
+        reason and reviewer retry returns the original judgment.
+        """
+        return self._playbill._client.dispose_procedure_resolution(
+            self._playbill._instance_id,
+            self._name,
+            request=api.ProcedureResolutionDispositionRequest(
+                resolution_id=resolution_id,
+                verdict=verdict,
+                reason=reason,
+                at=self._playbill._read_at(self._coordinate),
+            ),
+        )
+
     def readings(
         self,
         *,

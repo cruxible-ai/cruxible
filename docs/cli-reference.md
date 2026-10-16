@@ -2039,10 +2039,24 @@ cruxible procedure run NAME INPUT_FILE|- [--evaluation-time TS] [--at FILE|-]
   [--resolution-contract FILE|-] [--trigger-event FILE|-] [--json]
 cruxible procedure measure NAME [--run-id RUN_ID] [--measurement NAME]...
   [--evaluation-time TS] [--at FILE] [--json]
+cruxible procedure dispose NAME RESOLUTION_ID --verdict upheld|overturned --reason TEXT [--json]
 cruxible procedure readings NAME [--run-id RUN_ID] [--measurement NAME]... [--subject-grain G]
   [--evaluation-time TS] [--at FILE]
   [--limit N] [--cursor C] [--json]
 ~~~
+
+`cruxible procedure dispose` records a reviewer's judgment and reason on the latest
+measurement answer. Find `RESOLUTION_ID` in `procedure measure`, `procedure readings`,
+or `get Procedure:NAME`. It requires `GOVERNED_WRITE` and attributes the judgment
+to the authenticated principal. Repeating the same verdict, reason and principal
+returns the original judgment. Uphold then overturn is allowed; another reason
+with the same last verdict refuses. Unknown or replaced answers, closed
+(retired/replaced) Procedure contracts, and unavailable books refuse. An overturn
+clears the standing answer; measure may produce a replacement while its original
+window remains open. Review does not extend an expired window.
+`cruxible get Procedure:NAME --detail history` shows a bounded tail of review
+judgments alongside revisions, with the total and truncation explicitly reported.
+`next` does not choose reviewer verdicts or automatically remeasure.
 
 Read a Procedure with `cruxible get Procedure:NAME`: its card says how it runs
 (`runnable`): `direct` (`procedure run`), `line` (only as a Line), or

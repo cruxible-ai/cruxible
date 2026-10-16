@@ -161,6 +161,18 @@ def _measurement_refusal_repair(code: str) -> object:
     return response.repair
 
 
+def _resolution_disposition_refusal_repair(code: str) -> object:
+    from cruxible_core.server.errors import error_to_response
+    from cruxible_core.service.procedures.resolution_dispositions import (
+        ResolutionDispositionRefused,
+    )
+
+    status, response = error_to_response(ResolutionDispositionRefused(code, "refused"))
+    assert status == (404 if code == "cruxible.resolution.unknown" else 409)
+    assert response.error_code == code
+    return response.repair
+
+
 def _next_refusal_repair(code: str) -> object:
     from cruxible_core.server.errors import error_to_response
     from cruxible_core.service.discovery.next import NextCursorMismatch
@@ -201,6 +213,10 @@ def test_every_runnable_repair_reaches_a_live_wire_response() -> None:
             assert isinstance(built, RepairOperation), code
             assert built.operation == declared.operation, code
             seen[code] = "procedure_measurement_refusal"
+        elif "resolution_disposition_refusal" in owners:
+            built = _resolution_disposition_refusal_repair(code)
+            assert built == declared, code
+            seen[code] = "resolution_disposition_refusal"
         elif "playbill_next_refusal" in owners:
             built = _next_refusal_repair(code)
             assert built == declared, code
