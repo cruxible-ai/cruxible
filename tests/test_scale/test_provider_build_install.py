@@ -481,3 +481,98 @@ def test_kit_mover_discovery_is_flat_with_retained_builds(
         work.append(_work(instance, monkeypatch, select))
         instance.connection.close()
     assert work[0] == work[1], work
+
+
+@pytest.mark.parametrize("route", ["authoring", "interface", "discovery", "catalog", "blueprint"])
+def test_read_work_is_flat_with_metadata_history(tmp_path, monkeypatch, package, route):
+    from cruxible_core.authoring.procedure_source import accepted_build_resolver
+    from cruxible_core.indexes.history.history_index import _MEMBER_SCHEMA
+    from cruxible_core.service.discovery.discovery import accepted_provider_interfaces
+    from cruxible_core.service.discovery.get import _fitting_names
+    from cruxible_core.service.procedures.provider_installation import installed_providers
+
+    work = []
+    for size in (20, 200):
+        instance, providers = _population(tmp_path / str(size), package, 2)
+        document, _build = package
+        from cruxible_client.contracts.provider_interfaces import (
+            provider_interface_path,
+            render_provider_interface,
+        )
+
+        registrations = {
+            provider_interface_path(r.identity.name): render_provider_interface(r)
+            for r in document.interface_registrations()
+        }
+        instance.tree = instance.tree.fork()
+        instance.tree.update(registrations)
+        insert_members(instance.connection, registrations, instance.coordinate.git_object_format)
+        insert_owners(
+            instance.connection,
+            parsed=parse_static_owners(registrations, accepted=instance.coordinate),
+            blobs=registrations,
+            codec=artifact_codec_for_compiler(PROVIDER_BUILDS_COMPILER),
+        )
+        instance.connection.executescript(_MEMBER_SCHEMA)
+        for seq in range(1, size + 1):
+            row = providers[0]
+            instance.connection.execute(
+                "INSERT INTO accepted_member_locations VALUES (?,?,?,?,?,?,?)",
+                (
+                    seq,
+                    0,
+                    provider_path(row.identity.name),
+                    "provider",
+                    row.identity.qualified,
+                    "sha256:" + f"{seq:064x}",
+                    1,
+                ),
+            )
+        typed = SimpleNamespace(
+            connection=instance.connection,
+            member_bytes=lambda path: instance.tree[path],
+            prefetch_members=lambda paths: None,
+        )
+        instance.bind_accepted_projection = lambda _: nullcontext(SimpleNamespace(typed=typed))
+        resolver = accepted_build_resolver(
+            instance, instance.coordinate, SimpleNamespace(connection=instance.connection)
+        )
+
+        def read():
+            if route == "authoring":
+                result = resolver.provider(NAME)
+                assert result.resolved == providers[-1].identity.name
+                assert len(result.considered) == 2
+            elif route == "interface":
+                assert resolver.interface(document.interface_registrations()[0].interface_id)
+            elif route == "discovery":
+                assert accepted_provider_interfaces(instance, instance.coordinate)
+            elif route == "catalog":
+                assert len(installed_providers(instance)) == 2
+            else:
+                assert _fitting_names(
+                    SimpleNamespace(typed=typed), (providers[-1].identity.name,)
+                ) == (NAME,)
+
+        work.append(_work(instance, monkeypatch, read))
+        instance.connection.close()
+    assert work[0] == work[1], work
+
+
+def test_exact_authoring_read_does_not_enumerate_sibling_builds(tmp_path, monkeypatch, package):
+    from cruxible_core.authoring.procedure_source import accepted_build_resolver
+
+    work = []
+    for size in (20, 200):
+        instance, providers = _population(tmp_path, package, size)
+        resolver = accepted_build_resolver(
+            instance, instance.coordinate, SimpleNamespace(connection=instance.connection)
+        )
+
+        def read():
+            result = resolver.provider(providers[0].identity.name)
+            assert len(result.considered) == 1
+
+        work.append(_work(instance, monkeypatch, read))
+        instance.connection.close()
+    assert work[0] == work[1], work

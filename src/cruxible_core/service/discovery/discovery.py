@@ -185,16 +185,18 @@ def accepted_provider_interfaces(
     """
 
     from cruxible_core.errors import RequestRefusedError
-    from cruxible_core.providers.builds import BuildRow, newest_live, registration_sequences
+    from cruxible_core.providers.builds import BuildRow, newest_live
 
     with instance.bind_accepted_projection(coordinate) as projection:
         typed = projection.typed
         provider_rows = typed.connection.execute(
-            "SELECT path,identity,artifact_digest,provider_name FROM main.providers "
+            "SELECT path,identity,artifact_digest,provider_name,registration_sequence "
+            "FROM main.providers "
             "WHERE lifecycle='live' ORDER BY path"
         ).fetchall()
         interface_rows = typed.connection.execute(
-            "SELECT identity,path,artifact_digest,interface_id FROM main.provider_interfaces "
+            "SELECT identity,path,artifact_digest,interface_id,registration_sequence "
+            "FROM main.provider_interfaces "
             "WHERE lifecycle='live' ORDER BY path"
         ).fetchall()
         typed.prefetch_members(
@@ -212,11 +214,15 @@ def accepted_provider_interfaces(
             for row in interface_rows
         ]
     by_id: dict[str, list[BuildRow]] = {}
-    for identity, path, digest, interface_id in interface_rows:
-        by_id.setdefault(interface_id, []).append(BuildRow(identity, path, digest, True))
+    for identity, path, digest, interface_id, sequence in interface_rows:
+        by_id.setdefault(interface_id, []).append(
+            BuildRow(identity, path, digest, True, registration_sequence=sequence)
+        )
     by_name: dict[str, list[BuildRow]] = {}
-    for path, identity, digest, name in provider_rows:
-        by_name.setdefault(name, []).append(BuildRow(identity, path, digest, True))
+    for path, identity, digest, name, sequence in provider_rows:
+        by_name.setdefault(name, []).append(
+            BuildRow(identity, path, digest, True, registration_sequence=sequence)
+        )
     newest = {key: rows[0].identity for key, rows in by_id.items()}
     newest_builds = {key: rows[0].identity for key, rows in by_name.items()}
     contested = [
@@ -225,23 +231,16 @@ def accepted_provider_interfaces(
         for rows in groups.values()
         if len(rows) > 1
     ]
-    if contested:
-        # Several live contracts of one id, or builds of one name: the most
-        # recently registered one is what a bare name selects. One history read
-        # for just those paths.
-        with instance.accepted_history_reader(
-            at=AcceptedCoordinate.from_internal(coordinate)
-        ) as history:
-            for target, rows in contested:
-                try:
-                    chosen = newest_live(rows, registration_sequences(history, rows))
-                except RequestRefusedError:
-                    chosen = None
-                key = rows[0].identity.partition(":")[2].partition("/")[0]
-                if chosen is None:
-                    target.pop(key, None)
-                else:
-                    target[key] = chosen.identity
+    for target, rows in contested:
+        try:
+            chosen = newest_live(rows, {row.identity: row.registration_sequence for row in rows})
+        except RequestRefusedError:
+            chosen = None
+        key = rows[0].identity.partition(":")[2].partition("/")[0]
+        if chosen is None:
+            target.pop(key, None)
+        else:
+            target[key] = chosen.identity
     return _provider_interfaces(
         providers,
         registrations,

@@ -309,6 +309,7 @@ OWNER_CODECS = (
             ("effect_class", "TEXT NOT NULL"),
             # NULL for a single-path (v1/v2) registration.
             ("contract_key", "TEXT"),
+            ("registration_sequence", "INTEGER NOT NULL"),
         ),
     ),
     OwnerCodec(
@@ -653,6 +654,8 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
     if owner.kind == "provider":
         runtime = getattr(source, "runtime_artifact", None)
         result["distribution_version"] = None if runtime is None else runtime.distribution.version
+        result["registration_sequence"] = 0
+    if owner.kind == "provider-interface":
         result["registration_sequence"] = 0
     if owner.kind in ("line", "procedure-mandate"):
         result.update(

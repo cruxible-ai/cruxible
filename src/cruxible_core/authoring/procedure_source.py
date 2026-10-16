@@ -117,6 +117,7 @@ def accepted_build_resolver(instance: Any, coordinate: Any, rows: EvaluationRows
     from cruxible_client.contracts.projection import AcceptedCoordinate
     from cruxible_core.providers.builds import (
         BuildResolver,
+        indexed_exact_provider,
         indexed_interface_registrations,
         indexed_provider_builds,
     )
@@ -127,7 +128,7 @@ def accepted_build_resolver(instance: Any, coordinate: Any, rows: EvaluationRows
         interface_rows=lambda interface_id: indexed_interface_registrations(
             rows.connection, interface_id
         ),
-        history=lambda: instance.accepted_history_reader(at=served),
+        exact_provider=lambda identity: indexed_exact_provider(rows.connection, identity),
         coordinate=served,
     )
 

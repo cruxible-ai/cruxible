@@ -126,23 +126,19 @@ def installed_providers(instance: PlaybillInstance) -> tuple[InstalledProvider, 
         BuildRow,
         live_pinners,
         newest_live,
-        registration_sequences,
     )
 
     coordinate = instance.accepted_coordinate()
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
         rows = connection.execute(
-            "SELECT identity,path,artifact_digest,provider_name,distribution_version "
+            "SELECT identity,path,artifact_digest,provider_name,distribution_version,registration_sequence "
             "FROM main.providers WHERE lifecycle='live' ORDER BY provider_name,identity"
         ).fetchall()
         contents = {row[1]: projection.typed.member_bytes(row[1]) for row in rows}
         pinned = {row[0]: len(live_pinners(connection, row[0], row[2])) for row in rows}
     builds = [BuildRow(row[0], row[1], row[2], True, row[4]) for row in rows]
-    with instance.accepted_history_reader(
-        at=AcceptedCoordinate.from_internal(coordinate)
-    ) as history:
-        sequences = registration_sequences(history, builds)
+    sequences = {row[0]: row[5] for row in rows}
     newest: dict[str, str] = {}
     for name in sorted({row[3] for row in rows}):
         try:
@@ -155,7 +151,7 @@ def installed_providers(instance: PlaybillInstance) -> tuple[InstalledProvider, 
         if chosen is not None:
             newest[name] = chosen.identity
     installed = []
-    for identity, path, _digest, name, _version in rows:
+    for identity, path, _digest, name, _version, _sequence in rows:
         provider = parse_provider(contents[path], path=path)
         distribution = getattr(getattr(provider, "runtime_artifact", None), "distribution", None)
         installed.append(

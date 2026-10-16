@@ -14,6 +14,11 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from cruxible_client.contracts.canonical import file_digest
+from cruxible_client.contracts.provider_interfaces import (
+    parse_provider_interface,
+    provider_interface_contract,
+    provider_interface_digest,
+)
 from cruxible_client.contracts.providers import parse_provider, provider_build_key, provider_digest
 from cruxible_core.proposals.settlement import parse_change_set_record
 
@@ -51,6 +56,15 @@ def remove_provider_domain(connection: sqlite3.Connection, name: str, domain: st
 
 def registration_key(content: bytes, path: str) -> str:
     """Stable runtime identity, unaffected by signing/capture metadata successors."""
+    if path.startswith("provider-interfaces/"):
+        registration = parse_provider_interface(content, path=path)
+        return provider_interface_contract(
+            interface_id=registration.interface_id,
+            interface_bytes_hex=registration.interface_bytes_hex,
+            interface_digest_domain=registration.interface_digest_domain,
+            interface_digest=registration.interface_digest,
+            effect_class=registration.effect_class,
+        ).identity.name.partition("/")[2]
     provider = parse_provider(content, path=path)
     runtime = getattr(provider, "runtime_artifact", None)
     return "" if runtime is None else provider_build_key(runtime).tagged
@@ -70,11 +84,13 @@ def cold_provider_source(
     ]
     latest = max((record.sequence for record in records), default=0)
     coordinates = {latest: head_oid}
+    oldest = latest
 
     def read(path: str, sequence: int) -> bytes:
+        nonlocal oldest
         while sequence not in coordinates:
-            oldest = min(coordinates)
             coordinates[oldest - 1] = repository.parent_of(coordinates[oldest])
+            oldest -= 1
         raw = repository.blob_at(coordinates[sequence], path)
         if raw is None:
             raise ValueError(f"historical Provider {path} at {sequence} is absent")
@@ -95,16 +111,24 @@ def refresh_provider_heads(
             continue
         record = parse_change_set_record(content, path=path)
         for member in record.members:
-            if member.artifact_kind != "provider":
+            if member.artifact_kind not in ("provider", "provider-interface"):
                 continue
-            name = member.path.removeprefix("providers/").removesuffix(".json")
+            name = member.path.partition("/")[2].removesuffix(".json")
             digest = ""
             if "/" not in name:
                 raw = sources.get(member.path)
                 commitment = getattr(member, "candidate_artifact_digest", None)
                 legacy = getattr(member, "artifact_digest", None)
+
+                def artifact_digest(raw: bytes) -> str:
+                    if member.artifact_kind == "provider":
+                        return provider_digest(parse_provider(raw, path=member.path)).tagged
+                    return provider_interface_digest(
+                        parse_provider_interface(raw, path=member.path)
+                    ).tagged
+
                 matches = raw is not None and (
-                    provider_digest(parse_provider(raw, path=member.path)).tagged == commitment
+                    artifact_digest(raw) == commitment
                     if commitment is not None
                     else file_digest(raw).tagged == legacy
                 )
@@ -121,6 +145,19 @@ def refresh_provider_heads(
                 "DO UPDATE SET sequence=min(sequence,excluded.sequence)",
                 (member.path, digest, record.sequence),
             )
+    for path, content in sources.items():
+        if not path.startswith("provider-interfaces/"):
+            continue
+        name = path.partition("/")[2].removesuffix(".json")
+        key = "" if "/" in name else registration_key(content, path)
+        sequence = connection.execute(
+            "SELECT sequence FROM provider_registration_order WHERE path=? AND digest=?",
+            (path, key),
+        ).fetchone()
+        connection.execute(
+            "UPDATE provider_interfaces SET registration_sequence=? WHERE path=?",
+            (0 if sequence is None else sequence[0], path),
+        )
     names = set()
     for path, content in sources.items():
         if not path.startswith("providers/"):

@@ -701,7 +701,6 @@ def _newest_interface(projection: Any, interface_id: str) -> str | None:
     from cruxible_core.providers.builds import (
         indexed_interface_registrations,
         newest_live,
-        registration_sequences,
     )
 
     rows = [
@@ -709,15 +708,14 @@ def _newest_interface(projection: Any, interface_id: str) -> str | None:
         for row in indexed_interface_registrations(projection.typed.connection, interface_id)
         if row.live
     ]
-    if len(rows) <= 1 or projection.typed.history is None:
+    if len(rows) <= 1:
         return rows[0].identity if len(rows) == 1 else None
     from cruxible_core.errors import RequestRefusedError
 
-    with projection.typed.history() as history:
-        try:
-            chosen = newest_live(rows, registration_sequences(history, rows))
-        except RequestRefusedError:
-            return None
+    try:
+        chosen = newest_live(rows, {row.identity: row.registration_sequence for row in rows})
+    except RequestRefusedError:
+        return None
     return None if chosen is None else chosen.identity
 
 
@@ -1480,25 +1478,14 @@ def _fitting_names(projection: Any, builds: tuple[str, ...]) -> tuple[str, ...]:
     the exact build."""
 
     from cruxible_core.errors import RequestRefusedError
-    from cruxible_core.providers.builds import (
-        indexed_provider_builds,
-        newest_live,
-        registration_sequences,
-    )
+    from cruxible_core.providers.builds import indexed_newest_provider
 
     names = []
     for name in sorted({build.partition("/")[0] for build in builds}):
-        rows = [
-            row for row in indexed_provider_builds(projection.typed.connection, name) if row.live
-        ]
-        if len(rows) > 1 and projection.typed.history is not None:
-            with projection.typed.history() as history:
-                try:
-                    newest = newest_live(rows, registration_sequences(history, rows))
-                except RequestRefusedError:
-                    newest = None
-        else:
-            newest = rows[0] if len(rows) == 1 else None
+        try:
+            newest = indexed_newest_provider(projection.typed.connection, name)
+        except RequestRefusedError:
+            newest = None
         fitting = sorted(build for build in builds if build.partition("/")[0] == name)
         if newest is not None and newest.identity.partition(":")[2] in fitting:
             names.append(name)

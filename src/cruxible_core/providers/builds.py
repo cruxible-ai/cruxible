@@ -9,7 +9,7 @@ most recently registered live build: the one first accepted last. Later
 signing-key or capture-declaration successors do not re-register a build.
 Interface registrations resolve the same way, per interface id.
 
-Inventory and authoring resolutions enumerate one name's rows and history.
+Inventory and authoring resolutions read maintained rows and registration order.
 Installation and move use the maintained name head instead, without enumerating
 retained builds; move selects only live reverse pinners from its name index.
 """
@@ -59,6 +59,7 @@ class BuildRow:
     artifact_digest: str
     live: bool
     version: str | None = None
+    registration_sequence: int = 0
 
 
 def tree_provider_builds(tree: Mapping[str, bytes], name: str) -> tuple[BuildRow, ...]:
@@ -112,9 +113,10 @@ def indexed_provider_builds(connection: sqlite3.Connection, name: str) -> tuple[
     """Every build of ``name`` from the typed index (``providers_by_name``)."""
 
     return tuple(
-        BuildRow(str(identity), str(path), str(digest), lifecycle == "live", version)
-        for identity, path, digest, lifecycle, version in connection.execute(
-            "SELECT identity,path,artifact_digest,lifecycle,distribution_version FROM "
+        BuildRow(str(identity), str(path), str(digest), lifecycle == "live", version, sequence)
+        for identity, path, digest, lifecycle, version, sequence in connection.execute(
+            "SELECT identity,path,artifact_digest,lifecycle,distribution_version,"
+            "registration_sequence FROM "
             "main.providers WHERE provider_name=? ORDER BY identity",
             (name,),
         )
@@ -140,11 +142,14 @@ def indexed_newest_provider(connection: sqlite3.Connection, name: str) -> BuildR
 
 def indexed_exact_provider(connection: sqlite3.Connection, identity: str) -> BuildRow | None:
     row = connection.execute(
-        "SELECT identity,path,artifact_digest,lifecycle,distribution_version FROM main.providers "
+        "SELECT identity,path,artifact_digest,lifecycle,distribution_version,"
+        "registration_sequence FROM main.providers "
         "WHERE identity=?",
         (identity,),
     ).fetchone()
-    return None if row is None else BuildRow(row[0], row[1], row[2], row[3] == "live", row[4])
+    return (
+        None if row is None else BuildRow(row[0], row[1], row[2], row[3] == "live", row[4], row[5])
+    )
 
 
 def indexed_move_pinners(
@@ -186,38 +191,20 @@ def indexed_interface_registrations(
     """Every registration of ``interface_id`` from the typed index."""
 
     return tuple(
-        BuildRow(str(identity), str(path), str(digest), lifecycle == "live")
-        for identity, path, digest, lifecycle in connection.execute(
-            "SELECT identity,path,artifact_digest,lifecycle FROM main.provider_interfaces "
+        BuildRow(
+            str(identity),
+            str(path),
+            str(digest),
+            lifecycle == "live",
+            registration_sequence=sequence,
+        )
+        for identity, path, digest, lifecycle, sequence in connection.execute(
+            "SELECT identity,path,artifact_digest,lifecycle,registration_sequence "
+            "FROM main.provider_interfaces "
             "WHERE interface_id=? ORDER BY identity",
             (interface_id,),
         )
     )
-
-
-def registration_sequences(history: Any, rows: Sequence[BuildRow]) -> dict[str, int]:
-    """Identity -> the generation that registered each build or contract.
-
-    Build-qualified artifacts keep their first accepted sequence through
-    metadata successors. A legacy single-path artifact orders its current
-    version, since that path could have held another package version before
-    builds. One history read for these paths; genesis sorts at 0 and a build
-    not accepted yet sorts after everything accepted.
-    """
-
-    versions = history.member_versions(tuple(row.path for row in rows)) if rows else {}
-    found = {}
-    for row in rows:
-        sequences = [
-            sequence
-            for sequence, digest in versions.get(row.path, ())
-            if "/" in row.identity or digest == row.artifact_digest
-        ]
-        if sequences:
-            found[row.identity] = min(sequences)
-        else:
-            found[row.identity] = 0 if versions.get(row.path) == () else _UNACCEPTED
-    return found
 
 
 def live_pinners(
@@ -344,8 +331,8 @@ class BuildResolver:
     """Resolve bare provider names and interface ids for one authoring base.
 
     ``provider_rows`` and ``interface_rows`` read one name's (or interface id's)
-    rows; ``history`` opens an accepted history reader at the base, only when a
-    name has several live builds to order. Every provider resolution made is
+    rows; registration sequences are maintained by accepted deltas. Exact references
+    seek one row without enumerating sibling builds. Every provider resolution made is
     kept in ``resolutions``, in request order.
     """
 
@@ -354,26 +341,27 @@ class BuildResolver:
         *,
         provider_rows: Callable[[str], Sequence[BuildRow]],
         interface_rows: Callable[[str], Sequence[BuildRow]],
-        history: Callable[[], Any],
+        exact_provider: Callable[[str], BuildRow | None],
         coordinate: AcceptedCoordinate,
     ) -> None:
         self._provider_rows = provider_rows
         self._interface_rows = interface_rows
-        self._history = history
+        self._exact_provider = exact_provider
         self._coordinate = coordinate
         self.resolutions: list[ProviderBuildResolutionV1] = []
 
     def _sequences(self, rows: Sequence[BuildRow]) -> dict[str, int]:
-        if sum(row.live for row in rows) <= 1:
-            return {row.identity: 0 for row in rows}
-        with self._history() as history:
-            return registration_sequences(history, rows)
+        return {row.identity: row.registration_sequence for row in rows}
 
     def provider(self, requested: str) -> ProviderBuildResolutionV1:
         """The build a provider reference names (exact, or most recently registered)."""
 
         name = requested.removeprefix("Provider:")
-        rows = self._provider_rows(name.partition("/")[0])
+        if "/" in name:
+            exact = self._exact_provider("Provider:" + name)
+            rows = () if exact is None else (exact,)
+        else:
+            rows = self._provider_rows(name)
         resolution = resolve_provider_build(
             name,
             rows=rows,
@@ -424,7 +412,7 @@ def resolve_in_tree(
 ) -> ProviderBuildResolutionV1:
     """Resolve a provider reference against one authoring tree at ``coordinate``.
 
-    The history is read only when the name has several live builds to order.
+    The coordinate-bound projection supplies maintained registration order.
     """
 
     name = requested.removeprefix("Provider:")
@@ -436,11 +424,17 @@ def resolve_in_tree(
             f"{requested!r} is not a provider name or build",
             repair=RepairOperation(operation="cruxible.provider.list"),
         ) from exc
-    rows = tree_provider_builds(tree, base)
     served = AcceptedCoordinate.from_internal(coordinate)
-    if "/" in name or sum(row.live for row in rows) <= 1:
-        sequences: dict[str, int] = {row.identity: 0 for row in rows}
-    else:
-        with instance.accepted_history_reader(at=served) as history:
-            sequences = registration_sequences(history, rows)
-    return resolve_provider_build(name, rows=rows, sequences=sequences, coordinate=served)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        if "/" in name:
+            exact = indexed_exact_provider(connection, "Provider:" + name)
+            rows = () if exact is None else (exact,)
+        else:
+            rows = indexed_provider_builds(connection, base)
+        return resolve_provider_build(
+            name,
+            rows=rows,
+            sequences={row.identity: row.registration_sequence for row in rows},
+            coordinate=served,
+        )
