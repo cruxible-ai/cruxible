@@ -9,6 +9,7 @@ from cruxible_client.contracts.acquisition_policies import (
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from cruxible_client.contracts.providers import provider_path, render_provider
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import (
@@ -21,8 +22,10 @@ from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
-from tests.core_support._pc_c_support import capture_contract, provider
+from tests.core_support._p2b1_support import accepted_interface
+from tests.core_support._pc_c_support import capture_contract
 from tests.core_support._support import client_material, initialize_local
+from tests.support.provider_builds import capture_provider_build
 from tests.test_claims.test_claims import _claim_type
 from tests.test_integration.test_acquisition_policies import _policy, _rule
 from tests.test_ledger.test_activation import _sign
@@ -34,12 +37,13 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
     instance, owner = initialize_local(tmp_path)
     base = instance.accepted_coordinate()
     contract = capture_contract()
-    provider_artifact = provider(contract)
+    provider_artifact = capture_provider_build(contract)
     policy = _policy(_rule("orders"))
     claim_type = _claim_type()
     candidate_tree = {
         **instance.tree_at(base.git_oid),
         capture_contract_path(contract.identity.name): render_capture_contract(contract),
+        accepted_interface().path: render_provider_interface(accepted_interface().registration),
         provider_path(provider_artifact.identity.name): render_provider(provider_artifact),
         claim_type_path(claim_type.predicate): render_claim_type(claim_type),
         acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
@@ -53,11 +57,12 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
         candidate_tree=candidate_tree,
         timestamp=TIMESTAMP,
     )
-    assert isinstance(proposed.candidate, CandidateRecord)
+    assert isinstance(proposed.candidate, CandidateRecord), proposed.evaluation.diagnostics
     assert {member.artifact_kind for member in proposed.candidate.members} == {
         "capture-contract",
         "claim-type",
         "provider",
+        "provider-interface",
         "source-acquisition-policy",
     }
     approval = _sign(
@@ -99,6 +104,7 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
         "capture-contract",
         "claim-type",
         "provider",
+        "provider-interface",
         "source-acquisition-policy",
     }.issubset(kinds)
     schemas = {fact.schema_id for fact in projected.semantic_facts}

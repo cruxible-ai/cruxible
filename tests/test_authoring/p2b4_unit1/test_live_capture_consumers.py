@@ -58,6 +58,7 @@ from tests.core_support._p2b1_support import (
 from tests.core_support._pc_c_support import capture_contract
 from tests.core_support._support import generate_client
 from tests.support.procedures import PERMISSIVE_CONTRACT
+from tests.support.provider_builds import accepted_build
 from tests.test_authoring.test_authoring_existing_capture import _activate
 from tests.test_authoring.test_authoring_preflight import _working_payload
 from tests.test_claims.test_claim_attestation_service import _request
@@ -123,6 +124,15 @@ def _acquisition_registration() -> ProviderInterfaceRegistrationV1:
 @pytest.fixture
 def acquisition_demo(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(p2b1_support, "interface_registration", _acquisition_registration)
+
+    # All producers and prepared runs pin the same current package build.
+    def build_provider():
+        return accepted_build(p2b1_support.provider_v2())
+
+    monkeypatch.setattr(__name__ + ".accepted_provider", build_provider)
+    monkeypatch.setattr(
+        "tests.test_providers.test_provider_invocation_journal.accepted_provider", build_provider
+    )
 
 
 @dataclass(frozen=True)
