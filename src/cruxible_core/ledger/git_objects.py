@@ -1,6 +1,8 @@
 """Git pack v2 / index v2 storage for SHA-1 and SHA-256 repositories.
 
-Writes publish a pack and its index together (index last); no per-object files.
+Writes publish a pack and then its index under the store lock; no per-object files.
+A provisional replacement reuses its pathname, so whole-store Git scans must
+also hold that lock across the subprocess to avoid a new-pack/old-index pair.
 A cold read indexes existing packs once. Our publications extend that index by
 just their new entries; external gc/repack changes trigger a cold rediscovery.
 """

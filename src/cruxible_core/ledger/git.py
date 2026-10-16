@@ -1951,13 +1951,20 @@ class GitLedger:
         return _batch_reader(self.path).object_info((oid,))[oid] is not None
 
     def unreachable_commits(self) -> tuple[str, ...]:
-        """List unreachable commit OIDs without pruning or mutating object storage."""
+        """List unreachable commits while excluding in-process pack publication.
 
-        rows = (
-            self._git(["fsck", "--unreachable", "--no-reflogs", "--no-progress"])
-            .decode()
-            .splitlines()
-        )
+        Git scans the whole object store, so callers reserve this for recovery
+        or explicit inspection. Provisional packs reuse a pathname: the pack
+        and index renames are individually atomic, but the pair is not. Hold
+        the same lock as publication and targeted removal until Git exits.
+        """
+
+        with _batch_reader(self.path).store.lock:
+            rows = (
+                self._git(["fsck", "--unreachable", "--no-reflogs", "--no-progress"])
+                .decode()
+                .splitlines()
+            )
         commits: list[str] = []
         for row in rows:
             fields = row.split()
