@@ -178,6 +178,10 @@ def _objects_counted() -> Iterator[None]:
             value = frame.f_locals.get("self", frame.f_locals.get("cls"))
             name = value.__name__ if isinstance(value, type) else type(value).__name__
             _COUNTS.counts["model:" + name] += 1
+            caller = frame.f_back
+            if caller is not None:
+                site = f"{caller.f_code.co_filename}:{caller.f_lineno}"
+                _COUNTS.counts[f"model_site:{name}:{site}"] += 1
         elif code in codes:
             _COUNTS.counts[codes[code]] += 1
 
@@ -262,6 +266,10 @@ def _encoding(original: Callable[[object], bytes]) -> Callable[[object], bytes]:
         if _COUNTS.measuring():
             _COUNTS.counts["encodes"] += 1
             _COUNTS.counts["encoded_bytes"] += len(encoded)
+            caller = sys._getframe(1)
+            site = f"{caller.f_code.co_filename}:{caller.f_lineno}"
+            _COUNTS.counts["encode_site:" + site] += 1
+            _COUNTS.counts["encode_bytes_site:" + site] += len(encoded)
         return encoded
 
     return counted
@@ -515,9 +523,9 @@ def test_a_small_commit_after_a_large_one_does_not_encode_the_parent_change(
     measured: list[Counter[str]] = []
 
     def counted_prepare(*args: Any, **kwargs: Any) -> Any:
-        with _counted() as counts, _objects_counted():
-            result = prepare(*args, **kwargs)
-        measured.append(Counter(counts))
+        before = Counter(_COUNTS.counts)
+        result = prepare(*args, **kwargs)
+        measured.append(Counter(_COUNTS.counts) - before)
         return result
 
     monkeypatch.setattr(instance_module, "prepare_generation", counted_prepare)
@@ -527,21 +535,32 @@ def test_a_small_commit_after_a_large_one_does_not_encode_the_parent_change(
             *(_claim(qualifier=f"parent-size-{i}") for i in range(first, first + count))
         )
         _forget_parsed_receipts()
-        intent = coordinator.create(
-            actor=actor, payload=payload, canonical_timestamp=TIMESTAMP
-        ).intent
         before = len(measured)
-        _accept(instance, owner, coordinator, intent.intent_id, actor)
+        with _counted() as counts, _objects_counted():
+            intent = coordinator.create(
+                actor=actor, payload=payload, canonical_timestamp=TIMESTAMP
+            ).intent
+            _accept(instance, owner, coordinator, intent.intent_id, actor)
         assert len(measured) == before + 1
-        return measured[-1]
+        return Counter(counts)
 
     commit(0, 1)
     small = commit(1, 1)
     commit(2, 2 * N)
     after_large = commit(2 + 2 * N, 1)
-    for name in ("encodes", "encoded_bytes", "claim_parses"):
-        assert after_large[name] <= small[name] * LARGE_PARENT_RATIO + FLAT_SLACK[name], (
-            name,
-            small,
-            after_large,
-        )
+    report = (
+        f"whole small {dict(small)}; whole after large {dict(after_large)}; "
+        f"preparation {[dict(c) for c in measured]}"
+    )
+    destination = os.environ.get("CRUXIBLE_WHOLE_WRITE_REPORT")
+    if destination:
+        Path(destination).write_text(report + "\n")
+    violations = []
+    for label, prior, after in (
+        ("whole write", small, after_large),
+        ("preparation", measured[1], measured[3]),
+    ):
+        for name in ("encodes", "encoded_bytes", "claim_parses"):
+            if after[name] > prior[name] * LARGE_PARENT_RATIO + FLAT_SLACK[name]:
+                violations.append((label, name, prior[name], after[name]))
+    assert not violations, (violations, report)

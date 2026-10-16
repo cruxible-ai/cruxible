@@ -546,7 +546,11 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
             canonical_timestamp="2026-09-02T13:10:00.000000Z",
         ).intent
         submitted = coordinator.submit(accepted.intent_id, actor=_ACTOR)
-        assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+        assert submitted.status.proposal_id is not None, (
+            None
+            if submitted.intent.last_preflight is None
+            else submitted.intent.last_preflight.model_dump(mode="json")
+        )
         _activate(instance, submitted)
         pending = coordinator.create(
             actor=_ACTOR,
@@ -587,7 +591,11 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
         actor=_ACTOR, payload=revision, canonical_timestamp="2026-09-02T13:13:00.000000Z"
     ).intent
     submitted = coordinator.submit(revised.intent_id, actor=_ACTOR)
-    assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+    assert submitted.status.proposal_id is not None, (
+        None
+        if submitted.intent.last_preflight is None
+        else submitted.intent.last_preflight.model_dump(mode="json")
+    )
     _activate(instance, submitted)
     instance.refresh()
     assert coordinator.status(revised.intent_id, actor=_ACTOR).state == "accepted"
@@ -737,7 +745,11 @@ def test_one_submit_verifies_a_shared_capture_once(
 
     submitted = coordinator.submit(intent.intent_id, actor=_ACTOR)
 
-    assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+    assert submitted.status.proposal_id is not None, (
+        None
+        if submitted.intent.last_preflight is None
+        else submitted.intent.last_preflight.model_dump(mode="json")
+    )
     # Lowering, the preflight laws and admission share the submit's one context:
     # one run lookup and one verification for six Claims. The Capture is read
     # once to lower its first citation and once to verify it; its material once
