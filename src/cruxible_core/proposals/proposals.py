@@ -3298,9 +3298,10 @@ def historical_capture_contract_resolver(
 
 
 def _claim_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_core.compiler.sealed_members import sealed_claim_member
     from cruxible_core.indexes.evaluated_state import mapped_values
 
-    claim = parse_claim(context.content, path=context.path)
+    claim = sealed_claim_member(context.content, path=context.path).claim
     if claim.backing.attestation_digests and any(
         entry.kind == "attestation"
         for entry in artifact_kinds_for_compiler(context.current.compiler).entries()

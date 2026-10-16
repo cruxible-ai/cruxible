@@ -167,6 +167,7 @@ def parse_static_owners(
         artifact_codec=codec,
         verified_change_sets=verified_change_sets,
         selected_member_history=selected_member_history,
+        carry_members=True,
     )
     envelopes = list(parsed.envelopes)
     # Keyed exactly as parse_projection_tree keys them: a Claim's capture-contract

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Mapping, cast
@@ -596,6 +597,7 @@ def parse_projection_tree(
     accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
     verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
     selected_member_history: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
+    carry_members: bool = False,
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream.
 
@@ -611,9 +613,6 @@ def parse_projection_tree(
     from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
     from cruxible_client.contracts.claims import (
         ClaimFormatError,
-        claim_artifact_digest,
-        claim_statement_digest,
-        parse_claim,
         parse_claim_law_evidence,
     )
     from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -674,7 +673,7 @@ def parse_projection_tree(
             continue
         content = blobs[path]
         kind = registered_path_kind(path, artifact_kinds=artifact_kinds)
-        payload = _load_object(content, path=path)
+        payload = {} if kind == "claim" else _load_object(content, path=path)
         try:
             if kind == "approval-policy":
                 policy = parse_approval_policy(content, path=path, codec=artifact_codec)
@@ -2328,8 +2327,11 @@ def parse_projection_tree(
                 )
                 continue
             if kind == "claim":
+                from cruxible_core.compiler.sealed_members import sealed_claim_member
+
                 try:
-                    claim = parse_claim(content, path=path, codec=artifact_codec)
+                    member = sealed_claim_member(content, path=path, codec=artifact_codec)
+                    claim = member.claim
                 except ClaimFormatError as exc:
                     raise ProjectionFormatError(
                         f"registered Claim failed strict validation: {path}"
@@ -2341,9 +2343,8 @@ def parse_projection_tree(
                         f"duplicate semantic identity {identity!r}: {previous} and {path}"
                     )
                 identities[identity] = path
-                input_digest = file_digest(content).tagged
-                artifact_digest = claim_artifact_digest(claim).tagged
-                statement_digest = claim_statement_digest(claim.statement).tagged
+                input_digest = member.input_digest
+                artifact_digest = member.artifact_digest
                 format_tag: str = claim.artifact_format
                 predecessor_digest = claim.lifecycle.predecessor_digest
                 retired = claim.lifecycle.state == "retired"
@@ -2377,14 +2378,10 @@ def parse_projection_tree(
                     )
                     for target, digest, role in claim_pins
                 )
-                static_facts = _claim_static_facts(
-                    claim,
-                    path=path,
-                    input_digest=input_digest,
-                    artifact_digest=artifact_digest,
-                    statement_digest=statement_digest,
-                )
-                semantic_facts.extend(static_facts)
+                # Compiler-owned write passes carry immutable rows. Standalone
+                # reconstruction and read adapters retain their detached value
+                # contract, without parsing or normalizing the facts again.
+                semantic_facts.extend(member.facts if carry_members else deepcopy(member.facts))
                 if coordinate is not None and registry.supports(
                     "cruxible.claim.current_verdict",
                     1,

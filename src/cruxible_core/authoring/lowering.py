@@ -1933,7 +1933,9 @@ def _lower_claim(
     # law reports it.
     final: ClaimArtifactAny = claim
     try:
-        final = parse_claim(claim_bytes, path=path)
+        from cruxible_core.compiler.sealed_members import sealed_claim_member
+
+        final = sealed_claim_member(claim_bytes, path=path).claim
     except ClaimFormatError:
         pass
     if install_contract:
