@@ -337,6 +337,7 @@ def test_an_unknown_creation_reference_refuses(instance: PlaybillInstance) -> No
 def test_revision_33_is_its_own_coordinate_and_revision_32_keeps_its_grammar() -> None:
     from cruxible_core.compiler.compiler import (
         GOVERNED_TRIGGERS_COMPILER,
+        PROVIDER_BUILDS_COMPILER,
         SUBJECT_IDENTITY_COMPILER,
         artifact_kinds_for_compiler,
         current_compiler_coordinate,
@@ -344,7 +345,7 @@ def test_revision_33_is_its_own_coordinate_and_revision_32_keeps_its_grammar() -
     )
 
     assert SUBJECT_IDENTITY_COMPILER != GOVERNED_TRIGGERS_COMPILER
-    assert current_compiler_coordinate() == SUBJECT_IDENTITY_COMPILER
+    assert current_compiler_coordinate() == PROVIDER_BUILDS_COMPILER
     old = {
         entry.kind for entry in artifact_kinds_for_compiler(GOVERNED_TRIGGERS_COMPILER).entries()
     }

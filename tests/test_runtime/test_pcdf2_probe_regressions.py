@@ -44,13 +44,13 @@ from cruxible_core.compiler.compiler import (
     PC_DF2_COMPILER,
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     PC_HR_COMPILER,
+    PROVIDER_BUILDS_COMPILER,
     PROVIDER_CONTRACT_COMPILER,
     PROVIDER_PACKAGE_COMPILER,
     RESOLUTION_COMPILER,
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
     SOURCE_CHECKED_COMPILER,
-    SUBJECT_IDENTITY_COMPILER,
     SUPPORTED_COMPILERS,
     TRIGGER_CAPTURE_COMPILER,
     UPGRADE_COMPILER,
@@ -92,7 +92,7 @@ def _genesis_replay_at_retained_compiler(
         from cruxible_core.compiler import compiler
         from cruxible_core.runtime.instance import PlaybillInstance
 
-        assert compiler.current_compiler_coordinate() == compiler.SUBJECT_IDENTITY_COMPILER
+        assert compiler.current_compiler_coordinate() == compiler.PROVIDER_BUILDS_COMPILER
         reopened = PlaybillInstance.open(
             Path(sys.argv[1]),
             trust_root=TrustRoot.model_validate(json.loads(sys.argv[2])),
@@ -125,7 +125,7 @@ def _genesis_replay_at_retained_compiler(
 
 
 def test_rev15_and_rev12_remain_exact_codec_lineage_members() -> None:
-    assert current_compiler_coordinate() == SUBJECT_IDENTITY_COMPILER
+    assert current_compiler_coordinate() == PROVIDER_BUILDS_COMPILER
     for succeeded in (
         ATTESTATION_COMPILER,
         RESOLUTION_COMPILER,
