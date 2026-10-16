@@ -155,14 +155,33 @@ def recording_body_identities() -> Iterator[None]:
 
 
 def body_identity(store: Any, digest: str) -> tuple[int, int, int, int, int] | None:
-    """Sweep baseline, independent of the index's authoritative presence answer."""
+    """Sweep baseline, checked by workers before replacing an earlier observation.
+
+    Reads use only the last verified identity. Workers inspect only the changed
+    Claims' consulted bodies and verify identities not covered by that proof;
+    damage must be sequenced before its physical identity becomes a baseline.
+    """
 
     if body_present(store, digest) is False:
         return None
-    observe = getattr(
-        store, "file_identity" if _OBSERVE_IDENTITIES.get() else "verified_identity", None
-    )
-    return None if observe is None else observe(digest)
+    observe = getattr(store, "verified_identity", None)
+    verified = None if observe is None else observe(digest)
+    if not _OBSERVE_IDENTITIES.get():
+        return verified
+    observe = getattr(store, "file_identity", None)
+    if observe is None:
+        return None
+    identity: tuple[int, int, int, int, int] | None = observe(digest)
+    if identity is None or identity != verified:
+        try:
+            whole = store.verify(digest)
+        except CasError:
+            whole = False
+        if not whole:
+            # verify's damage logging is best effort. Require the completion
+            # here before allowing a damaged observation to replace a baseline.
+            store.availability(digest)
+    return identity
 
 
 def recording_identities() -> bool:

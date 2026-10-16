@@ -779,9 +779,9 @@ def _current_replay_available(
         if remembered is not None:
             answer, consulted = remembered
             if bodies is not None:
-                # The boolean belongs to the landing position. A worker's
-                # physical baseline belongs to its own observation, never to
-                # a previous reader's in-memory verified-file cache.
+                # The boolean belongs to the landing position. A worker checks
+                # changed physical identities before persisting new baselines;
+                # memo reuse alone is no proof that the files remain intact.
                 if recording_identities():
                     bodies.update(
                         (digest, body_identity(store, digest)) for digest, _seen in consulted

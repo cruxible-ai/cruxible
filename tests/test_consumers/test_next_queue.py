@@ -942,6 +942,66 @@ def _replayable(instance, capture: str, positions) -> bool:  # type: ignore[no-u
         return verdict_evidence._current_replay_available(instance, capture, readers={})
 
 
+@pytest.mark.parametrize("reuse", ("availability", "metadata", "availability-cold-metadata"))
+@pytest.mark.parametrize("damage", ("missing", "corrupt"))
+@pytest.mark.parametrize("part", ("envelope", "commitment"))
+def test_retirement_update_cannot_hide_body_damage_from_the_sweep(
+    tmp_path: Path, reuse: str, damage: str, part: str
+) -> None:
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.service.evidence import evidence as verdict_evidence
+    from cruxible_core.storage.capture_metadata import _ENVELOPES
+    from cruxible_core.storage.read_positions import body_present
+    from tests.core_support._retirement_support import retire_claim
+
+    instance, owner = seed_claims(tmp_path)
+    claim = _current_claim(instance)
+    capture = claim.backing.capture_digests[0]
+    store = instance.body_store()
+    envelope = parse_capture_envelope(store.read(capture, access=_BYTES_READER))
+    assert envelope.commitment.materialization == "cas"
+    body = capture if part == "envelope" else envelope.commitment.digest
+    path = store._path(body)
+    original = path.read_bytes()
+    _drain(instance)  # Healthy baseline from the live Claim's facts.
+    retire_claim(instance, owner, claim.identity.name)
+    # Warm availability at the retirement's landing position. The retirement
+    # update will skip the live citation-byte read that otherwise checks envelopes.
+    assert verdict_evidence._current_replay_available(instance, capture, readers={})
+    landed = facts.read_positions(instance)
+    if damage == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(b"damaged between facts updates")
+    if reuse == "metadata":
+        verdict_evidence._AVAILABILITY_MEMO.clear()
+    elif reuse == "availability-cold-metadata":
+        _ENVELOPES.clear()
+
+    _drain(instance)  # Refreshes the retired Claim before any sweep fires.
+    _sweep(instance, EVALUATION_TIME)
+    assert body_present(store, body) is False
+    assert [(row.digest, row.kind) for row in store.landings.after(landed.landing)] == [
+        (body, damage)
+    ]
+    assert not _replayable(instance, capture, facts.read_positions(instance))
+    _assert_equivalent(instance, EVALUATION_TIME)
+    assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=EVALUATION_TIME)
+
+    # The same interleaving must retain the sweep's ability to sequence repair.
+    damaged = facts.read_positions(instance)
+    path.write_bytes(original)
+    later = EVALUATION_TIME + timedelta(days=1)
+    _sweep(instance, later)
+    assert body_present(store, body) is True
+    assert [(row.digest, row.kind) for row in store.landings.after(damaged.landing)] == [
+        (body, "stored")
+    ]
+    assert _replayable(instance, capture, facts.read_positions(instance))
+    _assert_equivalent(instance, later)
+    assert facts.stored_tables(instance) == facts.rebuilt_tables(instance, at=later)
+
+
 @pytest.mark.parametrize("damage", ("corrupt", "deleted"))
 def test_a_damaged_commitment_reads_not_replayable_from_the_sweeps_damage_record(
     tmp_path: Path, damage: str
