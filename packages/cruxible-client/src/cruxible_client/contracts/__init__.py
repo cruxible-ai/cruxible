@@ -2024,6 +2024,8 @@ class ProviderInterfaceImplementation(BaseModel):
     implementation_digest: str
     #: The most recently registered live build of its provider name.
     newest: bool = True
+    #: Exact head(s) of this provider name, including builds on other contracts.
+    newest_builds: tuple[str, ...] = ()
 
 
 class ProviderInterfaceEntry(BaseModel):

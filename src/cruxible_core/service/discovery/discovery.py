@@ -70,6 +70,8 @@ class ProviderInterfaceImplementationV1(_StrictDiscoveryServiceModel):
     #: This build is its provider name's most recently registered live build:
     #: what a bare provider name selects.
     newest: bool = True
+    #: Exact head(s) of this provider name, including builds on other contracts.
+    newest_builds: tuple[str, ...] = ()
 
     @field_validator("provider_artifact_digest", "implementation_digest")
     @classmethod
@@ -117,6 +119,7 @@ def _provider_interfaces(
     *,
     newest: Mapping[str, str],
     newest_builds: frozenset[str],
+    build_heads: Mapping[str, tuple[str, ...]] | None = None,
 ) -> tuple[AcceptedProviderInterface, ...]:
     """The inventory entries of live registrations, each with the live builds
     implementing its exact contract (interface id and digest)."""
@@ -135,6 +138,17 @@ def _provider_interfaces(
                     provider_artifact_digest=provider_digest(provider).tagged,
                     implementation_digest=implementation.implementation_digest,
                     newest=provider.identity.qualified in newest_builds,
+                    newest_builds=(build_heads or {}).get(
+                        provider.provider_name,
+                        tuple(
+                            sorted(
+                                item
+                                for item in newest_builds
+                                if item.partition(":")[2].partition("/")[0]
+                                == provider.provider_name
+                            )
+                        ),
+                    ),
                 )
             )
     entries: list[AcceptedProviderInterface] = []
@@ -241,11 +255,18 @@ def accepted_provider_interfaces(
             target.pop(key, None)
         else:
             target[key] = chosen.identity
+    build_heads = {}
+    for name, rows in by_name.items():
+        last = max(row.registration_sequence for row in rows)
+        build_heads[name] = tuple(
+            sorted(row.identity for row in rows if row.registration_sequence == last)
+        )
     return _provider_interfaces(
         providers,
         registrations,
         newest=newest,
         newest_builds=frozenset(newest_builds.values()),
+        build_heads=build_heads,
     )
 
 

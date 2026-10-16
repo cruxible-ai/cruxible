@@ -96,6 +96,24 @@ class Previous:
     path: str = ""
 
 
+class ProviderSelectionError(ValueError):
+    """A bare name cannot select a unique newest build for this contract."""
+
+    code = "cruxible.provider.newest_does_not_fit"
+
+    def __init__(
+        self, provider: str, *, newest_builds: tuple[str, ...], fitting_builds: tuple[str, ...]
+    ) -> None:
+        self.provider = provider
+        self.newest_builds = newest_builds
+        self.fitting_builds = fitting_builds
+        super().__init__(
+            f"Bare provider {provider!r} requires its unique newest build "
+            f"({', '.join(newest_builds) or 'no unique newest build'}); "
+            f"select an exact fitting build explicitly: {', '.join(fitting_builds) or 'none'}"
+        )
+
+
 class ProviderBinding(BaseModel):
     """Names and exact interface/implementation identifiers from provider discovery.
 
@@ -142,10 +160,17 @@ class ProviderBinding(BaseModel):
             or ("/" not in identity and p.provider_identity.partition("/")[0] == identity)
         ]
         names = {p.provider_identity.partition("/")[0] for p in matches}
-        if len(matches) > 1 and len(names) == 1:
-            # Several builds of one name: the bare name selects its most
-            # recently registered live build.
-            matches = [p for p in matches if p.newest]
+        if (identity is not None and "/" not in identity) or (len(matches) > 1 and len(names) == 1):
+            newest = [p for p in matches if p.newest]
+            if len(newest) != 1:
+                raise ProviderSelectionError(
+                    identity or next(iter(names)),
+                    newest_builds=tuple(
+                        sorted({head for p in matches for head in p.newest_builds})
+                    ),
+                    fitting_builds=tuple(sorted(p.provider_identity for p in matches)),
+                )
+            matches = newest
         if len(matches) != 1:
             raise ValueError("Select exactly one registered provider for this interface")
         selected = matches[0]
@@ -697,6 +722,7 @@ __all__ = [
     "ProposeChangeSet",
     "SettleChangeSet",
     "ProviderBinding",
+    "ProviderSelectionError",
     "Sequence",
     "Source",
     "StateTap",
