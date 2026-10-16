@@ -23,6 +23,7 @@ re-hashes only the touched leaves and the interior nodes above them.
 from __future__ import annotations
 
 import bisect
+import os
 import threading
 from collections import OrderedDict
 from collections.abc import (
@@ -311,6 +312,15 @@ _INTERIOR_LISTINGS: OrderedDict[tuple[str, str], _InteriorListing] = OrderedDict
 _INTERIOR_LOCK = threading.Lock()
 _INTERIOR_CAPACITY = 400_000
 _INTERIOR_ENTRIES = 0
+
+
+def _reset_interior_lock_after_fork() -> None:
+    global _INTERIOR_LOCK
+    _INTERIOR_LOCK = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_interior_lock_after_fork)
 
 
 def _remember_interior(domain: str, digest: str, listing: _InteriorListing) -> None:

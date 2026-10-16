@@ -3530,7 +3530,7 @@ def _after_fork_in_parent() -> None:
 def _after_fork_in_child() -> None:
     global _BATCH_READERS_LOCK, _TREE_LISTINGS_LOCK, _VERIFIED_COMMITS_LOCK
     global _LISTING_INDEXES_LOCK, _TREE_CHANGES_LOCK, _PACKED_REFS_LOCK, _CONFIG_READS_LOCK
-    global _PARSED_TREES_LOCK
+    global _PARSED_TREES_LOCK, _ENCODED_TREES_LOCK
     inherited = tuple(_BATCH_READERS.values())
     _BATCH_READERS.clear()
     for reader in inherited:
@@ -3545,6 +3545,7 @@ def _after_fork_in_child() -> None:
     _PACKED_REFS_LOCK = threading.Lock()
     _CONFIG_READS_LOCK = threading.Lock()
     _PARSED_TREES_LOCK = threading.Lock()
+    _ENCODED_TREES_LOCK = threading.Lock()
 
 
 if hasattr(os, "register_at_fork"):
