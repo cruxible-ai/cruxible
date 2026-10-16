@@ -223,11 +223,11 @@ All services are clear to release.
 <!-- cruxible:block:exposed -->
 <!-- /cruxible:block:exposed -->
 EOF
-cruxible sources add deps docs/dependencies.md
+cruxible files add deps docs/dependencies.md
 git add -A && git commit -m "Pins and dependencies page"
 ~~~
 
-`sources add` gives the page a name, `deps`, that Cruxible can refer to. Both
+`files add` gives the page a name, `deps`, that Cruxible can refer to. Both
 passages depend on the same question, the kit's saved query
 `app.exposed_services`: *which services pin a release with a known advisory?*
 Stamp each passage with that question. `--render` also fills the table in

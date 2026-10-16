@@ -83,7 +83,7 @@ def test_the_client_joins_workspace_paths_into_sources_and_projections(tmp_path:
     _add_document(instance, "reports", NOTE.encode())
     _add_document(instance, "design-note", NOTE.encode())
     # A local catalog entry whose file is gone.
-    (workspace / ".cruxible" / "sources.local.yaml").write_text(
+    (workspace / ".cruxible" / "files.local.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: local\n"
         "entries:\n"

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.errors import ChangeRefusedError, DataValidationError
+from cruxible_core.errors import ChangeRefusedError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime.permissions import TOOL_PERMISSIONS, PermissionMode, reset_permissions
@@ -37,7 +37,7 @@ def test_repin_by_page_previews_then_stamps_and_declares(
         [tmp_path],
         lambda: handlers.handle_playbill_block_repin(
             "inst_projection",
-            file="runbook.md",
+            file="corpus.runbook",
             block="summary",
             claims=["CLM-first"],
             dry_run=True,
@@ -51,7 +51,7 @@ def test_repin_by_page_previews_then_stamps_and_declares(
     assert adapter.declared == []
 
     stamped = handlers.handle_playbill_block_repin(
-        "inst_projection", source="corpus.runbook", block="summary", claims=["CLM-first"]
+        "inst_projection", file="corpus.runbook", block="summary", claims=["CLM-first"]
     )
 
     assert stamped.status == "repinned"
@@ -60,17 +60,17 @@ def test_repin_by_page_previews_then_stamps_and_declares(
     assert b"<!-- cruxible:block:summary:ref:" in (tmp_path / "runbook.md").read_bytes()
 
 
-def test_repin_names_its_page_exactly_once(adapter: _RepinClient) -> None:
-    with pytest.raises(DataValidationError, match="exactly one of file or source"):
+def test_repin_requires_a_catalog_file(adapter: _RepinClient) -> None:
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+
+    with pytest.raises(TypeError, match="file"):
         handlers.handle_playbill_block_repin("inst_projection", block="summary")
-    with pytest.raises(DataValidationError, match="exactly one of file or source"):
+    with pytest.raises(TypeError, match="source"):
         handlers.handle_playbill_block_repin(
-            "inst_projection", block="summary", file="runbook.md", source="corpus.runbook"
+            "inst_projection", block="summary", file="corpus.runbook", source="corpus.runbook"
         )
-    with pytest.raises(DataValidationError, match="escapes|normalized"):
-        handlers.handle_playbill_block_repin(
-            "inst_projection", block="summary", file="../outside.md"
-        )
+    with pytest.raises(SourceSelectionError, match="catalogued file"):
+        handlers.handle_playbill_block_repin("inst_projection", block="summary", file="unknown")
 
 
 def test_the_block_tools_replace_declare_on_mcp() -> None:
@@ -122,7 +122,7 @@ def test_a_read_only_agent_checks_blocks_but_never_edits_a_page(
 
     schemas, (detach_refused, detach_text), _sync_error = _run(exercise())
 
-    assert schemas["cruxible_block_sync"] == {"instance_id", "files", "all_sources"}
+    assert schemas["cruxible_block_sync"] == {"instance_id", "files", "all_files"}
     assert "cruxible_block_detach" not in schemas
     assert detach_refused and "GOVERNED_WRITE" in detach_text
     assert page.read_bytes() == before
@@ -254,3 +254,42 @@ def test_a_page_edited_at_the_adapter_read_refuses_the_pinned_detach(
         )
     assert moved.value.error_code == "cruxible.preview.state_moved"
     assert page.read_bytes() == edited[0]
+
+
+def test_depublish_calls_the_daemon_by_file_id(
+    adapter: _RepinClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client import contracts
+    from tests.test_client.test_playbill_projection_repin import COORDINATE
+
+    calls = []
+
+    def depublish(instance_id, file_id, block_id, **kwargs):
+        calls.append((instance_id, file_id, block_id, kwargs))
+        return contracts.BlockDepublishResult(
+            source_id=file_id, block_id=block_id, outcome="would_depublish", coordinate=COORDINATE
+        )
+
+    monkeypatch.setattr(adapter, "depublish_block", depublish, raising=False)
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
+    (tmp_path / "runbook.md").unlink()
+    (tmp_path / ".cruxible/files.yaml").unlink()
+
+    async def exercise():
+        async with _protocol_session(create_server()) as session:
+            await session.initialize()
+            return await session.call_tool(
+                "cruxible_block_depublish",
+                {
+                    "instance_id": "inst_projection",
+                    "file_id": "corpus.runbook",
+                    "block_id": "summary",
+                    "dry_run": True,
+                },
+            )
+
+    result = _run(exercise())
+    assert not result.isError, result
+    assert calls == [
+        ("inst_projection", "corpus.runbook", "summary", {"dry_run": True, "at": None})
+    ]

@@ -108,7 +108,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:abb4d0b2e2ed4211fe15548bbecbb2cd23f63569d243cacc56f5c70cb470b36f"
+    "sha256:12f2be9a79e1ae2361f954bfd853a1eac7ca8c49b6263a317805b16cc5db4cdc"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -2259,7 +2259,7 @@ BlockSyncReason: TypeAlias = Literal[
     "workspace_not_attached",
     "workspace_binding_invalid",
     "workspace_instance_mismatch",
-    "workspace_source_catalog_invalid",
+    "workspace_file_catalog_invalid",
     "source_path_invalid",
     "source_not_projection_target",
     "block_marker_malformed",

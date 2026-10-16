@@ -235,7 +235,7 @@ def _claim_type(predicate: str, schema: dict[str, object]) -> ClaimType:
 def _workspace(root: Path) -> Path:
     workspace = root / "workspace"
     (workspace / ".cruxible").mkdir(parents=True)
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries: []\n",
         encoding="utf-8",
     )

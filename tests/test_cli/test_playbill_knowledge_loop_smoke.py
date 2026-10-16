@@ -540,11 +540,11 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     #    Subject is admitted first because tagless Claim input resolves accepted
     #    dependencies instead of carrying a private direct-writer closure.
     claim_identities: list[str] = []
-    # The source catalog names the one file both Claims cite (bind checks it).
+    # The file catalog names the one file both Claims cite (bind checks it).
     source_file = tmp_path / "claim-status.md"
     source_file.write_text("status: ready\nstatus: blocked\n", encoding="utf-8")
     (tmp_path / ".cruxible").mkdir(exist_ok=True)
-    (tmp_path / ".cruxible" / "sources.yaml").write_text(
+    (tmp_path / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"

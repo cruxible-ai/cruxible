@@ -217,3 +217,12 @@ def test_tool_parameters_use_declared_types_except_instance_defined_query_parame
             if annotation is None or names & {"dict", "object", "Any"}:
                 offenders.append(f"{function.name}.{parameter.arg}")
     assert offenders == [], f"untyped MCP parameters: {offenders}"
+
+
+def test_depublish_names_the_stored_file_identity() -> None:
+    schema = _schemas()["cruxible_block_depublish"].inputSchema
+    assert set(schema["properties"]) == {"instance_id", "file_id", "block_id", "dry_run", "at"}
+    assert set(schema["required"]) == {"file_id", "block_id"}
+    assert schema["properties"]["file_id"]["description"] == (
+        "The stored projection file identity; the file and catalog entry need not still exist."
+    )

@@ -337,14 +337,14 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             "Working notes nobody governs.",
         ),
     }
-    # Bind reads a file through the workspace's source catalog, the one mapping
+    # Bind reads a file through the workspace's file catalog, the one mapping
     # from a file to its source name. The bundle keeps its bodies catalog-free
     # (they are the arms' corpus), so binding runs in a scratch workspace that
     # catalogs each working source as evidence-only.
     catalog_root = Path(tempfile.mkdtemp(prefix="taubench-seed-"))
     shutil.copytree(bundle_dir / SEED_BODY_DIRECTORY, catalog_root, dirs_exist_ok=True)
     (catalog_root / ".cruxible").mkdir(exist_ok=True)
-    (catalog_root / ".cruxible" / "sources.yaml").write_text(
+    (catalog_root / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n"
         + "".join(
             f"  - name: {source_id}\n"

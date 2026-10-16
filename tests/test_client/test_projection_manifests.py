@@ -36,7 +36,7 @@ def test_compact_page_manifest_retention_and_refusals(tmp_path: Path) -> None:
         parse_projection_blocks(page, source_id=stamp.source_id, allow_bootstrap=True)
     with pytest.raises(ProjectionMarkerError, match="digest"):
         parse_projection_blocks(page, source_id=stamp.source_id, manifests={digest: b"corrupt"})
-    with pytest.raises(ProjectionMarkerError, match="source differs"):
+    with pytest.raises(ProjectionMarkerError, match="file identity differs"):
         parse_projection_blocks(page, source_id="another.source", manifests={digest: manifest})
     retain_local_manifests(tmp_path, {digest: manifest})
     assert load_projection_manifests(tmp_path, page) == {digest: manifest}
@@ -158,7 +158,7 @@ def test_compact_sync_and_coverage_preserve_manifest_binding(tmp_path: Path) -> 
         client,
         INSTANCE_ID,
         workspace=tmp_path,
-        source_id="corpus.runbook",
+        file="corpus.runbook",
         block_id="pub-example",
         backing_digest="sha256:" + "b" * 64,
         compact=True,

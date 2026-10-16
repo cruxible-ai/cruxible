@@ -152,7 +152,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "cruxible.block.detach",
         "cruxible.block.repin",
         "cruxible.block.sync",
-        "cruxible.sources.propose",
+        "cruxible.files.propose",
         "cruxible.proposal.readmit",
         "cruxible.proposal.approve",
         "cruxible.proposal.activate",

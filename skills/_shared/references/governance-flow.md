@@ -74,7 +74,7 @@ Before handing off:
 cruxible next                        # nothing unexpected; every row explained
 cruxible proposal list --status open # nothing left half-done
 cruxible block sync --all            # pages match their backings
-cruxible sources check               # catalogued Documents match their files
+cruxible files check               # catalogued Documents match their files
 cruxible kit status                  # when kits are installed
 ```
 

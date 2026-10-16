@@ -910,7 +910,7 @@
 
 - **A workspace-wide block sync no longer refuses on a source that merely
   quotes marker bytes.** `block sync --all` -- and the sync `proposal activate`
-  runs as its last step -- inferred its targets from every catalogued source,
+  runs as its last step -- inferred its targets from every catalogued file,
   so a captured report ABOUT the marker grammar was parsed as a projection page
   and refused `block_marker_malformed`, whose repair is to hand-edit a file that
   is exact accepted bytes. An inferred walk now notes such a source
@@ -1042,7 +1042,7 @@
   the draft and still chain.
 
 - **BEHAVIOUR CHANGE: a `Cruxible` connection no longer demands a workspace
-  source catalog.** The catalog is resolved the first time a surface actually
+  file catalog.** The catalog is resolved the first time a surface actually
   selects from the working tree, so a read-only connection -- orientation,
   search, `world()`, the new stub leaf -- works from any directory. The refusal
   is unchanged and still typed; it now lands on `cx.file(...)` and the other

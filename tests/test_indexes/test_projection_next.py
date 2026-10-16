@@ -34,6 +34,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_parameter_digest,
     projection_query_semantic_result_digest,
 )
+from cruxible_client.contracts.file_catalog import ProcedureProjectionCatalogEntry
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.models import (
     ProcedureBudget,
@@ -47,7 +48,6 @@ from cruxible_client.contracts.query.grammar import (
     QueryParameterDeclaration,
     QueryParameterRef,
 )
-from cruxible_client.contracts.source_catalog import ProcedureProjectionCatalogEntry
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.typed_state import ProcedureInventoryRow, TypedStateReader
@@ -312,7 +312,7 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
     assert health.repair is not None
     assert health.repair.operation == "hand_edit"
     assert health.repair.command is None
-    assert health.repair.target == ".cruxible/sources.yaml"
+    assert health.repair.target == ".cruxible/files.yaml"
     assert health.repair.required_change == "add_procedure_projection_catalog_entries"
     assert health.repair.arguments == {
         "catalog_entries": [
@@ -878,6 +878,14 @@ def test_retired_claim_backing_requires_depublication_without_access_disclosure(
     assert row.repair.operation == "cruxible.block.depublish"
     assert row.repair.command == "cruxible block depublish corpus.runbook status"
     assert row.repair.required_change == "depublish_retired_backing_block"
+    for surface, command in (
+        ("mcp", 'cruxible_block_depublish(file_id="corpus.runbook", block_id="status")'),
+        ("sdk", 'cx.block.depublish(file_id="corpus.runbook", block_id="status")'),
+    ):
+        (rendered,) = _projection_rows(
+            instance, retired_request.model_copy(update={"caller_surface": surface})
+        )
+        assert rendered.repair.command == command
 
     assert retired_request.workspace_observation is not None
     assert retired_request.workspace_observation.source_observations is not None

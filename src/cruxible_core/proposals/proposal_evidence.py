@@ -39,8 +39,8 @@ from cruxible_client.contracts.errors import (
     ProposalRejectedError,
     ProposalWithdrawnError,
 )
+from cruxible_client.contracts.file_catalog import FileCompilationManifest
 from cruxible_client.contracts.proposal_models import ProposalItemReason, ProposalItemReasonLink
-from cruxible_client.contracts.source_catalog import SourceCompilationManifest
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.proposals.candidate_review_summary import (
     CandidateReviewSummary,
@@ -407,7 +407,7 @@ class ProposalEvidenceStore:
         cursor = page_names[-1][:-5] if len(remaining) > limit else None
         return page, len(names), cursor
 
-    def write_source_compilation(self, manifest: SourceCompilationManifest) -> Path:
+    def write_source_compilation(self, manifest: FileCompilationManifest) -> Path:
         """Persist a path-free immutable compile receipt beside proposal exhaust."""
 
         path = self.source_compilations / (
@@ -419,12 +419,12 @@ class ProposalEvidenceStore:
         )
         return path
 
-    def read_source_compilation(self, compilation_digest: str) -> SourceCompilationManifest:
+    def read_source_compilation(self, compilation_digest: str) -> FileCompilationManifest:
         Sha256Value.from_tagged(compilation_digest)
         path = self.source_compilations / f"{compilation_digest.removeprefix('sha256:')}.json"
         return self._read_model(
             path,
-            SourceCompilationManifest,
+            FileCompilationManifest,
             label="source compilation",
         )
 

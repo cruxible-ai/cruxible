@@ -195,7 +195,7 @@ def test_block_sync_repair_needs_governed_write_on_cli_but_stays_read_only_elsew
     mcp_row = _block_sync_row()
     (kept,) = _view(surface="mcp", caller_rung=0).render([mcp_row])  # READ_ONLY
     assert kept.repair is not None and kept.repair_requires is None
-    assert kept.repair.command == "cruxible_block_sync(all_sources=true)"
+    assert kept.repair.command == "cruxible_block_sync(all_files=true)"
 
     sdk_row = _block_sync_row()
     (kept,) = _view(surface="sdk", caller_rung=0).render([sdk_row])  # READ_ONLY

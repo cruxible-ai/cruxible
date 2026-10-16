@@ -941,10 +941,10 @@ def test_cli_validation_names_field_path_and_matching_example(tmp_path: Path) ->
 
 
 def _catalog(workspace: Path, source: Path) -> None:
-    """Name ``source`` repo.work-items in the workspace's source catalog (bind checks it)."""
+    """Name ``source`` repo.work-items in the workspace's file catalog (bind checks it)."""
 
     (workspace / ".cruxible").mkdir(exist_ok=True)
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"

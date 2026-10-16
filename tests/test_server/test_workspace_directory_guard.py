@@ -19,7 +19,7 @@ from click.testing import CliRunner
 
 from cruxible_client.authoring.context import resolve_context
 from cruxible_client.authoring.projection_manifests import retain_local_manifests
-from cruxible_client.authoring.selectors import WorkspaceSources
+from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.authoring.workspace import observe_next_workspace, write_workspace_config
 from cruxible_client.contracts.workspace_layout import (
     WorkspaceDirectoryConflict,
@@ -83,7 +83,7 @@ def test_selection_reads_and_writes_refuse_a_0_3_instance(tmp_path: Path, name: 
     with pytest.raises(WorkspaceDirectoryConflict):
         retain_local_manifests(root, {"sha256:" + "0" * 64: b"x"})
     with pytest.raises(WorkspaceDirectoryConflict):
-        WorkspaceSources(root)
+        WorkspaceFiles(root)
     with pytest.raises(WorkspaceDirectoryConflict):
         write_workspace_config(root, instance_id="inst", server_socket=str(tmp_path / "s.sock"))
     # Nothing was created beside the 0.3 instance's files.
@@ -289,7 +289,7 @@ def test_a_relocated_daemon_state_root_is_no_workspace(
             lambda: mcp_workspace_root({MCP_WORKSPACE_ROOT_ENV: str(spelled)}),
             lambda: mcp_git_workspace_root({MCP_WORKSPACE_ROOT_ENV: str(project)}),
             lambda: resolve_workspace_path(".", root=project, kind="directory"),
-            lambda: WorkspaceSources(project),
+            lambda: WorkspaceFiles(project),
         ):
             with pytest.raises(WorkspaceDirectoryConflict):
                 selected()

@@ -151,7 +151,7 @@ def test_projection_only_scan_can_bind_head_without_whole_world_orientation(tmp_
     calls = []
     monkeypatch.setattr(
         workspace,
-        "WorkspaceSources",
+        "WorkspaceFiles",
         lambda root: SimpleNamespace(procedure_projection_entries=("registered",)),
     )
     monkeypatch.setattr(

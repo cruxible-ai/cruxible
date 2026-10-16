@@ -75,7 +75,7 @@ from cruxible_client.authoring.sdk_types import (
 from cruxible_client.authoring.selectors import (
     EvidenceSelection,
     FileSelector,
-    WorkspaceSources,
+    WorkspaceFiles,
 )
 from cruxible_client.authoring.signing import ApprovalSigner
 from cruxible_client.authoring.source import ProcedureSource
@@ -2172,7 +2172,7 @@ class Cruxible:
         # None: a connection with no workspace. Reads serve; orient reports no
         # floor; the members that read or write workspace files refuse.
         self._workspace = None if workspace is None else workspace.expanduser().resolve()
-        self._workspace_sources: WorkspaceSources | None = None
+        self._workspace_files: WorkspaceFiles | None = None
         self._access_profile = access_profile
         self._clock = clock
         self._coordinate: AcceptedCoordinate | None = None
@@ -2367,8 +2367,8 @@ class Cruxible:
         return self._workspace
 
     @property
-    def _sources(self) -> WorkspaceSources:
-        """Resolve the workspace source catalog the first time one is needed.
+    def _files(self) -> WorkspaceFiles:
+        """Resolve the workspace file catalog the first time one is needed.
 
         Reads -- orientation, search, `world()` -- touch no working tree, so
         demanding a catalog at connect made every read depend on a writer's
@@ -2376,9 +2376,9 @@ class Cruxible:
         actually selects from the workspace.
         """
 
-        if self._workspace_sources is None:
-            self._workspace_sources = WorkspaceSources(self._workspace_root)
-        return self._workspace_sources
+        if self._workspace_files is None:
+            self._workspace_files = WorkspaceFiles(self._workspace_root)
+        return self._workspace_files
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
@@ -2773,7 +2773,7 @@ class Cruxible:
         Next: ``cx.file(path).anchor("text found once")`` and pass it as ``supported_by=``.
         """
 
-        return self._sources.select(path)
+        return self._files.select(path)
 
     def subject(
         self,
@@ -4311,15 +4311,15 @@ class Cruxible:
         return result
 
     def _source_card(self, ref: SourceRef) -> KnowledgeCard:
-        """A catalog source: its Document's card, or the catalog entry when it has none.
+        """A catalog file: its Document's card, or the catalog entry when it has none.
 
-        The catalog name lives only in the workspace's source catalog, so the
+        The catalog name lives only in the workspace's file catalog, so the
         name resolves there; an entry that declares a Document reads that
         Document at the ref's coordinate, and an evidence-only entry answers
         the entry itself.
         """
 
-        entry = self._sources.entry_for_source(ref.address)
+        entry = self._files.entry_for_file(ref.address)
         if entry.document_id is not None:
             result = self._get(f"Document:{entry.document_id}", "summary", None, ref.coordinate)
             return KnowledgeCard(
@@ -4740,7 +4740,7 @@ class ProjectionBlocks:
 
     def repin(
         self,
-        source: str | SourceRef,
+        file: str | SourceRef,
         block_id: str,
         *,
         claims: Sequence[str | ClaimRef] | None = None,
@@ -4764,9 +4764,9 @@ class ProjectionBlocks:
 
         Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
-        source_id = _address(source, RefKind.SOURCE)
-        if isinstance(source, SourceRef):
-            self._playbill._assert_coordinate(source.coordinate)
+        file_id = _address(file, RefKind.SOURCE)
+        if isinstance(file, SourceRef):
+            self._playbill._assert_coordinate(file.coordinate)
         claim_refs: list[str] = []
         for claim in claims or ():
             if isinstance(claim, ClaimRef):
@@ -4785,7 +4785,7 @@ class ProjectionBlocks:
             self._playbill._client,
             self._playbill._instance_id,
             workspace=self._playbill._workspace_root,
-            source_id=source_id,
+            file=file_id,
             block_id=block_id,
             claims=claim_refs if claims is not None else None,
             queries=query_refs if queries is not None else None,
@@ -4814,7 +4814,7 @@ class ProjectionBlocks:
             self._playbill._instance_id,
             workspace=self._playbill._workspace_root,
             paths=paths,
-            all_sources=all,
+            all_files=all,
         )
 
     def detach(self, *paths: str | Path, dry_run: bool = False) -> api.BlockSyncResult:
@@ -4824,7 +4824,7 @@ class ProjectionBlocks:
         instance, are detached; live blocks are refused. Edits pages only.
         ``dry_run`` reports what would change and edits nothing.
 
-        Next: ``cx.block.depublish(source, block)`` when the block is not coming back.
+        Next: ``cx.block.depublish(file_id, block)`` when the block is not coming back.
         """
 
         if not paths:
@@ -4839,7 +4839,7 @@ class ProjectionBlocks:
 
     def depublish(
         self,
-        source: str | SourceRef,
+        file_id: str | SourceRef,
         block_id: str,
         *,
         dry_run: bool | None = None,
@@ -4850,13 +4850,15 @@ class ProjectionBlocks:
         ``next`` reads that registration to call a removed marker a blocking
         row; releasing it edits no page and retires no backing. ``dry_run``
         previews; ``at`` pins a commit to the preview's coordinate.
+        ``file_id`` is the stored projection file identity; the file and catalog
+        entry need not still exist.
 
         Next: ``cx.block.detach(page)`` strips the markers if they remain.
         """
 
-        source_id = _address(source, RefKind.SOURCE)
+        file_id = _address(file_id, RefKind.SOURCE)
         return self._playbill._client.depublish_block(
-            self._playbill._instance_id, source_id, block_id, dry_run=dry_run, at=at
+            self._playbill._instance_id, file_id, block_id, dry_run=dry_run, at=at
         )
 
 

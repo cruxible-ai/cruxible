@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from cruxible_client.authoring.selectors import WorkspaceSources
+from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.contracts.write import (
     AddChange,
     Change,
@@ -26,7 +26,7 @@ def observe_evidence(evidence: Evidence | None, *, workspace: Path) -> Evidence 
 
     if not isinstance(evidence, FileEvidence) or evidence.observation is not None:
         return evidence
-    selection = WorkspaceSources(workspace).select(evidence.path).anchor(evidence.anchor)
+    selection = WorkspaceFiles(workspace).select(evidence.path).anchor(evidence.anchor)
     return evidence.model_copy(update={"observation": selection.observation()})
 
 

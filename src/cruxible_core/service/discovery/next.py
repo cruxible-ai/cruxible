@@ -877,7 +877,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.block.detach": "block detach",
     "cruxible.block.repin": "block repin",
     "cruxible.block.sync": "block sync",
-    "cruxible.sources.propose": "sources propose",
+    "cruxible.files.propose": "files propose",
     "cruxible.proposal.readmit": "proposal readmit",
     "cruxible.proposal.approve": "proposal approve",
     "cruxible.proposal.activate": "proposal activate",
@@ -964,7 +964,7 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.block.detach": "cruxible_block_detach",
     "cruxible.block.repin": "cruxible_block_repin",
     "cruxible.block.sync": "cruxible_block_sync",
-    "cruxible.sources.propose": "cruxible_sources_propose",
+    "cruxible.files.propose": "cruxible_files_propose",
     "cruxible.proposal.readmit": "cruxible_proposal_readmit",
     "cruxible.proposal.approve": "cruxible_proposal_approve",
     "cruxible.proposal.activate": "cruxible_proposal_activate",
@@ -1165,20 +1165,20 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
     if operation == "cruxible.block.depublish" and text("source_id") and text("block_id"):
         return _mcp_call(
             "cruxible_block_depublish",
-            source_id=text("source_id"),
+            file_id=text("source_id"),
             block_id=text("block_id"),
         )
     if operation == "cruxible.block.repin" and text("source_id") and text("block_id"):
-        return _mcp_call("cruxible_block_repin", source=text("source_id"), block=text("block_id"))
+        return _mcp_call("cruxible_block_repin", file=text("source_id"), block=text("block_id"))
     if operation == "cruxible.block.sync" and values.get("all") is True:
-        return _mcp_call("cruxible_block_sync", all_sources=True)
+        return _mcp_call("cruxible_block_sync", all_files=True)
     if operation == "cruxible.block.detach" and _repair_paths(values):
         return _mcp_call("cruxible_block_detach", files=_repair_paths(values))
     if operation == "cruxible.floor.export":
         return _mcp_call("cruxible_floor_export", mode="write")
-    if operation == "cruxible.sources.propose" and (source := text("source_id")):
+    if operation == "cruxible.files.propose" and (source := text("source_id")):
         return _mcp_call(
-            "cruxible_sources_propose", source_name=source, proposal_name=_revision_name(source)
+            "cruxible_files_propose", file=source, proposal_name=_revision_name(source)
         )
     if operation == "cruxible.claim.retire" and text("claim_id"):
         # Why it ends is the retirer's to say: `because` is the argument left to add.
@@ -1291,7 +1291,11 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _sdk_call("cx.block.detach", *_repair_paths(values))
     if operation == "cruxible.block.depublish" and (source := text("source_id")):
         block = text("block_id")
-        return None if block is None else _sdk_call("cx.block.depublish", source, block)
+        return (
+            None
+            if block is None
+            else _sdk_call("cx.block.depublish", file_id=source, block_id=block)
+        )
     return None
 
 
@@ -1428,12 +1432,12 @@ def _repair_command(
         if len(changes) != 1 or changes[0].get("op") != "retire":
             return None
         return f"cruxible retire {shlex.quote(str(changes[0]['target']))}"
-    elif operation == "cruxible.sources.propose":
-        # Without a named source the operator adds --source and --name.
+    elif operation == "cruxible.files.propose":
+        # Without a named file the operator adds --file and --name.
         source = values.get("source_id")
         if isinstance(source, str) and source:
             parts.extend(
-                ["--source", shlex.quote(source), "--name", shlex.quote(_revision_name(source))]
+                ["--file", shlex.quote(source), "--name", shlex.quote(_revision_name(source))]
             )
     elif operation == "cruxible.claim.retire":
         # Why it ends is the retirer's to say: `--because` is the operand left to add.
@@ -4975,7 +4979,7 @@ def _procedure_catalog_health(
         },
         repair=PlaybillNextRepairV1(
             operation="hand_edit",
-            target=".cruxible/sources.yaml",
+            target=".cruxible/files.yaml",
             required_change="add_procedure_projection_catalog_entries",
             arguments={"catalog_entries": entries},
         ),
@@ -5051,7 +5055,7 @@ def _document_items(
                 "source_id": binding.source_id,
                 "document_id": binding.document_id,
                 "locator": binding.locator,
-                "message": "the source catalog binds a workspace file that does not exist",
+                "message": "the file catalog binds a workspace file that does not exist",
             },
             repair=PlaybillNextRepairV1(
                 operation="hand_edit",
@@ -5093,7 +5097,7 @@ def _document_items(
                 # it through the source road, which compiles the file's exact
                 # bytes against the accepted Document.
                 repair=PlaybillNextRepairV1(
-                    operation="cruxible.sources.propose",
+                    operation="cruxible.files.propose",
                     target=identity,
                     required_change="repropose_modified_document",
                     arguments={

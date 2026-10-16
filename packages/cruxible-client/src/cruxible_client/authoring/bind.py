@@ -8,7 +8,7 @@ from pathlib import Path
 
 from cruxible_client.authoring.blocks import assert_independent_projection_evidence
 from cruxible_client.authoring.inputs import ClaimInput, lower_bound_claim_input
-from cruxible_client.authoring.selectors import WorkspaceSources, source_content_for_observation
+from cruxible_client.authoring.selectors import WorkspaceFiles, source_content_for_observation
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
     WorkingAnchorWindow,
@@ -185,16 +185,16 @@ def bind_catalogued_selection_input(
 ) -> ClaimAuthoringPayloadV1:
     """Bind ``anchor`` in a catalogued workspace file, checking the stub's source name.
 
-    The source catalog is the one mapping from a file to its logical source, so
+    The file catalog is the one mapping from a file to its logical source, so
     the stub's ``source_id`` must be the name the catalog gives this file: a
     mistyped name would mint a citation ``next`` and coverage never match.
     """
 
-    selected = WorkspaceSources(workspace).select(path)
+    selected = WorkspaceFiles(workspace).select(path)
     stub_source = getattr(input.source, "source_id", None)
     if stub_source is not None and stub_source != selected.source_id:
         raise AuthoringBindError(
-            f"the Claim stub names source {stub_source!r}, but the source catalog names "
+            f"the Claim stub names source {stub_source!r}, but the file catalog names "
             f"{path!s} {selected.source_id!r}; set the stub's source_id to "
             f"{selected.source_id!r}"
         )

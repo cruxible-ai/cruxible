@@ -18,7 +18,7 @@ from cruxible_client.authoring.projection_manifests import (
     load_projection_manifests,
     retain_local_manifests,
 )
-from cruxible_client.authoring.selectors import WorkspaceSources
+from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     BlockSyncItem,
@@ -59,6 +59,7 @@ from cruxible_client.contracts.declared_blocks import (
     resolve_projection_manifest_digest,
 )
 from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.file_catalog import refuse_legacy_file_catalogs
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.results import QueryResultRow
 from cruxible_client.contracts.repairs import RepairOperation, ServedRepair
@@ -121,7 +122,7 @@ class ProjectionRepinConflict(ProjectionRepinError):
         self.source_id = source_id
         self.block_id = block_id
         super().__init__(
-            f"block {block_id!r} in source {source_id!r} changed after it was proved "
+            f"block {block_id!r} in file {source_id!r} changed after it was proved "
             "rendered; re-run sync to re-prove it before converging"
         )
 
@@ -448,7 +449,7 @@ def _relative_path(root: Path, path: Path) -> str:
     try:
         return path.relative_to(root).as_posix()
     except ValueError as exc:
-        raise ProjectionSyncError(f"source path escapes workspace: {path}") from exc
+        raise ProjectionSyncError(f"file path escapes workspace: {path}") from exc
 
 
 def _result(items: Sequence[BlockSyncItem]) -> BlockSyncResult:
@@ -579,10 +580,10 @@ def _discover_source(
     content = b""
     try:
         if path.is_symlink():
-            raise ProjectionSyncError("source path must not be a symbolic link")
+            raise ProjectionSyncError("file path must not be a symbolic link")
         resolved = path.resolve(strict=True)
         if not resolved.is_relative_to(root) or not resolved.is_file():
-            raise ProjectionSyncError("source path escapes the workspace or is not a file")
+            raise ProjectionSyncError("file path escapes the workspace or is not a file")
     except (OSError, ProjectionSyncError) as exc:
         return None, BlockSyncItem(
             path=path.name or ".",
@@ -605,7 +606,7 @@ def _discover_source(
         )
         source_ids = {block.source_id for block in blocks}
         if len(source_ids) != 1:
-            raise ProjectionMarkerError("projection markers disagree on logical source")
+            raise ProjectionMarkerError("projection markers disagree on file identity")
         return next(iter(source_ids)), None
     except ProjectionMarkerError as exc:
         if inferred and not declares_projection_block(content):
@@ -812,7 +813,7 @@ def record_declared_blocks(
     instance_id: str,
     *,
     root: Path,
-    sources: WorkspaceSources | None,
+    sources: WorkspaceFiles | None,
     pages: Iterable[tuple[Path, str]],
 ) -> int:
     """Record the declared blocks of the pages this call touched, for block-churn detection.
@@ -832,7 +833,7 @@ def record_declared_blocks(
         document_id: str | None = None
         if sources is not None:
             try:
-                document_id = sources.entry_for_source(source_id).document_id
+                document_id = sources.entry_for_file(source_id).document_id
             except (ValueError, CruxibleError):
                 document_id = None
         observed.append(
@@ -885,7 +886,7 @@ def sync_projection_blocks(
     *,
     workspace: str | Path,
     paths: Sequence[str | Path] = (),
-    all_sources: bool = False,
+    all_files: bool = False,
     check: bool = False,
     detach_paths: Sequence[str | Path] = (),
     observe_preimages: Callable[[Mapping[Path, bytes]], None] | None = None,
@@ -946,40 +947,39 @@ def sync_projection_blocks(
                 ),
             )
         )
-    if all_sources and (paths or detach_paths):
+    if all_files and (paths or detach_paths):
         raise ProjectionSyncError("--all cannot be combined with explicit or detached paths")
     if paths and detach_paths:
         raise ProjectionSyncError("checked paths cannot be combined with detached paths")
     selected: dict[Path, str] = {}
     items: list[BlockSyncItem] = []
     requested = tuple(detach_paths or paths)
+    refuse_legacy_file_catalogs(root)
     catalog_paths = tuple(
-        path
-        for path in (workspace_path(root, "sources.yaml"), root / "sources.yaml")
-        if path.is_file()
+        path for path in (workspace_path(root, "files.yaml"), root / "files.yaml") if path.is_file()
     )
-    sources: WorkspaceSources | None = None
+    sources: WorkspaceFiles | None = None
     if catalog_paths:
         try:
-            sources = WorkspaceSources(root)
+            sources = WorkspaceFiles(root)
         except (ValueError, CruxibleError) as exc:
             return _result(
                 (
                     BlockSyncItem(
-                        path=".cruxible/sources.yaml",
+                        path=".cruxible/files.yaml",
                         outcome="refused",
-                        reason="workspace_source_catalog_invalid",
+                        reason="workspace_file_catalog_invalid",
                         detail={"message": str(exc)},
                     ),
                 )
             )
-    if all_sources and sources is None:
+    if all_files and sources is None:
         selected, items = _discover_workspace_sources(root)
-    elif all_sources:
+    elif all_files:
         assert sources is not None
-        for entry in sources.source_entries:
+        for entry in sources.file_entries:
             try:
-                selected[sources.path_for_source(entry.name)] = entry.name
+                selected[sources.path_for_file(entry.name)] = entry.name
             except (ValueError, CruxibleError) as exc:
                 items.append(
                     BlockSyncItem(
@@ -1040,7 +1040,7 @@ def sync_projection_blocks(
                 manifests=load_projection_manifests(root, content),
             )
         except ProjectionMarkerError as exc:
-            # `--all` walks the whole catalog, and a catalogued source is a
+            # `--all` walks the whole catalog, and a catalogued file is a
             # source, not necessarily a projection page: a captured report ABOUT
             # the marker grammar carries the marker bytes verbatim and is exact
             # accepted bytes, so "hand edit it" is the one repair it cannot
@@ -1053,7 +1053,7 @@ def sync_projection_blocks(
             # target with a defect, and it refuses here too -- otherwise a real
             # marker defect is hidden from `--all`, and from the sync every
             # activation runs as its last step, behind a zero exit code.
-            if all_sources and not declares_projection_block(content):
+            if all_files and not declares_projection_block(content):
                 items.append(
                     _not_a_projection_target_item(
                         root=root,
@@ -1283,7 +1283,7 @@ def sync_projection_blocks(
             # byte outside them is untouched.
             final_by_id = {block.block_id: block for block in final_blocks}
             if set(replacements) & set(final_by_id):
-                raise ProjectionSyncError("detached projection markers remain in the source")
+                raise ProjectionSyncError("detached projection markers remain in the file")
             for index in changed_item_indexes:
                 items[index] = items[index].model_copy(
                     update={
@@ -1351,7 +1351,7 @@ def _converge(
                 client,
                 instance_id,
                 workspace=root,
-                source_id=source_id,
+                file=source_id,
                 block_id=block.block_id,
                 evaluation_time=at,
                 render=True,
@@ -1406,7 +1406,7 @@ def repin_projection_block(
     instance_id: str,
     *,
     workspace: str | Path,
-    source_id: str,
+    file: str,
     block_id: str,
     claims: Sequence[str] | None = None,
     queries: Sequence[tuple[str, Mapping[str, object]]] | None = None,
@@ -1449,8 +1449,9 @@ def repin_projection_block(
     instant = ensure_utc(evaluation_time)
     formatted = cast(str, format_datetime(instant))
     root = ensure_workspace_directory(Path(workspace).resolve())
-    sources = WorkspaceSources(root)
-    path = sources.path_for_source(source_id)
+    source_id = file
+    sources = WorkspaceFiles(root)
+    path = sources.path_for_file(source_id)
     content = read_projection_source(path)
     blocks = parse_projection_blocks(
         content,
@@ -1460,7 +1461,7 @@ def repin_projection_block(
     )
     block = next((item for item in blocks if item.block_id == block_id), None)
     if block is None:
-        raise ProjectionRepinError(f"source {source_id!r} has no block {block_id!r}")
+        raise ProjectionRepinError(f"file {source_id!r} has no block {block_id!r}")
     if proved is not None and (
         block.body_digest != proved.body_digest or block.stamp != proved.stamp
     ):

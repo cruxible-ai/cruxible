@@ -53,7 +53,7 @@ def _clear_target_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _catalog(root: Path) -> None:
-    (root / ".cruxible" / "sources.yaml").write_text(
+    (root / ".cruxible" / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -360,7 +360,7 @@ def test_disagreeing_coverage_and_catalog_roots_refuse(tmp_path: Path) -> None:
         server_url="https://coverage.example.test",
     )
     (sources_root / ".cruxible").mkdir()
-    (sources_root / ".cruxible" / "sources.yaml").write_text(
+    (sources_root / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries: []\n",
         encoding="utf-8",
     )
@@ -371,7 +371,7 @@ def test_disagreeing_coverage_and_catalog_roots_refuse(tmp_path: Path) -> None:
     message = str(raised.value)
     assert "workspace_binding_conflict" in message
     assert str(coverage_root / ".cruxible" / "coverage.json") in message
-    assert str(sources_root / ".cruxible" / "sources.yaml") in message
+    assert str(sources_root / ".cruxible" / "files.yaml") in message
     assert "repair:" in message
 
 

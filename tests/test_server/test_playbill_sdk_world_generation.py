@@ -49,7 +49,7 @@ def _workspace(root: Path) -> Path:
     (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "corpus").mkdir()
     (workspace / "corpus" / "advisory.md").write_text("# advisory\n", encoding="utf-8")
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"

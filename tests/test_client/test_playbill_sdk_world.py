@@ -438,7 +438,7 @@ class _WorldClient:
 
 def _workspace(path: Path) -> None:
     (path / ".cruxible").mkdir()
-    (path / ".cruxible" / "sources.yaml").write_text(
+    (path / ".cruxible" / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -1505,7 +1505,7 @@ def test_a_world_is_built_at_the_instances_current_coordinate(
     assert previous_world.coordinate.git_oid == "a" * 40
 
 
-def test_a_read_only_connection_needs_no_workspace_source_catalog(
+def test_a_read_only_connection_needs_no_workspace_file_catalog(
     tmp_path: Path,
 ) -> None:
     """Reads touch no working tree, so they must not demand a writer's setup."""
@@ -1541,7 +1541,7 @@ def test_selecting_a_file_still_refuses_at_the_same_typed_point(
     with pytest.raises(SourceSelectionError) as refused:
         playbill.file("notes.txt")
 
-    assert "exactly one .cruxible/sources.yaml or sources.yaml" in str(refused.value)
+    assert "exactly one .cruxible/files.yaml or files.yaml" in str(refused.value)
     assert len(client.batch_requests) == before
 
 

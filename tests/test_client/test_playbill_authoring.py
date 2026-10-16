@@ -290,11 +290,11 @@ def _authored_change_set(captured: list[httpx.Request]) -> dict[str, Any]:
 
 
 def _workspace(path: Path) -> Path:
-    """The smallest workspace a `Cruxible` will open: one source catalog."""
+    """The smallest workspace a `Cruxible` will open: one file catalog."""
 
     catalog = path / ".cruxible"
     catalog.mkdir(parents=True, exist_ok=True)
-    (catalog / "sources.yaml").write_text(
+    (catalog / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -410,3 +410,32 @@ def test_change_set_retire_dedups_the_prefixed_and_bare_spellings(tmp_path: Path
     )
     with pytest.raises(ValidationError, match="member identities must be unique"):
         duplicated.prepare()
+
+
+def test_depublish_transport_sends_file_id_and_keeps_the_frozen_result() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/inst_projection/blocks/depublish"
+        assert json.loads(request.content) == {
+            "file_id": "corpus.runbook",
+            "block_id": "summary",
+            "dry_run": True,
+        }
+        return httpx.Response(
+            200,
+            json={
+                "tag": "playbill-block-depublish-result-v1",
+                "source_id": "corpus.runbook",
+                "block_id": "summary",
+                "outcome": "would_depublish",
+                "coordinate": COORDINATE,
+            },
+        )
+
+    client = _client(handler)
+    try:
+        result = client.depublish_block(
+            "inst_projection", file_id="corpus.runbook", block_id="summary", dry_run=True
+        )
+        assert result.source_id == "corpus.runbook"
+    finally:
+        client._client.close()

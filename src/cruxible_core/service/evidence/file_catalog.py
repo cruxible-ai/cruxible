@@ -1,4 +1,4 @@
-"""Client-side source-catalog compilation and server-safe frozen-bundle proposal."""
+"""Client-side file-catalog compilation and server-safe frozen-bundle proposal."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.errors import FormatError, ProposalIntegrityError
-from cruxible_client.contracts.source_catalog import (
-    CompiledSourceDocument,
-    SourceAlignment,
-    SourceAlignmentState,
-    SourceCompilationBundle,
+from cruxible_client.contracts.file_catalog import (
+    CompiledFileDocument,
+    FileAlignment,
+    FileAlignmentState,
+    FileCompilationBundle,
     content_digest_bytes,
 )
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -36,14 +36,14 @@ class _StrictSourceServiceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class SourceCheckResult(_StrictSourceServiceModel):
+class FileCheckResult(_StrictSourceServiceModel):
     tag: Literal["playbill-source-check-v1"] = "playbill-source-check-v1"
     compilation_digest: str
     accepted_coordinate: AcceptedCoordinate
-    alignments: tuple[SourceAlignment, ...]
+    alignments: tuple[FileAlignment, ...]
 
 
-class SourceContext(_StrictSourceServiceModel):
+class FileContext(_StrictSourceServiceModel):
     """Path-free accepted inputs needed for deterministic client-side compilation."""
 
     tag: Literal["playbill-source-context-v1"] = "playbill-source-context-v1"
@@ -64,10 +64,10 @@ def _accepted_documents(
         return documents
 
 
-def service_playbill_source_context(instance: PlaybillInstance) -> SourceContext:
+def service_playbill_file_context(instance: PlaybillInstance) -> FileContext:
     coordinate = instance.accepted_coordinate()
     documents = _accepted_documents(instance, coordinate)
-    return SourceContext(
+    return FileContext(
         accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
         documents=tuple(
             documents[key] for key in sorted(documents, key=lambda item: item.encode())
@@ -117,18 +117,18 @@ def _pending_body_digests(
     return result
 
 
-def service_check_playbill_source_bundle(
+def service_check_playbill_file_bundle(
     instance: PlaybillInstance,
     *,
-    bundle: SourceCompilationBundle,
-) -> SourceCheckResult:
+    bundle: FileCompilationBundle,
+) -> FileCheckResult:
     """Compare one exact frozen compile with current accepted and pending coordinates."""
 
     coordinate = instance.accepted_coordinate()
     current_coordinate = AcceptedCoordinate.from_internal(coordinate)
     accepted = _accepted_documents(instance, coordinate)
     pending = _pending_body_digests(instance, coordinate)
-    alignments: list[SourceAlignment] = []
+    alignments: list[FileAlignment] = []
     base_is_current = bundle.manifest.accepted_base == current_coordinate
     for document in bundle.documents:
         document_id = document.source.document_id
@@ -151,9 +151,9 @@ def service_check_playbill_source_bundle(
             state = "ahead"
         else:
             state = "diverged"
-        alignment_state = cast(SourceAlignmentState, state)
+        alignment_state = cast(FileAlignmentState, state)
         alignments.append(
-            SourceAlignment(
+            FileAlignment(
                 name=document.source.name,
                 document_id=document_id,
                 state=alignment_state,
@@ -164,7 +164,7 @@ def service_check_playbill_source_bundle(
                 accepted_coordinate=current_coordinate,
             )
         )
-    return SourceCheckResult(
+    return FileCheckResult(
         compilation_digest=bundle.manifest.compilation_digest,
         accepted_coordinate=current_coordinate,
         alignments=tuple(alignments),
@@ -172,20 +172,20 @@ def service_check_playbill_source_bundle(
 
 
 def _compiled_document(
-    bundle: SourceCompilationBundle,
-    source_name: str,
-) -> CompiledSourceDocument:
-    matches = tuple(item for item in bundle.documents if item.source.name == source_name)
+    bundle: FileCompilationBundle,
+    file: str,
+) -> CompiledFileDocument:
+    matches = tuple(item for item in bundle.documents if item.source.name == file)
     if len(matches) != 1:
-        raise FormatError("source compilation does not contain exactly one named source")
+        raise FormatError("file compilation does not contain exactly one named file")
     return matches[0]
 
 
-def service_propose_playbill_source_bundle(
+def service_propose_playbill_file_bundle(
     instance: PlaybillInstance,
     *,
-    bundle: SourceCompilationBundle,
-    source_name: str,
+    bundle: FileCompilationBundle,
+    file: str,
     actor_id: str,
     proposal_name: str,
     timestamp: str,
@@ -199,12 +199,12 @@ def service_propose_playbill_source_bundle(
     change is evaluated on the admission path and admitted nowhere (R12).
     """
 
-    document = _compiled_document(bundle, source_name)
+    document = _compiled_document(bundle, file)
     try:
         body = base64.b64decode(document.body_base64, validate=True)
         envelope_bytes = base64.b64decode(document.envelope_bytes_base64, validate=True)
     except ValueError as exc:  # defensive: bundle validation already proves this
-        raise ProposalIntegrityError("compiled source bundle contains invalid base64") from exc
+        raise ProposalIntegrityError("compiled file bundle contains invalid base64") from exc
     if content_digest_bytes(body) != document.source.body_digest:
         raise ProposalIntegrityError("compiled body bytes changed after compilation")
     if envelope_bytes != render_document(document.envelope):
@@ -214,7 +214,7 @@ def service_propose_playbill_source_bundle(
             instance.proposal_evidence().write_source_compilation(bundle.manifest)
         stored = service_store_playbill_body(instance, content=body)
         if stored.digest != document.source.body_digest:
-            raise ProposalIntegrityError("stored body digest differs from compiled source")
+            raise ProposalIntegrityError("stored body digest differs from compiled file")
         return service_propose_playbill_document(
             instance,
             shell=document.envelope,
@@ -229,9 +229,9 @@ def service_propose_playbill_source_bundle(
 
 
 __all__ = [
-    "SourceContext",
-    "SourceCheckResult",
-    "service_check_playbill_source_bundle",
-    "service_propose_playbill_source_bundle",
-    "service_playbill_source_context",
+    "FileContext",
+    "FileCheckResult",
+    "service_check_playbill_file_bundle",
+    "service_propose_playbill_file_bundle",
+    "service_playbill_file_context",
 ]

@@ -10,7 +10,7 @@ import yaml
 from cruxible_client import _safe_files
 from cruxible_client.authoring import workspace as authoring
 from cruxible_client.authoring.workspace import WorkspaceError
-from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCatalogEntry
+from cruxible_client.contracts.file_catalog import FileCatalog, FileCatalogEntry
 from tests.support.fifos import call_with_fifo_timeout
 from tests.test_client.test_playbill_workspace import _delta, _export
 
@@ -23,11 +23,11 @@ def _workspace(tmp_path):
     return workspace
 
 
-def _catalog(workspace, *, portable=".cruxible/sources.yaml"):
-    catalog = SourceCatalog(
+def _catalog(workspace, *, portable=".cruxible/files.yaml"):
+    catalog = FileCatalog(
         catalog_kind="portable",
         entries=(
-            SourceCatalogEntry(
+            FileCatalogEntry(
                 name="page",
                 locator="page.md",
                 document_id="page",
@@ -90,7 +90,7 @@ def test_fifo_projection_manifest_keeps_the_existing_skip_behavior(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "relative", [".cruxible/sources.yaml", "sources.yaml", ".cruxible/sources.local.yaml"]
+    "relative", [".cruxible/files.yaml", "files.yaml", ".cruxible/files.local.yaml"]
 )
 def test_catalog_swap_to_fifo_keeps_the_existing_invalid_catalog_fallback(
     tmp_path, monkeypatch, relative
@@ -98,13 +98,13 @@ def test_catalog_swap_to_fifo_keeps_the_existing_invalid_catalog_fallback(
     workspace = _workspace(tmp_path)
     catalog = _catalog(
         workspace,
-        portable="sources.yaml" if relative == "sources.yaml" else ".cruxible/sources.yaml",
+        portable="files.yaml" if relative == "files.yaml" else ".cruxible/files.yaml",
     )
     fifo = workspace / relative
-    if relative.endswith("sources.local.yaml"):
+    if relative.endswith("files.local.yaml"):
         fifo.write_text(
             yaml.safe_dump(
-                SourceCatalog(catalog_kind="local", entries=catalog.entries).model_dump(mode="json")
+                FileCatalog(catalog_kind="local", entries=catalog.entries).model_dump(mode="json")
             )
         )
     seen = _swap_at_open(monkeypatch, fifo)
@@ -163,15 +163,15 @@ def test_fifo_git_exclude_refuses_after_applying_the_floor(tmp_path):
 
 
 def test_regular_catalog_overlay_and_bound_source_keep_their_results(tmp_path):
-    from cruxible_client.authoring.selectors import WorkspaceSources
+    from cruxible_client.authoring.selectors import WorkspaceFiles
 
     workspace = _workspace(tmp_path)
     portable = _catalog(workspace)
-    local = SourceCatalog(catalog_kind="local", entries=portable.entries)
-    (workspace / ".cruxible/sources.local.yaml").write_text(
+    local = FileCatalog(catalog_kind="local", entries=portable.entries)
+    (workspace / ".cruxible/files.local.yaml").write_text(
         yaml.safe_dump(local.model_dump(mode="json"))
     )
-    sources = WorkspaceSources(workspace)
+    sources = WorkspaceFiles(workspace)
     assert sources.select("page.md").content == b"page\n"
     assert authoring.write_projection_index(workspace) == 0
 

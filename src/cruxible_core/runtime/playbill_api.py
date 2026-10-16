@@ -56,6 +56,7 @@ from cruxible_client.contracts.duplicates import DuplicatesAuditRequest, Duplica
 from cruxible_client.contracts.errors import (
     BootstrapError,
 )
+from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.get_reads import (
     GetBatchRequest,
@@ -105,7 +106,6 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.query.definitions import query_definition_path
 from cruxible_client.contracts.repairs import RepairOperation
-from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_client.contracts.types import (
     CompilerCoordinate,
@@ -233,10 +233,10 @@ from cruxible_core.service.discovery.since import (
 )
 from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
-from cruxible_core.service.evidence.source_catalog import (
-    service_check_playbill_source_bundle,
-    service_playbill_source_context,
-    service_propose_playbill_source_bundle,
+from cruxible_core.service.evidence.file_catalog import (
+    service_check_playbill_file_bundle,
+    service_playbill_file_context,
+    service_propose_playbill_file_bundle,
 )
 from cruxible_core.service.floor.floor import MANIFEST_PATH, service_export_playbill_floor
 from cruxible_core.service.floor.floor_delta import service_playbill_floor_delta
@@ -1324,29 +1324,29 @@ def playbill_read_capture(instance_id: str, request: CaptureReadRequest) -> Capt
     )
 
 
-def playbill_source_context(instance_id: str) -> contracts.SourceContext:
+def playbill_file_context(instance_id: str) -> contracts.FileContext:
     check_permission("cruxible_read", instance_id=instance_id)
-    result = service_playbill_source_context(get_playbill_manager().get(instance_id))
-    return contracts.SourceContext.model_validate(result.model_dump(mode="json"))
+    result = service_playbill_file_context(get_playbill_manager().get(instance_id))
+    return contracts.FileContext.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_check_source_bundle(
+def playbill_check_file_bundle(
     instance_id: str,
     *,
-    bundle: SourceCompilationBundle,
-) -> contracts.SourceCheckResult:
+    bundle: FileCompilationBundle,
+) -> contracts.FileCheckResult:
     check_permission("cruxible_read", instance_id=instance_id)
-    result = service_check_playbill_source_bundle(
+    result = service_check_playbill_file_bundle(
         get_playbill_manager().get(instance_id), bundle=bundle
     )
-    return contracts.SourceCheckResult.model_validate(result.model_dump(mode="json"))
+    return contracts.FileCheckResult.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_propose_source_bundle(
+def playbill_propose_file_bundle(
     instance_id: str,
     *,
-    bundle: SourceCompilationBundle,
-    source_name: str,
+    bundle: FileCompilationBundle,
+    file: str,
     proposal_name: str,
     dry_run: bool | None = None,
     at: str | None = None,
@@ -1354,11 +1354,11 @@ def playbill_propose_source_bundle(
     check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         result = _proposal_validation_boundary(
-            "source bundle",
-            lambda: service_propose_playbill_source_bundle(
+            "file bundle",
+            lambda: service_propose_playbill_file_bundle(
                 get_playbill_manager().get(instance_id),
                 bundle=bundle,
-                source_name=source_name,
+                file=file,
                 actor_id=_actor_id(instance_id),
                 proposal_name=proposal_name,
                 timestamp=canonical_candidate_timestamp(utc_now()),
@@ -1950,7 +1950,7 @@ def playbill_block_declare(
 
 def playbill_block_depublish(
     instance_id: str,
-    source_id: str,
+    file_id: str,
     block_id: str,
     *,
     dry_run: bool | None = None,
@@ -1964,7 +1964,7 @@ def playbill_block_depublish(
         instance = get_playbill_manager().get(instance_id)
         return service_depublish_playbill_block(
             instance,
-            source_id=source_id,
+            source_id=file_id,
             block_id=block_id,
             dry_run=dry_run,
             at=at,

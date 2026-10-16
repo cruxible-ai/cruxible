@@ -120,13 +120,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Requires body-read permission; max_bytes bounds returned material. "
         "Never refetches sources."
     ),
-    "cruxible_sources_check": (
-        "Use when you need to check the workspace's catalogued sources (or a compiled "
+    "cruxible_files_check": (
+        "Use when you need to check the workspace's catalogued files (or a compiled "
         "bundle) against accepted state: aligned, modified, pending, behind and the rest."
     ),
-    "cruxible_sources_propose": (
+    "cruxible_files_propose": (
         "Use when a catalogued workspace file should become its Document's next revision: "
-        "name the catalog source; this adapter reads and compiles the file and proposes it."
+        "name the catalog file; this adapter reads and compiles the file and proposes it."
     ),
     "cruxible_compiler_upgrade": (
         "Use to propose an explicit compiler upgrade bound to the exact accepted base. "
@@ -180,7 +180,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need exactly what still separates an authored candidate from acceptance."
     ),
     "cruxible_block_repin": (
-        "Use to stamp a new projection block or refresh one: name the page (file or source) "
+        "Use to stamp a new projection block or refresh one: name the catalogued file "
         "and the block; this adapter reads the backings, rewrites the opening marker and "
         "registers the block. The marker grammar is in docs/cli-reference.md, Projection "
         "block markers."
@@ -351,10 +351,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_coverage_resolve": (
         "Use when you have read or changed working files and need what they have to do with "
-        "accepted state; the source catalog binds files to their sources."
+        "accepted state; the file catalog binds files to their sources."
     ),
-    "cruxible_sources_compile": (
-        "Use to compile the workspace's catalogued files without constructing source "
+    "cruxible_files_compile": (
+        "Use to compile the workspace's catalogued files without constructing file "
         "digests or compilation wire."
     ),
 }

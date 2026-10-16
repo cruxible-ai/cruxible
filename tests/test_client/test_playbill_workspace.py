@@ -265,7 +265,7 @@ def test_a_config_carrying_cut_hook_rules_is_refused_with_the_repair(tmp_path: P
         encoding="utf-8",
     )
 
-    with pytest.raises(WorkspaceError, match="catalog the files in .cruxible/sources.yaml"):
+    with pytest.raises(WorkspaceError, match="catalog the files in .cruxible/files.yaml"):
         record_floor_output(workspace, instance_id="inst_floor", server_url="https://x.test")
 
 

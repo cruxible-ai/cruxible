@@ -77,7 +77,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("proposal", "readmit"): "active",
     ("proposal", "withdraw"): "active",
     ("proposal", "reject"): "active",
-    ("sources", "propose"): "active",
+    ("files", "propose"): "active",
     ("compiler", "upgrade"): "active",
     ("principal", "add"): "active",
     ("principal", "rotate"): "active",

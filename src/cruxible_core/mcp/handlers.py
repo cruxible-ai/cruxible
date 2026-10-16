@@ -24,15 +24,15 @@ from cruxible_client.authoring.attestations import (
 from cruxible_client.authoring.bind import bind_catalogued_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.authoring.examples import authoring_example, authoring_example_note
-from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
-from cruxible_client.authoring.sdk_types import SourceSelectionError
-from cruxible_client.authoring.selectors import WorkspaceSources
-from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
-from cruxible_client.authoring.sources import (
-    compile_client_source_context,
-    load_source_catalog,
+from cruxible_client.authoring.files import (
+    compile_client_file_context,
+    load_file_catalog,
     mapped_root_aliases,
 )
+from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.sdk_types import SourceSelectionError
+from cruxible_client.authoring.selectors import WorkspaceFiles
+from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
 from cruxible_client.authoring.workspace import (
     daemon_floor_delivery,
     floor_export_parts,
@@ -66,6 +66,7 @@ from cruxible_client.contracts.duplicates import (
     DUPLICATES_AUDIT_DEFAULT_LIMIT,
     DuplicatesAuditResult,
 )
+from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.get_reads import (
     ByteRange,
     GetRequest,
@@ -91,7 +92,6 @@ from cruxible_client.contracts.provider_installation import (
     ProviderRetireResult,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
-from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_lines
@@ -651,7 +651,7 @@ def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequest) 
     )
 
 
-def handle_playbill_sources_check(
+def handle_playbill_files_check(
     instance_id: str,
     *,
     bundle: dict[str, Any] | None = None,
@@ -659,8 +659,8 @@ def handle_playbill_sources_check(
     repository_root: str = ".",
     local_catalog_path: str | None = None,
     root_aliases: Mapping[str, str] | None = None,
-) -> contracts.SourceCheckResult:
-    """Check a compiled bundle, or compile the workspace's catalogued sources first."""
+) -> contracts.FileCheckResult:
+    """Check a compiled bundle, or compile the workspace's catalogued files first."""
 
     if bundle is not None and (
         catalog_path is not None
@@ -673,9 +673,9 @@ def handle_playbill_sources_check(
             "and root_aliases apply only when compiling the workspace catalog"
         )
     frozen = (
-        SourceCompilationBundle.model_validate(bundle)
+        FileCompilationBundle.model_validate(bundle)
         if bundle is not None
-        else handle_playbill_sources_compile(
+        else handle_playbill_files_compile(
             instance_id,
             catalog_path=catalog_path,
             repository_root=repository_root,
@@ -684,17 +684,15 @@ def handle_playbill_sources_check(
         )
     )
     return _daemon_call(
-        lambda client: client.check_source_bundle(
-            instance_id, bundle=frozen.model_dump(mode="json")
-        ),
-        operation_name="cruxible_sources_check",
+        lambda client: client.check_file_bundle(instance_id, bundle=frozen.model_dump(mode="json")),
+        operation_name="cruxible_files_check",
     )
 
 
-def handle_playbill_sources_propose(
+def handle_playbill_files_propose(
     instance_id: str,
     *,
-    source_name: str,
+    file: str,
     proposal_name: str,
     catalog_path: str | None = None,
     repository_root: str = ".",
@@ -703,34 +701,34 @@ def handle_playbill_sources_propose(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalInspection:
-    """Compile the workspace catalog here and propose one source as its Document.
+    """Compile the workspace catalog here and propose one file as its Document.
 
     The adapter reads the files, so no file bytes travel through the caller.
     """
 
-    frozen = handle_playbill_sources_compile(
+    frozen = handle_playbill_files_compile(
         instance_id,
         catalog_path=catalog_path,
         repository_root=repository_root,
         local_catalog_path=local_catalog_path,
         root_aliases=root_aliases or {},
     )
-    if source_name not in {item.source.name for item in frozen.documents}:
+    if file not in {item.source.name for item in frozen.documents}:
         raise DataValidationError(
-            f"source {source_name!r} compiles to no Document: it is not catalogued, or its "
+            f"file {file!r} compiles to no Document: it is not catalogued, or its "
             "catalog entry is evidence-only (give it document_id, document_kind, title, "
             "media_type and governance_scope to propose it)"
         )
     return _daemon_call(
-        lambda client: client.propose_source_bundle(
+        lambda client: client.propose_file_bundle(
             instance_id,
             bundle=frozen.model_dump(mode="json"),
-            source_name=source_name,
+            file=file,
             proposal_name=proposal_name,
             dry_run=dry_run,
             at=at,
         ),
-        operation_name="cruxible_sources_propose",
+        operation_name="cruxible_files_propose",
     )
 
 
@@ -1052,8 +1050,7 @@ def handle_playbill_block_repin(
     instance_id: str,
     *,
     block: str,
-    file: str | None = None,
-    source: str | None = None,
+    file: str,
     claims: Sequence[str] | None = None,
     queries: Sequence[tuple[str, Mapping[str, object]]] | None = None,
     artifacts: Sequence[str] | None = None,
@@ -1064,30 +1061,20 @@ def handle_playbill_block_repin(
 ) -> BlockRepinResult:
     """Repin one projection block adapter-side: this process computes the stamp (Q17).
 
-    The block is named by its page (``file``, workspace-relative) or its
-    catalog source (``source``). The SDK reads the page, reads the backings from
-    the instance, rewrites the opening marker and declares the block; a dry run
-    stops before the first write.
+    The block is named by its file catalog entry. The SDK reads the page and
+    its backings, rewrites the marker and declares the block.
     """
 
-    if (file is None) == (source is None):
-        raise DataValidationError("name the block's page with exactly one of file or source")
     root = mcp_workspace_root()
-    sources = WorkspaceSources(root)
-    source_id = (
-        source
-        if source is not None
-        else sources.select(
-            resolve_workspace_path(cast(str, file), root=root, kind="file")
-        ).source_id
-    )
-    path = sources.path_for_source(source_id)
+    sources = WorkspaceFiles(root)
+    source_id = file
+    path = sources.path_for_file(source_id)
     stamp = _daemon_call(
         lambda client: repin_projection_block(
             client,
             instance_id,
             workspace=root,
-            source_id=source_id,
+            file=source_id,
             block_id=block,
             claims=claims,
             queries=queries,
@@ -1116,7 +1103,7 @@ def handle_playbill_block_sync(
     instance_id: str,
     *,
     files: Sequence[str] = (),
-    all_sources: bool = False,
+    all_files: bool = False,
 ) -> contracts.BlockSyncResult:
     """Check every block's backings adapter-side; reads only, edits no page.
 
@@ -1128,7 +1115,7 @@ def handle_playbill_block_sync(
     paths = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
     return _daemon_call(
         lambda client: sync_projection_blocks(
-            client, instance_id, workspace=root, paths=paths, all_sources=all_sources
+            client, instance_id, workspace=root, paths=paths, all_files=all_files
         ),
         operation_name="cruxible_block_sync",
     )
@@ -1164,7 +1151,7 @@ def handle_playbill_block_detach(
 
 def handle_playbill_block_depublish(
     instance_id: str,
-    source_id: str,
+    file_id: str,
     block_id: str,
     *,
     dry_run: bool | None = None,
@@ -1172,7 +1159,7 @@ def handle_playbill_block_depublish(
 ) -> contracts.BlockDepublishResult:
     return _daemon_call(
         lambda client: client.depublish_block(
-            instance_id, source_id, block_id, dry_run=dry_run, at=at
+            instance_id, file_id, block_id, dry_run=dry_run, at=at
         ),
         operation_name="cruxible_block_depublish",
     )
@@ -1852,7 +1839,7 @@ def handle_playbill_coverage(
 ) -> contracts.CoverageResult:
     """Resolve caller observations, or ones the adapter derives from workspace files.
 
-    Workspace files are bound to their sources by the source catalog; ``bindings``
+    Workspace files are bound to their sources by the file catalog; ``bindings``
     override it path by path.
     """
 
@@ -1887,19 +1874,19 @@ def handle_playbill_coverage(
     )
 
 
-def handle_playbill_sources_compile(
+def handle_playbill_files_compile(
     instance_id: str,
     *,
     catalog_path: str | None = None,
     repository_root: str = ".",
     local_catalog_path: str | None = None,
     root_aliases: Mapping[str, str] | None = None,
-) -> SourceCompilationBundle:
-    """Compile the workspace's catalogued sources without exposing path or digest plumbing.
+) -> FileCompilationBundle:
+    """Compile the workspace's catalogued files without exposing path or digest plumbing.
 
     With no ``catalog_path`` the catalog is discovered as every other command
-    finds it (``.cruxible/sources.yaml`` or ``sources.yaml``, plus
-    ``.cruxible/sources.local.yaml``).
+    finds it (``.cruxible/files.yaml`` or ``files.yaml``, plus
+    ``.cruxible/files.local.yaml``).
     """
 
     workspace = mcp_workspace_root()
@@ -1908,9 +1895,9 @@ def handle_playbill_sources_compile(
             raise DataValidationError(
                 "local_catalog_path needs catalog_path; omit both to discover them"
             )
-        catalog = WorkspaceSources(workspace).catalog
+        catalog = WorkspaceFiles(workspace).catalog
     else:
-        catalog = load_source_catalog(
+        catalog = load_file_catalog(
             resolve_workspace_path(catalog_path, root=workspace, kind="file"),
             (
                 None
@@ -1926,22 +1913,22 @@ def handle_playbill_sources_compile(
         }
     )
     return _daemon_call(
-        lambda client: compile_client_source_context(
+        lambda client: compile_client_file_context(
             client,
             instance_id,
             catalog=catalog,
             repository_root=repository,
             aliases=aliases,
         ),
-        operation_name="cruxible_sources_compile",
+        operation_name="cruxible_files_compile",
     )
 
 
 def _catalog_coverage_bindings(root: Path) -> dict[str, str]:
-    """The source catalog's bindings, or none when the workspace has no catalog."""
+    """The file catalog's bindings, or none when the workspace has no catalog."""
 
     try:
-        sources = WorkspaceSources(root)
+        sources = WorkspaceFiles(root)
     except SourceSelectionError:
         return {}
     return sources.coverage_bindings()

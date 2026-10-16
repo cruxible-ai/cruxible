@@ -18,12 +18,13 @@ from cruxible_client.contracts.authoring.models import (
     WorkingSelectionObservation,
 )
 from cruxible_client.contracts.declared_blocks import stamped_projection_windows
-from cruxible_client.contracts.source_catalog import (
+from cruxible_client.contracts.file_catalog import (
+    FileCatalog,
+    FileCatalogEntry,
+    FileCatalogEntryAny,
     ProcedureProjectionCatalogEntry,
-    SourceCatalog,
-    SourceCatalogEntry,
-    SourceCatalogEntryAny,
-    merge_source_catalogs,
+    merge_file_catalogs,
+    refuse_legacy_file_catalogs,
 )
 from cruxible_client.contracts.workspace_layout import workspace_path
 
@@ -134,44 +135,43 @@ class FileSelector:
         )
 
 
-class WorkspaceSources:
+class WorkspaceFiles:
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace.expanduser().resolve()
+        refuse_legacy_file_catalogs(self.workspace)
         portable_paths = tuple(
             path
             for path in (
-                workspace_path(self.workspace, "sources.yaml"),
-                self.workspace / "sources.yaml",
+                workspace_path(self.workspace, "files.yaml"),
+                self.workspace / "files.yaml",
             )
             if path.is_file()
         )
         if len(portable_paths) != 1:
             raise SourceSelectionError(
-                "workspace must contain exactly one .cruxible/sources.yaml or sources.yaml"
+                "workspace must contain exactly one .cruxible/files.yaml or files.yaml"
             )
         try:
-            portable = SourceCatalog.model_validate(
+            portable = FileCatalog.model_validate(
                 yaml.safe_load(read_regular_file(portable_paths[0]))
             )
-            local_path = workspace_path(self.workspace, "sources.local.yaml")
+            local_path = workspace_path(self.workspace, "files.local.yaml")
             local = (
                 None
                 if not local_path.is_file()
-                else SourceCatalog.model_validate(yaml.safe_load(read_regular_file(local_path)))
+                else FileCatalog.model_validate(yaml.safe_load(read_regular_file(local_path)))
             )
-            self.catalog = merge_source_catalogs(portable, local)
+            self.catalog = merge_file_catalogs(portable, local)
         except ValidationError as exc:
             raise SourceSelectionError(
-                f"source catalog is invalid: {_format_catalog_validation(exc)}"
+                f"file catalog is invalid: {_format_catalog_validation(exc)}"
             ) from exc
         except (OSError, ValueError, yaml.YAMLError) as exc:
-            raise SourceSelectionError(f"source catalog is invalid: {exc}") from exc
+            raise SourceSelectionError(f"file catalog is invalid: {exc}") from exc
 
     @property
-    def source_entries(self) -> tuple[SourceCatalogEntry, ...]:
-        return tuple(
-            entry for entry in self.catalog.entries if isinstance(entry, SourceCatalogEntry)
-        )
+    def file_entries(self) -> tuple[FileCatalogEntry, ...]:
+        return tuple(entry for entry in self.catalog.entries if isinstance(entry, FileCatalogEntry))
 
     @property
     def procedure_projection_entries(self) -> tuple[ProcedureProjectionCatalogEntry, ...]:
@@ -181,10 +181,10 @@ class WorkspaceSources:
             if isinstance(entry, ProcedureProjectionCatalogEntry)
         )
 
-    def _resolved_path(self, entry: SourceCatalogEntryAny) -> Path:
+    def _resolved_path(self, entry: FileCatalogEntryAny) -> Path:
         label = (
             entry.name
-            if isinstance(entry, SourceCatalogEntry)
+            if isinstance(entry, FileCatalogEntry)
             else entry.procedure_identity.qualified
         )
         if entry.root_alias is not None:
@@ -202,11 +202,11 @@ class WorkspaceSources:
         path = Path(requested)
         resolved = (path if path.is_absolute() else self.workspace / path).expanduser().resolve()
         matches = tuple(
-            entry for entry in self.source_entries if self._resolved_path(entry) == resolved
+            entry for entry in self.file_entries if self._resolved_path(entry) == resolved
         )
         if len(matches) != 1:
             raise SourceSelectionError(
-                f"path {requested!s} maps to {len(matches)} logical sources; exactly one required"
+                f"path {requested!s} maps to {len(matches)} catalogued files; exactly one required"
             )
         try:
             content = read_regular_file(resolved)
@@ -214,20 +214,20 @@ class WorkspaceSources:
             raise SourceSelectionError(f"could not read {requested!s}: {exc}") from exc
         return FileSelector(path=resolved, source_id=matches[0].name, content=content)
 
-    def entry_for_source(self, source_id: str) -> SourceCatalogEntry:
-        """The one catalog entry named ``source_id``, or a refusal naming the known ones."""
+    def entry_for_file(self, file: str) -> FileCatalogEntry:
+        """The one catalog entry named ``file``, or a refusal naming the known ones."""
 
-        matches = tuple(entry for entry in self.source_entries if entry.name == source_id)
+        matches = tuple(entry for entry in self.file_entries if entry.name == file)
         if len(matches) != 1:
-            known = ", ".join(entry.name for entry in self.source_entries) or "none"
+            known = ", ".join(entry.name for entry in self.file_entries) or "none"
             raise SourceSelectionError(
-                f"logical source {source_id!r} maps to {len(matches)} local files "
-                f"(catalogued sources: {known})"
+                f"catalogued file {file!r} maps to {len(matches)} local files "
+                f"(catalogued files: {known})"
             )
         return matches[0]
 
-    def path_for_source(self, source_id: str) -> Path:
-        return self._resolved_path(self.entry_for_source(source_id))
+    def path_for_file(self, file: str) -> Path:
+        return self._resolved_path(self.entry_for_file(file))
 
     def coverage_bindings(self) -> dict[str, str]:
         """Each catalogued workspace file, relative to the workspace, to its source.
@@ -239,7 +239,7 @@ class WorkspaceSources:
         """
 
         bindings: dict[str, str] = {}
-        for entry in self.source_entries:
+        for entry in self.file_entries:
             if entry.root_alias is not None or Path(entry.locator).is_absolute():
                 continue
             path = self._resolved_path(entry)
@@ -262,5 +262,5 @@ class WorkspaceSources:
 __all__ = [
     "EvidenceSelection",
     "FileSelector",
-    "WorkspaceSources",
+    "WorkspaceFiles",
 ]

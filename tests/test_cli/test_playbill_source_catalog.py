@@ -1,4 +1,4 @@
-"""PB-E source-catalog CLI keeps paths local and submits frozen bytes."""
+"""PB-E file-catalog CLI keeps paths local and submits frozen bytes."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 from click.testing import CliRunner
 
 from cruxible_client import contracts
-from cruxible_client.contracts.source_catalog import SourceCompilationBundle
+from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_core.cli.main import cli
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from tests.test_service.test_playbill_documents import _instance
@@ -27,7 +27,7 @@ def test_cli_compile_and_propose_never_send_a_client_path(
     source.parent.mkdir(parents=True)
     original = b"# Cruxible from a declared source\n"
     source.write_bytes(original)
-    catalog = tmp_path / "playbill-sources.yaml"
+    catalog = tmp_path / "playbill-files.yaml"
     catalog.write_text(
         """\
 tag: playbill-source-catalog-v1
@@ -46,27 +46,27 @@ entries:
     submitted: list[dict[str, Any]] = []
 
     class StubClient:
-        def source_context(self, instance_id: str) -> contracts.SourceContext:
+        def file_context(self, instance_id: str) -> contracts.FileContext:
             assert instance_id == "inst_cli"
-            return contracts.SourceContext(
+            return contracts.FileContext(
                 accepted_coordinate=contracts.AcceptedCoordinate.model_validate(
                     coordinate.model_dump(mode="json")
                 ),
                 documents=[],
             )
 
-        def propose_source_bundle(
+        def propose_file_bundle(
             self,
             instance_id: str,
             *,
             bundle: dict[str, Any],
-            source_name: str,
+            file: str,
             proposal_name: str,
             dry_run: bool | None = None,
             at: str | None = None,
         ) -> contracts.ProposalInspection:
             assert instance_id == "inst_cli"
-            assert source_name == "playbill-design"
+            assert file == "playbill-design"
             assert proposal_name == "compiled-design"
             submitted.append(bundle)
             return contracts.ProposalInspection(
@@ -88,7 +88,7 @@ entries:
             "https://playbill.invalid",
             "--instance-id",
             "inst_cli",
-            "sources",
+            "files",
             "compile",
             "--catalog",
             str(catalog),
@@ -100,7 +100,7 @@ entries:
         ],
     )
     assert compiled.exit_code == 0, compiled.output
-    frozen = SourceCompilationBundle.model_validate_json(bundle_path.read_bytes())
+    frozen = FileCompilationBundle.model_validate_json(bundle_path.read_bytes())
     assert base64.b64decode(frozen.documents[0].body_base64) == original
     assert "locator" not in frozen.model_dump_json()
     assert str(repository) not in frozen.model_dump_json()
@@ -113,11 +113,11 @@ entries:
             "https://playbill.invalid",
             "--instance-id",
             "inst_cli",
-            "sources",
+            "files",
             "propose",
             "--bundle",
             str(bundle_path),
-            "--source",
+            "--file",
             "playbill-design",
             "--name",
             "compiled-design",
@@ -149,7 +149,7 @@ def test_cli_sources_discover_the_workspace_catalog_and_propose_by_name(
     (workspace / "specs" / "design.md").write_bytes(b"# Design\n")
     (workspace / "notes.md").write_bytes(b"notes\n")
     (workspace / ".cruxible").mkdir()
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -169,13 +169,13 @@ entries:
     proposed: list[str] = []
 
     class StubClient:
-        def source_context(self, instance_id: str) -> contracts.SourceContext:
-            return contracts.SourceContext(accepted_coordinate=coordinate, documents=[])
+        def file_context(self, instance_id: str) -> contracts.FileContext:
+            return contracts.FileContext(accepted_coordinate=coordinate, documents=[])
 
-        def check_source_bundle(
+        def check_file_bundle(
             self, instance_id: str, *, bundle: dict[str, Any]
-        ) -> contracts.SourceCheckResult:
-            return contracts.SourceCheckResult(
+        ) -> contracts.FileCheckResult:
+            return contracts.FileCheckResult(
                 compilation_digest=bundle["manifest"]["compilation_digest"],
                 accepted_coordinate=coordinate,
                 alignments=[
@@ -184,17 +184,17 @@ entries:
                 ],
             )
 
-        def propose_source_bundle(
-            self, instance_id: str, *, source_name: str, **_: Any
+        def propose_file_bundle(
+            self, instance_id: str, *, file: str, **_: Any
         ) -> contracts.ProposalInspection:
-            proposed.append(source_name)
+            proposed.append(file)
             return contracts.ProposalInspection(
                 proposal={"admission": {"proposal_id": "sha256:" + "1" * 64}},
                 accepted_coordinate=coordinate,
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    base = ["--server-url", "https://playbill.invalid", "--instance-id", "inst_cli", "sources"]
+    base = ["--server-url", "https://playbill.invalid", "--instance-id", "inst_cli", "files"]
     runner = CliRunner()
 
     checked = runner.invoke(cli, [*base, "check", "--root", str(workspace)])
@@ -203,14 +203,14 @@ entries:
     assert checked.stdout == "design: untracked\n"
 
     named = runner.invoke(
-        cli, [*base, "propose", "--source", "design", "--name", "revise-design", "--root", "."]
+        cli, [*base, "propose", "--file", "design", "--name", "revise-design", "--root", "."]
     )
     assert named.exit_code == 0, named.output
     assert proposed == ["design"]
     assert "Proposal: sha256:" in named.stdout
 
     evidence_only = runner.invoke(
-        cli, [*base, "propose", "--source", "notes", "--name", "revise-notes"]
+        cli, [*base, "propose", "--file", "notes", "--name", "revise-notes"]
     )
     assert evidence_only.exit_code != 0
     assert "evidence-only" in evidence_only.output

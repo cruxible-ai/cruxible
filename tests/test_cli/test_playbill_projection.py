@@ -176,7 +176,7 @@ def test_cli_sync_passes_local_edit_and_path_controls(
     assert converging == {
         "workspace": str(tmp_path),
         "paths": ("corpus/runbook.md",),
-        "all_sources": False,
+        "all_files": False,
     }
     checked = CliRunner().invoke(
         cli,

@@ -439,7 +439,7 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.block.detach",
     "cruxible.block.repin",
     "cruxible.block.sync",
-    "cruxible.sources.propose",
+    "cruxible.files.propose",
     "cruxible.proposal.readmit",
     "cruxible.proposal.approve",
     "cruxible.proposal.activate",
@@ -1049,7 +1049,7 @@ class FloorRefreshResult(BaseModel):
     message: str | None = None
 
 
-class SourceContext(BaseModel):
+class FileContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-source-context-v1"] = "playbill-source-context-v1"
@@ -1057,7 +1057,7 @@ class SourceContext(BaseModel):
     documents: list[dict[str, Any]]
 
 
-class SourceCheckResult(BaseModel):
+class FileCheckResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-source-check-v1"] = "playbill-source-check-v1"

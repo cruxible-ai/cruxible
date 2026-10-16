@@ -192,7 +192,7 @@ def test_file_evidence_is_read_in_the_mcp_workspace(
     workspace = tmp_path / "workspace"
     (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "notes.md").write_text("# Notes\n\nStatus: done\n", encoding="utf-8")
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable

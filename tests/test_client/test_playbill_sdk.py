@@ -253,7 +253,7 @@ class _Client:
 
 def _workspace(path: Path) -> None:
     (path / ".cruxible").mkdir()
-    (path / ".cruxible" / "sources.yaml").write_text(
+    (path / ".cruxible" / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable

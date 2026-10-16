@@ -46,7 +46,7 @@ UNDECLARED_HAND_EDIT_CHANGE = "read_the_refusal_details_and_revise_the_named_art
 DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "workspace_binding_missing": (
         "Restore the bound file at the catalog entry's locator, or correct or remove "
-        "that entry in the workspace source catalog."
+        "that entry in the workspace file catalog."
     ),
     "trigger_capture_stale": (
         "Acquire a fresh Capture and evaluate its new occurrence. "
@@ -130,7 +130,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     # skips it; an operator who believes it is a projection page says so by
     # naming the path, and gets the marker refusal that path deserves.
     "source_not_projection_target": "name_this_path_explicitly_if_it_declares_a_projection_block",
-    "workspace_source_catalog_invalid": "repair_the_workspace_source_catalog",
+    "workspace_file_catalog_invalid": "repair_the_workspace_file_catalog",
     # A `propose_change_set` item is the Procedure author's: the template
     # resolved to something that is not one Claim proposal item, or to a Claim
     # no observation in the item's own closure can back.
@@ -303,7 +303,7 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
     "occurrence_id_mismatch": RepairOperation(operation="cruxible.line.run"),
     "evaluation_instant_skewed": RepairOperation(operation="cruxible.line.run"),
     "line_identity_mismatch": RepairOperation(operation="cruxible.line.run"),
-    "document_modified": RepairOperation(operation="cruxible.sources.propose"),
+    "document_modified": RepairOperation(operation="cruxible.files.propose"),
     # A next page cursor names the whole queue it continues; once that queue
     # moves, the repair is to read page one again.
     "cruxible.next.cursor_mismatch": RepairOperation(operation="cruxible.next"),

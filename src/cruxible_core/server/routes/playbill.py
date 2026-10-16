@@ -83,6 +83,8 @@ from cruxible_core.server.playbill_request_models import (
     CurationOverruleRequest,
     CurationSuppressRequest,
     CurationUnsuppressRequest,
+    FileBundleRequest,
+    FileProposeRequest,
     FloorDeltaRequest,
     FloorExportRequest,
     InitRequest,
@@ -102,8 +104,6 @@ from cruxible_core.server.playbill_request_models import (
     ProposePrincipalRequest,
     ResolveCoverageRequest,
     ReviewRequest,
-    SourceBundleRequest,
-    SourceProposeRequest,
     StoreBodyRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
@@ -604,38 +604,38 @@ def read_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead:
 
 
 @router.get(
-    "/{instance_id}/sources/context",
-    response_model=contracts.SourceContext,
+    "/{instance_id}/files/context",
+    response_model=contracts.FileContext,
 )
-def source_context(instance_id: str) -> contracts.SourceContext:
-    return playbill_api.playbill_source_context(resolve_server_instance_id(instance_id))
+def file_context(instance_id: str) -> contracts.FileContext:
+    return playbill_api.playbill_file_context(resolve_server_instance_id(instance_id))
 
 
 @router.post(
-    "/{instance_id}/sources/check",
-    response_model=contracts.SourceCheckResult,
+    "/{instance_id}/files/check",
+    response_model=contracts.FileCheckResult,
 )
-def check_sources(
+def check_files(
     instance_id: str,
-    req: SourceBundleRequest,
-) -> contracts.SourceCheckResult:
-    return playbill_api.playbill_check_source_bundle(
+    req: FileBundleRequest,
+) -> contracts.FileCheckResult:
+    return playbill_api.playbill_check_file_bundle(
         resolve_server_instance_id(instance_id), bundle=req.bundle
     )
 
 
 @router.post(
-    "/{instance_id}/sources/proposals",
+    "/{instance_id}/files/proposals",
     response_model=contracts.ProposalInspection,
 )
-def propose_sources(
+def propose_files(
     instance_id: str,
-    req: SourceProposeRequest,
+    req: FileProposeRequest,
 ) -> contracts.ProposalInspection:
-    return playbill_api.playbill_propose_source_bundle(
+    return playbill_api.playbill_propose_file_bundle(
         resolve_server_instance_id(instance_id),
         bundle=req.bundle,
-        source_name=req.source_name,
+        file=req.file,
         proposal_name=req.proposal_name,
         dry_run=req.dry_run,
         at=req.at,
@@ -914,7 +914,7 @@ def depublish_playbill_block(
 ) -> contracts.BlockDepublishResult:
     return playbill_api.playbill_block_depublish(
         resolve_server_instance_id(instance_id),
-        req.source_id,
+        req.file_id,
         req.block_id,
         dry_run=req.dry_run,
         at=req.at,

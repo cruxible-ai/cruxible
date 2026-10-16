@@ -98,6 +98,15 @@
   "/api/v1/{instance_id}/documents/proposals": {
     "POST": "ProposalInspection"
   },
+  "/api/v1/{instance_id}/files/check": {
+    "POST": "FileCheckResult"
+  },
+  "/api/v1/{instance_id}/files/context": {
+    "GET": "FileContext"
+  },
+  "/api/v1/{instance_id}/files/proposals": {
+    "POST": "ProposalInspection"
+  },
   "/api/v1/{instance_id}/floor/deliver-now": {
     "POST": "FloorDeliveryResult"
   },
@@ -282,15 +291,6 @@
   },
   "/api/v1/{instance_id}/since": {
     "POST": "SinceResult"
-  },
-  "/api/v1/{instance_id}/sources/check": {
-    "POST": "SourceCheckResult"
-  },
-  "/api/v1/{instance_id}/sources/context": {
-    "GET": "SourceContext"
-  },
-  "/api/v1/{instance_id}/sources/proposals": {
-    "POST": "ProposalInspection"
   },
   "/api/v1/{instance_id}/whoami": {
     "GET": "WhoAmI"
