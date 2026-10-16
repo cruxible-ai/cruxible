@@ -52,7 +52,15 @@ COMMIT_HEADER_READERS = {
     "_commit_tree": (b"tree ",),
     "main_history": (b"parent ",),
     "commit_timestamps": ("author ", "committer "),
+    "_extend_archive_members": (b"parent ",),
+    "is_ancestor": (b"parent ",),
+    "path_blob": (b"tree ",),
+    "_batch_paths": (b"tree ", "refs/"),
 }
+# Type checks and cryptographic authentication consume no prose facts. The
+# authenticator forwards opaque commit bytes to SSHSIG verification, whose
+# signature must cover the message as well as the header.
+COMMIT_OPAQUE_READERS = {"_archive_update", "_verify_public"}
 
 
 def _source_files() -> tuple[Path, ...]:
@@ -165,10 +173,25 @@ def test_every_raw_commit_read_stops_at_the_header_lines_it_names() -> None:
             if isinstance(node, ast.FunctionDef) and _gates_on_a_commit_object(node):
                 readers[node.name] = (path, node)
     assert direct == []
-    assert set(readers) == set(COMMIT_HEADER_READERS)
+    assert set(readers) == set(COMMIT_HEADER_READERS) | COMMIT_OPAQUE_READERS
     assert {path.name for path, _function in readers.values()} == {"git.py"}
 
     for name, (path, function) in readers.items():
+        if name in COMMIT_OPAQUE_READERS:
+            assert not any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"split", "partition", "decode", "startswith"}
+                for node in ast.walk(function)
+            ), name
+            if name == "_verify_public":
+                assert any(
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "verify_signature"
+                    for node in ast.walk(function)
+                )
+            continue
         # A module-level helper the reader hands the bytes to is part of the read.
         scope = [function] + [
             helpers[path][node.func.id]

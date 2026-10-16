@@ -68,7 +68,7 @@ def test_snapshot_rehashes_corrupted_loose_commit_on_every_read(ledger):
     assert raw.endswith(b"base\n")
     path.chmod(0o600)
     path.write_bytes(zlib.compress(raw[:-5] + b"fake\n"))
-    with pytest.raises(GitError, match="do not reproduce its OID"):
+    with pytest.raises(GitError, match="do not (reproduce its OID|hash to their ID)"):
         ledger.read_review_projection((base,), dependencies={})
 
 
@@ -157,7 +157,7 @@ def test_snapshot_rehashes_corrupted_note_blob(ledger):
     assert raw.endswith(b"good\n")
     path.chmod(0o600)
     path.write_bytes(zlib.compress(raw[:-5] + b"fake\n"))
-    with pytest.raises(GitError, match="do not reproduce its OID"):
+    with pytest.raises(GitError, match="do not (reproduce its OID|hash to their ID)"):
         ledger.read_review_projection((original,), dependencies={})
 
 

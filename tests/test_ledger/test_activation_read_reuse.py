@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -20,14 +21,15 @@ from tests.test_ledger.test_activation import _sign
 
 def _verifications(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
-    command = ledger_git._command
+    verify = ledger_git.verify_signature
 
-    def counted(args, *rest, **kwargs):
-        if "verify-commit" in args:
-            calls.append(args[-1])
-        return command(args, *rest, **kwargs)
+    def counted(body, key, *, sha256):
+        preimage = f"commit {len(body)}".encode() + b"\x00" + body
+        algorithm = "sha256" if sha256 else "sha1"
+        calls.append(hashlib.new(algorithm, preimage).hexdigest())
+        return verify(body, key, sha256=sha256)
 
-    monkeypatch.setattr(ledger_git, "_command", counted)
+    monkeypatch.setattr(ledger_git, "verify_signature", counted)
     return calls
 
 

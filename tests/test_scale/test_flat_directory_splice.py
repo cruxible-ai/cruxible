@@ -93,7 +93,7 @@ def test_pack_file_work_is_constant_per_batch(tmp_path):
     sync = os.fsync
     for n in (1, 100):
         with patch("os.fsync", side_effect=lambda fd: (calls.append(fd), sync(fd))[-1]):
-            ledger._store_loose_objects(
+            ledger._store_objects(
                 {ledger._blob_oid(str(i).encode()): ("blob", str(i).encode()) for i in range(n)}
             )
         assert len(calls) == 3

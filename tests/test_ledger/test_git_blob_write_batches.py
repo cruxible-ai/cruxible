@@ -156,7 +156,7 @@ def test_a_path_that_is_both_file_and_directory_is_refused(ledger):
 
 def test_normalization_collisions_refuse_before_writing(ledger, monkeypatch):
     writer = Mock()
-    monkeypatch.setattr(ledger, "_store_loose_objects", writer)
+    monkeypatch.setattr(ledger, "_store_objects", writer)
     with pytest.raises(GitError, match="collide after normalization"):
         ledger._write_tree({"café": b"one", "cafe\u0301": b"two"})
     with pytest.raises(CanonicalEncodingError, match="case-fold-colliding"):
@@ -168,7 +168,7 @@ def test_different_bytes_with_same_computed_address_are_not_deduplicated(ledger,
     oid = "1" * (40 if ledger.object_format() == "sha1" else 64)
     monkeypatch.setattr(ledger, "_blob_oid", lambda content: oid)
     writer = Mock()
-    monkeypatch.setattr(ledger, "_store_loose_objects", writer)
+    monkeypatch.setattr(ledger, "_store_objects", writer)
     with pytest.raises(GitError, match="different blob bytes"):
         ledger._write_tree({"a": b"one", "b": b"two"})
     writer.assert_not_called()

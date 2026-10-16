@@ -231,8 +231,10 @@ class GitLedger:
         if self._object_format_cache is not None:
             return self._object_format_cache
         config = configparser.ConfigParser(interpolation=None, strict=False)
-        config.read(self.path / "config")
-        value = config.get("extensions", "objectformat", fallback="sha1")
+        if not config.read(self.path / "config"):
+            value = self._git(["rev-parse", "--show-object-format"]).decode().strip()
+        else:
+            value = config.get("extensions", "objectformat", fallback="sha1")
         if value not in {"sha1", "sha256"}:
             raise GitError(f"unsupported Git object format: {value!r}")
         self._object_format_cache = cast(GitObjectFormat, value)
@@ -373,7 +375,7 @@ class GitLedger:
             except (OSError, ValueError) as exc:
                 raise GitError("daemon commit signing failed") from exc
         oid = self._object_oid("commit", body)
-        self._store_loose_objects({oid: ("commit", body)})
+        self._store_objects({oid: ("commit", body)})
         repository = _repository_key(self.path)
         for sized in (True, False):
             listing = _remembered_listing(repository, tree_oid, with_sizes=sized)
@@ -402,7 +404,7 @@ class GitLedger:
             return hashlib.sha1(header + body).hexdigest()  # noqa: S324 - Git identity
         return hashlib.sha256(header + body).hexdigest()
 
-    def _store_loose_objects(self, objects: Mapping[str, tuple[str, bytes]]) -> None:
+    def _store_objects(self, objects: Mapping[str, tuple[str, bytes]]) -> None:
         """Publish one in-process pack/index, with no per-object file operations."""
         reader = _batch_reader(self.path)
         pending = getattr(reader._transaction, "pending", None)
@@ -528,7 +530,7 @@ class GitLedger:
             body = b""
             root = self._object_oid("tree", body)
             written[root] = ("tree", body)
-        self._store_loose_objects(written)
+        self._store_objects(written)
         return root
 
     @_pack_transaction
@@ -549,7 +551,7 @@ class GitLedger:
         re-storing every member would make each write cost O(members) Git
         processes for bytes the repository already holds. Blob addresses are
         computed in process; only changed members' blobs and the directories on
-        their paths are written, as loose objects, with no Git process. The
+        their paths are written in a pack, with no Git process. The
         resulting tree object ID is byte-for-byte the one a member-by-member
         write produces.
         """
@@ -848,7 +850,7 @@ class GitLedger:
                 raise GitError("proposal archive target is not a retained commit")
             if empty_tree is None:
                 empty_tree = self._object_oid("tree", b"")
-                self._store_loose_objects({empty_tree: ("tree", b"")})
+                self._store_objects({empty_tree: ("tree", b"")})
             parents = ([tip] if tip else []) + [oid]
             # No growing manifest/tree and no authoring ancestry. The archive is
             # unsigned retention metadata, outside accepted-state authority.
@@ -860,7 +862,7 @@ class GitLedger:
                 + "Retain closed proposal\n"
             ).encode()
             tip = self._object_oid("commit", raw)
-            self._store_loose_objects({tip: ("commit", raw)})
+            self._store_objects({tip: ("commit", raw)})
             known = self._extend_archive_members(known, (oid,)).set(tip, True)
             _ARCHIVE_MEMBERS[(_repository_key(self.path), tip)] = known
             while len(_ARCHIVE_MEMBERS) > 16:
@@ -1756,11 +1758,10 @@ class GitLedger:
     def compact_objects(self) -> None:
         """Pack every reachable object and write the commit-graph.
 
-        Safe beside live writers: nothing reads an object by its loose path
-        except the write dedup (a packed object is simply written loose again),
-        a generation's objects stay loose until a ref reaches them, and the
-        commit-graph is replaced atomically. Unreachable loose objects are
-        left for ``prune_unreachable``.
+        Safe beside live writers: Git keep files protect a writer's pack until
+        a durable ref reaches it (or recovery collects a losing generation).
+        Git replaces the consolidated pack and commit-graph atomically.
+        Unreachable loose objects are left for ``prune_unreachable``.
         """
 
         self._git(["repack", "-a", "-d", "-q"])
@@ -1803,7 +1804,7 @@ class GitLedger:
         return True
 
     def collect_unreachable_generation(self, oid: str) -> tuple[str, ...]:
-        """Delete only loose objects proven reachable solely from one losing generation."""
+        """Delete objects proven reachable solely from one losing generation, including packs."""
 
         self._validate_oid(oid)
         if self.read_main() == oid:
@@ -2435,7 +2436,7 @@ class GitLedger:
         if listing is not None:
             return _listing_child_names(listing, directory)
         entries = self._directory_entries(oid, directory)
-        return () if entries is None else tuple(entries)
+        return () if entries is None else tuple(sorted(entries, key=_tree_order_key(entries)))
 
     def _directory_entries(
         self, oid: str, directory: str
@@ -2813,7 +2814,7 @@ class GitLedger:
             visited.add(current)
             found = _batch_reader(self.path).objects((current,))[current]
             if found is not None and found[0] == "commit":
-                pending.extend(_commit_parents(found[1]))
+                pending.extend(reversed(_commit_parents(found[1])))
         return False
 
     def _allowed_signer_entry(self, principal_id: str) -> bytes:

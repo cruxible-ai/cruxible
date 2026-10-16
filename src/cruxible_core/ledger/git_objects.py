@@ -23,6 +23,11 @@ from cruxible_client.contracts.errors import GitError
 _KINDS = {1: "commit", 2: "tree", 3: "blob", 4: "tag"}
 _CODES = {value: key for key, value in _KINDS.items()}
 
+_EMPTY_TREES = {
+    hashlib.sha1(b"tree 0\x00").hexdigest(),  # noqa: S324 - Git object identity
+    hashlib.sha256(b"tree 0\x00").hexdigest(),
+}
+
 
 def _hash(data: bytes, width: int) -> bytes:
     return hashlib.new("sha1" if width == 20 else "sha256", data).digest()
@@ -210,7 +215,9 @@ class PackStore:
                 self._discover(width)
                 location = self.locations.get(oid)
                 if location is None:
-                    return None
+                    # Git exposes the empty tree even without a physical
+                    # object; physical objects still pass the hash check.
+                    return ("tree", b"") if oid in _EMPTY_TREES else None
                 result = self._at(*location, width=width, depth=0)
             kind, body = result
             if _hash(f"{kind} {len(body)}".encode() + b"\x00" + body, width).hex() != oid:

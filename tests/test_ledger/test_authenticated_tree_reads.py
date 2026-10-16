@@ -155,8 +155,9 @@ def test_a_file_that_becomes_a_directory_is_a_deletion_plus_additions(
 
 def _forge_subtree(ledger: GitLedger, subtree: str, body: bytes) -> None:
     loose = ledger.path / "objects" / subtree[:2] / subtree[2:]
-    assert loose.is_file()
-    loose.chmod(0o644)
+    loose.parent.mkdir(exist_ok=True)
+    if loose.exists():
+        loose.chmod(0o644)
     loose.write_bytes(zlib.compress(b"tree %d\x00" % len(body) + body))
 
 
