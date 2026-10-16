@@ -319,6 +319,17 @@ class PackStore:
             while True:
                 decoded = inflater.decompress(compressed, 1)
                 compressed = inflater.unconsumed_tail
+                # Dynamic-Huffman tables can consume an entire input chunk
+                # before emitting the first header byte. Feed more compressed
+                # input while still limiting output to exactly one byte.
+                while not decoded and not inflater.eof:
+                    if not compressed:
+                        cursor += 64
+                        compressed = mapped[cursor : cursor + 64]
+                        if not compressed:
+                            break
+                    decoded = inflater.decompress(compressed, 1)
+                    compressed = inflater.unconsumed_tail
                 if not decoded or shift > 63:
                     raise GitError("malformed Git delta header")
                 byte = decoded[0]
@@ -344,6 +355,8 @@ class PackStore:
         except (OSError, ValueError, IndexError, struct.error, zlib.error, GitError) as exc:
             if self.is_pending(oid):
                 return None
+            if isinstance(exc, GitError):
+                raise
             raise GitError(f"Git object storage is corrupt or unavailable: {oid}") from exc
 
     def _read(self, oid: str) -> tuple[str, bytes] | None:

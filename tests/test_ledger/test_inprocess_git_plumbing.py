@@ -143,16 +143,13 @@ def test_request_stages_one_pair_and_flushes_only_at_acceptance(ledger, monkeypa
     real_fsync = os.fsync
 
     def observe(fd):
-        import fcntl
-        import sys
-
-        path = (
-            fcntl.fcntl(fd, 50, b"\x00" * 1024).split(b"\x00", 1)[0].decode()
-            if sys.platform == "darwin"
-            else os.readlink(f"/proc/self/fd/{fd}")
-        )
-        synced.append(path)
+        st = os.fstat(fd)
+        synced.append((st.st_dev, st.st_ino))
         return real_fsync(fd)
+
+    def sync_count(path):
+        st = path.stat()
+        return synced.count((st.st_dev, st.st_ino))
 
     monkeypatch.setattr(os, "fsync", observe)
     with ledger.request_pack():
@@ -184,11 +181,13 @@ def test_request_stages_one_pair_and_flushes_only_at_acceptance(ledger, monkeypa
             assert ledger.compare_and_set_main(generation, expected_oid=base)
             ledger.write_generation_note(generation, b"descriptor\n")
         # The accepted pack is durable before a successor can acquire the lock.
-        assert len([path for path in synced if path.endswith(".pack")]) == 1
+        (accepted_pack,) = set(directory.glob("*.pack")) - before
+        assert sync_count(accepted_pack) == 1
+        assert sync_count(accepted_pack.with_suffix(".idx")) == 1
         ledger.replace_proposal_review_refs({})
     assert len(set(directory.glob("*.pack")) - before) == 1
-    assert len([path for path in synced if path.endswith(".pack")]) == 1
-    assert len([path for path in synced if path.endswith(".idx")]) == 1
+    assert sync_count(accepted_pack) == 1
+    assert sync_count(accepted_pack.with_suffix(".idx")) == 1
     assert not list(directory.glob("*.keep"))
     ledger._git(["fsck", "--strict", "--no-dangling"])
 
