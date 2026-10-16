@@ -12,6 +12,7 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from typing import ClassVar, TypeVar, cast
 
 from pydantic import BaseModel
@@ -25,6 +26,14 @@ CanonicalValue = CanonicalScalar | list["CanonicalValue"] | dict[str, "Canonical
 Manifest = dict[str, str]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+@lru_cache(maxsize=65536)
+def _valid_sha256_hex(value: str) -> None:
+    """Retain only successful hex validations, independently of digest kind."""
+    if _SHA256_RE.fullmatch(value) is None:
+        # lru_cache does not retain calls that raise.
+        raise ValueError("invalid SHA-256 hex")
 
 
 class ArtifactCodec(str, Enum):
@@ -481,8 +490,12 @@ class Sha256Value:
     kind: ClassVar[str] = "digest"
 
     def __post_init__(self) -> None:
-        if not _SHA256_RE.fullmatch(self.value):
+        if len(self.value) != 64:
             raise ValueError(f"{self.kind} must be 32 bytes of lowercase SHA-256 hex")
+        try:
+            _valid_sha256_hex(self.value)
+        except ValueError:
+            raise ValueError(f"{self.kind} must be 32 bytes of lowercase SHA-256 hex") from None
 
     @property
     def tagged(self) -> str:
@@ -495,6 +508,14 @@ class Sha256Value:
         prefix, separator, digest = value.partition(":")
         if separator != ":" or prefix != cls.algorithm:
             raise ValueError(f"{cls.kind} must use the {cls.algorithm!r} algorithm tag")
+        # Keep arbitrarily sized inputs out of both process-wide caches.
+        if len(digest) != 64:
+            raise ValueError(f"{cls.kind} must be 32 bytes of lowercase SHA-256 hex")
+        return cls._from_hex(digest)
+
+    @classmethod
+    @lru_cache(maxsize=65536)
+    def _from_hex(cls, digest: str) -> "Sha256Value":
         return cls(digest)
 
 

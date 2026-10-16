@@ -655,7 +655,16 @@ class ProcedureJournalRecordV1(_StrictJournalModel):
         previous_record_digest: str,
     ) -> "ProcedureJournalRecordV1":
         return cls(
-            **draft.model_dump(mode="python", exclude={"tag"}),
+            # Carry the already validated nested contracts; dumping the draft
+            # would turn them into dictionaries and rebuild every nested model.
+            **{
+                name: getattr(draft, name)
+                for name in type(draft).model_fields
+                if name not in {"tag", "actor_context"}
+            },
+            # Attribution is mutable (validate_assignment), unlike the other
+            # nested contracts. Its copy belongs to the bound record.
+            actor_context=draft.actor_context.model_copy(deep=True),
             sequence=sequence,
             previous_record_digest=previous_record_digest,
         )

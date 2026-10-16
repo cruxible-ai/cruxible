@@ -13,6 +13,7 @@ from cruxible_client.contracts.canonical import (
     SemanticRoot,
     Sha256Value,
 )
+from cruxible_client.contracts.content_memo import ValueMemo
 from cruxible_client.contracts.types import CompilerCoordinate, GitObjectFormat
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -115,12 +116,27 @@ class AcceptedCoordinate(_StrictProjectionModel):
 
     @classmethod
     def from_internal(cls, coordinate: AcceptedProjectionCoordinate) -> AcceptedCoordinate:
-        return cls(
-            git_oid=coordinate.git_oid,
-            semantic_root=coordinate.semantic_root,
-            generation_root=coordinate.generation_root,
-            compiler_digest=coordinate.compiler.rule_digest,
+        values = (
+            coordinate.git_oid,
+            coordinate.semantic_root,
+            coordinate.generation_root,
+            coordinate.compiler.rule_digest,
         )
+
+        def build() -> AcceptedCoordinate:
+            return cls(
+                git_oid=values[0],
+                semantic_root=values[1],
+                generation_root=values[2],
+                compiler_digest=values[3],
+            )
+
+        # Only scalar frozen contracts are shared; subclasses retain their own
+        # construction semantics and copies never key an identity-based memo.
+        return _PUBLIC_COORDINATES.derive(values, build) if cls is AcceptedCoordinate else build()
+
+
+_PUBLIC_COORDINATES: ValueMemo[AcceptedCoordinate] = ValueMemo(capacity=4096)
 
 
 class CandidateGenerationProjectionCoordinate(_StrictProjectionModel):

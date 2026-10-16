@@ -101,6 +101,16 @@ class LocalProducerReceiptResolver:
         self._full_journal = full_journal
         self._resolver: JournalProducerReceiptResolver | None = None
         self._verified = _VerifiedCaptures()
+        self._request_bound = False
+        self._request_identity = object()
+
+    def _capture_proof_epoch(self) -> object | None:
+        if not self._request_bound:
+            return None
+        try:
+            return self._request_identity, self._bodies.landings.head()
+        except (OSError, CruxibleError, ValueError):
+            return None
 
     def _opened(self) -> JournalProducerReceiptResolver | None:
         if self._resolver is None:
@@ -111,6 +121,7 @@ class LocalProducerReceiptResolver:
                 instance_id=self._instance_id,
                 bodies=self._bodies,
                 full_journal=self._full_journal,
+                request_bound=self._request_bound,
             )
         return self._resolver
 
@@ -160,10 +171,15 @@ def verification_request(
         yield active
         return
     context = open_context()
+    context._request_bound = True
     token = _REQUEST_CONTEXT.set((instance_key, context))
     try:
         yield context
     finally:
+        context._request_bound = False
+        if context._resolver is not None:
+            context._resolver._request_bound = False
+            context._resolver._proof_heads.clear()
         _REQUEST_CONTEXT.reset(token)
 
 
@@ -226,12 +242,15 @@ class JournalProducerReceiptResolver:
         bodies: ContentAddressedBodyStore,
         note_sink: Callable[[ProducerReceiptJournalNote], None] | None = None,
         full_journal: bool = False,
+        request_bound: bool = False,
     ) -> None:
         self._journal = journal
         self._stream = procedure_line_journal_stream(instance_id)
         self._bodies = bodies
         self._note_sink = note_sink
         self._full_journal = full_journal
+        self._request_bound = request_bound
+        self._proof_heads: dict[str, object] = {}
         self._full = False
         #: How many runs this context located through the journal index.
         self.lookups = 0
@@ -697,14 +716,28 @@ class JournalProducerReceiptResolver:
     def _still_proven(self, run_ids: Iterable[str]) -> bool:
         """Whether every journal payload these runs' answers were derived from is held."""
 
+        # A request's journal records are immutable. Only a recorded body
+        # landing, erase or damage can change their availability during it.
+        # Check one bounded log head, rather than re-checking the run's entire
+        # proof closure for each sibling Claim. Standalone verification keeps
+        # its cold check (including unrecorded on-disk damage).
+        try:
+            head = self._bodies.landings.head() if self._request_bound else None
+        except (OSError, CruxibleError, ValueError):
+            head = None
         for run_id in dict.fromkeys(run_ids):
-            for body in sorted(self._run_bodies.get(run_id, ())):
+            bodies = self._run_bodies.get(run_id, ())
+            if head is not None and self._proof_heads.get(run_id) == head:
+                continue
+            for body in sorted(bodies):
                 try:
                     if not self._bodies.verify(body):
                         return False
                 except (OSError, CruxibleError, ValueError):
                     # Unreadable as cold resolution would find it: re-derive.
                     return False
+            if head is not None and bodies:
+                self._proof_heads[run_id] = head
         return True
 
     def _forget(self) -> None:
@@ -714,6 +747,7 @@ class JournalProducerReceiptResolver:
         self._errors.clear()
         self._productions.clear()
         self._run_bodies.clear()
+        self._proof_heads.clear()
         self._full = False
 
     def _receipt_runs(self, digest: str) -> tuple[str, ...]:

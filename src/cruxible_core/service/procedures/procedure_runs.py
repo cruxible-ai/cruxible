@@ -1984,19 +1984,6 @@ def _fold_terminal_egress(
         value = payload.get(key)
         return value if isinstance(value, str) else None
 
-    raw_children = payload.get("children")
-    children: list[ProcedureTerminalEgressChild] = []
-    if isinstance(raw_children, list):
-        for child in raw_children:
-            if not isinstance(child, dict):
-                continue
-            children.append(
-                ProcedureTerminalEgressChild(
-                    child_index=int(cast(int, child.get("child_index", 0))),
-                    item_key=str(child.get("item_key")),
-                    manifest_digest=str(child.get("manifest_digest")),
-                )
-            )
     receipt = payload.get("receipt")
     proposal_id = None
     candidate_digest = None
@@ -2040,24 +2027,26 @@ def _fold_terminal_egress(
             for child in receipt.get("children", [])
             if isinstance(child, dict)
         }
-        children = [
-            child.model_copy(
-                update={
-                    "egress_digest": (
-                        handles[child.item_key].get("egress_digest")
-                        if child.item_key in handles
-                        else None
-                    ),
-                    "path": (
-                        handles[child.item_key].get("path") if child.item_key in handles else None
-                    ),
-                    # A restated Claim, or a Subject item whose key named a live Subject.
-                    "unchanged": child.item_key in handles
-                    and handles[child.item_key].get("disposition") in {"unchanged", "reused"},
-                }
+    else:
+        handles = {}
+    raw_children = payload.get("children")
+    children: list[ProcedureTerminalEgressChild] = []
+    if isinstance(raw_children, list):
+        for child in raw_children:
+            if not isinstance(child, dict):
+                continue
+            item_key = str(child.get("item_key"))
+            handle = handles.get(item_key, {})
+            children.append(
+                ProcedureTerminalEgressChild(
+                    child_index=int(cast(int, child.get("child_index", 0))),
+                    item_key=item_key,
+                    manifest_digest=str(child.get("manifest_digest")),
+                    egress_digest=handle.get("egress_digest"),
+                    path=handle.get("path"),
+                    unchanged=handle.get("disposition") in {"unchanged", "reused"},
+                )
             )
-            for child in children
-        ]
     raw_targets = payload.get("target_paths")
     target_paths = (
         tuple(str(item) for item in raw_targets)

@@ -3299,9 +3299,10 @@ def historical_capture_contract_resolver(
 
 
 def _claim_member(context: _MemberContext) -> _MemberVerdict:
+    from cruxible_core.compiler.sealed_members import sealed_claim_member
     from cruxible_core.indexes.evaluated_state import mapped_values
 
-    claim = parse_claim(context.content, path=context.path)
+    claim = sealed_claim_member(context.content, path=context.path).claim
     if claim.backing.attestation_digests and any(
         entry.kind == "attestation"
         for entry in artifact_kinds_for_compiler(context.current.compiler).entries()
@@ -4875,6 +4876,12 @@ def _multi_member_evidence(
 
     law_evidence: list[MemberLawEvaluation] = []
     members: list[CandidateMemberLawEvidence] = []
+    evaluation_coordinate = LawEvaluationCoordinate(
+        git_oid=current.git_oid,
+        semantic_root=current.semantic_root,
+        generation_root=current.generation_root,
+        compiler_digest=current.compiler.rule_digest,
+    )
     for item in accepted:
         proofs = closure.proofs_for(item.path)
         evidence = MemberLawEvaluation(
@@ -4882,12 +4889,7 @@ def _multi_member_evidence(
             law_identifier=item.law_identifier,
             law_digest=item.law_digest,
             evaluation_time=timestamp,
-            evaluation_coordinate=LawEvaluationCoordinate(
-                git_oid=current.git_oid,
-                semantic_root=current.semantic_root,
-                generation_root=current.generation_root,
-                compiler_digest=current.compiler.rule_digest,
-            ),
+            evaluation_coordinate=evaluation_coordinate,
             dependency_proof_refs=proofs,
             policy_digests=item.policy_digests,
             query_receipt_digests=item.query_receipt_digests,

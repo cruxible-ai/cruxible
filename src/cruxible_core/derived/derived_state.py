@@ -798,6 +798,11 @@ def card_free_view(root: SnapshotTree) -> SnapshotTree:
         # Cards are not Claims: the root's accepted projection answers the view.
         view._accepted_reader = root._accepted_reader
         view._accepted_claim_items = root._accepted_claim_items
+        # Semantic manifests and dependency proofs exclude derivative cards.
+        # A newly requested card-free view owns the exact same immutable roots.
+        if root._proofs is not None:
+            view._proofs = root._proofs
+            view._proof_seed = None
     return view
 
 

@@ -139,6 +139,33 @@ copy of the other.
 Indexes, search engines or graph databases that accelerate reads are
 projections of accepted state and can be rebuilt from it.
 
+Each write or Line request owns an artifact carrier across lowering, evaluation
+and projection. Every parser keys it by parser, exact bytes, path and codec;
+nested stages join the outer request. It retains oversized and evicted process
+memo entries until that request exits, so LRU budgets do not cause repeated
+parsing within a large change. Sealed models are shared; unsealable parses stay
+detached. Refusals are never retained. Request memory grows with the artifacts
+this request touches, and all of it is released at outer scope exit.
+
+The write pipeline shares each Claim's sealed member: exact bytes, strict
+parsed model, digests and normalized intrinsic projection facts. The bounded
+cache keys all of these by path, codec and exact bytes. Changed bytes derive a
+new member. Generation-dependent revisions, verdicts and explanation proofs
+are compiled for the accepting coordinate. Carried rows are checked against
+fresh derivation in tests; cold reconstruction remains the projection oracle.
+
+A successful activation also carries the evaluator's semantic-manifest and
+dependency proof tries to the exact accepted Git OID. The next write updates
+those roots for its own changed paths; it does not finish deferred proof work
+for the previous change. Only a winning verified publication installs them,
+compiler adoption stays cold, and physical and card-free snapshots share the
+same immutable semantic proof roots.
+
+Within a Capture verification request, a run's immutable journal proof closure
+is checked once at each CAS landing-log head. A recorded landing, erase or
+damage invalidates that proof. A separately opened verification context checks
+the retained proof bodies afresh.
+
 ## Retention
 
 One setting (`RetentionSettings`: 64 generations, 14 days) bounds what is kept

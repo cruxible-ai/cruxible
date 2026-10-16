@@ -183,6 +183,7 @@ def populate_successor(
                 coordinate=request,
                 accepted_coordinates_by_sequence=assembler.accepted_coordinates_by_sequence,
                 selected_member_history=records,
+                carry_members=True,
             ),
         )
         # Verify the compiled member identities/digests against the changeset, not

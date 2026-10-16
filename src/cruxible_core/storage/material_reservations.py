@@ -139,8 +139,10 @@ _RESERVATION_IDS: ValueMemo[str] = ValueMemo(capacity=1024)
 
 
 def _reservation_id(domain: str, record: MaterialReservationV1) -> str:
-    preimage = _reservation_preimage(record)
+    return _reservation_id_fields(domain, _reservation_preimage(record))
 
+
+def _reservation_id_fields(domain: str, preimage: dict[str, object]) -> str:
     def derive() -> str:
         return typed_digest(Sha256Value, domain, preimage).tagged
 
@@ -225,19 +227,20 @@ def make_run_reservation(
         admission_binding_digest=admission_binding_digest,
         body_digest=body_digest,
     )
-    provisional = RunMaterialReservationV1.model_construct(
-        reservation_id="sha256:" + "0" * 64,
-        instance_id=instance_id,
-        run_id=run_id,
-        admission_binding_digest=admission_binding_digest,
-        invocation_id=invocation_id,
-        body_digest=body_digest,
-        intended_event_kind=event_kind,
-    )
+    preimage: dict[str, object] = {
+        "instance_id": instance_id,
+        "run_id": run_id,
+        "admission_binding_digest": admission_binding_digest,
+        "invocation_id": invocation_id,
+        "body_digest": body_digest,
+        "intended_event_kind": event_kind,
+    }
+    # The digest preimage does not need a provisional, unchecked model. Build
+    # the final contract once; its validator still reproduces the same digest.
     return RunMaterialReservationV1.model_validate(
         {
-            **provisional.model_dump(mode="json"),
-            "reservation_id": run_reservation_id(provisional),
+            **preimage,
+            "reservation_id": _reservation_id_fields(RUN_RESERVATION_DOMAIN, preimage),
         }
     )
 

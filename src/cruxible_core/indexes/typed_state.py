@@ -39,6 +39,7 @@ from cruxible_client.contracts.claim_attestations import (
 from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
 from cruxible_client.contracts.claims import claim_statement_digest, parse_claim
 from cruxible_client.contracts.codes import normalize_code
+from cruxible_client.contracts.content_memo import sealed_derive
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import PrincipalIntegrityError, ProjectionIntegrityError
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
@@ -629,7 +630,13 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
             },
         }
     if owner.kind == "claim":
-        return _claim_fields(source)
+        return dict(
+            sealed_derive(
+                source,
+                ("typed_state.claim_fields",),
+                lambda: tuple(_claim_fields(source).items()),
+            )
+        )
     if owner.kind == "subject-kind":
         rule = source.identity_rule
         return {
@@ -850,7 +857,13 @@ def insert_owners(
     terms: list[tuple[Any, ...]] = []
     for row in owned:
         owner = OWNER_BY_KIND[row.kind]
-        source = owner.parse(blobs[row.path], path=row.path, codec=codec)
+        source: Any
+        if row.kind == "claim":
+            from cruxible_core.compiler.sealed_members import sealed_claim_member
+
+            source = sealed_claim_member(blobs[row.path], path=row.path, codec=codec).claim
+        else:
+            source = owner.parse(blobs[row.path], path=row.path, codec=codec)
         sources[row.identity] = source
         values: dict[str, SQLValue] = {
             "identity": row.identity,
@@ -1304,10 +1317,19 @@ class TypedStateReader:
         row = self.envelope(identity)
         if row is None or row.kind not in OWNER_BY_KIND:
             return None
-        if row.kind == "attestation":
+        from cruxible_client.contracts.canonical import ArtifactCodec
+
+        if self.codec == ArtifactCodec.CURRENT_PRETTY_JSON or row.kind == "attestation":
             from cruxible_core.claims.closure import parse_dependency_artifact
 
-            return parse_dependency_artifact(row.path, self.member_bytes(row.path))
+            state = parse_dependency_artifact(row.path, self.member_bytes(row.path))
+            if state is None or (
+                state.artifact_kind,
+                state.artifact_tag,
+                state.artifact_digest,
+            ) != (row.kind, row.format_tag, row.artifact_digest):
+                raise ProjectionIntegrityError("dependency state differs from its selected owner")
+            return state
         source = OWNER_BY_KIND[row.kind].parse(
             self.member_bytes(row.path), path=row.path, codec=self.codec
         )

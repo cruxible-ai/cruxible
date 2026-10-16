@@ -43,7 +43,6 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import SettlementEvidenceUnproven
-from cruxible_client.contracts.providers import provider_digest
 from cruxible_client.contracts.source_references import (
     CasSourceReference,
     EvidenceCommitment,
@@ -340,7 +339,7 @@ def _count_run_lookups(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     calls = {"runs": 0, "journal": 0, "payloads": 0}
     original_run = producer_receipts.JournalProducerReceiptResolver._index_run
     original_all = producer_receipts.JournalProducerReceiptResolver.index_all
-    original_parse = producer_receipts.parse_journal_payload
+    original_parse = producer_receipts.read_payload
 
     def run(self, run_id):  # type: ignore[no-untyped-def]
         calls["runs"] += 1
@@ -351,13 +350,13 @@ def _count_run_lookups(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
             calls["journal"] += 1
         return original_all(self)
 
-    def parse(content):  # type: ignore[no-untyped-def]
+    def parse(*args, **kwargs):  # type: ignore[no-untyped-def]
         calls["payloads"] += 1
-        return original_parse(content)
+        return original_parse(*args, **kwargs)
 
     monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "_index_run", run)
     monkeypatch.setattr(producer_receipts.JournalProducerReceiptResolver, "index_all", full)
-    monkeypatch.setattr(producer_receipts, "parse_journal_payload", parse)
+    monkeypatch.setattr(producer_receipts, "read_payload", parse)
     return calls
 
 
@@ -517,8 +516,11 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
     world: ProducedCaptures, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     instance = world.instance
-    provider = accepted_provider().provider
-    # A version-1 Provider Capture, as Sources produced before receipts.
+    source_capture, _terminal_capture = _genuine(world)
+    produced = _envelope(instance, source_capture)
+    # A version-1 Capture of the Provider build this world actually accepted.
+    # acquisition_demo patches the producer fixture to a package build; the
+    # module's imported single-path accepted_provider is not that build.
     legacy = build_cas_capture(
         store=instance.body_store(),
         contract=world.contract,
@@ -527,11 +529,11 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
             run_kind="provider",
             run_id="legacy-provider-run",
             bound_generation=instance.accepted_coordinate().generation_root,
-            executable_identity=provider.identity,
-            executable_digest=provider_digest(provider).tagged,
+            executable_identity=produced.run_coordinate.executable_identity,
+            executable_digest=produced.run_coordinate.executable_digest,
         ),
         run_receipt_digest=capture_contract_digest(world.contract).tagged,
-        producer=provider.identity,
+        producer=produced.producer,
         producer_binding_digest=capture_contract_digest(world.contract).tagged,
         observed_at=datetime(2026, 9, 2, 11, tzinfo=UTC),
     ).capture_digest
@@ -545,7 +547,15 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
             payload=_citing(legacy, qualifier="legacy"),
             canonical_timestamp="2026-09-02T13:10:00.000000Z",
         ).intent
-        _activate(instance, coordinator.submit(accepted.intent_id, actor=_ACTOR))
+        submitted = coordinator.submit(accepted.intent_id, actor=_ACTOR)
+        assert submitted.status.proposal_id is not None, (
+            None
+            if submitted.intent.last_preflight is None
+            else tuple(
+                (d.code, d.message) for d in submitted.intent.last_preflight.frontier.diagnostics
+            )
+        )
+        _activate(instance, submitted)
         pending = coordinator.create(
             actor=_ACTOR,
             payload=_citing(legacy, qualifier="legacy-pending"),
@@ -585,7 +595,13 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
         actor=_ACTOR, payload=revision, canonical_timestamp="2026-09-02T13:13:00.000000Z"
     ).intent
     submitted = coordinator.submit(revised.intent_id, actor=_ACTOR)
-    assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+    assert submitted.status.proposal_id is not None, (
+        None
+        if submitted.intent.last_preflight is None
+        else tuple(
+            (d.code, d.message) for d in submitted.intent.last_preflight.frontier.diagnostics
+        )
+    )
     _activate(instance, submitted)
     instance.refresh()
     assert coordinator.status(revised.intent_id, actor=_ACTOR).state == "accepted"
@@ -735,7 +751,13 @@ def test_one_submit_verifies_a_shared_capture_once(
 
     submitted = coordinator.submit(intent.intent_id, actor=_ACTOR)
 
-    assert submitted.status.proposal_id is not None, submitted.intent.last_preflight
+    assert submitted.status.proposal_id is not None, (
+        None
+        if submitted.intent.last_preflight is None
+        else tuple(
+            (d.code, d.message) for d in submitted.intent.last_preflight.frontier.diagnostics
+        )
+    )
     # Lowering, the preflight laws and admission share the submit's one context:
     # one run lookup and one verification for six Claims. The Capture is read
     # once to lower its first citation and once to verify it; its material once

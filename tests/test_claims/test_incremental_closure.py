@@ -22,7 +22,12 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
+from cruxible_client.contracts.subjects import (
+    SubjectFormatError,
+    SubjectShell,
+    render_subject,
+    subject_digest,
+)
 from cruxible_core.claims.closure import (
     DependencyIndexV1,
     build_dependency_index,
@@ -351,3 +356,23 @@ def test_warm_dependency_update_does_not_iterate_unrelated_maps(monkeypatch) -> 
         result = update_dependency_index(index, tree=revised, changed=(_path("anchor"),))
     _assert_same_index(result, expected)
     _assert_same_index(index, build_dependency_index(tree))
+
+
+def test_request_dependency_state_misses_changed_bytes_and_does_not_remember_refusals():
+    from cruxible_client.contracts.content_memo import artifact_request
+    from cruxible_core.claims import closure
+
+    path = _path("carried")
+    content = render_subject(_subject("carried"))
+    changed = render_subject(_subject("carried", revision=1))
+    with artifact_request():
+        first = closure.parse_dependency_artifact(path, content)
+        assert closure.parse_dependency_artifact(path, content) is first
+        second = closure.parse_dependency_artifact(path, changed)
+        assert second is not first
+        assert second == closure._parse_dependency_artifact(path, changed)
+        assert first == closure._parse_dependency_artifact(path, content)
+        assert first.artifact_digest != second.artifact_digest
+        for _ in range(2):
+            with pytest.raises(SubjectFormatError):
+                closure.parse_dependency_artifact(path, b"{}")

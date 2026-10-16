@@ -6,6 +6,7 @@ from cruxible_client.contracts import claims
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.projection_extensions import ProjectionExtensionRegistry
+from cruxible_core.compiler import sealed_members
 from cruxible_core.compiler.assembler import PYTHON_REFERENCE_ASSEMBLER
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.indexes.sqlite import (
@@ -75,14 +76,19 @@ def test_retirement_misses_old_bytes_and_rebuilds_lifecycle_revision_and_proofs(
     # members); bring it current so only the projection parse is counted.
     instance.coordinate_for_oid(instance.accepted_coordinate().git_oid)
     calls = []
-    original = claims.parse_claim
+    original = claims._parse_claim
 
     def parse(content, *, path, **kwargs):
         calls.append(path)
         return original(content, path=path, **kwargs)
 
     with monkeypatch.context() as guarded:
-        guarded.setattr(claims, "parse_claim", parse)
+        # Retirement already derived its immutable member during acceptance.
+        # Forget both caches to compare a genuine cold parse with the carried
+        # one; count actual parsing rather than calls that return a memo hit.
+        sealed_members._clear()
+        claims._CLAIM_PARSES.clear()
+        guarded.setattr(claims, "_parse_claim", parse)
         changed = _parse(instance)
     # The Subject's key Claim (unchanged bytes) parses beside the retired one.
     keys = fixture_key_claims(instance.tree_at(instance.accepted_coordinate().git_oid))

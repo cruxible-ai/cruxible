@@ -27,7 +27,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
+from cruxible_client.contracts.content_memo import ParseMemo, ValueMemo, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -840,9 +840,17 @@ class ProviderBuildName(_StrictProviderModel):
         return self.name if self.build is None else f"{self.name}/{self.build}"
 
 
-def parse_provider_build_name(identity_name: str) -> ProviderBuildName:
-    """``name`` or ``name/<64 hex>``; anything else is not a Provider identity name."""
+_PROVIDER_BUILD_NAMES: ValueMemo[ProviderBuildName] = ValueMemo(capacity=4096)
 
+
+def parse_provider_build_name(identity_name: str) -> ProviderBuildName:
+    """Parse the immutable identity string once; malformed names are never retained."""
+    return _PROVIDER_BUILD_NAMES.derive(
+        identity_name, lambda: _parse_provider_build_name(identity_name)
+    )
+
+
+def _parse_provider_build_name(identity_name: str) -> ProviderBuildName:
     name, slash, build = identity_name.partition("/")
     try:
         return ProviderBuildName(name=name, build=build if slash else None)

@@ -356,3 +356,66 @@ def test_a_refusal_is_never_kept_past_its_proof_body_returning(
     assert store.store(original).digest == admission
     assert _outcome(lambda: verify(instance.capture_verification_context())) == "verified"
     assert _outcome(lambda: verify(shared)) == "verified"
+
+
+def test_request_reuses_proof_closure_until_a_recorded_body_change(
+    world: ProducedCaptures,  # noqa: F811 - imported fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sibling Claims pay for a run's proof once; an erase invalidates it."""
+    instance = world.instance
+    store = instance.body_store()
+    capture, _ = _genuine(world)
+    envelope = _envelope(instance, capture)
+    proof = {
+        item.record.payload_digest
+        for item in world.records
+        if item.record.event_kind in {"admission_bound", "produced_capture"}
+    }
+    checked = []
+    original = type(store).verify
+    from cruxible_client.contracts import captures
+
+    proof_checks = []
+    original_proof = captures._journal_proof_still_answers
+
+    def check_proof(*args, **kwargs):
+        proof_checks.append(1)
+        return original_proof(*args, **kwargs)
+
+    monkeypatch.setattr(captures, "_journal_proof_still_answers", check_proof)
+
+    def verify_body(self, digest):
+        if digest in proof:
+            checked.append(digest)
+        return original(self, digest)
+
+    monkeypatch.setattr(type(store), "verify", verify_body)
+
+    def verify(context):
+        return verify_capture(
+            capture,
+            store=store,
+            contract=world.contract,
+            producer_artifact_digests={
+                envelope.producer.qualified: envelope.run_coordinate.executable_digest
+            },
+            producer_receipt_resolver=context,
+        )
+
+    with instance.capture_verification_request() as context:
+        verify(context)
+        verify(context)
+        before = len(checked)
+        verify(context)
+        verify(context)
+        assert len(checked) == before
+        assert not proof_checks
+        admission = next(
+            item.record.payload_digest
+            for item in world.records
+            if item.record.event_kind == "admission_bound"
+        )
+        assert store.erase(admission)
+        assert _outcome(lambda: verify(context)) != "verified"
+    assert not context._request_bound

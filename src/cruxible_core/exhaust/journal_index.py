@@ -40,6 +40,11 @@ from cruxible_core.indexes.sql_batch import insert_rows
 if TYPE_CHECKING:
     from cruxible_core.exhaust.backends import LocalJournalBackend
 
+#: Stream JSON is repeated on every selected row. It contains only validated
+#: frozen scalar fields; its exact bytes, not the row or a file identity, key it.
+_STREAM_IDENTITIES: ValueMemo[JournalStreamIdentityV1] = ValueMemo(capacity=4096)
+
+
 _LOCK = threading.RLock()
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -516,7 +521,10 @@ class JournalIndex:
             )
 
     def read_row(self, row: sqlite3.Row) -> StoredProcedureJournalRecordV1:
-        stream = JournalStreamIdentityV1.model_validate_json(row["stream"])
+        encoded_stream = row["stream"]
+        stream = _STREAM_IDENTITIES.derive(
+            encoded_stream, lambda: JournalStreamIdentityV1.model_validate_json(encoded_stream)
+        )
         directory = self.backend._partition_directory(stream, row["partition_id"], create=False)
         frames = self.backend._read_frames(
             directory,

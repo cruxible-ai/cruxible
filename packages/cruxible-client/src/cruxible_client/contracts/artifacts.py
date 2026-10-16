@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -54,6 +55,7 @@ class ArtifactIdentity(_StrictArtifactModel):
         return f"{self.kind}:{self.name}"
 
 
+@lru_cache(maxsize=16384)
 def parse_artifact_identity(value: str) -> ArtifactIdentity:
     """Parse the generic kind-qualified identity grammar without guessing a kind."""
 
