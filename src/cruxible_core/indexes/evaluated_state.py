@@ -31,6 +31,7 @@ from cruxible_core.claims.closure import (
     _outgoing_edges,
     _sorted_edges,
     build_dependency_edge_tree,
+    dependency_proof,
     update_dependency_edge_tree,
 )
 from cruxible_core.indexes.claims.claim_subject_index import ClaimSubjectIndex
@@ -338,7 +339,7 @@ class EvaluationRows:
     def projected_edges(self) -> tuple[DependencyProofReference, ...]:
         """Every dependency edge of the projected tree, from its pin rows."""
         return _sorted_edges(
-            DependencyProofReference(
+            dependency_proof(
                 source_path=row[0],
                 source_artifact_digest=row[1],
                 target_path=row[2],
