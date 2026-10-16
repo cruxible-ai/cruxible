@@ -1139,14 +1139,32 @@ class GitLedger:
 
     def _refs(self, prefix: str) -> dict[str, str]:
         """Enumerate a requested ref namespace, including packed refs (maintenance)."""
-        result: dict[str, str] = {}
         packed = self.path / "packed-refs"
-        if packed.exists():
-            for line in packed.read_text().splitlines():
-                if line and not line.startswith(("#", "^")):
-                    oid, ref = line.split(" ", 1)
-                    if ref.startswith(prefix):
-                        result[ref] = oid
+        identity = _file_identity(packed)
+        key = (_repository_key(self.path), identity, prefix)
+        with _PACKED_REFS_LOCK:
+            cached = _PACKED_PREFIX_REFS.get(key)
+            if cached is not None:
+                _PACKED_PREFIX_REFS.move_to_end(key)
+        if cached is None:
+            cached = {}
+            if identity is not None:
+                # Cold packed-ref version only. Ordinary reconciliation never
+                # parses an unchanged whole-repository packed table again.
+                for line in packed.read_text().splitlines():
+                    if line and not line.startswith(("#", "^")):
+                        oid, ref = line.split(" ", 1)
+                        if ref.startswith(prefix):
+                            cached[ref] = oid
+            if _file_identity(packed) == identity:
+                with _PACKED_REFS_LOCK:
+                    _PACKED_PREFIX_REFS[key] = cached
+                    while len(_PACKED_PREFIX_REFS) > 1 and (
+                        len(_PACKED_PREFIX_REFS) > 64
+                        or sum(len(refs) for refs in _PACKED_PREFIX_REFS.values()) > 400_000
+                    ):
+                        _PACKED_PREFIX_REFS.popitem(last=False)
+        result = dict(cached)
         root = self.path / prefix.rstrip("/")
         paths = root.rglob("*") if root.is_dir() else (root,)
         for path in paths:
@@ -3032,6 +3050,7 @@ _PACKED_REFS_CAPACITY = 16
 _PACKED_REFS: OrderedDict[tuple[str, int, int], tuple[tuple[int, ...], dict[str, str]]] = (
     OrderedDict()
 )
+_PACKED_PREFIX_REFS: OrderedDict[tuple[object, ...], dict[str, str]] = OrderedDict()
 _PACKED_REFS_LOCK = threading.Lock()
 
 
