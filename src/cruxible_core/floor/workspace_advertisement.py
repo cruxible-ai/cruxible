@@ -218,10 +218,13 @@ def _configure_remote(
             output.append(line)
         output.append(f"\n[{_REMOTE_SECTION}]\n")
         for key, values in desired.items():
-            output.extend(f"\t{key} = {json.dumps(value)}\n" for value in values)
-        os.write(fd, "".join(output).encode())
-        os.close(fd)
+            output.extend(
+                f"\t{key} = {json.dumps(value, ensure_ascii=False)}\n" for value in values
+            )
+        stream = os.fdopen(fd, "wb")
         fd = -1
+        with stream:
+            stream.write("".join(output).encode())
         os.replace(lock, config)
     finally:
         if fd >= 0:

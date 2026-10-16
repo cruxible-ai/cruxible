@@ -492,3 +492,14 @@ def test_linked_worktree_uses_common_config_objects_and_refs(tmp_path):
         ledger, "rev-parse", "main"
     )
     _git(linked, "fsck", "--strict", "--no-dangling")
+
+
+def test_advertisement_keeps_unicode_local_urls_git_readable(tmp_path):
+    directory = tmp_path / "café"
+    directory.mkdir()
+    workspace, ledger = _repositories(directory, "sha1")
+    result = advertise_workspace_refs(
+        workspace_root=workspace, ledger_path=ledger, ledger_object_format="sha1"
+    )
+    assert result.status == "updated"
+    assert _git(workspace, "config", "--get", "remote.cruxible-ledger.url") == str(ledger)
