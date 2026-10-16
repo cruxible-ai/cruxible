@@ -124,6 +124,11 @@ def _provider_interfaces(
     """The inventory entries of live registrations, each with the live builds
     implementing its exact contract (interface id and digest)."""
 
+    if build_heads is None:
+        grouped: dict[str, list[str]] = {}
+        for identity in sorted(newest_builds):
+            grouped.setdefault(identity.partition(":")[2].partition("/")[0], []).append(identity)
+        build_heads = {name: tuple(values) for name, values in grouped.items()}
     implementations: dict[tuple[str, str], list[ProviderInterfaceImplementationV1]] = {}
     for provider in providers:
         for implementation in provider.implementations:
@@ -138,17 +143,7 @@ def _provider_interfaces(
                     provider_artifact_digest=provider_digest(provider).tagged,
                     implementation_digest=implementation.implementation_digest,
                     newest=provider.identity.qualified in newest_builds,
-                    newest_builds=(build_heads or {}).get(
-                        provider.provider_name,
-                        tuple(
-                            sorted(
-                                item
-                                for item in newest_builds
-                                if item.partition(":")[2].partition("/")[0]
-                                == provider.provider_name
-                            )
-                        ),
-                    ),
+                    newest_builds=build_heads.get(provider.provider_name, ()),
                 )
             )
     entries: list[AcceptedProviderInterface] = []

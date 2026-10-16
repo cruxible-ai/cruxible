@@ -357,6 +357,7 @@ class BuildResolver:
         """The build a provider reference names (exact, or most recently registered)."""
 
         name = requested.removeprefix("Provider:")
+        rows: Sequence[BuildRow]
         if "/" in name:
             exact = self._exact_provider("Provider:" + name)
             rows = () if exact is None else (exact,)
@@ -427,6 +428,7 @@ def resolve_in_tree(
     served = AcceptedCoordinate.from_internal(coordinate)
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
+        rows: Sequence[BuildRow]
         if "/" in name:
             exact = indexed_exact_provider(connection, "Provider:" + name)
             rows = () if exact is None else (exact,)

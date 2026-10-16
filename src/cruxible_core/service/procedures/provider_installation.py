@@ -122,43 +122,28 @@ def installed_providers(instance: PlaybillInstance) -> tuple[InstalledProvider, 
     marks the one new authoring resolves a bare name to.
     """
 
-    from cruxible_core.providers.builds import (
-        BuildRow,
-        live_pinners,
-        newest_live,
-    )
+    from cruxible_core.providers.builds import live_pinners
 
     coordinate = instance.accepted_coordinate()
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
         rows = connection.execute(
-            "SELECT identity,path,artifact_digest,provider_name,distribution_version,registration_sequence "
-            "FROM main.providers WHERE lifecycle='live' ORDER BY provider_name,identity"
+            "SELECT p.identity,p.path,p.artifact_digest,p.provider_name,p.distribution_version,"
+            "coalesce(h.identity=p.identity AND h.ambiguous=0,0) FROM main.providers p "
+            "LEFT JOIN main.provider_heads h ON h.provider_name=p.provider_name "
+            "WHERE p.lifecycle='live' ORDER BY p.provider_name,p.identity"
         ).fetchall()
         contents = {row[1]: projection.typed.member_bytes(row[1]) for row in rows}
         pinned = {row[0]: len(live_pinners(connection, row[0], row[2])) for row in rows}
-    builds = [BuildRow(row[0], row[1], row[2], True, row[4]) for row in rows]
-    sequences = {row[0]: row[5] for row in rows}
-    newest: dict[str, str] = {}
-    for name in sorted({row[3] for row in rows}):
-        try:
-            chosen = newest_live(
-                [item for item, row in zip(builds, rows) if row[3] == name], sequences
-            )
-        except RequestRefusedError:
-            # The list remains usable when a bare name cannot choose a build.
-            chosen = None
-        if chosen is not None:
-            newest[name] = chosen.identity
     installed = []
-    for identity, path, _digest, name, _version, _sequence in rows:
+    for identity, path, _digest, name, _version, is_newest in rows:
         provider = parse_provider(contents[path], path=path)
         distribution = getattr(getattr(provider, "runtime_artifact", None), "distribution", None)
         installed.append(
             InstalledProvider(
                 provider=name,
                 build=provider.identity.name,
-                newest=newest.get(name) == identity,
+                newest=bool(is_newest),
                 pinned_by=pinned[identity],
                 package=None if distribution is None else distribution.name,
                 version=None if distribution is None else distribution.version,
