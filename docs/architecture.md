@@ -27,6 +27,13 @@ Every accepted generation is addressed by a four-part coordinate:
 - Generation root commits to the accepted generation.
 - Compiler digest commits to the deterministic interpretation.
 
+New accepted generations carry a `cruxible-accepting-admission` Git header
+with a canonical `playbill-accepting-admission-v1` record naming the admission
+id and digest. The daemon signature and Git OID cover this fact, which travels
+with the ledger without changing frozen change-set receipt formats. History,
+why, and floor changes read reasons from that exact admission. Headerless
+historical generations retain their original candidate-and-actor resolution.
+
 A read that omits this context is presentation, not a portable proof of state.
 
 ## Mutation path

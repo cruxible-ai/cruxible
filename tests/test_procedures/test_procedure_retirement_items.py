@@ -243,6 +243,15 @@ def test_a_settle_grant_listing_retire_settles_the_retirement(tmp_path: Path) ->
     egress = settlement._egress(state)
     assert egress.settle_outcome == "settled", egress
     assert egress.accepted_git_oid == instance.accepted_coordinate().git_oid
+    identity = instance.accepting_admission(egress.accepted_git_oid)
+    assert identity is not None and identity.proposal_id == egress.proposal_id
+    from cruxible_core.service.discovery.change_reasons import ChangeReasons
+
+    with instance.accepted_history_reader() as history:
+        reason = ChangeReasons(instance).reason(
+            history.generation(history.sequence), claim_path(claim_id)
+        )
+    assert reason is not None and reason.proposal == identity.proposal_id
     assert [child.path for child in egress.children] == [claim_path(claim_id)]
     assert _head_claim(instance, claim_id).lifecycle.state == "retired"
 

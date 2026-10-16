@@ -158,6 +158,7 @@ from cruxible_core.ledger.checkpoints import (
     DEFAULT_CHECKPOINT_INTERVAL,
     QuietCheckpointWriter,
 )
+from cruxible_core.ledger.generation_facts import AcceptingAdmission
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.ledger.ledger_mirror import (
     LedgerMirrorStateV1,
@@ -352,6 +353,9 @@ def _generation_at(recovered: RecoveredInstanceState, sequence: int) -> Recovere
         if generation.sequence == sequence:
             return generation
     return next(item for item in recovered.history if item.sequence == sequence)
+
+
+_ACCEPTING_ADMISSIONS: OrderedDict[str, tuple[AcceptingAdmission | None]] = OrderedDict()
 
 
 class PlaybillInstance:
@@ -2956,6 +2960,7 @@ class PlaybillInstance:
         candidate_tree_oid: str | None = None,
         mandate_digest: str | None = None,
         admitted: AdmittedEvaluation | None = None,
+        accepting_admission: AcceptingAdmission | None = None,
     ) -> VerifiedGenerationBundle:
         """Construct one verified generation without exposing the Git ledger to surfaces.
 
@@ -3000,7 +3005,18 @@ class PlaybillInstance:
             subject_assignment_authority=self.subject_assignment_authority(),
             admitted=admitted,
             parent_derivation=self._parent_derivation(base, sequence=sequence),
+            accepting_admission=accepting_admission,
         )
+
+    def accepting_admission(self, oid: str) -> AcceptingAdmission | None:
+        """Immutable generation facts, parsed once per coordinate while resident."""
+
+        # Include absence: old generations never acquire a header on a later read.
+        held = memo_get(_ACCEPTING_ADMISSIONS, oid)
+        if held is None:
+            held = (self._ledger.accepting_admission(oid),)
+            memo_put(_ACCEPTING_ADMISSIONS, oid, held, capacity=65536)
+        return held[0]
 
     def _parent_derivation(
         self, base: AcceptedProjectionCoordinate, *, sequence: int
@@ -3038,6 +3054,7 @@ class PlaybillInstance:
         candidate_tree_oid: str | None = None,
         mandate_digest: str | None = None,
         admitted: AdmittedEvaluation | None = None,
+        accepting_admission: AcceptingAdmission | None = None,
     ) -> ActivationResult:
         """Publish one owned preparation and install its verified successor state.
 
@@ -3058,6 +3075,7 @@ class PlaybillInstance:
                 candidate_tree_oid=candidate_tree_oid,
                 mandate_digest=mandate_digest,
                 admitted=admitted,
+                accepting_admission=accepting_admission,
             )
             successor = (
                 prepared_generation_for_handoff(

@@ -81,6 +81,7 @@ from cruxible_core.indexes.projection import (
 )
 from cruxible_core.indexes.subject_identity import SubjectAssignmentAuthority
 from cruxible_core.ledger.bootstrap import generation_root
+from cruxible_core.ledger.generation_facts import AcceptingAdmission
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.proposals.prepared_evaluation import AdmittedEvaluation
 from cruxible_core.proposals.proposal_message import generation_commit_message
@@ -836,6 +837,7 @@ def prepare_generation(
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
     admitted: AdmittedEvaluation | None = None,
     parent_derivation: SemanticRootDerivation | None = None,
+    accepting_admission: AcceptingAdmission | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state.
 
@@ -1003,6 +1005,7 @@ def prepare_generation(
         parent_oid=binding.base_oid,
         sequence=sequence,
         timestamp=candidate.candidate.timestamp,
+        accepting_admission=accepting_admission,
         # The settled generation carries the proposal's own member summary, so
         # accepted history reads as the same change set a reviewer approved
         # rather than as an anonymous sequence number.

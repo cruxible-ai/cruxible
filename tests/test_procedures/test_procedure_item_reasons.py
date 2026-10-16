@@ -202,14 +202,30 @@ def test_a_readmitted_procedure_proposal_keeps_its_items_reasons(tmp_path: Path)
     readmitted = service_readmit_playbill_proposal(
         instance, proposal_id=egress.proposal_id, actor_id="owner"
     )
+    first_readmission_id = readmitted.proposal.proposal.admission.proposal_id
+    assert first_readmission_id != egress.proposal_id
+    # A second moved head creates a chain: the accepting identity must remain
+    # the final admission, while the item's own reason follows both links.
+    another = settlement._predicate_claim_type("security.advisory.unrelated_again")
+    fixtures._accept_more(
+        instance,
+        owner,
+        {claim_type_path(another.predicate): render_claim_type(another)},
+        name="unrelated-again",
+    )
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=first_readmission_id, actor_id="owner"
+    )
     accepted_id = readmitted.proposal.proposal.admission.proposal_id
-    assert accepted_id != egress.proposal_id
+    assert accepted_id not in {egress.proposal_id, first_readmission_id}
     activate_proposal(instance, owner, accepted_id)
     claim_id = egress.children[0].path.rsplit("/", 1)[-1].removesuffix(".json")
 
     why = _why(instance, claim_id)
 
     assert why.reason is not None
+    identity = instance.accepting_admission(instance.accepted_coordinate().git_oid)
+    assert identity is not None and identity.proposal_id == accepted_id
     assert why.reason.proposal == accepted_id and why.reason.run == state.run_id
     assert why.reason.reason == delivery.item_template()["rationale"]
     # The Claim's history names the same reason, through the same resolver.

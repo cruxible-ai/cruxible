@@ -40,6 +40,7 @@ from cruxible_core.derived.derived_state import (
     same_row,
 )
 from cruxible_core.governance.keys import raw_public_key_hex_from_openssh
+from cruxible_core.ledger.generation_facts import AcceptingAdmission, parse_accepting_admission
 from cruxible_core.ledger.git_objects import PackStore
 from cruxible_core.ledger.git_signing import load_private, sign_commit
 from cruxible_core.ledger.git_signing import verify_commit as verify_signature
@@ -282,6 +283,7 @@ class GitLedger:
         sequence: int,
         timestamp: str,
         message: str,
+        accepting_admission: AcceptingAdmission | None = None,
         extends_tree: str | None = None,
         extends_rows: Mapping[str, bytes] | None = None,
     ) -> str:
@@ -317,7 +319,9 @@ class GitLedger:
         # while this writer is live; callers that go on to activate hold one
         # across both.
         with self.generation_attempt():
-            return self._commit_generation(tree_oid, parent_oid, message, environment)
+            return self._commit_generation(
+                tree_oid, parent_oid, message, environment, accepting_admission=accepting_admission
+            )
 
     def _commit_generation(
         self,
@@ -325,9 +329,18 @@ class GitLedger:
         parent_oid: str,
         message: str,
         environment: Mapping[str, str],
+        *,
+        accepting_admission: AcceptingAdmission | None = None,
     ) -> str:
         pending = self._mark_generation_in_flight(f"pending-{secrets.token_hex(8)}")
-        oid = self._create_commit(tree_oid, (parent_oid,), message, environment, signed=True)
+        oid = self._create_commit(
+            tree_oid,
+            (parent_oid,),
+            message,
+            environment,
+            signed=True,
+            accepting_admission=accepting_admission,
+        )
         self._validate_oid(oid)
         self._mark_generation_in_flight(oid)
         _batch_reader(self.path)._transaction.retain = True
@@ -347,6 +360,7 @@ class GitLedger:
         environment: Mapping[str, str],
         *,
         signed: bool = False,
+        accepting_admission: AcceptingAdmission | None = None,
     ) -> str:
         timestamp = environment["GIT_AUTHOR_DATE"]
         try:
@@ -365,6 +379,8 @@ class GitLedger:
         encoding = self.review_commit_context().decode("utf-8").strip() or "UTF-8"
         if encoding.lower() not in {"utf8", "utf-8"}:
             headers.append(f"encoding {encoding}")
+        if accepting_admission is not None:
+            headers.append("cruxible-accepting-admission " + accepting_admission.header_value())
         body = ("\n".join(headers) + "\n\n" + message).encode("utf-8")
         if not body.endswith(b"\n"):
             body += b"\n"
@@ -2896,6 +2912,29 @@ class GitLedger:
                 raise GitError("Cruxible main history is not a single parent chain")
             oid = parents[0] if parents else None
         return tuple(reversed(newest_first))
+
+    def accepting_admission(self, oid: str) -> AcceptingAdmission | None:
+        """Read one signed generation header; absence means pre-succession.
+
+        Only header lines are interpreted, never the prose commit message.
+        The hash-checked object reader authenticates the immutable bytes; the
+        accepted-history epoch has already verified the commit's signature.
+        """
+
+        self._validate_oid(oid)
+        found = _batch_reader(self.path).objects((oid,))[oid]
+        if found is None or found[0] != "commit":
+            raise GitError(f"ledger object is not a commit: {oid}")
+        values = [
+            line.removeprefix(b"cruxible-accepting-admission ")
+            for line in found[1].split(b"\n\n", 1)[0].splitlines()
+            if line.startswith(b"cruxible-accepting-admission ")
+        ]
+        if not values:
+            return None
+        if len(values) != 1:
+            raise GitError("generation has multiple accepting admission headers")
+        return parse_accepting_admission(values[0])
 
     def commit_timestamps(self, oid: str) -> tuple[datetime, datetime]:
         """Return one commit's embedded author and committer instants in UTC."""

@@ -47,6 +47,7 @@ from cruxible_client.contracts.workspace_advertisement import (
 from cruxible_core.documents.projection_documents import DocumentProjectionView
 from cruxible_core.errors import PermissionDeniedError, RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.ledger.generation_facts import AcceptingAdmission
 from cruxible_core.proposals.prepared_evaluation import SettlementHandoff, SubmittedProposal
 from cruxible_core.proposals.proposals import (
     ProposalAdmissionRequest,
@@ -704,6 +705,7 @@ def service_activate_playbill_proposal(
             source_compilation_digest=proposal.admission.source_compilation_digest,
         ),
         proposal_actor_id=proposal.admission.actor_id,
+        accepting_admission=AcceptingAdmission.of(proposal.admission),
         mandate_digest=mandate_digest,
         admitted=None if submitted is None else submitted.evaluation,
     )
