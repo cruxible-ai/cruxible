@@ -304,7 +304,8 @@ class _WorldClient:
             from cruxible_client.contracts.get_reads import GetCoordinate, GetResult, GetSubjectCard
 
             self.subject_get_requests.append(request)
-            ref = self.subject_spellings.get(request.ref, request.ref)
+            spelling = request.ref.removeprefix("Subject:")
+            ref = self.subject_spellings.get(spelling, spelling)
             if ref not in self.subjects:
                 raise ReadRefusalError("cruxible.get.ref_not_found", f"No Subject {ref}")
             return GetResult(
@@ -683,7 +684,7 @@ def test_a_subject_lookup_resolves_only_that_subject_and_caches_it(
 
     package = world.sec.package.cryptography
     assert package.address == "sec.package/cryptography"
-    assert [r.ref for r in client.subject_get_requests] == [package.address]
+    assert [r.ref for r in client.subject_get_requests] == [f"Subject:{package.address}"]
     assert world.sec.package["cryptography"] is package
     assert "cryptography" in world.sec.package
     assert client.subject_queries == []

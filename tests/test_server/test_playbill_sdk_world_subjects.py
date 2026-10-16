@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -341,6 +342,41 @@ def test_world_lookup_resolves_alias_and_single_key_and_keeps_the_read_coordinat
     assert decisions["launch decision"] is by_key
     assert [claim.value for claim in by_key.title] == ["Ship"]
     assert typed.get(by_key, detail="history", field="title").coordinate == world.coordinate
+
+
+def _assert_cached_json_lookup(cx: Cruxible, kind: str, spelling: str, address: str) -> None:
+    # The generic resolver supports this explicit reference at the same pin.
+    world = cx.world()
+    assert cx.get(f"Subject:{kind}/{spelling}").value.subject == address
+    items = world.kind(kind)
+    with patch.object(cx._client, "get", wraps=cx._client.get) as get:
+        subject = items[spelling]
+        assert subject.address == address
+        assert spelling in items
+        assert items[spelling] is subject
+        assert items[address.split("/", 1)[1]] is subject
+        assert get.call_count == 1
+        request = get.call_args.kwargs["request"]
+        assert request.ref == f"Subject:{kind}/{spelling}"
+        assert request.at == world.coordinate
+
+
+def test_alias_ending_in_json_resolves_and_caches_a_subject(typed: Cruxible) -> None:
+    assert (
+        typed.changes(because="Name the report item.")
+        .add(f"{KIND}/wi-2", "semantic.alias", "item.json")
+        .write()
+        .status
+        == "accepted"
+    )
+    _assert_cached_json_lookup(typed, KIND, "item.json", f"{KIND}/wi-2")
+
+
+def test_single_key_ending_in_json_resolves_and_caches_a_subject(typed: Cruxible) -> None:
+    draft = typed.world().dev.decision.define("Report.json", title="Report")
+    assert draft.write(because="Record the report decision.").status == "accepted"
+    assert draft.address is not None
+    _assert_cached_json_lookup(typed, DECISION, "Report.json", draft.address)
 
 
 def test_a_hint_key_two_subjects_hold_is_ambiguous_to_define(typed: Cruxible) -> None:
