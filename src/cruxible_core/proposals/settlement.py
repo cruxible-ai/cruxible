@@ -39,6 +39,7 @@ from cruxible_client.contracts.canonical import (
     ApprovalDigest,
     CandidateDigest,
     ChangeSetDigest,
+    DependencyEdgeRoot,
     GenerationRoot,
     SemanticManifestRoot,
     SemanticMerkleRoot,
@@ -65,7 +66,7 @@ from cruxible_client.contracts.governance import (
     validate_approval_requirements,
 )
 from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, AcceptanceLawRegistry
-from cruxible_client.contracts.merkle import MerkleManifest
+from cruxible_client.contracts.merkle import MerkleManifest, MerkleTree
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     principal_registry_from_tree,
@@ -772,6 +773,10 @@ class VerifiedGenerationBundle:
     #: ``members``' manifest-domain trie, as the candidate's evaluation advanced
     #: it: a replay checkpoint reads its root instead of rebuilding the trie.
     merkle: MerkleManifest | None = None
+    #: The evaluator already advanced the candidate's dependency proof trie.
+    #: Acceptance carries it to the exact accepted OID; the following write
+    #: must not reprocess this generation's changed dependency edges.
+    dependency_edges: MerkleTree[DependencyEdgeRoot] | None = None
 
     def projection_coordinate(
         self,
@@ -1045,6 +1050,7 @@ def prepare_generation(
         principals=principals,
         approvals=verified_approvals,
         merkle=reevaluated.state.merkle,
+        dependency_edges=reevaluated.state.dependencies.edge_tree,
     )
     _checkpoint("after", crash_hook)
     return bundle

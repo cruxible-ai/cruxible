@@ -142,6 +142,13 @@ new member. Generation-dependent revisions, verdicts and explanation proofs
 are compiled for the accepting coordinate. Carried rows are checked against
 fresh derivation in tests; cold reconstruction remains the projection oracle.
 
+A successful activation also carries the evaluator's semantic-manifest and
+dependency proof tries to the exact accepted Git OID. The next write updates
+those roots for its own changed paths; it does not finish deferred proof work
+for the previous change. Only a winning verified publication installs them,
+compiler adoption stays cold, and physical and card-free snapshots share the
+same immutable semantic proof roots.
+
 Within a Capture verification request, a run's immutable journal proof closure
 is checked once at each CAS landing-log head. A recorded landing, erase or
 damage invalidates that proof. A separately opened verification context checks

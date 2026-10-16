@@ -112,7 +112,7 @@ from cruxible_core.governance.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
-from cruxible_core.indexes.evaluated_state import derive_indexed_state
+from cruxible_core.indexes.evaluated_state import EvaluationProofs, derive_indexed_state
 from cruxible_core.indexes.history.history_index import (
     AcceptedGenerationLocation,
     AcceptedHistoryIndex,
@@ -379,6 +379,9 @@ class PlaybillInstance:
         #: records through it. Tests replace it here.
         self.recording_clock: Callable[[], datetime] = utc_now
         self.derived = DerivedState()
+        # One exact accepted head's immutable proof roots. This is not a tree
+        # or connection cache, and contains no request-owned selection rows.
+        self._accepted_evaluation_proofs: tuple[str, EvaluationProofs] | None = None
         #: What rebuildable and raw operational state is kept (projection
         #: generations, raw-receipt days). Tests replace it here.
         self.retention: RetentionSettings = DEFAULT_RETENTION
@@ -2397,6 +2400,14 @@ class PlaybillInstance:
         tree = self.derived.accepted_tree(binding, load, advance)
         # Loaded or advanced from exactly this commit's tree, so its rows are that tree.
         tree._commit_oid = oid
+        retained = self._accepted_evaluation_proofs
+        if retained is not None and retained[0] == oid:
+            with tree._lock:
+                tree._proofs = retained[1]
+                tree._proof_seed = None
+                if tree._card_free is not None:
+                    tree._card_free._proofs = retained[1]
+                    tree._card_free._proof_seed = None
         if coordinate.git_oid == self._verified_genesis.oid:
             tree._accepted_reader = None
             tree._accepted_claim_items = None
@@ -3107,6 +3118,18 @@ class PlaybillInstance:
                     projection=copy.deepcopy(result.projection),
                 )
                 self._recovered = advanced
+                # Only the winning, verified publication owns these roots.
+                # An adoption changes interpretation and deliberately stays cold.
+                self._accepted_evaluation_proofs = (
+                    (
+                        bundle.oid,
+                        EvaluationProofs(bundle.merkle, bundle.dependency_edges),
+                    )
+                    if bundle.merkle is not None
+                    and bundle.dependency_edges is not None
+                    and expected.compiler == base.compiler
+                    else None
+                )
 
             try:
                 projection = publisher.prebuild(bundle, base=base)

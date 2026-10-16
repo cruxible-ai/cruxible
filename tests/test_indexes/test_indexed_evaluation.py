@@ -486,3 +486,35 @@ def test_pin_sources_seek_each_owner_table_and_match_the_join(tmp_path):
     finally:
         base.close()
     assert counts["opened"] == counts["closed"]
+
+
+def test_verified_acceptance_carries_proof_roots_to_both_physical_and_card_free_snapshots(
+    tmp_path, monkeypatch
+):
+    from cruxible_core.derived.derived_state import without_cards
+    from cruxible_core.indexes.evaluated_state import EvaluationRows
+    from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
+
+    instance, _claim_id, _owner = _accepted_claim_world(tmp_path)
+    head = instance.accepted_coordinate()
+    cold = build_tree_state(instance.tree_at(head.git_oid))
+    retained = instance._accepted_evaluation_proofs
+    assert retained is not None and retained[0] == head.git_oid
+
+    def no_cold_edge_enumeration(*args, **kwargs):
+        pytest.fail("a verified successor rebuilt all projected dependency edges")
+
+    monkeypatch.setattr(EvaluationRows, "projected_edges", no_cold_edge_enumeration)
+    physical = instance.immutable_tree_at(head.git_oid)
+    for tree in (physical, without_cards(physical)):
+        with instance.projection_scope():
+            carried = derive_indexed_state(tree)
+            assert dict(carried.members) == dict(cold.members)
+            assert carried.merkle.root == cold.merkle.root
+            assert carried.dependencies.edge_root == cold.dependencies.edge_root
+            with carried.scope():
+                assert carried.dependencies.edges() == cold.dependencies.edges()
+    # The head proof cannot answer for another immutable accepted OID.
+    parent = instance.accepted_history()[-2]
+    earlier = instance.immutable_tree_at(parent.oid)
+    assert earlier._proofs is not retained[1]
