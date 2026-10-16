@@ -292,7 +292,9 @@ def test_warm_get_and_exact_retry_do_flat_work_at_two_review_history_sizes(
     from cruxible_core.storage.cas import ContentAddressedBodyStore
 
     def work(size):
-        instance, _, procedure = _world(tmp_path / str(size))
+        root = tmp_path / str(size)
+        root.mkdir()
+        instance, _, procedure = _world(root)
         first = _measure(instance, procedure, names=("rows-present",)).rows[0].resolution
         for sequence in range(size):
             _dispose(instance, procedure, first, "overturned" if sequence % 2 else "upheld")

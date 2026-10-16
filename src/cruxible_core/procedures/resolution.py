@@ -1593,7 +1593,8 @@ class _CachedResolutionFold:
     fold: _ResolutionFold
     bodies: _ResolutionBodyChanges
     changed: set[str] = field(default_factory=set)
-    blocked: dict[str, UnavailablePayload] = field(default_factory=dict)
+    blocked: PersistentMap[UnavailablePayload] = field(default_factory=PersistentMap)
+    unavailable: tuple[UnavailablePayload, ...] = ()
     subscriptions: dict[str, weakref.WeakSet[_CachedResolutionFold]] = field(default_factory=dict)
 
 
@@ -1716,9 +1717,16 @@ def resolution_book_at_head(
             for digest in cached.changed:
                 payload = read_payload_bytes(bodies, digest, access=_REPLAY_ACCESS)
                 if isinstance(payload, UnavailablePayload):
-                    cached.blocked[digest] = payload
+                    cached.blocked = cached.blocked.set(digest, payload)
                 else:
-                    cached.blocked.pop(digest, None)
+                    cached.blocked = cached.blocked.delete(digest)
+            if cached.changed:
+                # Keep the single unavailable witness supplied by the old fold.
+                # Choosing it costs a tree seek only when damage/repair changes;
+                # clean refusals reuse it without enumerating damaged inputs.
+                cached.unavailable = (
+                    (next(iter(cached.blocked.values())),) if cached.blocked else ()
+                )
             cached.changed.clear()
         fold = cached.fold
         if not cached.blocked:
@@ -1749,7 +1757,9 @@ def resolution_book_at_head(
             changes.subscribe(cached, added, bodies)
             fold = fold.extend(added, activations=activations, bodies=bodies, head=head)
             cached.fold = fold
-            cached.blocked.update((item.digest, item) for item in fold.unavailable)
+            for item in fold.unavailable:
+                cached.blocked = cached.blocked.set(item.digest, item)
+            cached.unavailable = fold.unavailable
         if head.sequence > 0:
             _BOOKS[key] = cached
             _BOOKS.move_to_end(key)
@@ -1760,7 +1770,7 @@ def resolution_book_at_head(
                 _ResolutionFold.empty(),
                 head_sequence=head.sequence,
                 head_digest=head.record_digest,
-                unavailable=tuple(cached.blocked.values()),
+                unavailable=cached.unavailable,
             )
         return ResolutionBookView(fold), head
 

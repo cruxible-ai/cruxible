@@ -899,3 +899,29 @@ def test_stale_disposition_head_is_a_conflict_but_bad_sequence_is_integrity_fail
             stream=stream,
             expected_head=journal.read_head(stream, partition),
         )
+
+
+@pytest.mark.parametrize("history", [2, 8])
+def test_unavailable_book_retains_one_witness_without_rechecking_damaged_history(
+    tmp_path, monkeypatch, history
+):
+    from cruxible_core.procedures.resolution import resolution_book_at_head
+
+    activation, journal, bodies, stream, partition, writer = _resolution_partition(tmp_path)
+    for sequence in range(1, history + 1):
+        _answer(activation, writer, stream, sequence, overturn=True)
+    resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    for record in journal.all_records(stream, partition):
+        if record.record.event_kind == "resolution":
+            assert bodies.erase(record.record.payload_digest)
+    damaged, _ = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    assert len(damaged.unavailable) == 1
+    assert damaged.latest_resolution(activation.contract_id) is None
+
+    def no_read(*args, **kwargs):
+        pytest.fail("A clean unavailable-book lookup rechecked a payload.")
+
+    monkeypatch.setattr(bodies, "read", no_read)
+    monkeypatch.setattr(bodies, "file_identity", no_read)
+    repeated, _ = resolution_book_at_head(journal, stream, activation, bodies=bodies)
+    assert repeated.unavailable == damaged.unavailable
