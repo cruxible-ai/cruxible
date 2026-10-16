@@ -68,7 +68,6 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
     EvidenceRequirement,
     claim_type_accepts_subject,
-    claim_type_digest,
     effective_evidence_requirement,
     effective_revision_evidence,
 )
@@ -95,6 +94,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyAny,
     ClaimEvidenceAdmissionTrace,
     EvidenceAdmissionInput,
     VerifiedAttestationGrade,
@@ -1520,6 +1520,12 @@ class CaptureEvidenceKindEvaluation:
     trace: ClaimEvidenceAdmissionTrace
 
 
+@sealed_memo
+def _evidence_admission_policy_key(policy: ClaimEvidenceAdmissionPolicyAny) -> bytes:
+    """Exact policy content; a mutable copy is encoded afresh, never remembered."""
+    return canonical_bytes(policy.model_dump(mode="json"))
+
+
 def evaluate_capture_evidence_admissions(
     claim: ClaimArtifactAny,
     *,
@@ -1580,11 +1586,11 @@ def evaluate_capture_evidence_admissions(
         source_bound = any(subject_binding_by_rule[rule.rule_id] for rule in matching_rules)
         # The law and lowering can ask the same policy question, and many
         # Claims ask it of the same Capture. Only these derived inputs affect
-        # admission; Claim identity, path and the source bytes do not. The type
-        # digest binds the complete policy, including rules that did not match.
+        # admission; Claim identity, path and the source bytes do not. The policy
+        # bytes bind the complete policy, including rules that did not match.
         key = (
             "claims.evidence_admission",
-            claim_type_digest(claim_type).tagged,
+            _evidence_admission_policy_key(claim_type.evidence_admission_policy),
             claim.statement.role,
             capture_contract.artifact_digest,
             capture_contract.contract.identity.qualified,

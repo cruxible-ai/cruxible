@@ -71,10 +71,27 @@ def test_admission_carrier_matches_cold_and_releases_at_request_exit(tmp_path, m
         assert changed == cold
         assert changed[0] is not first[0]
         assert len(calls) == 2
-        # A shallowly frozen but mutable ClaimType must not reuse a digest or
-        # its admission answer after a nested input changes.
+        # Unrelated ClaimType metadata does not change the policy question.
         claim_type.literal_schema["description"] = "changed"
         assert claims.evaluate_capture_evidence_admissions(claim, **kwargs) == cold
+        assert len(calls) == 2
+        # The entire policy, including the selected rule's identity, is keyed.
+        changed_type = claim_type.model_copy(
+            update={
+                "evidence_admission_policy": claim_type.evidence_admission_policy.model_copy(
+                    update={
+                        "rules": (
+                            claim_type.evidence_admission_policy.rules[0].model_copy(
+                                update={"rule_id": "renamed"}
+                            ),
+                        )
+                    }
+                )
+            }
+        )
+        kwargs["claim_type"] = changed_type
+        changed_policy = claims.evaluate_capture_evidence_admissions(claim, **kwargs)
+        assert changed_policy[0].trace.result.rule_id == "renamed"
         assert len(calls) == 3
         silent = claim_type.model_copy(
             update={
