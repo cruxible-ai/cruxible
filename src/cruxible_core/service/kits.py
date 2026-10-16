@@ -65,6 +65,7 @@ from cruxible_client.contracts.kits import (
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.projection import AcceptedCoordinate as ServedCoordinate
 from cruxible_client.contracts.provider_installation import (
+    AutomationCarryV1,
     ProviderInstallRequest,
     ProviderInstallResult,
     ProviderRepinV1,
@@ -103,6 +104,7 @@ from cruxible_core.errors import ConfigError, DataValidationError, RequestRefuse
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS, genesis_seed_files
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+from cruxible_core.providers.automation_carry import carry_automation
 from cruxible_core.providers.build_moves import (
     Mover,
     SettledMoves,
@@ -940,7 +942,8 @@ def _settle_dependents(
     with a definition the request retires together with its dependents. Each
     live Procedure bound to another build of a provider the kit ships moves to
     the kit's build (``movers``), unless ``keep_build`` names it. A Line,
-    Trigger or Mandate over a replaced or moved Procedure is stopped. The plan
+    or Mandate over a replaced or moved Procedure is carried disabled or
+    propose-only, respectively; Triggers stay untouched. The plan
     counts each definition's dependents rather than listing them.
     """
 
@@ -1013,41 +1016,57 @@ def _kit_moves(
     return moves
 
 
-def _planned_stops(
+def _planned_automation(
     connection: Any,
     tree: Mapping[str, bytes],
     roots: tuple[ArtifactIdentity, ...],
-    fixed: frozenset[str],
-) -> tuple[StoppedAutomationV1, ...]:
-    """The Lines, Mandates and Triggers a change over ``roots`` would stop, read
-    before the change can be evaluated (a preview whose providers are not installed)."""
+    writes: Mapping[str, bytes],
+    retire_with: set[str],
+) -> tuple[tuple[AutomationCarryV1, ...], tuple[StoppedAutomationV1, ...]]:
+    """Affected automation before installation, with unavailable final digests.
 
+    Closure errors block inventory. Retirement remains distinct from carry;
+    discovery uses the same indexed closure and target lookups as settlement.
+    """
+
+    fixed = frozenset(writes)
+    items = dependent_closure_inventory(tree, roots=roots, fixed_paths=fixed)
+    retiring_procedures = {
+        _artifact_state(path, content).identity.qualified
+        for path, content in writes.items()
+        if path.startswith("procedures/")
+        and _artifact_state(path, content).lifecycle.state == "retired"
+    }
+    if retire_with:
+        retired_items = dependent_closure_inventory(
+            tree,
+            roots=tuple(root for root in roots if root.qualified in retire_with),
+            fixed_paths=fixed,
+        )
+        retiring_procedures.update(
+            item.identity.qualified for item in retired_items if item.artifact_kind == "procedure"
+        )
+    carries = []
     stops: dict[str, StoppedAutomationV1] = {}
-    for root in roots:
-        try:
-            items = dependent_closure_inventory(tree, roots=(root,), fixed_paths=fixed)
-        except ClaimTypeMigrationError:
+    for item in items:
+        if item.artifact_kind not in {"line", "procedure-mandate"}:
             continue
-        for item in items:
-            if item.artifact_kind not in {"line", "procedure-mandate"}:
-                continue
-            stops.setdefault(
-                item.identity.qualified,
-                StoppedAutomationV1(
-                    identity=item.identity.qualified,
-                    kind="line" if item.artifact_kind == "line" else "mandate",
-                    stopped_by=item.triggering_identity.qualified,
-                ),
-            )
-            if item.artifact_kind == "line":
-                for trigger, _path in live_triggers_of(connection, item.identity.qualified):
-                    stops.setdefault(
-                        trigger,
-                        StoppedAutomationV1(
-                            identity=trigger, kind="trigger", stopped_by=item.identity.qualified
-                        ),
-                    )
-    return tuple(stops[key] for key in sorted(stops))
+        row = carry_automation(item.path, tree[item.path], {}, planned=True)[1]
+        if row.procedure not in retiring_procedures:
+            carries.append(row)
+            continue
+        stops[row.identity] = StoppedAutomationV1(
+            identity=row.identity, kind=row.kind, stopped_by=row.procedure
+        )
+        if row.kind == "line":
+            for trigger, _ in live_triggers_of(connection, row.identity):
+                stops[trigger] = StoppedAutomationV1(
+                    identity=trigger, kind="trigger", stopped_by=row.identity
+                )
+    return (
+        tuple(sorted(carries, key=lambda row: row.identity)),
+        tuple(stops[key] for key in sorted(stops)),
+    )
 
 
 def _held_by_other_kits(
@@ -1137,6 +1156,7 @@ def _submit(
     providers: tuple[KitProviderStep, ...] = (),
     repins: tuple[ProviderRepinV1, ...] = (),
     stops: tuple[StoppedAutomationV1, ...] = (),
+    automation_carries: tuple[AutomationCarryV1, ...] = (),
 ) -> KitChangeResult:
     assert mode.head is not None
     base = mode.head
@@ -1147,6 +1167,7 @@ def _submit(
         "providers": providers,
         "repins": repins,
         "stops": stops,
+        "automation_carries": automation_carries,
     }
     body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
     shell = DocumentShell(
@@ -1818,19 +1839,26 @@ def _add_kit(
             changed_roots = tuple(
                 _artifact_state(path, tree[path]).identity for path in diff.writes if path in tree
             )
-            stops = _planned_stops(
-                connection,
-                tree,
-                (
-                    *changed_roots,
-                    *(
-                        mover.identity
-                        for mover in movers
-                        if mover.identity.qualified not in request.keep_build
+            stops: tuple[StoppedAutomationV1, ...]
+            try:
+                automation_carries, stops = _planned_automation(
+                    connection,
+                    tree,
+                    (
+                        *changed_roots,
+                        *(
+                            mover.identity
+                            for mover in movers
+                            if mover.identity.qualified not in request.keep_build
+                        ),
                     ),
-                ),
-                frozenset(diff.writes),
-            )
+                    diff.writes,
+                    retire_with,
+                )
+            except (ClaimTypeMigrationError, ValueError) as exc:
+                blocked.append(f"automation inventory incomplete: {exc}")
+                automation_carries = ()
+                stops = ()
             writes: dict[str, bytes] = dict(diff.writes)
         else:
             moves = _kit_moves(tree, movers)
@@ -1881,8 +1909,10 @@ def _add_kit(
             writes = settled.writes if not settled.refused else dict(diff.writes)
             repins = tuple(settled.repins)
             stops = tuple(settled.stops)
+            automation_carries = tuple(settled.automation_carries)
     described["repins"] = repins
     described["stops"] = stops
+    described["automation_carries"] = automation_carries
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
     if blocked:
         return KitChangeResult(

@@ -102,6 +102,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "consumer_stalled": "restart_the_consumer_through_its_named_repair",
     "line_coverage_gap": "evaluate_the_uncovered_range_then_dispatch_what_it_finds",
     "line_work_pending": "dispatch_the_lines_pending_work",
+    "line_disabled_by_upgrade": "enable_the_upgraded_line_to_resume",
     # Items a Line posted for judgment: read them, then ack, dismiss or link each.
     "line_inbox_unread": "judge_the_lines_unread_inbox_items",
     "evidence_unavailable": "restore_the_capture_from_backup_or_recapture_and_recite_its_claims",

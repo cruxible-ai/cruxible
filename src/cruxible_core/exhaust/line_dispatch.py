@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS sessions (
  active INTEGER NOT NULL, payload TEXT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS active_session ON sessions(line_id,epoch) WHERE active=1;
 CREATE INDEX IF NOT EXISTS sessions_active ON sessions(active);
+-- Exact versions ever enabled: next clears upgrade findings with a keyed probe,
+-- independent of enablement history size. Built once on projection format change.
+CREATE INDEX IF NOT EXISTS sessions_version
+ ON sessions(line_id,json_extract(payload,'$.line_artifact_digest'));
 CREATE TABLE IF NOT EXISTS pending (
  line_id TEXT NOT NULL, epoch INTEGER NOT NULL, occurrence_id TEXT NOT NULL,
  disposition TEXT NOT NULL, eligible_at TEXT NOT NULL, payload TEXT NOT NULL, run_id TEXT,

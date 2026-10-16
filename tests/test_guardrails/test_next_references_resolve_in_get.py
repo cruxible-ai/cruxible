@@ -64,6 +64,7 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace", "kit_status"]] = {
     "prediction_window_unbindable": "get",
     "line_coverage_gap": "get",
     "line_work_pending": "get",
+    "line_disabled_by_upgrade": "get",
     "line_settled_prior_refusals": "get",
     "line_inbox_unread": "get",
     # A kit is read with kit status, not get.

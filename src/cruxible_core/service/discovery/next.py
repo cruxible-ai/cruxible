@@ -4330,6 +4330,33 @@ def _line_settled_refusal_items(
     return tuple(items)
 
 
+def _line_upgrade_items(
+    instance: PlaybillInstance, *, access_profile: CoverageAccessProfile
+) -> tuple[PlaybillNextItemV1, ...]:
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.consumers.next.line_upgrades import disabled_upgrades
+
+    return tuple(
+        _item(
+            severity="repair",
+            reason="line_disabled_by_upgrade",
+            subject_identity=line,
+            detail={
+                "procedure_version": version,
+                "detail": f"disabled by upgrade to {version}; enable to resume",
+            },
+            repair=PlaybillNextRepairV1(
+                operation="cruxible.line.enable",
+                target=line,
+                required_change="enable_the_upgraded_line_to_resume",
+                arguments={"line": line.removeprefix("Line:")},
+            ),
+        )
+        for line, version in disabled_upgrades(instance)
+    )
+
+
 def _line_attention_items(
     instance: PlaybillInstance,
     *,
@@ -6203,6 +6230,7 @@ def _queue_at(
         *_line_settled_refusal_items(
             instance, coordinate=coordinate, access_profile=request.access_profile
         ),
+        *_line_upgrade_items(instance, access_profile=request.access_profile),
         *_line_inbox_items(instance, access_profile=request.access_profile),
         *_kit_resume_items(instance, access_profile=request.access_profile),
     )
