@@ -1198,6 +1198,7 @@ class GitLedger:
         with _batch_reader(self.path).request():
             yield
 
+    @_pack_transaction
     def _update_refs(self, commands: Sequence[str]) -> None:
         """Git files-backend lock/verify/rename transaction, with packed deletes.
 
@@ -1207,7 +1208,6 @@ class GitLedger:
         renames; the archive is published before any retired root is removed.
         """
         reader = _batch_reader(self.path)
-        reader.flush()
         deferred = getattr(reader._transaction, "request", False)
 
         def sync_directory(path: Path) -> None:
@@ -1243,6 +1243,13 @@ class GitLedger:
             if ref in parsed:
                 raise GitError("duplicate ref in transaction")
             parsed[ref] = (operation, new, expected)
+        main_oid = parsed.get("refs/heads/main", (None, None, None))[1]
+        if main_oid is not None:
+            # A bundle may have been prepared in an earlier advisory request.
+            # Import its change-sized pack before sealing, even when this CAS
+            # creates no objects of its own (including outside request_pack).
+            reader.import_pending_pack(main_oid)
+        reader.flush()
         locks: dict[str, tuple[Path, int]] = {}
         published: set[str] = set()
         packed_published = False
@@ -1300,7 +1307,7 @@ class GitLedger:
                     _lock, fd = locks[ref]
                     os.write(fd, (new + "\n").encode("ascii"))
                     sync_file(fd, self.path / ref)
-            if parsed.get("refs/heads/main", (None, None, None))[1] is not None:
+            if main_oid is not None:
                 # Authority must never name advisory bytes, even if publication
                 # is interrupted before the activation lock's final ref sync.
                 reader.flush(final=True, accepting=True)
@@ -1319,7 +1326,7 @@ class GitLedger:
                     (self.path / ref).unlink(missing_ok=True)
                     sync_directory((self.path / ref).parent)
             if deferred:
-                if parsed.get("refs/heads/main", (None, None, None))[1] is not None:
+                if main_oid is not None:
                     reader._transaction.accepted = True
             else:
                 for _operation, new, _expected in parsed.values():

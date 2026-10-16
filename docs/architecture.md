@@ -165,7 +165,8 @@ record references is deleted under it.
   staged in one in-process request pack/index pair. Proposal refs and notes
   publish in authority order without a durable flush. Acceptance prepares the
   generation note objects and durably seals the complete pair before publishing
-  main, then publishes the note ref after the winning main CAS. Changed refs
+  main, importing the target's pending pack when preparation used an earlier
+  request, then publishes the note ref after the winning main CAS. Changed refs
   are durable before releasing the activation lock. Retention objects are
   prepared in that pack before acceptance; their refs
   still publish in retirement order. Interrupted

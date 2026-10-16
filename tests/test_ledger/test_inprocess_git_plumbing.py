@@ -391,3 +391,51 @@ def test_publication_cleanup_preserves_the_next_writers_lock(
         if successor_fd is not None:
             os.close(successor_fd)
         lock.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("mode", ("direct", "request", "request-with-note"))
+def test_main_imports_an_earlier_advisory_generation(ledger, mode):
+    from contextlib import nullcontext
+
+    from cruxible_core.ledger.git_objects import PackStore
+
+    base = ledger.create_signed_genesis({"one": b"base"}, timestamp="2026-10-15T12:00:00Z")
+    ledger.set_main_genesis(base)
+    with ledger.request_pack():
+        generation = ledger.create_signed_generation(
+            {"one": b"earlier generation"},
+            parent_oid=base,
+            sequence=1,
+            timestamp="2026-10-15T12:01:00Z",
+            message="Prepare now, accept later",
+        )
+    fresh = PackStore(ledger.path)
+    assert fresh.is_pending(generation)
+    provisional = fresh.locations[generation][0]
+    fresh.close()
+
+    request = ledger.request_pack() if mode != "direct" else nullcontext()
+    note = (
+        ledger.prepared_generation_note(generation, b"descriptor\n")
+        if mode == "request-with-note"
+        else nullcontext(None)
+    )
+    with request, ledger.activation_lock(), note as publish_note:
+        assert ledger.compare_and_set_main(generation, expected_oid=base)
+        # The earlier generation's bytes must already be durable, independently
+        # of this request's note batch and of activation/request finalizers.
+        fresh = PackStore(ledger.path)
+        assert not fresh.is_pending(generation)
+        accepted = fresh.locations[generation][0]
+        assert fresh.read(ledger._blob_oid(b"earlier generation")) == (
+            "blob",
+            b"earlier generation",
+        )
+        fresh.close()
+        if publish_note is not None:
+            publish_note()
+    if provisional != accepted:
+        for suffix in (".pack", ".idx", ".pending", ".keep"):
+            provisional.with_suffix(suffix).unlink(missing_ok=True)
+    assert ledger._git(["show", "refs/heads/main:one"]) == b"earlier generation"
+    ledger._git(["fsck", "--strict", "--no-dangling"])
