@@ -636,15 +636,23 @@ def test_a_claim_subject_draft_is_held_to_the_boundary(instance: PlaybillInstanc
     assert _codes(result) == ["cruxible.authoring.subject_id_not_assigned"], _codes(result)
 
 
-def test_a_write_adding_an_alias_and_its_subject_together_refuses(
+@pytest.mark.parametrize("alias_first", [True, False])
+def test_a_write_adding_and_using_an_alias_together_reaches_its_live_subject(
     instance: PlaybillInstance,
+    alias_first: bool,
 ) -> None:
-    outcome = write(
-        instance,
+    """Identity D3 and set-history-build-1015: a held alias lands on its live Subject."""
+
+    changes = [
         {"op": "add", "subject": ALPHA, "field": "semantic.alias", "value": "fresh"},
         {"op": "set", "subject": f"{KIND}/fresh", "field": "code", "value": "x"},
-    )
-    assert outcome.status != "accepted", outcome
+    ]
+    outcome = write(instance, *(changes if alias_first else reversed(changes)))
+    assert outcome.status == "accepted", outcome
+    assert outcome.subjects_added == ()
+    assert [change.subject for change in outcome.changes] == [ALPHA, ALPHA]
+    assert values(instance, ALPHA, "semantic.alias") == ["fresh"]
+    assert values(instance, ALPHA, f"{KIND}.code") == ["x"]
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert subject_path(KIND, "fresh") not in tree
 
