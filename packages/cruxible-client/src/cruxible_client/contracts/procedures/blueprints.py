@@ -329,7 +329,7 @@ def instantiate_blueprint(
                 f"{slot_name!r}'s interface exactly once.",
                 slot=slot_name,
             )
-        original = blueprint_slot_interface(blueprint, slot_name)
+        original = blueprint_slot_interface(blueprint, slot)
         interface = (
             None
             if original is None
@@ -338,7 +338,8 @@ def instantiate_blueprint(
         if interface is None:
             raise BlueprintInstantiationError(
                 "cruxible.blueprint.provider_interface_mismatch",
-                f"Provider {provider.provider.identity.name!r} pins no registration for slot {slot_name!r}",
+                f"Provider {provider.provider.identity.name!r} pins no registration "
+                f"for slot {slot_name!r}",
                 slot=slot_name,
             )
         interfaces[slot_name] = interface

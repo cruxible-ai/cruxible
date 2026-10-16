@@ -1,32 +1,34 @@
-from tests.test_procedures.test_blueprints import _blueprint
-from tests.test_integration.test_graph_v4_provider_closure import contracted_demo
-from tests.core_support._p2b1_support import accepted_interface, accepted_provider
-from tests.support.provider_builds import as_build
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactPin
-from cruxible_client.contracts.providers import (
-    AcceptedProvider,
-    render_provider,
-    provider_path,
-    provider_digest,
+from cruxible_client.contracts.procedures.artifacts import parse_procedure, render_procedure
+from cruxible_client.contracts.procedures.blueprints import (
+    blueprint_digest,
+    blueprint_path,
+    instantiate_blueprint,
+    render_blueprint,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    provider_interface_contract,
-    provider_interface_path,
-    provider_interface_digest,
-    render_provider_interface,
     AcceptedProviderInterfaceRegistration,
+    provider_interface_contract,
+    provider_interface_digest,
+    provider_interface_path,
+    render_provider_interface,
 )
-from cruxible_client.contracts.procedures.blueprints import (
-    instantiate_blueprint,
-    blueprint_digest,
-    render_blueprint,
-    blueprint_path,
+from cruxible_client.contracts.providers import (
+    AcceptedProvider,
+    provider_digest,
+    provider_path,
+    render_provider,
 )
-from cruxible_client.contracts.procedures.artifacts import render_procedure, parse_procedure
 from cruxible_core.providers.build_moves import _reinstantiated, build_move
+from tests.core_support._p2b1_support import accepted_interface, accepted_provider
+from tests.support.provider_builds import as_build
+from tests.test_integration.test_graph_v4_provider_closure import contracted_demo as contracted_demo
+from tests.test_procedures.test_blueprints import _blueprint
 
 
-def legacy_blueprint_move():
+def legacy_blueprint_move(source=False):
     old = accepted_provider()
     registration = accepted_interface().registration
     contract = provider_interface_contract(
@@ -47,7 +49,7 @@ def legacy_blueprint_move():
             )
         }
     )
-    bp = _blueprint()
+    bp = _source_blueprint() if source else _blueprint()
     proc = instantiate_blueprint(
         bp,
         blueprint_artifact_digest=blueprint_digest(bp).tagged,
@@ -67,8 +69,10 @@ def legacy_blueprint_move():
     return old, new, bp, proc, path, tree, move
 
 
-def test_legacy_blueprint_move_binds_the_registration_of_the_new_build(contracted_demo):
-    old, new, bp, proc, path, tree, move = legacy_blueprint_move()
+@pytest.mark.usefixtures("contracted_demo")
+@pytest.mark.parametrize("source", [False, True])
+def test_legacy_blueprint_move_binds_the_registration_of_the_new_build(source):
+    old, new, bp, proc, path, tree, move = legacy_blueprint_move(source)
     moved = parse_procedure(
         _reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}), path=path
     )
@@ -80,6 +84,7 @@ def test_legacy_blueprint_move_binds_the_registration_of_the_new_build(contracte
     )
 
     from types import SimpleNamespace
+
     from cruxible_core.providers.provider_local_runtime import LocalProviderExecutionDriver
 
     contract = new.pins[0]
@@ -109,3 +114,148 @@ def test_legacy_blueprint_move_binds_the_registration_of_the_new_build(contracte
         environment_manifest_digest="sha256:" + "d" * 64,
     )
     assert parse_procedure(render_procedure(moved), path=path) == moved
+    if source:
+        binding = moved.definition.source.bindings["lookup"]
+        assert binding.interface == contract.target.name
+        assert binding.interface_version == contract.artifact_digest
+
+
+def _source_blueprint():
+    import textwrap
+
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.procedures.artifacts import (
+        BlueprintArtifact,
+        ProcedureOwnedContract,
+    )
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.models import iter_pin_bindings
+    from cruxible_client.contracts.procedures.source_compiler import compile_source
+    from cruxible_client.contracts.procedures.source_program import (
+        ProcedureSourceProgram,
+        SourceSlotBinding,
+    )
+    from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
+    from tests.test_procedures.test_source_compiler import INPUT, OUTPUT
+    from tests.test_procedures.test_source_compiler import _budget as source_budget
+    from tests.test_procedures.test_source_compiler import _hard_caps as source_hard_caps
+
+    interface = accepted_interface()
+    registration = interface.registration
+    slot = SourceSlotBinding(
+        interface=registration.identity.name,
+        interface_version=interface.artifact_digest,
+        interface_digest=registration.interface_digest,
+        effect_class=registration.effect_class,
+        operation=read_provider_operation_contract(registration.interface_bytes_hex),
+    )
+    program = ProcedureSourceProgram(
+        text=textwrap.dedent("""
+        def example(request, bindings):
+            looked = call(bindings.lookup, input=bindings.lookup.input())
+            return Output.value(value='done')
+    """),
+        filename="blueprint.py",
+        function="example",
+        contracts={"Output": OUTPUT},
+        bindings={"lookup": slot},
+    )
+    compiled = compile_source(
+        program,
+        name="source-blueprint",
+        input=INPUT,
+        output=OUTPUT,
+        budget=source_budget(),
+        hard_caps=source_hard_caps(),
+    )
+    definition = compiled.definition
+    assert definition.open_slots == ("lookup",)
+    assert [slot.slot_name for slot in definition.pin_slots] == ["lookup"]
+    owned = tuple(
+        ProcedureOwnedContract(
+            identity={"kind": "Contract", "name": item.name},  # type: ignore[arg-type]
+            schema=item.schema_,
+        )
+        for item in compiled.contracts
+    )
+    pins = {
+        (pin.role, pin.target.qualified, pin.artifact_digest): pin
+        for pin in iter_pin_bindings(definition)
+        if isinstance(pin, ArtifactPin)
+    }
+    blueprint = BlueprintArtifact(
+        identity={"kind": "Blueprint", "name": "source-blueprint"},  # type: ignore[arg-type]
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        pins=tuple(
+            pins[key] for key in sorted(pins, key=lambda item: tuple(p.encode() for p in item))
+        ),
+        owned_contracts=owned,
+        activation_policy="snapshot",
+    )
+    return blueprint
+
+
+@pytest.mark.usefixtures("contracted_demo")
+def test_unmoved_blueprint_slot_keeps_its_exact_registration():
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
+
+    old, new, bp, proc, path, tree, move = legacy_blueprint_move()
+    runtime = old.provider.runtime_artifact
+    held = as_build(
+        old.provider.model_copy(
+            update={
+                "runtime_artifact": runtime.model_copy(
+                    update={
+                        "distribution": runtime.distribution.model_copy(
+                            update={"sha256": "sha256:" + "9" * 64}
+                        )
+                    }
+                )
+            }
+        )
+    )
+    held = AcceptedProvider(
+        path=provider_path(held.identity.name),
+        provider=held,
+        artifact_digest=provider_digest(held).tagged,
+    )
+    raw = bp.definition.model_dump(mode="json", by_alias=True)
+    first = raw["nodes"][0]
+    second = {
+        **first,
+        "node_id": "held",
+        "as": "held",
+        "provider": {"tag": "playbill-procedure-pin-slot-ref-v1", "slot_name": "held"},
+    }
+    first["next"] = "held"
+    raw["nodes"].insert(1, second)
+    raw["pin_slots"].append({**raw["pin_slots"][0], "slot_name": "held"})
+    definition = ProcedureDefinition.model_validate(raw)
+    bp = bp.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+        }
+    )
+    proc = instantiate_blueprint(
+        bp,
+        blueprint_artifact_digest=blueprint_digest(bp).tagged,
+        name=proc.identity.name,
+        providers={"lookup": old, "held": held},
+    )
+    tree.update(
+        {
+            path: render_procedure(proc),
+            held.path: render_provider(held.provider),
+            blueprint_path(bp.identity.name): render_blueprint(bp),
+        }
+    )
+    moved = parse_procedure(
+        _reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}), path=path
+    )
+    occurrence = next(node for node in moved.definition.nodes if node.node_id == "held")
+    assert occurrence.provider.target == held.provider.identity
+    assert occurrence.interface == proc.definition.nodes[1].interface
+    assert moved.definition.nodes[0].interface != occurrence.interface
