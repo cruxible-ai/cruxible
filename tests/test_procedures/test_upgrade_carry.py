@@ -319,3 +319,49 @@ def test_retirement_clears_upgrade_row_and_keeps_history_readable(tmp_path):
         instance.accepted_coordinate(), line_spec_digest(line).tagged, family="lines/"
     )
     assert found == (f"lines/{line.identity.name}.json", original)
+
+
+@pytest.mark.parametrize("enable_before_edit", [False, True])
+def test_enable_after_an_ordinary_line_edit_clears_upgrade_finding(tmp_path, enable_before_edit):
+    instance, line, procedure, owner = line_world(
+        tmp_path, CadenceSchedule(interval_seconds=2), with_owner=True
+    )
+    tree, settled = _settled(instance, procedure)
+    candidate = dict(tree)
+    candidate.update(settled.writes)
+    _accept_tree(
+        instance, owner, candidate, timestamp="2026-08-25T15:00:00.000000Z", proposal_name="upgrade"
+    )
+    path = f"lines/{line.identity.name}.json"
+    upgraded = parse_line_spec(settled.writes[path], path=path)
+    if enable_before_edit:
+        service_enable_line(
+            instance,
+            line.identity.name,
+            principal=LOCAL,
+            actor=_actor(instance),
+            now=READ_TIME,
+            daemon_id="daemon",
+        )
+    edited = upgraded.model_copy(
+        update={
+            "max_authority": "observe",
+            "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(upgraded).tagged),
+        }
+    )
+    candidate[path] = render_line_spec(edited)
+    _accept_tree(
+        instance, owner, candidate, timestamp="2026-08-26T15:00:00.000000Z", proposal_name="edit"
+    )
+    # Cold replay must notice an earlier enablement even when no next read saw it.
+    _STATE.reset(instance)
+    assert bool(disabled_upgrades(instance)) is not enable_before_edit
+    service_enable_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=READ_TIME + timedelta(seconds=1),
+        daemon_id="daemon",
+    )
+    assert not disabled_upgrades(instance)

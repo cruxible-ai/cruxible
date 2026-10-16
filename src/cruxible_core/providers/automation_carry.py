@@ -7,14 +7,18 @@ parameters and conditions are data, never reference replacement targets.
 from collections.abc import Mapping
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
+from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
+    ProcedureMandateAny,
     mandate_grant,
     parse_procedure_mandate_any,
     procedure_mandate_digest,
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.line_specs import (
+    LineSpec,
     line_spec_digest,
     parse_line_spec,
     render_line_spec,
@@ -25,6 +29,19 @@ from cruxible_client.contracts.provider_installation import (
     CarriedMandateV1,
 )
 
+# These newly selected families have no contract-level parse memo yet. Share the
+# exact-byte models between upgrade planning and the generation findings worker.
+_LINES: ParseMemo[LineSpec] = ParseMemo(capacity=2048, max_bytes=32 * 1024 * 1024)
+_MANDATES: ParseMemo[ProcedureMandateAny] = ParseMemo(capacity=2048, max_bytes=16 * 1024 * 1024)
+_line_digest = sealed_memo(line_spec_digest)
+_mandate_digest = sealed_memo(procedure_mandate_digest)
+
+
+def parse_carry_line(content: bytes, *, path: str) -> LineSpec:
+    return _LINES.parse(
+        content, path, CURRENT_ARTIFACT_CODEC, lambda: parse_line_spec(content, path=path)
+    )
+
 
 def carry_automation(
     path: str, content: bytes, replacements: Mapping[str, str], *, planned: bool = False
@@ -32,8 +49,8 @@ def carry_automation(
     """One accepted predecessor -> one final successor, or an inventory-only row."""
 
     if path.startswith("lines/"):
-        line = parse_line_spec(content, path=path)
-        old = line_spec_digest(line).tagged
+        line = parse_carry_line(content, path=path)
+        old = _line_digest(line).tagged
         target = replacements.get(line.procedure.artifact_digest)
         pin = line.procedure.model_copy(update={"artifact_digest": target})
         successor = line.model_copy(
@@ -60,8 +77,13 @@ def carry_automation(
                 phase="planned" if planned else "validated",
             ),
         )
-    mandate = parse_procedure_mandate_any(content, path=path)
-    old = procedure_mandate_digest(mandate).tagged
+    mandate = _MANDATES.parse(
+        content,
+        path,
+        CURRENT_ARTIFACT_CODEC,
+        lambda: parse_procedure_mandate_any(content, path=path),
+    )
+    old = _mandate_digest(mandate).tagged
     target = replacements.get(mandate.procedure.artifact_digest)
     successor_mandate = (
         ProcedureMandate(
