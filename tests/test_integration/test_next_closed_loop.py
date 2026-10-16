@@ -166,7 +166,7 @@ EXPECTED_OPERATIONS = {
     "claim_contradicting_evidence_available": "cruxible.authoring.example",
     "claim_new_evidence_supporting": "cruxible.authoring.example",
     "claim_new_evidence_unreviewed": "cruxible.authoring.example",
-    "document_modified": "cruxible.sources.propose",
+    "document_modified": "cruxible.files.propose",
     # Restoring a bound file, or fixing its catalog locator, is a workspace edit.
     "workspace_binding_missing": "hand_edit",
     "unregistered_projection_block": "cruxible.block.repin",
@@ -1276,7 +1276,7 @@ def _workspace_binding_missing(root: Path, _monkeypatch: pytest.MonkeyPatch) -> 
     instance, _owner = initialize_local(root / "instance")
     workspace = root / "workspace"
     (workspace / ".cruxible").mkdir(parents=True)
-    (workspace / ".cruxible/sources.yaml").write_text(
+    (workspace / ".cruxible/files.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"

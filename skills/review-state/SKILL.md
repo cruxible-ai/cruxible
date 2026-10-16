@@ -81,7 +81,7 @@ question.
 ## Phase 4: Files, pages and the floor
 
 ```bash
-cruxible sources check           # catalogued files against accepted Documents
+cruxible files check           # catalogued files against accepted Documents
 cruxible block sync --all        # projection blocks against their backings
 cruxible coverage resolve --all  # which spans of catalogued files are governed
 ```

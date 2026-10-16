@@ -30,7 +30,7 @@ and `get` the ref a hit names; an agent without a shell searches values with
 
 `full` advertises the complete catalog below, including the `authoring_*`
 intent tools, `cruxible_query_spec`, `cruxible_since`,
-curation, coverage, the floor, sources, blocks, kits, Procedures, Lines, and the
+curation, coverage, the floor, files, blocks, kits, Procedures, Lines, and the
 split approval pair
 `cruxible_proposal_approve_prepare` and `cruxible_proposal_approve_submit` for
 a signer outside the MCP process. `CRUXIBLE_MCP_TOOLS` (a comma-separated
@@ -221,14 +221,14 @@ names the whole body's `body_digest`.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_sources_compile` | Read the workspace's catalogued files and derive a source bundle | `READ_ONLY` |
-| `cruxible_sources_check` | Check the catalogued sources (or a compiled `bundle`) against accepted state | `READ_ONLY` |
-| `cruxible_sources_propose` | Compile the catalog and propose one source (`source_name`) as its Document; the adapter reads the file | `GOVERNED_WRITE` |
+| `cruxible_files_compile` | Read the workspace's catalogued files and derive a file bundle | `READ_ONLY` |
+| `cruxible_files_check` | Check the catalogued files (or a compiled `bundle`) against accepted state | `READ_ONLY` |
+| `cruxible_files_propose` | Compile the catalog and propose one file (`file`) as its Document; the adapter reads the file | `GOVERNED_WRITE` |
 
 The catalog is discovered as every other command finds it
-(`.cruxible/sources.yaml` or `sources.yaml`, plus `.cruxible/sources.local.yaml`);
+(`.cruxible/files.yaml` or `files.yaml`, plus `.cruxible/files.local.yaml`);
 `catalog_path` names another. The adapter owns local path traversal and digest
-construction, so an agent supplies a source name, not compilation wire or file
+construction, so an agent supplies a file catalog name, not compilation wire or file
 bytes. A catalog entry with only `name` and `locator` is evidence-only: it can be
 cited and covered but not proposed.
 
@@ -270,7 +270,7 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
 | `cruxible_authoring_submit` | Compile and submit a `payload` in one call, submit a staged `intent_id`, or both (revise, then submit); idempotent | `GOVERNED_WRITE` |
 | `cruxible_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
-| `cruxible_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp, registers the block and records the page's declared blocks for block-churn detection; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
+| `cruxible_block_repin` | Stamp or refresh one projection block by its catalog `file` and `block`; the adapter computes the stamp, registers the block and records the page's declared blocks for block-churn detection; `render: true` writes the body as a table or list from its one query backing | `GOVERNED_WRITE` |
 | `cruxible_block_sync` | Check each projection block's backings (the CLI's `block sync --check`); edits no page | `READ_ONLY` |
 | `cruxible_block_detach` | Remove retired blocks' markers from pages, keeping the prose; `dry_run` previews, `at` pins the commit to the pages' bytes | `GOVERNED_WRITE` |
 | `cruxible_block_depublish` | Release the declaration that registers one page block | `GOVERNED_WRITE` |
@@ -405,7 +405,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 | `cruxible_curation_suppress` | Hide an item (`scope: item`) or its lineage (`scope: lineage`) without resolving it | `GOVERNED_WRITE` |
 | `cruxible_curation_unsuppress` | Lift a suppression on an item | `GOVERNED_WRITE` |
 | `cruxible_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.cruxible/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible floor export` does, so the daemon's delivery exports the same parts (a daemon that delivers this workspace's floor is its only writer: over its socket it delivers now, over TCP `write` refuses); `mode=status` reports whether that floor is current, stale, or missing. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref), `current/<kind>/INDEX`, `changes/`, `sources/`, `projections/INDEX` and `manifest.json` (see [floor](cli-reference.md#what-is-in-the-floor)). `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_get` the ref for live verdicts; an agent without a shell uses `cruxible_query` with `contains` | `READ_ONLY` |
-| `cruxible_coverage_resolve` | Resolve working sources against accepted state, from `observations` you built or from a workspace file selection (`files`, `ranges`, inline `grep_results` text, or `whole_working_set`) bound by the source catalog; `bindings` (`path`, `source` as `external:NAME` or `ledger:PATH`) override it path by path | `READ_ONLY` |
+| `cruxible_coverage_resolve` | Resolve working sources against accepted state, from `observations` you built or from a workspace file selection (`files`, `ranges`, inline `grep_results` text, or `whole_working_set`) bound by the file catalog; `bindings` (`path`, `source` as `external:NAME` or `ledger:PATH`) override it path by path | `READ_ONLY` |
 
 `cruxible_next` renders each repair's `command` as the MCP tool call
 that performs it (for example `cruxible_prediction_settle(prediction_id="RSC-...")`,

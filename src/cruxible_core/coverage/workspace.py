@@ -41,7 +41,7 @@ def bindings_from_mapping(declared: Mapping[str, str]) -> WorkingPathBindingsV1:
         )
     if not bindings:
         raise WorkspaceCoverageError(
-            "coverage needs at least one binding: catalog the files in .cruxible/sources.yaml "
+            "coverage needs at least one binding: catalog the files in .cruxible/files.yaml "
             "or declare one with --bind PATH=PLANE:IDENTITY"
         )
     return WorkingPathBindingsV1(bindings=tuple(bindings))

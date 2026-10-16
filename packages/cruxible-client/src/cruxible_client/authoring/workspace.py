@@ -38,7 +38,7 @@ from cruxible_client.authoring.floor_apply import (
     read_floor_manifest,
 )
 from cruxible_client.authoring.projection_manifests import load_projection_manifests
-from cruxible_client.authoring.selectors import WorkspaceSources
+from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_CARDS_PER_SOURCE,
@@ -56,6 +56,7 @@ from cruxible_client.contracts.declared_blocks import (
     upgrade_presentation_policy,
 )
 from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.file_catalog import refuse_legacy_file_catalogs
 from cruxible_client.contracts.floor import (
     FLOOR_FORMAT,
     FLOOR_LOCAL_PATHS,
@@ -121,7 +122,7 @@ _WORKSPACE_CONFIG_FIELDS = frozenset(
         "floor_output",
     }
 )
-# The cut Claude Code hook read path rules from coverage.json; the source catalog
+# The cut Claude Code hook read path rules from coverage.json; the file catalog
 # is now the one path-to-source mapping.
 _CUT_HOOK_FIELDS = frozenset({"rules", "scan_budget", "max_observed_paths"})
 _SECRET_FIELD_FRAGMENTS = ("bearer", "credential", "password", "secret", "token")
@@ -275,7 +276,7 @@ def _read_workspace_config(path: Path) -> dict[str, Any] | None:
     unknown = sorted(set(payload).difference(_WORKSPACE_CONFIG_FIELDS))
     if unknown:
         hint = (
-            "; path rules are gone: delete them and catalog the files in .cruxible/sources.yaml"
+            "; path rules are gone: delete them and catalog the files in .cruxible/files.yaml"
             if _CUT_HOOK_FIELDS & set(unknown)
             else ""
         )
@@ -869,17 +870,17 @@ def _sources_generations(rows: Sequence[Sequence[str]]) -> dict[str, str]:
     return generations
 
 
-def _workspace_locators(root: Path, sources: WorkspaceSources | None) -> dict[str, str]:
-    """Each catalog source name and ``Document:<id>`` to its workspace path.
+def _workspace_locators(root: Path, sources: WorkspaceFiles | None) -> dict[str, str]:
+    """Each catalog file name and ``Document:<id>`` to its workspace path.
 
     A path outside the workspace stays absolute; a bound file that does not
     exist is marked ``(missing)``, which ``next`` reports for repair.
     """
 
     found: dict[str, str] = {}
-    for entry in () if sources is None else sources.source_entries:
+    for entry in () if sources is None else sources.file_entries:
         try:
-            path = sources.path_for_source(entry.name) if sources is not None else None
+            path = sources.path_for_file(entry.name) if sources is not None else None
         except (OSError, ValueError, CruxibleError):
             path = None
         if path is None:
@@ -1016,7 +1017,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
     ledger_header, ledger_rows = ledger
     generations = _sources_generations(ledger_rows)
     try:
-        sources: WorkspaceSources | None = WorkspaceSources(root)
+        sources: WorkspaceFiles | None = WorkspaceFiles(root)
     except (OSError, ValueError, CruxibleError):
         sources = None
     locators = _workspace_locators(root, sources)
@@ -1036,9 +1037,9 @@ def write_projection_index(workspace: str | Path) -> int | None:
         "".join(f"{line}\n" for line in (sources_header, *("\t".join(row) for row in joined))),
     )
     rows: list[tuple[str, str, str, str]] = []
-    for entry in () if sources is None else sources.source_entries:
+    for entry in () if sources is None else sources.file_entries:
         try:
-            path = sources.path_for_source(entry.name) if sources is not None else None
+            path = sources.path_for_file(entry.name) if sources is not None else None
         except (OSError, ValueError, CruxibleError):
             continue
         if path is None or not path.is_file() or not path.is_relative_to(root):
@@ -1371,7 +1372,7 @@ def workspace_floor_freshness(
 
 
 def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
-    """Observe the configured floor and every resolvable installed catalog source.
+    """Observe the configured floor and every resolvable installed catalog file.
 
     The daemon compares ``installed_coordinate`` with its resolved coordinate.  Therefore
     the local ``stale`` spelling produced without a daemon coordinate is only a transport
@@ -1392,6 +1393,7 @@ def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
             "presentation_policy_notes": [],
         }
     root = _workspace_root(workspace)
+    refuse_legacy_file_catalogs(root)
     floor = inspect_workspace_floor(workspace, current_coordinate=None)
     observation: dict[str, object] = {
         "tag": "playbill-next-workspace-observation-v1",
@@ -1407,30 +1409,30 @@ def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
     }
     try:
         candidates = (
-            workspace_path(root, "sources.yaml"),
-            root / "sources.yaml",
+            workspace_path(root, "files.yaml"),
+            root / "files.yaml",
         )
         existing = tuple(path for path in candidates if path.is_file())
         if not existing or any(not path.resolve().is_relative_to(root) for path in existing):
             _observe_presentation_policy(observation, root, known_source_ids=())
             return observation
-        overlay_path = workspace_path(root, "sources.local.yaml")
+        overlay_path = workspace_path(root, "files.local.yaml")
         if overlay_path.is_file() and not overlay_path.resolve().is_relative_to(root):
             return observation
-        sources = WorkspaceSources(root)
+        sources = WorkspaceFiles(root)
     except (OSError, ValueError, CruxibleError):
         _observe_presentation_policy(observation, root, known_source_ids=())
         return observation
     _observe_presentation_policy(
         observation,
         root,
-        known_source_ids=tuple(entry.name for entry in sources.source_entries),
+        known_source_ids=tuple(entry.name for entry in sources.file_entries),
     )
     source_observations: list[dict[str, str]] = []
     missing: list[dict[str, str | None]] = []
-    for entry in sources.source_entries:
+    for entry in sources.file_entries:
         try:
-            path = sources.path_for_source(entry.name)
+            path = sources.path_for_file(entry.name)
         except (OSError, ValueError, CruxibleError):
             continue
         if not path.exists() and not path.is_symlink():
@@ -1519,7 +1521,7 @@ def observe_projection_coverage(
 
     root = _workspace_root(workspace)
     try:
-        sources = WorkspaceSources(root)
+        sources = WorkspaceFiles(root)
     except (OSError, ValueError, CruxibleError):
         return None
 
@@ -1544,9 +1546,9 @@ def observe_projection_coverage(
     claim_bindings: list[ProjectionCoverageBinding] = []
     claims_complete = True
     scanned_bytes = 0
-    for document_entry in sources.source_entries:
+    for document_entry in sources.file_entries:
         try:
-            content = read_projection_source(sources.path_for_source(document_entry.name))
+            content = read_projection_source(sources.path_for_file(document_entry.name))
         except (OSError, ValueError, CruxibleError):
             claims_complete = False
             break
@@ -1918,7 +1920,7 @@ def observe_next_workspace_with_coverage(
     if not isinstance(entries, list) or not entries:
         resolved_coordinate: contracts.AcceptedCoordinate | None = None
         try:
-            local_sources = WorkspaceSources(_workspace_root(workspace))
+            local_sources = WorkspaceFiles(_workspace_root(workspace))
         except (OSError, ValueError, CruxibleError):
             local_sources = None
         if local_sources is not None and local_sources.procedure_projection_entries:
@@ -1943,7 +1945,7 @@ def observe_next_workspace_with_coverage(
 
     root = _workspace_root(workspace)
     try:
-        sources = WorkspaceSources(root)
+        sources = WorkspaceFiles(root)
     except (OSError, ValueError, CruxibleError):
         base.pop("source_observations", None)
         return base, None
@@ -1956,7 +1958,7 @@ def observe_next_workspace_with_coverage(
             continue
         source_id = entry["source_id"]
         try:
-            content = read_projection_source(sources.path_for_source(source_id))
+            content = read_projection_source(sources.path_for_file(source_id))
         except (OSError, ValueError, CruxibleError):
             continue
         material[source_id] = content

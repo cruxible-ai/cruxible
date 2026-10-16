@@ -97,8 +97,8 @@ def test_flow_a_bind_reads_workspace_and_sends_only_the_lowered_payload(
     source.write_text("before\nThe decision is ready.\nafter\n", encoding="utf-8")
     payload = ClaimInput.model_validate(authoring_example("claim-flow-a").model_dump(mode="json"))
     (workspace / ".cruxible").mkdir()
-    # The source catalog names the file; an evidence-only entry is enough to bind.
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    # The file catalog names the file; an evidence-only entry is enough to bind.
+    (workspace / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n"
         f"  - name: {payload.source.source_id}\n    locator: corpus/decision.md\n",
         encoding="utf-8",
@@ -134,7 +134,7 @@ def test_flow_a_bind_reads_workspace_and_sends_only_the_lowered_payload(
     misnamed = payload.model_copy(
         update={"source": payload.source.model_copy(update={"source_id": "corpus.typo"})}
     )
-    with pytest.raises(AuthoringBindError, match="source catalog names"):
+    with pytest.raises(AuthoringBindError, match="file catalog names"):
         handlers.handle_playbill_authoring_bind(
             "inst_test",
             source_path="corpus/decision.md",

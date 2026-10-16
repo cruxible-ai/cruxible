@@ -377,12 +377,12 @@ def _next(*, sources: bool = False) -> Callable[[World], object]:
 
 
 def _observe_reports(world: World) -> None:
-    """The workspace's ``reports.md``, observed client-side through its source catalog."""
+    """The workspace's ``reports.md``, observed client-side through its file catalog."""
 
-    from cruxible_client.authoring.selectors import WorkspaceSources
+    from cruxible_client.authoring.selectors import WorkspaceFiles
     from cruxible_core.coverage.workspace import bindings_from_mapping, observe_workspace
 
-    bindings = bindings_from_mapping(WorkspaceSources(world.workspace).coverage_bindings())
+    bindings = bindings_from_mapping(WorkspaceFiles(world.workspace).coverage_bindings())
     world.prepared = observe_workspace(bindings, root=world.workspace, files=("reports.md",))
 
 

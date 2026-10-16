@@ -7,14 +7,14 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.authoring.sdk_types import Duration
-from cruxible_client.authoring.selectors import WorkspaceSources
+from cruxible_client.authoring.selectors import WorkspaceFiles
 from cruxible_client.authoring.workspace import observe_next_workspace
-from cruxible_client.contracts.source_catalog import SourceCatalog
+from cruxible_client.contracts.file_catalog import FileCatalog
 
 
 def _catalog(path: Path) -> None:
     (path / ".cruxible").mkdir()
-    (path / ".cruxible" / "sources.yaml").write_text(
+    (path / ".cruxible" / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -51,7 +51,7 @@ def test_workspace_selector_lowers_evidence_and_insertion_from_exact_bytes(
     content = b"# Runbook\n\nPatch critical systems within 48 hours.\n"
     source.write_bytes(content)
 
-    selected = WorkspaceSources(tmp_path).select("corpus/runbook.md")
+    selected = WorkspaceFiles(tmp_path).select("corpus/runbook.md")
     observation = selected.anchor("within 48 hours").observation()
     assert observation.source_id == "corpus.runbook"
     assert observation.selected_content == b"within 48 hours"
@@ -65,19 +65,19 @@ def test_selector_refuses_ambiguous_and_unmapped_paths(tmp_path: Path) -> None:
     source = tmp_path / "corpus" / "runbook.md"
     source.parent.mkdir()
     source.write_text("same same", encoding="utf-8")
-    workspace = WorkspaceSources(tmp_path)
+    workspace = WorkspaceFiles(tmp_path)
 
     with pytest.raises(ValueError, match="2 occurrences"):
         workspace.select(source).anchor("same")
-    with pytest.raises(ValueError, match="maps to 0 logical sources"):
+    with pytest.raises(ValueError, match="maps to 0 catalogued files"):
         workspace.select("corpus/other.md")
 
 
-def test_source_catalog_accepts_unambiguous_entry_order_and_canonicalizes_it(
+def test_file_catalog_accepts_unambiguous_entry_order_and_canonicalizes_it(
     tmp_path: Path,
 ) -> None:
     _catalog(tmp_path)
-    catalog_path = tmp_path / ".cruxible" / "sources.yaml"
+    catalog_path = tmp_path / ".cruxible" / "files.yaml"
     first = catalog_path.read_text(encoding="utf-8").split("entries:\n", maxsplit=1)[1]
     second = first.replace("corpus.runbook", "alpha.runbook").replace(
         "document_id: runbook", "document_id: alpha-runbook"
@@ -87,17 +87,17 @@ def test_source_catalog_accepts_unambiguous_entry_order_and_canonicalizes_it(
         encoding="utf-8",
     )
 
-    loaded = WorkspaceSources(tmp_path).catalog
+    loaded = WorkspaceFiles(tmp_path).catalog
 
     assert [entry.name for entry in loaded.entries] == ["alpha.runbook", "corpus.runbook"]
-    assert SourceCatalog.model_validate(loaded.model_dump(mode="json")) == loaded
+    assert FileCatalog.model_validate(loaded.model_dump(mode="json")) == loaded
 
 
-def test_source_catalog_validation_refusal_has_stable_paths_without_raw_pydantic_dump(
+def test_file_catalog_validation_refusal_has_stable_paths_without_raw_pydantic_dump(
     tmp_path: Path,
 ) -> None:
     _catalog(tmp_path)
-    catalog_path = tmp_path / ".cruxible" / "sources.yaml"
+    catalog_path = tmp_path / ".cruxible" / "files.yaml"
     catalog_path.write_text(
         catalog_path.read_text(encoding="utf-8").replace(
             "required_tier: governed_write", "required_tier: impossible"
@@ -106,7 +106,7 @@ def test_source_catalog_validation_refusal_has_stable_paths_without_raw_pydantic
     )
 
     with pytest.raises(ValueError) as caught:
-        WorkspaceSources(tmp_path)
+        WorkspaceFiles(tmp_path)
 
     refusal = str(caught.value)
     assert "$.entries[0].required_tier" in refusal
@@ -137,7 +137,7 @@ def test_next_workspace_observes_confined_whole_source_bytes(tmp_path: Path) -> 
 
 def test_next_workspace_upgrades_v1_archival_presentation_policy(tmp_path: Path) -> None:
     _catalog(tmp_path)
-    catalog_path = tmp_path / ".cruxible" / "sources.yaml"
+    catalog_path = tmp_path / ".cruxible" / "files.yaml"
     first = catalog_path.read_text(encoding="utf-8").split("entries:\n", maxsplit=1)[1]
     second = first.replace("corpus.runbook", "alpha.runbook").replace(
         "document_id: runbook", "document_id: alpha-runbook"
@@ -262,7 +262,7 @@ def test_next_workspace_degrades_when_catalog_overlay_escapes_the_workspace(
     _catalog(workspace)
     outside = tmp_path / "outside.yaml"
     outside.write_text("secret: true\n", encoding="utf-8")
-    (workspace / ".cruxible" / "sources.local.yaml").symlink_to(outside)
+    (workspace / ".cruxible" / "files.local.yaml").symlink_to(outside)
 
     observation = observe_next_workspace(workspace)
 
@@ -273,8 +273,8 @@ def test_next_workspace_degrades_when_local_overlay_ambiguously_retargets_source
     tmp_path: Path,
 ) -> None:
     _catalog(tmp_path)
-    portable = (tmp_path / ".cruxible" / "sources.yaml").read_text(encoding="utf-8")
-    (tmp_path / ".cruxible" / "sources.local.yaml").write_text(
+    portable = (tmp_path / ".cruxible" / "files.yaml").read_text(encoding="utf-8")
+    (tmp_path / ".cruxible" / "files.local.yaml").write_text(
         portable.replace("catalog_kind: portable", "catalog_kind: local").replace(
             "document_id: runbook", "document_id: different-runbook"
         ),
@@ -294,8 +294,8 @@ def test_next_workspace_observes_absolute_source_from_explicit_local_overlay(
     _catalog(workspace)
     external = tmp_path / "external.md"
     external.write_bytes(b"Local overlay authorizes this absolute source.\n")
-    portable = (workspace / ".cruxible" / "sources.yaml").read_text(encoding="utf-8")
-    (workspace / ".cruxible" / "sources.local.yaml").write_text(
+    portable = (workspace / ".cruxible" / "files.yaml").read_text(encoding="utf-8")
+    (workspace / ".cruxible" / "files.local.yaml").write_text(
         portable.replace("catalog_kind: portable", "catalog_kind: local").replace(
             "locator: corpus/runbook.md", f"locator: {external}"
         ),
@@ -315,8 +315,8 @@ def test_next_workspace_observes_absolute_source_from_explicit_local_overlay(
 
 def test_next_workspace_omits_unresolved_root_alias_without_failing(tmp_path: Path) -> None:
     _catalog(tmp_path)
-    portable = (tmp_path / ".cruxible" / "sources.yaml").read_text(encoding="utf-8")
-    (tmp_path / ".cruxible" / "sources.local.yaml").write_text(
+    portable = (tmp_path / ".cruxible" / "files.yaml").read_text(encoding="utf-8")
+    (tmp_path / ".cruxible" / "files.local.yaml").write_text(
         portable.replace("catalog_kind: portable", "catalog_kind: local").replace(
             "locator: corpus/runbook.md", "locator: corpus/runbook.md\n    root_alias: external"
         ),
@@ -336,12 +336,12 @@ def test_next_workspace_omits_missing_catalog_source_without_failing(tmp_path: P
     assert observation["source_observations"] == []
 
 
-def test_next_workspace_observes_root_level_source_catalog(tmp_path: Path) -> None:
+def test_next_workspace_observes_root_level_file_catalog(tmp_path: Path) -> None:
     _catalog(tmp_path)
-    (tmp_path / ".cruxible" / "sources.yaml").rename(tmp_path / "sources.yaml")
+    (tmp_path / ".cruxible" / "files.yaml").rename(tmp_path / "files.yaml")
     source = tmp_path / "corpus" / "runbook.md"
     source.parent.mkdir()
-    source.write_bytes(b"Root-level portable source catalog.\n")
+    source.write_bytes(b"Root-level portable file catalog.\n")
 
     observation = observe_next_workspace(tmp_path)
 
@@ -356,8 +356,8 @@ def test_next_workspace_observes_root_level_source_catalog(tmp_path: Path) -> No
 
 def test_next_workspace_degrades_when_both_catalog_layouts_exist(tmp_path: Path) -> None:
     _catalog(tmp_path)
-    portable = (tmp_path / ".cruxible" / "sources.yaml").read_text(encoding="utf-8")
-    (tmp_path / "sources.yaml").write_text(portable, encoding="utf-8")
+    portable = (tmp_path / ".cruxible" / "files.yaml").read_text(encoding="utf-8")
+    (tmp_path / "files.yaml").write_text(portable, encoding="utf-8")
 
     observation = observe_next_workspace(tmp_path)
 

@@ -28,9 +28,9 @@ from cruxible_client.contracts.declared_blocks import (
     ReviewWorkspaceObservation,
 )
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.ledger_mirror import MIRROR_URL_MAX_LENGTH
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.types import (
     DECOMMISSION_REASON_MAX_LENGTH,
     CompilerCoordinate,
@@ -172,12 +172,12 @@ class PlaybillExplainRequest(_StrictPlaybillRequest):
     include_body: bool = False
 
 
-class SourceBundleRequest(_StrictPlaybillRequest):
-    bundle: SourceCompilationBundle
+class FileBundleRequest(_StrictPlaybillRequest):
+    bundle: FileCompilationBundle
 
 
-class SourceProposeRequest(SourceBundleRequest):
-    source_name: str
+class FileProposeRequest(FileBundleRequest):
+    file: str
     proposal_name: str
     dry_run: DryRun = None
     at: PreviewAt = None

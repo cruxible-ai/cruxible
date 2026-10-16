@@ -134,7 +134,7 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     # `line status` folded into `get Line:<name>`, `line check` became
     # `line evaluate --dry-run`. v1 polish added `proposal reject`; the Line inbox
     # added `inbox list|get|ack|dismiss|link`; incremental next added `instance rebuild-next`;
-    # `action run` adds one more; `sources add|remove` add two and `curation observe` left;
+    # `action run` adds one more; `files add|remove` add two and `curation observe` left;
     # `authoring rebase` and `claim recover-attestation` left.
     # Multi-build adds provider move and provider retire.
     assert len(leaf_claims) == 108, (

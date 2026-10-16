@@ -165,7 +165,7 @@ def _workspace(root: Path, *, instance_id: str, content: bytes) -> Path:
         "}",
         encoding="utf-8",
     )
-    (playbill / "sources.yaml").write_text(
+    (playbill / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -526,7 +526,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
     (source_observation,) = workspace_observation["source_observations"]  # type: ignore[index]
     # The observation reports what it saw about the page itself. That contract
     # belongs to the scan, not to the sync, and it survived the sync rewrite
-    # untouched: a catalogued source whose bytes are not the coverage card's,
+    # untouched: a catalogued file whose bytes are not the coverage card's,
     # carrying a block nobody has stamped yet.
     assert source_observation["tag"] == "playbill-next-source-observation-v4"
     assert source_observation["scan_notes"] == ["coverage_source_mismatch"]
@@ -551,7 +551,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
         _ServiceClient(instance),  # type: ignore[arg-type]
         instance.descriptor.instance_id,
         workspace=workspace_root,
-        all_sources=True,
+        all_files=True,
     )
 
     assert [item.outcome for item in result.items] == ["skipped", "stale"]

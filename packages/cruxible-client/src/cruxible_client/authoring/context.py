@@ -11,6 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from cruxible_client.contracts.file_catalog import refuse_legacy_file_catalogs
 from cruxible_client.contracts.workspace_layout import (
     WORKSPACE_DIRECTORY,
     WorkspaceDirectoryConflict,
@@ -155,11 +156,12 @@ def _walk_roots(start: Path, *, home: Path) -> tuple[Path, ...]:
     return tuple(roots)
 
 
-def _source_catalog_path(root: Path) -> Path | None:
+def _file_catalog_path(root: Path) -> Path | None:
+    refuse_legacy_file_catalogs(root)
     return next(
         (
             path
-            for path in (root / WORKSPACE_DIRECTORY / "sources.yaml", root / "sources.yaml")
+            for path in (root / WORKSPACE_DIRECTORY / "files.yaml", root / "files.yaml")
             if path.exists()
             and (
                 path.parent.name != WORKSPACE_DIRECTORY
@@ -170,14 +172,14 @@ def _source_catalog_path(root: Path) -> Path | None:
     )
 
 
-def _binding_conflict(*, binding_path: Path | None, source_catalog_path: Path | None) -> None:
-    if binding_path is None or source_catalog_path is None:
+def _binding_conflict(*, binding_path: Path | None, file_catalog_path: Path | None) -> None:
+    if binding_path is None or file_catalog_path is None:
         return
-    if binding_path.parent.parent == source_catalog_path.parent.parent:
+    if binding_path.parent.parent == file_catalog_path.parent.parent:
         return
     raise ContextResolutionError(
         "workspace_binding_conflict: "
-        f"coverage binding {binding_path} and source catalog {source_catalog_path} "
+        f"coverage binding {binding_path} and file catalog {file_catalog_path} "
         "select different workspace roots; repair: move both files under the same "
         "<workspace>/.cruxible directory"
     )
@@ -216,9 +218,9 @@ def _selected_workspace(
 
     warnings: list[str] = []
     selected: tuple[Path, WorkspaceBinding, Path] | None = None
-    source_catalog_path: Path | None = None
+    file_catalog_path: Path | None = None
     for root in _walk_roots(start, home=home):
-        source_catalog_path = source_catalog_path or _source_catalog_path(root)
+        file_catalog_path = file_catalog_path or _file_catalog_path(root)
         try:
             binding, path = _workspace_binding(root)
         except (ContextResolutionError, WorkspaceDirectoryConflict) as exc:
@@ -236,13 +238,13 @@ def _selected_workspace(
         ensure_workspace_directory(start)
         return start, "local", None, None, tuple(warnings)
     root, binding, path = selected
-    if source_catalog_path is None:
+    if file_catalog_path is None:
         remaining = _walk_roots(root, home=home)
-        source_catalog_path = next(
-            (candidate for item in remaining if (candidate := _source_catalog_path(item))),
+        file_catalog_path = next(
+            (candidate for item in remaining if (candidate := _file_catalog_path(item))),
             None,
         )
-    _binding_conflict(binding_path=path, source_catalog_path=source_catalog_path)
+    _binding_conflict(binding_path=path, file_catalog_path=file_catalog_path)
     return root, "workspace", binding, path, tuple(warnings)
 
 

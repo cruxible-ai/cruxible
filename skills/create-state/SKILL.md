@@ -1,6 +1,6 @@
 ---
 name: create-state
-description: Model a new domain in Cruxible - decide what is typed state and what stays prose, define Subject kinds and ClaimTypes, catalogue sources, seed values with evidence, and add named queries and projection blocks - in reviewed stages.
+description: Model a new domain in Cruxible - decide what is typed state and what stays prose, define Subject kinds and ClaimTypes, catalogue files, seed values with evidence, and add named queries and projection blocks - in reviewed stages.
 ---
 
 # Create State
@@ -115,9 +115,9 @@ Changing a ClaimType later disposes the Claims that use it, so it goes through
 `cruxible claim-type migrate`, never a quiet redefinition. Get the vocabulary
 reviewed now.
 
-## Phase 3: Catalogue the sources
+## Phase 3: Catalogue workspace files
 
-List each file you will cite in `.cruxible/sources.yaml`:
+List each file you will cite in `.cruxible/files.yaml`:
 
 ```yaml
 catalog_kind: portable
@@ -129,7 +129,7 @@ entries:
 A `name` and a `locator` are enough to cite a file. Make an entry a Document
 (add `document_id`, `document_kind`, `title`, `media_type`,
 `governance_scope`) only when the file's exact wording is itself governed, such
-as a policy; then `cruxible sources propose --source NAME --name PROPOSAL`
+as a policy; then `cruxible files propose --file NAME --name PROPOSAL`
 proposes each revision.
 
 ## Phase 4: Seed the values

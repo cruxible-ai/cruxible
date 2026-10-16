@@ -149,7 +149,7 @@ For cloud deployments:
 ## External sources
 
 Do not mount an entire enterprise source estate into the daemon merely so it can
-compile files. Compile source catalogs client-side and submit path-free bundles.
+compile files. Compile file catalogs client-side and submit path-free bundles.
 For APIs and databases, record stable source coordinates and evidence rather
 than copying whole tables into Cruxible.
 

@@ -25,7 +25,7 @@ never crosses a filesystem boundary. `--no-workspace` or
 `CRUXIBLE_NO_WORKSPACE=1` disables workspace discovery for recovery from a bad
 ancestor binding. A workspace is attached when that file names an instance and
 exactly one of `server_url` or `server_socket`; its root must agree with the root
-of `.cruxible/sources.yaml` when both exist. The global context is only a
+of `.cruxible/files.yaml` when both exist. The global context is only a
 fallback, its remembered instance remains bound to the transport on which it
 was selected, and entering one workspace never retargets another.
 
@@ -826,7 +826,7 @@ cruxible body store PATH|- [--json]
 Stores exact bytes in inert CAS and prints their digest. Use it for Document
 bytes that are not a catalogued workspace file (`document propose` then names
 the digest) and for staging provider files; a catalogued file goes through
-`sources propose`.
+`files propose`.
 
 ## instance
 
@@ -1609,7 +1609,7 @@ find staged work again after the context that started it is gone.
 `authoring example` prints a model-generated template for NAME, or lists the
 names without one.
 
-`authoring bind` reads `--file` through the workspace's source catalog (the
+`authoring bind` reads `--file` through the workspace's file catalog (the
 current worktree's, or `--workspace-root`'s): the stub's `source_id` must be the
 name the catalog gives that file, so a mistyped name is refused instead of
 minting a citation `next` and coverage never match. An evidence-only catalog
@@ -2797,7 +2797,7 @@ to clear the row.
 ## block
 
 ~~~text
-cruxible block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
+cruxible block repin FILE BLOCK_ID [--claim ID]... [--query ID]...
   [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
   [--evaluation-time TS] [--artifact ID]... [--currency-policy warn|require_current]
   [--clear-claims] [--clear-queries] [--clear-artifacts] [--render] [--dry-run]
@@ -2825,7 +2825,7 @@ exactly two kinds of governed block, and they never overlap.
 
 A **source block** is ordinary prose the author wrote, made governed by a Claim
 that cites its span. There is no marker: write the passage, capture the page
-through `cruxible sources compile` / `propose`, and author the Claim citing the
+through `cruxible files compile` / `propose`, and author the Claim citing the
 span it states -- `copied_from` when the passage states the value verbatim,
 `supported_by` when it rests on the passage as evidence. This is the kind for
 "the page says this, and here is the Claim that stands behind it".
@@ -2888,8 +2888,8 @@ backing was the Claim it states would be a source block projected as its own
 projection, the overlap the two kinds never allow.
 
 On MCP the same adapter runs in the MCP server process:
-`cruxible_block_repin` takes the block and its page (`file`,
-workspace-relative, or `source`, its catalog id) and computes the stamp there,
+`cruxible_block_repin` takes the block and its catalogued page (`file`,
+the file catalog name) and computes the stamp there,
 so an agent never builds one (`render: true` is `--render`);
 `cruxible_block_sync` is `block sync --check`, a read that edits no page. Detaching is
 `block detach` and the write-tier `cruxible_block_detach` (`files`, `dry_run`,
@@ -2922,7 +2922,7 @@ marker, each on its own line:
   the body ends with a line feed.
 - Markers inside a fenced code block (``` or ~~~) are text, not markers.
 - Blocks never nest or overlap, and every opening has its closing marker.
-- The page must be a source in `.cruxible/sources.yaml` (or `sources.yaml`);
+- The page must be a file entry in `.cruxible/files.yaml` (or `files.yaml`);
   that catalog names the block's `source_id`, which a bootstrap marker cannot.
 
 ### Checking and detaching
@@ -3001,7 +3001,7 @@ Returns the deterministic repair queue at one accepted coordinate. The client
 stamps the current UTC evaluation time when `--evaluation-time` is omitted,
 parses `--expiring-within` ISO-8601 durations client-side without changing the
 integer-microsecond daemon wire, and observes its configured floor locally. If
-`.cruxible/sources.yaml` or root-level `sources.yaml` exists, the client also
+`.cruxible/files.yaml` or root-level `files.yaml` exists, the client also
 observes readable source-file digests, including paths explicitly authorized by
 a local overlay. Unreadable or unresolved sources are omitted individually; the
 daemon compares observed sources with accepted whole-source snapshots and names
@@ -3647,7 +3647,7 @@ audit path.
 | `current/<kind>/<id>.<field>.txt` | A text value too long to inline (over 2 KiB or 40 lines), whole; never truncated. |
 | `current/<kind>/INDEX` | One tab-separated line per Subject of the kind: ref, a title-like value, `field=value` for each state-like field. |
 | `changes/<seq>.json` | The accepted change that introduced a current Claim revision: time, actor, the rationale of the admission that accepted it (the one `get` shows), and the refs it changed. |
-| `sources/INDEX` | Written by the client from `sources/LEDGER` and its own source catalog, outside the daemon manifest: one tab-separated line per evidence source (self-source Captures excluded; a Document is a source, cited or not, on the line of its name): source, CaptureContract(s), where it lives (the workspace path the catalog binds it to, `(missing)` when that file is gone; otherwise the ledger locator), citing-Claim count, the generation it last changed. |
+| `sources/INDEX` | Written by the client from `sources/LEDGER` and its own file catalog, outside the daemon manifest: one tab-separated line per evidence source (self-source Captures excluded; a Document is a source, cited or not, on the line of its name): source, CaptureContract(s), where it lives (the workspace path the catalog binds it to, `(missing)` when that file is gone; otherwise the ledger locator), citing-Claim count, the generation it last changed. |
 | `sources/LEDGER` | The same lines from accepted state alone, which holds no workspace paths: the locator is the Document of the source's name (`Document:<id>`); otherwise every distinct `coordinate/selector` type pair its Captures were taken at, sorted and comma-separated (a foreign source has none); or `-`. |
 | `projections/INDEX` | Written by the client from its own workspace bindings, outside the daemon manifest: one line per workspace file bound to accepted state (Document body, evidence source, rendered block), its role, bound ref and the generation that ref last changed. A bound file that does not exist is a `workspace_binding_missing` row in `next`, not a line here. |
 | `manifest.json` | The coordinate, its generation, the renderer, and every file's digest and `changed_at`, bound into the floor digest. |
@@ -3766,7 +3766,7 @@ resolve answers what the working files you just read or changed have to do with
 accepted state. Every working path is bound to a logical source by a
 declaration, never inferred from a filename, because identical bytes in another
 file are precisely not the same source. The declaration is the workspace's
-source catalog (`.cruxible/sources.yaml`): each catalogued file binds to
+file catalog (`.cruxible/files.yaml`): each catalogued file binds to
 `external:<name>`, the identity file evidence is cited under. `--bind` and
 `--bindings` (a mapping, `-` for stdin) override it path by path, for example to
 bind a file to a ledger path. The CLI reads and hashes the bytes locally; the
@@ -4043,49 +4043,54 @@ limit needs daemon auth; with auth off every process of the OS user is equally
 trusted and could load another principal's settings. See the
 [For AI agents](for-ai-agents.md#a-propose-only-agent) for the worked example.
 
-## sources
+## files
 
 ~~~text
-cruxible sources add NAME PATH [--document-id ID --document-kind KIND --title TEXT
+cruxible files add NAME PATH [--document-id ID --document-kind KIND --title TEXT
   --scope SCOPE... [--media-type TYPE] [--required-tier TIER] [--public-uri URI]]
   [--replace] [--root DIR] [--json]
-cruxible sources remove NAME [--root DIR] [--json]
-cruxible sources check [--catalog FILE] [--local-catalog FILE] [--root DIR]
+cruxible files remove NAME [--root DIR] [--json]
+cruxible files check [--catalog FILE] [--local-catalog FILE] [--root DIR]
   [--root-alias NAME=PATH]... [--json]
-cruxible sources compile --output FILE [--catalog FILE] [--local-catalog FILE]
+cruxible files compile --output FILE [--catalog FILE] [--local-catalog FILE]
   [--root DIR] [--root-alias NAME=PATH]... [--json]
-cruxible sources propose --source NAME --name NAME [--bundle FILE]
+cruxible files propose --file NAME --name NAME [--bundle FILE]
   [--catalog FILE] [--local-catalog FILE] [--root DIR] [--root-alias NAME=PATH]...
   [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
-The source catalog (`.cruxible/sources.yaml` or `sources.yaml`, plus an optional
-`.cruxible/sources.local.yaml` overlay) is the one mapping from workspace files to
-logical sources. Every command discovers it the same way; `--catalog` names
+The file catalog (`.cruxible/files.yaml` or `files.yaml`, plus an optional
+`.cruxible/files.local.yaml` overlay) names workspace files. A file can hold
+evidence, projection blocks or a whole Document. Every command discovers it the same way; `--catalog` names
 another. An entry needs only `name` and `locator` to be cited as evidence
 (`set --evidence-file`, `cx.file`), covered (`coverage resolve`) and watched by
 `next`; adding `document_id`, `document_kind`, `title`, `media_type` and
 `governance_scope` (all five together) makes it a Document that compiles and
 can be proposed.
 
-`sources add NAME PATH` writes that entry so nobody hand-writes the YAML: PATH
+`files add NAME PATH` writes that entry so nobody hand-writes the YAML: PATH
 (relative to the current directory) must be a file inside the workspace, and
 becomes the entry's workspace-relative `locator`. `--document-id`,
 `--document-kind`, `--title` and `--scope` (repeatable) declare the Document;
 `--media-type` defaults from the file suffix (`.md` is `text/markdown`). The
 whole catalog is validated before the file is rewritten, so an existing NAME
-refuses `cruxible.sources.catalog_edit_refused` (`entry_exists`) unless
+refuses `cruxible.files.catalog_edit_refused` (`entry_exists`) unless
 `--replace`, and a partial Document, a duplicate Document target or a
 malformed value refuses (`entry_invalid`) with the catalog model's reason;
 nothing is written on a refusal. The file is rewritten canonically (entries
 sorted, defaults omitted, comments not kept); it is created on the first
-`add`. `sources remove NAME` drops one entry (the file goes with the last).
+`add`. `files remove NAME` drops one entry (the file goes with the last).
 Both edit only the catalog file: commit it with Git.
 
-`sources compile` reads the catalogued Documents' bytes client-side and writes a
-path-free bundle; `sources check` reports each one's alignment (aligned,
-modified, ahead, pending, behind, diverged, untracked); `sources propose` proposes
-one source as its Document's next revision, compiling the catalog first unless
+Old `sources.yaml` and `sources.local.yaml` filenames refuse with
+`cruxible.files.catalog_rename_required`. Rename them to `files.yaml` and
+`files.local.yaml` in the same directory, then retry. There are no old command
+names or fallback reads. Persisted `playbill-source-*` format tags stay unchanged.
+
+`files compile` reads the catalogued Documents' bytes client-side and writes a
+path-free bundle; `files check` reports each one's alignment (aligned,
+modified, ahead, pending, behind, diverged, untracked); `files propose` proposes
+one file as its Document's next revision, compiling the catalog first unless
 `--bundle` names a frozen one. This is the repair `next` names for a
 `document_modified` row. The daemon never reads a submitted client path.
 

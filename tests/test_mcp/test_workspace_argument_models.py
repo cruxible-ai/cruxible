@@ -21,7 +21,7 @@ def test_workspace_mapping_records_reach_the_adapter_and_reject_duplicates(
         assert instance_id == "inst_test"
         calls.append(kwargs)
 
-    monkeypatch.setattr(handlers, "handle_playbill_sources_check", check)
+    monkeypatch.setattr(handlers, "handle_playbill_files_check", check)
     monkeypatch.setattr(handlers, "handle_playbill_coverage", check)
     server = FastMCP("workspace arguments")
     register_tools(server)
@@ -29,7 +29,7 @@ def test_workspace_mapping_records_reach_the_adapter_and_reject_duplicates(
 
     async def exercise() -> None:
         # Invoke the registered functions through their actual MCP argument parser.
-        source = manager.get_tool("cruxible_sources_check")
+        source = manager.get_tool("cruxible_files_check")
         coverage = manager.get_tool("cruxible_coverage_resolve")
         assert source is not None and coverage is not None
         await source.run(

@@ -47,19 +47,19 @@ from cruxible_client.authoring.examples import (
     authoring_example_note,
     document_example,
 )
-from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
-from cruxible_client.authoring.sdk_types import SourceSelectionError
-from cruxible_client.authoring.selectors import WorkspaceSources
-from cruxible_client.authoring.signing import sign_runtime_credential_mint
-from cruxible_client.authoring.sources import (
-    SourceCatalogEdit,
+from cruxible_client.authoring.files import (
+    FileCatalogEdit,
     add_catalog_entry,
-    compile_client_source_context,
-    load_source_catalog,
+    compile_client_file_context,
+    load_file_catalog,
     media_type_for,
     remove_catalog_entry,
     root_aliases,
 )
+from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
+from cruxible_client.authoring.sdk_types import SourceSelectionError
+from cruxible_client.authoring.selectors import WorkspaceFiles
+from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.authoring.workspace import (
     WorkspaceAttachmentError,
     daemon_floor_delivery,
@@ -96,6 +96,7 @@ from cruxible_client.contracts.errors import (
     SigningKeyError,
     SinceRequestInvalid,
 )
+from cruxible_client.contracts.file_catalog import FileCatalog, FileCompilationBundle
 from cruxible_client.contracts.get_display import (
     GET_CLI_HISTORY_VALUE_WIDTH,
     GET_CLI_VALUE_WIDTH,
@@ -121,7 +122,6 @@ from cruxible_client.contracts.provider_installation import (
 from cruxible_client.contracts.read_values import shown_plain
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
-from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_summary
@@ -645,7 +645,7 @@ def _prepare_init_custody(
     return tuple(materials), tuple(markers)
 
 
-def _write_bundle(path: str, bundle: SourceCompilationBundle) -> None:
+def _write_bundle(path: str, bundle: FileCompilationBundle) -> None:
     output = Path(path).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -659,8 +659,8 @@ def _root_aliases(values: tuple[str, ...]) -> dict[str, Path]:
     return root_aliases(values)
 
 
-def _catalog(portable_path: str, local_path: str | None) -> SourceCatalog:
-    return load_source_catalog(
+def _catalog(portable_path: str, local_path: str | None) -> FileCatalog:
+    return load_file_catalog(
         Path(portable_path).expanduser(),
         None if local_path is None else Path(local_path).expanduser(),
     )
@@ -670,11 +670,11 @@ def _compile_remote_context(
     client: CruxibleClient,
     instance_id: str,
     *,
-    catalog: SourceCatalog,
+    catalog: FileCatalog,
     repository_root: Path,
     aliases: dict[str, Path],
-) -> SourceCompilationBundle:
-    return compile_client_source_context(
+) -> FileCompilationBundle:
+    return compile_client_file_context(
         client,
         instance_id,
         catalog=catalog,
@@ -2685,12 +2685,12 @@ def whoami(output_json: bool) -> None:
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 
-@playbill_group.group("sources")
-def sources_group() -> None:
+@playbill_group.group("files")
+def files_group() -> None:
     """Compile catalogued workspace files into exact-byte Document proposals."""
 
 
-def _source_options(function: Callable[..., Any]) -> Callable[..., Any]:
+def _file_options(function: Callable[..., Any]) -> Callable[..., Any]:
     function = click.option(
         "--root",
         "repository_root",
@@ -2700,7 +2700,7 @@ def _source_options(function: Callable[..., Any]) -> Callable[..., Any]:
     function = click.option(
         "--local-catalog",
         default=None,
-        help="A local overlay catalog (default: .cruxible/sources.local.yaml when present).",
+        help="A local overlay catalog (default: .cruxible/files.local.yaml when present).",
     )(function)
     function = click.option(
         "--root-alias",
@@ -2711,13 +2711,13 @@ def _source_options(function: Callable[..., Any]) -> Callable[..., Any]:
         "--catalog",
         "portable_catalog",
         default=None,
-        help="The portable catalog (default: the workspace's .cruxible/sources.yaml).",
+        help="The portable catalog (default: the workspace's .cruxible/files.yaml).",
     )(function)
 
 
-def _source_catalog_and_root(
+def _file_catalog_and_root(
     portable_catalog: str | None, local_catalog: str | None, repository_root: str | None
-) -> tuple[SourceCatalog, Path]:
+) -> tuple[FileCatalog, Path]:
     """The catalog the other commands use, discovered the same way unless named."""
 
     if repository_root is not None:
@@ -2730,11 +2730,11 @@ def _source_catalog_and_root(
         return _catalog(portable_catalog, local_catalog), root
     if local_catalog is not None:
         raise click.UsageError("--local-catalog needs --catalog; omit both to discover them")
-    return WorkspaceSources(root).catalog, root
+    return WorkspaceFiles(root).catalog, root
 
 
-@sources_group.command("compile")
-@_source_options
+@files_group.command("compile")
+@_file_options
 @click.option(
     "--output",
     required=True,
@@ -2743,7 +2743,7 @@ def _source_catalog_and_root(
 )
 @json_option
 @handle_errors
-def compile_sources(
+def compile_files(
     portable_catalog: str | None,
     local_catalog: str | None,
     root_alias: tuple[str, ...],
@@ -2751,14 +2751,14 @@ def compile_sources(
     output: str,
     output_json: bool,
 ) -> None:
-    """Freeze every catalogued Document's exact bytes into a bundle for sources propose.
+    """Freeze every catalogued Document's exact bytes into a bundle for files propose.
 
     Each entry that declares a Document compiles to its next revision against
     the accepted head; evidence-only entries compile to nothing. Writes only
     the local bundle file.
     """
 
-    catalog, root = _source_catalog_and_root(portable_catalog, local_catalog, repository_root)
+    catalog, root = _file_catalog_and_root(portable_catalog, local_catalog, repository_root)
     bundle = _server_call(
         lambda client, instance_id: _compile_remote_context(
             client,
@@ -2767,7 +2767,7 @@ def compile_sources(
             repository_root=root,
             aliases=_root_aliases(root_alias),
         ),
-        command_name="cruxible sources compile",
+        command_name="cruxible files compile",
     )
     _write_bundle(output, bundle)
     if output_json:
@@ -2776,11 +2776,11 @@ def compile_sources(
         click.echo(f"Compiled {bundle.manifest.compilation_digest} -> {output}")
 
 
-@sources_group.command("check")
-@_source_options
+@files_group.command("check")
+@_file_options
 @json_option
 @handle_errors
-def check_sources(
+def check_files(
     portable_catalog: str | None,
     local_catalog: str | None,
     root_alias: tuple[str, ...],
@@ -2789,13 +2789,13 @@ def check_sources(
 ) -> None:
     """Compare each catalogued Document's file with accepted and pending state; writes nothing.
 
-    Each source reads aligned, modified, ahead, pending, behind, diverged or
+    Each file reads aligned, modified, ahead, pending, behind, diverged or
     untracked.
     """
 
-    catalog, root = _source_catalog_and_root(portable_catalog, local_catalog, repository_root)
+    catalog, root = _file_catalog_and_root(portable_catalog, local_catalog, repository_root)
 
-    def call(client: CruxibleClient, instance_id: str) -> contracts.SourceCheckResult:
+    def call(client: CruxibleClient, instance_id: str) -> contracts.FileCheckResult:
         bundle = _compile_remote_context(
             client,
             instance_id,
@@ -2803,9 +2803,9 @@ def check_sources(
             repository_root=root,
             aliases=_root_aliases(root_alias),
         )
-        return client.check_source_bundle(instance_id, bundle=bundle.model_dump(mode="json"))
+        return client.check_file_bundle(instance_id, bundle=bundle.model_dump(mode="json"))
 
-    result = _server_call(call, command_name="cruxible sources check")
+    result = _server_call(call, command_name="cruxible files check")
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
@@ -2821,11 +2821,11 @@ def _catalog_edit_root(repository_root: str | None) -> Path:
     resolution = _local_git_workspace_root()
     _emit_git_workspace_note(resolution)
     if resolution.workspace_root is None:
-        raise click.UsageError("cruxible sources add/remove must run inside one Git worktree")
+        raise click.UsageError("cruxible files add/remove must run inside one Git worktree")
     return resolution.workspace_root
 
 
-def _echo_catalog_edit(result: SourceCatalogEdit, *, output_json: bool) -> None:
+def _echo_catalog_edit(result: FileCatalogEdit, *, output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
@@ -2833,17 +2833,17 @@ def _echo_catalog_edit(result: SourceCatalogEdit, *, output_json: bool) -> None:
         suffix = (
             " (it was the last entry; the catalog file is gone)" if result.catalog_removed else ""
         )
-        click.echo(f"Removed source {result.name} from {result.catalog_path}{suffix}")
+        click.echo(f"Removed file {result.name} from {result.catalog_path}{suffix}")
         return
     assert result.entry is not None
     shape = "Document" if result.entry.is_document else "evidence-only"
     click.echo(
-        f"{result.status.capitalize()} source {result.name} -> {result.entry.locator} "
+        f"{result.status.capitalize()} file {result.name} -> {result.entry.locator} "
         f"({shape}) in {result.catalog_path}"
     )
 
 
-@sources_group.command("add")
+@files_group.command("add")
 @click.argument("name")
 @click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
 @click.option("--document-id", default=None, help="The Document this file compiles to.")
@@ -2876,7 +2876,7 @@ def _echo_catalog_edit(result: SourceCatalogEdit, *, output_json: bool) -> None:
 )
 @json_option
 @handle_errors
-def add_source(
+def add_file(
     name: str,
     path: Path,
     document_id: str | None,
@@ -2890,12 +2890,12 @@ def add_source(
     repository_root: str | None,
     output_json: bool,
 ) -> None:
-    """Catalogue PATH under NAME in the workspace's .cruxible/sources.yaml.
+    """Catalogue PATH under NAME in the workspace's .cruxible/files.yaml.
 
     NAME is the stable source name evidence is cited under (`--evidence-file
     PATH#ANCHOR` resolves through it). With --document-id, --document-kind,
     --title and --scope the entry also declares the Document it compiles to
-    (sources compile, sources propose); without them it is evidence-only. The
+    (files compile, files propose); without them it is evidence-only. The
     whole catalog is validated before the file is rewritten: an existing NAME
     refuses unless --replace, and a partial Document or a duplicate Document
     target refuses. Writes only the catalog file; commit it with Git.
@@ -2927,7 +2927,7 @@ def add_source(
     _echo_catalog_edit(result, output_json=output_json)
 
 
-@sources_group.command("remove")
+@files_group.command("remove")
 @click.argument("name")
 @click.option(
     "--root",
@@ -2937,8 +2937,8 @@ def add_source(
 )
 @json_option
 @handle_errors
-def remove_source(name: str, repository_root: str | None, output_json: bool) -> None:
-    """Remove NAME's entry from the workspace's .cruxible/sources.yaml.
+def remove_file(name: str, repository_root: str | None, output_json: bool) -> None:
+    """Remove NAME's entry from the workspace's .cruxible/files.yaml.
 
     Evidence already cited under NAME keeps its retained passage; new
     citations of the file stop resolving. Writes only the catalog file.
@@ -2948,23 +2948,23 @@ def remove_source(name: str, repository_root: str | None, output_json: bool) -> 
     _echo_catalog_edit(result, output_json=output_json)
 
 
-@sources_group.command("propose")
+@files_group.command("propose")
 @click.option(
     "--bundle",
     "bundle_path",
     default=None,
     type=click.Path(exists=True, dir_okay=False),
-    help="A bundle sources compile wrote (default: compile the workspace catalog now).",
+    help="A bundle files compile wrote (default: compile the workspace catalog now).",
 )
-@click.option("--source", "source_name", required=True, help="The catalog source to propose.")
+@click.option("--file", "file", required=True, help="The catalog file to propose.")
 @click.option("--name", "proposal_name", required=True, help="The proposal's name.")
-@_source_options
+@_file_options
 @change_control_options
 @json_option
 @handle_errors
-def propose_sources(
+def propose_files(
     bundle_path: str | None,
-    source_name: str,
+    file: str,
     proposal_name: str,
     portable_catalog: str | None,
     local_catalog: str | None,
@@ -2974,10 +2974,10 @@ def propose_sources(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Propose one catalogued source as its Document's next revision.
+    """Propose one catalogued file as its Document's next revision.
 
     Without --bundle the workspace catalog is compiled first, exactly as
-    sources compile does; with it, the frozen bundle is proposed as written.
+    files compile does; with it, the frozen bundle is proposed as written.
     An ordinary Document proposal, reviewed, approved and activated as usual;
     the compilation it came from is recorded with it.
     """
@@ -2986,11 +2986,11 @@ def propose_sources(
         portable_catalog or local_catalog or root_alias or repository_root
     ):
         raise click.UsageError("a --bundle is proposed as written; it takes no catalog options")
-    frozen = None if bundle_path is None else _read_model(bundle_path, SourceCompilationBundle)
+    frozen = None if bundle_path is None else _read_model(bundle_path, FileCompilationBundle)
     catalog_and_root = (
         None
         if frozen is not None
-        else _source_catalog_and_root(portable_catalog, local_catalog, repository_root)
+        else _file_catalog_and_root(portable_catalog, local_catalog, repository_root)
     )
 
     def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
@@ -3005,28 +3005,28 @@ def propose_sources(
                 repository_root=root,
                 aliases=_root_aliases(root_alias),
             )
-        if source_name not in {item.source.name for item in bundle.documents}:
+        if file not in {item.source.name for item in bundle.documents}:
             raise click.ClickException(
-                f"source {source_name!r} compiles to no Document: it is not catalogued, or its "
+                f"file {file!r} compiles to no Document: it is not catalogued, or its "
                 "entry is evidence-only (give it document_id, document_kind, title, "
                 "media_type and governance_scope to propose it)"
             )
-        return client.propose_source_bundle(
+        return client.propose_file_bundle(
             instance_id,
             bundle=bundle.model_dump(mode="json"),
-            source_name=source_name,
+            file=file,
             proposal_name=proposal_name,
             dry_run=dry_run,
             at=at,
         )
 
-    result = _server_call(call, command_name="cruxible sources propose")
+    result = _server_call(call, command_name="cruxible files propose")
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
     admission = result.proposal.get("admission")
     proposal_id = admission.get("proposal_id") if isinstance(admission, dict) else None
-    click.echo(f"{source_name}: {result.status}")
+    click.echo(f"{file}: {result.status}")
     if proposal_id:
         click.echo(f"Proposal: {proposal_id}")
     echo_preview_next(result.status, result.accepted_coordinate)
@@ -4170,7 +4170,7 @@ def compile_authoring(payload: str, intent_id: str | None, output_json: bool) ->
     "--workspace-root",
     default=None,
     type=click.Path(file_okay=False),
-    help="The workspace whose source catalog names --file (default: this worktree).",
+    help="The workspace whose file catalog names --file (default: this worktree).",
 )
 @json_option
 @handle_errors
@@ -4186,7 +4186,7 @@ def bind_authoring_selection(
     """Bind a Claim to one exact anchor in a local file, then compile it.
 
     The payload file is a Claim stub whose source names only the working tag and
-    a logical source_id, which must be the name the workspace's source catalog
+    a logical source_id, which must be the name the workspace's file catalog
     gives --file. Bind reads --file, finds --anchor (--occurrence picks one of
     several matches, --window-lines widens the cited window), derives the exact
     observation and compiles the Claim as a new staged intent.
@@ -4646,7 +4646,7 @@ def _evidence_option_value(
     default=".",
     show_default=True,
     type=click.Path(file_okay=False),
-    help="Workspace whose source catalog --evidence-file reads.",
+    help="Workspace whose file catalog --evidence-file reads.",
 )
 @_write_options
 @handle_errors
@@ -4735,7 +4735,7 @@ def set_value(
     default=".",
     show_default=True,
     type=click.Path(file_okay=False),
-    help="Workspace whose source catalog --evidence-file reads.",
+    help="Workspace whose file catalog --evidence-file reads.",
 )
 @_write_options
 @handle_errors
@@ -4863,7 +4863,7 @@ def retire(
     default=".",
     show_default=True,
     type=click.Path(file_okay=False),
-    help="Workspace whose source catalog file evidence reads.",
+    help="Workspace whose file catalog file evidence reads.",
 )
 @_write_options
 @handle_errors
@@ -5381,7 +5381,7 @@ def depublish_projection(
 
 
 @block_group.command("repin")
-@click.argument("source_id")
+@click.argument("file")
 @click.argument("block_id")
 @click.option("--claim", "claims", multiple=True, help="Accepted Claim backing identity.")
 @click.option("--query", "queries", multiple=True, help="Accepted QueryDefinition identity.")
@@ -5415,7 +5415,7 @@ def depublish_projection(
 @json_option
 @handle_errors
 def repin_projection(
-    source_id: str,
+    file: str,
     block_id: str,
     claims: tuple[str, ...],
     queries: tuple[str, ...],
@@ -5489,7 +5489,7 @@ def repin_projection(
             client,
             instance_id,
             workspace=workspace_root,
-            source_id=source_id,
+            file=file,
             block_id=block_id,
             claims=claims if claims or clear_claims else None,
             queries=resolved if queries or clear_queries else None,
@@ -5509,16 +5509,16 @@ def repin_projection(
         return
     if dry_run:
         click.echo(
-            f"Would repin {source_id}#{block_id} at generation {stamp.declared_generation}; "
+            f"Would repin {file}#{block_id} at generation {stamp.declared_generation}; "
             "nothing was written."
         )
         return
-    click.echo(f"Repinned {source_id}#{block_id} at generation {stamp.declared_generation}.")
+    click.echo(f"Repinned {file}#{block_id} at generation {stamp.declared_generation}.")
 
 
 @block_group.command("sync")
 @click.argument("paths", nargs=-1, type=click.Path(dir_okay=False))
-@click.option("--all", "all_sources", is_flag=True, help="Check every catalog source.")
+@click.option("--all", "all_files", is_flag=True, help="Check every catalog file.")
 @click.option(
     "--workspace-root",
     default=".",
@@ -5535,7 +5535,7 @@ def repin_projection(
 @handle_errors
 def sync_projection(
     paths: tuple[str, ...],
-    all_sources: bool,
+    all_files: bool,
     workspace_root: str,
     check: bool,
     output_json: bool,
@@ -5559,7 +5559,7 @@ def sync_projection(
             instance_id,
             workspace=workspace_root,
             paths=paths,
-            all_sources=all_sources,
+            all_files=all_files,
             converge_at=None if check else datetime.now(UTC),
         ),
         command_name="cruxible block sync",
@@ -7986,13 +7986,13 @@ def _coverage_bindings(
     bind_values: tuple[str, ...],
     bindings_path: str | None,
 ) -> WorkingPathBindingsV1:
-    """The source catalog's bindings, overridden path by path by declared ones.
+    """The file catalog's bindings, overridden path by path by declared ones.
 
     The catalog is the one path-to-source mapping; coverage never infers one.
     """
 
     try:
-        declared: dict[str, str] = WorkspaceSources(root).coverage_bindings()
+        declared: dict[str, str] = WorkspaceFiles(root).coverage_bindings()
     except SourceSelectionError:
         if not (bind_values or bindings_path):
             raise
@@ -8093,7 +8093,7 @@ def resolve_coverage(
 ) -> None:
     """Resolve what the working files you just read or changed are governed by.
 
-    Files are bound to their sources by the workspace's source catalog;
+    Files are bound to their sources by the workspace's file catalog;
     --bind and --bindings override it path by path. Governed spans are
     annotated inline and the ungoverned majority is summarized once;
     --all --view manifest renders the coverage manifest over every bound file.

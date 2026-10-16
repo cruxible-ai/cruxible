@@ -122,7 +122,7 @@ def _workspace(
         "}",
         encoding="utf-8",
     )
-    (playbill / "sources.yaml").write_text(
+    (playbill / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -536,13 +536,13 @@ def test_check_is_the_default_and_changes_only_detach(tmp_path: Path) -> None:
     assert source.read_bytes() != before
 
 
-@pytest.mark.parametrize("all_sources", [False, True])
-def test_source_catalog_is_optional_for_stamped_marker_discovery(
+@pytest.mark.parametrize("all_files", [False, True])
+def test_file_catalog_is_optional_for_stamped_marker_discovery(
     tmp_path: Path,
-    all_sources: bool,
+    all_files: bool,
 ) -> None:
     source = _workspace(tmp_path)
-    (tmp_path / ".cruxible" / "sources.yaml").unlink()
+    (tmp_path / ".cruxible" / "files.yaml").unlink()
     before = source.read_bytes()
     client = _SyncClient()
 
@@ -550,8 +550,8 @@ def test_source_catalog_is_optional_for_stamped_marker_discovery(
         client,  # type: ignore[arg-type]
         INSTANCE_ID,
         workspace=tmp_path,
-        paths=() if all_sources else ("corpus/runbook.md",),
-        all_sources=all_sources,
+        paths=() if all_files else ("corpus/runbook.md",),
+        all_files=all_files,
     )
 
     # The block was found and read either way; the stamp the read carries is
@@ -706,7 +706,7 @@ def test_malformed_marker_and_foreign_workspace_are_typed_without_daemon_calls(
 
 def test_catalog_optional_explicit_path_cannot_escape_workspace(tmp_path: Path) -> None:
     source = _workspace(tmp_path)
-    (tmp_path / ".cruxible" / "sources.yaml").unlink()
+    (tmp_path / ".cruxible" / "files.yaml").unlink()
     outside = tmp_path.parent / f"{tmp_path.name}-outside.md"
     outside.write_bytes(source.read_bytes())
 
@@ -725,7 +725,7 @@ def test_nonportable_catalog_returns_a_typed_refusal(tmp_path: Path) -> None:
     source = _workspace(tmp_path)
     outside = tmp_path.parent / "outside-runbook.md"
     outside.write_bytes(source.read_bytes())
-    catalog = tmp_path / ".cruxible" / "sources.yaml"
+    catalog = tmp_path / ".cruxible" / "files.yaml"
     catalog.write_text(
         catalog.read_text(encoding="utf-8")
         .replace("catalog_kind: portable", "catalog_kind: local")
@@ -737,11 +737,11 @@ def test_nonportable_catalog_returns_a_typed_refusal(tmp_path: Path) -> None:
         _SyncClient(),  # type: ignore[arg-type]
         INSTANCE_ID,
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
     )
 
     assert result.items[0].outcome == "refused"
-    assert result.items[0].reason == "workspace_source_catalog_invalid"
+    assert result.items[0].reason == "workspace_file_catalog_invalid"
     assert outside.read_bytes() == source.read_bytes()
 
 
@@ -753,7 +753,7 @@ def test_catalog_symlink_escape_is_typed_and_does_not_abort_other_sources(
     valid_stamp = _stamp().model_copy(update={"source_id": "corpus.valid", "block_id": "pub-valid"})
     valid_source.write_bytes(frame_projection_block(stamp=valid_stamp, body=OLD_BODY))
     valid_before = valid_source.read_bytes()
-    catalog = tmp_path / ".cruxible" / "sources.yaml"
+    catalog = tmp_path / ".cruxible" / "files.yaml"
     catalog.write_text(
         catalog.read_text(encoding="utf-8")
         + """\
@@ -778,7 +778,7 @@ def test_catalog_symlink_escape_is_typed_and_does_not_abort_other_sources(
         _SyncClient(),  # type: ignore[arg-type]
         INSTANCE_ID,
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
     )
 
     rows = {item.source_id: item for item in result.items}
@@ -839,7 +839,7 @@ _QUOTING_CAPTURE = (
 
 
 def _catalog_a_second_source(root: Path, *, name: str, locator: str) -> None:
-    catalog = root / ".cruxible" / "sources.yaml"
+    catalog = root / ".cruxible" / "files.yaml"
     catalog.write_text(
         catalog.read_text(encoding="utf-8")
         + f"""\
@@ -879,7 +879,7 @@ def test_a_capture_that_quotes_marker_bytes_is_skipped_by_the_catalog_walk(
         _SyncClient(),  # type: ignore[arg-type]
         INSTANCE_ID,
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
     )
 
     rows = {item.source_id: item for item in result.items}
@@ -922,7 +922,7 @@ def test_the_catalog_free_workspace_walk_also_skips_a_quoting_capture(
     """The inferred walk that has no catalog reaches the same conclusion."""
 
     source = _workspace(tmp_path)
-    (tmp_path / ".cruxible" / "sources.yaml").unlink()
+    (tmp_path / ".cruxible" / "files.yaml").unlink()
     before = source.read_bytes()
     capture = tmp_path / "history" / "agent-reports.md"
     capture.parent.mkdir()
@@ -932,7 +932,7 @@ def test_the_catalog_free_workspace_walk_also_skips_a_quoting_capture(
         _SyncClient(),  # type: ignore[arg-type]
         INSTANCE_ID,
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
     )
 
     rows = {item.path: item for item in result.items}
@@ -984,7 +984,7 @@ def test_a_registered_page_with_a_deleted_closing_marker_still_refuses_under_all
         _SyncClient(),  # type: ignore[arg-type]
         INSTANCE_ID,
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
     )
 
     rows = {item.path: item for item in result.items}
@@ -1012,7 +1012,7 @@ def test_a_registered_page_that_repeats_a_block_identity_still_refuses_under_all
         _SyncClient(),  # type: ignore[arg-type]
         INSTANCE_ID,
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
     )
 
     rows = {item.path: item for item in result.items}
@@ -1028,7 +1028,7 @@ def test_the_catalog_free_walk_also_refuses_a_page_that_declares_a_block_badly(
     """The inferred walk with no catalog draws the same line."""
 
     _workspace(tmp_path)
-    (tmp_path / ".cruxible" / "sources.yaml").unlink()
+    (tmp_path / ".cruxible" / "files.yaml").unlink()
     _broken_projection_page(tmp_path, source_id="repo.notes", locator="notes/page.md")
     capture = tmp_path / "history" / "agent-reports.md"
     capture.parent.mkdir()
@@ -1038,7 +1038,7 @@ def test_the_catalog_free_walk_also_refuses_a_page_that_declares_a_block_badly(
         _SyncClient(),  # type: ignore[arg-type]
         INSTANCE_ID,
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
     )
 
     rows = {item.path: item for item in result.items}
@@ -1070,7 +1070,7 @@ def test_repin_with_an_exact_backing_digest_reads_the_single_held_member(
         client,  # type: ignore[arg-type]
         INSTANCE_ID,
         workspace=tmp_path,
-        source_id="corpus.runbook",
+        file="corpus.runbook",
         block_id="pub-example",
         backing_digest="sha256:" + "b" * 64,
         evaluation_time=datetime(2026, 8, 21, 12, tzinfo=UTC),

@@ -40,7 +40,7 @@ The `default` profile advertises 13 tools, the everyday loop: `orient`,
 `query`, `get`, `next`, `set`, `retire`, `write`, `proposal_list`,
 `proposal_review`, `proposal_approve`, `proposal_activate`, `whoami` and
 `server_info` (each prefixed `cruxible_`). Set `CRUXIBLE_MCP_PROFILE=full` for
-the rest: authoring, ClaimTypes, Procedures, Lines, predictions, sources,
+the rest: authoring, ClaimTypes, Procedures, Lines, predictions, files,
 coverage, blocks, curation, kits and providers. Profiles change what is
 advertised; the credential's tier still gates every call.
 
@@ -327,8 +327,8 @@ slot. The deprecated `invalidation` disposition is refused inside a change set
 ## Evidence
 
 - **Own words**: every write's `because` (or a Claim's `self_source`).
-- **A file passage**: catalogue the file in `.cruxible/sources.yaml` (a
-  `name` and a `locator` suffice: `cruxible sources add NAME PATH`) and cite `PATH#ANCHOR`: `--evidence-file`
+- **A file passage**: catalogue the file in `.cruxible/files.yaml` (a
+  `name` and a `locator` suffice: `cruxible files add NAME PATH`) and cite `PATH#ANCHOR`: `--evidence-file`
   on the CLI, `{"kind": "file", "file": "PATH#ANCHOR"}` as `evidence` on MCP
   `cruxible_set`, `FileEvidence` on SDK writes, or `cx.file(path).anchor(...)`
   as `supported_by` or `copied_from` on an authored Claim. The client reads the

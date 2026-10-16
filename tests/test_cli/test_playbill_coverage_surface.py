@@ -201,7 +201,7 @@ def _govern_a_foreign_span(
     )
     stub = _write(tmp_path / "foreign-claim.json", authoring.model_dump(mode="json"))
     # The presented file is catalogued, evidence-only, under the stub's source name.
-    catalog = tmp_path / "presented-workspace" / ".cruxible" / "sources.yaml"
+    catalog = tmp_path / "presented-workspace" / ".cruxible" / "files.yaml"
     catalog.parent.mkdir(parents=True, exist_ok=True)
     (catalog.parent.parent / "presented.md").write_bytes(FOREIGN_BYTES)
     catalog.write_text(
@@ -539,9 +539,9 @@ def test_cli_coverage_manifest_view_renders_the_boundary_over_the_catalogued_sco
     (workspace / WORKING_PATH).write_bytes(GOVERNED_BYTES)
     (workspace / "notes.txt").write_bytes(b"ordinary working notes\n")
 
-    # The source catalog binds both files; --view manifest renders the boundary.
+    # The file catalog binds both files; --view manifest renders the boundary.
     (workspace / ".cruxible").mkdir()
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries:\n"
         f"  - name: {WORKING_SOURCE.removeprefix('external:')}\n    locator: {WORKING_PATH}\n"
         "  - name: workspace.notes\n    locator: notes.txt\n",

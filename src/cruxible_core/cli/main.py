@@ -95,7 +95,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("proposal", "readmit"): "active",
     ("proposal", "withdraw"): "active",
     ("proposal", "reject"): "active",
-    ("sources", "propose"): "active",
+    ("files", "propose"): "active",
     ("compiler", "upgrade"): "active",
     ("principal", "add"): "active",
     ("principal", "rotate"): "active",
@@ -813,27 +813,23 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         module="playbill",
         attr="coverage_group",
     ),
-    "sources": _group(
+    "files": _group(
         "Catalogue workspace files and compile them into exact-byte bundles.",
         {
             "add": _command(
-                "playbill", "add_source", "Catalogue one workspace file under a source name."
+                "playbill", "add_file", "Catalogue one workspace file under a catalog name."
             ),
             "remove": _command(
-                "playbill", "remove_source", "Remove one source from the workspace catalog."
+                "playbill", "remove_file", "Remove one file from the workspace catalog."
             ),
-            "compile": _command(
-                "playbill", "compile_sources", "Compile a read-only frozen bundle."
-            ),
+            "compile": _command("playbill", "compile_files", "Compile a read-only frozen bundle."),
             "check": _command(
-                "playbill", "check_sources", "Compare local bytes with accepted state."
+                "playbill", "check_files", "Compare local bytes with accepted state."
             ),
-            "propose": _command(
-                "playbill", "propose_sources", "Propose one exact compiled source."
-            ),
+            "propose": _command("playbill", "propose_files", "Propose one exact compiled file."),
         },
         module="playbill",
-        attr="sources_group",
+        attr="files_group",
     ),
     "principal": _group(
         "Govern owner, reviewer, and recovery public keys.",

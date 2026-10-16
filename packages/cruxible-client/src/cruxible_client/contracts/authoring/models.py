@@ -2259,7 +2259,7 @@ BlockSyncReason: TypeAlias = Literal[
     "workspace_not_attached",
     "workspace_binding_invalid",
     "workspace_instance_mismatch",
-    "workspace_source_catalog_invalid",
+    "workspace_file_catalog_invalid",
     "source_path_invalid",
     "source_not_projection_target",
     "block_marker_malformed",

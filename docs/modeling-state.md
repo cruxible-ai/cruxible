@@ -44,14 +44,14 @@ Warning signs that something is in the wrong place:
 ## Citation or Document
 
 When a Claim rests on what a file says, **cite** it: catalogue the file in
-`.cruxible/sources.yaml` (`cruxible sources add NAME PATH`) and pass
+`.cruxible/files.yaml` (`cruxible files add NAME PATH`) and pass
 `--evidence-file PATH#ANCHOR`. The quoted passage is retained, and `next`
 reports `citation_drifted` when it changes; repair by binding the Claim to the
 new text or retiring it.
 
 Make the file a **Document** only when its exact wording is itself the
 governed thing, such as a policy or a specification: the catalog entry gains
-its Document fields, and `sources compile` and `sources propose` turn each
+its Document fields, and `files compile` and `files propose` turn each
 revision into a reviewed, versioned artifact. Most usage is citations.
 
 ## Subjects
@@ -85,7 +85,7 @@ A ClaimType is one field of a kind. Decide, for each:
   need not name one.
 - **Which evidence supports a value**: the evidence admission rules. Admit the
   writer's own words for values a person or agent simply states; admit the
-  catalogued sources and CaptureContracts that should back values that must be
+  catalogued files and CaptureContracts that should back values that must be
   checkable. A value whose evidence is not admitted is recorded with the
   verdict `uncovered`, which reads expose.
 - **How competing values resolve**: the resolution policy.

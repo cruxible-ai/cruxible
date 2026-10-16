@@ -213,7 +213,7 @@ def _multi_source_world(
             )
         )
         (workspace / filename).write_bytes(source_bytes)
-    (playbill / "sources.yaml").write_text("\n".join(lines) + "\n")
+    (playbill / "files.yaml").write_text("\n".join(lines) + "\n")
 
     instance_root = root / "instance"
     instance_root.mkdir()

@@ -25,8 +25,8 @@ PLAYBILL_DOCUMENT_TOOLS = {
     "cruxible_proposal_approve_prepare",
     "cruxible_proposal_approve_submit",
     "cruxible_proposal_activate",
-    "cruxible_sources_check",
-    "cruxible_sources_propose",
+    "cruxible_files_check",
+    "cruxible_files_propose",
     "cruxible_principal_propose",
 }
 
@@ -40,10 +40,10 @@ def test_playbill_tools_register_without_private_key_or_local_path_inputs(
     approval = tools["cruxible_proposal_approve_submit"].inputSchema
     assert set(approval["properties"]) == {"instance_id", "proposal_id", "attestation", "hold"}
     # The adapter compiles the catalog itself: no bundle travels through the caller.
-    source = tools["cruxible_sources_propose"].inputSchema
+    source = tools["cruxible_files_propose"].inputSchema
     assert set(source["properties"]) == {
         "instance_id",
-        "source_name",
+        "file",
         "proposal_name",
         "catalog_path",
         "repository_root",

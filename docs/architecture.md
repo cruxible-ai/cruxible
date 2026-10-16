@@ -69,7 +69,7 @@ accepted state. It serves an HTTP API over a Unix socket or TCP. The CLI, the
 MCP server (`cruxible mcp`) and the Python SDK (`cruxible-client`) are all
 clients of that API; none of them holds state of its own. Work that needs the
 client's files happens on the client and sends the daemon bytes, never paths:
-compiling catalogued sources, quoting a cited passage, stamping projection
+compiling catalogued files, quoting a cited passage, stamping projection
 blocks, and signing approvals with a private key.
 
 Background work runs inside the daemon as consumers driven by Triggers:

@@ -40,6 +40,7 @@ from cruxible_client.contracts.duplicates import (
     DUPLICATES_AUDIT_MAX_LIMIT,
     DuplicatesAuditResult,
 )
+from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.get_reads import (
     GET_HISTORY_MAX_LIMIT,
     ByteRange,
@@ -64,7 +65,6 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import QueryBudgets
-from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import (
     AddChange,
@@ -111,7 +111,7 @@ class McpBlockQuery(BaseModel):
 
 
 class McpRootAlias(BaseModel):
-    """One named workspace root used by source catalog compilation."""
+    """One named workspace root used by file catalog compilation."""
 
     model_config = ConfigDict(extra="forbid")
     alias: str = Field(min_length=1)
@@ -592,11 +592,11 @@ def register_tools(
         return handlers.handle_playbill_read_capture(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_sources_check(
+    def cruxible_files_check(
         instance_id: InstanceId = None,
         *,
         bundle: Annotated[
-            SourceCompilationBundle | None,
+            FileCompilationBundle | None,
             Field(description="A compiled bundle to check as given; omit to compile the catalog."),
         ] = None,
         catalog_path: Annotated[
@@ -606,9 +606,9 @@ def register_tools(
         repository_root: str = ".",
         local_catalog_path: str | None = None,
         root_aliases: list[McpRootAlias] | None = None,
-    ) -> contracts.SourceCheckResult:
-        """Compare catalogued workspace sources (or a bundle) with accepted state."""
-        return handlers.handle_playbill_sources_check(
+    ) -> contracts.FileCheckResult:
+        """Compare catalogued workspace files (or a bundle) with accepted state."""
+        return handlers.handle_playbill_files_check(
             require_instance_id(instance_id),
             bundle=None if bundle is None else bundle.model_dump(mode="json"),
             catalog_path=catalog_path,
@@ -618,10 +618,10 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_sources_propose(
+    def cruxible_files_propose(
         instance_id: InstanceId = None,
         *,
-        source_name: Annotated[str, Field(description="The catalog source to propose.")],
+        file: Annotated[str, Field(description="The catalog file to propose.")],
         proposal_name: str,
         catalog_path: Annotated[
             str | None,
@@ -633,10 +633,10 @@ def register_tools(
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.ProposalInspection:
-        """Propose one catalogued source as its Document; the adapter reads the file."""
-        return handlers.handle_playbill_sources_propose(
+        """Propose one catalogued file as its Document; the adapter reads the file."""
+        return handlers.handle_playbill_files_propose(
             require_instance_id(instance_id),
-            source_name=source_name,
+            file=file,
             proposal_name=proposal_name,
             catalog_path=catalog_path,
             repository_root=repository_root,
@@ -881,12 +881,7 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         block: Annotated[str, Field(description="The block id in its marker.")],
-        file: Annotated[
-            str | None, Field(description="The page, workspace-relative; or give `source`.")
-        ] = None,
-        source: Annotated[
-            str | None, Field(description="The page's catalog source id; or give `file`.")
-        ] = None,
+        file: Annotated[str, Field(description="The page's file catalog name.")],
         claims: Annotated[
             list[str] | None, Field(description="Claim backings; omitted keeps the block's.")
         ] = None,
@@ -916,7 +911,6 @@ def register_tools(
             require_instance_id(instance_id),
             block=block,
             file=file,
-            source=source,
             claims=claims,
             queries=None
             if queries is None
@@ -935,15 +929,15 @@ def register_tools(
         files: Annotated[
             list[str] | None, Field(description="Pages to check, workspace-relative.")
         ] = None,
-        all_sources: Annotated[
-            bool, Field(description="Check every page the source catalog names.")
+        all_files: Annotated[
+            bool, Field(description="Check every page the file catalog names.")
         ] = False,
     ) -> contracts.BlockSyncResult:
         """Check each block's backings against the instance; reads only, edits no page."""
         return handlers.handle_playbill_block_sync(
             require_instance_id(instance_id),
             files=files or (),
-            all_sources=all_sources,
+            all_files=all_files,
         )
 
     @_tool
@@ -1748,7 +1742,7 @@ def register_tools(
             list[McpSourceBinding] | None,
             Field(
                 description=(
-                    "Bindings overriding the source catalog, path by path; the adapter reads "
+                    "Bindings overriding the file catalog, path by path; the adapter reads "
                     "the selected workspace files (files, ranges, grep_results, or "
                     "whole_working_set)."
                 )
@@ -1789,7 +1783,7 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_sources_compile(
+    def cruxible_files_compile(
         instance_id: InstanceId = None,
         *,
         catalog_path: Annotated[
@@ -1799,9 +1793,9 @@ def register_tools(
         repository_root: str = ".",
         local_catalog_path: str | None = None,
         root_aliases: list[McpRootAlias] | None = None,
-    ) -> SourceCompilationBundle:
-        """Compile catalogued workspace sources against accepted daemon context."""
-        return handlers.handle_playbill_sources_compile(
+    ) -> FileCompilationBundle:
+        """Compile catalogued workspace files against accepted daemon context."""
+        return handlers.handle_playbill_files_compile(
             require_instance_id(instance_id),
             catalog_path=catalog_path,
             repository_root=repository_root,

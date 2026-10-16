@@ -85,16 +85,16 @@ A ClaimType's evidence rules say which of these support a value of that
 field. A Claim whose evidence the rules do not admit is still recorded, with
 the verdict `uncovered`.
 
-The source catalog, `.cruxible/sources.yaml`, gives each workspace file a
+The file catalog, `.cruxible/files.yaml`, gives each workspace file a
 stable name. An entry needs only a `name` and a `locator` (its path) to be
-cited; `cruxible sources add NAME PATH` writes one. Two different things can then rest on a catalogued file:
+cited; `cruxible files add NAME PATH` writes one. Two different things can then rest on a catalogued file:
 
 | | Citation | Document |
 |---|---|---|
 | What it is | A Claim quoting a passage of the file as evidence | A governed copy of the whole file: its exact bytes as a versioned artifact with review history |
 | When to use it | A Claim relies on what the file says | The file's wording is itself the governed thing: a policy, a spec |
-| When the file changes | `next` reports `citation_drifted`; re-bind the Claim to the new text or retire it | `next` reports `document_modified`; `sources check` shows the detail |
-| How | `set --evidence-file`, `cx.file(...)` | Add `document_id`, `document_kind`, `title`, `media_type` and `governance_scope` to the entry, then `sources compile` and `sources propose` |
+| When the file changes | `next` reports `citation_drifted`; re-bind the Claim to the new text or retire it | `next` reports `document_modified`; `files check` shows the detail |
+| How | `set --evidence-file`, `cx.file(...)` | Add `document_id`, `document_kind`, `title`, `media_type` and `governance_scope` to the entry, then `files compile` and `files propose` |
 
 Most usage is citations. A Document whose bytes are not a workspace file (for
 example bytes a remote agent supplies) goes through `body store` and

@@ -158,7 +158,7 @@ def test_compact_sync_and_coverage_preserve_manifest_binding(tmp_path: Path) -> 
         client,
         INSTANCE_ID,
         workspace=tmp_path,
-        source_id="corpus.runbook",
+        file="corpus.runbook",
         block_id="pub-example",
         backing_digest="sha256:" + "b" * 64,
         compact=True,

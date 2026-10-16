@@ -135,7 +135,7 @@ def test_http_models_refuse_private_key_and_local_path_inputs(
     assert response.status_code == 422
     assert "private_key_path" in response.text
     source = client.post(
-        f"/api/v1/{instance_id}/sources/check",
+        f"/api/v1/{instance_id}/files/check",
         json={"local_path": "/" + "tmp/secret.md"},
     )
     assert source.status_code == 422
@@ -480,3 +480,26 @@ def test_http_held_approval_signs_only_and_activate_settles_it(
     activated = client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
     assert activated.json()["status"] == "accepted"
+
+
+def test_file_catalog_http_surface_has_no_sources_alias(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    from cruxible_client import CruxibleClient, contracts
+    from cruxible_client.contracts.file_catalog import FileCatalog
+
+    client, instance_id, _ = playbill_http
+    context = client.get(f"/api/v1/{instance_id}/files/context")
+    assert context.status_code == 200, context.text
+    assert contracts.FileContext.model_validate(context.json()).tag == "playbill-source-context-v1"
+    assert (
+        FileCatalog.model_validate(
+            {"catalog_kind": "portable", "entries": [{"name": "page", "locator": "page.md"}]}
+        ).tag
+        == "playbill-source-catalog-v1"
+    )
+    assert client.get(f"/api/v1/{instance_id}/sources/context").status_code == 404
+    for leaf in ("check", "proposals"):
+        assert client.post(f"/api/v1/{instance_id}/sources/{leaf}", json={}).status_code == 404
+    for name in ("source_context", "check_source_bundle", "propose_source_bundle"):
+        assert not hasattr(CruxibleClient, name)

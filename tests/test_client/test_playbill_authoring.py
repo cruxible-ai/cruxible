@@ -290,11 +290,11 @@ def _authored_change_set(captured: list[httpx.Request]) -> dict[str, Any]:
 
 
 def _workspace(path: Path) -> Path:
-    """The smallest workspace a `Cruxible` will open: one source catalog."""
+    """The smallest workspace a `Cruxible` will open: one file catalog."""
 
     catalog = path / ".cruxible"
     catalog.mkdir(parents=True, exist_ok=True)
-    (catalog / "sources.yaml").write_text(
+    (catalog / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable

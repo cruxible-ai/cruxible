@@ -232,7 +232,7 @@ def test_a_procedure_catalog_is_checked_only_where_the_workspace_asks_for_one(
     asked = status(_catalog_observation(instance, advisory=True)).procedure_catalog
     assert asked.state == "missing"
     assert asked.repair is not None
-    assert asked.repair.target == ".cruxible/sources.yaml"
+    assert asked.repair.target == ".cruxible/files.yaml"
     assert asked.repair.required_change == "add_procedure_projection_catalog_entries"
 
 

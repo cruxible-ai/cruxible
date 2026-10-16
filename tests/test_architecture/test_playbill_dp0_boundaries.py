@@ -46,7 +46,7 @@ SERVED_ROOTS = (
     "cruxible_core.service.authoring.documents",
     "cruxible_core.service.discovery.explain",
     "cruxible_core.service.proposals.review",
-    "cruxible_core.service.evidence.source_catalog",
+    "cruxible_core.service.evidence.file_catalog",
 )
 
 FORBIDDEN_MODULE_PREFIXES = (
@@ -388,9 +388,9 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "submit_authoring",
         "submit_authoring_intent",
         "read_capture",
-        "source_context",
-        "check_source_bundle",
-        "propose_source_bundle",
+        "file_context",
+        "check_file_bundle",
+        "propose_file_bundle",
         "propose_claim_type",
         "propose_claim_type_input",
         "append_claim_attestation",

@@ -385,7 +385,7 @@ def test_evidence_file_is_read_from_the_workspace(served: _ServiceClient, tmp_pa
     workspace = tmp_path / "workspace"
     (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "notes.md").write_text("# Notes\n\nTitle: Tidy the CLI\n", encoding="utf-8")
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable

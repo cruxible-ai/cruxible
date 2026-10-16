@@ -8,20 +8,20 @@ from unittest.mock import Mock
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCatalogEntry
+from cruxible_client.contracts.file_catalog import FileCatalog, FileCatalogEntry
 from cruxible_client.contracts.subjects import subject_digest
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
 from cruxible_core.service.discovery import curation as playbill_curation
-from cruxible_core.service.evidence import source_catalog
+from cruxible_core.service.evidence import file_catalog
 from tests.core_support._candidate_support import submit_subject_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal, subject_shell
 from tests.core_support._support import initialize_local
 from tests.test_ledger.test_activation import _sign
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
-from tests.test_service.test_playbill_source_catalog import service_compile_playbill_sources
+from tests.test_service.test_playbill_file_catalog import service_compile_playbill_files
 
 
 def _orphan(instance, proposal_id: str) -> None:  # type: ignore[no-untyped-def]
@@ -47,10 +47,10 @@ def test_pending_documents_require_an_unsettled_admission(
     source = repository / "specs" / "design.md"
     source.parent.mkdir(parents=True)
     source.write_bytes(b"# Cruxible v1\n")
-    catalog = SourceCatalog(
+    catalog = FileCatalog(
         catalog_kind="portable",
         entries=(
-            SourceCatalogEntry(
+            FileCatalogEntry(
                 name="playbill-design",
                 locator="specs/design.md",
                 document_id="design",
@@ -62,11 +62,11 @@ def test_pending_documents_require_an_unsettled_admission(
             ),
         ),
     )
-    bundle = service_compile_playbill_sources(instance, catalog=catalog, repository_root=repository)
-    proposed = source_catalog.service_propose_playbill_source_bundle(
+    bundle = service_compile_playbill_files(instance, catalog=catalog, repository_root=repository)
+    proposed = file_catalog.service_propose_playbill_file_bundle(
         instance,
         bundle=bundle,
-        source_name="playbill-design",
+        file="playbill-design",
         actor_id="owner",
         proposal_name="catalog-design",
         timestamp=TIMESTAMP,
@@ -94,7 +94,7 @@ def test_pending_documents_require_an_unsettled_admission(
         evidence_type, "read_candidate", lambda store, digest: read_candidate(store, digest)
     )
 
-    result = source_catalog._pending_body_digests(instance, instance.accepted_coordinate())
+    result = file_catalog._pending_body_digests(instance, instance.accepted_coordinate())
 
     body = bundle.documents[0].source.body_digest
     assert result == ({"design": {body}} if pending else {})

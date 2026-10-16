@@ -642,7 +642,7 @@ Pulls the configured floor, at the accepted head unless `at` pins a coordinate, 
 file(path: str | Path) -> FileSelector
 ```
 
-Reads a cataloged workspace file into a FileSelector using .cruxible/sources.yaml and applicable local catalog settings.
+Reads a cataloged workspace file into a FileSelector using .cruxible/files.yaml and applicable local catalog settings.
 
 **Conditions and effects:** Uncataloged/out-of-root selections and malformed catalogs refuse. File bytes are observed now, before prepare.
 
@@ -3312,7 +3312,7 @@ Import: `cruxible_client.authoring.sdk_types.SourceMapEntry`. [Source](src/cruxi
 
 ## Source selection
 
-`cx.file(path)` selects only cataloged local sources. FileSelector retains
+`cx.file(path)` selects only cataloged local files. FileSelector retains
 the observed bytes; `.anchor(text)` requires exactly one occurrence and records
 byte offsets. Missing, empty, or ambiguous anchors refuse.
 Selectors do not silently reinterpret character indexes as byte indexes.
@@ -3367,25 +3367,25 @@ Import: `cruxible_client.authoring.selectors.EvidenceSelection`. [Source](src/cr
 observation() -> WorkingSelectionObservation
 ```
 
-<a id="api-workspacesources"></a>
+<a id="api-workspacefiles"></a>
 
-## `WorkspaceSources`
+## `WorkspaceFiles`
 
-Import: `cruxible_client.authoring.selectors.WorkspaceSources`. [Source](src/cruxible_client/authoring/selectors.py)
+Import: `cruxible_client.authoring.selectors.WorkspaceFiles`. [Source](src/cruxible_client/authoring/selectors.py)
 
-<a id="api-workspacesources-document-entries"></a>
+<a id="api-workspacefiles-file-entries"></a>
 
-### `WorkspaceSources.source_entries`
+### `WorkspaceFiles.file_entries`
 
 [Source](src/cruxible_client/authoring/selectors.py)
 
 ```text
-source_entries: tuple[SourceCatalogEntry, ...]
+file_entries: tuple[FileCatalogEntry, ...]
 ```
 
-<a id="api-workspacesources-procedure-projection-entries"></a>
+<a id="api-workspacefiles-procedure-projection-entries"></a>
 
-### `WorkspaceSources.procedure_projection_entries`
+### `WorkspaceFiles.procedure_projection_entries`
 
 [Source](src/cruxible_client/authoring/selectors.py)
 
@@ -3393,9 +3393,9 @@ source_entries: tuple[SourceCatalogEntry, ...]
 procedure_projection_entries: tuple[ProcedureProjectionCatalogEntry, ...]
 ```
 
-<a id="api-workspacesources-select"></a>
+<a id="api-workspacefiles-select"></a>
 
-### `WorkspaceSources.select`
+### `WorkspaceFiles.select`
 
 [Source](src/cruxible_client/authoring/selectors.py)
 
@@ -3403,19 +3403,19 @@ procedure_projection_entries: tuple[ProcedureProjectionCatalogEntry, ...]
 select(requested: str | Path) -> FileSelector
 ```
 
-<a id="api-workspacesources-path-for-source"></a>
+<a id="api-workspacefiles-path-for-file"></a>
 
-### `WorkspaceSources.path_for_source`
+### `WorkspaceFiles.path_for_file`
 
 [Source](src/cruxible_client/authoring/selectors.py)
 
 ```text
-path_for_source(source_id: str) -> Path
+path_for_file(file: str) -> Path
 ```
 
-<a id="api-workspacesources-path-for-procedure"></a>
+<a id="api-workspacefiles-path-for-procedure"></a>
 
-### `WorkspaceSources.path_for_procedure`
+### `WorkspaceFiles.path_for_procedure`
 
 [Source](src/cruxible_client/authoring/selectors.py)
 
@@ -5739,51 +5739,51 @@ HTTP: `POST f'/api/v1/{instance_id}/captures/read'`.
 
 <a id="api-cruxibleclient-source-context"></a>
 
-### `CruxibleClient.source_context`
+### `CruxibleClient.file_context`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-source_context(instance_id: str) -> contracts.SourceContext
+file_context(instance_id: str) -> contracts.FileContext
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/sources/context'`.
+HTTP: `GET f'/api/v1/{instance_id}/files/context'`.
 
 <a id="api-cruxibleclient-check-source-bundle"></a>
 
-### `CruxibleClient.check_source_bundle`
+### `CruxibleClient.check_file_bundle`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-check_source_bundle(
+check_file_bundle(
     instance_id: str,
     *,
     bundle: Mapping[str, Any],
-) -> contracts.SourceCheckResult
+) -> contracts.FileCheckResult
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/sources/check'`.
+HTTP: `POST f'/api/v1/{instance_id}/files/check'`.
 
 <a id="api-cruxibleclient-propose-source-bundle"></a>
 
-### `CruxibleClient.propose_source_bundle`
+### `CruxibleClient.propose_file_bundle`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-propose_source_bundle(
+propose_file_bundle(
     instance_id: str,
     *,
     bundle: Mapping[str, Any],
-    source_name: str,
+    file: str,
     proposal_name: str,
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalInspection
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/sources/proposals'`.
+HTTP: `POST f'/api/v1/{instance_id}/files/proposals'`.
 
 <a id="api-cruxibleclient-propose-claim-type"></a>
 
@@ -7019,7 +7019,7 @@ render_projection_opening(stamp: 'ProjectionBlockStampAny') -> 'bytes'
 #### `repin_projection_block`
 
 ```text
-repin_projection_block(client: 'CruxibleClient', instance_id: 'str', *, workspace: 'str | Path', source_id: 'str', block_id: 'str', claims: 'Sequence[str] | None' = None, queries: 'Sequence[tuple[str, Mapping[str, object]]] | None' = None, artifacts: 'Sequence[ArtifactIdentity] | None' = None, currency_policy: 'ProjectionCurrencyPolicy | None' = None, backing_digest: 'str | None' = None, evaluation_time: 'datetime', coordinate: 'AcceptedCoordinate | None' = None, body: 'bytes | None' = None, compact: 'bool' = True, render: 'bool' = False, dry_run: 'bool' = False) -> 'ProjectionBlockStamp'
+repin_projection_block(client: 'CruxibleClient', instance_id: 'str', *, workspace: 'str | Path', file: 'str', block_id: 'str', claims: 'Sequence[str] | None' = None, queries: 'Sequence[tuple[str, Mapping[str, object]]] | None' = None, artifacts: 'Sequence[ArtifactIdentity] | None' = None, currency_policy: 'ProjectionCurrencyPolicy | None' = None, backing_digest: 'str | None' = None, evaluation_time: 'datetime', coordinate: 'AcceptedCoordinate | None' = None, body: 'bytes | None' = None, compact: 'bool' = True, render: 'bool' = False, dry_run: 'bool' = False) -> 'ProjectionBlockStamp'
 ```
 
 Repin one block, optionally installing explicitly supplied agent-authored body bytes.
@@ -7032,7 +7032,7 @@ The whole-file compare-and-swap preserves concurrent author edits.
 #### `sync_projection_blocks`
 
 ```text
-sync_projection_blocks(client: 'CruxibleClient', instance_id: 'str', *, workspace: 'str | Path', paths: 'Sequence[str | Path]' = (), all_sources: 'bool' = False, check: 'bool' = False, detach_paths: 'Sequence[str | Path]' = (), observe_preimages: 'Callable[[Mapping[Path, bytes]], None] | None' = None) -> 'BlockSyncResult'
+sync_projection_blocks(client: 'CruxibleClient', instance_id: 'str', *, workspace: 'str | Path', paths: 'Sequence[str | Path]' = (), all_files: 'bool' = False, check: 'bool' = False, detach_paths: 'Sequence[str | Path]' = (), observe_preimages: 'Callable[[Mapping[Path, bytes]], None] | None' = None) -> 'BlockSyncResult'
 ```
 
 Check all dependencies without authoring prose. Only explicit detach edits files.
@@ -7522,26 +7522,26 @@ Locate keyword expressions in the smallest call spanning the caller line.
 entries_for_keywords(*, builder: 'str', emitted: 'dict[str, tuple[str, ...]]', sites: 'dict[str, CallSite]') -> 'tuple[SourceMapEntry, ...]'
 ```
 
-### Module `cruxible_client.authoring.sources`
+### Module `cruxible_client.authoring.files`
 
-[Source](src/cruxible_client/authoring/sources.py)
+[Source](src/cruxible_client/authoring/files.py)
 
-#### `WorkspaceSourceError`
+#### `WorkspaceFileError`
 
 Local catalog paths or aliases are not a valid compilation request.
 
-#### `compile_client_source_context`
+#### `compile_client_file_context`
 
 ```text
-compile_client_source_context(client: 'SourceContextClient', instance_id: 'str', *, catalog: 'SourceCatalog', repository_root: 'Path', aliases: 'Mapping[str, Path]') -> 'SourceCompilationBundle'
+compile_client_file_context(client: 'FileContextClient', instance_id: 'str', *, catalog: 'FileCatalog', repository_root: 'Path', aliases: 'Mapping[str, Path]') -> 'FileCompilationBundle'
 ```
 
 Read local bytes against path-free accepted context from the daemon.
 
-#### `load_source_catalog`
+#### `load_file_catalog`
 
 ```text
-load_source_catalog(portable_path: 'Path', local_path: 'Path | None') -> 'SourceCatalog'
+load_file_catalog(portable_path: 'Path', local_path: 'Path | None') -> 'FileCatalog'
 ```
 
 #### `mapped_root_aliases`
@@ -7582,7 +7582,7 @@ Return the declared v2 floor path, or `None` when absent/unconfigured.
 observe_next_workspace(workspace: 'str | Path') -> 'dict[str, object]'
 ```
 
-Observe the configured floor and every resolvable installed catalog source.
+Observe the configured floor and every resolvable installed catalog file.
 
 The daemon compares `installed_coordinate` with its resolved coordinate.  Therefore
 the local `stale` spelling produced without a daemon coordinate is only a transport
@@ -7749,7 +7749,7 @@ fields, validation rules, enum values, and format. The high-level SDK's own
 return and value fields are documented above; these links keep wire schema
 definitions singular.
 
-**`contracts.__init__`** — [GitWorkspaceNote](src/cruxible_client/contracts/__init__.py), [HostResult](src/cruxible_client/contracts/__init__.py), [HostWorkspaceRegistration](src/cruxible_client/contracts/__init__.py), [HostCompatibilityReason](src/cruxible_client/contracts/__init__.py), [HostInspection](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialBootstrapResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialMetadata](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialListResult](src/cruxible_client/contracts/__init__.py), [ProviderLaneStatus](src/cruxible_client/contracts/__init__.py), [ConsumerStatus](src/cruxible_client/contracts/__init__.py), [ServerInfoResult](src/cruxible_client/contracts/__init__.py), [ServerRestartResult](src/cruxible_client/contracts/__init__.py), [ServerStopResult](src/cruxible_client/contracts/__init__.py), [IsolatedExecutorRegistration](src/cruxible_client/contracts/__init__.py), [InitResult](src/cruxible_client/contracts/__init__.py), [CasObjectResult](src/cruxible_client/contracts/__init__.py), [ProposalInspection](src/cruxible_client/contracts/__init__.py), [ProposalListEntry](src/cruxible_client/contracts/__init__.py), [ProposalList](src/cruxible_client/contracts/__init__.py), [ProposalSelectorResult](src/cruxible_client/contracts/__init__.py), [ProposalReadmitResult](src/cruxible_client/contracts/__init__.py), [ProposalWithdrawResult](src/cruxible_client/contracts/__init__.py), [ProposalRejectResult](src/cruxible_client/contracts/__init__.py), [WhoAmI](src/cruxible_client/contracts/__init__.py), [SemanticFieldValue](src/cruxible_client/contracts/__init__.py), [SemanticFieldDelta](src/cruxible_client/contracts/__init__.py), [ReviewedMember](src/cruxible_client/contracts/__init__.py), [ProjectionAdvisory](src/cruxible_client/contracts/__init__.py), [ProjectionEvidence](src/cruxible_client/contracts/__init__.py), [ProposalReview](src/cruxible_client/contracts/__init__.py), [ApprovalChallenge](src/cruxible_client/contracts/__init__.py), [ApprovalReceipt](src/cruxible_client/contracts/__init__.py), [ActivationReceipt](src/cruxible_client/contracts/__init__.py), [FloorRefreshResult](src/cruxible_client/contracts/__init__.py), [SourceContext](src/cruxible_client/contracts/__init__.py), [SourceCheckResult](src/cruxible_client/contracts/__init__.py), [InstanceDecommissionResult](src/cruxible_client/contracts/__init__.py), [LedgerMirror](src/cruxible_client/contracts/__init__.py), [LedgerMirrorCleared](src/cruxible_client/contracts/__init__.py), [ClaimTypeLintWarning](src/cruxible_client/contracts/__init__.py), [ClaimTypeProposalLint](src/cruxible_client/contracts/__init__.py), [ClaimTypeInputProposalResult](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResultV1](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationPreflight](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResultV2](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResult](src/cruxible_client/contracts/__init__.py), [CaptureEvidenceKindAdmission](src/cruxible_client/contracts/__init__.py), [CaptureAdmissionAccount](src/cruxible_client/contracts/__init__.py), [ClaimViewRecord](src/cruxible_client/contracts/__init__.py), [CandidateStatusRecord](src/cruxible_client/contracts/__init__.py), [AuthoringIntentViewRecord](src/cruxible_client/contracts/__init__.py), [AuthoringExampleResult](src/cruxible_client/contracts/__init__.py), [AuthoringIntentListRecord](src/cruxible_client/contracts/__init__.py), [AuthoringPreflightResult](src/cruxible_client/contracts/__init__.py), [AuthoringSubmitResultRecord](src/cruxible_client/contracts/__init__.py), [BlockDeclareResult](src/cruxible_client/contracts/__init__.py), [BlockDepublishResult](src/cruxible_client/contracts/__init__.py), [ProcedureReadiness](src/cruxible_client/contracts/__init__.py), [PolicyInForceList](src/cruxible_client/contracts/__init__.py), [ProcedureRunState](src/cruxible_client/contracts/__init__.py), [NextRepair](src/cruxible_client/contracts/__init__.py), [NextRepairRequirement](src/cruxible_client/contracts/__init__.py), [NextFinding](src/cruxible_client/contracts/__init__.py), [NextItem](src/cruxible_client/contracts/__init__.py), [NextHealth](src/cruxible_client/contracts/__init__.py), [NextStatus](src/cruxible_client/contracts/__init__.py), [NextResult](src/cruxible_client/contracts/__init__.py), [CurationDetection](src/cruxible_client/contracts/__init__.py), [CurationInactiveDetector](src/cruxible_client/contracts/__init__.py), [CurationListResult](src/cruxible_client/contracts/__init__.py), [BlockObserveResult](src/cruxible_client/contracts/__init__.py), [CurationActionResult](src/cruxible_client/contracts/__init__.py), [AuditFactors](src/cruxible_client/contracts/__init__.py), [AuditEvidenceRef](src/cruxible_client/contracts/__init__.py), [AuditRow](src/cruxible_client/contracts/__init__.py), [AuditScope](src/cruxible_client/contracts/__init__.py), [AuditCoveredClaim](src/cruxible_client/contracts/__init__.py), [AuditCoverage](src/cruxible_client/contracts/__init__.py), [AuditCursor](src/cruxible_client/contracts/__init__.py), [AuditResult](src/cruxible_client/contracts/__init__.py), [SinceCursor](src/cruxible_client/contracts/__init__.py), [SinceRequest](src/cruxible_client/contracts/__init__.py), [SinceRow](src/cruxible_client/contracts/__init__.py), [SinceResult](src/cruxible_client/contracts/__init__.py), [ProviderInterfaceImplementation](src/cruxible_client/contracts/__init__.py), [ProviderInterfaceEntry](src/cruxible_client/contracts/__init__.py), [CoverageResult](src/cruxible_client/contracts/__init__.py), [FloorFile](src/cruxible_client/contracts/__init__.py), [FloorExport](src/cruxible_client/contracts/__init__.py), [WorkspaceFloorWriteResult](src/cruxible_client/contracts/__init__.py), [FloorDeliveryResult](src/cruxible_client/contracts/__init__.py), [FloorConsumerOutcome](src/cruxible_client/contracts/__init__.py), [FloorDeliverNowRequest](src/cruxible_client/contracts/__init__.py), [FloorDeliveryRequest](src/cruxible_client/contracts/__init__.py), [WorkspaceAttachResult](src/cruxible_client/contracts/__init__.py), [WorkspaceDetachResult](src/cruxible_client/contracts/__init__.py), [HostWorkspaceAttachResult](src/cruxible_client/contracts/__init__.py), [WorkspaceFloorStatus](src/cruxible_client/contracts/__init__.py).
+**`contracts.__init__`** — [GitWorkspaceNote](src/cruxible_client/contracts/__init__.py), [HostResult](src/cruxible_client/contracts/__init__.py), [HostWorkspaceRegistration](src/cruxible_client/contracts/__init__.py), [HostCompatibilityReason](src/cruxible_client/contracts/__init__.py), [HostInspection](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialBootstrapResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialMetadata](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialListResult](src/cruxible_client/contracts/__init__.py), [ProviderLaneStatus](src/cruxible_client/contracts/__init__.py), [ConsumerStatus](src/cruxible_client/contracts/__init__.py), [ServerInfoResult](src/cruxible_client/contracts/__init__.py), [ServerRestartResult](src/cruxible_client/contracts/__init__.py), [ServerStopResult](src/cruxible_client/contracts/__init__.py), [IsolatedExecutorRegistration](src/cruxible_client/contracts/__init__.py), [InitResult](src/cruxible_client/contracts/__init__.py), [CasObjectResult](src/cruxible_client/contracts/__init__.py), [ProposalInspection](src/cruxible_client/contracts/__init__.py), [ProposalListEntry](src/cruxible_client/contracts/__init__.py), [ProposalList](src/cruxible_client/contracts/__init__.py), [ProposalSelectorResult](src/cruxible_client/contracts/__init__.py), [ProposalReadmitResult](src/cruxible_client/contracts/__init__.py), [ProposalWithdrawResult](src/cruxible_client/contracts/__init__.py), [ProposalRejectResult](src/cruxible_client/contracts/__init__.py), [WhoAmI](src/cruxible_client/contracts/__init__.py), [SemanticFieldValue](src/cruxible_client/contracts/__init__.py), [SemanticFieldDelta](src/cruxible_client/contracts/__init__.py), [ReviewedMember](src/cruxible_client/contracts/__init__.py), [ProjectionAdvisory](src/cruxible_client/contracts/__init__.py), [ProjectionEvidence](src/cruxible_client/contracts/__init__.py), [ProposalReview](src/cruxible_client/contracts/__init__.py), [ApprovalChallenge](src/cruxible_client/contracts/__init__.py), [ApprovalReceipt](src/cruxible_client/contracts/__init__.py), [ActivationReceipt](src/cruxible_client/contracts/__init__.py), [FloorRefreshResult](src/cruxible_client/contracts/__init__.py), [FileContext](src/cruxible_client/contracts/__init__.py), [FileCheckResult](src/cruxible_client/contracts/__init__.py), [InstanceDecommissionResult](src/cruxible_client/contracts/__init__.py), [LedgerMirror](src/cruxible_client/contracts/__init__.py), [LedgerMirrorCleared](src/cruxible_client/contracts/__init__.py), [ClaimTypeLintWarning](src/cruxible_client/contracts/__init__.py), [ClaimTypeProposalLint](src/cruxible_client/contracts/__init__.py), [ClaimTypeInputProposalResult](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResultV1](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationPreflight](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResultV2](src/cruxible_client/contracts/__init__.py), [ClaimTypeMigrationResult](src/cruxible_client/contracts/__init__.py), [CaptureEvidenceKindAdmission](src/cruxible_client/contracts/__init__.py), [CaptureAdmissionAccount](src/cruxible_client/contracts/__init__.py), [ClaimViewRecord](src/cruxible_client/contracts/__init__.py), [CandidateStatusRecord](src/cruxible_client/contracts/__init__.py), [AuthoringIntentViewRecord](src/cruxible_client/contracts/__init__.py), [AuthoringExampleResult](src/cruxible_client/contracts/__init__.py), [AuthoringIntentListRecord](src/cruxible_client/contracts/__init__.py), [AuthoringPreflightResult](src/cruxible_client/contracts/__init__.py), [AuthoringSubmitResultRecord](src/cruxible_client/contracts/__init__.py), [BlockDeclareResult](src/cruxible_client/contracts/__init__.py), [BlockDepublishResult](src/cruxible_client/contracts/__init__.py), [ProcedureReadiness](src/cruxible_client/contracts/__init__.py), [PolicyInForceList](src/cruxible_client/contracts/__init__.py), [ProcedureRunState](src/cruxible_client/contracts/__init__.py), [NextRepair](src/cruxible_client/contracts/__init__.py), [NextRepairRequirement](src/cruxible_client/contracts/__init__.py), [NextFinding](src/cruxible_client/contracts/__init__.py), [NextItem](src/cruxible_client/contracts/__init__.py), [NextHealth](src/cruxible_client/contracts/__init__.py), [NextStatus](src/cruxible_client/contracts/__init__.py), [NextResult](src/cruxible_client/contracts/__init__.py), [CurationDetection](src/cruxible_client/contracts/__init__.py), [CurationInactiveDetector](src/cruxible_client/contracts/__init__.py), [CurationListResult](src/cruxible_client/contracts/__init__.py), [BlockObserveResult](src/cruxible_client/contracts/__init__.py), [CurationActionResult](src/cruxible_client/contracts/__init__.py), [AuditFactors](src/cruxible_client/contracts/__init__.py), [AuditEvidenceRef](src/cruxible_client/contracts/__init__.py), [AuditRow](src/cruxible_client/contracts/__init__.py), [AuditScope](src/cruxible_client/contracts/__init__.py), [AuditCoveredClaim](src/cruxible_client/contracts/__init__.py), [AuditCoverage](src/cruxible_client/contracts/__init__.py), [AuditCursor](src/cruxible_client/contracts/__init__.py), [AuditResult](src/cruxible_client/contracts/__init__.py), [SinceCursor](src/cruxible_client/contracts/__init__.py), [SinceRequest](src/cruxible_client/contracts/__init__.py), [SinceRow](src/cruxible_client/contracts/__init__.py), [SinceResult](src/cruxible_client/contracts/__init__.py), [ProviderInterfaceImplementation](src/cruxible_client/contracts/__init__.py), [ProviderInterfaceEntry](src/cruxible_client/contracts/__init__.py), [CoverageResult](src/cruxible_client/contracts/__init__.py), [FloorFile](src/cruxible_client/contracts/__init__.py), [FloorExport](src/cruxible_client/contracts/__init__.py), [WorkspaceFloorWriteResult](src/cruxible_client/contracts/__init__.py), [FloorDeliveryResult](src/cruxible_client/contracts/__init__.py), [FloorConsumerOutcome](src/cruxible_client/contracts/__init__.py), [FloorDeliverNowRequest](src/cruxible_client/contracts/__init__.py), [FloorDeliveryRequest](src/cruxible_client/contracts/__init__.py), [WorkspaceAttachResult](src/cruxible_client/contracts/__init__.py), [WorkspaceDetachResult](src/cruxible_client/contracts/__init__.py), [HostWorkspaceAttachResult](src/cruxible_client/contracts/__init__.py), [WorkspaceFloorStatus](src/cruxible_client/contracts/__init__.py).
 
 **`contracts.accepted_attestations`** — [AcceptedAttestationVerdictStatement](src/cruxible_client/contracts/accepted_attestations.py), [AcceptedClaimAttestationEvidence](src/cruxible_client/contracts/accepted_attestations.py).
 
@@ -7927,7 +7927,7 @@ definitions singular.
 
 **`contracts.semantic`** — [SemanticSelector](src/cruxible_client/contracts/semantic.py), [SemanticAddress](src/cruxible_client/contracts/semantic.py), [ContentSpan](src/cruxible_client/contracts/semantic.py), [SourceMapping](src/cruxible_client/contracts/semantic.py).
 
-**`contracts.source_catalog`** — [SourceCatalogEntry](src/cruxible_client/contracts/source_catalog.py), [ProcedureProjectionCatalogEntry](src/cruxible_client/contracts/source_catalog.py), [SourceCatalog](src/cruxible_client/contracts/source_catalog.py), [ResolvedSourceInput](src/cruxible_client/contracts/source_catalog.py), [CompiledSourceDocument](src/cruxible_client/contracts/source_catalog.py), [SourceCompilationManifest](src/cruxible_client/contracts/source_catalog.py), [SourceCompilationBundle](src/cruxible_client/contracts/source_catalog.py), [SourceAlignment](src/cruxible_client/contracts/source_catalog.py).
+**`contracts.file_catalog`** — [FileCatalogEntry](src/cruxible_client/contracts/file_catalog.py), [ProcedureProjectionCatalogEntry](src/cruxible_client/contracts/file_catalog.py), [FileCatalog](src/cruxible_client/contracts/file_catalog.py), [ResolvedFileInput](src/cruxible_client/contracts/file_catalog.py), [CompiledFileDocument](src/cruxible_client/contracts/file_catalog.py), [FileCompilationManifest](src/cruxible_client/contracts/file_catalog.py), [FileCompilationBundle](src/cruxible_client/contracts/file_catalog.py), [FileAlignment](src/cruxible_client/contracts/file_catalog.py).
 
 **`contracts.source_references`** — [ProvisionalSemanticReadCoordinate](src/cruxible_client/contracts/source_references.py), [CandidateGenerationReadCoordinate](src/cruxible_client/contracts/source_references.py), [LedgerSourceReference](src/cruxible_client/contracts/source_references.py), [CasSourceReference](src/cruxible_client/contracts/source_references.py), [ExternalSourceReference](src/cruxible_client/contracts/source_references.py), [SourceSchemaRegistry](src/cruxible_client/contracts/source_references.py), [EvidenceCommitment](src/cruxible_client/contracts/source_references.py), [CoverageDescriptor](src/cruxible_client/contracts/source_references.py), [SourceHandle](src/cruxible_client/contracts/source_references.py), [BodyAccessResult](src/cruxible_client/contracts/source_references.py), [SourceDereferenceResult](src/cruxible_client/contracts/source_references.py), [OpenSourceRequest](src/cruxible_client/contracts/source_references.py).
 
@@ -8012,7 +8012,7 @@ changeset Claim writer when revising it. Acceptance and
 evidential support are distinct: an accepted Claim may remain unsupported under
 its evidence policy.
 
-File-backed authoring requires a declared `.cruxible/sources.yaml` catalog in the
+File-backed authoring requires a declared `.cruxible/files.yaml` catalog in the
 workspace. Supplying a body with `self_source` is an explicit self-assertion, not
 an observation of an independent source. The SDK's `derived_by()` method raises
 `CapabilityNotServed`; it is not a supported derivation writer.

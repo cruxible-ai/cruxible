@@ -169,7 +169,7 @@ def test_one_changeset_has_one_intent_identity_across_sdk_cli_and_mcp(
     (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "corpus").mkdir()
     (workspace / "corpus" / "notes.md").write_text("# notes\n", encoding="utf-8")
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"
@@ -332,7 +332,7 @@ def test_the_sdk_builder_authors_a_mixed_changeset_that_preflights_clean(
     (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "corpus").mkdir()
     (workspace / "corpus" / "notes.md").write_text("# notes\n", encoding="utf-8")
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"
@@ -408,7 +408,7 @@ def test_one_claim_type_succession_has_one_identity_across_sdk_cli_and_mcp(
     (workspace / ".cruxible").mkdir(parents=True)
     (workspace / "corpus").mkdir()
     (workspace / "corpus" / "notes.md").write_text("# notes\n", encoding="utf-8")
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"

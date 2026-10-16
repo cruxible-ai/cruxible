@@ -992,34 +992,34 @@ class CruxibleClient:
         )
         return self._parse_model(response, CaptureRead)
 
-    def source_context(self, instance_id: str) -> contracts.SourceContext:
-        response = self._client.get(f"/api/v1/{instance_id}/sources/context")
-        return self._parse_model(response, contracts.SourceContext)
+    def file_context(self, instance_id: str) -> contracts.FileContext:
+        response = self._client.get(f"/api/v1/{instance_id}/files/context")
+        return self._parse_model(response, contracts.FileContext)
 
-    def check_source_bundle(
+    def check_file_bundle(
         self, instance_id: str, *, bundle: Mapping[str, Any]
-    ) -> contracts.SourceCheckResult:
+    ) -> contracts.FileCheckResult:
         response = self._client.post(
-            f"/api/v1/{instance_id}/sources/check",
+            f"/api/v1/{instance_id}/files/check",
             json={"bundle": dict(bundle)},
         )
-        return self._parse_model(response, contracts.SourceCheckResult)
+        return self._parse_model(response, contracts.FileCheckResult)
 
-    def propose_source_bundle(
+    def propose_file_bundle(
         self,
         instance_id: str,
         *,
         bundle: Mapping[str, Any],
-        source_name: str,
+        file: str,
         proposal_name: str,
         dry_run: bool | None = None,
         at: str | None = None,
     ) -> contracts.ProposalInspection:
         response = self._client.post(
-            f"/api/v1/{instance_id}/sources/proposals",
+            f"/api/v1/{instance_id}/files/proposals",
             json={
                 "bundle": dict(bundle),
-                "source_name": source_name,
+                "file": file,
                 "proposal_name": proposal_name,
                 **_change_control(dry_run, at),
             },

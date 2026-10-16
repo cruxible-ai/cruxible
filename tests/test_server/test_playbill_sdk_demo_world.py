@@ -78,7 +78,7 @@ from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_fact
 def _catalog(workspace: Path) -> None:
     (workspace / ".cruxible").mkdir()
     (workspace / "corpus").mkdir()
-    (workspace / ".cruxible" / "sources.yaml").write_text(
+    (workspace / ".cruxible" / "files.yaml").write_text(
         """\
 tag: playbill-source-catalog-v1
 catalog_kind: portable
@@ -642,7 +642,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     reverted = pb.next(expiring_within=Duration.days(count=7))
     assert not any(item.reason == "citation_drifted" for item in reverted.items)
 
-    catalog = workspace / ".cruxible" / "sources.yaml"
+    catalog = workspace / ".cruxible" / "files.yaml"
     original_catalog = catalog.read_text(encoding="utf-8")
     catalog.write_text(
         original_catalog.split("  - name: corpus.vuln-response-runbook\n", maxsplit=1)[0],

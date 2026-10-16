@@ -35,8 +35,8 @@ staleness, not derivation.
    <!-- /cruxible:block:status -->
    ~~~
 
-   The page must be catalogued in `.cruxible/sources.yaml`
-   (`cruxible sources add status-page notes/status.md`); its entry name is the
+   The page must be catalogued in `.cruxible/files.yaml`
+   (`cruxible files add status-page notes/status.md`); its entry name is the
    block's source ID.
 
 2. **Repin to stamp it.** Name what the block reflects:

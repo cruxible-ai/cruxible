@@ -38,7 +38,7 @@ BODY = b"reflects generation 7\nstatus: ready --> preserve this prose\n"
 
 def _workspace(root: Path) -> Path:
     (root / ".cruxible").mkdir()
-    (root / ".cruxible" / "sources.yaml").write_text(
+    (root / ".cruxible" / "files.yaml").write_text(
         "tag: playbill-source-catalog-v1\n"
         "catalog_kind: portable\n"
         "entries:\n"
@@ -235,7 +235,7 @@ def _repin(
         client,  # type: ignore[arg-type]
         "inst_projection",
         workspace=root,
-        source_id="corpus.runbook",
+        file="corpus.runbook",
         block_id="summary",
         claims=claims,
         queries=queries,
@@ -437,7 +437,7 @@ def test_repin_preserves_omitted_categories_and_policy_and_removes_only_explicit
             client,
             "inst_projection",
             workspace=tmp_path,
-            source_id="corpus.runbook",
+            file="corpus.runbook",
             block_id="summary",
             evaluation_time=NOW,
             **kwargs,
@@ -501,7 +501,7 @@ def test_old_manifest_bytes_remain_verifiable_after_repin_adds_policy(tmp_path: 
         client,
         "inst_projection",
         workspace=tmp_path,
-        source_id="corpus.runbook",
+        file="corpus.runbook",
         block_id="summary",
         evaluation_time=NOW,
         currency_policy="require_current",
@@ -534,7 +534,7 @@ def test_a_dry_run_repin_computes_the_stamp_and_writes_nothing(tmp_path: Path) -
             client,  # type: ignore[arg-type]
             "inst_projection",
             workspace=tmp_path,
-            source_id="corpus.runbook",
+            file="corpus.runbook",
             block_id="summary",
             claims=("CLM-first",),
             evaluation_time=NOW,
@@ -602,7 +602,7 @@ def test_render_writes_the_body_from_the_one_query_backing(tmp_path: Path) -> No
         client,  # type: ignore[arg-type]
         "inst_projection",
         workspace=tmp_path,
-        source_id="corpus.runbook",
+        file="corpus.runbook",
         block_id="summary",
         queries=(("project.items", {}),),
         evaluation_time=NOW,
@@ -621,7 +621,7 @@ def test_render_writes_the_body_from_the_one_query_backing(tmp_path: Path) -> No
             client,  # type: ignore[arg-type]
             "inst_projection",
             workspace=tmp_path,
-            source_id="corpus.runbook",
+            file="corpus.runbook",
             block_id="summary",
             queries=(),
             claims=("CLM-1",),
@@ -663,7 +663,7 @@ def test_sdk_get_source_ref_reads_its_document_or_its_evidence_only_entry(
     from cruxible_client.contracts.get_reads import GetCoordinate, GetResult
 
     _workspace(tmp_path)
-    catalog = tmp_path / ".cruxible" / "sources.yaml"
+    catalog = tmp_path / ".cruxible" / "files.yaml"
     catalog.write_text(
         catalog.read_text() + "  - name: corpus.notes\n    locator: notes.md\n", encoding="utf-8"
     )
@@ -753,7 +753,7 @@ def test_repin_records_its_page_for_block_churn(tmp_path: Path) -> None:
         client,  # type: ignore[arg-type]
         "inst_projection",
         workspace=tmp_path,
-        source_id="corpus.runbook",
+        file="corpus.runbook",
         block_id="summary",
         evaluation_time=NOW,
         dry_run=True,
@@ -776,7 +776,7 @@ def test_a_converging_sync_rerenders_a_stale_rendered_block_and_records_the_page
         client,  # type: ignore[arg-type]
         "inst_projection",
         workspace=tmp_path,
-        source_id="corpus.runbook",
+        file="corpus.runbook",
         block_id="summary",
         queries=(("project.items", {}),),
         evaluation_time=NOW,
@@ -789,7 +789,7 @@ def test_a_converging_sync_rerenders_a_stale_rendered_block_and_records_the_page
         client,  # type: ignore[arg-type]
         "inst_projection",
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
     )
     assert [item.outcome for item in checked.items] == ["stale"]
     assert source.read_bytes() == rendered
@@ -800,7 +800,7 @@ def test_a_converging_sync_rerenders_a_stale_rendered_block_and_records_the_page
         client,  # type: ignore[arg-type]
         "inst_projection",
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
         converge_at=later,
     )
     (item,) = converged.items
@@ -829,7 +829,7 @@ def test_sync_preserves_prose_edited_during_render_proof(tmp_path: Path) -> None
         setup_client,  # type: ignore[arg-type]
         "inst_projection",
         workspace=tmp_path,
-        source_id="corpus.runbook",
+        file="corpus.runbook",
         block_id="summary",
         queries=(("project.items", {}),),
         evaluation_time=NOW,
@@ -858,7 +858,7 @@ def test_sync_preserves_prose_edited_during_render_proof(tmp_path: Path) -> None
         client,  # type: ignore[arg-type]
         "inst_projection",
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
         converge_at=NOW + timedelta(hours=1),
     )
 
@@ -883,7 +883,7 @@ def test_a_converging_sync_leaves_stale_prose_to_its_author(tmp_path: Path) -> N
         client,  # type: ignore[arg-type]
         "inst_projection",
         workspace=tmp_path,
-        all_sources=True,
+        all_files=True,
         converge_at=NOW + timedelta(hours=1),
     )
 
