@@ -21,6 +21,7 @@ from cruxible_client.contracts.provider_interfaces import (
 )
 from cruxible_client.contracts.providers import parse_provider, provider_build_key, provider_digest
 from cruxible_core.indexes.sql_batch import execute_values, insert_rows, select_in
+from cruxible_core.ledger.git import _proven_blob_entries
 from cruxible_core.ledger.protocols import LedgerRepositoryProtocol
 from cruxible_core.proposals.settlement import parse_change_set_record
 
@@ -125,7 +126,9 @@ def cold_provider_source(
         # Only cold reconstruction needs historical listings. Cache each once;
         # use the repository protocol rather than assuming an on-disk Git ledger.
         if oid not in historical_entries:
-            historical_entries[oid] = {entry.path: entry.oid for entry in repository.list_tree(oid)}
+            historical_entries[oid] = {
+                entry.path: entry.oid for entry in _proven_blob_entries(repository.list_tree(oid))
+            }
         blob_oid = historical_entries[oid].get(path)
         return None if blob_oid is None else repository.read_blob(blob_oid)
 

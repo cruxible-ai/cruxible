@@ -333,3 +333,26 @@ def test_cold_provider_source_has_no_ancestor_in_a_memory_snapshot(tmp_path, mon
     assert read("providers/demo.json", 0) is None
     assert read("providers/demo.json", 1) == b"new"
     assert repository.list_calls == repository.read_calls == 0
+
+
+@pytest.mark.parametrize(
+    "mode,kind", [("120000", "blob"), ("100755", "blob"), ("160000", "commit")]
+)
+def test_cold_provider_source_refuses_non_plain_historical_members(
+    tmp_path, monkeypatch, mode, kind
+):
+    from cruxible_client.contracts.errors import GitError
+    from tests.core_support._projection_support import MemoryLedger
+
+    path = "providers/demo.json"
+    old = MemoryLedger(tmp_path / "old", {path: b"old"}, modes={path: (mode, kind)})
+    sources = {"changesets/1.json": b"record"}
+    monkeypatch.setattr(
+        provider_heads, "parse_change_set_record", lambda *a, **kw: SimpleNamespace(sequence=1)
+    )
+    monkeypatch.setattr(old, "parent_of", lambda oid: old.oid)
+    read = provider_heads.cold_provider_source(old, "head", sources)
+
+    with pytest.raises(GitError, match="unsupported"):
+        read(path, 0)
+    assert old.read_calls == 0
