@@ -79,3 +79,28 @@ def test_carried_member_does_not_hide_wrong_path_or_noncanonical_bytes():
         sealed_claim_member(content, path=claim_path("CLM-" + "e" * 32))
     with pytest.raises(ClaimFormatError):
         sealed_claim_member(content + b" ", path=path)
+
+
+def test_request_owns_a_member_when_the_process_carrier_cannot_retain_it(monkeypatch):
+    from cruxible_client.contracts.content_memo import artifact_request
+    from cruxible_core.compiler import sealed_members
+
+    monkeypatch.setattr(sealed_members, "_MAX_BYTES", 0)
+    sealed_members._clear()
+    path, content = _member()
+    with artifact_request():
+        member = sealed_claim_member(content, path=path)
+        sealed_members._clear()
+        with artifact_request():
+            assert sealed_claim_member(content, path=path) is member
+        # The oracle bypasses both the request carrier and process LRU.
+        fresh = _parse_claim(content, path=path, codec=CURRENT_ARTIFACT_CODEC)
+        assert member.claim == fresh
+        assert member.facts == _claim_static_facts(
+            fresh,
+            path=path,
+            input_digest=member.input_digest,
+            artifact_digest=member.artifact_digest,
+            statement_digest=member.statement_digest,
+        )
+    assert sealed_claim_member(content, path=path) is not member

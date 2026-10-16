@@ -24,7 +24,9 @@ from cruxible_client.contracts.content_memo import (
     FrozenList,
     ParseMemo,
     ValueMemo,
+    artifact_request,
     is_sealed,
+    request_derive,
     seal,
     sealed_derive,
     sealed_memo,
@@ -605,3 +607,70 @@ def test_deeply_nested_values_encode_and_refuse_exactly_as_the_normalizing_encod
             same = outcome(lambda both: old(both[0]) == old(both[1]), pair)
             assert equal == same, depth
     assert accepted >= 2
+
+
+@pytest.mark.parametrize("sealed", [True, False])
+def test_request_carrier_outlives_lru_eviction_and_keeps_detached_values_independent(sealed):
+    memo = ParseMemo(capacity=1, max_bytes=1)
+    calls = []
+
+    def parsed(body):
+        calls.append(body)
+        return _Leaf(tags=[body.decode()], meta={}) if sealed else _Loose(note=body.decode())
+
+    with artifact_request():
+        first = memo.parse(b"first", "a", "codec", lambda: parsed(b"first"))
+        memo.parse(b"second", "b", "codec", lambda: parsed(b"second"))
+        memo.clear()  # process eviction cannot evict what the request owns
+        with artifact_request():
+            again = memo.parse(b"first", "a", "codec", lambda: parsed(b"first"))
+        assert first == again
+        assert (first is again) is sealed
+        if not sealed:
+            again.note = "changed"
+            assert memo.parse(b"first", "a", "codec", lambda: parsed(b"first")).note == "first"
+        assert calls == [b"first", b"second"]
+    # Oversized entries were never retained process-wide; a new request is cold.
+    with artifact_request():
+        assert memo.parse(b"first", "a", "codec", lambda: parsed(b"first")) == first
+    assert calls == [b"first", b"second", b"first"]
+
+
+def test_request_carrier_keys_include_parser_path_codec_and_exact_bytes():
+    memo = ParseMemo(capacity=1, max_bytes=1)
+    other = ParseMemo(capacity=1, max_bytes=1)
+    calls = []
+
+    def parsed():
+        calls.append(1)
+        return _Leaf(tags=[], meta={})
+
+    with artifact_request():
+        first = memo.parse(b"a", "path", "codec", parsed)
+        assert memo.parse(b"a", "path", "codec", parsed) is first
+        assert memo.parse(b"b", "path", "codec", parsed) is not first
+        assert memo.parse(b"a", "other", "codec", parsed) is not first
+        assert memo.parse(b"a", "path", "other", parsed) is not first
+        assert other.parse(b"a", "path", "codec", parsed) is not first
+    assert len(calls) == 5
+
+
+def test_request_carrier_releases_values_and_never_retains_refusals():
+    def refused():
+        raise ValueError("refused")
+
+    memo = ParseMemo(capacity=1, max_bytes=1)
+    with pytest.raises(RuntimeError), artifact_request():
+        first = memo.parse(b"a", "path", "codec", lambda: _Leaf(tags=[], meta={}))
+        reference = weakref.ref(first)
+        derived = request_derive(("test.leaf",), lambda: _Leaf(tags=[], meta={}))
+        derived_reference = weakref.ref(derived)
+        for _ in range(2):
+            with pytest.raises(ValueError, match="refused"):
+                memo.parse(b"refused", "path", "codec", refused)
+            with pytest.raises(ValueError, match="refused"):
+                request_derive(("test.refused",), refused)
+        del first, derived
+        raise RuntimeError("release on error")
+    gc.collect()
+    assert reference() is derived_reference() is None

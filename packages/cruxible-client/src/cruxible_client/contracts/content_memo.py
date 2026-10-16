@@ -47,7 +47,9 @@ import threading
 import uuid
 import weakref
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from enum import Enum
 from typing import Any, Generic, NoReturn, TypeVar
@@ -336,6 +338,54 @@ class _Shared:
 _SEALED_WEIGHT = 4
 
 
+class _RequestCarrier:
+    """Strong ownership until the outermost request exits, independent of LRU budgets."""
+
+    def __init__(self) -> None:
+        self.parses: dict[tuple[object, ...], _Shared | bytes] = {}
+        self.derived: dict[tuple[object, ...], object] = {}
+
+
+_REQUEST_CARRIER: ContextVar[_RequestCarrier | None] = ContextVar(
+    "artifact_request_carrier", default=None
+)
+
+
+@contextmanager
+def artifact_request() -> Iterator[None]:
+    """Carry exact immutable parses and derivations across all artifact kinds.
+
+    Nested pipeline stages join their caller. There is no process-wide growth:
+    the outermost synchronous request releases everything, including oversized
+    artifacts that the bounded process memos deliberately cannot retain.
+    """
+    if _REQUEST_CARRIER.get() is not None:
+        yield
+        return
+    token = _REQUEST_CARRIER.set(_RequestCarrier())
+    try:
+        yield
+    finally:
+        _REQUEST_CARRIER.reset(token)
+
+
+def request_derive(key: tuple[object, ...], derive: Callable[[], _V]) -> _V:
+    """One pure immutable derivation per exact value key in the owning request.
+
+    Callers own the namespace (the first key element) and must supply immutable
+    keys and results. With no explicit request, compute without retention.
+    Refusals are never retained.
+    """
+    carrier = _REQUEST_CARRIER.get()
+    if carrier is None:
+        return derive()
+    found = carrier.derived.get(key, _MISSING)
+    if found is _MISSING:
+        found = derive()
+        carrier.derived[key] = found
+    return found  # type: ignore[return-value]
+
+
 class ParseMemo(Generic[_V]):
     """``(path, codec, exact bytes) -> parsed artifact``, bounded by entries and bytes."""
 
@@ -361,12 +411,21 @@ class ParseMemo(Generic[_V]):
             hash(key)
         except TypeError:
             return parse()
+        carrier = _REQUEST_CARRIER.get()
+        request_key = (self, *key)
+        stored = None if carrier is None else carrier.parses.get(request_key)
+        if stored is not None:
+            if isinstance(stored, _Shared):
+                return stored.value  # type: ignore[return-value]
+            return pickle.loads(stored)  # type: ignore[no-any-return]
         with self._lock:
             found = self._entries.get(key)
             if found is not None:
                 self._entries.move_to_end(key)
         if found is not None:
             stored = found[0]
+            if carrier is not None:
+                carrier.parses[request_key] = stored
             if isinstance(stored, _Shared):
                 return stored.value  # type: ignore[return-value]
             return pickle.loads(stored)  # type: ignore[no-any-return]
@@ -376,8 +435,6 @@ class ParseMemo(Generic[_V]):
             # A sealed value is shared, never copied, so it is never pickled:
             # it is weighed as its content's size several times over instead.
             weight = len(content) * (1 + _SEALED_WEIGHT) + len(path)
-            if weight > self._max_entry_bytes:
-                return value
             stored_value = _Shared(value)
         else:
             try:
@@ -385,9 +442,11 @@ class ParseMemo(Generic[_V]):
             except (pickle.PicklingError, TypeError, AttributeError):
                 return value
             weight = len(content) + len(path) + len(pickled)
-            if weight > self._max_entry_bytes:
-                return value
             stored_value = pickled
+        if carrier is not None:
+            carrier.parses[request_key] = stored_value
+        if weight > self._max_entry_bytes:
+            return value
         with self._lock:
             if key not in self._entries:
                 self._entries[key] = (stored_value, weight)
@@ -439,6 +498,8 @@ class ValueMemo(Generic[_V]):
 __all__ = [
     "FrozenDict",
     "FrozenList",
+    "artifact_request",
+    "request_derive",
     "ParseMemo",
     "ValueMemo",
     "is_sealed",

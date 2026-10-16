@@ -24,7 +24,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_client.contracts.content_memo import seal
+from cruxible_client.contracts.content_memo import request_derive, seal
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.projection_extensions import ProjectionFact
@@ -59,7 +59,14 @@ def _clear() -> None:
 def sealed_claim_member(
     content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
 ) -> SealedClaimMember:
-    """The one sealed parse and intrinsic row stream for these exact bytes."""
+    """The request owns the member even if the bounded process memo evicts it."""
+    return request_derive(
+        ("core.sealed_claim_member", path, codec, content),
+        lambda: _sealed_claim_member(content, path=path, codec=codec),
+    )
+
+
+def _sealed_claim_member(content: bytes, *, path: str, codec: ArtifactCodec) -> SealedClaimMember:
     global _WEIGHT
     cacheable = type(content) is bytes and type(path) is str and type(codec) is ArtifactCodec
     key = (path, codec, content)

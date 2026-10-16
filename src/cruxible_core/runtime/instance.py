@@ -39,6 +39,7 @@ from cruxible_client.contracts.claims import (
     claim_path,
     parse_claim_law_evidence,
 )
+from cruxible_client.contracts.content_memo import artifact_request
 from cruxible_client.contracts.errors import (
     BootstrapError,
     FormatError,
@@ -1589,9 +1590,12 @@ class PlaybillInstance:
     def capture_verification_request(self) -> Iterator[LocalProducerReceiptResolver]:
         """Own one Capture verification context for a whole request."""
 
-        with verification_request(
-            self._verification_key(), self._open_verification_context
-        ) as context:
+        with (
+            artifact_request(),
+            verification_request(
+                self._verification_key(), self._open_verification_context
+            ) as context,
+        ):
             yield context
 
     def _verification_key(self) -> tuple[str, str]:
@@ -2628,7 +2632,8 @@ class PlaybillInstance:
         pool = ProjectionPool()
         token = _PROJECTION_POOL.set(pool)
         try:
-            yield
+            with artifact_request():
+                yield
         finally:
             _PROJECTION_POOL.reset(token)
             pool.close()
