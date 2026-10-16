@@ -268,6 +268,7 @@ def test_unmoved_blueprint_slot_keeps_its_exact_registration():
     }
     first["next"] = "held"
     raw["nodes"].insert(1, second)
+    raw["returns"] = "held"
     raw["pin_slots"].append({**raw["pin_slots"][0], "slot_name": "held"})
     raw["pin_slots"].sort(key=lambda item: item["slot_name"])
     definition = ProcedureDefinition.model_validate(raw)

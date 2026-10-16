@@ -157,23 +157,6 @@ def _registration_digest(tree: Mapping[str, bytes], pin: ArtifactPin) -> str | N
     )
 
 
-def live_procedure_pinners(
-    connection: sqlite3.Connection, identity: str, artifact_digest: str
-) -> tuple[tuple[str, str], ...]:
-    """(identity, path) of every live Procedure pinning this exact build version."""
-
-    return tuple(
-        (str(row[0]), str(row[1]))
-        for row in connection.execute(
-            "SELECT DISTINCT p.source_identity, r.path FROM main.pins p "
-            "JOIN main.procedures r ON r.identity=p.source_identity "
-            "WHERE p.target_identity=? AND p.target_digest=? AND p.edge_kind='required_pin' "
-            "AND r.lifecycle='live' ORDER BY p.source_identity",
-            (identity, artifact_digest),
-        )
-    )
-
-
 def _reinstantiated(
     tree: Mapping[str, bytes],
     overlay: Mapping[str, bytes],
