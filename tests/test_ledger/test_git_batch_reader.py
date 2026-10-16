@@ -43,7 +43,7 @@ def test_resident_reader_matches_git_and_is_shared_across_handles(tmp_path, monk
         ledger.path, signing_key_path=tmp_path / "k", allowed_signers_path=tmp_path / "s"
     )
     assert other.read_blobs(list(reversed(oids))) == dict(zip(oids, contents, strict=True))
-    assert len([args for args in spawned if "cat-file" in args]) == 1
+    assert len([args for args in spawned if "cat-file" in args]) == 0
 
 
 def test_missing_object_refuses_and_the_next_read_recovers(tmp_path):

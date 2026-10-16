@@ -13,7 +13,6 @@ import signal
 import subprocess
 import tempfile
 import threading
-import zlib
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -40,6 +39,7 @@ from cruxible_core.derived.derived_state import (
     same_row,
 )
 from cruxible_core.governance.keys import raw_public_key_hex_from_openssh
+from cruxible_core.ledger.git_objects import PackStore
 from cruxible_core.runtime.phase_timing import timed_phase
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -353,47 +353,8 @@ class GitLedger:
         return hashlib.sha256(header + body).hexdigest()
 
     def _store_loose_objects(self, objects: Mapping[str, tuple[str, bytes]]) -> None:
-        """Write objects exactly as Git writes a loose object, without a Git process.
-
-        Each object is the zlib stream of ``<type> <size>\\0<body>`` at
-        ``objects/<2 hex>/<rest>``: written to a temporary file in that
-        directory, fsynced, then hard-linked into place, which is Git's own
-        create-only publication (an existing object is left untouched). The
-        directory is fsynced too, so the durability matches ``core.fsync``
-        covering loose objects. Git reads these like any object it wrote.
-
-        Every object handed here was addressed by this process from its own
-        bytes a moment before (``_blob_oid`` for blobs, ``_object_oid`` for the
-        trees ``_apply_to_tree`` rewrites), so storing hashes nothing again; a
-        reader still checks each object it reads against its address
-        (``_require_object_hash``).
-        """
-
-        root = self.path / "objects"
-        touched: set[Path] = set()
-        for oid, (kind, body) in objects.items():
-            directory = root / oid[:2]
-            final = directory / oid[2:]
-            if final.exists():
-                continue
-            directory.mkdir(mode=0o755, exist_ok=True)
-            header = f"{kind} {len(body)}".encode("ascii") + b"\x00"
-            descriptor, temporary = tempfile.mkstemp(prefix="tmp_obj_", dir=directory)
-            try:
-                with os.fdopen(descriptor, "wb") as stream:
-                    stream.write(zlib.compress(header + body, level=0 if kind == "tree" else -1))
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.chmod(temporary, 0o444)
-                try:
-                    os.link(temporary, final)
-                except FileExistsError:
-                    pass
-            finally:
-                os.unlink(temporary)
-            touched.add(directory)
-        for directory in touched:
-            _fsync_directory(directory)
+        """Publish one in-process pack/index, with no per-object file operations."""
+        _batch_reader(self.path).store.write(objects)
 
     def _tree_entries_of(self, tree_oid: str) -> dict[str, tuple[bytes, str]]:
         found = _batch_reader(self.path).objects((tree_oid,))[tree_oid]
@@ -3031,185 +2992,63 @@ def _command_environment(environment: Mapping[str, str] | None = None) -> dict[s
 
 
 class _BatchBlobReader:
-    """One long-lived `cat-file --batch` per repository, shared by every handle.
-
-    Objects are immutable and content-addressed, so a resident reader returns
-    exactly what a fresh process would, without paying a process spawn per
-    read. Requests are strictly one object at a time under a lock: a pipe never
-    holds an unread response while another request is written. Any error,
-    including a missing object, retires the process; the next read starts one.
-    """
+    """Shared in-process object reader, including Git's delta-compressed packs."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        self._lock = threading.Lock()
-        self._process: subprocess.Popen[bytes] | None = None
-        # A sibling `--batch-check` answers type and size without any payload.
-        self._check_process: subprocess.Popen[bytes] | None = None
-        self._owner = 0
-
-    def _spawn(self, mode: str) -> subprocess.Popen[bytes]:
-        return subprocess.Popen(
-            ["git", f"--git-dir={self.path}", "cat-file", mode],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            env=_command_environment(),
-        )
-
-    def _running(self) -> subprocess.Popen[bytes]:
-        process = self._process
-        if process is None or process.poll() is not None or self._owner != os.getpid():
-            if self._owner != os.getpid():
-                self._check_process = None
-            process = self._spawn("--batch")
-            self._process, self._owner = process, os.getpid()
-        return process
-
-    def _checking(self) -> subprocess.Popen[bytes]:
-        if self._owner != os.getpid():
-            self._running()
-        process = self._check_process
-        if process is None or process.poll() is not None:
-            process = self._check_process = self._spawn("--batch-check")
-        return process
+        self._lock = threading.RLock()
+        self.store = PackStore(path)
 
     def close(self) -> None:
-        processes = (self._process, self._check_process)
-        self._process = self._check_process = None
-        if self._owner != os.getpid():
-            return
-        for process in processes:
-            if process is None:
-                continue
-            for stream in (process.stdin, process.stdout):
-                if stream is not None:
-                    try:
-                        stream.close()
-                    except OSError:
-                        pass
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+        self.store.close()
 
     def forget_inherited(self) -> None:
-        """In a forked child, release this copy of the parent's processes untouched.
-
-        The fork hooks hold every reader's lock across ``fork``, so no request
-        is in flight and no buffered bytes can reach the parent's pipe here.
-        """
-
-        processes = (self._process, self._check_process)
-        self._process = self._check_process = None
-        self._lock = threading.Lock()
-        for process in processes:
-            if process is None:
-                continue
-            for stream in (process.stdin, process.stdout):
-                if stream is not None:
-                    try:
-                        stream.close()
-                    except OSError:
-                        pass
+        self._lock = threading.RLock()
+        self.store.lock = threading.RLock()
+        self.close()
 
     def path_blob(self, oid: str, path: str) -> bytes | None:
-        """One committed path's blob through ``<commit>:<path>``; None when absent."""
-
-        expression = f"{oid}:{path}".encode()
-        with self._lock:
-            process = self._running()
-            assert process.stdin is not None and process.stdout is not None
-            try:
-                process.stdin.write(expression + b"\n")
-                process.stdin.flush()
-                header = process.stdout.readline()
-                if not header.endswith(b"\n"):
-                    raise GitError("Git batch output ended before its header")
-                if header == expression + b" missing\n":
-                    return None
-                try:
-                    object_oid, object_type, raw_size = header[:-1].decode("ascii").split()
-                    size = int(raw_size)
-                except (UnicodeDecodeError, ValueError) as exc:
-                    raise GitError("Git batch output has malformed metadata") from exc
-                payload = process.stdout.read(size + 1)
-                if len(payload) != size + 1 or payload[-1:] != b"\n":
-                    raise GitError("Git batch output has a truncated payload")
-                if object_type != "blob":
-                    raise GitError(f"ledger path is not a regular blob: {path}")
-                _require_object_hash(object_oid, object_type, payload[:-1])
-                return payload[:-1]
-            except BaseException:
-                self.close()
-                raise
+        found = self.objects((oid,))[oid]
+        if found is not None and found[0] == "commit":
+            first = found[1].split(b"\n", 1)[0]
+            if not first.startswith(b"tree "):
+                raise GitError("ledger commit has no tree header")
+            oid = first[5:].decode("ascii")
+        segments = path.split("/")
+        for index, segment in enumerate(segments):
+            found = self.objects((oid,))[oid]
+            if found is None or found[0] != "tree":
+                return None
+            entries = _tree_entries(found[1], raw_length=len(oid) // 2)
+            if entries is None:
+                raise GitError("ledger tree object is malformed")
+            entry = entries.get(segment)
+            if entry is None:
+                return None
+            mode, oid = entry
+            if index < len(segments) - 1 and mode != b"40000":
+                return None
+        found = self.objects((oid,))[oid]
+        if found is None:
+            return None
+        if found[0] != "blob":
+            raise GitError(f"ledger path is not a regular blob: {path}")
+        return found[1]
 
     def object_info(self, oids: Sequence[str]) -> dict[str, tuple[str, int] | None]:
-        """Each object's type and size, never its bytes; ``None`` when Git lacks it."""
-
-        found: dict[str, tuple[str, int] | None] = {}
-        with self._lock:
-            process = self._checking()
-            assert process.stdin is not None and process.stdout is not None
-            try:
-                # Requests go in chunks small enough that neither pipe can fill
-                # while the other waits, so a whole listing's sizes cost a few
-                # round trips rather than one per object.
-                ordered = list(oids)
-                for start in range(0, len(ordered), _OBJECT_INFO_CHUNK):
-                    chunk = ordered[start : start + _OBJECT_INFO_CHUNK]
-                    process.stdin.write(b"".join(oid.encode("ascii") + b"\n" for oid in chunk))
-                    process.stdin.flush()
-                    for expected_oid in chunk:
-                        found[expected_oid] = _object_info_row(
-                            process.stdout.readline(), expected_oid
-                        )
-            except BaseException:
-                self.close()
-                raise
-        return found
+        return {
+            oid: None if value is None else (value[0], len(value[1]))
+            for oid, value in self.objects(oids).items()
+        }
 
     def objects(self, oids: Sequence[str]) -> dict[str, tuple[str, bytes] | None]:
-        """Each object's type and bytes by exact ID; ``None`` when Git lacks it."""
-
-        found: dict[str, tuple[str, bytes] | None] = {}
         with self._lock:
-            process = self._running()
-            assert process.stdin is not None and process.stdout is not None
-            try:
-                for expected_oid in oids:
-                    process.stdin.write(expected_oid.encode("ascii") + b"\n")
-                    process.stdin.flush()
-                    header = process.stdout.readline()
-                    if not header.endswith(b"\n"):
-                        raise GitError("Git batch blob output ended before its header")
-                    if header == expected_oid.encode("ascii") + b" missing\n":
-                        found[expected_oid] = None
-                        continue
-                    try:
-                        actual_oid, object_type, raw_size = header[:-1].decode("ascii").split()
-                        size = int(raw_size)
-                    except (UnicodeDecodeError, ValueError) as exc:
-                        raise GitError("Git batch blob output has malformed metadata") from exc
-                    if actual_oid != expected_oid or size < 0:
-                        raise GitError("Git batch blob output differs from the requested blob")
-                    payload = process.stdout.read(size + 1)
-                    if len(payload) != size + 1 or payload[-1:] != b"\n":
-                        raise GitError("Git batch blob output has a truncated payload")
-                    _require_object_hash(expected_oid, object_type, payload[:-1])
-                    found[expected_oid] = (object_type, payload[:-1])
-            except BaseException:
-                self.close()
-                raise
-        return found
+            return {oid: self.store.read(oid) for oid in oids}
 
     def read(self, oids: Sequence[str]) -> dict[str, bytes]:
         blobs: dict[str, bytes] = {}
         for oid, value in self.objects(oids).items():
-            if value is None:
-                raise GitError("Git batch blob output has malformed metadata")
-            if value[0] != "blob":
+            if value is None or value[0] != "blob":
                 raise GitError("Git batch blob output differs from the requested blob")
             blobs[oid] = value[1]
         return blobs
