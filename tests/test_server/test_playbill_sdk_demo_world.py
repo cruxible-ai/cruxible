@@ -294,11 +294,21 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
         pins=(),
         evidence_freshness=None,
     )
-    # The same definition through the HTTP envelope route the draft uses.
+    # The same authored definition through the typed input route the draft uses.
     http_proposal = http.post(
         f"/api/v1/{instance_id}/claim-types/proposals",
         json={
-            "claim_type": draft.definition.model_dump(mode="json"),
+            "input": draft.definition.model_dump(
+                mode="json",
+                exclude={
+                    "artifact_format",
+                    "identity",
+                    "lifecycle",
+                    "subject_scope",
+                    "slot_policy",
+                    "canonical_form",
+                },
+            ),
             "proposal_name": "empty-policy-http",
         },
     )

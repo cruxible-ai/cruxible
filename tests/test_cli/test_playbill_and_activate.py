@@ -97,7 +97,7 @@ def test_and_activate_stops_and_names_the_step_when_the_candidate_is_not_ready(
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
 
     result = CliRunner().invoke(
-        cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--and-activate", "--json"]
+        cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--and-activate"]
     )
 
     assert result.exit_code == 0, result.output

@@ -14,6 +14,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
 )
+from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequest,
@@ -1047,26 +1048,26 @@ class CruxibleClient:
             payload["base"] = base_payload
         return payload
 
-    def propose_claim_type(
+    def propose_builtin_claim_type(
         self,
         instance_id: str,
         *,
-        claim_type: Mapping[str, Any],
+        builtin: BuiltinClaimTypeName,
         proposal_name: str,
         base: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
         dry_run: bool | None = None,
         at: str | None = None,
-    ) -> contracts.ProposalInspection:
+    ) -> contracts.ClaimTypeInputProposalResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/claim-types/proposals",
             json={
-                **self._proposal_payload(
-                    proposal_name=proposal_name, base=base, claim_type=dict(claim_type)
-                ),
+                "tag": "cruxible-builtin-claim-type-propose-request-v1",
+                "builtin": builtin,
+                **self._proposal_payload(proposal_name=proposal_name, base=base),
                 **_change_control(dry_run, at),
             },
         )
-        return self._parse_model(response, contracts.ProposalInspection)
+        return self._parse_model(response, contracts.ClaimTypeInputProposalResult)
 
     def propose_claim_type_input(
         self,
@@ -1074,6 +1075,7 @@ class CruxibleClient:
         *,
         input: Mapping[str, Any],
         proposal_name: str,
+        base: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
         dry_run: bool | None = None,
         at: str | None = None,
     ) -> contracts.ClaimTypeInputProposalResult:
@@ -1082,7 +1084,7 @@ class CruxibleClient:
             json={
                 "tag": "playbill-claim-type-input-propose-request-v1",
                 "input": dict(input),
-                "proposal_name": proposal_name,
+                **self._proposal_payload(proposal_name=proposal_name, base=base),
                 **_change_control(dry_run, at),
             },
         )

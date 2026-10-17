@@ -258,7 +258,7 @@ def test_an_instance_created_before_the_builtin_adopts_it(
     import cruxible_core.runtime.instance as instance_module
     from cruxible_core.ledger.bootstrap import genesis_seed_set
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
-    from cruxible_core.service.claims.claim_types import service_propose_playbill_claim_type
+    from cruxible_core.service.claims.claim_types import service_propose_playbill_builtin_claim_type
     from tests.core_support._support import initialize_local
 
     older = genesis_seed_set("triggers-3-workspace-file")
@@ -268,14 +268,14 @@ def test_an_instance_created_before_the_builtin_adopts_it(
     assert claim_type_path("semantic.alias") not in instance.tree_at(
         instance.accepted_coordinate().git_oid
     )
-    inspection = service_propose_playbill_claim_type(
+    inspection = service_propose_playbill_builtin_claim_type(
         instance,
-        claim_type=SEMANTIC_ALIAS_CLAIM_TYPE,
+        builtin="semantic.alias",
         actor_id="owner",
         proposal_name="builtin-semantic-alias",
         timestamp="2026-10-09T12:00:00.000000Z",
     )
-    proposal_id = inspection.proposal.admission.proposal_id  # type: ignore[union-attr]
+    proposal_id = inspection.proposal.proposal.admission.proposal_id  # type: ignore[union-attr]
     receipt = service_activate_playbill_proposal(
         instance, proposal_id=proposal_id, activated_by="owner"
     )
@@ -291,7 +291,7 @@ def test_an_instance_seeded_with_the_alias_alone_adopts_distinct_from(
     from cruxible_client.contracts.builtin_claim_types import SEMANTIC_DISTINCT_FROM_CLAIM_TYPE
     from cruxible_core.ledger.bootstrap import genesis_seed_set
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
-    from cruxible_core.service.claims.claim_types import service_propose_playbill_claim_type
+    from cruxible_core.service.claims.claim_types import service_propose_playbill_builtin_claim_type
     from tests.core_support._support import initialize_local
 
     older = genesis_seed_set("triggers-3-workspace-file-alias")
@@ -300,14 +300,14 @@ def test_an_instance_seeded_with_the_alias_alone_adopts_distinct_from(
     monkeypatch.undo()
     path = claim_type_path("semantic.distinct_from")
     assert path not in instance.tree_at(instance.accepted_coordinate().git_oid)
-    inspection = service_propose_playbill_claim_type(
+    inspection = service_propose_playbill_builtin_claim_type(
         instance,
-        claim_type=SEMANTIC_DISTINCT_FROM_CLAIM_TYPE,
+        builtin="semantic.distinct_from",
         actor_id="owner",
         proposal_name="builtin-semantic-distinct-from",
         timestamp="2026-10-09T12:00:00.000000Z",
     )
-    proposal_id = inspection.proposal.admission.proposal_id  # type: ignore[union-attr]
+    proposal_id = inspection.proposal.proposal.admission.proposal_id  # type: ignore[union-attr]
     receipt = service_activate_playbill_proposal(
         instance, proposal_id=proposal_id, activated_by="owner"
     )

@@ -41,7 +41,6 @@ def test_cli_claim_attest_uses_the_real_local_key_path(
             "--support",
             "--note",
             "examined through CLI",
-            "--json",
         ],
     )
 

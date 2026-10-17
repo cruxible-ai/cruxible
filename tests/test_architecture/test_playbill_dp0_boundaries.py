@@ -392,7 +392,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "file_context",
         "check_file_bundle",
         "propose_file_bundle",
-        "propose_claim_type",
+        "propose_builtin_claim_type",
         "propose_claim_type_input",
         "append_claim_attestation",
         "read_claim_batch",
@@ -449,30 +449,6 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "unsuppress_curation",
         "since",
     }
-
-
-def test_unserved_donor_operations_retain_permissions_without_public_registration() -> None:
-    from cruxible_core.runtime.permissions import (
-        DONOR_OPERATION_PERMISSIONS,
-        PERMISSION_REQUIREMENTS,
-        RUNTIME_OPERATION_PERMISSIONS,
-        TOOL_PERMISSIONS,
-        PermissionMode,
-    )
-
-    assert DONOR_OPERATION_PERMISSIONS == {
-        "cruxible_feedback_adjudicate": PermissionMode.GRAPH_WRITE,
-        "cruxible_resolve_group": PermissionMode.GRAPH_WRITE,
-        "cruxible_supersede_claim": PermissionMode.GRAPH_WRITE,
-        "cruxible_retract_claim": PermissionMode.GRAPH_WRITE,
-        "cruxible_supersede_entity": PermissionMode.GRAPH_WRITE,
-        "cruxible_retire_entity": PermissionMode.GRAPH_WRITE,
-    }
-    assert set(DONOR_OPERATION_PERMISSIONS).isdisjoint(TOOL_PERMISSIONS)
-    assert set(DONOR_OPERATION_PERMISSIONS).isdisjoint(RUNTIME_OPERATION_PERMISSIONS)
-    assert all(
-        PERMISSION_REQUIREMENTS[name] == tier for name, tier in DONOR_OPERATION_PERMISSIONS.items()
-    )
 
 
 def test_pc_d_retired_donor_packages_and_modules_are_absent() -> None:

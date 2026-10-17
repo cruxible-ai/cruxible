@@ -79,7 +79,7 @@ class _StrictMigrationModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-MigrationInputDisposition: TypeAlias = Literal["successor", "retire", "invalidation"]
+MigrationInputDisposition: TypeAlias = Literal["successor", "retire"]
 MigrationResultDisposition: TypeAlias = Literal["successor", "retire"]
 
 
@@ -311,27 +311,9 @@ def _normalized_dependents(
     return tuple(
         ClaimTypeMigrationDispositionV1(
             claim_id=item.claim_id,
-            disposition=("retire" if item.disposition == "invalidation" else item.disposition),
+            disposition=item.disposition,
         )
         for item in dependents
-    )
-
-
-def _invalidation_warnings(
-    dependents: tuple[
-        ClaimTypeDependentDispositionV1
-        | ClaimTypeDependentDispositionV2
-        | ClaimTypeDependentDisposition,
-        ...,
-    ],
-) -> tuple[ClaimTypeMigrationWarningV1, ...]:
-    return tuple(
-        ClaimTypeMigrationWarningV1(
-            code="cruxible.claim_type.invalidation_deprecated",
-            field_path=f"$.dependents[{index}].disposition",
-        )
-        for index, item in enumerate(dependents)
-        if item.disposition == "invalidation"
     )
 
 
@@ -860,9 +842,7 @@ def _build_v2_candidate(
     for identity, current in _dependency_order(tree, by_identity):
         row = by_identity[identity]
         entry = supplied[identity]
-        disposition: MigrationResultDisposition = (
-            "retire" if entry.disposition == "invalidation" else entry.disposition
-        )
+        disposition: MigrationResultDisposition = entry.disposition
         if disposition not in row.permitted_dispositions:
             raise ClaimTypeMigrationDependentInvalid(
                 f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
@@ -968,9 +948,7 @@ def build_claim_type_migration_candidate(
     for identity, current in _dependency_order(tree, by_identity):
         row = by_identity[identity]
         entry = supplied[identity]
-        disposition: MigrationResultDisposition = (
-            "retire" if entry.disposition == "invalidation" else entry.disposition
-        )
+        disposition: MigrationResultDisposition = entry.disposition
         if disposition not in row.permitted_dispositions:
             raise ClaimTypeMigrationDependentInvalid(
                 f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
@@ -1006,7 +984,7 @@ def build_claim_type_migration_candidate(
             normalized[identity]
             for identity in sorted(normalized, key=lambda item: item.encode("utf-8"))
         ),
-        _invalidation_warnings(dispositions),
+        (),
     )
 
 
@@ -1084,9 +1062,7 @@ def build_dependent_closure_candidate(
     for identity, current in _dependency_order(tree, by_identity):
         row = by_identity[identity]
         entry = supplied[identity]
-        disposition: MigrationResultDisposition = (
-            "retire" if entry.disposition == "invalidation" else entry.disposition
-        )
+        disposition: MigrationResultDisposition = entry.disposition
         if disposition not in row.permitted_dispositions:
             raise ClaimTypeMigrationDependentInvalid(
                 f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
@@ -1242,7 +1218,7 @@ def _service_migrate_claim_type_v1(
             workspace_advertisement=proposal.workspace_advertisement,
             accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         ),
-        warnings=_invalidation_warnings(request.dependents),
+        warnings=(),
         lint=lint if lint.warnings else None,
     )
 
@@ -1310,7 +1286,7 @@ def _service_migrate_claim_type_v2(
             successor_artifact_digest=claim_type_digest(successor).tagged,
             semantic_delta=delta,
             dependents=inventory,
-            warnings=_invalidation_warnings(request.dependents),
+            warnings=(),
             lint=lint if lint.warnings else None,
         )
 
@@ -1342,7 +1318,7 @@ def _service_migrate_claim_type_v2(
             workspace_advertisement=proposal.workspace_advertisement,
             accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         ),
-        warnings=_invalidation_warnings(request.dependents),
+        warnings=(),
         lint=lint if lint.warnings else None,
     )
 

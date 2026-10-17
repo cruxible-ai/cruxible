@@ -60,7 +60,7 @@
     "POST": "ClaimTypeMigrationResultV1 | ClaimTypeMigrationPreflight | ClaimTypeMigrationResultV2 | ClaimTypeMigrationResult"
   },
   "/api/v1/{instance_id}/claim-types/proposals": {
-    "POST": "ProposalInspection | ClaimTypeInputProposalResult"
+    "POST": "ClaimTypeInputProposalResult"
   },
   "/api/v1/{instance_id}/claim-types/upgrade": {
     "POST": "ClaimTypeUpgradeResult"

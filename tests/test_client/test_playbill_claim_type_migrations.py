@@ -138,7 +138,7 @@ def test_client_parses_v3_attributed_retirement_result_and_warning() -> None:
     assert result.warnings == [warning]
 
 
-def test_client_preserves_expert_claim_type_proposal_lint() -> None:
+def test_client_preserves_named_builtin_proposal_lint() -> None:
     warning = {
         "code": "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
         "field_path": "$.evidence_admission_policy.rules",
@@ -152,7 +152,7 @@ def test_client_preserves_expert_claim_type_proposal_lint() -> None:
         return httpx.Response(
             200,
             json={
-                **_result()["proposal"],
+                "proposal": _result()["proposal"],
                 "lint": {"tag": "playbill-claim-type-proposal-lint-v1", "warnings": [warning]},
             },
         )
@@ -162,9 +162,10 @@ def test_client_preserves_expert_claim_type_proposal_lint() -> None:
         base_url="http://cruxible", transport=httpx.MockTransport(handler)
     )
 
-    result = client.propose_claim_type(
+    assert not hasattr(client, "propose_claim_type")
+    result = client.propose_builtin_claim_type(
         "inst",
-        claim_type={"predicate": "project.work_item.status"},
+        builtin="semantic.alias",
         proposal_name="warn",
     )
 

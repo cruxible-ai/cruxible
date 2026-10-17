@@ -165,7 +165,7 @@ def test_real_security_101_to_102_is_one_kit_add() -> None:
                 }
             )
         )
-        cx("authoring", "submit", str(payload), "--and-activate", "--json")
+        cx("authoring", "submit", str(payload), "--and-activate")
         preview = json.loads(
             cx(
                 "kit",

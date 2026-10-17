@@ -106,3 +106,49 @@ def test_every_change_controlled_command_takes_yes() -> None:
         result = CliRunner().invoke(cli, [*path, "--help"])
         assert result.exit_code == 0, result.output
         assert "--yes" in result.output
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ["document", "propose", "--envelope", "-", "--name", "doc"],
+        ["principal", "rotate", "owner", "--key-dir", "keys", "--name", "rotate"],
+        ["principal", "recover", "owner", "--key-dir", "keys", "--name", "recover"],
+        ["principal", "revoke", "owner", "--name", "revoke"],
+        ["compiler", "upgrade", "--to", "sha256:" + "a" * 64, "--name", "upgrade"],
+    ],
+)
+def test_proposal_commands_select_json_or_text_and_preserve_prompt_control(
+    monkeypatch: pytest.MonkeyPatch, path: list[str]
+) -> None:
+    import importlib
+    import json
+
+    from cruxible_client import contracts
+    from cruxible_client.authoring.examples import document_example
+
+    commands = importlib.import_module("cruxible_core.cli.commands.playbill")
+    result = contracts.ProposalInspection(
+        status="would_propose",
+        proposal={"evaluation": {"verdict": "passed"}},
+        accepted_coordinate=contracts.AcceptedCoordinate(
+            git_oid="a" * 40,
+            semantic_root="sha256:" + "b" * 64,
+            generation_root="sha256:" + "c" * 64,
+            compiler_digest="sha256:" + "d" * 64,
+        ),
+    )
+    monkeypatch.setattr(commands, "_server_call", lambda *_a, **_kw: result)
+    monkeypatch.setattr(commands, "_principal_successor", lambda **_kw: result)
+    monkeypatch.setattr(commands, "_read_model", lambda *_a: document_example())
+    _terminal(monkeypatch, True)
+
+    rendered = CliRunner().invoke(cli, path, input="n\n")
+    assert rendered.exit_code == 0, rendered.output
+    assert "would_propose" in rendered.stdout
+    assert "Commit this change?" in rendered.stdout
+
+    machine = CliRunner().invoke(cli, [*path, "--json"])
+    assert machine.exit_code == 0, machine.output
+    assert json.loads(machine.stdout)["status"] == "would_propose"
+    assert "Commit this change?" not in machine.stdout

@@ -665,19 +665,47 @@ class ClaimTypeDraft:
         ``.approve(...)`` and ``.activate()``.
         """
 
-        result = self._playbill._client.propose_claim_type(
-            self._playbill._instance_id,
-            claim_type=self.definition.model_dump(mode="json"),
-            proposal_name=proposal_name,
-            base=_api_coordinate(self._playbill.coordinate),
+        from cruxible_client.contracts.builtin_claim_types import (
+            BUILTIN_CLAIM_TYPES,
+            BuiltinClaimTypeName,
         )
-        admission = result.proposal.get("admission")
+
+        cx = self._playbill
+        builtin = BUILTIN_CLAIM_TYPES.get(self.predicate)
+        if builtin is not None and self.definition == builtin:
+            result = cx._client.propose_builtin_claim_type(
+                cx._instance_id,
+                builtin=cast(BuiltinClaimTypeName, self.predicate),
+                proposal_name=proposal_name,
+                base=_api_coordinate(cx.coordinate),
+            )
+        else:
+            value = self.definition.model_dump(
+                mode="json",
+                exclude={
+                    "artifact_format",
+                    "identity",
+                    "lifecycle",
+                    "subject_scope",
+                    "slot_policy",
+                },
+            )
+            for field_name in ("evidence_requirement", "revision_evidence", "canonical_form"):
+                if value.get(field_name) is None:
+                    value.pop(field_name, None)
+            result = cx._client.propose_claim_type_input(
+                cx._instance_id,
+                input=value,
+                proposal_name=proposal_name,
+                base=_api_coordinate(cx.coordinate),
+            )
+        admission = result.proposal.proposal.get("admission")
         proposal_id = admission.get("proposal_id") if isinstance(admission, Mapping) else None
         if not isinstance(proposal_id, str):
             raise ValueError("claim-type proposal omitted its proposal_id")
         return ClaimTypeProposal(
             proposal=Proposal(self._playbill, proposal_id),
-            lint=result.lint or api.ClaimTypeProposalLint(warnings=()),
+            lint=result.lint,
         )
 
 
@@ -5039,7 +5067,10 @@ class Line:
 
         ``event`` is the retained Capture event a Line whose Procedure takes an
         event input runs on; an event the enabled Line already admitted refuses
-        unless ``repeat=True``.
+        unless ``repeat=True``. ``occurrence_id`` only asserts this admission's
+        identity, which includes the daemon evaluation instant; it cannot select
+        pending work. Use ``line.dispatch(occurrence_id=...)`` for a retained
+        pending occurrence shown by ``line.evaluate()`` or ``cx.get(line.ref)``.
 
         Next: ``run.succeeded`` and ``run.result``, or ``cx.get(f"ProcedureRun:{run.run_id}")``.
         """

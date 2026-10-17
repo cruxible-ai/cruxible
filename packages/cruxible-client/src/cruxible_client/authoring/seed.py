@@ -115,7 +115,7 @@ SEED_ENTRY_DIRECTORIES: Final[Mapping[str, SeedEntryKind]] = {
 file: the layout *is* the manifest, and the plan below is its rendering."""
 
 SEED_GROUP_OPERATIONS: Final[Mapping[SeedEntryKind, str]] = {
-    "claim_type": "playbill_propose_claim_type",
+    "claim_type": "playbill_propose_claim_type_input",
     "subject": "playbill_authoring_submit",
     "document": "playbill_propose_document",
     "query_definition": "playbill_authoring_submit",

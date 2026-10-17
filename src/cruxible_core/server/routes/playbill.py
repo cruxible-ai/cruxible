@@ -9,6 +9,10 @@ from fastapi import APIRouter, Query, Request
 from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
+from cruxible_client.contracts.authoring.models import (
+    AuthoringIntentCompileRequest,
+    AuthoringIntentCompileRequestV1,
+)
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.change_control import ChangeControlRequest
 from cruxible_client.contracts.claim_attestations import (
@@ -93,13 +97,11 @@ from cruxible_core.server.playbill_request_models import (
     LedgerMirrorRequest,
     LedgerPublishRequest,
     NextRequest,
-    PlaybillAuthoringCompileRequest,
-    PlaybillAuthoringCompileRequestV3,
     ProposalReadmitRequest,
     ProposalRejectRequest,
     ProposalWithdrawRequest,
+    ProposeBuiltinClaimTypeRequest,
     ProposeClaimTypeInputRequest,
-    ProposeClaimTypeRequest,
     ProposeDocumentRequest,
     ProposePrincipalRequest,
     ResolveCoverageRequest,
@@ -644,23 +646,24 @@ def propose_files(
 
 @router.post(
     "/{instance_id}/claim-types/proposals",
-    response_model=(contracts.ProposalInspection | contracts.ClaimTypeInputProposalResult),
+    response_model=contracts.ClaimTypeInputProposalResult,
 )
 def propose_claim_type(
     instance_id: str,
-    req: ProposeClaimTypeRequest | ProposeClaimTypeInputRequest,
-) -> contracts.ProposalInspection | contracts.ClaimTypeInputProposalResult:
+    req: ProposeBuiltinClaimTypeRequest | ProposeClaimTypeInputRequest,
+) -> contracts.ClaimTypeInputProposalResult:
     if isinstance(req, ProposeClaimTypeInputRequest):
         return playbill_api.playbill_propose_claim_type_input(
             resolve_server_instance_id(instance_id),
             input=req.input,
             proposal_name=req.proposal_name,
+            base=req.base,
             dry_run=req.dry_run,
             at=req.at,
         )
-    return playbill_api.playbill_propose_claim_type(
+    return playbill_api.playbill_propose_builtin_claim_type(
         resolve_server_instance_id(instance_id),
-        claim_type=req.claim_type,
+        builtin=req.builtin,
         proposal_name=req.proposal_name,
         base=req.base,
         dry_run=req.dry_run,
@@ -769,8 +772,8 @@ def list_pending_authoring_intents(
 def compile_authoring(
     instance_id: str,
     req: (
-        PlaybillAuthoringCompileRequest
-        | PlaybillAuthoringCompileRequestV3
+        AuthoringIntentCompileRequestV1
+        | AuthoringIntentCompileRequest
         | AuthoringInputCompileRequest
     ),
 ) -> contracts.AuthoringPreflightResult:
@@ -780,7 +783,7 @@ def compile_authoring(
             input=req.input,
             intent_id=req.intent_id,
         )
-    if isinstance(req, PlaybillAuthoringCompileRequestV3):
+    if isinstance(req, AuthoringIntentCompileRequest):
         return playbill_api.playbill_authoring_compile(
             resolve_server_instance_id(instance_id),
             payload=req.payload,
@@ -826,7 +829,7 @@ def preflight_authoring_intent(
 )
 def compile_and_submit_authoring(
     instance_id: str,
-    req: PlaybillAuthoringCompileRequestV3 | AuthoringInputSubmitRequest,
+    req: AuthoringIntentCompileRequest | AuthoringInputSubmitRequest,
 ) -> contracts.AuthoringSubmitResultRecord | contracts.AuthoringPreflightResult:
     """Compile and submit one payload; a dry-run input answers with its preflight."""
 

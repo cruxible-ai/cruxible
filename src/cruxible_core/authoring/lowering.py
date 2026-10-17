@@ -30,6 +30,10 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
     ArtifactRef,
 )
+from cruxible_client.contracts.authoring.inputs import (
+    AuthoringInputError,
+    refuse_unserved_procedure_nodes,
+)
 from cruxible_client.contracts.authoring.models import (
     MAX_REPAIR_BYTES,
     ApprovalPolicyAuthoringPayload,
@@ -2327,6 +2331,19 @@ def _same_revision_content(candidate: BaseModel, previous: BaseModel) -> bool:
     )
 
 
+def _refuse_unserved_procedure(definition: dict[str, object]) -> None:
+    try:
+        refuse_unserved_procedure_nodes(definition)
+    except AuthoringInputError as exc:
+        _refuse(
+            exc.code,
+            exc.field_path,
+            exc.message,
+            repair_kind="replace_definition",
+            repair_description=exc.repair,
+        )
+
+
 def _lower_procedure(
     instance: PlaybillInstance,
     *,
@@ -2339,6 +2356,8 @@ def _lower_procedure(
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ProcedureAuthoringPayload)
+    if not payload.retire:
+        _refuse_unserved_procedure(payload.definition)
     source_authoring = "source_request" in payload.definition
     accepted: dict[str, tuple[str, str]] = {}
     candidate_artifacts: dict[str, tuple[str, str]] = {}
@@ -2705,6 +2724,7 @@ def _lower_blueprint_instance(
         )
     assert blueprint_content is not None
     blueprint = parse_blueprint(blueprint_content, path=blueprint_target)
+    _refuse_unserved_procedure(blueprint.definition.model_dump(mode="json", by_alias=True))
     if blueprint.lifecycle.state != "live":
         _refuse(
             "cruxible.authoring.blueprint_retired",
@@ -5208,28 +5228,6 @@ def _stage_claim_type_succession(
     dependent's successor.
     """
 
-    for position, dependent in enumerate(member.dependents):
-        if dependent.disposition != "invalidation":
-            continue
-        _refuse(
-            "cruxible.authoring.claim_type_succession_disposition_deprecated",
-            f"dependents[{position}].disposition",
-            "`invalidation` is the standalone migration route's deprecated spelling of "
-            "`retire`. A change set refuses or accepts -- it has no warning channel to "
-            "answer a deprecated word with -- so say which retirement this is.",
-            repair_kind="replace_disposition",
-            repair_description=(
-                "Disposition this dependent `retire` with a claim_retirement_reason, or "
-                "run the succession through the operator route "
-                "`cruxible claim-type migrate`, which still tolerates the "
-                "deprecated word and warns."
-            ),
-            replacement={
-                "identity": dependent.identity.qualified,
-                "operator_route": "cruxible claim-type migrate",
-                "permitted_dispositions": ["re_author", "retire", "successor"],
-            },
-        )
     try:
         type_path, predecessor, successor = resolve_claim_type_succession(
             staged_tree,

@@ -51,8 +51,9 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
     monkeypatch.setattr(handlers, "_get_client", lambda: client)
 
     def invoke(*args):
+        extra = () if args[:1] == ("authoring",) else ("--json",)
         result = CliRunner().invoke(
-            cli, ["--server-url", "http://cruxible", "--instance-id", instance_id, *args, "--json"]
+            cli, ["--server-url", "http://cruxible", "--instance-id", instance_id, *args, *extra]
         )
         assert result.exit_code == 0, result.output
         return json.loads(result.stdout)

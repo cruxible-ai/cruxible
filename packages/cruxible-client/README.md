@@ -2,7 +2,7 @@
 
 `cruxible-client` is the Python client for a Cruxible daemon; `pip install
 cruxible` installs it together with the daemon, CLI and MCP server. This is an
-API reference. The [source authoring reference](../../docs/sdk-v2-reference.md)
+API reference. The [source authoring reference](../../docs/procedure-source.md)
 specifies authoring Procedures as Python source (`@procedure`,
 `ProcedureSource`), contract-derived records, typed query and run results, and
 child calls. Names and typed handles are authoring inputs; exact versions and
@@ -1554,9 +1554,9 @@ caps as its budget unless one is given.
 Line then accepts only that Source's exact CaptureContract event, and every
 Trigger aimed at it must fire on it.
 
-Lowering refuses a Procedure with an `exhaust_tap` node, which no run path
-admits. A Procedure always pins exact providers (only a Blueprint leaves slots
-open), so the Line pins exactly what the Procedure names.
+Authoring refuses `exhaust_tap` with `cruxible.procedure.node_not_served`; no run path
+admits it yet. Retained artifacts still parse and verify. A Procedure always
+pins exact providers (only a Blueprint leaves slots open), so the Line pins exactly what the Procedure names.
 ``acquisition_policy`` is required only when the Procedure has Source
 nodes. ``parameters`` is the Procedure's input record; lowering checks it
 against the Procedure's input contract. ``max_authority`` (observe,
@@ -3217,18 +3217,6 @@ Import: `cruxible_client.authoring.sdk_types.Disposition`. [Source](src/cruxible
 | `CONTRADICT` | `'contradict'` |
 | `UNSURE` | `'unsure'` |
 
-<a id="api-audience"></a>
-
-## `Audience`
-
-Import: `cruxible_client.authoring.sdk_types.Audience`. [Source](src/cruxible_client/authoring/sdk_types.py)
-
-| Member | Value |
-|---|---|
-| `AGENT` | `'agent'` |
-| `HUMAN` | `'human'` |
-| `BOTH` | `'both'` |
-
 <a id="api-activationpolicy"></a>
 
 ## `ActivationPolicy`
@@ -3442,21 +3430,55 @@ different stable graph identity. Edges use node identities. Steps fall through
 in order unless a forward `next`/Guard branch is supplied. Terminals have no
 successor. Every consumed alias must exist on every path reaching its consumer.
 
-| Step | Behavior | Special requirement |
-|---|---|---|
-| StateTap | Named accepted query read bound at admission | No dynamic query depending on a provider output later in the run |
-| Source | Acquisition through selected provider/interface | Capture contract and admitted acquisition policy |
-| Call | Contracted operation | Bound provider; applicable effect policy and authority |
-| Transform | Closed deterministic transformation | Matching declared contracts and typed transform spec |
-| Project | Explicit output construction | Fields satisfy output contract |
-| Guard | Forward routing or refusal | on_false defaults to `$abort`; on_true defaults to continuation |
-| EmitCapture | Register output evidence, end path | Served through accepted Lines |
-| PostInbox | Post items, as they are, to the Line inbox; end path | Served through accepted Lines; observe authority; `max_items` caps one run |
-| ProposeChangeSet | Submit governed candidate templates, end path | Served through Lines with mandate/authority; does not accept |
-| SettleChangeSet | Settle candidate templates under the one covering settle mandate, end path | Served through Lines; falls back as that mandate declares |
-| Halt | End path without successful return value | No successor |
+Sequence supports exactly these 11 step kinds:
 
-Contracts are accepted references or carried Contract definitions. Previous()
+| Graph kind | Sequence step | Served lane / requirements |
+|---|---|---|
+| `state_tap` | `StateTap` | Direct or Line; named query binds at admission, before provider outputs exist |
+| `source` | `Source` | Direct or Line; bound provider/interface, CaptureContract and acquisition policy |
+| `call` | `Call` | Direct or Line; bound provider/interface and applicable effect policy/authority |
+| `transform` | `Transform` | Direct or Line; closed transform spec and matching Contracts |
+| `project` | `Project` | Direct or Line; explicit fields satisfy output Contract |
+| `guard` | `Guard` | Direct or Line; forward branches, false defaults to `$abort` |
+| `halt` | `Halt` | Direct or Line; ends without a successful value |
+| `emit_capture` | `EmitCapture` | Line only; registers evidence and ends the path |
+| `post_inbox` | `PostInbox` | Line only; observe authority, bounded `max_items`, ends the path |
+| `propose_change_set` | `ProposeChangeSet` | Line only; covering mandate/authority, submits without accepting |
+| `settle_change_set` | `SettleChangeSet` | Line only; effective authority and one covering settle mandate with its declared fallback |
+
+The remaining graph kinds have no Sequence step:
+
+| Graph kind absent from Sequence | Raw graph model | Served lane / requirements |
+|---|---|---|
+| `state_claim` | `ClaimTapNode` | Direct or Line; exact ClaimType and named Subject, bounded selection |
+| `repeat` | `RepeatNode` | Transform-only body: direct or Line; provider-bearing body: Line only; bounded attempts |
+| `select` | `SelectNode` | Direct or Line; join mutually exclusive producers |
+| `constant` | `ConstantNode` | Direct or Line; literal record, dollar-prefixed strings remain data |
+| `return` | `ReturnNode` | Direct or Line; explicit typed successful leaf |
+| `invoke` | `InvokeNode` | Direct or Line subject to the child's closure and terminal authority |
+| `exhaust_tap` | `ExhaustTapNode` | No lane yet; fresh authoring refuses `cruxible.procedure.node_not_served` |
+
+For the six served kinds absent from Sequence, use the raw typed
+`ProcedureInput` from `cruxible_client.authoring.inputs`: supply graph-format-6
+node records in `definition.nodes`, declare `contracts`, then call
+`cx.procedure(definition=input).prepare()` or `.submit()`. The corresponding
+node models in `cruxible_client.contracts.procedures.models` specify each
+record's fields; the daemon resolves authoring references and validates the
+resulting `ProcedureDefinition` through the same compiler. Use symbolic
+`accepted` / `candidate` references and `carried_contract` references in fresh
+inputs; exact artifact pins and digests belong to accepted graphs. The tagless
+wire fallback is that same `ProcedureInput` JSON via `authoring compile` or
+`authoring submit --dry-run`. This adds no execution implementation.
+
+Sequence's global `returns` alias and a returning value-producing leaf remain
+available, but there is no explicit `Return` step. These six missing step
+classes are planned for the kit-authoring phase; they are not Sequence support
+today. `exhaust_tap` has no runnable fallback, including on a Line; retained
+artifacts still read and verify. Open provider slots belong to a Blueprint,
+which must be instantiated before running.
+
+Sequence Contracts must be owner-carried Contract definitions; accepted references
+are refused by this frontend. Previous()
 denotes the preceding value-producing output, or invocation input when first.
 Output(alias, path) selects a particular earlier output. Source.request and
 Call.input default to Previous(); Project.fields is explicit. Whole-output Call
@@ -3472,19 +3494,18 @@ Every definition is graph format 6.
 
 | Run surface | Availability |
 |---|---|
-| Direct run (`Procedure.run`) | state_tap, state_claim, transform, project, guard, repeat, select, constant, return, invoke, halt, source and call nodes |
+| Direct run (`Procedure.run`) | state_tap, state_claim, transform, project, guard, select, constant, return, halt, source and call; transform-only repeat; invoke subject to child closure/authority |
 | Accepted Line (`cx.line(name).run()`) | Adds authorized emit_capture, post_inbox, propose_change_set and settle_change_set paths; a Repeat whose body calls a provider also runs only on a Line |
-| Nowhere | exhaust_tap; open slots belong only to a Blueprint |
+| No lane yet | exhaust_tap is retained but fresh authoring refuses `cruxible.procedure.node_not_served`; a Line cannot enable it |
 
 `cx.get(f"Procedure:{name}")` reports which of these applies as `runnable`
 (`direct`, `line` or `unsupported`) with the nodes behind it.
 
-Bounded Repeat is available in shared ProcedureInput but has no Sequence step
-class. Current Sequence has no general value-merge, nested invoke, recursion, or
-parallel execution. Python source compiles through `@procedure` /
-`ProcedureSource` in `cruxible_client.authoring.source`, not through Sequence. StateTap binds at admission;
-Source requests can depend on prior runtime outputs. Graph legality does not
-promise availability in every run lane.
+The tables above distinguish graph capabilities from Sequence support.
+Python source compiles through `@procedure` / `ProcedureSource` in
+`cruxible_client.authoring.source`, with its own supported subset. StateTap
+binds at admission; Source requests can depend on prior runtime outputs.
+Graph legality does not promise availability in every run lane.
 
 `Procedure.run` admits a new invocation. Read its retained status by run ID via
 `ProcedureRun.refresh`; do not use fresh invocation as a generic historical
@@ -3839,7 +3860,7 @@ input contract. Pass it as `Procedure.run(input=record)`; successful
 guards result access, and `.children` returns authorized child run handles.
 `cx.get("query:NAME")` shows a named query's parameters, and
 `cx.query(name=NAME, params=..., receipt="full")` returns its result with the
-replay receipt. See the [source authoring reference](../../docs/sdk-v2-reference.md)
+replay receipt. See the [source authoring reference](../../docs/procedure-source.md)
 for the exhaustive source syntax, arguments, validation, and execution boundaries.
 
 ### `Procedure.run`
@@ -5815,25 +5836,28 @@ propose_file_bundle(
 
 HTTP: `POST f'/api/v1/{instance_id}/files/proposals'`.
 
-<a id="api-cruxibleclient-propose-claim-type"></a>
+<a id="api-cruxibleclient-propose-builtin-claim-type"></a>
 
-### `CruxibleClient.propose_claim_type`
+### `CruxibleClient.propose_builtin_claim_type`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-propose_claim_type(
+propose_builtin_claim_type(
     instance_id: str,
     *,
-    claim_type: Mapping[str, Any],
+    builtin: BuiltinClaimTypeName,
     proposal_name: str,
     base: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.ProposalInspection
+) -> contracts.ClaimTypeInputProposalResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/claim-types/proposals'`.
+Builtin adoption sends only its declared name; the daemon supplies the exact
+builtin definition. User definitions use typed ClaimType input, with an optional
+base coordinate. Raw ClaimType envelopes are refused.
 
 <a id="api-cruxibleclient-propose-claim-type-input"></a>
 
@@ -5847,6 +5871,7 @@ propose_claim_type_input(
     *,
     input: Mapping[str, Any],
     proposal_name: str,
+    base: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ClaimTypeInputProposalResult
@@ -6045,6 +6070,15 @@ compile_authoring(
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/authoring/compile'`.
+
+The unstamped payload form remains in use by CLI `authoring bind` and MCP
+`cruxible_authoring_bind`: both compile a locally bound selection payload
+without an SDK program stamp. The stamped form requires
+`reference_expectations` and `program_stamp` together and validates the stamp's
+SDK version and contract snapshot. `compile_authoring` serves both forms;
+`submit_authoring` serves only the stamped form. Tagless input compilation and
+submission remain separate typed entry points. These forms are retained while
+binding callers depend on the unstamped path.
 
 <a id="api-cruxibleclient-compile-authoring-input"></a>
 
@@ -6833,7 +6867,6 @@ include constructor/validator definitions for request and response contracts.
 | `AbsentSubject` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `AccessProfile` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ActivationPolicy` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
-| `Audience` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ArtifactIdentity` | `cruxible_client.contracts.artifacts` · [Source](src/cruxible_client/contracts/artifacts.py) |
 | `ArtifactLifecycle` | `cruxible_client.contracts.artifacts` · [Source](src/cruxible_client/contracts/artifacts.py) |
 | `ArtifactPin` | `cruxible_client.contracts.artifacts` · [Source](src/cruxible_client/contracts/artifacts.py) |
@@ -6899,7 +6932,7 @@ include constructor/validator definitions for request and response contracts.
 [Source](src/cruxible_client/authoring/source.py)
 
 Python source authoring of Procedures; the
-[source authoring reference](../../docs/sdk-v2-reference.md) specifies it in
+[source authoring reference](../../docs/procedure-source.md) specifies it in
 full.
 
 #### `procedure`

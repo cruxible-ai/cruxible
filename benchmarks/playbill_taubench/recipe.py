@@ -165,7 +165,9 @@ def run_cli(*args: str) -> str:
 
 
 def run_cli_json(*args: str) -> Any:
-    return json.loads(run_cli(*args, "--json"))
+    # Authoring emits its structured result without an output selector.
+    extra = () if args[:1] == ("authoring",) else ("--json",)
+    return json.loads(run_cli(*args, *extra))
 
 
 # -- step 1: stand up a served instance -------------------------------------
@@ -281,22 +283,59 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
                 "rationale": f"Seed work item {payload['subject_id']}.",
             }
             if kind == "subject"
-            else {"kind": kind, "query_definition": dict(payload)}
+            # Typed ClaimType authoring produces the current envelope, so the
+            # historical bundle's explicit dependency digest is no longer its
+            # accepted digest. The authoring compiler owns base resolution.
+            else {"kind": kind, "query_definition": {**payload, "pins": []}}
         )
         authoring_path.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
         submitted = run_cli_json("authoring", "submit", str(authoring_path))
-        return str(submitted["status"]["proposal_id"])
+        proposal = submitted["status"].get("proposal_id")
+        if not isinstance(proposal, str):
+            raise RuntimeError(f"authoring {kind} did not submit: {submitted}")
+        return proposal
 
+    from cruxible_client.contracts.captures import (
+        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+        capture_contract_digest,
+        foreign_source_capture_contract,
+    )
+    from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
+
+    source_ids = {
+        json.loads(path.read_text())["source"]["source_id"]
+        for path in (bundle_dir / "claims").glob("*.json")
+    }
+    contracts = [DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT]
+    contracts.extend(foreign_source_capture_contract(source) for source in sorted(source_ids))
+    identities = {
+        capture_contract_digest(item).tagged: item.identity.qualified for item in contracts
+    }
+    input_dir = key_dir / "seed-authoring-inputs"
+    input_dir.mkdir(parents=True, exist_ok=True)
     for path in sorted((bundle_dir / "claim-types").glob("*.json")):
+        value = json.loads(path.read_text())
+        for field in ("artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"):
+            value.pop(field, None)
+        for field in ("evidence_requirement", "revision_evidence", "canonical_form"):
+            if value.get(field) is None:
+                value.pop(field, None)
+        for rule in value["evidence_admission_policy"]["rules"]:
+            if rule.pop("allowed_reducer_digests", ()):
+                raise ValueError(
+                    "legacy reducer allowances need an explicit current evidence policy"
+                )
+            rule["capture_contracts"] = [
+                *rule.get("capture_contracts", ()),
+                *(identities[digest] for digest in rule.pop("capture_contract_digests", ())),
+            ]
+        authoring_input = ClaimTypeInputRecord.model_validate(value)
+        input_path = input_dir / f"claim-type-{path.stem}.json"
+        input_path.write_text(authoring_input.model_dump_json())
         answer = run_cli_json(
-            "claim-type",
-            "propose",
-            "--envelope",
-            str(path),
-            "--name",
-            f"{name}-{path.stem}",
+            "claim-type", "propose", "--input", str(input_path), "--name", f"{name}-{path.stem}"
         )
-        record(f"claim_type:{path.stem}", "playbill_propose_claim_type", proposal_id(answer))
+        record(f"claim_type:{path.stem}", "playbill_propose_claim_type_input", proposal_id(answer))
 
     # Every new Subject is of a declared kind: work items are named by their slug.
     kinds_path = key_dir / "seed-authoring-inputs" / "subject-kind-project.work_item.json"

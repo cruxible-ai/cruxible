@@ -436,54 +436,30 @@ def test_migration_refuses_an_omitted_current_dependent(tmp_path: Path) -> None:
         )
 
 
-def test_v3_invalidation_normalizes_to_attributed_retirement_with_warning(
-    tmp_path: Path,
-) -> None:
-    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
-    result = service_migrate_claim_type(
-        instance,
-        request=ClaimTypeMigrationRequest(
-            mode="submit",
-            successor=_successor(instance),
-            dependents=(
-                ClaimTypeDependentDisposition(
-                    identity=ArtifactIdentity(kind="Claim", name=claim_id),
-                    disposition="invalidation",
-                    claim_retirement_reason="was-wrong",
-                ),
-            ),
-        ),
-        actor=AuthenticatedActor(actor_id="owner"),
-    )
+@pytest.mark.parametrize(
+    "model, values",
+    [
+        (ClaimTypeDependentDispositionV1, {"claim_id": "claim"}),
+        (ClaimTypeDependentDispositionV2, {"identity": {"kind": "Claim", "name": "claim"}}),
+        (ClaimTypeDependentDisposition, {"identity": {"kind": "Claim", "name": "claim"}}),
+    ],
+)
+def test_unshipped_invalidation_input_is_rejected(model, values) -> None:
+    from pydantic import ValidationError
 
-    assert isinstance(result, ClaimTypeMigrationResultV3)
-    assert result.dependents[0].disposition == "retire"
-    assert result.dependents[0].claim_retirement_reason == "was-wrong"
-    assert [warning.code for warning in result.warnings] == [
-        "cruxible.claim_type.invalidation_deprecated"
-    ]
-    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
-    assert tree_oid is not None
-    claim = parse_claim(
-        instance.proposal_tree(tree_oid)[claim_path(claim_id)],
-        path=claim_path(claim_id),
-    )
-    assert claim.lifecycle.state == "retired"
-    assert isinstance(claim, ClaimArtifact)
-    assert claim.retirement.reason == "was-wrong"
+    with pytest.raises(ValidationError, match="disposition"):
+        model.model_validate({**values, "disposition": "invalidation"})
 
 
-@pytest.mark.parametrize("disposition", ["retire", "invalidation"])
 def test_shape_changing_affects_package_migration_accepts_exact_retirement_tombstone(
     tmp_path: Path,
-    disposition: str,
 ) -> None:
     instance, claim_id, owner = _accepted_affects_package_world(tmp_path)
     successor = _subject_valued_affects_package_successor(instance)
     actor = AuthenticatedActor(actor_id="owner")
     dependent = ClaimTypeDependentDisposition(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
-        disposition=disposition,  # type: ignore[arg-type]
+        disposition="retire",
         claim_retirement_reason="was-rescinded",
     )
     preflight = service_migrate_claim_type(
@@ -511,9 +487,7 @@ def test_shape_changing_affects_package_migration_accepts_exact_retirement_tombs
     )
     assert isinstance(result, ClaimTypeMigrationResultV3)
     assert result.dependents[0].disposition == "retire"
-    assert [warning.code for warning in result.warnings] == (
-        [] if disposition == "retire" else ["cruxible.claim_type.invalidation_deprecated"]
-    )
+    assert result.warnings == ()
     proposal = result.proposal.proposal
     assert proposal.candidate is not None
     tree_oid = proposal.evaluation.evaluated_tree_oid

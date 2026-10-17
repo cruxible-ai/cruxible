@@ -175,7 +175,6 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_instance_rebuild_next": PermissionMode.ADMIN,
     "cruxible_host_workspace_registration": PermissionMode.READ_ONLY,
     "cruxible_host_show": PermissionMode.READ_ONLY,
-    "cruxible_inspect": PermissionMode.READ_ONLY,
     "cruxible_read": PermissionMode.READ_ONLY,
     "cruxible_propose": PermissionMode.GOVERNED_WRITE,
     "cruxible_body_read": PermissionMode.GOVERNED_WRITE,
@@ -187,24 +186,9 @@ RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_server_stop": PermissionMode.ADMIN,
 }
 
-# Unserved operations retained only for donor behavior and parity tests. Keeping
-# these names separate from ``TOOL_PERMISSIONS`` and
-# ``RUNTIME_OPERATION_PERMISSIONS`` makes their lack of a public transport
-# registration explicit while preserving the service-layer permission law
-# until the owning behavior is transplanted or removed.
-DONOR_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
-    "cruxible_feedback_adjudicate": PermissionMode.GRAPH_WRITE,
-    "cruxible_resolve_group": PermissionMode.GRAPH_WRITE,
-    "cruxible_supersede_claim": PermissionMode.GRAPH_WRITE,
-    "cruxible_retract_claim": PermissionMode.GRAPH_WRITE,
-    "cruxible_supersede_entity": PermissionMode.GRAPH_WRITE,
-    "cruxible_retire_entity": PermissionMode.GRAPH_WRITE,
-}
-
 PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
     **TOOL_PERMISSIONS,
     **RUNTIME_OPERATION_PERMISSIONS,
-    **DONOR_OPERATION_PERMISSIONS,
 }
 
 

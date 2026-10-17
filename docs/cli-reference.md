@@ -1,8 +1,8 @@
 # CLI reference
 
 Every `cruxible` command, grouped as `cruxible --help` lists them. Run any
-command with `--help` for its exact options; `--json` gives machine-readable
-output.
+command with `--help` for its exact options; commands that offer `--json`
+give machine-readable output.
 
 ## Global options
 
@@ -1277,7 +1277,7 @@ SDK: `read_kit_directory`, `write_kit_directory` and `stage_kit_providers` in
 
 ~~~text
 cruxible document propose --envelope FILE|- --name NAME [--dry-run|--commit] [--at OID] [--json]
-cruxible document propose --example document
+cruxible document propose --template
 ~~~
 
 `document propose` is the only Document subcommand; Documents are read through
@@ -1350,7 +1350,8 @@ values; stored in the canonical form `nfc, casefold, collapse_whitespace,
 trim`). `semantic.distinct_from` states that its object Subject is a different
 thing from its subject, whatever names or keys they share (any kinds; many
 values): the duplicates audit never groups the pair. An instance created before a builtin shipped adopts it with
-`propose --builtin NAME`, which proposes its exact envelope; MCP's
+`propose --builtin NAME`, which asks the daemon to propose its exact builtin
+definition; MCP's
 `cruxible_claim_type_propose` takes `builtin` in place of `input`, and the SDK
 offers `Cruxible.builtin_claim_type(name).propose(...)`. Add an alias with
 `cruxible add KIND/ID semantic.alias other-name --because TEXT`.
@@ -1588,22 +1589,23 @@ than choosing between ambiguous histories.
 ## authoring
 
 ~~~text
-cruxible authoring submit PAYLOAD|- [--dry-run] [--and-activate] [--brief] [--json]
+cruxible authoring submit PAYLOAD|- [--dry-run] [--and-activate] [--brief]
 cruxible authoring submit --intent-id INTENT_ID [PAYLOAD|-] [--dry-run] [--and-activate]
-  [--brief] [--json]
+  [--brief]
 cruxible authoring example [NAME]
 cruxible authoring example claim-cite-supporting-evidence
   --attestation-claim-id CLAIM_ID --capture-digest DIGEST
-cruxible authoring compile PAYLOAD|- [--intent-id INTENT_ID] [--json]
+cruxible authoring compile PAYLOAD|- [--intent-id INTENT_ID]
 cruxible authoring bind --file PATH --anchor TEXT [--occurrence N]
   [--window-lines N] [--workspace-root DIR]
-  --payload-file CLAIM_STUB|- [--json]
-cruxible authoring preflight INTENT_ID [--brief] [--json]
-cruxible authoring status INTENT_ID [--json]
-cruxible authoring get INTENT_ID [--json]
-cruxible authoring list [--json]
+  --payload-file CLAIM_STUB|-
+cruxible authoring preflight INTENT_ID [--brief]
+cruxible authoring status INTENT_ID
+cruxible authoring get INTENT_ID
+cruxible authoring list
 ~~~
 
+Authoring commands emit JSON; `--brief` selects the compact rendering where offered.
 PAYLOAD is a tagless authoring input file, or `-` for stdin. `authoring submit
 PAYLOAD` compiles, checks and submits in one call; `--dry-run` returns the
 preflight the submit would run, with every refusal, and saves no intent. Durable
@@ -1681,10 +1683,8 @@ the staged tree. Each dependent takes `successor` (carry it, re-pinned),
 rescission, `was-wrong` for a statement that was false, or `superseded` for the
 ordinary case of a statement that stood under a shape a later ruling replaced)
 or `re_author` (a sibling Claim member of the same set, naming that
-Claim again under the successor, named by `successor_claim_id`). The standalone
-route's fourth, deprecated word `invalidation` parses here and refuses typed,
-naming `cruxible claim-type migrate` as the command that still tolerates
-it. A successor that changes `object_kind` refuses `successor`
+Claim again under the successor, named by `successor_claim_id`). A successor
+that changes `object_kind` refuses `successor`
 for any live Claim dependent. `cruxible claim-type migrate` is the
 operator form of the same law and builds its candidate with the same code.
 
@@ -2253,6 +2253,10 @@ cruxible line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit N] [--js
 
 `enable`, `disable` and `run` are the normal flow; `evaluate` and `dispatch`
 recover what automation missed, and `cruxible next` points to them.
+Manual `run --occurrence-id` only asserts the id derived at admission, including
+that admission's daemon evaluation instant. A later retry derives a different
+manual id. Select retained pending work with `line dispatch --occurrence-id ID`,
+using an id shown by `line evaluate` or `get Line:NAME`.
 `evaluate --dispatch` does both in one command: it evaluates every page of the
 range (following `--cursor` itself, with the same `--until`), then dispatches
 each occurrence that evaluation made pending, one by one, and reports both

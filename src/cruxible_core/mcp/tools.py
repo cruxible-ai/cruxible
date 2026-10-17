@@ -1460,6 +1460,8 @@ def register_tools(
 
         ``event`` is the event input for a Line whose Procedure takes one;
         ``repeat`` runs an event its Triggers already admitted again.
+        ``occurrence_id`` asserts this admission, including its daemon instant;
+        use line_dispatch to select a retained pending occurrence.
         """
         return handlers.handle_playbill_line_run(
             require_instance_id(instance_id),
@@ -1503,21 +1505,18 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         prediction_id: str,
-        observation: str | None = None,
-        request: contracts.SettleRequest | None = None,
+        observation: str,
     ) -> contracts.SettleResult:
         """Settle one prediction from the Claim ID of an accepted observation.
 
         ``prediction_id`` is the contract name or the RSC-... window id ``next``
-        names; ``observation`` is the settling Claim's ID. ``request`` is the
-        advanced form (exact references or mandated terminal evidence).
+        names; ``observation`` is the settling Claim's ID. Advanced typed
+        settlement remains available through the SDK and HTTP.
         """
-        if (observation is None) == (request is None):
-            raise ValueError("pass exactly one of observation or request")
         return handlers.handle_playbill_settle_prediction(
             require_instance_id(instance_id),
             prediction_id,
-            request or contracts.SettleRequest(observation=observation),
+            contracts.SettleRequest(observation=observation),
         )
 
     @_tool

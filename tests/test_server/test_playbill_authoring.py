@@ -12,9 +12,6 @@ from cruxible_client.authoring.examples import claim_flow_a_example, procedure_e
 from cruxible_client.contracts.authoring.inputs import CarriedContractInput, lower_authoring_input
 from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_core.claims.claim_type_inputs import (
-    lower_claim_type_input,
-)
 from tests.core_support._claim_type_support import claim_type_input_example
 from tests.support.preflight_results import stub_diagnostic, stub_preflight_result
 
@@ -558,7 +555,7 @@ def test_http_claim_type_input_proposal_delivers_actionable_source_lint(
     assert warnings[0]["source_id"] == "corpus.runbook"
 
 
-@pytest.mark.parametrize("operation", ["expert_propose", "migrate"])
+@pytest.mark.parametrize("operation", ["builtin_propose", "migrate"])
 def test_http_claim_type_routes_preserve_optional_lint_payload(
     playbill_http: tuple[TestClient, str, Path],
     monkeypatch,
@@ -574,20 +571,21 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
         "replacement_rule_fragment": {"capture_contract_digests": ["sha256:" + "7" * 64]},
     }
     lint = contracts.ClaimTypeProposalLint(warnings=[warning])
-    if operation == "expert_propose":
+    if operation == "builtin_propose":
         monkeypatch.setattr(
-            "cruxible_core.runtime.playbill_api.playbill_propose_claim_type",
-            lambda _selected, **_values: contracts.ProposalInspection(
-                proposal={"proposal_id": "sha256:" + "8" * 64},
-                accepted_coordinate=COORDINATE,
+            "cruxible_core.runtime.playbill_api.playbill_propose_builtin_claim_type",
+            lambda _selected, **_values: contracts.ClaimTypeInputProposalResult(
+                proposal=contracts.ProposalInspection(
+                    proposal={"proposal_id": "sha256:" + "8" * 64},
+                    accepted_coordinate=COORDINATE,
+                ),
                 lint=lint,
             ),
         )
         path = f"/api/v1/{instance_id}/claim-types/proposals"
         request = {
-            "claim_type": lower_claim_type_input(
-                claim_type_input_example(), tree={}, identity_rules=True
-            ).model_dump(mode="json"),
+            "tag": "cruxible-builtin-claim-type-propose-request-v1",
+            "builtin": "semantic.alias",
             "proposal_name": "warn",
         }
     else:
@@ -765,3 +763,15 @@ def test_http_list_routes_bound_their_page_size(
     assert oversized.status_code == 422
     assert foreign.status_code == 400
     assert foreign.json()["error_code"] == "cruxible.list.cursor_mismatch"
+
+
+def test_raw_claim_type_envelopes_are_no_longer_an_http_variant(playbill_http) -> None:
+    from cruxible_core.claims.claim_type_inputs import lower_claim_type_input
+
+    client, instance_id, _key = playbill_http
+    raw = lower_claim_type_input(claim_type_input_example(), tree={}, identity_rules=True)
+    response = client.post(
+        f"/api/v1/{instance_id}/claim-types/proposals",
+        json={"claim_type": raw.model_dump(mode="json"), "proposal_name": "removed-raw"},
+    )
+    assert response.status_code == 422

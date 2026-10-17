@@ -16,12 +16,8 @@ from cruxible_client.contracts import (
 )
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInput
-from cruxible_client.contracts.authoring.models import (
-    AuthoringIntentCompileRequest,
-    AuthoringIntentCompileRequestV1,
-)
+from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
-from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.declared_blocks import (
     DeclaredBlockPageObservation,
     ProjectionBlockStampAny,
@@ -30,7 +26,6 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.file_catalog import FileCompilationBundle
 from cruxible_client.contracts.ledger_mirror import MIRROR_URL_MAX_LENGTH
-from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.types import (
     DECOMMISSION_REASON_MAX_LENGTH,
     CompilerCoordinate,
@@ -52,12 +47,6 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 
 class _StrictPlaybillRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-# The route module retains its existing local names, but these are aliases to
-# the canonical client-owned wire models rather than parallel definitions.
-PlaybillAuthoringCompileRequest = AuthoringIntentCompileRequestV1
-PlaybillAuthoringCompileRequestV3 = AuthoringIntentCompileRequest
 
 
 class InitRequest(_StrictPlaybillRequest):
@@ -165,13 +154,6 @@ class ApprovalChallengeRequest(_StrictPlaybillRequest):
     include_body: bool = False
 
 
-class PlaybillExplainRequest(_StrictPlaybillRequest):
-    subject: SemanticAddress
-    at: AcceptedCoordinate
-    detail: Literal["summary", "evidence", "proof"] = "summary"
-    include_body: bool = False
-
-
 class FileBundleRequest(_StrictPlaybillRequest):
     bundle: FileCompilationBundle
 
@@ -183,8 +165,11 @@ class FileProposeRequest(FileBundleRequest):
     at: PreviewAt = None
 
 
-class ProposeClaimTypeRequest(_StrictPlaybillRequest):
-    claim_type: ClaimType
+class ProposeBuiltinClaimTypeRequest(_StrictPlaybillRequest):
+    tag: Literal["cruxible-builtin-claim-type-propose-request-v1"] = (
+        "cruxible-builtin-claim-type-propose-request-v1"
+    )
+    builtin: BuiltinClaimTypeName
     proposal_name: str
     base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
@@ -197,6 +182,7 @@ class ProposeClaimTypeInputRequest(_StrictPlaybillRequest):
     )
     input: ClaimTypeInputRecord
     proposal_name: str
+    base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
 

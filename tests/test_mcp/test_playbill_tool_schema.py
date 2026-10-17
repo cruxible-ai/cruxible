@@ -65,17 +65,17 @@ def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation()
     assert set(schema["required"]) == {"line"}
 
 
-def test_prediction_tools_expose_the_same_typed_requests_as_http_and_sdk() -> None:
+def test_prediction_settlement_exposes_only_the_observation_id() -> None:
     schemas = _schemas()
     predict = schemas["cruxible_prediction_propose"].inputSchema
     settle = schemas["cruxible_prediction_settle"].inputSchema
 
     assert set(predict["properties"]) == {"instance_id", "request"}
     assert set(predict["required"]) == {"request"}
-    # Settle names the observation by Claim ID; the full request stays the
-    # advanced form, so neither is required on its own.
-    assert set(settle["properties"]) == {"instance_id", "prediction_id", "observation", "request"}
-    assert set(settle["required"]) == {"prediction_id"}
+    # Exact references and mandated terminal evidence stay in SDK/HTTP.
+    assert set(settle["properties"]) == {"instance_id", "prediction_id", "observation"}
+    assert set(settle["required"]) == {"prediction_id", "observation"}
+    assert "$defs" not in settle
 
 
 def test_every_instance_id_is_optional_and_names_its_default() -> None:

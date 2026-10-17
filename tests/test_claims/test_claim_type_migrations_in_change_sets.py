@@ -821,63 +821,11 @@ def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(
     assert [warning.model_dump(mode="json") for warning in served.lint.warnings] == expected
 
 
-def test_the_deprecated_invalidation_word_refuses_typed(tmp_path: Path) -> None:
-    """The standalone route's fourth word parses here and names the road that takes it."""
-
-    instance, _owner, coordinator, claims = _affects_package_world(
-        tmp_path,
-        values=(("wi-42", "ready"),),
-    )
-    actor = AuthenticatedActor(actor_id="owner")
-    payload = _change_set(
-        ClaimTypeSuccessionMember(
-            successor=_enum_successor(instance, enum=["ready"]),
-            dependents=(
-                _dependent(
-                    claims["wi-42"],
-                    disposition="invalidation",
-                    reason="was-rescinded",
-                ),
-            ),
+def test_unshipped_succession_invalidation_input_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="disposition"):
+        ClaimTypeSuccessionDependent.model_validate(
+            {"identity": {"kind": "Claim", "name": "claim"}, "disposition": "invalidation"}
         )
-    )
-    intent = coordinator.create(
-        actor=actor,
-        payload=payload,
-        canonical_timestamp=TIMESTAMP,
-    ).intent
-
-    with pytest.raises(AuthoringLoweringError) as raised:
-        lower_authoring(instance, intent=intent, actor_id="owner")
-    error = raised.value
-    assert error.code == "cruxible.authoring.claim_type_succession_disposition_deprecated"
-    assert error.offending_element == "members[0].dependents[0].disposition"
-    repair = error.repairs[0]
-    assert repair.kind == "replace_disposition"
-    assert "cruxible claim-type migrate" in repair.description
-    replacement = repair.replacement
-    assert isinstance(replacement, dict)
-    assert replacement["operator_route"] == "cruxible claim-type migrate"
-    assert replacement["permitted_dispositions"] == ["re_author", "retire", "successor"]
-    # The standalone route still takes the word, with its deprecation warning.
-    standalone = service_migrate_claim_type(
-        instance,
-        request=ClaimTypeMigrationRequest(
-            mode="preflight",
-            successor=_enum_successor(instance, enum=["ready"]),
-            dependents=(
-                ClaimTypeDependentDisposition(
-                    identity=ArtifactIdentity(kind="Claim", name=claims["wi-42"]),
-                    disposition="invalidation",
-                    claim_retirement_reason="was-rescinded",
-                ),
-            ),
-        ),
-        actor=actor,
-    )
-    assert {warning.code for warning in standalone.warnings} == {
-        "cruxible.claim_type.invalidation_deprecated"
-    }
 
 
 def test_a_dependent_this_set_also_retires_refuses_naming_both_members(

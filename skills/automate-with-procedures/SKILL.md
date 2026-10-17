@@ -66,6 +66,53 @@ Or author it in Python: a `Sequence` of steps from
 implementation. A definition that leaves a provider slot open is a Blueprint,
 which never runs; instantiate it to get a Procedure.
 
+Sequence supports exactly these 11 graph kinds:
+
+| Graph kind | Sequence step | Served lane / requirements |
+|---|---|---|
+| `state_tap` | `StateTap` | Direct or Line; named query binds at admission, before provider outputs exist |
+| `source` | `Source` | Direct or Line; bound provider/interface, CaptureContract and acquisition policy |
+| `call` | `Call` | Direct or Line; bound provider/interface and applicable effect policy/authority |
+| `transform` | `Transform` | Direct or Line; closed transform spec and matching Contracts |
+| `project` | `Project` | Direct or Line; explicit fields satisfy output Contract |
+| `guard` | `Guard` | Direct or Line; forward branches, false defaults to `$abort` |
+| `halt` | `Halt` | Direct or Line; ends without a successful value |
+| `emit_capture` | `EmitCapture` | Line only; registers evidence and ends the path |
+| `post_inbox` | `PostInbox` | Line only; observe authority, bounded `max_items`, ends the path |
+| `propose_change_set` | `ProposeChangeSet` | Line only; covering mandate/authority, submits without accepting |
+| `settle_change_set` | `SettleChangeSet` | Line only; effective authority and one covering settle mandate with its declared fallback |
+
+The remaining graph kinds have no Sequence step:
+
+| Graph kind absent from Sequence | Raw graph model | Served lane / requirements |
+|---|---|---|
+| `state_claim` | `ClaimTapNode` | Direct or Line; exact ClaimType and named Subject, bounded selection |
+| `repeat` | `RepeatNode` | Transform-only body: direct or Line; provider-bearing body: Line only; bounded attempts |
+| `select` | `SelectNode` | Direct or Line; join mutually exclusive producers |
+| `constant` | `ConstantNode` | Direct or Line; literal record, dollar-prefixed strings remain data |
+| `return` | `ReturnNode` | Direct or Line; explicit typed successful leaf |
+| `invoke` | `InvokeNode` | Direct or Line subject to the child's closure and terminal authority |
+| `exhaust_tap` | `ExhaustTapNode` | No lane yet; fresh authoring refuses `cruxible.procedure.node_not_served` |
+
+For the six served kinds absent from Sequence, use the raw typed
+`ProcedureInput` from `cruxible_client.authoring.inputs`: supply graph-format-6
+node records in `definition.nodes`, declare `contracts`, then call
+`cx.procedure(definition=input).prepare()` or `.submit()`. The corresponding
+node models in `cruxible_client.contracts.procedures.models` specify each
+record's fields; the daemon resolves authoring references and validates the
+resulting `ProcedureDefinition` through the same compiler. Use symbolic
+`accepted` / `candidate` references and `carried_contract` references in fresh
+inputs; exact artifact pins and digests belong to accepted graphs. The tagless
+wire fallback is that same `ProcedureInput` JSON via `authoring compile` or
+`authoring submit --dry-run`. This adds no execution implementation.
+
+Sequence's global `returns` alias and a returning value-producing leaf remain
+available, but there is no explicit `Return` step. These six missing step
+classes are planned for the kit-authoring phase; they are not Sequence support
+today. `exhaust_tap` has no runnable fallback, including on a Line; retained
+artifacts still read and verify. Open provider slots belong to a Blueprint,
+which must be instantiated before running.
+
 In a v3 Claim proposal item, name a one-key Subject with
 `{"subject_kind": "sec.package", "key": "$item.package"}`. The same reference
 works for a Subject-valued object (`kind: "subject_key"`, `subject: {...}`).
@@ -89,8 +136,9 @@ cruxible procedure run NAME INPUT.json      # or - for stdin
 cruxible get ProcedureRun:RUN-…             # state, outcomes, terminal detail
 ```
 
-A direct run never runs terminals. A Procedure whose terminals propose or
-settle reports `runnable: line`; run it as a Line.
+A direct run supports typed returns and halt. Outward terminals
+(`emit_capture`, `post_inbox`, `propose_change_set`, `settle_change_set`) and
+provider-bearing Repeat bodies require a Line; inspect `runnable` first.
 
 ## Phase 4: Put it on a Line
 

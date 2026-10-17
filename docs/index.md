@@ -25,7 +25,7 @@ from. No LLM runs inside Cruxible.
 - [CLI reference](cli-reference.md)
 - [MCP tools](mcp-tools.md)
 - [Python SDK](https://github.com/cruxible-ai/cruxible/blob/main/packages/cruxible-client/README.md)
-  and its [Procedure source authoring](sdk-v2-reference.md) reference
+  and its [Procedure source authoring](procedure-source.md) reference
 - [Architecture](architecture.md)
 
 ## Operations

@@ -479,3 +479,32 @@ def test_proposal_terminal_has_no_activation_or_direct_write_capability() -> Non
     payload["nodes"][1] = {"kind": "apply_entities", "node_id": "write"}
     with pytest.raises(ValidationError, match="union_tag_invalid"):
         ProcedureDefinition.model_validate(payload)
+
+
+def test_retained_exhaust_tap_artifacts_still_parse_digest_and_verify() -> None:
+    from cruxible_client.contracts.procedures.models import ExhaustTapNode
+
+    base = _definition()
+    definition = _definition(
+        nodes=(
+            ExhaustTapNode(
+                node_id="exhaust",
+                reducer_or_query=_pin("query", "QueryDefinition", "journal-query"),
+                journal_identity="retained-journal",
+                as_="rows",
+            ),
+            base.nodes[1],
+        )
+    )
+    artifact = _artifact(definition)
+    content = render_procedure(artifact)
+    parsed = parse_procedure(content, path=procedure_path("triage"))
+    assert render_procedure(parsed) == content
+    assert procedure_artifact_digest(parsed) == procedure_artifact_digest(artifact)
+    assert (
+        evaluate_procedure_law(parsed, path=procedure_path("triage"), predecessor=None).verdict
+        == "accepted"
+    )
+    runnable, (node,) = procedure_runnability(parsed.definition)
+    assert runnable == "unsupported"
+    assert node.kind == "exhaust_tap" and node.runs_on == "nowhere"

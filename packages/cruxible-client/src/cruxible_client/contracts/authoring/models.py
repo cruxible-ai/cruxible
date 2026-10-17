@@ -108,7 +108,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:2d5dc6a2f0f821ae44a966739fb63918aa5fd8dd04573dd95c68c3eeb9065e3d"
+    "sha256:1144b4fb4de52fc4eecb32febc83d44f4e34966d82e1f70da526e003b9a74fd3"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -924,7 +924,7 @@ class LineAuthoringPayload(_StrictAuthoringModel):
     by name, the way a ProcedureMandate member names its Procedure, and
     lowering resolves both into the exact digest pins the LineSpec carries. A
     budget left unset lowers to the Procedure's own hard caps. The acquisition
-    policy is required only when the Procedure acquires (has Source or exhaust
+    policy is required only when the Procedure acquires (has Source
     nodes); a pure-compute Line pins none. ``parameters`` is the Procedure's
     input record, checked against its input Contract when the Line lowers.
     When the Line runs is not its own: Triggers aim at it. ``trigger_input``
@@ -1140,7 +1140,6 @@ class ClaimTypeAuthoringPayload(_StrictAuthoringModel):
 ClaimTypeSuccessionDisposition: TypeAlias = Literal[
     "successor",
     "retire",
-    "invalidation",
     "re_author",
 ]
 
@@ -1164,15 +1163,6 @@ class ClaimTypeSuccessionDependent(_StrictAuthoringModel):
     predecessor digest, which is what makes it a re-authoring of that Claim
     rather than a new one. There is no second spelling by member index: an index
     could only ever name the member this Claim ID already names.
-
-    `invalidation` parses and always refuses. It is the standalone route's
-    deprecated spelling of `retire`, answered there with a
-    `cruxible.claim_type.invalidation_deprecated` warning; change-set lowering
-    has no warning channel, so admitting it would coerce a deprecated word
-    silently. The word is carried here only so an author who knows the
-    standalone vocabulary gets a typed refusal naming the operator route
-    instead of an untyped parse failure. It emits no deprecation notice: this
-    surface never accepted it, so there is nothing to schedule for removal.
     """
 
     tag: Literal["playbill-claim-type-succession-dependent-v1"] = (

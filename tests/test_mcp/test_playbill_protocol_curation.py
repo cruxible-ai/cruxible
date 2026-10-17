@@ -204,6 +204,8 @@ def test_default_input_schema_catalog_stays_within_agent_budget(
 
     monkeypatch.delenv("CRUXIBLE_MCP_PROFILE", raising=False)
     tools = _run(create_server().list_tools())
+    # Simplifying full-only settlement does not claim a default-profile saving.
+    assert "cruxible_prediction_settle" not in {tool.name for tool in tools}
     estimate = catalog_model_visible_tokens(tools)
     assert estimate <= DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS, (
         f"default input schemas plus descriptions cost about {estimate:.0f} tokens"

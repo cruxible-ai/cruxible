@@ -320,9 +320,7 @@ required dependent. Each dependent takes one disposition:
 
 A successor that changes `object_kind` refuses `carry` for any live dependent;
 rescind, retire or re-author those. A re-authored Claim keeps its identity and
-slot. The deprecated `invalidation` disposition is refused inside a change set
-(`cruxible.authoring.claim_type_succession_disposition_deprecated`); say
-`retire` with a reason.
+slot. Use `retire` with a reason for an attributed retirement.
 
 ## Evidence
 
@@ -405,7 +403,7 @@ producing graph-format-6 definitions:
   submitting;
 - `ProcedureSource`: a function decorated with `@procedure` from
   `cruxible_client.authoring.source`, compiled into the same graph; see the
-  [source authoring reference](sdk-v2-reference.md).
+  [source authoring reference](procedure-source.md).
 
 Every provider a Procedure calls is pinned to one exact implementation;
 `cx.provider_interface(interface, provider=...)` selects one. A definition
