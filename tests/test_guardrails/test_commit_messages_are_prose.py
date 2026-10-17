@@ -5,7 +5,9 @@ nothing but Git can read a proposal. That only stays true while they are prose:
 the moment one caller parses a subject line for a disposition, or greps a body
 for a path, the message has quietly become a wire format with no schema, no
 version, and no canonical bytes -- and the evidence store, the candidate record,
-and the note refs stop being the only places a fact about a proposal lives.
+and the note refs stop being reliable sources of proposal facts. Acceptance
+identity is carried separately in a versioned signed generation header; its
+header-only reader is explicitly inventoried below.
 
 This guardrail states the rule as a property of the source tree rather than of
 any single call site, so a new Git invocation anywhere in the package has to
@@ -49,6 +51,7 @@ MESSAGE_PLACEHOLDERS = (
 DIRECT_COMMIT_OBJECT_READ = ("cat-file", "commit")
 COMMIT_HEADER_READERS = {
     "parent_of": (b"parent ",),
+    "accepting_admission": (b"cruxible-accepting-admission ",),
     "_commit_tree": (b"tree ",),
     "main_history": (b"parent ",),
     "commit_timestamps": ("author ", "committer "),
@@ -143,7 +146,7 @@ def test_every_raw_commit_read_stops_at_the_header_lines_it_names() -> None:
     """Only the named header readers interpret a commit, and none looks past the header.
 
     Reading a commit object is legitimate -- its tree, parents, and author and
-    committer instants are Git's own facts and live nowhere else -- but the same
+    committer instants and signed acceptance identity belong to the header -- but the same
     bytes carry the message. Every read goes through the hash-checked batch
     reader, so this pins each function that interprets a commit it read there:
     it cuts the bytes at the header before reading them, and matches only the

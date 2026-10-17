@@ -1,25 +1,18 @@
 """Why an accepted generation changed what it changed: one resolver for get and the floor.
 
-An accepted generation publishes exactly one candidate, by exactly one actor.
-The admission that accepted it is the one proposal that admitted that candidate
-(``proposals_by_candidate``), by that actor, and was not withdrawn or rejected;
-none, or more than one, and the generation has no attributed proposal: nothing
-is picked by id order and nothing is invented. Its reason for one member is the
-Procedure item's own reason for that path when a Procedure proposed it (read
-through the admission's own item-reason link), else the admission's rationale
--- a write's ``because`` with its per-retire notes, or an authored change set's
-rationale.
+Acceptance records the admission id and digest in the generation's signed
+header. Reasons are read by that identity, even when a later admission shares
+the same candidate and actor. Pre-succession generations without that header
+retain the unique non-withdrawn candidate/actor resolution.
 
 ``get`` (``detail="evidence"``, ``"why"`` and ``"history"``) and the floor's
-``changes/`` files read it here and nowhere else, so a rendered page and a read
-always name the same reason. The change-set record and its generation facts are
-never read: the resolver needs only the generation's history row.
+``changes/`` files share this resolver. A Procedure item's own reason for the
+path wins, else the admission's rationale (a write's ``because``).
 
-Work, memoized per resolver (one per request or render): per distinct
-generation one index lookup of the admissions sharing its candidate, and each
-admission's file read, verified and parsed once per process (keyed by its
-digest); per member path at most one item-reason file. Nothing grows with the
-instance.
+Per generation, one immutable header and one admission are parsed once per
+process, keyed by OID and digest. New generations require only an id lookup,
+never a scan of admissions. Legacy prefetch batches candidate index lookups.
+Per member path at most one item-reason file is read.
 """
 
 from __future__ import annotations
@@ -28,6 +21,7 @@ from collections import OrderedDict
 from collections.abc import Iterable
 from typing import Any
 
+from cruxible_client.contracts.errors import ProposalNotFoundError, SettlementIntegrityError
 from cruxible_client.contracts.get_reads import (
     GET_REASON_MAX_CHARS,
     GetChangeSetReason,
@@ -37,6 +31,7 @@ from cruxible_client.contracts.get_reads import (
 from cruxible_client.contracts.proposal_models import ProposalAdmissionRecord, ProposalItemReason
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.indexes.history.history_index import AcceptedGenerationLocation
+from cruxible_core.ledger.generation_facts import AcceptingAdmission
 from cruxible_core.runtime.instance import PlaybillInstance
 
 #: Admission records by the digest of their bytes: immutable, so each is read,
@@ -50,27 +45,34 @@ class ChangeReasons:
 
     def __init__(self, instance: PlaybillInstance) -> None:
         self._instance = instance
-        self._admissions: dict[tuple[str, str], ProposalAdmissionRecord | None] = {}
+        self._admissions: dict[str, ProposalAdmissionRecord | None] = {}
+        self._legacy: dict[tuple[str, str], ProposalAdmissionRecord | None] = {}
         self._operations: dict[str, str | None] = {}
         self._items: dict[tuple[str, str], ProposalItemReason | None] = {}
 
     def prefetch(self, generations: Iterable[AcceptedGenerationLocation]) -> None:
         """Resolve many generations' admissions from one read of the proposal index.
 
-        A render that names many generations (the floor's changes/) asks the
-        index once, in chunks, instead of once per generation.
+        New generations use recorded ids; headerless legacy generations share
+        batched candidate index lookups (the floor's changes/ renders many).
         """
 
+        legacy = []
+        for generation in generations:
+            if self._instance.accepting_admission(generation.git_oid) is None:
+                legacy.append(generation)
+            else:
+                self.admission(generation)
         wanted = {
             (str(item.candidate_digest), str(item.actor_id))
-            for item in generations
+            for item in legacy
             if item.candidate_digest is not None and item.actor_id is not None
-        } - set(self._admissions)
+        } - set(self._legacy)
         if not wanted:
             return
         evidence = self._instance.proposal_evidence()
         if evidence.index is None:
-            self._admissions.update(dict.fromkeys(wanted))
+            self._legacy.update(dict.fromkeys(wanted))
             return
         digests = sorted({candidate for candidate, _actor in wanted})
         rows: dict[str, list[dict[str, Any]]] = {digest: [] for digest in digests}
@@ -83,17 +85,49 @@ class ChangeReasons:
             ):
                 rows[str(row["candidate_digest"])].append(row)
         for candidate, actor in wanted:
-            self._admissions[(candidate, actor)] = self._matching(evidence, rows[candidate], actor)
+            self._legacy[(candidate, actor)] = self._matching(evidence, rows[candidate], actor)
 
     def admission(self, generation: AcceptedGenerationLocation) -> ProposalAdmissionRecord | None:
         """The one admission that accepted ``generation``'s candidate, or None."""
 
         if generation.candidate_digest is None or generation.actor_id is None:
             return None  # genesis: no proposal
-        key = (generation.candidate_digest, generation.actor_id)
-        if key not in self._admissions:
-            self._admissions[key] = self._accepting(*key)
-        return self._admissions[key]
+        oid = generation.git_oid
+        if oid not in self._admissions:
+            identity = self._instance.accepting_admission(oid)
+            if identity is not None:
+                admission = memo_get(_ADMISSIONS, identity.admission_digest)
+                if admission is None:
+                    try:
+                        admission = self._instance.proposal_evidence().read_admission(
+                            identity.proposal_id
+                        )
+                    except ProposalNotFoundError:
+                        self._admissions[oid] = None
+                        return None
+                    if AcceptingAdmission.of(admission) != identity:
+                        raise SettlementIntegrityError(
+                            "accepting admission digest differs from generation"
+                        )
+                    memo_put(
+                        _ADMISSIONS,
+                        identity.admission_digest,
+                        admission,
+                        capacity=_ADMISSIONS_CAPACITY,
+                    )
+                if admission.proposal_id != identity.proposal_id:
+                    raise SettlementIntegrityError("accepting admission id differs from generation")
+                if admission.actor_id != generation.actor_id:
+                    raise SettlementIntegrityError(
+                        "accepting admission actor differs from generation"
+                    )
+                self._admissions[oid] = admission
+            else:
+                key = (generation.candidate_digest, generation.actor_id)
+                if key not in self._legacy:
+                    self._legacy[key] = self._accepting(*key)
+                self._admissions[oid] = self._legacy[key]
+        return self._admissions[oid]
 
     def _accepting(self, candidate_digest: str, actor_id: str) -> ProposalAdmissionRecord | None:
         evidence = self._instance.proposal_evidence()

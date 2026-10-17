@@ -1550,6 +1550,11 @@ that proposed it), `--detail history` its revisions, and
 under `artifacts.claims`, from the `next` worker's facts when they are current
 at the read's coordinate and instant, else derived at the read.
 
+Acceptance fixes the reason's admission identity in the signed generation.
+Later proposals with identical content keep their own reasons without changing
+an earlier generation's history or floor entry. Generations accepted before
+this identity was recorded retain the unique candidate-and-actor lookup.
+
 Claims are written through `cruxible set`, `add`, `retire` and `write`, or authored
 through `cruxible authoring submit`/`compile`. `cruxible retire` retires a Claim with its
 complete dependent Claim closure in one change set. When a Claim shares anything

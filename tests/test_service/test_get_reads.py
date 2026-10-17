@@ -1244,7 +1244,8 @@ def test_a_claim_history_says_what_each_revision_did_and_why(
     # --detail evidence keeps its rationale, through the same resolver.
     evidence = _get(instance, fields_world["title"], detail="evidence").evidence
     assert evidence is not None and evidence.rationale == "Looked again."
-    # No admission to read: no reason, never an invented one.
+    # A pre-succession generation with no admission has no invented reason.
+    monkeypatch.setattr(instance, "accepting_admission", lambda _oid: None)
     index = type(instance.proposal_evidence().index)
     monkeypatch.setattr(index, "rows", lambda *_args, **_kwargs: [])
     bare = _get(instance, fields_world["status"], detail="history").history

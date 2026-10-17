@@ -7,7 +7,8 @@ hand. It is prose and nothing else. No caller parses a commit message, and the
 guardrail in `tests/test_guardrails/test_commit_messages_are_prose.py` is what
 keeps it that way: every machine-readable fact about a proposal lives in the
 evidence store, in the candidate record, and in the note refs projected from
-them.
+them. The accepting admission id and digest live in a versioned, signed
+generation header, outside the prose message.
 
 Because it is only prose, it is also cheap to be exact about: the whole message
 is a pure function of the candidate's own members, so the advisory review-ref
