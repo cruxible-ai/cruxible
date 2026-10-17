@@ -1058,6 +1058,72 @@ def test_a_consumers_own_definition_is_a_takeover_that_keep_preserves(
     assert consumer.claim_type(SEATS).literal_schema == {"type": "integer", "minimum": 1}
 
 
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_reusing_an_installed_kit_id_with_disjoint_prefixes_is_refused(
+    worlds: tuple[_World, _World], dry_run: bool
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    publisher.author(_claim_type("beta.account.flag", {"type": "string"}))
+    unrelated = publisher.build("2.0.0", owns=("beta.",))
+    before = consumer.tree()
+    response = consumer.http.post(
+        f"/api/v1/{consumer.instance_id}/kits",
+        json=KitAddRequest(bundle=unrelated, dry_run=dry_run).model_dump(mode="json"),
+    )
+    assert response.status_code == 200, response.text
+    result = KitChangeResult.model_validate(response.json())
+    assert result.status == ("would_block" if dry_run else "blocked")
+    (refusal,) = result.refusals
+    assert refusal.code == "cruxible.kit.id_reused"
+    assert refusal.owning_kit_id == "acme"
+    assert refusal.our_prefixes == ("beta.",)
+    assert refusal.installed_prefixes == ("acme.",)
+    assert "cruxible kit remove acme" in refusal.repair
+    assert consumer.tree() == before
+    assert result.plan == ()
+
+    # Removing the installed kit is the exit, not a permanent reservation of its id.
+    removal = playbill_api.playbill_kit_remove(
+        consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+    )
+    consumer.settle(removal)
+    preview = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=unrelated)
+    )
+    assert preview.status == "would_propose", preview.detail
+    assert preview.refusals == ()
+
+
+@pytest.mark.parametrize(
+    ("installed_owns", "release_owns"),
+    [
+        (("acme.",), ("acme.",)),
+        (("acme.",), ("acme.", "acme.account.")),
+        (("acme.",), ("acme.account.",)),
+        (("acme.account.",), ("acme.",)),
+    ],
+)
+def test_a_genuine_upgrade_with_related_prefixes_still_plans_normally(
+    worlds: tuple[_World, _World],
+    installed_owns: tuple[str, ...],
+    release_owns: tuple[str, ...],
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0", owns=installed_owns))
+    publisher.succeed(SEATS, {"type": "integer", "minimum": 1})
+    result = playbill_api.playbill_kit_add(
+        consumer.instance_id,
+        KitAddRequest(bundle=publisher.build("2.0.0", owns=release_owns)),
+    )
+    assert result.status == "would_propose", result.detail
+    assert result.transition == "upgrade"
+    assert result.refusals == ()
+    assert (result.plan[0].identity, result.plan[0].action) == (f"ClaimType:{SEATS}", "replace")
+
+
 def test_removing_a_kit_retires_what_it_installed(worlds: tuple[_World, _World]) -> None:
     publisher, consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))

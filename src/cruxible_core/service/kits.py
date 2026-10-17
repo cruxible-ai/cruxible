@@ -48,6 +48,7 @@ from cruxible_client.contracts.kits import (
     KitBundle,
     KitChangeResult,
     KitConsequence,
+    KitIdReusedRefusal,
     KitInstalledArtifact,
     KitKeptDivergence,
     KitManifest,
@@ -1736,6 +1737,31 @@ def _add_kit(
     shell, receipt = (None, None) if found is None else found
     installed_version = None if receipt is None or not receipt.artifacts else receipt.version
     transition = _transition(installed_version, manifest.version)
+    if receipt is not None and receipt.artifacts and not any(
+        ours.startswith(theirs) or theirs.startswith(ours)
+        for ours in manifest.owns
+        for theirs in receipt.owns
+    ):
+        refusal = KitIdReusedRefusal(
+            owning_kit_id=receipt.kit_id,
+            our_prefixes=manifest.owns,
+            installed_prefixes=receipt.owns,
+            detail=f"kit id {manifest.kit_id} is installed with prefixes {receipt.owns}; "
+            f"release prefixes {manifest.owns} share no prefix with that kit",
+            repair=f"Remove the installed kit first: cruxible kit remove {receipt.kit_id}; "
+            "then add this release.",
+        )
+        return KitChangeResult(
+            kit_id=manifest.kit_id,
+            version=manifest.version,
+            status="would_block" if mode.previewing else "blocked",
+            transition=transition,
+            installed_version=installed_version,
+            provenance=manifest.provenance,
+            refusals=(refusal,),
+            detail=refusal.detail,
+            coordinate=mode.coordinate,
+        )
     # Kit-add work only: indexed receipt documents and their recorded definitions,
     # never the instance's Claims or Subjects. Reuse this inventory for both guards.
     receipts = tuple(_receipts(instance, tree))
