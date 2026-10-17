@@ -350,6 +350,11 @@ themselves a governed track record; promotion remains a separate governed act.
 | `cruxible_prediction_propose` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
 | `cruxible_prediction_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
 
+`cruxible_prediction_settle` requires `prediction_id` and the accepted
+observation Claim ID (`observation`). Its MCP form has no advanced `request`
+parameter. Exact references and mandated terminal evidence remain available in
+the SDK and HTTP `SettleRequest`; settlement remains full-profile only.
+
 Every Claim version these tools need can be a plain Claim ID (`CLM-...` or
 `Claim:CLM-...`); the daemon resolves its digests and accepting coordinate. The
 exact reference, and settle's full `request` (exact contract reference, anchor
