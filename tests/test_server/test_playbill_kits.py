@@ -1089,9 +1089,7 @@ def test_reusing_an_installed_kit_id_with_disjoint_prefixes_is_refused(
         consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
     )
     consumer.settle(removal)
-    preview = playbill_api.playbill_kit_add(
-        consumer.instance_id, KitAddRequest(bundle=unrelated)
-    )
+    preview = playbill_api.playbill_kit_add(consumer.instance_id, KitAddRequest(bundle=unrelated))
     assert preview.status == "would_propose", preview.detail
     assert preview.refusals == ()
 

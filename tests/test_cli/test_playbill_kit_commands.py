@@ -148,7 +148,7 @@ def test_kit_collision_exposes_the_shared_refusal_and_next_repair(
 
     result = CliRunner().invoke(cli, [*BASE, "add", "extra", "--json"])
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["refusals"] == [refusal.model_dump(mode="json")]
+    assert json.loads(result.stdout)["refusals"] == [refusal.model_dump(mode="json")]
 
 
 def test_kit_takeover_points_to_keep(monkeypatch: pytest.MonkeyPatch) -> None:

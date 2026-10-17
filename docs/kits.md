@@ -148,8 +148,8 @@ Next: pass `--keep IDENTITY` to keep your version.
 Two installed kits cannot own overlapping prefixes, and a kit cannot replace a
 definition another kit still holds, even outside that kit's current prefixes.
 These are refusals (`cruxible.kit.ownership_conflict`). Prefix overlap remains
-a hard block even with `--keep`. The result's `refusals` name our prefixes, the owning kit, and its
-prefix or held identity, with a repair.
+a hard block even with `--keep`. The result's `refusals` name our prefixes,
+the owning kit, and its prefix or held identity, with a repair.
 Next: remove the owning kit first with `cruxible kit remove KIT`, or install a
 release that does not own the overlapping prefix or replace the held definition.
 

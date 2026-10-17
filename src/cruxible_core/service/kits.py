@@ -1076,9 +1076,7 @@ def _planned_automation(
     )
 
 
-def _held_by_other_kits(
-    receipts: tuple[KitReceipt, ...], kit_id: str
-) -> dict[str, str]:
+def _held_by_other_kits(receipts: tuple[KitReceipt, ...], kit_id: str) -> dict[str, str]:
     """Every definition path another installed kit holds -> that kit.
 
     A kit holds what its receipt records, not only what its current prefixes
@@ -1737,10 +1735,14 @@ def _add_kit(
     shell, receipt = (None, None) if found is None else found
     installed_version = None if receipt is None or not receipt.artifacts else receipt.version
     transition = _transition(installed_version, manifest.version)
-    if receipt is not None and receipt.artifacts and not any(
-        ours.startswith(theirs) or theirs.startswith(ours)
-        for ours in manifest.owns
-        for theirs in receipt.owns
+    if (
+        receipt is not None
+        and receipt.artifacts
+        and not any(
+            ours.startswith(theirs) or theirs.startswith(ours)
+            for ours in manifest.owns
+            for theirs in receipt.owns
+        )
     ):
         refusal = KitIdReusedRefusal(
             owning_kit_id=receipt.kit_id,
