@@ -64,6 +64,59 @@ def _settled(instance, procedure, writes=None):
     return tree, result
 
 
+@pytest.mark.parametrize("evolution", ["required", "type", "optional"])
+def test_definition_upgrade_validates_preserved_line_input(tmp_path, evolution):
+    from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+    from tests.support.procedures import procedure_artifact
+
+    instance, line, accepted, owner = line_world(
+        tmp_path, CadenceSchedule(interval_seconds=2), with_owner=True
+    )
+    old = accepted.procedure
+    schemas = {item.identity.name: item.contract_schema for item in old.owned_contracts}
+    fields = {"status": PropertySchema(type="int" if evolution == "type" else "string")}
+    if evolution != "type":
+        fields["new_input"] = PropertySchema(type="int", optional=evolution == "optional")
+    schemas[old.definition.contract_in.target.name] = ContractSchema(fields=fields)
+    successor = procedure_artifact(
+        old.definition,
+        contracts=schemas,
+        activation_policy=old.activation_policy,
+        lifecycle=ArtifactLifecycle(predecessor_digest=accepted.artifact_digest),
+    )
+    coordinate = instance.accepted_coordinate()
+    tree = instance.immutable_tree_at(coordinate.git_oid)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        settled = settle_changes(
+            tree,
+            writes={accepted.path: render_procedure(successor)},
+            connection=projection.typed.connection,
+        )
+    assert instance.accepted_coordinate() == coordinate
+    if evolution != "optional":
+        assert not settled.writes
+        diagnostic = " ".join(settled.refused)
+        assert line.identity.qualified in diagnostic
+        assert successor.identity.qualified in diagnostic
+        assert procedure_artifact_digest(successor).tagged in diagnostic
+        assert f"parameters.{'status' if evolution == 'type' else 'new_input'}" in diagnostic
+        assert "explicitly author compatible Line parameters" in diagnostic
+        return
+    assert not settled.refused, settled.refused
+    path = f"lines/{line.identity.name}.json"
+    carried = parse_line_spec(settled.writes[path], path=path)
+    assert carried.parameters == line.parameters
+    assert "new_input" not in carried.parameters
+    assert carried.procedure.artifact_digest == procedure_artifact_digest(successor).tagged
+    _accept_tree(
+        instance,
+        owner,
+        {**tree, **settled.writes},
+        timestamp="2026-08-25T15:00:00.000000Z",
+        proposal_name="compatible-input-upgrade",
+    )
+
+
 @pytest.mark.parametrize("event", [False, True])
 def test_definition_upgrade_disabled_next_recovery_and_enable_resumes(tmp_path, monkeypatch, event):
     schedule = (

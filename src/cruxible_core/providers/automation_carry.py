@@ -6,8 +6,8 @@ parameters and conditions are data, never reference replacement targets.
 
 from collections.abc import Mapping
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC
+from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.canonical import CURRENT_ARTIFACT_CODEC, normalize_canonical
 from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
@@ -16,6 +16,11 @@ from cruxible_client.contracts.procedure_mandates import (
     parse_procedure_mandate_any,
     procedure_mandate_digest,
     render_procedure_mandate,
+)
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.contracts import (
+    OwnedProcedureContractValidator,
+    ProcedureContractValidationError,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,
@@ -41,6 +46,32 @@ def parse_carry_line(content: bytes, *, path: str) -> LineSpec:
     return _LINES.parse(
         content, path, CURRENT_ARTIFACT_CODEC, lambda: parse_line_spec(content, path=path)
     )
+
+
+def validate_carried_line(content: bytes, *, path: str, procedure: AcceptedProcedure) -> None:
+    """Apply ordinary Line-authoring input semantics to the exact final Procedure.
+
+    Called once per affected Line at settlement; parameters remain unchanged.
+    """
+
+    line = parse_carry_line(content, path=path)
+    contract = procedure.procedure.definition.contract_in
+    if not isinstance(contract, ArtifactPin):
+        return
+    try:
+        OwnedProcedureContractValidator(procedure).validate_contract(
+            contract=contract,
+            payload=normalize_canonical(line.parameters),
+            direction="input",
+        )
+    except ProcedureContractValidationError as exc:
+        field = "parameters" if not exc.field_path else f"parameters.{exc.field_path}"
+        raise ValueError(
+            f"{line.identity.qualified}: final {procedure.procedure.identity.qualified} "
+            f"at {procedure.artifact_digest} refuses {field}: {exc}; "
+            "explicitly author compatible Line parameters against the final Procedure's "
+            "input contract before retrying the upgrade"
+        ) from exc
 
 
 def carry_automation(

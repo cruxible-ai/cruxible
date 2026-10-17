@@ -28,6 +28,7 @@ from typing import Any
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedure,
     parse_procedure,
     procedure_artifact_digest,
     render_procedure,
@@ -70,7 +71,7 @@ from cruxible_core.claims.claim_type_migrations import (
     dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
-from cruxible_core.providers.automation_carry import carry_automation
+from cruxible_core.providers.automation_carry import carry_automation, validate_carried_line
 
 #: Families a move stops (retires) instead of carrying.
 _STOPPED_KINDS = {"line": "line", "procedure-mandate": "mandate"}
@@ -471,6 +472,7 @@ def settle_changes(
     # Only live, same-identity Procedure successors are carry targets. Retirement
     # continues through the existing stop path. All pins use FINAL digests.
     live_procedures: dict[str, str] = {}
+    final_procedures: dict[str, AcceptedProcedure] = {}
     for path, content in final.items():
         if not path.startswith("procedures/") or path not in tree:
             continue
@@ -484,12 +486,23 @@ def settle_changes(
             and old_procedure.artifact_digest != new_procedure.artifact_digest
         ):
             live_procedures[old_procedure.artifact_digest] = new_procedure.artifact_digest
+            final_procedures[old_procedure.artifact_digest] = AcceptedProcedure(
+                path=path,
+                procedure=parse_procedure(content, path=path),
+                artifact_digest=new_procedure.artifact_digest,
+            )
     for item in stopped:
         state = parse_dependency_artifact(item.path, tree[item.path])
         assert state is not None
         procedure_pins = [pin for pin in state.pins if pin.role == "procedure"]
         if any(pin.artifact_digest in live_procedures for pin in procedure_pins):
             try:
+                if item.artifact_kind == "line":
+                    validate_carried_line(
+                        tree[item.path],
+                        path=item.path,
+                        procedure=final_procedures[procedure_pins[0].artifact_digest],
+                    )
                 carried_content, outcome = carry_automation(
                     item.path, tree[item.path], live_procedures
                 )
