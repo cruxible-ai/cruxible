@@ -40,7 +40,13 @@ from cruxible_client.contracts.procedures.blueprints import (
     instantiate_blueprint,
     parse_blueprint,
 )
-from cruxible_client.contracts.procedures.models import iter_pin_bindings
+from cruxible_client.contracts.procedures.models import (
+    CallNode,
+    RepeatBodyNode,
+    RepeatNode,
+    SourceNode,
+    iter_pin_bindings,
+)
 from cruxible_client.contracts.provider_installation import (
     AutomationCarryV1,
     ProviderRepinV1,
@@ -150,6 +156,73 @@ def build_move(tree: Mapping[str, bytes], source: str, target: str) -> ProviderB
     return ProviderBuildMove(
         source=old_pin, target=new_pin, implementations=implementations, interfaces=interfaces
     )
+
+
+def restore_procedure_build(
+    tree: Mapping[str, bytes], *, path: str, content: bytes, source: str, target: str
+) -> dict[str, Any]:
+    """Restore a release Procedure's kept build before or after installation.
+
+    The release graph supplies the source occurrences; the accepted target
+    Provider supplies their exact compatible implementations and registrations.
+    No source Provider installation is needed for this metadata-only transform.
+    Work grows with this changed Procedure's nodes and the kept build's metadata.
+    """
+
+    procedure = parse_procedure(content, path=path)
+    target_path = provider_path(target)
+    provider = parse_provider(tree[target_path], path=target_path)
+    if not isinstance(provider, ProviderV2):
+        raise ProviderBuildMoveRefused(f"{target} runs no package build", reason="not_movable")
+    source_pin = next(
+        (pin for pin in procedure.pins if pin.role == "provider" and pin.target.name == source),
+        None,
+    )
+    payload: dict[str, Any] = json.loads(content)
+    if source_pin is None:
+        return payload
+    implementations = {}
+    interfaces = {}
+    # Graph nodes include compiled source bindings; repeat bodies can also call providers.
+    occurrences = (
+        occurrence
+        for node in procedure.definition.nodes
+        for occurrence in (node.body if isinstance(node, RepeatNode) else (node,))
+        if isinstance(occurrence, SourceNode | CallNode | RepeatBodyNode)
+    )
+    for occurrence in occurrences:
+        if occurrence.provider != source_pin or not isinstance(occurrence.interface, ArtifactPin):
+            continue
+        interface_id = occurrence.interface.target.name.partition("/")[0]
+        matches = [
+            item.implementation_digest
+            for item in provider.implementations
+            if item.interface_id == interface_id
+            and item.interface_digest == occurrence.interface_digest
+        ]
+        pin = provider_interface_pin(provider, interface_id)
+        if (
+            len(matches) != 1
+            or pin is None
+            or _registration_digest(tree, pin) != occurrence.interface_digest
+        ):
+            raise ProviderBuildMoveRefused(
+                f"{target} implements no exact contract of {interface_id} used by {path}"
+            )
+        assert occurrence.implementation_digest is not None
+        implementations[occurrence.implementation_digest] = matches[0]
+        interfaces[occurrence.interface.artifact_digest] = pin
+    backward = ProviderBuildMove(
+        source=source_pin,
+        target=ArtifactPin(
+            role="provider",
+            target=provider.identity,
+            artifact_digest=provider_digest(provider).tagged,
+        ),
+        implementations=implementations,
+        interfaces=interfaces,
+    )
+    return move_references(path, payload, {}, {source_pin.target.qualified: backward})
 
 
 def _registration_digest(tree: Mapping[str, bytes], pin: ArtifactPin) -> str | None:

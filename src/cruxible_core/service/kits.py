@@ -114,6 +114,7 @@ from cruxible_core.providers.build_moves import (
     SettledMoves,
     build_move,
     live_triggers_of,
+    restore_procedure_build,
     settle_changes,
 )
 from cruxible_core.providers.builds import indexed_move_pinners, tree_provider_builds
@@ -1839,6 +1840,28 @@ def _add_kit(
     with instance.bind_accepted_projection(mode.head) as projection:
         connection = projection.typed.connection
         movers = _kit_movers(connection, tree, shipped, diff.writes)
+        for mover in movers:
+            if mover.identity.qualified not in request.keep_build or mover.path not in diff.writes:
+                continue
+            try:
+                payload = restore_procedure_build(
+                    tree,
+                    path=mover.path,
+                    content=diff.writes[mover.path],
+                    source=mover.to_build,
+                    target=mover.from_build,
+                )
+                content, _digest = _render(mover.path, payload)
+                if _without_lifecycle(payload) == _without_lifecycle(json.loads(tree[mover.path])):
+                    diff.writes.pop(mover.path)
+                    _digest = _artifact_state(mover.path, tree[mover.path]).artifact_digest
+                else:
+                    diff.writes[mover.path] = content
+                release_digest = _artifact_state(mover.path, contents[mover.path]).artifact_digest
+                diff.installed[release_digest] = _digest
+                diff.content[mover.path] = kit_content_digest(payload)
+            except ProviderBuildMoveRefused as exc:
+                blocked.append(f"{mover.identity.qualified}: cannot keep its build: {exc}")
         if awaiting_install:
             # The kit's builds are not installed yet, so nothing can be moved or
             # evaluated: the preview names what the change will move and stop.
@@ -1885,35 +1908,6 @@ def _add_kit(
             writes: dict[str, bytes] = dict(diff.writes)
         else:
             moves = _kit_moves(tree, movers)
-            for mover in movers:
-                if (
-                    mover.identity.qualified not in request.keep_build
-                    or mover.path not in diff.writes
-                ):
-                    continue
-                try:
-                    backward = build_move(tree, mover.to_build, mover.from_build)
-                    payload = move_references(
-                        mover.path,
-                        json.loads(diff.writes[mover.path]),
-                        {},
-                        {backward.source.target.qualified: backward},
-                    )
-                    content, _digest = _render(mover.path, payload)
-                    if _without_lifecycle(payload) == _without_lifecycle(
-                        json.loads(tree[mover.path])
-                    ):
-                        diff.writes.pop(mover.path)
-                        _digest = _artifact_state(mover.path, tree[mover.path]).artifact_digest
-                    else:
-                        diff.writes[mover.path] = content
-                    release_digest = _artifact_state(
-                        mover.path, contents[mover.path]
-                    ).artifact_digest
-                    diff.installed[release_digest] = _digest
-                    diff.content[mover.path] = kit_content_digest(payload)
-                except ProviderBuildMoveRefused as exc:
-                    blocked.append(f"{mover.identity.qualified}: cannot keep its build: {exc}")
             settled = _settle_dependents(
                 tree,
                 diff,
