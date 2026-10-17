@@ -23,7 +23,12 @@ from .canonical import Sha256Value, canonical_digest
 from .change_control import DryRun, PreviewAt
 from .get_reads import GetCoordinate
 from .projection import AcceptedCoordinate
-from .provider_installation import ProviderRepinV1, ProviderWheelObject, StoppedAutomationV1
+from .provider_installation import (
+    AutomationCarryV1,
+    ProviderRepinV1,
+    ProviderWheelObject,
+    StoppedAutomationV1,
+)
 from .providers import provider_build_key_of
 
 KIT_MANIFEST_FILE = "cruxible-kit.json"
@@ -772,9 +777,9 @@ class KitChangeResult(_Strict):
     #: Each live Procedure bound to another build of a provider the kit ships,
     #: moved to the kit's build in this change set (or kept, with keep_build).
     repins: tuple[ProviderRepinV1, ...] = ()
-    #: The Lines, Triggers and Mandates those re-pins stop: each pinned a moved
-    #: Procedure's old version, so it is retired with this change.
+    #: Automation retired with definitions, rather than carried to live successors.
     stops: tuple[StoppedAutomationV1, ...] = ()
+    automation_carries: tuple[AutomationCarryV1, ...] = ()
     detail: str | None = None
     #: The accepted coordinate this change was evaluated at.
     coordinate: GetCoordinate | None = None

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.inputs import BlueprintInstanceInput
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
@@ -13,6 +14,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     parse_procedure,
     procedure_artifact_digest,
+    render_procedure,
 )
 from cruxible_client.contracts.provider_installation import (
     ProviderMoveRequest,
@@ -65,12 +67,23 @@ def _pins(world, name):
     )
 
 
-@pytest.mark.parametrize("keep", [(), ("Procedure:user.increment",), (f"Procedure:{PROCEDURE}",)])
+@pytest.mark.parametrize(
+    "keep,concurrent,definition_change",
+    [
+        ((), False, False),
+        ((), True, False),
+        (("Procedure:user.increment",), False, False),
+        ((f"Procedure:{PROCEDURE}",), False, False),
+        ((f"Procedure:{PROCEDURE}",), False, True),
+    ],
+)
 def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     provider_checkout: ProviderCheckout,
     keep: tuple[str, ...],
+    concurrent: bool,
+    definition_change: bool,
 ) -> None:
     opened = _worlds(tmp_path, monkeypatch)
     publisher, consumer = next(opened)
@@ -85,6 +98,7 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
         intent = (
             consumer.pb.changes(rationale="Schedule the operator's Procedure.")
             .line(name="user.tick", procedure="user.increment", parameters={"n": 2})
+            .line(name="user.kit-tick", procedure=PROCEDURE, parameters={"n": 2})
             .trigger(
                 name="user.clock", line="user.tick", schedule=CadenceSchedule(interval_seconds=3600)
             )
@@ -102,10 +116,26 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
                 artifact_digest=procedure_artifact_digest(procedure).tagged,
             )
         )
+        kit_path = f"procedures/{PROCEDURE}.json"
+        kit_procedure = parse_procedure(_tree(consumer)[kit_path], path=kit_path)
+        kit_mandate = _line_mandate(
+            AcceptedProcedure(
+                path=kit_path,
+                procedure=kit_procedure,
+                artifact_digest=procedure_artifact_digest(kit_procedure).tagged,
+            )
+        ).model_copy(
+            update={"identity": ArtifactIdentity(kind="ProcedureMandate", name="kit-mandate")}
+        )
         _accept_members(
             get_playbill_manager().get(consumer.instance_id),
             consumer.reviewer_key,
-            {procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate)},
+            {
+                procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+                procedure_mandate_path(kit_mandate.identity.name): render_procedure_mandate(
+                    kit_mandate
+                ),
+            },
             timestamp="2026-10-15T09:00:00.000000Z",
         )
         old = _pins(consumer, "user.increment")
@@ -119,11 +149,30 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
         )
         assert moved.status == "accepted", moved
         publisher.pb.refresh()
+        if definition_change:
+            current = parse_procedure(_tree(publisher)[kit_path], path=kit_path)
+            changed = current.model_copy(
+                update={
+                    "activation_policy": "snapshot",
+                    "lifecycle": ArtifactLifecycle(
+                        predecessor_digest=procedure_artifact_digest(current).tagged
+                    ),
+                }
+            )
+            _accept_members(
+                get_playbill_manager().get(publisher.instance_id),
+                publisher.reviewer_key,
+                {kit_path: render_procedure(changed)},
+                timestamp="2026-10-15T10:00:00.000000Z",
+            )
+            publisher.pb.refresh()
         v102 = _build(publisher, second, version="1.0.2")
         assert v101.manifest.providers[0].build != v102.manifest.providers[0].build
         assert [p for p in v101.contents() if p.startswith("provider-interfaces/")] == [
             p for p in v102.contents() if p.startswith("provider-interfaces/")
         ]
+        if concurrent:
+            _install(consumer, second)
         before = _tree(consumer)
         preview = _add(consumer, v102, keep_build=keep)
         assert preview.status == "would_propose", preview
@@ -132,19 +181,89 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
             f"Procedure:{PROCEDURE}",
             "Procedure:user.increment",
         }
-        expected_stops = (
+        expected_carries = (
             set()
             if "Procedure:user.increment" in keep
-            else {"Line:user.tick", "Trigger:user.clock", "ProcedureMandate:served-line-mandate"}
+            else {"Line:user.tick", "ProcedureMandate:served-line-mandate"}
         )
-        assert {item.identity for item in preview.stops} == expected_stops
-        added = _add(consumer, v102, dry_run=False, keep_build=keep)
+        if f"Procedure:{PROCEDURE}" not in keep or definition_change:
+            expected_carries.update({"Line:user.kit-tick", "ProcedureMandate:kit-mandate"})
+        assert not preview.stops
+        assert {item.identity for item in preview.automation_carries} == expected_carries
+        assert all(
+            item.phase == ("validated" if concurrent else "planned")
+            for item in preview.automation_carries
+        )
+        if concurrent:
+            from concurrent.futures import ThreadPoolExecutor
+            from threading import Barrier
+
+            from cruxible_core.errors import RequestRefusedError
+
+            barrier = Barrier(2)
+
+            def add_once():
+                barrier.wait(timeout=30)
+                try:
+                    return _add(
+                        consumer,
+                        v102,
+                        dry_run=False,
+                        keep_build=keep,
+                        at=preview.coordinate.git_oid,
+                    )
+                except RequestRefusedError:
+                    return None  # The other add moved the preview's accepted coordinate.
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = list(pool.map(lambda _: add_once(), range(2)))
+            accepted_results = [
+                item for item in outcomes if item is not None and item.status == "accepted"
+            ]
+            assert len(accepted_results) == 1, outcomes
+            added = accepted_results[0]
+            assert added.automation_carries == preview.automation_carries
+        else:
+            added = _add(consumer, v102, dry_run=False, keep_build=keep)
         assert added.status == "accepted", added
         assert {item.identity for item in added.repins} == {
             f"Procedure:{PROCEDURE}",
             "Procedure:user.increment",
         }
-        assert {item.identity for item in added.stops} == expected_stops
+        assert not added.stops
+        assert {item.identity for item in added.automation_carries} == expected_carries
+        assert all(item.phase == "validated" for item in added.automation_carries)
+        after = _tree(consumer)
+        assert after["triggers/user.clock.json"] == before["triggers/user.clock.json"]
+        if "Procedure:user.increment" in keep:
+            for path in ("lines/user.tick.json", "procedure-mandates/served-line-mandate.json"):
+                assert after[path] == before[path]
+        else:
+            from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate_any
+            from cruxible_client.contracts.procedures.line_specs import parse_line_spec
+
+            line = parse_line_spec(after["lines/user.tick.json"], path="lines/user.tick.json")
+            carried_mandate = parse_procedure_mandate_any(
+                after["procedure-mandates/served-line-mandate.json"],
+                path="procedure-mandates/served-line-mandate.json",
+            )
+            new_procedure = parse_procedure(after[procedure_path], path=procedure_path)
+            assert line.procedure.artifact_digest == procedure_artifact_digest(new_procedure).tagged
+            assert carried_mandate.procedure == line.procedure
+            assert carried_mandate.grants == "propose"
+            assert line.occurrence_epoch == 1
+            assert any(
+                item.kind == "line" and item.enablement == "disabled"
+                for item in added.automation_carries
+            )
+        for path in ("lines/user.kit-tick.json", "procedure-mandates/kit-mandate.json"):
+            if f"Procedure:{PROCEDURE}" in keep and not definition_change:
+                assert after[path] == before[path]
+            else:
+                assert after[path] != before[path]
+        assert {item.identity for item in preview.automation_carries} == {
+            item.identity for item in added.automation_carries
+        }
         consumer.pb.refresh()
         for name in (PROCEDURE, "user.increment"):
             kept = f"Procedure:{name}" in keep

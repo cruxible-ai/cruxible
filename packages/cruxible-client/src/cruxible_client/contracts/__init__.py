@@ -431,6 +431,7 @@ NextReason: TypeAlias = Literal[
     "consumer_stalled",
     "line_coverage_gap",
     "line_work_pending",
+    "line_disabled_by_upgrade",
     "line_settled_prior_refusals",
     "line_inbox_unread",
     "evidence_unavailable",

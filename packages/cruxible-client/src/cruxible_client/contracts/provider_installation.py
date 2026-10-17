@@ -1,8 +1,8 @@
 """Administrative provider installation requests contain bytes references, never host paths."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .canonical import Sha256Value
 from .change_control import DryRun, PreviewAt
@@ -232,15 +232,47 @@ class ProviderRepinV1(_Strict):
         return self
 
 
+class CarriedLineV1(_Strict):
+    """A same-identity Line successor; exact-version enablement never transfers."""
+
+    kind: Literal["line"] = "line"
+    identity: str
+    procedure: str
+    old_procedure_digest: str
+    new_procedure_digest: str | None = None
+    old_artifact_digest: str
+    new_artifact_digest: str | None = None
+    phase: Literal["planned", "validated"] = "validated"
+    enablement: Literal["disabled"] = "disabled"
+
+
+class CarriedMandateV1(_Strict):
+    """A same-name propose successor, with all settle-only fields removed."""
+
+    kind: Literal["mandate"] = "mandate"
+    identity: str
+    procedure: str
+    old_procedure_digest: str
+    new_procedure_digest: str | None = None
+    old_artifact_digest: str
+    new_artifact_digest: str | None = None
+    phase: Literal["planned", "validated"] = "validated"
+    old_grant: Literal["propose", "settle"]
+    new_grant: Literal["propose"] = "propose"
+    loses_settle: bool
+    subject_creation_namespace_limitation: bool = False
+
+
+AutomationCarryV1 = Annotated[CarriedLineV1 | CarriedMandateV1, Field(discriminator="kind")]
+
+
 class StoppedAutomationV1(_Strict):
-    """A Line, Trigger or Mandate a re-pin retires: it pinned the moved definition's
-    old version and cannot be carried to the new one, so its automation stops.
-    Author it again over the moved definition to resume it."""
+    """Automation retired with a retired definition; live Procedure successors
+    instead carry Lines disabled and Mandates propose-only."""
 
     tag: Literal["cruxible-stopped-automation-v1"] = "cruxible-stopped-automation-v1"
     identity: str
     kind: Literal["line", "trigger", "mandate"]
-    #: The moved definition whose re-pin stops it.
     stopped_by: str
 
 
@@ -321,8 +353,9 @@ class ProviderMoveResult(_Strict):
     provider: str
     to: ProviderBuildResolutionV1
     moved: tuple[ProviderRepinV1, ...] = ()
-    #: Automation the move stops (carrying it is not automatic yet).
+    #: Automation retired with retired definitions.
     stops: tuple[StoppedAutomationV1, ...] = ()
+    automation_carries: tuple[AutomationCarryV1, ...] = ()
     #: Other live dependents carried (re-pinned) with the moved definitions.
     carried_dependents: int = 0
     status: Literal["unchanged", "would_propose", "would_block", "proposed", "accepted", "blocked"]

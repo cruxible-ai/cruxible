@@ -233,6 +233,7 @@ def service_move_provider(
             to=resolution,
             moved=tuple(settled.repins),
             stops=tuple(settled.stops),
+            automation_carries=tuple(settled.automation_carries),
             carried_dependents=settled.carried,
             status=status,  # type: ignore[arg-type]
             proposal_id=proposal_id,

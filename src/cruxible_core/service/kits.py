@@ -31,7 +31,11 @@ from cruxible_client.contracts.documents import (
     parse_document,
     render_document,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.errors import (
+    ProposalIntegrityError,
+    ProposalStale,
+    SettlementIntegrityError,
+)
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_PREFIXES,
     KIT_RECEIPT_DOCUMENT_KIND,
@@ -65,6 +69,7 @@ from cruxible_client.contracts.kits import (
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.projection import AcceptedCoordinate as ServedCoordinate
 from cruxible_client.contracts.provider_installation import (
+    AutomationCarryV1,
     ProviderInstallRequest,
     ProviderInstallResult,
     ProviderRepinV1,
@@ -103,11 +108,13 @@ from cruxible_core.errors import ConfigError, DataValidationError, RequestRefuse
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.bootstrap import GENESIS_SEED_SETS, genesis_seed_files
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+from cruxible_core.providers.automation_carry import carry_automation
 from cruxible_core.providers.build_moves import (
     Mover,
     SettledMoves,
     build_move,
     live_triggers_of,
+    restore_procedure_build,
     settle_changes,
 )
 from cruxible_core.providers.builds import indexed_move_pinners, tree_provider_builds
@@ -940,7 +947,8 @@ def _settle_dependents(
     with a definition the request retires together with its dependents. Each
     live Procedure bound to another build of a provider the kit ships moves to
     the kit's build (``movers``), unless ``keep_build`` names it. A Line,
-    Trigger or Mandate over a replaced or moved Procedure is stopped. The plan
+    or Mandate over a replaced or moved Procedure is carried disabled or
+    propose-only, respectively; Triggers stay untouched. The plan
     counts each definition's dependents rather than listing them.
     """
 
@@ -1013,41 +1021,57 @@ def _kit_moves(
     return moves
 
 
-def _planned_stops(
+def _planned_automation(
     connection: Any,
     tree: Mapping[str, bytes],
     roots: tuple[ArtifactIdentity, ...],
-    fixed: frozenset[str],
-) -> tuple[StoppedAutomationV1, ...]:
-    """The Lines, Mandates and Triggers a change over ``roots`` would stop, read
-    before the change can be evaluated (a preview whose providers are not installed)."""
+    writes: Mapping[str, bytes],
+    retire_with: set[str],
+) -> tuple[tuple[AutomationCarryV1, ...], tuple[StoppedAutomationV1, ...]]:
+    """Affected automation before installation, with unavailable final digests.
 
+    Closure errors block inventory. Retirement remains distinct from carry;
+    discovery uses the same indexed closure and target lookups as settlement.
+    """
+
+    fixed = frozenset(writes)
+    items = dependent_closure_inventory(tree, roots=roots, fixed_paths=fixed)
+    retiring_procedures = {
+        _artifact_state(path, content).identity.qualified
+        for path, content in writes.items()
+        if path.startswith("procedures/")
+        and _artifact_state(path, content).lifecycle.state == "retired"
+    }
+    if retire_with:
+        retired_items = dependent_closure_inventory(
+            tree,
+            roots=tuple(root for root in roots if root.qualified in retire_with),
+            fixed_paths=fixed,
+        )
+        retiring_procedures.update(
+            item.identity.qualified for item in retired_items if item.artifact_kind == "procedure"
+        )
+    carries = []
     stops: dict[str, StoppedAutomationV1] = {}
-    for root in roots:
-        try:
-            items = dependent_closure_inventory(tree, roots=(root,), fixed_paths=fixed)
-        except ClaimTypeMigrationError:
+    for item in items:
+        if item.artifact_kind not in {"line", "procedure-mandate"}:
             continue
-        for item in items:
-            if item.artifact_kind not in {"line", "procedure-mandate"}:
-                continue
-            stops.setdefault(
-                item.identity.qualified,
-                StoppedAutomationV1(
-                    identity=item.identity.qualified,
-                    kind="line" if item.artifact_kind == "line" else "mandate",
-                    stopped_by=item.triggering_identity.qualified,
-                ),
-            )
-            if item.artifact_kind == "line":
-                for trigger, _path in live_triggers_of(connection, item.identity.qualified):
-                    stops.setdefault(
-                        trigger,
-                        StoppedAutomationV1(
-                            identity=trigger, kind="trigger", stopped_by=item.identity.qualified
-                        ),
-                    )
-    return tuple(stops[key] for key in sorted(stops))
+        row = carry_automation(item.path, tree[item.path], {}, planned=True)[1]
+        if row.procedure not in retiring_procedures:
+            carries.append(row)
+            continue
+        stops[row.identity] = StoppedAutomationV1(
+            identity=row.identity, kind=row.kind, stopped_by=row.procedure
+        )
+        if row.kind == "line":
+            for trigger, _ in live_triggers_of(connection, row.identity):
+                stops[trigger] = StoppedAutomationV1(
+                    identity=trigger, kind="trigger", stopped_by=row.identity
+                )
+    return (
+        tuple(sorted(carries, key=lambda row: row.identity)),
+        tuple(stops[key] for key in sorted(stops)),
+    )
 
 
 def _held_by_other_kits(
@@ -1137,6 +1161,7 @@ def _submit(
     providers: tuple[KitProviderStep, ...] = (),
     repins: tuple[ProviderRepinV1, ...] = (),
     stops: tuple[StoppedAutomationV1, ...] = (),
+    automation_carries: tuple[AutomationCarryV1, ...] = (),
 ) -> KitChangeResult:
     assert mode.head is not None
     base = mode.head
@@ -1147,6 +1172,7 @@ def _submit(
         "providers": providers,
         "repins": repins,
         "stops": stops,
+        "automation_carries": automation_carries,
     }
     body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
     shell = DocumentShell(
@@ -1208,9 +1234,28 @@ def _submit(
         # Like provider install and value writes, a kit change the approval
         # policy lets through lands at once; otherwise it stops at proposed.
         assert admitted.proposal_id is not None
-        activation = service_activate_playbill_proposal(
-            instance, proposal_id=admitted.proposal_id, activated_by=actor_id
-        )
+        try:
+            activation = service_activate_playbill_proposal(
+                instance, proposal_id=admitted.proposal_id, activated_by=actor_id
+            )
+        except (SettlementIntegrityError, ProposalStale):
+            # A concurrent add can publish after activation's stale check but
+            # before settlement. Preserve integrity errors at the same head;
+            # a genuinely moved preview gets the ordinary R12 refusal.
+            with instance.accepted_head_held() as head_oid:
+                if head_oid == base.git_oid:
+                    raise
+                mode.confirm_head(head_oid)
+            return KitChangeResult(
+                kit_id=kit_id,
+                version=version,
+                status="blocked",
+                plan=plan,
+                proposal_id=admitted.proposal_id,
+                detail="Accepted state moved during kit add; preview the kit again.",
+                coordinate=mode.coordinate,
+                **described,  # type: ignore[arg-type]
+            )
         if activation.status == "accepted":
             status = "accepted"
     return KitChangeResult(
@@ -1795,6 +1840,28 @@ def _add_kit(
     with instance.bind_accepted_projection(mode.head) as projection:
         connection = projection.typed.connection
         movers = _kit_movers(connection, tree, shipped, diff.writes)
+        for mover in movers:
+            if mover.identity.qualified not in request.keep_build or mover.path not in diff.writes:
+                continue
+            try:
+                payload = restore_procedure_build(
+                    tree,
+                    path=mover.path,
+                    content=diff.writes[mover.path],
+                    source=mover.to_build,
+                    target=mover.from_build,
+                )
+                content, _digest = _render(mover.path, payload)
+                if _without_lifecycle(payload) == _without_lifecycle(json.loads(tree[mover.path])):
+                    diff.writes.pop(mover.path)
+                    _digest = _artifact_state(mover.path, tree[mover.path]).artifact_digest
+                else:
+                    diff.writes[mover.path] = content
+                release_digest = _artifact_state(mover.path, contents[mover.path]).artifact_digest
+                diff.installed[release_digest] = _digest
+                diff.content[mover.path] = kit_content_digest(payload)
+            except ProviderBuildMoveRefused as exc:
+                blocked.append(f"{mover.identity.qualified}: cannot keep its build: {exc}")
         if awaiting_install:
             # The kit's builds are not installed yet, so nothing can be moved or
             # evaluated: the preview names what the change will move and stop.
@@ -1818,51 +1885,29 @@ def _add_kit(
             changed_roots = tuple(
                 _artifact_state(path, tree[path]).identity for path in diff.writes if path in tree
             )
-            stops = _planned_stops(
-                connection,
-                tree,
-                (
-                    *changed_roots,
-                    *(
-                        mover.identity
-                        for mover in movers
-                        if mover.identity.qualified not in request.keep_build
+            stops: tuple[StoppedAutomationV1, ...]
+            try:
+                automation_carries, stops = _planned_automation(
+                    connection,
+                    tree,
+                    (
+                        *changed_roots,
+                        *(
+                            mover.identity
+                            for mover in movers
+                            if mover.identity.qualified not in request.keep_build
+                        ),
                     ),
-                ),
-                frozenset(diff.writes),
-            )
+                    diff.writes,
+                    retire_with,
+                )
+            except (ClaimTypeMigrationError, ValueError) as exc:
+                blocked.append(f"automation inventory incomplete: {exc}")
+                automation_carries = ()
+                stops = ()
             writes: dict[str, bytes] = dict(diff.writes)
         else:
             moves = _kit_moves(tree, movers)
-            for mover in movers:
-                if (
-                    mover.identity.qualified not in request.keep_build
-                    or mover.path not in diff.writes
-                ):
-                    continue
-                try:
-                    backward = build_move(tree, mover.to_build, mover.from_build)
-                    payload = move_references(
-                        mover.path,
-                        json.loads(diff.writes[mover.path]),
-                        {},
-                        {backward.source.target.qualified: backward},
-                    )
-                    content, _digest = _render(mover.path, payload)
-                    if _without_lifecycle(payload) == _without_lifecycle(
-                        json.loads(tree[mover.path])
-                    ):
-                        diff.writes.pop(mover.path)
-                        _digest = _artifact_state(mover.path, tree[mover.path]).artifact_digest
-                    else:
-                        diff.writes[mover.path] = content
-                    release_digest = _artifact_state(
-                        mover.path, contents[mover.path]
-                    ).artifact_digest
-                    diff.installed[release_digest] = _digest
-                    diff.content[mover.path] = kit_content_digest(payload)
-                except ProviderBuildMoveRefused as exc:
-                    blocked.append(f"{mover.identity.qualified}: cannot keep its build: {exc}")
             settled = _settle_dependents(
                 tree,
                 diff,
@@ -1881,8 +1926,10 @@ def _add_kit(
             writes = settled.writes if not settled.refused else dict(diff.writes)
             repins = tuple(settled.repins)
             stops = tuple(settled.stops)
+            automation_carries = tuple(settled.automation_carries)
     described["repins"] = repins
     described["stops"] = stops
+    described["automation_carries"] = automation_carries
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
     if blocked:
         return KitChangeResult(

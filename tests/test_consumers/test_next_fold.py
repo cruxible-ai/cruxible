@@ -52,6 +52,7 @@ def test_one_kind_one_health_and_independent_part_cursors(tmp_path: Path) -> Non
         "prediction",
         "curation",
         "settled_refusals",
+        "line_upgrades",
     }
     assert health.detail["prediction"]["contracts"] == 1
     before = health.detail

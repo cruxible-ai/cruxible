@@ -307,6 +307,7 @@ _DUE_AFTER_GENERATION = {
     "prediction": False,
     "curation": True,
     "settled_refusals": True,
+    "line_upgrades": False,
 }
 
 

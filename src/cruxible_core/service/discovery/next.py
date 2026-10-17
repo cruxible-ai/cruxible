@@ -4330,6 +4330,33 @@ def _line_settled_refusal_items(
     return tuple(items)
 
 
+def _line_upgrade_items(
+    instance: PlaybillInstance, *, access_profile: CoverageAccessProfile
+) -> tuple[PlaybillNextItemV1, ...]:
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.consumers.next.line_upgrades import disabled_upgrades
+
+    return tuple(
+        _item(
+            severity="repair",
+            reason="line_disabled_by_upgrade",
+            subject_identity=line,
+            detail={
+                "procedure_version": version,
+                "detail": f"disabled by upgrade to {version}; enable to resume",
+            },
+            repair=PlaybillNextRepairV1(
+                operation="cruxible.line.enable",
+                target=line,
+                required_change="enable_the_upgraded_line_to_resume",
+                arguments={"line": line.removeprefix("Line:")},
+            ),
+        )
+        for line, version in disabled_upgrades(instance)
+    )
+
+
 def _line_attention_items(
     instance: PlaybillInstance,
     *,
@@ -6118,6 +6145,9 @@ def _queue_at(
         if domain == "accepted_state" or domain in workspace_domains
     )
     unobserved = tuple(domain for domain in _ALL_DOMAINS if domain not in observed)
+    # Upgrade findings catch up their projection on a read. Capture health
+    # afterward so the first response and its continuation see the same cursor.
+    line_upgrade_items = _line_upgrade_items(instance, access_profile=request.access_profile)
     consumer_healths = _consumer_healths(
         instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
     )
@@ -6203,6 +6233,7 @@ def _queue_at(
         *_line_settled_refusal_items(
             instance, coordinate=coordinate, access_profile=request.access_profile
         ),
+        *line_upgrade_items,
         *_line_inbox_items(instance, access_profile=request.access_profile),
         *_kit_resume_items(instance, access_profile=request.access_profile),
     )

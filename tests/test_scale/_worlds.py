@@ -672,6 +672,7 @@ TICK_PARTS = (
     "prediction",
     "curation",
     "settled_refusals",
+    "line_upgrades",
 )
 
 
@@ -688,6 +689,7 @@ def tick(world: World, part: str) -> object:
         curation,
         evidence,
         facts,
+        line_upgrades,
         predictions,
         settled_refusals,
     )
@@ -711,6 +713,7 @@ def tick(world: World, part: str) -> object:
         "prediction": predictions._PART,  # noqa: SLF001
         "curation": curation._PART,  # noqa: SLF001
         "settled_refusals": settled_refusals._PART,  # noqa: SLF001
+        "line_upgrades": line_upgrades._PART,  # noqa: SLF001
     }[part]
     if part in ("line", "floor") and not kind.active(instance):
         raise AssertionError(f"the {part} consumer is not active")

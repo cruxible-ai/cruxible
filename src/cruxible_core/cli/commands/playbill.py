@@ -1768,7 +1768,7 @@ def move_provider(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Move live definitions to NAME's build, with a preview of re-pins and stopped automation."""
+    """Move definitions to NAME's build; carry Lines disabled and Mandates propose-only."""
     request = ProviderMoveRequest(
         provider=provider, to=to, only=tuple(sorted(set(only))), dry_run=dry_run, at=at
     )
@@ -1780,7 +1780,7 @@ def move_provider(
         _emit_json(result.model_dump(mode="json"))
     else:
         click.echo(f"{result.provider} -> {result.to.resolved}: {result.status}")
-        _echo_provider_repins(result.moved, result.stops)
+        _echo_provider_repins(result.moved, result.stops, result.automation_carries)
         if result.detail:
             click.echo(result.detail)
         if result.proposal_id:
@@ -1788,12 +1788,29 @@ def move_provider(
         echo_preview_next(result.status, result.coordinate)
 
 
-def _echo_provider_repins(repins: Any, stops: Any) -> None:
+def _echo_provider_repins(repins: Any, stops: Any, carries: Any = ()) -> None:
     for item in repins:
         click.echo(
             f"  {item.action}: {item.identity}: {item.from_build} -> {item.to_build}"
             + (f" ({item.reason})" if item.reason else "")
         )
+    for item in carries:
+        phase = "planned " if item.phase == "planned" else ""
+        if item.kind == "line":
+            click.echo(
+                f"  {phase}carry: {item.identity}: disabled by upgrade to "
+                f"{item.new_procedure_digest or 'pending Procedure version'}; line enable to resume"
+            )
+        else:
+            click.echo(
+                f"  {phase}carry: {item.identity}: {item.old_grant} -> propose"
+                + ("; settle re-grant required" if item.loses_settle else "")
+            )
+            if item.subject_creation_namespace_limitation:
+                click.echo(
+                    "    Subject creation needs explicit propose namespace authoring; "
+                    "namespace preserved."
+                )
     for item in stops:
         click.echo(f"  stop {item.kind}: {item.identity} (over {item.stopped_by})")
 
@@ -1829,7 +1846,7 @@ def _echo_kit_change(result: KitChangeResult) -> None:
         if step.detail is not None:
             line += f" ({printable(step.detail)})"
         click.echo(line)
-    _echo_provider_repins(result.repins, result.stops)
+    _echo_provider_repins(result.repins, result.stops, result.automation_carries)
     if result.provenance is not None:
         provenance = result.provenance
         click.echo(
@@ -2020,7 +2037,8 @@ def add_kit(
     takes over one defined outside the kit) unless --keep or --keep-local-edits
     keeps yours. Every Procedure on a shipped provider moves to its exact build;
     --keep-build Procedure:NAME keeps its current build. The preview names each
-    re-pin and the Lines, Triggers and Mandates it stops by retiring them.
+    re-pin, each carried disabled Line, and every Mandate downgraded to propose.
+    Triggers stay unchanged; use line enable to resume and re-grant settle explicitly.
     Replaced definitions' other dependents are carried along. The change
     lands at once when the approval policy requires no approval, otherwise it
     stops at proposed. A kit that bundles provider packages installs the missing

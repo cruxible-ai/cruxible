@@ -8158,3 +8158,12 @@ preflights an authoring intent. Submission, review, approval where required,
 and acceptance remain separate operations. To include related definitions,
 use `cx.changes(rationale=...).procedure(definition=sequence)` before preparing
 the changeset.
+
+Kit and provider upgrades return `automation_carries` alongside `repins`/`moved`
+and true retirement `stops`. Its discriminated `kind` is `line` (successor arrives
+`disabled`) or `mandate` (same-name propose successor, with `loses_settle` and a
+Subject-creation namespace limitation when applicable). `phase="planned"` has no
+final digests before provider installation; `phase="validated"` names the exact
+successors. Triggers stay unchanged. Procedure-definition changes carry automation
+too. Use `line.enable()` to resume and ordinary Mandate authoring/approval to
+restore settle. `--keep-build` preserves automation when its Procedure is unchanged.

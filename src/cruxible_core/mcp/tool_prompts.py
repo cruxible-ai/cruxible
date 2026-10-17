@@ -23,7 +23,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_provider_move": (
         "Move live Procedures to a provider build (newest means most recently registered). "
-        "Preview each re-pin and every Line, Trigger and Mandate it stops; commit the governed "
+        "Preview each re-pin, carried disabled Line and propose-only Mandate; commit the governed "
         "change with dry_run false and at set to the preview coordinate."
     ),
     "cruxible_kit_build": (
@@ -48,8 +48,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "then proposes the definitions; an install awaiting approval stops at "
         "awaiting_providers, and its activation proposes them on their own. Every Procedure "
         "on a shipped provider moves to that exact build (kit and user definitions); "
-        "keep_build opts out by Procedure identity. The preview lists re-pins and stopped "
-        "Lines, Triggers and Mandates. Old builds stay installed."
+        "keep_build opts out by Procedure identity. The preview lists re-pins, disabled "
+        "Line successors and propose-only Mandates; Triggers stay unchanged. "
+        "Old builds stay installed."
     ),
     "cruxible_claim_type_upgrade": (
         "Use to move ClaimTypes before v7 to v7, which states revision_evidence "

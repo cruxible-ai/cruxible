@@ -213,8 +213,14 @@ version is unchanged.
 A kit add installs the builds the release ships and re-pins every live Procedure
 bound to those provider names, including your own Procedures, to the release's
 exact builds in the definitions change set. The preview lists each re-pin and
-every Line, Trigger and Mandate it stops (retires). Author that automation again
-over the moved Procedure to resume it. To keep a Procedure on its current build,
+every carried Line (disabled) and every Mandate losing settle. A build change
+or Procedure-definition change carries same-identity Lines to the final Procedure
+version and same-name Mandates to propose-only grants, with settle fields cleared.
+Triggers stay byte-identical. `next` names each disabled upgrade; use the existing
+`line enable` to resume its cadence or events, then explicitly author and approve
+a settle re-grant if needed. Normal kit approval policy applies. Subject-creating
+settle workflows retain their namespace: proposing Subjects needs explicit
+namespace authoring. Retiring a Procedure still retires its automation. To keep a Procedure on its current build,
 pass `--keep-build Procedure:NAME` (repeatable). Procedures using other providers
 are unaffected. Old builds stay installed and runnable; kit add neither retires
 nor lists them.

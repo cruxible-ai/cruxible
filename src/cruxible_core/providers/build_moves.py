@@ -8,10 +8,9 @@ are carried with it in the same change set. A Procedure instantiated from a
 Blueprint is instantiated again, from the Blueprint's current version, with
 the moved slot bound to the new build.
 
-Lines, Triggers and Mandates cannot be carried yet: each pins an exact
-Procedure version and carries authority of its own. A move retires (stops)
-each one over a moved Procedure and names it, so the automation can be
-authored again over the moved definition.
+Lines take same-identity successors pinning the final live Procedure, disabled.
+Mandates take same-name propose-only successors with settle fields cleared.
+Triggers stay byte-identical. Retirement still retires dependent automation.
 
 Cost: O(moved definitions + their dependents). The live pinners of a build come
 from the typed pin index (``pins_by_target``), the dependents from the indexed
@@ -29,6 +28,7 @@ from typing import Any
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedure,
     parse_procedure,
     procedure_artifact_digest,
     render_procedure,
@@ -40,8 +40,15 @@ from cruxible_client.contracts.procedures.blueprints import (
     instantiate_blueprint,
     parse_blueprint,
 )
-from cruxible_client.contracts.procedures.models import iter_pin_bindings
+from cruxible_client.contracts.procedures.models import (
+    CallNode,
+    RepeatBodyNode,
+    RepeatNode,
+    SourceNode,
+    iter_pin_bindings,
+)
 from cruxible_client.contracts.provider_installation import (
+    AutomationCarryV1,
     ProviderRepinV1,
     StoppedAutomationV1,
 )
@@ -70,6 +77,7 @@ from cruxible_core.claims.claim_type_migrations import (
     dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
+from cruxible_core.providers.automation_carry import carry_automation, validate_carried_line
 
 #: Families a move stops (retires) instead of carrying.
 _STOPPED_KINDS = {"line": "line", "procedure-mandate": "mandate"}
@@ -92,6 +100,7 @@ class SettledMoves:
     writes: dict[str, bytes] = field(default_factory=dict)
     repins: list[ProviderRepinV1] = field(default_factory=list)
     stops: list[StoppedAutomationV1] = field(default_factory=list)
+    automation_carries: list[AutomationCarryV1] = field(default_factory=list)
     #: Changed definition identity -> its live dependents (each carried or retired).
     counts: dict[str, int] = field(default_factory=dict)
     #: Dependents carried (re-pinned) beyond the moved definitions themselves.
@@ -147,6 +156,73 @@ def build_move(tree: Mapping[str, bytes], source: str, target: str) -> ProviderB
     return ProviderBuildMove(
         source=old_pin, target=new_pin, implementations=implementations, interfaces=interfaces
     )
+
+
+def restore_procedure_build(
+    tree: Mapping[str, bytes], *, path: str, content: bytes, source: str, target: str
+) -> dict[str, Any]:
+    """Restore a release Procedure's kept build before or after installation.
+
+    The release graph supplies the source occurrences; the accepted target
+    Provider supplies their exact compatible implementations and registrations.
+    No source Provider installation is needed for this metadata-only transform.
+    Work grows with this changed Procedure's nodes and the kept build's metadata.
+    """
+
+    procedure = parse_procedure(content, path=path)
+    target_path = provider_path(target)
+    provider = parse_provider(tree[target_path], path=target_path)
+    if not isinstance(provider, ProviderV2):
+        raise ProviderBuildMoveRefused(f"{target} runs no package build", reason="not_movable")
+    source_pin = next(
+        (pin for pin in procedure.pins if pin.role == "provider" and pin.target.name == source),
+        None,
+    )
+    payload: dict[str, Any] = json.loads(content)
+    if source_pin is None:
+        return payload
+    implementations = {}
+    interfaces = {}
+    # Graph nodes include compiled source bindings; repeat bodies can also call providers.
+    occurrences = (
+        occurrence
+        for node in procedure.definition.nodes
+        for occurrence in (node.body if isinstance(node, RepeatNode) else (node,))
+        if isinstance(occurrence, SourceNode | CallNode | RepeatBodyNode)
+    )
+    for occurrence in occurrences:
+        if occurrence.provider != source_pin or not isinstance(occurrence.interface, ArtifactPin):
+            continue
+        interface_id = occurrence.interface.target.name.partition("/")[0]
+        matches = [
+            item.implementation_digest
+            for item in provider.implementations
+            if item.interface_id == interface_id
+            and item.interface_digest == occurrence.interface_digest
+        ]
+        pin = provider_interface_pin(provider, interface_id)
+        if (
+            len(matches) != 1
+            or pin is None
+            or _registration_digest(tree, pin) != occurrence.interface_digest
+        ):
+            raise ProviderBuildMoveRefused(
+                f"{target} implements no exact contract of {interface_id} used by {path}"
+            )
+        assert occurrence.implementation_digest is not None
+        implementations[occurrence.implementation_digest] = matches[0]
+        interfaces[occurrence.interface.artifact_digest] = pin
+    backward = ProviderBuildMove(
+        source=source_pin,
+        target=ArtifactPin(
+            role="provider",
+            target=provider.identity,
+            artifact_digest=provider_digest(provider).tagged,
+        ),
+        implementations=implementations,
+        interfaces=interfaces,
+    )
+    return move_references(path, payload, {}, {source_pin.target.qualified: backward})
 
 
 def _registration_digest(tree: Mapping[str, bytes], pin: ArtifactPin) -> str | None:
@@ -298,13 +374,15 @@ def settle_changes(
     ``writes`` are the change's own definitions: a dependent of one that already
     exists here is carried to its final bytes, or retired with it when its
     identity is in ``retire_with``. Each mover takes the build move unless its
-    identity is in ``keep``. A Line or Mandate over a moved or replaced Procedure
-    is stopped (retired); a Trigger aimed at a stopped Line is retired too.
+    identity is in ``keep``. Lines over live Procedure successors arrive disabled;
+    Mandates arrive propose-only. Triggers are untouched except on retirement.
     """
 
     moves = dict(moves or {})
     settled = SettledMoves()
-    changed = {path: content for path, content in writes.items() if path in tree}
+    changed = {
+        path: content for path, content in writes.items() if path in tree and content != tree[path]
+    }
     unmoved: set[str] = set()
     movable: list[Mover] = []
     for mover in movers:
@@ -352,7 +430,11 @@ def settle_changes(
                 action="successor",
             )
         )
-    fixed = frozenset({*writes, *changed})
+    fixed = frozenset(
+        path
+        for path in {*writes, *changed}
+        if not path.startswith(("lines/", "procedure-mandates/"))
+    )
     roots: dict[str, ArtifactIdentity] = {}
     for path in sorted(changed):
         state = parse_dependency_artifact(path, tree[path])
@@ -399,7 +481,11 @@ def settle_changes(
     for path in sorted(union):
         item = union[path]
         if item.artifact_kind in _STOPPED_KINDS:
-            # Stopping is retiring: whether its Procedure moves or retires.
+            if path in writes:
+                settled.refused.append(
+                    f"{item.identity.qualified}: explicit automation write conflicts with carry; "
+                    "author it separately"
+                )
             stopped.append(item)
             continue
         if item.artifact_kind == "procedure" and item.path not in changed:
@@ -456,9 +542,61 @@ def settle_changes(
         new = parse_dependency_artifact(path, content)
         if old is not None and new is not None and old.artifact_digest != new.artifact_digest:
             replacements[old.artifact_digest] = new.artifact_digest
+    # Only live, same-identity Procedure successors are carry targets. Retirement
+    # continues through the existing stop path. All pins use FINAL digests.
+    live_procedures: dict[str, str] = {}
+    final_procedures: dict[str, AcceptedProcedure] = {}
+    for path, content in final.items():
+        if not path.startswith("procedures/") or path not in tree:
+            continue
+        old_procedure = parse_dependency_artifact(path, tree[path])
+        new_procedure = parse_dependency_artifact(path, content)
+        if (
+            old_procedure is not None
+            and new_procedure is not None
+            and old_procedure.identity == new_procedure.identity
+            and new_procedure.lifecycle.state == "live"
+            and old_procedure.artifact_digest != new_procedure.artifact_digest
+        ):
+            live_procedures[old_procedure.artifact_digest] = new_procedure.artifact_digest
+            final_procedures[old_procedure.artifact_digest] = AcceptedProcedure(
+                path=path,
+                procedure=parse_procedure(content, path=path),
+                artifact_digest=new_procedure.artifact_digest,
+            )
     for item in stopped:
         state = parse_dependency_artifact(item.path, tree[item.path])
         assert state is not None
+        procedure_pins = [pin for pin in state.pins if pin.role == "procedure"]
+        if any(pin.artifact_digest in live_procedures for pin in procedure_pins):
+            try:
+                if item.artifact_kind == "line":
+                    validate_carried_line(
+                        tree[item.path],
+                        path=item.path,
+                        procedure=final_procedures[procedure_pins[0].artifact_digest],
+                    )
+                carried_content, outcome = carry_automation(
+                    item.path, tree[item.path], live_procedures
+                )
+                assert carried_content is not None
+                final[item.path] = carried_content
+                settled.automation_carries.append(outcome)
+                settled.carried += 1
+            except ValueError as exc:
+                settled.refused.append(
+                    f"{item.identity.qualified}: cannot carry automation: {exc}; "
+                    "author a compatible successor"
+                )
+            continue
+        # Automation reached through some OTHER changed dependency needs its
+        # own authoring; never retire it merely because traversal reached it.
+        if not any(pin.artifact_digest in replacements for pin in procedure_pins):
+            settled.refused.append(
+                f"{item.identity.qualified}: cannot carry non-Procedure dependency change; "
+                "author a compatible successor"
+            )
+            continue
         final[item.path] = _stopped(state, tree[item.path], replacements)
         settled.stops.append(
             StoppedAutomationV1(
@@ -477,7 +615,8 @@ def settle_changes(
                         identity=trigger, kind="trigger", stopped_by=item.identity.qualified
                     )
                 )
-    settled.writes = final
+    settled.writes = final if not settled.refused else {}
+    settled.automation_carries.sort(key=lambda item: item.identity)
     settled.stops.sort(key=lambda item: item.identity)
     settled.repins.sort(key=lambda item: item.identity)
     return settled

@@ -1231,15 +1231,19 @@ Existing single-path Providers remain readable without a rewrite, and
 
 `kit add` installs the release's builds and re-pins every live Procedure on those
 provider names (the kit's and your own) to the exact shipped build in the definitions
-change set. Its preview lists every re-pin and every Line, Trigger and Mandate
-it stops by retiring them. Author those again over the moved Procedure to resume.
+change set. Its preview lists every re-pin, every carried disabled Line, and every
+Mandate losing settle. Procedure-definition successors carry these too. Triggers
+stay unchanged. `next` names each disabled upgrade with `line enable` as its repair;
+settle requires an explicit same-name Mandate re-grant through normal authoring and
+approval. Subject-creating workflows keep their namespace and report the need for
+explicit propose namespace authoring. Retirement still stops dependent automation.
 Pass `--keep-build Procedure:NAME` (repeatable) to keep a Procedure's current build.
 Other Procedures stay as they are. Old builds remain installed; kit add neither
 reports nor retires them.
 
 `provider move NAME --to newest|BUILD` previews by default and moves definitions
 and their dependents as one governed change. `--only` narrows the definitions moved.
-Its preview names re-pins and stopped automation; `--commit --at OID` submits it.
+Its preview names re-pins, disabled Line carries, propose-only Mandates and retirements; `--commit --at OID` submits it.
 It requires **GOVERNED_WRITE**. `provider retire NAME/BUILD` requires **ADMIN**,
 previews by default, refuses while live definitions pin it, and keeps its runtime
 environment. Retired builds are hidden from new authoring. No command here collects
