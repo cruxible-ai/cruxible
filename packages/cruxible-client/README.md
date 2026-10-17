@@ -6049,6 +6049,15 @@ compile_authoring(
 
 HTTP: `POST f'/api/v1/{instance_id}/authoring/compile'`.
 
+The unstamped payload form remains in use by CLI `authoring bind` and MCP
+`cruxible_authoring_bind`: both compile a locally bound selection payload
+without an SDK program stamp. The stamped form requires
+`reference_expectations` and `program_stamp` together and validates the stamp's
+SDK version and contract snapshot. `compile_authoring` serves both forms;
+`submit_authoring` serves only the stamped form. Tagless input compilation and
+submission remain separate typed entry points. These forms are retained while
+binding callers depend on the unstamped path.
+
 <a id="api-cruxibleclient-compile-authoring-input"></a>
 
 ### `CruxibleClient.compile_authoring_input`
