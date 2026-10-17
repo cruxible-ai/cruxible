@@ -36,7 +36,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CaptureContract
+from cruxible_client.contracts.captures import CaptureContract, capture_contract_path
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claim_attestations import ClaimAttestation
 from cruxible_client.contracts.claim_type_structure import ClaimRole
@@ -60,6 +60,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.models import ProcedureHardCaps
+from cruxible_client.contracts.procedures.windows import CaptureEventSelector, FixedWindow
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -78,7 +79,12 @@ from cruxible_client.contracts.subject_kinds import (
 )
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
-from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
+from cruxible_client.contracts.triggers import (
+    CadenceSchedule,
+    CronSchedule,
+    GenerationAcceptedSchedule,
+    InternalActionName,
+)
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -108,7 +114,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:1144b4fb4de52fc4eecb32febc83d44f4e34966d82e1f70da526e003b9a74fd3"
+    "sha256:3da6374e57f7b6cfe00741cff3bd8d153ae30ec08efd3a8f3025e56ae209e96e"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -958,6 +964,50 @@ class LineAuthoringPayload(_StrictAuthoringModel):
         return normalize_canonical(value)
 
 
+class CaptureLandingByNameSchedule(_StrictAuthoringModel):
+    """Resolve a live CaptureContract at prepare; accepted Triggers retain its digest."""
+
+    kind: Literal["capture_landing"] = "capture_landing"
+    capture_contract: str
+
+    @field_validator("capture_contract")
+    @classmethod
+    def _canonical_name(cls, value: str) -> str:
+        capture_contract_path(value)
+        return value
+
+
+class CaptureEventByNameWindow(_StrictAuthoringModel):
+    """An observation window anchored on a named CaptureContract's landings."""
+
+    kind: Literal["capture_event"] = "capture_event"
+    capture_contract: str
+    duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
+
+    @field_validator("capture_contract")
+    @classmethod
+    def _canonical_name(cls, value: str) -> str:
+        capture_contract_path(value)
+        return value
+
+
+class WindowCloseAuthoringSchedule(_StrictAuthoringModel):
+    """Close a fixed window or resolve a named CaptureContract event anchor."""
+
+    kind: Literal["window_close"] = "window_close"
+    window: Annotated[FixedWindow | CaptureEventByNameWindow, Field(discriminator="kind")]
+
+
+AuthoringTriggerSchedule: TypeAlias = Annotated[
+    CadenceSchedule
+    | CronSchedule
+    | CaptureLandingByNameSchedule
+    | WindowCloseAuthoringSchedule
+    | GenerationAcceptedSchedule,
+    Field(discriminator="kind"),
+]
+
+
 class TriggerAuthoringPayload(_StrictAuthoringModel):
     """Decision-only Trigger input: a schedule and exactly one target.
 
@@ -967,7 +1017,7 @@ class TriggerAuthoringPayload(_StrictAuthoringModel):
 
     tag: Literal["playbill-trigger-authoring-payload-v1"] = "playbill-trigger-authoring-payload-v1"
     name: str
-    schedule: TriggerSchedule
+    schedule: AuthoringTriggerSchedule
     line_name: str | None = None
     action: InternalActionName | None = None
     retire: bool = False
@@ -1808,6 +1858,13 @@ def build_preflight_certificate(**values: object) -> PreflightCertificate:
     )
 
 
+class ResolvedTriggerCaptureContract(_StrictAuthoringModel):
+    """The exact contract a Trigger resolved during this prepare or preview."""
+
+    trigger_name: str
+    event: CaptureEventSelector
+
+
 class PreflightResult(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-preflight-result-v1"] = (
         "playbill-authoring-preflight-result-v1"
@@ -1815,6 +1872,10 @@ class PreflightResult(_StrictAuthoringModel):
     verdict: Literal["passed", "refused"]
     certificate: PreflightCertificate
     frontier: DiagnosticFrontier
+    resolved_trigger_contracts: tuple[ResolvedTriggerCaptureContract, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
 
     @model_validator(mode="after")
     def _verdict(self) -> "PreflightResult":
@@ -2411,6 +2472,7 @@ __all__ = [
     "BlockSyncSuccessorCandidate",
     "PreflightCertificate",
     "PreflightResult",
+    "ResolvedTriggerCaptureContract",
     "BlueprintAuthoringPayload",
     "BlueprintInstantiation",
     "ProcedureAuthoringPayload",
@@ -2421,6 +2483,10 @@ __all__ = [
     "MandateScopeAuthoring",
     "ProcedureMandateAuthoringPayload",
     "TriggerAuthoringPayload",
+    "CaptureLandingByNameSchedule",
+    "CaptureEventByNameWindow",
+    "WindowCloseAuthoringSchedule",
+    "AuthoringTriggerSchedule",
     "SubjectKindAuthoringPayload",
     "SubjectCreationAuthoringPayload",
     "QueryDefinitionAuthoringPayload",

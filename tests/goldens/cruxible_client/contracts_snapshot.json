@@ -4538,36 +4538,19 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
-          "CaptureEventSelector": {
+          "CaptureEventByNameWindow": {
             "additionalProperties": false,
-            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "description": "An observation window anchored on a named CaptureContract's landings.",
             "properties": {
-              "capture_contract_digest": {
-                "title": "Capture Contract Digest",
+              "capture_contract": {
+                "title": "Capture Contract",
                 "type": "string"
               },
-              "capture_contract_identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              }
-            },
-            "required": [
-              "capture_contract_identity",
-              "capture_contract_digest"
-            ],
-            "title": "CaptureEventSelector",
-            "type": "object"
-          },
-          "CaptureEventWindow": {
-            "additionalProperties": false,
-            "properties": {
               "duration_seconds": {
                 "description": "Reads VALIDITY WINDOW.",
                 "exclusiveMinimum": 0,
                 "title": "Duration Seconds",
                 "type": "integer"
-              },
-              "event": {
-                "$ref": "#/$defs/CaptureEventSelector"
               },
               "kind": {
                 "const": "capture_event",
@@ -4577,18 +4560,19 @@
               }
             },
             "required": [
-              "event",
+              "capture_contract",
               "duration_seconds"
             ],
-            "title": "CaptureEventWindow",
+            "title": "CaptureEventByNameWindow",
             "type": "object"
           },
-          "CaptureLandingSchedule": {
+          "CaptureLandingByNameSchedule": {
             "additionalProperties": false,
-            "description": "Fire once for each retained Capture landing under one exact CaptureContract.",
+            "description": "Resolve a live CaptureContract at prepare; accepted Triggers retain its digest.",
             "properties": {
-              "event": {
-                "$ref": "#/$defs/CaptureEventSelector"
+              "capture_contract": {
+                "title": "Capture Contract",
+                "type": "string"
               },
               "kind": {
                 "const": "capture_landing",
@@ -4598,9 +4582,9 @@
               }
             },
             "required": [
-              "event"
+              "capture_contract"
             ],
-            "title": "CaptureLandingSchedule",
+            "title": "CaptureLandingByNameSchedule",
             "type": "object"
           },
           "CarriedContractInput": {
@@ -9153,7 +9137,7 @@
           },
           "TriggerInput": {
             "additionalProperties": false,
-            "description": "One schedule aimed at an accepted or same-set Line, or a registered action.\n\nActions admit cadence, cron and generation_accepted. Every target's declared\ninput must be supplied by its schedule. Change or retire through a successor.",
+            "description": "One schedule aimed at an accepted or same-set Line, or a registered action.\n\nActions admit cadence, cron and generation_accepted. Every target's declared\ninput must be supplied by its schedule. Capture-based schedules name the\nCaptureContract; prepare pins its digest. Exact event selectors are refused.\nRetirement retains the predecessor's schedule and target without resolution.",
             "properties": {
               "action": {
                 "anyOf": [
@@ -9208,10 +9192,10 @@
                 "discriminator": {
                   "mapping": {
                     "cadence": "#/$defs/CadenceSchedule",
-                    "capture_landing": "#/$defs/CaptureLandingSchedule",
+                    "capture_landing": "#/$defs/CaptureLandingByNameSchedule",
                     "cron": "#/$defs/CronSchedule",
                     "generation_accepted": "#/$defs/GenerationAcceptedSchedule",
-                    "window_close": "#/$defs/WindowCloseSchedule"
+                    "window_close": "#/$defs/WindowCloseAuthoringSchedule"
                   },
                   "propertyName": "kind"
                 },
@@ -9223,10 +9207,10 @@
                     "$ref": "#/$defs/CronSchedule"
                   },
                   {
-                    "$ref": "#/$defs/CaptureLandingSchedule"
+                    "$ref": "#/$defs/CaptureLandingByNameSchedule"
                   },
                   {
-                    "$ref": "#/$defs/WindowCloseSchedule"
+                    "$ref": "#/$defs/WindowCloseAuthoringSchedule"
                   },
                   {
                     "$ref": "#/$defs/GenerationAcceptedSchedule"
@@ -9243,9 +9227,9 @@
             "title": "TriggerInput",
             "type": "object"
           },
-          "WindowCloseSchedule": {
+          "WindowCloseAuthoringSchedule": {
             "additionalProperties": false,
-            "description": "Fire when a fixed window, or a window anchored on a Capture landing, closes.",
+            "description": "Close a fixed window or resolve a named CaptureContract event anchor.",
             "properties": {
               "kind": {
                 "const": "window_close",
@@ -9256,7 +9240,7 @@
               "window": {
                 "discriminator": {
                   "mapping": {
-                    "capture_event": "#/$defs/CaptureEventWindow",
+                    "capture_event": "#/$defs/CaptureEventByNameWindow",
                     "fixed": "#/$defs/FixedWindow"
                   },
                   "propertyName": "kind"
@@ -9266,7 +9250,7 @@
                     "$ref": "#/$defs/FixedWindow"
                   },
                   {
-                    "$ref": "#/$defs/CaptureEventWindow"
+                    "$ref": "#/$defs/CaptureEventByNameWindow"
                   }
                 ],
                 "title": "Window"
@@ -9275,7 +9259,7 @@
             "required": [
               "window"
             ],
-            "title": "WindowCloseSchedule",
+            "title": "WindowCloseAuthoringSchedule",
             "type": "object"
           },
           "WorkingSelectionInput": {
@@ -9580,6 +9564,22 @@
             "default": null
           }
         },
+        "resolved_trigger_contracts": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "resolved_trigger_contracts",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ResolvedTriggerCaptureContract"
+            },
+            "title": "Resolved Trigger Contracts",
+            "type": "array"
+          }
+        },
         "tag": {
           "default": "playbill-authoring-preflight-result-v1",
           "default_json_serializable": true,
@@ -9645,6 +9645,26 @@
               "compiler_digest"
             ],
             "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Cruxible artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
             "type": "object"
           },
           "AuthenticatedActor": {
@@ -9770,6 +9790,25 @@
               "reason"
             ],
             "title": "BlockedCheck",
+            "type": "object"
+          },
+          "CaptureEventSelector": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelector",
             "type": "object"
           },
           "ClaimTypeLintWarning": {
@@ -10160,6 +10199,25 @@
             ],
             "title": "RepairAlternative",
             "type": "object"
+          },
+          "ResolvedTriggerCaptureContract": {
+            "additionalProperties": false,
+            "description": "The exact contract a Trigger resolved during this prepare or preview.",
+            "properties": {
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelector"
+              },
+              "trigger_name": {
+                "title": "Trigger Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "trigger_name",
+              "event"
+            ],
+            "title": "ResolvedTriggerCaptureContract",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -10180,6 +10238,14 @@
               }
             ],
             "default": null
+          },
+          "resolved_trigger_contracts": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ResolvedTriggerCaptureContract"
+            },
+            "title": "Resolved Trigger Contracts",
+            "type": "array"
           },
           "tag": {
             "const": "playbill-authoring-preflight-result-v1",
@@ -10522,6 +10588,26 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Cruxible artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
           "AuthenticatedActor": {
             "additionalProperties": false,
             "description": "Identity established by the daemon's authentication boundary.",
@@ -10639,6 +10725,14 @@
                   }
                 ],
                 "default": null
+              },
+              "resolved_trigger_contracts": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ResolvedTriggerCaptureContract"
+                },
+                "title": "Resolved Trigger Contracts",
+                "type": "array"
               },
               "tag": {
                 "const": "playbill-authoring-preflight-result-v1",
@@ -10767,6 +10861,25 @@
               "current_accepted_coordinate"
             ],
             "title": "CandidateStatusRecord",
+            "type": "object"
+          },
+          "CaptureEventSelector": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelector",
             "type": "object"
           },
           "ClaimTypeLintWarning": {
@@ -11156,6 +11269,25 @@
               "description"
             ],
             "title": "RepairAlternative",
+            "type": "object"
+          },
+          "ResolvedTriggerCaptureContract": {
+            "additionalProperties": false,
+            "description": "The exact contract a Trigger resolved during this prepare or preview.",
+            "properties": {
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelector"
+              },
+              "trigger_name": {
+                "title": "Trigger Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "trigger_name",
+              "event"
+            ],
+            "title": "ResolvedTriggerCaptureContract",
             "type": "object"
           },
           "WorkspaceAdvertisement": {
@@ -98237,6 +98369,93 @@
         "reviewer_id",
         "sequence",
         "verdict"
+      ]
+    },
+    "ResolvedTriggerCaptureContract": {
+      "fields": {
+        "event": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "event",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/CaptureEventSelector"
+          }
+        },
+        "trigger_name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "trigger_name",
+          "required": true,
+          "schema": {
+            "title": "Trigger Name",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Cruxible artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "CaptureEventSelector": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelector",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The exact contract a Trigger resolved during this prepare or preview.",
+        "properties": {
+          "event": {
+            "$ref": "#/$defs/CaptureEventSelector"
+          },
+          "trigger_name": {
+            "title": "Trigger Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trigger_name",
+          "event"
+        ],
+        "title": "ResolvedTriggerCaptureContract",
+        "type": "object"
+      },
+      "required_fields": [
+        "event",
+        "trigger_name"
       ]
     },
     "ReviewedMember": {

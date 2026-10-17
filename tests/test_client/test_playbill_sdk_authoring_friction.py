@@ -208,20 +208,14 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
     import pytest
     from pydantic import ValidationError
 
-    from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.authoring.models import (
+        CaptureLandingByNameSchedule,
         LineAuthoringPayload,
         TriggerAuthoringPayload,
     )
-    from cruxible_client.contracts.procedures.windows import CaptureEventSelector
-    from cruxible_client.contracts.triggers import CadenceSchedule, CaptureLandingSchedule
+    from cruxible_client.contracts.triggers import CadenceSchedule
 
-    landing = CaptureLandingSchedule(
-        event=CaptureEventSelector(
-            capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="feed"),
-            capture_contract_digest="sha256:" + "a" * 64,
-        )
-    )
+    landing = CaptureLandingByNameSchedule(capture_contract="feed")
     draft = pb.changes(rationale="Consume each observed feed")
     draft.line(
         name="consume-feed",
@@ -304,3 +298,77 @@ def test_sdk_claim_accepts_bare_subject_and_object_keys(pb, batch):
     payload = compiled.payload.members[0] if batch else compiled.payload
     assert payload.statement.subject.subject_key_reference == ("sec.vuln", "CVE-2026-0001")
     assert payload.statement.object.address.subject_key_reference == ("sec.package", "Demo")
+
+
+@pytest.mark.parametrize("contract_first", [False, True])
+def test_named_trigger_sdk_uses_the_shared_candidate_resolver(
+    pb, tmp_path, monkeypatch, contract_first
+):
+    from cruxible_client.contracts.authoring.models import CaptureLandingByNameSchedule
+    from cruxible_client.contracts.captures import (
+        foreign_source_capture_contract,
+    )
+    from cruxible_core.authoring import lowering
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from tests.core_support._identity_support import OWNER
+    from tests.test_procedures.test_trigger_artifacts import _line_world
+
+    contract = foreign_source_capture_contract("security.advisory")
+    (tmp_path / "instance").mkdir()
+    instance, _owner, line = _line_world(tmp_path / "instance")
+    draft = pb.changes(rationale="Consume contract by name")
+    if contract_first:
+        draft.capture_contract(contract)
+    draft.trigger(
+        name="on-feed",
+        line=line.identity.name,
+        schedule=CaptureLandingByNameSchedule(capture_contract=contract.identity.name),
+    )
+    if not contract_first:
+        draft.capture_contract(contract)
+    calls = []
+    resolve = lowering._resolve_trigger_authoring_schedule
+
+    def tracked(schedule, **kwargs):
+        calls.append(schedule)
+        return resolve(schedule, **kwargs)
+
+    monkeypatch.setattr(lowering, "_resolve_trigger_authoring_schedule", tracked)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    created = coordinator.create(
+        actor=OWNER,
+        payload=draft._compiled().payload,
+        canonical_timestamp="2026-10-17T12:00:00.000000Z",
+    ).intent
+    computed, _ = coordinator._compute_and_bind_preflight(created.intent_id, actor=OWNER)
+    assert computed.result.verdict == "passed", computed.result.frontier
+    assert calls and all(isinstance(schedule, CaptureLandingByNameSchedule) for schedule in calls)
+    assert computed.lowered is not None
+    assert "triggers/on-feed.json" in computed.lowered.proposed_tree
+    from cruxible_client.authoring.sdk import Intent
+
+    served = api.AuthoringPreflightResult.model_validate(computed.result.model_dump(mode="json"))
+    handle = Intent(pb, None, {"intent_id": created.intent_id}, preflight=served)
+    assert handle.resolved_trigger_contracts == served.resolved_trigger_contracts
+    assert handle.resolved_trigger_contracts[0].event.capture_contract_identity == contract.identity
+
+
+@pytest.mark.parametrize("window_close", [False, True])
+def test_sdk_trigger_refuses_exact_event_authoring(pb, window_close):
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+    from cruxible_client.contracts.triggers import CaptureLandingSchedule, WindowCloseSchedule
+    from tests.test_authoring.test_capture_landing_name import SELECTOR
+
+    schedule = (
+        WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60))
+        if window_close
+        else CaptureLandingSchedule(event=SELECTOR)
+    )
+    with pytest.raises(ValidationError):
+        pb.changes(rationale="Invalid exact event").trigger(
+            name="on-feed",
+            line="triage",
+            schedule=schedule,
+        )

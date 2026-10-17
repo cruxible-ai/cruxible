@@ -44,9 +44,11 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     AuthoringExactContentObject,
     AuthoringIntentV1,
+    AuthoringTriggerSchedule,
     BlueprintAuthoringPayload,
     BlueprintInstantiation,
     CaptureContractAuthoringPayload,
+    CaptureLandingByNameSchedule,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
     ClaimAuthoringPayloadV1,
@@ -70,6 +72,7 @@ from cruxible_client.contracts.authoring.models import (
     SubjectCreationAuthoringPayload,
     SubjectKindAuthoringPayload,
     TriggerAuthoringPayload,
+    WindowCloseAuthoringSchedule,
     WorkingSelectionObservation,
     authoring_member_identity,
     blueprint_instantiation,
@@ -94,6 +97,7 @@ from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     CaptureBuildResult,
     CaptureEnvelopeAny,
+    CaptureFormatError,
     CaptureObjectStoreProtocol,
     CaptureProductionUnproven,
     DirectCaptureBuildResult,
@@ -212,7 +216,11 @@ from cruxible_client.contracts.procedures.models import (
     SourceNode,
     iter_pin_bindings,
 )
-from cruxible_client.contracts.procedures.windows import CaptureEventSelector
+from cruxible_client.contracts.procedures.windows import (
+    CaptureEventSelector,
+    CaptureEventWindow,
+    FixedWindow,
+)
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     parse_provider,
@@ -259,9 +267,12 @@ from cruxible_client.contracts.subjects import (
 from cruxible_client.contracts.triggers import (
     TRIGGER_LINE_REF_ROLE,
     ActionTarget,
+    CaptureLandingSchedule,
     LineTarget,
     Trigger,
+    TriggerSchedule,
     TriggerTarget,
+    WindowCloseSchedule,
     parse_trigger,
     render_trigger,
     schedule_capture_selector,
@@ -3129,6 +3140,61 @@ def _render_line_member(
     return path, render_line_spec(line), line_spec_digest(line).tagged
 
 
+def _resolve_trigger_authoring_schedule(
+    schedule: AuthoringTriggerSchedule,
+    *,
+    tree: Mapping[str, bytes],
+) -> TriggerSchedule:
+    """Read one canonical contract artifact; never consult Captures or journals.
+
+    All authoring adapters preserve the typed schedule until this shared
+    candidate-overlay boundary. Stored schedules and runtime matching stay exact.
+    """
+
+    if isinstance(schedule, CaptureLandingByNameSchedule):
+        name = schedule.capture_contract
+    elif isinstance(schedule, WindowCloseAuthoringSchedule):
+        if isinstance(schedule.window, FixedWindow):
+            return WindowCloseSchedule(window=schedule.window)
+        name = schedule.window.capture_contract
+    else:
+        return schedule
+    capture_path = capture_contract_path(name)
+    content = tree.get(capture_path)
+    try:
+        contract = None if content is None else parse_capture_contract(content, path=capture_path)
+    except CaptureFormatError:
+        contract = None
+    if contract is None or contract.lifecycle.state != "live":
+        _refuse(
+            "cruxible.authoring.trigger_capture_missing",
+            "schedule",
+            f"{capture_path} must contain a live, kind-correct CaptureContract at this base.",
+            repair_kind="replace_schedule",
+            repair_description=(
+                "Declare or install the named live CaptureContract in this change set, "
+                "or name an existing live CaptureContract."
+            ),
+        )
+    event = CaptureEventSelector(
+        capture_contract_identity=contract.identity,
+        capture_contract_digest=capture_contract_digest(contract).tagged,
+    )
+    if isinstance(schedule, CaptureLandingByNameSchedule):
+        return CaptureLandingSchedule(event=event)
+    return WindowCloseSchedule(
+        window=CaptureEventWindow(event=event, duration_seconds=schedule.window.duration_seconds)
+    )
+
+
+def _resolved_trigger_schedule(content: bytes, *, path: str) -> dict[str, object]:
+    """Expose the exact event identity and digest in prepare/preview output."""
+
+    schedule = parse_trigger(content, path=path).schedule
+    selector = schedule_capture_selector(schedule)
+    return {} if selector is None else {"capture_contract": selector.model_dump(mode="json")}
+
+
 def _render_trigger_member(
     payload: TriggerAuthoringPayload,
     *,
@@ -3142,9 +3208,32 @@ def _render_trigger_member(
     is the Trigger law's to judge at acceptance.
     """
 
-    live = not payload.retire
+    path = trigger_path(payload.name)
+    previous_content = tree.get(path)
+    previous = None if previous_content is None else parse_trigger(previous_content, path=path)
+    if payload.retire:
+        if previous is None:
+            _refuse(
+                "cruxible.authoring.trigger_missing",
+                "name",
+                "Retiring a Trigger requires its accepted or same-ChangeSet predecessor.",
+                repair_kind="replace_trigger_name",
+                repair_description="Name an existing Trigger to retire.",
+            )
+        if previous.lifecycle.state == "retired":
+            assert previous_content is not None
+            return path, previous_content, trigger_digest(previous).tagged
+        retired = previous.model_copy(
+            update={
+                "lifecycle": ArtifactLifecycle(
+                    state="retired",
+                    predecessor_digest=trigger_digest(previous).tagged,
+                ),
+            }
+        )
+        return path, render_trigger(retired), trigger_digest(retired).tagged
     if payload.line_name is not None:
-        if live and line_spec_path(payload.line_name) not in tree:
+        if line_spec_path(payload.line_name) not in tree:
             _refuse(
                 "cruxible.authoring.trigger_line_missing",
                 "line_name",
@@ -3161,32 +3250,32 @@ def _render_trigger_member(
     else:
         assert payload.action is not None
         target = ActionTarget(action=payload.action)
-    selector = schedule_capture_selector(payload.schedule)
-    if live and selector is not None:
-        capture_path = capture_contract_path(selector.capture_contract_identity.name)
-        content = tree.get(capture_path)
-        if (
-            content is None
-            or capture_contract_digest(parse_capture_contract(content, path=capture_path)).tagged
-            != selector.capture_contract_digest
-        ):
+    schedule = _resolve_trigger_authoring_schedule(payload.schedule, tree=tree)
+    selector = schedule_capture_selector(schedule)
+    if selector is not None and payload.line_name:
+        line_path = line_spec_path(payload.line_name)
+        line = parse_line_spec(tree[line_path], path=line_path)
+        if line.trigger_event is not None and line.trigger_event != selector:
             _refuse(
-                "cruxible.authoring.trigger_capture_missing",
+                "cruxible.trigger.event_not_accepted",
                 "schedule",
-                "The Trigger's CaptureContract does not match the accepted or staged version.",
+                f"Resolved contract {selector.capture_contract_identity.qualified} digest "
+                f"{selector.capture_contract_digest} differs from Line Source contract "
+                f"{line.trigger_event.capture_contract_identity.qualified} digest "
+                f"{line.trigger_event.capture_contract_digest}.",
                 repair_kind="replace_schedule",
-                repair_description="Use the exact accepted CaptureContract identity and digest.",
+                repair_description=(
+                    "Name the live CaptureContract matching the Line Source, or re-author "
+                    "the Line against the resolved CaptureContract."
+                ),
             )
-    path = trigger_path(payload.name)
-    previous_content = tree.get(path)
-    previous = None if previous_content is None else parse_trigger(previous_content, path=path)
     trigger = Trigger(
         identity=ArtifactIdentity(kind="Trigger", name=payload.name),
-        schedule=payload.schedule,
+        schedule=schedule,
         target=target,
-        pins=trigger_schedule_pins(payload.schedule),
+        pins=trigger_schedule_pins(schedule),
         lifecycle=ArtifactLifecycle(
-            state="retired" if payload.retire else "live",
+            state="live",
             predecessor_digest=None if previous is None else trigger_digest(previous).tagged,
         ),
     )
@@ -5009,7 +5098,15 @@ def _stage_change_set_member(
         trigger_member_path, content, digest = _render_trigger_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[trigger_member_path] = content
-        return candidate_tree, {"artifact_digest": digest}, set(), {}
+        return (
+            candidate_tree,
+            {
+                "artifact_digest": digest,
+                **_resolved_trigger_schedule(content, path=trigger_member_path),
+            },
+            set(),
+            {},
+        )
     if isinstance(member, SubjectKindAuthoringPayload):
         kind_path, content, digest = _render_subject_kind_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)
@@ -5800,6 +5897,11 @@ def _lower_authoring(
             proposed_tree=candidate_tree,
             resolved_authoring={
                 "artifact_digest": digest,
+                **(
+                    _resolved_trigger_schedule(content, path=path)
+                    if isinstance(intent.payload, TriggerAuthoringPayload)
+                    else {}
+                ),
                 "changed_members": _encoded_members(changed),
                 "identity": authoring_member_identity(intent.payload),
             },

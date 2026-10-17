@@ -1588,7 +1588,7 @@ mandate).
 trigger(
     *,
     name: str,
-    schedule: TriggerSchedule,
+    schedule: AuthoringTriggerSchedule,
     line: str | None = None,
     action: InternalActionName | None = None,
     retire: bool = False,
@@ -1603,7 +1603,18 @@ have several Triggers, and they do nothing until the Line is enabled.
 
 `schedule` is a `CadenceSchedule(interval_seconds=...)`,
 `CronSchedule(expression=...)`, `GenerationAcceptedSchedule()`,
-`CaptureLandingSchedule(event=...)` or `WindowCloseSchedule(window=...)`. Cron
+`CaptureLandingByNameSchedule(capture_contract="security.advisory")` (from
+`cruxible_client.contracts.authoring.models`) or
+`WindowCloseAuthoringSchedule(window=...)` from the same module. A window is
+`FixedWindow(...)` or
+`CaptureEventByNameWindow(capture_contract="security.advisory", duration_seconds=60)`.
+Prepare resolves the named live contract at the pinned base or in the same
+ChangeSet, regardless of declaration order, and stores its exact identity, digest
+and pins. Inspect `intent.resolved_trigger_contracts` before submitting.
+Capture-based authoring takes a contract name only; exact `event` selectors
+are refused. With `retire=True`, core retains the predecessor's stored schedule
+and target without resolving a contract; the supplied schedule is ignored.
+Contract succession still needs the existing dependency-closure dispositions. Cron
 expressions are always evaluated in UTC: convert local times first (09:00 New
 York in winter is 14:00 UTC); a schedule that names a timezone is refused. An
 internal action takes a cadence, cron or generation-accepted schedule. A Line takes any schedule that supplies
@@ -1940,6 +1951,18 @@ lint: api.ClaimTypeProposalLint | None
 ```text
 warnings: tuple[api.ClaimTypeLintWarning, ...]
 ```
+
+<a id="api-intent-resolved-trigger-contracts"></a>
+
+### `Intent.resolved_trigger_contracts`
+
+```python
+@property
+def resolved_trigger_contracts(self) -> tuple[ResolvedTriggerCaptureContract, ...]
+```
+
+Contract identities and digests resolved by the last prepare, one row per
+Capture-based Trigger. Next: inspect each `event`, then `intent.submit()`.
 
 <a id="api-intent-diagnostics"></a>
 
@@ -4924,11 +4947,39 @@ needs no enablement. Cron expressions are
 always evaluated in UTC; convert local times first (09:00 New York in winter
 is 14:00 UTC). A Trigger is changed or retired (`retire`) through a successor.
 
+For Capture landings, name the contract:
+
+```json
+{"kind":"trigger","name":"on-advisory","line_name":"triage",
+ "schedule":{"kind":"capture_landing","capture_contract":"security.advisory"}}
+```
+
+`AuthoringTriggerSchedule` admits cadence, cron, generation-accepted,
+`CaptureLandingByNameSchedule` and `WindowCloseAuthoringSchedule`. Capture landings
+and Capture-anchored windows take contract names only; exact `event` selectors
+are refused. A Capture window is authored as:
+
+```json
+{"kind":"window_close","window":{"kind":"capture_event",
+ "capture_contract":"security.advisory","duration_seconds":60}}
+```
+
+The SDK equivalent is `WindowCloseAuthoringSchedule(window=CaptureEventByNameWindow(
+capture_contract="security.advisory", duration_seconds=60))`, importing both
+models from `cruxible_client.contracts.authoring.models`. Fixed windows use
+`WindowCloseAuthoringSchedule(window=FixedWindow(...))`.
+With `retire=True`, core retains the predecessor's stored schedule and target
+without resolution and ignores the supplied schedule. Prepare/preview returns `resolved_trigger_contracts`: each
+`ResolvedTriggerCaptureContract` has `trigger_name` and an exact `event`
+(`CaptureEventSelector`, including contract identity and digest). Missing,
+retired or wrong-kind contracts refuse with a repair; a Source-pinned Line must
+accept the same digest. Next: submit the prepared intent, then enable the Line.
+
 | Field | Type | Default / construction |
 |---|---|---|
 | `kind` | `Literal['trigger']` | `Required` |
 | `name` | `str` | `Required` |
-| `schedule` | `CadenceSchedule \| CronSchedule \| CaptureLandingSchedule \| WindowCloseSchedule \| GenerationAcceptedSchedule` | `Required`; `CronSchedule.expression` is five UTC fields and names no timezone |
+| `schedule` | `AuthoringTriggerSchedule` | `Required`; `CronSchedule.expression` is five UTC fields and names no timezone |
 | `line_name` | `str \| None` | `None`; the Line this Trigger runs |
 | `action` | `InternalActionName \| None` | `None`; a registered internal action |
 | `retire` | `bool` | `False` |

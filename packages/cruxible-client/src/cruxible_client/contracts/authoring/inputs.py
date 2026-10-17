@@ -23,6 +23,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObject,
     AuthoringExistingClaimDisposition,
     AuthoringPayload,
+    AuthoringTriggerSchedule,
     BlueprintAuthoringPayload,
     BlueprintInstantiation,
     ChangeSetAuthoringPayload,
@@ -71,7 +72,7 @@ from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDe
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
-from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
+from cruxible_client.contracts.triggers import InternalActionName
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.records import RecordConstructor
@@ -443,12 +444,14 @@ class TriggerInput(_StrictInputModel):
     """One schedule aimed at an accepted or same-set Line, or a registered action.
 
     Actions admit cadence, cron and generation_accepted. Every target's declared
-    input must be supplied by its schedule. Change or retire through a successor.
+    input must be supplied by its schedule. Capture-based schedules name the
+    CaptureContract; prepare pins its digest. Exact event selectors are refused.
+    Retirement retains the predecessor's schedule and target without resolution.
     """
 
     kind: Literal["trigger"]
     name: str
-    schedule: TriggerSchedule
+    schedule: AuthoringTriggerSchedule
     line_name: str | None = Field(
         default=None,
         description=(
