@@ -6145,6 +6145,9 @@ def _queue_at(
         if domain == "accepted_state" or domain in workspace_domains
     )
     unobserved = tuple(domain for domain in _ALL_DOMAINS if domain not in observed)
+    # Upgrade findings catch up their projection on a read. Capture health
+    # afterward so the first response and its continuation see the same cursor.
+    line_upgrade_items = _line_upgrade_items(instance, access_profile=request.access_profile)
     consumer_healths = _consumer_healths(
         instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
     )
@@ -6230,7 +6233,7 @@ def _queue_at(
         *_line_settled_refusal_items(
             instance, coordinate=coordinate, access_profile=request.access_profile
         ),
-        *_line_upgrade_items(instance, access_profile=request.access_profile),
+        *line_upgrade_items,
         *_line_inbox_items(instance, access_profile=request.access_profile),
         *_kit_resume_items(instance, access_profile=request.access_profile),
     )

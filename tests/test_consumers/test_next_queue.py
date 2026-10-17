@@ -367,6 +367,9 @@ def test_serving_skips_the_fold_and_keeps_paging_and_delta(tmp_path: Path) -> No
     _drain(instance, request.evaluation_time)
     with _no_fold():
         first = service_playbill_next(instance, request=request)
+        # Read-side upgrade catch-up must already be reflected in first-page
+        # health; its initialization cannot change the next response's digest.
+        assert service_playbill_next(instance, request=request) == first
         summary = summarize_playbill_next(instance, request=request)
         assert summary.total_items == first.total_items
         delta = service_playbill_next(
