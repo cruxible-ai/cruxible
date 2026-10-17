@@ -34,6 +34,8 @@ from cruxible_client.contracts.authoring.models import (
     DiagnosticFrontierLimits,
     PreflightResult,
     RepairAlternative,
+    ResolvedTriggerCaptureContract,
+    TriggerAuthoringPayload,
     WorkingSelectionObservation,
     build_preflight_certificate,
 )
@@ -70,6 +72,11 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
+from cruxible_client.contracts.triggers import (
+    parse_trigger,
+    schedule_capture_selector,
+    trigger_path,
+)
 from cruxible_core.authoring.lowering import (
     AuthoringLoweringError,
     LoweredAuthoring,
@@ -806,6 +813,29 @@ def authoring_operation(instance: PlaybillInstance, intent: AuthoringIntentV1) -
     )
 
 
+def _resolved_trigger_contracts(
+    payload: AuthoringPayload,
+    lowered: LoweredAuthoring | None,
+) -> tuple[ResolvedTriggerCaptureContract, ...]:
+    """Explain only authored Triggers, reading their already memoized candidate bytes."""
+
+    if lowered is None:
+        return ()
+    members = payload.members if isinstance(payload, ChangeSetAuthoringPayload) else (payload,)
+    resolutions = []
+    for member in members:
+        if not isinstance(member, TriggerAuthoringPayload):
+            continue
+        path = trigger_path(member.name)
+        trigger = parse_trigger(lowered.proposed_tree[path], path=path)
+        selector = schedule_capture_selector(trigger.schedule)
+        if selector is not None:
+            resolutions.append(
+                ResolvedTriggerCaptureContract(trigger_name=member.name, event=selector)
+            )
+    return tuple(resolutions)
+
+
 def compute_preflight(
     instance: PlaybillInstance,
     *,
@@ -1248,6 +1278,7 @@ def compute_preflight(
         verdict=verdict,
         certificate=certificate,
         frontier=frontier,
+        resolved_trigger_contracts=_resolved_trigger_contracts(intent.payload, lowered),
     )
     candidate_digest = None
     if evaluation is not None and evaluation.candidate is not None:

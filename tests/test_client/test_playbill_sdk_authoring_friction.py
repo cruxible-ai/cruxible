@@ -304,3 +304,59 @@ def test_sdk_claim_accepts_bare_subject_and_object_keys(pb, batch):
     payload = compiled.payload.members[0] if batch else compiled.payload
     assert payload.statement.subject.subject_key_reference == ("sec.vuln", "CVE-2026-0001")
     assert payload.statement.object.address.subject_key_reference == ("sec.package", "Demo")
+
+
+@pytest.mark.parametrize("contract_first", [False, True])
+def test_named_trigger_sdk_uses_the_shared_candidate_resolver(
+    pb, tmp_path, monkeypatch, contract_first
+):
+    from cruxible_client.contracts.authoring.models import CaptureLandingByNameSchedule
+    from cruxible_client.contracts.captures import (
+        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT as contract,
+    )
+    from cruxible_core.authoring import lowering
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from tests.core_support._identity_support import OWNER
+    from tests.test_procedures.test_trigger_artifacts import _line_world
+
+    contract = contract.model_copy(
+        update={
+            "identity": contract.identity.model_copy(update={"name": "security.advisory"}),
+        }
+    )
+    instance, _owner, line = _line_world(tmp_path / "instance")
+    draft = pb.changes(rationale="Consume contract by name")
+    if contract_first:
+        draft.capture_contract(contract)
+    draft.trigger(
+        name="on-feed",
+        line=line.identity.name,
+        schedule=CaptureLandingByNameSchedule(capture_contract=contract.identity.name),
+    )
+    if not contract_first:
+        draft.capture_contract(contract)
+    calls = []
+    resolve = lowering._resolve_trigger_authoring_schedule
+
+    def tracked(schedule, **kwargs):
+        calls.append(schedule)
+        return resolve(schedule, **kwargs)
+
+    monkeypatch.setattr(lowering, "_resolve_trigger_authoring_schedule", tracked)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    created = coordinator.create(
+        actor=OWNER,
+        payload=draft._compiled().payload,
+        canonical_timestamp="2026-10-17T12:00:00.000000Z",
+    ).intent
+    computed, _ = coordinator._compute_and_bind_preflight(created.intent_id, actor=OWNER)
+    assert computed.result.verdict == "passed", computed.result.frontier
+    assert calls and all(isinstance(schedule, CaptureLandingByNameSchedule) for schedule in calls)
+    assert computed.lowered is not None
+    assert "triggers/on-feed.json" in computed.lowered.proposed_tree
+    from cruxible_client.authoring.sdk import Intent
+
+    served = api.AuthoringPreflightResult.model_validate(computed.result.model_dump(mode="json"))
+    handle = Intent(pb, None, {"intent_id": created.intent_id}, preflight=served)
+    assert handle.resolved_trigger_contracts == served.resolved_trigger_contracts
+    assert handle.resolved_trigger_contracts[0].event.capture_contract_identity == contract.identity

@@ -60,6 +60,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.models import ProcedureHardCaps
+from cruxible_client.contracts.procedures.windows import CaptureEventSelector
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -1826,6 +1827,13 @@ def build_preflight_certificate(**values: object) -> PreflightCertificate:
     )
 
 
+class ResolvedTriggerCaptureContract(_StrictAuthoringModel):
+    """The exact contract a Trigger resolved during this prepare or preview."""
+
+    trigger_name: str
+    event: CaptureEventSelector
+
+
 class PreflightResult(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-preflight-result-v1"] = (
         "playbill-authoring-preflight-result-v1"
@@ -1833,6 +1841,10 @@ class PreflightResult(_StrictAuthoringModel):
     verdict: Literal["passed", "refused"]
     certificate: PreflightCertificate
     frontier: DiagnosticFrontier
+    resolved_trigger_contracts: tuple[ResolvedTriggerCaptureContract, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
 
     @model_validator(mode="after")
     def _verdict(self) -> "PreflightResult":
@@ -2429,6 +2441,7 @@ __all__ = [
     "BlockSyncSuccessorCandidate",
     "PreflightCertificate",
     "PreflightResult",
+    "ResolvedTriggerCaptureContract",
     "BlueprintAuthoringPayload",
     "BlueprintInstantiation",
     "ProcedureAuthoringPayload",

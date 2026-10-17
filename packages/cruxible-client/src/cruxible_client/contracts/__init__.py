@@ -47,6 +47,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.authoring.models import (
     ProjectionCheckResult as ProjectionCheckResult,
 )
+from cruxible_client.contracts.authoring.models import ResolvedTriggerCaptureContract
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claims import ClaimStatementCard as ClaimStatementCard
@@ -1376,6 +1377,10 @@ class AuthoringPreflightResult(BaseModel):
     # computed: a reader validates them on parse rather than probing a dict.
     certificate: PreflightCertificate
     frontier: DiagnosticFrontier
+    resolved_trigger_contracts: tuple[ResolvedTriggerCaptureContract, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+    )
     lint: ClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,

@@ -23,6 +23,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObject,
     AuthoringExistingClaimDisposition,
     AuthoringPayload,
+    AuthoringTriggerSchedule,
     BlueprintAuthoringPayload,
     BlueprintInstantiation,
     ChangeSetAuthoringPayload,
@@ -71,7 +72,7 @@ from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDe
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
-from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
+from cruxible_client.contracts.triggers import InternalActionName
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.records import RecordConstructor
@@ -448,7 +449,7 @@ class TriggerInput(_StrictInputModel):
 
     kind: Literal["trigger"]
     name: str
-    schedule: TriggerSchedule
+    schedule: AuthoringTriggerSchedule
     line_name: str | None = Field(
         default=None,
         description=(

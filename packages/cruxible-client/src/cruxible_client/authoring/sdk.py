@@ -120,6 +120,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringProgramOperation,
     AuthoringProgramStamp,
     AuthoringReferenceExpectation,
+    AuthoringTriggerSchedule,
     CaptureContractAuthoringPayload,
     ChangeSetAuthoringPayload,
     ClaimAuthoringPayload,
@@ -136,6 +137,7 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureMandateAuthoringPayload,
     QueryDefinitionAuthoringPayload,
     ResolutionContractAuthoringPayload,
+    ResolvedTriggerCaptureContract,
     SelfSourceBody,
     SourceAcquisitionPolicyAuthoringPayload,
     SubjectAuthoringPayload,
@@ -247,7 +249,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
-from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
+from cruxible_client.contracts.triggers import InternalActionName
 from cruxible_client.contracts.write import (
     AddChange,
     Change,
@@ -1271,7 +1273,7 @@ class ChangeSetDraft:
         self,
         *,
         name: str,
-        schedule: TriggerSchedule,
+        schedule: AuthoringTriggerSchedule,
         line: str | None = None,
         action: InternalActionName | None = None,
         retire: bool = False,
@@ -1283,6 +1285,10 @@ class ChangeSetDraft:
         ``floor.refresh``), which takes cadence, cron or generation_accepted;
         a Line takes any schedule that supplies its input. A Trigger aimed at a
         Line does nothing until the Line is enabled (``cx.line(name).enable()``).
+        For capture landings, pass ``CaptureLandingByNameSchedule(capture_contract=
+        "security.advisory")`` from ``contracts.authoring.models``. Prepare resolves
+        the live contract at the pinned base or in this set and retains its exact
+        digest; ``CaptureLandingSchedule(event=...)`` supplies an exact selector.
         A Line can have several Triggers; retiring a Line needs its live
         Triggers retired or retargeted in the same set.
 
@@ -1946,6 +1952,15 @@ class Intent:
 
         lint = self.lint
         return () if lint is None else tuple(lint.warnings)
+
+    @property
+    def resolved_trigger_contracts(self) -> tuple[ResolvedTriggerCaptureContract, ...]:
+        """Contract identities and digests resolved by the last prepare.
+
+        Next: inspect each ``event``, then ``intent.submit()``.
+        """
+
+        return () if self._preflight is None else self._preflight.resolved_trigger_contracts
 
     @property
     def diagnostics(self) -> tuple[Diagnostic, ...]:
