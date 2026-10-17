@@ -5259,6 +5259,8 @@ class Procedure:
 
         Find the ID with measure(), readings(), or get. The same verdict,
         reason and reviewer retry returns the original judgment.
+
+        Next: ``readings()`` shows the standing answer this judgment leaves.
         """
         return self._playbill._client.dispose_procedure_resolution(
             self._playbill._instance_id,
