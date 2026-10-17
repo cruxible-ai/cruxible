@@ -141,6 +141,25 @@ Installing the provider packages a kit needs requires `admin` permission. A
 `governed_write` caller can add a kit whose providers are already installed or
 satisfied.
 
+Your own definitions under a kit's prefix are not an ownership collision. A
+different definition appears as `takes_over_outside_definition` in the plan.
+Next: pass `--keep IDENTITY` to keep your version.
+
+Two installed kits cannot own overlapping prefixes, and a kit cannot replace a
+definition another kit still holds, even outside that kit's current prefixes.
+These are refusals (`cruxible.kit.ownership_conflict`). Prefix overlap remains
+a hard block even with `--keep`. The result's `refusals` name our prefixes,
+the owning kit, and its prefix or held identity, with a repair.
+Next: remove the owning kit first with `cruxible kit remove KIT`, or install a
+release that does not own the overlapping prefix or replace the held definition.
+
+Reusing an installed `kit_id` with wholly disjoint owned prefixes is refused
+(`cruxible.kit.id_reused`), rather than planned as an upgrade. The refusal names
+both prefix sets. Releases with the same prefixes, or with a shared parent or
+sub-prefix, can still upgrade normally.
+Next: remove the installed kit first with `cruxible kit remove KIT`, then add
+the other kit.
+
 A default provider is installed at exactly the version the kit names, and only
 as the build the kit recorded: the provider index must list the recorded wheel
 hash before the wheel is fetched, and the wheel's lock must match before any

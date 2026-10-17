@@ -15,7 +15,7 @@ import base64
 import binascii
 import hashlib
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -741,6 +741,40 @@ class KitProviderStep(_Strict):
     detail: str | None = None
 
 
+class KitOwnershipConflictRefusal(_Strict):
+    """Another installed kit owns an overlapping prefix or holds a definition."""
+
+    code: Literal["cruxible.kit.ownership_conflict"] = "cruxible.kit.ownership_conflict"
+    our_prefixes: tuple[str, ...]
+    owning_kit_id: str
+    owning_prefix: str | None = None
+    identity: str | None = None
+    detail: str
+    repair: str
+
+    @model_validator(mode="after")
+    def _collision_target(self) -> KitOwnershipConflictRefusal:
+        if self.owning_prefix is None and self.identity is None:
+            raise ValueError("an ownership conflict must name a prefix or identity")
+        return self
+
+
+class KitIdReusedRefusal(_Strict):
+    """An installed kit id cannot silently become an unrelated set of prefixes."""
+
+    code: Literal["cruxible.kit.id_reused"] = "cruxible.kit.id_reused"
+    owning_kit_id: str
+    our_prefixes: tuple[str, ...]
+    installed_prefixes: tuple[str, ...]
+    detail: str
+    repair: str
+
+
+KitAddRefusal = Annotated[
+    KitOwnershipConflictRefusal | KitIdReusedRefusal, Field(discriminator="code")
+]
+
+
 class KitChangeResult(_Strict):
     """What a kit add or remove changed, or why it changed nothing."""
 
@@ -780,6 +814,8 @@ class KitChangeResult(_Strict):
     #: Automation retired with definitions, rather than carried to live successors.
     stops: tuple[StoppedAutomationV1, ...] = ()
     automation_carries: tuple[AutomationCarryV1, ...] = ()
+    #: Hard ownership/id blocks; the same structured refusals on every surface.
+    refusals: tuple[KitAddRefusal, ...] = ()
     detail: str | None = None
     #: The accepted coordinate this change was evaluated at.
     coordinate: GetCoordinate | None = None
