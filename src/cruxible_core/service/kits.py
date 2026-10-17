@@ -1219,11 +1219,21 @@ def _submit(
             coordinate=mode.coordinate,
             **described,  # type: ignore[arg-type]
         )
+    # Carries have no per-item reason: the accepting admission records why
+    # this revision changed, for the shared get/floor reason resolver.
+    if transition is None:
+        rationale = f"Remove kit {kit_id} {version}."
+    elif installed_version is None or transition == "reinstall":
+        rationale = f"{transition.capitalize()} kit {kit_id} {version}."
+    else:
+        rationale = f"{transition.capitalize()} kit {kit_id} from {installed_version} to {version}."
     admitted = admit_change_set(
         instance,
         mode,
         actor_id=actor_id,
-        request=ProposalAdmissionRequest(target_ref=target, proposed_base_oid=base.git_oid),
+        request=ProposalAdmissionRequest(
+            target_ref=target, proposed_base_oid=base.git_oid, rationale=rationale
+        ),
         candidate_tree=candidate,
         timestamp=timestamp,
     )

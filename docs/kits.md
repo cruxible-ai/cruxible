@@ -247,8 +247,12 @@ keeps its single path.
 A definition the release dropped is retired when nothing depends on it. When
 something does, it stays live until you decide: `--keep IDENTITY` keeps it,
 and `--retire-dependents IDENTITY` retires it together with its dependents.
+The preview counts dependents after the release's replacements: a query that
+the same release replaces and that no longer uses the dropped type does not count.
 Definitions the release replaces carry their dependents (Claims, Procedures,
 Blueprints) forward to the new version in the same change set.
+For a carried Claim, `get --detail evidence` and the floor's `changes/` file
+show the kit transition as the rationale for that revision.
 
 `kit add` refuses a release older than the one installed unless you pass
 `--allow-downgrade`; the preview names the transition (install, upgrade,

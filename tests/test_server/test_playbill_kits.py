@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import typing
 from collections.abc import Iterator
 from pathlib import Path
@@ -454,23 +455,44 @@ def _claim_paths(world: _World, predicate: str) -> list[str]:
     ]
 
 
+@pytest.mark.parametrize(
+    ("predicate", "schema", "value", "successor_schema"),
+    [
+        (SEATS, {"type": "integer"}, 50, {"type": "integer", "minimum": 0}),
+        (
+            "acme.account.status",
+            {"type": "string"},
+            "ready",
+            {"type": "string", "enum": ["ready", "done"]},
+        ),
+    ],
+)
 def test_changing_a_claim_type_carries_its_live_claims_as_a_succession_would(
     worlds: tuple[_World, _World],
+    predicate: str,
+    schema: dict[str, object],
+    value: object,
+    successor_schema: dict[str, object],
 ) -> None:
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.service.floor.floor import service_export_playbill_floor
+    from cruxible_core.storage.cas import BodyAccessContext
+
     publisher, consumer = worlds
-    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    publisher.author(_claim_type(predicate, schema))
     consumer.add(publisher.build("1.0.0"))
-    draft = consumer.pb.changes(rationale="Record Acme's seats.")
+    draft = consumer.pb.changes(rationale="Record Acme's account value.")
     created = _create_by_slug(consumer, draft, "acme.account", "acme")
     draft.claim(
         subject=created,
-        predicate=SEATS,
-        value=50,
+        predicate=predicate,
+        value=value,
         role="observation",
-        rationale="The contract says 50 seats.",
+        rationale="The source records this account value.",
         supported_by=None,
         copied_from=None,
-        self_source="seats: 50\n",
+        self_source=f"{predicate}: {value}\n",
         qualifier=None,
         effective_period=None,
         revises=None,
@@ -484,18 +506,37 @@ def test_changing_a_claim_type_carries_its_live_claims_as_a_succession_would(
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     consumer.approve(submitted._candidate_status.proposal_id)
-    claim_paths = _claim_paths(consumer, SEATS)
+    claim_paths = _claim_paths(consumer, predicate)
     assert len(claim_paths) == 1
+    before = parse_claim(consumer.tree()[claim_paths[0]], path=claim_paths[0])
 
-    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
+    publisher.succeed(predicate, successor_schema)
     upgraded = consumer.add(publisher.build("1.1.0"))
 
     # Dependents are counted, not listed, and carried to the replacement.
-    (seats,) = (item for item in upgraded.plan if item.path == _path(SEATS))
+    (seats,) = (item for item in upgraded.plan if item.path == _path(predicate))
     assert (seats.action, seats.dependent_count) == ("replace", 1)
     assert claim_paths[0] not in {item.path for item in upgraded.plan}
     carried = consumer.tree()[claim_paths[0]]
-    assert claim_type_digest(consumer.claim_type(SEATS)).tagged.encode("ascii") in carried
+    assert claim_type_digest(consumer.claim_type(predicate)).tagged.encode("ascii") in carried
+
+    # A carry keeps the Claim's backing, but this revision's reason is the kit
+    # change's, resolved by the same accepting admission for get and the floor.
+    instance = get_playbill_manager().get(consumer.instance_id)
+    claim = parse_claim(carried, path=claim_paths[0])
+    assert claim.statement.object == before.statement.object
+    assert claim.backing == before.backing
+    evidence = service_playbill_get(
+        instance,
+        request=GetRequest(ref=claim.identity.qualified, detail="evidence"),
+        access=BodyAccessContext(principal_id="operator", can_read_body=True),
+    ).evidence
+    assert evidence is not None
+    assert evidence.rationale == "Upgrade kit acme from 1.0.0 to 1.1.0."
+    files = service_export_playbill_floor(instance)
+    with instance.accepted_history_reader() as history:
+        change = json.loads(files[f"changes/{history.sequence:020d}.json"])
+    assert change["rationale"] == [evidence.rationale]
 
 
 def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
@@ -1369,6 +1410,61 @@ def test_a_kit_dependent_lands_as_the_kit_wrote_it_when_its_type_changes(
     assert {pin.artifact_digest for pin in query.pins} == {
         claim_type_digest(consumer.claim_type(SEATS)).tagged
     }
+
+
+@pytest.mark.parametrize("local_dependent", [False, True])
+def test_a_dropped_type_counts_only_queries_left_dependent_after_the_release(
+    worlds: tuple[_World, _World], local_dependent: bool
+) -> None:
+    """A same-release query replacement must not inflate the dropped type's count."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    _author_query(publisher, _query("acme.accounts", (SEATS,)))
+    consumer.add(publisher.build("1.0.0"))
+    if local_dependent:
+        _author_query(consumer, _query("local.accounts", (SEATS,)))
+
+    path = "query-definitions/acme.accounts.json"
+    current = parse_query_definition(publisher.tree()[path], path=path)
+    replacement = _query("acme.accounts", (PLAN,))
+    _author_query(
+        publisher,
+        replacement.model_copy(
+            update={
+                "query_definition": replacement.query_definition.model_copy(
+                    update={
+                        "lifecycle": ArtifactLifecycle(
+                            predecessor_digest=query_definition_digest(current).tagged
+                        )
+                    }
+                )
+            }
+        ),
+    )
+    release = _without(publisher.build("1.1.0"), SEATS)
+    before = consumer.tree()
+    preview = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=release, source="test")
+    )
+    assert preview.status == "would_propose", preview.detail
+    assert consumer.tree() == before
+    by_path = {item.path: item for item in preview.plan}
+    assert by_path[path].action == "replace"
+    assert (by_path[_path(SEATS)].action, by_path[_path(SEATS)].dependent_count) == (
+        "keep" if local_dependent else "retire",
+        int(local_dependent),
+    )
+
+    installed = consumer.add(release)
+    assert installed.status == "accepted", installed.detail
+    assert installed.plan == preview.plan
+    query = parse_query_definition(consumer.tree()[path], path=path)
+    assert query.lifecycle.state == "live"
+    assert {pin.artifact_digest for pin in query.pins} == {
+        claim_type_digest(consumer.claim_type(PLAN)).tagged
+    }
+    assert consumer.claim_type(SEATS).lifecycle.state == ("live" if local_dependent else "retired")
 
 
 def _digest_fields(
