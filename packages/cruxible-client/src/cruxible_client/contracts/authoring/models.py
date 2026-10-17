@@ -36,7 +36,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CaptureContract
+from cruxible_client.contracts.captures import CaptureContract, capture_contract_path
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claim_attestations import ClaimAttestation
 from cruxible_client.contracts.claim_type_structure import ClaimRole
@@ -958,6 +958,24 @@ class LineAuthoringPayload(_StrictAuthoringModel):
         return normalize_canonical(value)
 
 
+class CaptureLandingByNameSchedule(_StrictAuthoringModel):
+    """Resolve a live CaptureContract at prepare; accepted Triggers retain its digest."""
+
+    kind: Literal["capture_landing"] = "capture_landing"
+    capture_contract: str
+
+    @field_validator("capture_contract")
+    @classmethod
+    def _canonical_name(cls, value: str) -> str:
+        capture_contract_path(value)
+        return value
+
+
+# The exact arm retains its kind discriminator. The name arm is separate and
+# strict, so a payload carrying both capture_contract and event cannot match.
+AuthoringTriggerSchedule: TypeAlias = TriggerSchedule | CaptureLandingByNameSchedule
+
+
 class TriggerAuthoringPayload(_StrictAuthoringModel):
     """Decision-only Trigger input: a schedule and exactly one target.
 
@@ -967,7 +985,7 @@ class TriggerAuthoringPayload(_StrictAuthoringModel):
 
     tag: Literal["playbill-trigger-authoring-payload-v1"] = "playbill-trigger-authoring-payload-v1"
     name: str
-    schedule: TriggerSchedule
+    schedule: AuthoringTriggerSchedule
     line_name: str | None = None
     action: InternalActionName | None = None
     retire: bool = False
@@ -2421,6 +2439,8 @@ __all__ = [
     "MandateScopeAuthoring",
     "ProcedureMandateAuthoringPayload",
     "TriggerAuthoringPayload",
+    "CaptureLandingByNameSchedule",
+    "AuthoringTriggerSchedule",
     "SubjectKindAuthoringPayload",
     "SubjectCreationAuthoringPayload",
     "QueryDefinitionAuthoringPayload",
