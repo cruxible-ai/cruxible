@@ -97,13 +97,11 @@ def test_client_audit_factor_bounds_mirror_core_calibration() -> None:
 
 
 def test_calibration_exports_survive_concurrent_import_during_reload() -> None:
-    # A fresh interpreter isolates reload and tracing from pytest's imports.
-    # Pause after the comprehension's iterator exists, then let an importer
-    # attach metadata: iterating the live globals dict fails on its next step.
+    # A fresh interpreter isolates reload and the observer key from pytest's imports.
+    # A str key pauses isupper() inside the export comprehension, after its
+    # iterator exists, on every supported Python (including inlined comprehensions).
     code = dedent("""
-        import dis
         import importlib
-        import sys
         import threading
         from concurrent.futures import ThreadPoolExecutor
 
@@ -113,22 +111,13 @@ def test_calibration_exports_survive_concurrent_import_during_reload() -> None:
         iterating = threading.Event()
         mutated = threading.Event()
 
-        def trace(frame, event, arg):
-            if frame.f_code.co_filename != calibration.__file__:
-                return None
-            frame.f_trace_opcodes = True
-            if (event == 'opcode' and not iterating.is_set()
-                    and dis.opname[frame.f_code.co_code[frame.f_lasti]] == 'FOR_ITER'):
+        class ExportObserver(str):
+            def isupper(self):
                 iterating.set()
                 assert mutated.wait(10), 'concurrent importer did not finish'
-            return trace
+                return False
 
-        def reload_calibration():
-            sys.settrace(trace)
-            try:
-                return importlib.reload(calibration)
-            finally:
-                sys.settrace(None)
+        calibration.__dict__[ExportObserver('_export_observer')] = None
 
         def import_calibration():
             assert iterating.wait(10), 'reload never reached export iteration'
@@ -138,13 +127,32 @@ def test_calibration_exports_survive_concurrent_import_during_reload() -> None:
             return module
 
         with ThreadPoolExecutor(max_workers=2) as workers:
-            reloaded = workers.submit(reload_calibration)
+            reloaded = workers.submit(importlib.reload, calibration)
             imported = workers.submit(import_calibration)
             assert reloaded.result(timeout=20) is imported.result(timeout=20)
 
         assert iterating.is_set() and mutated.is_set()
         assert set(calibration.__all__) == expected
         assert all(name.isupper() for name in calibration.__all__)
+
+        # Negative control: the same handshake must detect the original live
+        # dict iteration, rather than merely making concurrent imports pass.
+        iterating.clear()
+        mutated.clear()
+        del calibration._concurrent_import_observer
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            live = workers.submit(
+                exec, '__all__ = [name for name in globals() if name.isupper()]',
+                calibration.__dict__,
+            )
+            imported = workers.submit(import_calibration)
+            try:
+                live.result(timeout=20)
+            except RuntimeError as error:
+                assert 'dictionary changed size during iteration' in str(error)
+            else:
+                raise AssertionError('live export iteration escaped the regression')
+            assert imported.result(timeout=20) is calibration
     """)
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=30
