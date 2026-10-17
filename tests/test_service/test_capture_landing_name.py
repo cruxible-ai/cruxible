@@ -2,6 +2,8 @@
 
 from datetime import timedelta
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.authoring.inputs import TriggerInput
 from cruxible_client.contracts.authoring.models import (
@@ -28,7 +30,12 @@ from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_wor
 from tests.test_procedures.test_procedure_run_surface import READ_TIME
 
 
-def test_decision_input_prepare_calls_the_same_resolver_and_explains_the_pin(tmp_path, monkeypatch):
+@pytest.mark.parametrize("window_close", [False, True])
+def test_decision_input_prepare_calls_the_same_resolver_and_explains_the_pin(
+    tmp_path,
+    monkeypatch,
+    window_close,
+):
     instance, line, _procedure = line_world(
         tmp_path, CaptureLandingSchedule(event=SELECTOR), triggers=()
     )
@@ -41,6 +48,18 @@ def test_decision_input_prepare_calls_the_same_resolver_and_explains_the_pin(tmp
 
     monkeypatch.setattr(lowering, "_resolve_trigger_authoring_schedule", tracked)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    schedule = (
+        {
+            "kind": "window_close",
+            "window": {
+                "kind": "capture_event",
+                "capture_contract": CONTRACT.identity.name,
+                "duration_seconds": 60,
+            },
+        }
+        if window_close
+        else {"kind": "capture_landing", "capture_contract": CONTRACT.identity.name}
+    )
     result = coordinator.compile_input(
         actor=OWNER,
         input=TriggerInput.model_validate(
@@ -48,13 +67,13 @@ def test_decision_input_prepare_calls_the_same_resolver_and_explains_the_pin(tmp
                 "kind": "trigger",
                 "name": "on-feed",
                 "line_name": line.identity.name,
-                "schedule": {"kind": "capture_landing", "capture_contract": CONTRACT.identity.name},
+                "schedule": schedule,
             }
         ),
         canonical_timestamp="2026-10-17T12:00:00.000000Z",
     )
     assert result.verdict == "passed", result.frontier
-    assert calls and all(isinstance(schedule, CaptureLandingByNameSchedule) for schedule in calls)
+    assert calls and all(item.model_dump(mode="json") == schedule for item in calls)
     assert result.resolved_trigger_contracts[0].trigger_name == "on-feed"
     assert result.resolved_trigger_contracts[0].event == SELECTOR
     from cruxible_client.contracts import AuthoringPreflightResult
@@ -141,3 +160,27 @@ def test_contract_succession_requires_closure_and_cannot_retarget_a_stored_trigg
     )
     assert result.status == "met", result
     assert [item.binding.event.record_digest for item in result.occurrences] == [old.record_digest]
+
+
+def test_retire_prepare_preserves_predecessor_without_contract_lookup(tmp_path, monkeypatch):
+    from tests.test_procedures.test_line_triggers import TRIGGER
+
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
+    monkeypatch.setattr(
+        lowering,
+        "_resolve_trigger_authoring_schedule",
+        lambda *args, **kwargs: pytest.fail("retirement must not resolve a contract"),
+    )
+    result = AuthoringIntentCoordinator.for_instance(instance).compile_input(
+        actor=OWNER,
+        input=TriggerInput(
+            kind="trigger",
+            name=TRIGGER,
+            line_name=line.identity.name,
+            schedule=CaptureLandingByNameSchedule(capture_contract="absent.contract"),
+            retire=True,
+        ),
+        canonical_timestamp="2026-10-17T12:00:00.000000Z",
+    )
+    assert result.verdict == "passed", result.frontier
+    assert result.resolved_trigger_contracts[0].event == SELECTOR

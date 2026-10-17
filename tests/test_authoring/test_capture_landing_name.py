@@ -9,9 +9,11 @@ from pydantic import ValidationError
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
     CaptureContractAuthoringPayload,
+    CaptureEventByNameWindow,
     CaptureLandingByNameSchedule,
     ChangeSetAuthoringPayload,
     TriggerAuthoringPayload,
+    WindowCloseAuthoringSchedule,
 )
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT as CONTRACT,
@@ -23,15 +25,23 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
-from cruxible_client.contracts.procedures.windows import CaptureEventSelector
+from cruxible_client.contracts.procedures.windows import (
+    CaptureEventSelector,
+    CaptureEventWindow,
+    FixedWindow,
+)
 from cruxible_client.contracts.triggers import (
     CaptureLandingSchedule,
+    WindowCloseSchedule,
     parse_trigger,
+    render_trigger,
+    trigger_digest,
     trigger_schedule_pins,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import AuthoringLoweringError, _render_trigger_member
 from tests.core_support._identity_support import OWNER
+from tests.support.lines import line_trigger
 from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 from tests.test_procedures.test_trigger_artifacts import _line_world
 from tests.test_server.test_playbill_line_run_refusals import (
@@ -71,10 +81,14 @@ def payload(**updates):
 def test_name_form_produces_identical_trigger_bytes_digest_and_pins():
     staged = tree()
     named = _render_trigger_member(payload(), tree=staged)
-    exact = _render_trigger_member(
-        payload(schedule=CaptureLandingSchedule(event=SELECTOR)), tree=staged
+    exact = line_trigger(
+        "on-landing", line="triage", schedule=CaptureLandingSchedule(event=SELECTOR)
     )
-    assert named == exact
+    assert named == (
+        "triggers/on-landing.json",
+        render_trigger(exact),
+        trigger_digest(exact).tagged,
+    )
     trigger = parse_trigger(named[1], path=named[0])
     assert trigger.artifact_format == "playbill-trigger-v1"
     assert trigger.pins == trigger_schedule_pins(CaptureLandingSchedule(event=SELECTOR))
@@ -107,7 +121,7 @@ def test_unavailable_named_contract_is_a_typed_authoring_refusal(failure):
     assert caught.value.offending_element == "schedule"
     assert PATH in caught.value.message
     assert "Declare or install" in caught.value.repairs[0].description
-    assert "exact" in caught.value.repairs[0].description
+    assert "existing live CaptureContract" in caught.value.repairs[0].description
 
 
 @pytest.mark.parametrize(
@@ -216,3 +230,124 @@ def test_payload_prepare_resolves_against_candidate_overlay_and_explains_the_pin
         computed.lowered.proposed_tree["triggers/on-landing.json"], path="triggers/on-landing.json"
     )
     assert stored.pins[0].artifact_digest == capture_contract_digest(contract).tagged
+
+
+@pytest.mark.parametrize("window_close", [False, True])
+def test_exact_event_authoring_form_is_refused(window_close):
+    from cruxible_client.contracts.authoring.inputs import TriggerInput
+
+    schedule = (
+        WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60))
+        if window_close
+        else CaptureLandingSchedule(event=SELECTOR)
+    )
+    for model in (TriggerInput, TriggerAuthoringPayload):
+        values = {"name": "on-feed", "line_name": "triage", "schedule": schedule.model_dump()}
+        if model is TriggerInput:
+            values["kind"] = "trigger"
+        with pytest.raises(ValidationError):
+            model.model_validate(values)
+
+
+def test_named_capture_window_uses_the_shared_resolver_and_exact_stored_bytes():
+    authoring = WindowCloseAuthoringSchedule(
+        window=CaptureEventByNameWindow(
+            capture_contract=NAME,
+            duration_seconds=60,
+        )
+    )
+    path, content, digest = _render_trigger_member(payload(schedule=authoring), tree=tree())
+    exact = line_trigger(
+        "on-landing",
+        line="triage",
+        schedule=WindowCloseSchedule(
+            window=CaptureEventWindow(event=SELECTOR, duration_seconds=60),
+        ),
+    )
+    assert (content, digest) == (render_trigger(exact), trigger_digest(exact).tagged)
+    assert parse_trigger(content, path=path).pins == exact.pins
+
+
+def test_fixed_window_authoring_retains_its_stored_schedule():
+    window = FixedWindow(starts_at="2026-10-17T12:00:00Z", duration_seconds=60)
+    path, content, _ = _render_trigger_member(
+        payload(schedule=WindowCloseAuthoringSchedule(window=window)),
+        tree=tree(),
+    )
+    assert parse_trigger(content, path=path).schedule == WindowCloseSchedule(window=window)
+
+
+@pytest.mark.parametrize("unavailable", ["missing", "retired", "changed", "wrong_kind"])
+@pytest.mark.parametrize("window_close", [False, True])
+def test_retiring_trigger_reuses_predecessor_without_resolving_contract(
+    unavailable,
+    window_close,
+    monkeypatch,
+):
+    from cruxible_core.authoring import lowering
+
+    staged = tree()
+    decision = (
+        payload(
+            schedule=WindowCloseAuthoringSchedule(
+                window=CaptureEventByNameWindow(
+                    capture_contract=NAME,
+                    duration_seconds=60,
+                )
+            )
+        )
+        if window_close
+        else payload()
+    )
+    path, content, digest = _render_trigger_member(decision, tree=staged)
+    staged[path] = content
+    previous = parse_trigger(content, path=path)
+    if unavailable == "missing":
+        staged.pop(PATH)
+    elif unavailable == "retired":
+        staged[PATH] = render_capture_contract(
+            CONTRACT.model_copy(
+                update={
+                    "lifecycle": ArtifactLifecycle(state="retired"),
+                }
+            )
+        )
+    elif unavailable == "changed":
+        staged[PATH] = render_capture_contract(
+            CONTRACT.model_copy(
+                update={
+                    "evidence_kinds": ("changed",),
+                }
+            )
+        )
+    else:
+        staged[PATH] = staged[line_spec_path("triage")]
+    staged.pop(line_spec_path("triage"))
+    monkeypatch.setattr(
+        lowering,
+        "_resolve_trigger_authoring_schedule",
+        lambda *args, **kwargs: pytest.fail("retirement must not resolve"),
+    )
+    retired_path, retired_content, _ = _render_trigger_member(
+        decision.model_copy(update={"retire": True}),
+        tree=staged,
+    )
+    retired = parse_trigger(retired_content, path=retired_path)
+    assert retired.lifecycle == ArtifactLifecycle(state="retired", predecessor_digest=digest)
+    assert (retired.schedule, retired.pins, retired.target) == (
+        previous.schedule,
+        previous.pins,
+        previous.target,
+    )
+    staged[path] = retired_content
+    assert (
+        _render_trigger_member(decision.model_copy(update={"retire": True}), tree=staged)[1]
+        == retired_content
+    )
+
+
+def test_retiring_an_absent_trigger_refuses_without_resolving_its_schedule():
+    with pytest.raises(AuthoringLoweringError) as caught:
+        _render_trigger_member(payload(retire=True), tree={})
+    assert caught.value.code == "cruxible.authoring.trigger_missing"
+    assert caught.value.repairs

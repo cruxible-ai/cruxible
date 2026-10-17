@@ -208,20 +208,14 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
     import pytest
     from pydantic import ValidationError
 
-    from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.authoring.models import (
+        CaptureLandingByNameSchedule,
         LineAuthoringPayload,
         TriggerAuthoringPayload,
     )
-    from cruxible_client.contracts.procedures.windows import CaptureEventSelector
-    from cruxible_client.contracts.triggers import CadenceSchedule, CaptureLandingSchedule
+    from cruxible_client.contracts.triggers import CadenceSchedule
 
-    landing = CaptureLandingSchedule(
-        event=CaptureEventSelector(
-            capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="feed"),
-            capture_contract_digest="sha256:" + "a" * 64,
-        )
-    )
+    landing = CaptureLandingByNameSchedule(capture_contract="feed")
     draft = pb.changes(rationale="Consume each observed feed")
     draft.line(
         name="consume-feed",
@@ -357,3 +351,24 @@ def test_named_trigger_sdk_uses_the_shared_candidate_resolver(
     handle = Intent(pb, None, {"intent_id": created.intent_id}, preflight=served)
     assert handle.resolved_trigger_contracts == served.resolved_trigger_contracts
     assert handle.resolved_trigger_contracts[0].event.capture_contract_identity == contract.identity
+
+
+@pytest.mark.parametrize("window_close", [False, True])
+def test_sdk_trigger_refuses_exact_event_authoring(pb, window_close):
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+    from cruxible_client.contracts.triggers import CaptureLandingSchedule, WindowCloseSchedule
+    from tests.test_authoring.test_capture_landing_name import SELECTOR
+
+    schedule = (
+        WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60))
+        if window_close
+        else CaptureLandingSchedule(event=SELECTOR)
+    )
+    with pytest.raises(ValidationError):
+        pb.changes(rationale="Invalid exact event").trigger(
+            name="on-feed",
+            line="triage",
+            schedule=schedule,
+        )

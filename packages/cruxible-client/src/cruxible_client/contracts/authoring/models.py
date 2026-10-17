@@ -60,7 +60,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.models import ProcedureHardCaps
-from cruxible_client.contracts.procedures.windows import CaptureEventSelector
+from cruxible_client.contracts.procedures.windows import CaptureEventSelector, FixedWindow
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -79,7 +79,12 @@ from cruxible_client.contracts.subject_kinds import (
 )
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
-from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
+from cruxible_client.contracts.triggers import (
+    CadenceSchedule,
+    CronSchedule,
+    GenerationAcceptedSchedule,
+    InternalActionName,
+)
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -972,9 +977,35 @@ class CaptureLandingByNameSchedule(_StrictAuthoringModel):
         return value
 
 
-# The exact arm retains its kind discriminator. The name arm is separate and
-# strict, so a payload carrying both capture_contract and event cannot match.
-AuthoringTriggerSchedule: TypeAlias = TriggerSchedule | CaptureLandingByNameSchedule
+class CaptureEventByNameWindow(_StrictAuthoringModel):
+    """An observation window anchored on a named CaptureContract's landings."""
+
+    kind: Literal["capture_event"] = "capture_event"
+    capture_contract: str
+    duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
+
+    @field_validator("capture_contract")
+    @classmethod
+    def _canonical_name(cls, value: str) -> str:
+        capture_contract_path(value)
+        return value
+
+
+class WindowCloseAuthoringSchedule(_StrictAuthoringModel):
+    """Close a fixed window or resolve a named CaptureContract event anchor."""
+
+    kind: Literal["window_close"] = "window_close"
+    window: Annotated[FixedWindow | CaptureEventByNameWindow, Field(discriminator="kind")]
+
+
+AuthoringTriggerSchedule: TypeAlias = Annotated[
+    CadenceSchedule
+    | CronSchedule
+    | CaptureLandingByNameSchedule
+    | WindowCloseAuthoringSchedule
+    | GenerationAcceptedSchedule,
+    Field(discriminator="kind"),
+]
 
 
 class TriggerAuthoringPayload(_StrictAuthoringModel):
@@ -2453,6 +2484,8 @@ __all__ = [
     "ProcedureMandateAuthoringPayload",
     "TriggerAuthoringPayload",
     "CaptureLandingByNameSchedule",
+    "CaptureEventByNameWindow",
+    "WindowCloseAuthoringSchedule",
     "AuthoringTriggerSchedule",
     "SubjectKindAuthoringPayload",
     "SubjectCreationAuthoringPayload",
