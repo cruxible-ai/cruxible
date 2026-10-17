@@ -40,6 +40,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_core.cli.commands.playbill import _local_git_workspace_root
 from cruxible_core.cli.main import cli
 from cruxible_core.runtime.permissions import reset_permissions
@@ -617,7 +618,9 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
             # The fixture ClaimType was lowered to the current format. Resolve
             # its dependency at the accepted base, rather than pinning the old
             # fixture envelope's digest.
-            query_definition=work_item_query(claim_type=claim_type).model_copy(update={"pins": ()}),
+            query_definition=QueryDefinitionSpec.model_validate(
+                work_item_query(claim_type=claim_type).model_dump(mode="json", exclude={"pins"})
+            ),
         ).model_dump(mode="json"),
     )
     coordinate = accepted["accepted_coordinate"]
@@ -642,10 +645,8 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         "semantic.alias",
         "semantic.distinct_from",
     ]
-    assert (
-        cruxible.json("get", f"ClaimType:{PREDICATE}", "--detail", "proof")["proof"]["predicate"]
-        == PREDICATE
-    )
+    claim_type_proof = cruxible.json("get", f"ClaimType:{PREDICATE}", "--detail", "proof")["proof"]
+    assert claim_type_proof["predicate"] == PREDICATE
 
     claims = cruxible.json("query", SUBJECT_KIND, "--claims")
     assert {
@@ -668,10 +669,15 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
 
     definitions = cruxible.json("orient", "--section", "queries")
     assert [item["name"] for item in definitions["queries"]] == [QUERY_NAME]
-    assert (
-        cruxible.json("get", f"query:{QUERY_NAME}", "--detail", "proof")["proof"]["name"]
-        == QUERY_NAME
-    )
+    query_proof = cruxible.json("get", f"query:{QUERY_NAME}", "--detail", "proof")["proof"]
+    assert query_proof["name"] == QUERY_NAME
+    assert query_proof["envelope"]["pins"] == [
+        {
+            "role": "claim-type",
+            "target": claim_type_proof["envelope"]["identity"],
+            "artifact_digest": claim_type_proof["artifact_digest"],
+        }
+    ]
 
     # 6. Execute the entrypoint. The full receipt is the replay coordinate of
     #    the read.
