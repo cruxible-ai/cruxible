@@ -3189,6 +3189,7 @@ Import: `cruxible_client.authoring.sdk_types.RefKind`. [Source](src/cruxible_cli
 | `PROCEDURE_RUNTIME_POLICY` | `'procedure_runtime_policy'` |
 | `SOURCE_ACQUISITION_POLICY` | `'source_acquisition_policy'` |
 | `PROVIDER_INTERFACE` | `'provider_interface'` |
+| `PROVIDER` | `'provider'` |
 
 <a id="api-claimrole"></a>
 
