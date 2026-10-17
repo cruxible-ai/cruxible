@@ -905,6 +905,13 @@ def test_a_kept_definition_stays_held_when_a_release_narrows_its_prefix(
     competing = consumer.add(publisher.build("1.0.0", kit_id="beta", owns=("acme.other.",)))
     assert competing.status == "blocked", competing
     assert f"ClaimType:{flag} is held by kit acme" in (competing.detail or "")
+    (refusal,) = competing.refusals
+    assert refusal.code == "cruxible.kit.ownership_conflict"
+    assert refusal.our_prefixes == ("acme.other.",)
+    assert refusal.owning_prefix is None
+    assert refusal.identity == f"ClaimType:{flag}"
+    assert refusal.owning_kit_id == "acme"
+    assert "cruxible kit remove acme" in refusal.repair
     assert consumer.claim_type(flag).literal_schema == {"type": "string"}
 
     # The holder still removes it, as an unedited definition it installed.
@@ -998,17 +1005,57 @@ def test_a_dropped_contract_an_evidence_rule_needs_is_kept_or_retired_with_it(
     )
 
 
-def test_overlapping_ownership_is_refused(worlds: tuple[_World, _World]) -> None:
+@pytest.mark.parametrize("owns", [("acme.account.",), ("acme.",)])
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_overlapping_ownership_is_refused(
+    worlds: tuple[_World, _World], owns: tuple[str, ...], dry_run: bool
+) -> None:
     publisher, consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
     consumer.add(publisher.build("1.0.0"))
 
-    overlapping = consumer.add(
-        publisher.build("1.0.0", owns=("acme.account.",), kit_id="acme-extra")
+    before = consumer.tree()
+    response = consumer.http.post(
+        f"/api/v1/{consumer.instance_id}/kits",
+        json=KitAddRequest(
+            bundle=publisher.build("1.0.0", owns=owns, kit_id="acme-extra"),
+            dry_run=dry_run,
+            keep=(f"ClaimType:{SEATS}",),
+        ).model_dump(mode="json"),
     )
-
-    assert overlapping.status == "blocked"
+    assert response.status_code == 200, response.text
+    overlapping = KitChangeResult.model_validate(response.json())
+    assert overlapping.status == ("would_block" if dry_run else "blocked")
     assert "owned by kit acme" in (overlapping.detail or "")
+    (refusal,) = overlapping.refusals
+    assert refusal.code == "cruxible.kit.ownership_conflict"
+    assert refusal.our_prefixes == owns
+    assert refusal.owning_prefix == "acme."
+    assert refusal.identity is None
+    assert refusal.owning_kit_id == "acme"
+    assert "cruxible kit remove acme" in refusal.repair
+    assert "release that does not own the overlapping prefix" in refusal.repair
+    assert consumer.tree() == before
+
+
+def test_a_consumers_own_definition_is_a_takeover_that_keep_preserves(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.author(_claim_type(SEATS, {"type": "integer", "minimum": 1}))
+    bundle = publisher.build("1.0.0")
+    preview = playbill_api.playbill_kit_add(consumer.instance_id, KitAddRequest(bundle=bundle))
+    assert preview.status == "would_propose", preview.detail
+    assert preview.refusals == ()
+    (item,) = preview.plan
+    assert (item.action, item.consequence) == ("replace", "takes_over_outside_definition")
+
+    kept = consumer.add(bundle, keep=(f"ClaimType:{SEATS}",))
+    assert kept.refusals == ()
+    assert kept.plan[0].action == "keep"
+    assert kept.plan[0].consequence == "takes_over_outside_definition"
+    assert consumer.claim_type(SEATS).literal_schema == {"type": "integer", "minimum": 1}
 
 
 def test_removing_a_kit_retires_what_it_installed(worlds: tuple[_World, _World]) -> None:
@@ -1225,6 +1272,13 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
     refused = consumer.add(forged)
     assert refused.status == "blocked"
     assert "owned by kit acme" in (refused.detail or "")
+    (refusal,) = refused.refusals
+    assert refusal.code == "cruxible.kit.ownership_conflict"
+    assert refusal.our_prefixes == ("beta.",)
+    assert refusal.owning_prefix == "acme."
+    assert refusal.identity == "CaptureContract:acme.orders-v1"
+    assert refusal.owning_kit_id == "acme"
+    assert "cruxible kit remove acme" in refusal.repair
 
     removed = playbill_api.playbill_kit_remove(
         consumer.instance_id, KitRemoveRequest(kit_id="beta")

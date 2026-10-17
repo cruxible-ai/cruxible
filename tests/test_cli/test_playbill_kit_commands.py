@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from cruxible_client.contracts.kits import (
     KitBuildResult,
     KitBundle,
     KitChangeResult,
+    KitOwnershipConflictRefusal,
     KitPathPlan,
     KitProvider,
     KitProviderFile,
@@ -114,6 +116,65 @@ def test_kit_status_offline_skips_the_registry(monkeypatch: pytest.MonkeyPatch) 
     assert result.exit_code == 0, result.output
     assert "acme 1.0.0" in result.output
     assert "update check offline" in result.output
+
+
+def test_kit_collision_exposes_the_shared_refusal_and_next_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refusal = KitOwnershipConflictRefusal(
+        our_prefixes=("acme.account.",),
+        owning_kit_id="acme",
+        owning_prefix="acme.",
+        detail="acme.account. overlaps acme., owned by kit acme",
+        repair="Remove the owning kit first: cruxible kit remove acme; or install "
+        "a release that does not own the overlapping prefix.",
+    )
+    answer = KitChangeResult(
+        kit_id="extra", version="1.0.0", status="would_block", refusals=(refusal,)
+    )
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return answer
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "extra")
+    )
+    result = CliRunner().invoke(cli, [*BASE, "add", "extra"])
+    assert result.exit_code == 0, result.output
+    assert refusal.code in result.output
+    assert f"Next: {refusal.repair}" in result.output
+
+    result = CliRunner().invoke(cli, [*BASE, "add", "extra", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["refusals"] == [refusal.model_dump(mode="json")]
+
+
+def test_kit_takeover_points_to_keep(monkeypatch: pytest.MonkeyPatch) -> None:
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.0.0",
+                status="would_propose",
+                plan=(
+                    KitPathPlan(
+                        path="claim-types/acme.account/seats.json",
+                        identity="ClaimType:acme.account.seats",
+                        action="replace",
+                        consequence="takes_over_outside_definition",
+                    ),
+                ),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "acme")
+    )
+    result = CliRunner().invoke(cli, [*BASE, "add", "acme"])
+    assert result.exit_code == 0, result.output
+    assert "Next: rerun cruxible kit add with --keep ClaimType:acme.account.seats" in result.output
 
 
 def _provider_files() -> dict[str, bytes]:

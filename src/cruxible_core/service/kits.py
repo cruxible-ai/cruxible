@@ -51,6 +51,7 @@ from cruxible_client.contracts.kits import (
     KitInstalledArtifact,
     KitKeptDivergence,
     KitManifest,
+    KitOwnershipConflictRefusal,
     KitPathPlan,
     KitProvenance,
     KitProvider,
@@ -1075,7 +1076,7 @@ def _planned_automation(
 
 
 def _held_by_other_kits(
-    instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str
+    receipts: tuple[KitReceipt, ...], kit_id: str
 ) -> dict[str, str]:
     """Every definition path another installed kit holds -> that kit.
 
@@ -1086,60 +1087,109 @@ def _held_by_other_kits(
 
     return {
         entry.path: receipt.kit_id
-        for receipt in _receipts(instance, tree)
+        for receipt in receipts
         if receipt.kit_id != kit_id
         for entry in receipt.artifacts
     }
 
 
+def _ownership_refusal(
+    manifest: KitManifest,
+    owner: str,
+    detail: str,
+    *,
+    owning_prefix: str | None = None,
+    identity: str | None = None,
+) -> KitOwnershipConflictRefusal:
+    return KitOwnershipConflictRefusal(
+        our_prefixes=manifest.owns,
+        owning_kit_id=owner,
+        owning_prefix=owning_prefix,
+        identity=identity,
+        detail=detail,
+        repair=f"Remove the owning kit first: cruxible kit remove {owner}; or install "
+        "a release that does not own the overlapping prefix or replace the held definition.",
+    )
+
+
 def _foreign_takeovers(
-    instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str, diff: _Diff
-) -> list[str]:
+    receipts: tuple[KitReceipt, ...], manifest: KitManifest, diff: _Diff
+) -> list[KitOwnershipConflictRefusal]:
     """A release may not change a definition another installed kit owns or holds: a
     hard block, like overlapping ownership."""
 
     owners = [
         (prefix, receipt.kit_id)
-        for receipt in _receipts(instance, tree)
-        if receipt.kit_id != kit_id and receipt.artifacts
+        for receipt in receipts
+        if receipt.kit_id != manifest.kit_id and receipt.artifacts
         for prefix in receipt.owns
     ]
-    held = _held_by_other_kits(instance, tree, kit_id)
-    found: list[str] = []
+    held = _held_by_other_kits(receipts, manifest.kit_id)
+    found: list[KitOwnershipConflictRefusal] = []
     for item in diff.plan:
         if item.action != "replace" or item.identity is None:
             continue
         name = item.identity.partition(":")[2]
-        owned_by = [owner for prefix, owner in owners if name.startswith(prefix)]
-        found.extend(f"{item.identity} is owned by kit {owner}" for owner in owned_by)
+        owned_by = [(prefix, owner) for prefix, owner in owners if name.startswith(prefix)]
+        found.extend(
+            _ownership_refusal(
+                manifest,
+                owner,
+                f"{item.identity} is owned by kit {owner}",
+                owning_prefix=prefix,
+                identity=item.identity,
+            )
+            for prefix, owner in owned_by
+        )
         holder = held.get(item.path)
-        if holder is not None and holder not in owned_by:
-            found.append(f"{item.identity} is held by kit {holder}")
+        if holder is not None and not any(owner == holder for _, owner in owned_by):
+            found.append(
+                _ownership_refusal(
+                    manifest,
+                    holder,
+                    f"{item.identity} is held by kit {holder}",
+                    identity=item.identity,
+                )
+            )
     return found
 
 
 def _ownership_conflicts(
-    instance: PlaybillInstance, tree: Mapping[str, bytes], manifest: KitManifest
-) -> list[str]:
+    receipts: tuple[KitReceipt, ...], tree: Mapping[str, bytes], manifest: KitManifest
+) -> list[KitOwnershipConflictRefusal]:
     conflicts = []
-    for receipt in _receipts(instance, tree):
+    for receipt in receipts:
         if receipt.kit_id == manifest.kit_id or not receipt.artifacts:
             continue
         for prefix in manifest.owns:
             for theirs in receipt.owns:
                 if prefix.startswith(theirs) or theirs.startswith(prefix):
-                    conflicts.append(f"{prefix} overlaps {theirs}, owned by kit {receipt.kit_id}")
+                    conflicts.append(
+                        _ownership_refusal(
+                            manifest,
+                            receipt.kit_id,
+                            f"{prefix} overlaps {theirs}, owned by kit {receipt.kit_id}",
+                            owning_prefix=theirs,
+                        )
+                    )
     # A prefix may not take in a definition another kit still holds outside
     # its own prefixes (one it kept after its release dropped it).
-    for path, holder in sorted(_held_by_other_kits(instance, tree, manifest.kit_id).items()):
+    for path, holder in sorted(_held_by_other_kits(receipts, manifest.kit_id).items()):
         current = tree.get(path)
         if current is None:
             continue
         identity = _artifact_state(path, current).identity
         if any(identity.name.startswith(prefix) for prefix in manifest.owns) and not any(
-            conflict.endswith(f"owned by kit {holder}") for conflict in conflicts
+            conflict.owning_kit_id == holder for conflict in conflicts
         ):
-            conflicts.append(f"{identity.qualified} is held by kit {holder}")
+            conflicts.append(
+                _ownership_refusal(
+                    manifest,
+                    holder,
+                    f"{identity.qualified} is held by kit {holder}",
+                    identity=identity.qualified,
+                )
+            )
     return conflicts
 
 
@@ -1469,7 +1519,6 @@ def _provider_steps(
 
 
 def _early_refusals(
-    instance: PlaybillInstance,
     tree: Mapping[str, bytes],
     manifest: KitManifest,
     contents: Mapping[str, bytes],
@@ -1484,8 +1533,7 @@ def _early_refusals(
     package's.
     """
 
-    refused = _ownership_conflicts(instance, tree, manifest)
-    refused.extend(_builtin_refusals(tree, contents))
+    refused = _builtin_refusals(tree, contents)
     if downgrade:
         refused.append(
             f"release {manifest.version} is older than installed {installed_version}; "
@@ -1688,6 +1736,22 @@ def _add_kit(
     shell, receipt = (None, None) if found is None else found
     installed_version = None if receipt is None or not receipt.artifacts else receipt.version
     transition = _transition(installed_version, manifest.version)
+    # Kit-add work only: indexed receipt documents and their recorded definitions,
+    # never the instance's Claims or Subjects. Reuse this inventory for both guards.
+    receipts = tuple(_receipts(instance, tree))
+    ownership = _ownership_conflicts(receipts, tree, manifest)
+    if ownership:
+        return KitChangeResult(
+            kit_id=manifest.kit_id,
+            version=manifest.version,
+            status="would_block" if mode.previewing else "blocked",
+            transition=transition,
+            installed_version=installed_version,
+            provenance=manifest.provenance,
+            refusals=tuple(ownership),
+            detail="; ".join(item.detail for item in ownership),
+            coordinate=mode.coordinate,
+        )
     # A commit reads the staged provider files and resolves them for this host,
     # so a bundled build counts as installed only with its whole dependency
     # closure; a preview has no files and compares wheel and lock.
@@ -1726,7 +1790,6 @@ def _add_kit(
         # Every refusal the current state already decides comes before any
         # provider is prepared or installed.
         early = _early_refusals(
-            instance,
             tree,
             manifest,
             contents,
@@ -1746,13 +1809,15 @@ def _add_kit(
             keep_local_edits=request.keep_local_edits,
             preset=_provider_remap(tree, contents, manifest, inspected),
         )
-        early.extend(_foreign_takeovers(instance, tree, manifest.kit_id, initial))
+        ownership = _foreign_takeovers(receipts, manifest, initial)
+        early.extend(item.detail for item in ownership)
         if early:
             return KitChangeResult(
                 kit_id=manifest.kit_id,
                 version=manifest.version,
                 status="blocked",
                 detail="; ".join(early),
+                refusals=tuple(ownership),
                 coordinate=mode.coordinate,
                 **described,  # type: ignore[arg-type]
             )
@@ -1805,8 +1870,7 @@ def _add_kit(
                 "the definitions that pin it are not proposed",
                 repair=RepairOperation(operation="cruxible.kit.status"),
             )
-    blocked = _ownership_conflicts(instance, tree, manifest)
-    blocked.extend(_builtin_refusals(tree, contents))
+    blocked = _builtin_refusals(tree, contents)
     blocked.extend(
         f"{step.provider_id}: {step.detail}" for step in steps if step.action == "blocked"
     )
@@ -1837,7 +1901,8 @@ def _add_kit(
         retire_dependents=frozenset(request.retire_dependents),
         kept=kept,
     )
-    blocked.extend(_foreign_takeovers(instance, tree, manifest.kit_id, diff))
+    ownership = _foreign_takeovers(receipts, manifest, diff)
+    blocked.extend(item.detail for item in ownership)
     # Each live Procedure on another build of a provider the kit ships moves to
     # the kit's build in this same change; a satisfied index default installs no
     # build, so nothing moves for it.
@@ -1948,6 +2013,7 @@ def _add_kit(
             status="would_block" if mode.previewing else "blocked",
             plan=plan,
             detail="; ".join(blocked),
+            refusals=tuple(ownership),
             coordinate=mode.coordinate,
             **described,  # type: ignore[arg-type]
         )

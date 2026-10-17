@@ -7,7 +7,12 @@ from typing import Any
 import pytest
 
 from cruxible_client.artifacts import pack_artifact
-from cruxible_client.contracts.kits import KitAddRequest, KitChangeResult, KitStatus
+from cruxible_client.contracts.kits import (
+    KitAddRequest,
+    KitChangeResult,
+    KitOwnershipConflictRefusal,
+    KitStatus,
+)
 from cruxible_client.kits import KIT_ARTIFACT
 from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
@@ -66,6 +71,28 @@ def test_kit_status_runs_the_update_check_in_the_adapter(monkeypatch: pytest.Mon
     handlers.handle_playbill_kit_status("inst", offline=True)
 
     assert checked == [True]
+
+
+def test_kit_collision_preserves_the_shared_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    refusal = KitOwnershipConflictRefusal(
+        our_prefixes=("acme.account.",),
+        owning_prefix="acme.",
+        owning_kit_id="acme",
+        detail="acme.account. overlaps acme., owned by kit acme",
+        repair="Remove the owning kit first: cruxible kit remove acme; or install "
+        "a release that does not own the overlapping prefix.",
+    )
+    answer = KitChangeResult(
+        kit_id="extra", version="1.0.0", status="would_block", refusals=(refusal,)
+    )
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return answer
+
+    bind_mcp_daemon(monkeypatch, StubClient())
+    result = handlers.handle_playbill_kit_add("inst", bundle=_bundle())
+    assert result.model_dump(mode="json")["refusals"] == [refusal.model_dump(mode="json")]
 
 
 def test_kit_add_stages_a_pulled_kits_bundled_providers_when_it_commits(

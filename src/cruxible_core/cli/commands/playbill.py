@@ -1875,6 +1875,14 @@ def _echo_kit_change(result: KitChangeResult) -> None:
             click.echo(line)
     if result.detail:
         click.echo(printable(result.detail))
+    for refusal in result.refusals:
+        click.echo(refusal.code)
+        click.echo(f"Next: {printable(refusal.repair)}")
+    for item in result.plan:
+        if item.action == "replace" and item.consequence == "takes_over_outside_definition":
+            click.echo(
+                f"Next: rerun cruxible kit add with --keep {item.identity} to keep yours."
+            )
     if result.proposal_id:
         click.echo(f"Proposal: {result.proposal_id}")
         if result.status == "proposed":
