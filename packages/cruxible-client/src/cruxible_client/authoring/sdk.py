@@ -448,6 +448,7 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "procedure_runtime_policy": RefKind.PROCEDURE_RUNTIME_POLICY,
     "source_acquisition_policy": RefKind.SOURCE_ACQUISITION_POLICY,
     "provider_interface": RefKind.PROVIDER_INTERFACE,
+    "provider": RefKind.PROVIDER,
     "subject_kind": RefKind.SUBJECT_KIND,
 }
 
@@ -4046,7 +4047,9 @@ class Cruxible:
         a proposal id, or an operational reference: ``Line:<name>`` (or the
         Line identity digest ``next`` names), ``CAP-<12+ hex>`` /
         ``Capture:<digest>``, ``ResolutionContract:<name>``, ``Mandate:<name>``
-        and ``ProcedureRun:<run_id>`` (or ``RUN-<12+ hex>``). A wrong or
+        and ``ProcedureRun:<run_id>`` (or ``RUN-<12+ hex>``). Providers read by
+        ``Provider:NAME`` (the newest live build) or ``Provider:NAME/BUILD``
+        (one exact build), with a ``GetProviderCard`` summary. A wrong or
         ambiguous name refuses with the nearest names. A Claim summary is a
         ``ClaimView``; other summaries are the values-first card; other
         details carry that detail's payload.

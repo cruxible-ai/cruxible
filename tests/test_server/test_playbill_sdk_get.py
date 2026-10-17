@@ -18,6 +18,8 @@ from cruxible_client.contracts.get_reads import (
     GetBatchRequest,
     GetClaimTypeCard,
     GetEvidence,
+    GetHistory,
+    GetProviderCard,
     GetRequest,
     GetSubjectCard,
 )
@@ -494,9 +496,53 @@ def test_sdk_get_answers_every_kind_get_resolves(
         "ProcedureRuntimePolicy:instance": RefKind.PROCEDURE_RUNTIME_POLICY,
         "Trigger:floor-refresh": RefKind.TRIGGER,
         "Principal:owner": RefKind.PRINCIPAL,
+        "Provider:cruxible-builtin": RefKind.PROVIDER,
     }
     for ref, kind in expected.items():
         card = pb.get(ref)
         assert card.kind is kind
         with pytest.raises(ReferenceKindError):
             card.ref  # noqa: B018 - operational cards mint no typed ref
+
+
+def test_sdk_get_reads_provider_names_and_exact_builds(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.provider_interfaces import (
+        provider_interface_path,
+        render_provider_interface,
+    )
+    from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
+    from tests.test_scale.test_provider_build_install import package
+    from tests.test_server.test_playbill_line_run_refusals import _accept_members
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    document, build = package.__wrapped__(tmp_path)
+    provider = build(1)
+    members = {
+        provider_interface_path(item.identity.name): render_provider_interface(item)
+        for item in document.interface_registrations()
+    }
+    members[provider_path(provider.identity.name)] = render_provider(provider)
+    _accept_members(instance, key, members, timestamp="2026-08-16T20:00:00.000000Z")
+    pb = _sdk(client, instance_id, tmp_path)
+
+    for ref in (f"Provider:{provider.provider_name}", provider.identity.qualified):
+        summary = pb.get(ref)
+        assert summary.kind is RefKind.PROVIDER
+        assert summary.identity == provider.identity.name
+        assert summary.coordinate == pb.coordinate
+        assert isinstance(summary.value, GetProviderCard)
+        assert summary.value.provider == provider.provider_name
+        assert summary.value.build == provider.identity.name
+
+        proof = pb.get(ref, detail="proof")
+        assert proof.kind is RefKind.PROVIDER and proof.identity == summary.identity
+        assert isinstance(proof.value, dict)
+        assert proof.value["envelope"] == provider.model_dump(mode="json")
+        assert proof.value["artifact_digest"] == provider_digest(provider).tagged
+        history = pb.get(ref, detail="history")
+        assert history.kind is RefKind.PROVIDER and history.identity == summary.identity
+        assert isinstance(history.value, GetHistory) and history.value.revisions
