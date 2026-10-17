@@ -281,19 +281,77 @@ def test_relocated_installation_reverifies_and_runs_after_restart(
     ) == {"n": 3}
 
 
+@pytest.fixture(scope="session")
+def local_call_dependency_wheels(provider_checkout, tmp_path_factory):
+    """Provision the host's exact locked wheels once, before testing installs.
+
+    The runtime wheel alone leaves registry dependencies to a live PyPI download
+    on every installation. Transfer the complete closure so an unrelated HTTP
+    failure cannot interrupt the deployment-preservation scenario halfway through.
+    ArtifactFetcher verifies every download against the lock's SHA256.
+    """
+    import platform
+    import sys
+
+    from cruxible_provider_runtime import index, resolution, wheels
+    from packaging.markers import default_environment
+    from packaging.tags import sys_tags
+
+    from cruxible_core.providers.package_materialization import ArtifactTransport
+
+    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
+    lock = resolution.load_uv_lock(
+        provider_checkout.repository / "packages/cruxible-provider-workspace/uv.lock"
+    )
+    environment = resolution.MarkerEnvironment(
+        id=f"{sys.platform}-{platform.machine().lower()}-cp{sys.version_info.major}{sys.version_info.minor}",
+        markers=default_environment(),
+        tags=tuple(str(tag) for tag in sys_tags()),
+    )
+    resolved = resolution.resolve(
+        lock,
+        "cruxible-provider-workspace",
+        environment,
+        local_wheels={"cruxible-provider-runtime": wheels.wheel_pin(runtime)},
+    )
+    fetcher = index.ArtifactFetcher(
+        index.IndexConfig(index_urls=("https://files.pythonhosted.org/",)),
+        ArtifactTransport(),
+    )
+    directory = tmp_path_factory.mktemp("local-call-dependencies")
+    dependencies = [runtime]
+    for distribution in resolved.distributions:
+        if distribution.name == "cruxible-provider-runtime":
+            continue
+        target = directory / distribution.filename
+        target.write_bytes(fetcher.fetch(distribution))
+        dependencies.append(target)
+    return tuple(dependencies)
+
+
 def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
-    installer_http, tmp_path, provider_checkout
+    installer_http, tmp_path, provider_checkout, local_call_dependency_wheels, monkeypatch
 ):
+    from cruxible_core.providers.package_materialization import ArtifactTransport
     from tests.support.provider_installation import build_local_call
+
+    original_get = ArtifactTransport.get
+
+    def local_only(self, url):
+        assert url.startswith("file:"), f"installation unexpectedly fetched {url}"
+        return original_get(self, url)
+
+    # This test exercises deployment preservation, with real wheels and children.
+    # Network provisioning belongs to fixture setup, never to its installs.
+    monkeypatch.setattr(ArtifactTransport, "get", local_only)
 
     http, instance_id, reviewer = installer_http
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
     repository = provider_checkout.repository
-    runtime = next(provider_checkout.wheels.glob("cruxible_provider_runtime-*.whl"))
     wheel, lock = build_local_call(tmp_path, repository)
     result = install_provider_wheel(
-        client, instance_id, wheel=wheel, lock=lock, dependency_wheels=(runtime,)
+        client, instance_id, wheel=wheel, lock=lock, dependency_wheels=local_call_dependency_wheels
     )
     assert result.status == "ready"
     assert _run_call(
@@ -310,7 +368,11 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     operator = get_playbill_manager().provider_runtime_operator()
     second, second_lock = build_local_call(tmp_path, repository, name="other-local-call")
     shared = install_provider_wheel(
-        client, instance_id, wheel=second, lock=second_lock, dependency_wheels=(runtime,)
+        client,
+        instance_id,
+        wheel=second,
+        lock=second_lock,
+        dependency_wheels=local_call_dependency_wheels,
     )
     assert shared.status == "ready"
     interface = interface_entry(client, instance_id, "local.increment")
@@ -318,7 +380,11 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
     old = dict(operator.deployments)
     updated, lock = build_local_call(tmp_path, repository, increment=2)
     result2 = install_provider_wheel(
-        client, instance_id, wheel=updated, lock=lock, dependency_wheels=(runtime,)
+        client,
+        instance_id,
+        wheel=updated,
+        lock=lock,
+        dependency_wheels=local_call_dependency_wheels,
     )
     assert result2.status == "ready", result2
     assert result2.installed and result2.registered
