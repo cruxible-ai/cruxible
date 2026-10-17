@@ -1371,6 +1371,61 @@ def test_a_kit_dependent_lands_as_the_kit_wrote_it_when_its_type_changes(
     }
 
 
+@pytest.mark.parametrize("local_dependent", [False, True])
+def test_a_dropped_type_counts_only_queries_left_dependent_after_the_release(
+    worlds: tuple[_World, _World], local_dependent: bool
+) -> None:
+    """A same-release query replacement must not inflate the dropped type's count."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    _author_query(publisher, _query("acme.accounts", (SEATS,)))
+    consumer.add(publisher.build("1.0.0"))
+    if local_dependent:
+        _author_query(consumer, _query("local.accounts", (SEATS,)))
+
+    path = "query-definitions/acme.accounts.json"
+    current = parse_query_definition(publisher.tree()[path], path=path)
+    replacement = _query("acme.accounts", (PLAN,))
+    _author_query(
+        publisher,
+        replacement.model_copy(
+            update={
+                "query_definition": replacement.query_definition.model_copy(
+                    update={
+                        "lifecycle": ArtifactLifecycle(
+                            predecessor_digest=query_definition_digest(current).tagged
+                        )
+                    }
+                )
+            }
+        ),
+    )
+    release = _without(publisher.build("1.1.0"), SEATS)
+    before = consumer.tree()
+    preview = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=release, source="test")
+    )
+    assert preview.status == "would_propose", preview.detail
+    assert consumer.tree() == before
+    by_path = {item.path: item for item in preview.plan}
+    assert by_path[path].action == "replace"
+    assert (by_path[_path(SEATS)].action, by_path[_path(SEATS)].dependent_count) == (
+        "keep" if local_dependent else "retire",
+        int(local_dependent),
+    )
+
+    installed = consumer.add(release)
+    assert installed.status == "accepted", installed.detail
+    assert installed.plan == preview.plan
+    query = parse_query_definition(consumer.tree()[path], path=path)
+    assert query.lifecycle.state == "live"
+    assert {pin.artifact_digest for pin in query.pins} == {
+        claim_type_digest(consumer.claim_type(PLAN)).tagged
+    }
+    assert consumer.claim_type(SEATS).lifecycle.state == ("live" if local_dependent else "retired")
+
+
 def _digest_fields(
     model: type[BaseModel],
     prefix: tuple[str, ...] = (),
