@@ -312,18 +312,15 @@ def test_named_trigger_sdk_uses_the_shared_candidate_resolver(
 ):
     from cruxible_client.contracts.authoring.models import CaptureLandingByNameSchedule
     from cruxible_client.contracts.captures import (
-        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT as contract,
+        foreign_source_capture_contract,
     )
     from cruxible_core.authoring import lowering
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from tests.core_support._identity_support import OWNER
     from tests.test_procedures.test_trigger_artifacts import _line_world
 
-    contract = contract.model_copy(
-        update={
-            "identity": contract.identity.model_copy(update={"name": "security.advisory"}),
-        }
-    )
+    contract = foreign_source_capture_contract("security.advisory")
+    (tmp_path / "instance").mkdir()
     instance, _owner, line = _line_world(tmp_path / "instance")
     draft = pb.changes(rationale="Consume contract by name")
     if contract_first:

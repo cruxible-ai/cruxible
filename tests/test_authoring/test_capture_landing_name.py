@@ -19,6 +19,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
+    foreign_source_capture_contract,
     render_capture_contract,
 )
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
@@ -181,7 +182,7 @@ def test_named_resolution_reads_one_contract_path_without_enumerating_the_tree()
 
 def test_payload_prepare_resolves_against_candidate_overlay_and_explains_the_pin(tmp_path: Path):
     instance, _owner, line = _line_world(tmp_path)
-    contract = CONTRACT.model_copy(
+    contract = foreign_source_capture_contract("security.advisory").model_copy(
         update={
             "identity": ArtifactIdentity(kind="CaptureContract", name="security.advisory"),
         }

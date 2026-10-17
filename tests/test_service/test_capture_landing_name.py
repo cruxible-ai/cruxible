@@ -14,6 +14,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
+    foreign_source_capture_contract,
     render_capture_contract,
 )
 from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
@@ -62,19 +63,22 @@ def test_decision_input_prepare_calls_the_same_resolver_and_explains_the_pin(tmp
     assert served.resolved_trigger_contracts == result.resolved_trigger_contracts
 
 
-def test_stored_named_trigger_keeps_its_digest_after_a_contract_successor(tmp_path):
+def test_contract_succession_requires_closure_and_cannot_retarget_a_stored_trigger(tmp_path):
     instance, line, procedure, owner = line_world(
         tmp_path,
         CaptureLandingSchedule(event=SELECTOR),
         triggers=(),
         with_owner=True,
     )
+    contract = foreign_source_capture_contract("security.advisory")
+    old_digest = capture_contract_digest(contract).tagged
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
     path, content, _ = lowering._render_trigger_member(
         TriggerAuthoringPayload(
             name="on-feed",
             line_name=line.identity.name,
-            schedule=CaptureLandingByNameSchedule(capture_contract=CONTRACT.identity.name),
+            schedule=CaptureLandingByNameSchedule(capture_contract=contract.identity.name),
         ),
         tree=tree,
     )
@@ -82,25 +86,52 @@ def test_stored_named_trigger_keeps_its_digest_after_a_contract_successor(tmp_pa
     _accept_tree(
         instance, owner, tree, timestamp="2026-08-24T15:01:00.000000Z", proposal_name="named"
     )
-    successor = CONTRACT.model_copy(
+    successor = contract.model_copy(
         update={
-            "lifecycle": ArtifactLifecycle(
-                predecessor_digest=capture_contract_digest(CONTRACT).tagged
-            ),
-            "evidence_kinds": ("revised-evidence",),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=old_digest),
+            "evidence_kinds": ("revised-evidence", "self_asserted"),
         }
     )
     new_digest = capture_contract_digest(successor).tagged
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[capture_contract_path(CONTRACT.identity.name)] = render_capture_contract(successor)
-    _accept_tree(
-        instance, owner, tree, timestamp="2026-08-24T15:02:00.000000Z", proposal_name="contract"
+    tree[capture_contract_path(contract.identity.name)] = render_capture_contract(successor)
+    # Existing closure treats this pin as a live dependency, not historical
+    # provenance. Preserve that law: an unchanged live Trigger blocks succession.
+    import json
+
+    from cruxible_client.contracts.proposal_models import ProposalAdmissionRequest
+
+    proposed = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/contract",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-24T15:02:00.000000Z",
+    )
+    assert proposed.candidate is None
+    diagnostic = next(
+        d
+        for d in proposed.evaluation.diagnostics
+        if d.code == "cruxible.change_set.incomplete_closure"
+    )
+    missing = json.loads(diagnostic.message)["missing"]
+    assert any(
+        item["path"] == path and item["dependency_edge_role"] == "trigger-capture-contract"
+        for item in missing
     )
     accepted = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert accepted[trigger_path("on-feed")] == content
-    assert parse_trigger(content, path=path).schedule.event == SELECTOR
+    assert parse_trigger(content, path=path).schedule.event.capture_contract_digest == old_digest
     capture(instance, procedure, digest=new_digest, partition="run:new", at=READ_TIME)
-    old = capture(instance, procedure, partition="run:old", at=READ_TIME + timedelta(seconds=1))
+    old = capture(
+        instance,
+        procedure,
+        digest=old_digest,
+        partition="run:old",
+        at=READ_TIME + timedelta(seconds=1),
+    )
     result = service_evaluate_line(
         instance,
         line.identity.name,
