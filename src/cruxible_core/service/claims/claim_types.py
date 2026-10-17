@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName, builtin_claim_type
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -119,6 +120,37 @@ def service_propose_playbill_claim_type(
     )
 
 
+def service_propose_playbill_builtin_claim_type(
+    instance: PlaybillInstance,
+    *,
+    builtin: BuiltinClaimTypeName,
+    actor_id: str,
+    proposal_name: str,
+    timestamp: str,
+    base: AcceptedCoordinate | None = None,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> ClaimTypeInputProposalResultV1:
+    """Adopt the daemon's exact builtin bytes, never a caller-supplied envelope."""
+
+    claim_type = builtin_claim_type(builtin)
+    coordinate = _resolve_coordinate(instance, base)
+    inspection = service_propose_playbill_claim_type(
+        instance,
+        claim_type=claim_type,
+        actor_id=actor_id,
+        proposal_name=proposal_name,
+        timestamp=timestamp,
+        base=AcceptedCoordinate.from_internal(coordinate),
+        dry_run=dry_run,
+        at=at,
+    )
+    return ClaimTypeInputProposalResultV1(
+        proposal=inspection,
+        lint=lint_claim_type_input(instance, claim_type, coordinate=coordinate),
+    )
+
+
 def service_propose_playbill_claim_type_input(
     instance: PlaybillInstance,
     *,
@@ -126,13 +158,14 @@ def service_propose_playbill_claim_type_input(
     actor_id: str,
     proposal_name: str,
     timestamp: str,
+    base: AcceptedCoordinate | None = None,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> ClaimTypeInputProposalResultV1:
     """Lower and lint one tagless ClaimType input against one captured coordinate."""
 
-    coordinate = instance.accepted_coordinate()
+    coordinate = _resolve_coordinate(instance, base)
     tree = instance.immutable_tree_at(coordinate.git_oid)
     claim_type = lower_claim_type_input(
         input, tree=tree, identity_rules=identity_rules_supported(coordinate.compiler)

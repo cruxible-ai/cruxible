@@ -113,7 +113,7 @@ def test_the_seed_bundle_uses_only_surviving_governed_writers(
         "procedure:project.work_item.digest",
     ]
     assert [item["operation"] for item in groups] == [
-        "playbill_propose_claim_type",
+        "playbill_propose_claim_type_input",
         "playbill_authoring_submit",
         "playbill_authoring_submit",
         "playbill_authoring_submit",

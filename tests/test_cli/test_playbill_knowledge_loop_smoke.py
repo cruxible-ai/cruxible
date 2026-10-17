@@ -46,6 +46,7 @@ from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import reset_registry
+from tests.core_support._claim_type_support import claim_type_input_from_artifact
 from tests.core_support._knowledge_loop_support import (
     PREDICATE,
     QUERY_NAME,
@@ -115,6 +116,8 @@ def _write(path: Path, payload: Any) -> str:
 
 
 def _proposal_id(inspection: dict[str, Any]) -> str:
+    if inspection.get("tag") == "playbill-claim-type-input-proposal-result-v1":
+        inspection = inspection["proposal"]
     return str(inspection["proposal"]["admission"]["proposal_id"])
 
 
@@ -395,8 +398,8 @@ def test_cli_custody_uses_the_git_workspace_across_working_directories(
     proposed = cruxible.json(
         "claim-type",
         "propose",
-        "--envelope",
-        _write(tmp_path / "claim-type-custody.json", _claim_type().model_dump(mode="json")),
+        "--input",
+        _write(tmp_path / "claim-type-custody.json", claim_type_input_from_artifact(_claim_type())),
         "--name",
         "custody-workspace",
     )
@@ -524,8 +527,11 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     proposed = cruxible.json(
         "claim-type",
         "propose",
-        "--envelope",
-        _write(tmp_path / "claim-type.json", claim_type.model_dump(mode="json")),
+        "--input",
+        _write(
+            tmp_path / "claim-type.json",
+            claim_type_input_from_artifact(claim_type, source_ids=(CLAIM_SOURCE_ID,)),
+        ),
         "--name",
         "seed-claim-type",
     )
@@ -608,7 +614,10 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         tmp_path / "query-input.json",
         QueryDefinitionInput(
             kind="query_definition",
-            query_definition=work_item_query(claim_type=claim_type),
+            # The fixture ClaimType was lowered to the current format. Resolve
+            # its dependency at the accepted base, rather than pinning the old
+            # fixture envelope's digest.
+            query_definition=work_item_query(claim_type=claim_type).model_copy(update={"pins": ()}),
         ).model_dump(mode="json"),
     )
     coordinate = accepted["accepted_coordinate"]

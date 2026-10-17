@@ -180,7 +180,7 @@ def test_principal_display_name_is_sanitized_and_invalid_ref_is_a_typed_400(
     "entrypoint",
     (
         playbill_api.playbill_propose_document,
-        playbill_api.playbill_propose_claim_type,
+        playbill_api.playbill_propose_builtin_claim_type,
         playbill_api.playbill_propose_claim_type_input,
     ),
 )

@@ -62,3 +62,32 @@ __all__ = [
     "claim_type_input_example",
     "defaulted_claim_type_input_example",
 ]
+
+
+def claim_type_input_from_artifact(claim_type, *, source_ids=()):
+    """Translate historical test fixtures into fresh, identity-based authoring input."""
+    from cruxible_client.contracts.captures import (
+        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+        capture_contract_digest,
+    )
+
+    value = claim_type.model_dump(
+        mode="json",
+        exclude={"artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"},
+    )
+    for name in ("evidence_requirement", "revision_evidence", "canonical_form"):
+        if value.get(name) is None:
+            value.pop(name, None)
+    contracts = [DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT]
+    contracts.extend(foreign_source_capture_contract(source) for source in source_ids)
+    identities = {
+        capture_contract_digest(item).tagged: item.identity.qualified for item in contracts
+    }
+    for rule in value["evidence_admission_policy"]["rules"]:
+        if rule.pop("allowed_reducer_digests", ()):
+            raise ValueError("legacy reducer allowances need an explicit current evidence policy")
+        if "capture_contract_digests" in rule:
+            rule["capture_contracts"] = [
+                identities[digest] for digest in rule.pop("capture_contract_digests")
+            ]
+    return ClaimTypeInputRecord.model_validate(value).model_dump(mode="json")

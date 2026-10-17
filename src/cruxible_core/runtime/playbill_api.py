@@ -31,6 +31,7 @@ from cruxible_client.contracts.authoring.models import (
     PreflightResult,
     WorkingSelectionObservation,
 )
+from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
@@ -47,7 +48,6 @@ from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeRequest,
     ClaimTypeUpgradeResult,
 )
-from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStampAny
@@ -191,7 +191,7 @@ from cruxible_core.service.claims.claim_reads import (
 )
 from cruxible_core.service.claims.claim_type_upgrade import service_upgrade_claim_types
 from cruxible_core.service.claims.claim_types import (
-    service_propose_playbill_claim_type,
+    service_propose_playbill_builtin_claim_type,
     service_propose_playbill_claim_type_input,
 )
 from cruxible_core.service.discovery.audit import (
@@ -1373,24 +1373,23 @@ def _evaluation_time(value: datetime | None) -> datetime:
     return utc_now() if value is None else value
 
 
-def playbill_propose_claim_type(
+def playbill_propose_builtin_claim_type(
     instance_id: str,
     *,
-    claim_type: ClaimType,
+    builtin: BuiltinClaimTypeName,
     proposal_name: str,
     base: AcceptedCoordinate | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.ProposalInspection:
+) -> contracts.ClaimTypeInputProposalResult:
     check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
         instance = get_playbill_manager().get(instance_id)
-        coordinate = instance.accepted_coordinate()
         result = _proposal_validation_boundary(
             "claim type",
-            lambda: service_propose_playbill_claim_type(
+            lambda: service_propose_playbill_builtin_claim_type(
                 instance,
-                claim_type=claim_type,
+                builtin=builtin,
                 actor_id=_actor_id(instance_id),
                 proposal_name=proposal_name,
                 timestamp=canonical_candidate_timestamp(utc_now()),
@@ -1399,11 +1398,7 @@ def playbill_propose_claim_type(
                 at=at,
             ),
         )
-        values = result.model_dump(mode="json")
-        lint = lint_claim_type_input(instance, claim_type, coordinate=coordinate)
-        if lint.warnings:
-            values["lint"] = lint.model_dump(mode="json")
-        return contracts.ProposalInspection.model_validate(values)
+        return contracts.ClaimTypeInputProposalResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_propose_claim_type_input(
@@ -1411,6 +1406,7 @@ def playbill_propose_claim_type_input(
     *,
     input: ClaimTypeInputRecord,
     proposal_name: str,
+    base: AcceptedCoordinate | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ClaimTypeInputProposalResult:
@@ -1421,6 +1417,7 @@ def playbill_propose_claim_type_input(
             lambda: service_propose_playbill_claim_type_input(
                 get_playbill_manager().get(instance_id),
                 input=input,
+                base=base,
                 actor_id=_actor_id(instance_id),
                 proposal_name=proposal_name,
                 timestamp=canonical_candidate_timestamp(utc_now()),

@@ -16,8 +16,8 @@ from cruxible_client.contracts import (
 )
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInput
+from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
-from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.declared_blocks import (
     DeclaredBlockPageObservation,
     ProjectionBlockStampAny,
@@ -165,8 +165,11 @@ class FileProposeRequest(FileBundleRequest):
     at: PreviewAt = None
 
 
-class ProposeClaimTypeRequest(_StrictPlaybillRequest):
-    claim_type: ClaimType
+class ProposeBuiltinClaimTypeRequest(_StrictPlaybillRequest):
+    tag: Literal["cruxible-builtin-claim-type-propose-request-v1"] = (
+        "cruxible-builtin-claim-type-propose-request-v1"
+    )
+    builtin: BuiltinClaimTypeName
     proposal_name: str
     base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
@@ -179,6 +182,7 @@ class ProposeClaimTypeInputRequest(_StrictPlaybillRequest):
     )
     input: ClaimTypeInputRecord
     proposal_name: str
+    base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
 

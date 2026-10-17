@@ -1212,3 +1212,9 @@ def test_cli_bind_declared_block_refuses_every_role(
     assert result.exit_code == 1
     assert "cruxible.projection.evidence_from_projection" in result.output
     assert calls == []
+
+
+def test_raw_claim_type_envelope_option_is_removed() -> None:
+    result = CliRunner().invoke(cli, ["claim-type", "propose", "--envelope", "-"])
+    assert result.exit_code == 2
+    assert "No such option: --envelope" in result.output

@@ -1346,7 +1346,8 @@ values; stored in the canonical form `nfc, casefold, collapse_whitespace,
 trim`). `semantic.distinct_from` states that its object Subject is a different
 thing from its subject, whatever names or keys they share (any kinds; many
 values): the duplicates audit never groups the pair. An instance created before a builtin shipped adopts it with
-`propose --builtin NAME`, which proposes its exact envelope; MCP's
+`propose --builtin NAME`, which asks the daemon to propose its exact builtin
+definition; MCP's
 `cruxible_claim_type_propose` takes `builtin` in place of `input`, and the SDK
 offers `Cruxible.builtin_claim_type(name).propose(...)`. Add an alias with
 `cruxible add KIND/ID semantic.alias other-name --because TEXT`.

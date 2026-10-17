@@ -512,9 +512,15 @@ def lower_claim_type_input(
     # Every rule names its contracts by identity. A rule naming an exact digest
     # no accepted contract version carries has no identity to follow, so it is
     # refused rather than authored as a v5 exact-digest rule.
+    raw_rules = value.evidence_admission_policy.get("rules", ())
+    needs_digest_lookup = isinstance(raw_rules, list | tuple) and any(
+        isinstance(rule, dict) and bool(rule.get("capture_contract_digests")) for rule in raw_rules
+    )
     identity_policy = _identity_evidence_policy(
         value.evidence_admission_policy,
-        identities=_contract_identities(tree, value.anticipated_source_ids),
+        identities=(
+            _contract_identities(tree, value.anticipated_source_ids) if needs_digest_lookup else {}
+        ),
     )
     payload.update(_v7_fields(value, predecessor))
     try:

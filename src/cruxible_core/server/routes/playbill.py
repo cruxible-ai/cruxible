@@ -100,8 +100,8 @@ from cruxible_core.server.playbill_request_models import (
     ProposalReadmitRequest,
     ProposalRejectRequest,
     ProposalWithdrawRequest,
+    ProposeBuiltinClaimTypeRequest,
     ProposeClaimTypeInputRequest,
-    ProposeClaimTypeRequest,
     ProposeDocumentRequest,
     ProposePrincipalRequest,
     ResolveCoverageRequest,
@@ -646,23 +646,24 @@ def propose_files(
 
 @router.post(
     "/{instance_id}/claim-types/proposals",
-    response_model=(contracts.ProposalInspection | contracts.ClaimTypeInputProposalResult),
+    response_model=contracts.ClaimTypeInputProposalResult,
 )
 def propose_claim_type(
     instance_id: str,
-    req: ProposeClaimTypeRequest | ProposeClaimTypeInputRequest,
-) -> contracts.ProposalInspection | contracts.ClaimTypeInputProposalResult:
+    req: ProposeBuiltinClaimTypeRequest | ProposeClaimTypeInputRequest,
+) -> contracts.ClaimTypeInputProposalResult:
     if isinstance(req, ProposeClaimTypeInputRequest):
         return playbill_api.playbill_propose_claim_type_input(
             resolve_server_instance_id(instance_id),
             input=req.input,
             proposal_name=req.proposal_name,
+            base=req.base,
             dry_run=req.dry_run,
             at=req.at,
         )
-    return playbill_api.playbill_propose_claim_type(
+    return playbill_api.playbill_propose_builtin_claim_type(
         resolve_server_instance_id(instance_id),
-        claim_type=req.claim_type,
+        builtin=req.builtin,
         proposal_name=req.proposal_name,
         base=req.base,
         dry_run=req.dry_run,

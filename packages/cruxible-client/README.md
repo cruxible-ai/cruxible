@@ -5814,25 +5814,28 @@ propose_file_bundle(
 
 HTTP: `POST f'/api/v1/{instance_id}/files/proposals'`.
 
-<a id="api-cruxibleclient-propose-claim-type"></a>
+<a id="api-cruxibleclient-propose-builtin-claim-type"></a>
 
-### `CruxibleClient.propose_claim_type`
+### `CruxibleClient.propose_builtin_claim_type`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-propose_claim_type(
+propose_builtin_claim_type(
     instance_id: str,
     *,
-    claim_type: Mapping[str, Any],
+    builtin: BuiltinClaimTypeName,
     proposal_name: str,
     base: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.ProposalInspection
+) -> contracts.ClaimTypeInputProposalResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/claim-types/proposals'`.
+Builtin adoption sends only its declared name; the daemon supplies the exact
+builtin definition. User definitions use typed ClaimType input, with an optional
+base coordinate. Raw ClaimType envelopes are refused.
 
 <a id="api-cruxibleclient-propose-claim-type-input"></a>
 
@@ -5846,6 +5849,7 @@ propose_claim_type_input(
     *,
     input: Mapping[str, Any],
     proposal_name: str,
+    base: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ClaimTypeInputProposalResult

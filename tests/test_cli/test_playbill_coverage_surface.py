@@ -52,6 +52,7 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_core.cli.main import cli
 from cruxible_core.coverage.render import BATCH_SUMMARY_PREFIX
+from tests.core_support._claim_type_support import claim_type_input_from_artifact
 from tests.core_support._knowledge_loop_support import SUBJECT_KIND
 from tests.core_support._subject_kind_support import create_by_slug_input
 from tests.test_claims.test_claims import _claim_type
@@ -98,8 +99,8 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
     proposed = cruxible.json(
         "claim-type",
         "propose",
-        "--envelope",
-        _write(tmp_path / "claim-type.json", claim_type.model_dump(mode="json")),
+        "--input",
+        _write(tmp_path / "claim-type.json", claim_type_input_from_artifact(claim_type)),
         "--name",
         "seed-claim-type",
     )
@@ -173,8 +174,11 @@ def _govern_a_foreign_span(
     proposed = cruxible.json(
         "claim-type",
         "propose",
-        "--envelope",
-        _write(tmp_path / "foreign-claim-type.json", claim_type.model_dump(mode="json")),
+        "--input",
+        _write(
+            tmp_path / "foreign-claim-type.json",
+            claim_type_input_from_artifact(claim_type, source_ids=(identity,)),
+        ),
         "--name",
         "seed-claim-type",
     )

@@ -77,7 +77,7 @@ from cruxible_client.authoring.write_evidence import observe_changes, observe_ev
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockSyncResult
-from cruxible_client.contracts.builtin_claim_types import BUILTIN_CLAIM_TYPES
+from cruxible_client.contracts.builtin_claim_types import BUILTIN_CLAIM_TYPES, BuiltinClaimTypeName
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
@@ -3482,7 +3482,6 @@ def claim_type_group() -> None:
 
 @claim_type_group.command("propose")
 @click.option("--input", "input_path", type=PayloadFile())
-@click.option("--envelope", type=PayloadFile(), hidden=True)
 @click.option(
     "--template",
     is_flag=True,
@@ -3491,7 +3490,7 @@ def claim_type_group() -> None:
 @click.option(
     "--builtin",
     type=click.Choice(sorted(BUILTIN_CLAIM_TYPES)),
-    help="Adopt a ClaimType core ships (new instances start with it) by its exact envelope.",
+    help="Adopt the daemon's exact built-in ClaimType (new instances start with it).",
 )
 @click.option("--name", "proposal_name")
 @change_control_options
@@ -3499,7 +3498,6 @@ def claim_type_group() -> None:
 @handle_errors
 def propose_claim_type(
     input_path: str | None,
-    envelope: str | None,
     template: bool,
     builtin: str | None,
     proposal_name: str | None,
@@ -3509,16 +3507,16 @@ def propose_claim_type(
 ) -> None:
     """Use the sanctioned typed-input ClaimType proposal path."""
 
-    if sum((input_path is not None, envelope is not None, template, builtin is not None)) != 1:
+    if sum((input_path is not None, template, builtin is not None)) != 1:
         raise click.UsageError("provide exactly one of --input, --template or --builtin")
     if template:
         _emit_json(claim_type_input_template().model_dump(mode="json"))
         return
     if builtin is not None:
         builtin_result = _server_call(
-            lambda client, instance_id: client.propose_claim_type(
+            lambda client, instance_id: client.propose_builtin_claim_type(
                 instance_id,
-                claim_type=BUILTIN_CLAIM_TYPES[builtin].model_dump(mode="json"),
+                builtin=cast(BuiltinClaimTypeName, builtin),
                 proposal_name=proposal_name or f"builtin-{builtin.replace('.', '-')}",
                 dry_run=dry_run,
                 at=at,
@@ -3528,27 +3526,7 @@ def propose_claim_type(
         if output_json:
             _emit_json(builtin_result.model_dump(mode="json"))
             return
-        _echo_proposal(builtin_result, builtin_result.lint)
-        return
-    if envelope is not None:
-        envelope_payload = _read_mapping(envelope)
-        resolved_name = proposal_name or envelope_payload.get("predicate")
-        if not isinstance(resolved_name, str) or not resolved_name:
-            raise click.UsageError("--name is required when the ClaimType payload has no predicate")
-        envelope_result = _server_call(
-            lambda client, instance_id: client.propose_claim_type(
-                instance_id,
-                claim_type=envelope_payload,
-                proposal_name=resolved_name,
-                dry_run=dry_run,
-                at=at,
-            ),
-            command_name="cruxible claim-type propose",
-        )
-        if output_json:
-            _emit_json(envelope_result.model_dump(mode="json"))
-            return
-        _echo_proposal(envelope_result, envelope_result.lint)
+        _echo_proposal(builtin_result.proposal, builtin_result.lint)
         return
     assert input_path is not None
     try:

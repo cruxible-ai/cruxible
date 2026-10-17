@@ -84,7 +84,7 @@ they were written to.
 The current ClaimInput bundle plans and settles as **nine** proposals:
 
 ```text
-1. claim_type:project.work_item.status  [playbill_propose_claim_type]
+1. claim_type:project.work_item.status  [playbill_propose_claim_type_input]
 2-4. subject:project.work_item/wi-10{1,2,3}  [playbill_authoring_submit]
 5-7. claim_input:project.work_item/wi-10{1,2,3}#project.work_item.status
      [playbill_authoring_submit]

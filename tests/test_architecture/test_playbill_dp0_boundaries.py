@@ -391,7 +391,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "file_context",
         "check_file_bundle",
         "propose_file_bundle",
-        "propose_claim_type",
+        "propose_builtin_claim_type",
         "propose_claim_type_input",
         "append_claim_attestation",
         "read_claim_batch",
