@@ -444,7 +444,9 @@ class TriggerInput(_StrictInputModel):
     """One schedule aimed at an accepted or same-set Line, or a registered action.
 
     Actions admit cadence, cron and generation_accepted. Every target's declared
-    input must be supplied by its schedule. Change or retire through a successor.
+    input must be supplied by its schedule. Capture-based schedules name the
+    CaptureContract; prepare pins its digest. Exact event selectors are refused.
+    Retirement retains the predecessor's schedule and target without resolution.
     """
 
     kind: Literal["trigger"]

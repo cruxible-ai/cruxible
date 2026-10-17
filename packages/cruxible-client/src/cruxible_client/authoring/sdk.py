@@ -1288,7 +1288,12 @@ class ChangeSetDraft:
         For capture landings, pass ``CaptureLandingByNameSchedule(capture_contract=
         "security.advisory")`` from ``contracts.authoring.models``. Prepare resolves
         the live contract at the pinned base or in this set and retains its exact
-        digest; ``CaptureLandingSchedule(event=...)`` supplies an exact selector.
+        digest. For a Capture-anchored window, use ``WindowCloseAuthoringSchedule(
+        window=CaptureEventByNameWindow(capture_contract="security.advisory",
+        duration_seconds=60))`` from the same module; fixed windows remain supported.
+        Exact event selectors are stored data and are refused as authoring input.
+        With ``retire=True``, core preserves the existing Trigger's schedule and
+        target without resolving a contract; the supplied schedule is ignored.
         A Line can have several Triggers; retiring a Line needs its live
         Triggers retired or retargeted in the same set.
 

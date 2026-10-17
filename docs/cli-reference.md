@@ -2294,9 +2294,13 @@ Prepare resolves the live contract at the pinned base or from the same ChangeSet
 (in either declaration order), shows its identity and digest in
 `resolved_trigger_contracts`, and stores the existing exact selector and pins.
 Contract succession still requires the existing dependency-closure dispositions;
-this feature never retargets a Trigger. The explicit
-`schedule.event` selector form still works; combining it with `capture_contract`
-refuses. Missing, retired or wrong-kind contracts refuse with a repair, as does
+this feature never retargets a Trigger. Authoring takes contract names only:
+exact `schedule.event` selectors are refused. For a Capture-anchored window use
+`{"kind":"window_close","window":{"kind":"capture_event",
+"capture_contract":"security.advisory","duration_seconds":60}}`; fixed windows
+remain supported. With `retire: true`, core retains the predecessor's stored
+schedule and target without resolving a contract and ignores the supplied
+schedule. Missing, retired or wrong-kind contracts refuse with a repair, as does
 a resolved digest differing from the Line's Source pin (both digests are shown).
 Next: submit the prepared intent, then `cruxible line enable NAME`.
 

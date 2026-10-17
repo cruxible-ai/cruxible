@@ -104,8 +104,9 @@ def test_name_form_produces_identical_trigger_bytes_digest_and_pins():
         parse_trigger(json.dumps(wire).encode(), path=named[0])
 
 
+@pytest.mark.parametrize("window_close", [False, True])
 @pytest.mark.parametrize("failure", ["missing", "retired", "wrong_kind"])
-def test_unavailable_named_contract_is_a_typed_authoring_refusal(failure):
+def test_unavailable_named_contract_is_a_typed_authoring_refusal(failure, window_close):
     staged = tree()
     if failure == "missing":
         staged.pop(PATH)
@@ -115,8 +116,18 @@ def test_unavailable_named_contract_is_a_typed_authoring_refusal(failure):
         )
     else:
         staged[PATH] = staged[line_spec_path("triage")]
+    schedule = (
+        WindowCloseAuthoringSchedule(
+            window=CaptureEventByNameWindow(
+                capture_contract=NAME,
+                duration_seconds=60,
+            )
+        )
+        if window_close
+        else CaptureLandingByNameSchedule(capture_contract=NAME)
+    )
     with pytest.raises(AuthoringLoweringError) as caught:
-        _render_trigger_member(payload(), tree=staged)
+        _render_trigger_member(payload(schedule=schedule), tree=staged)
     assert caught.value.code == "cruxible.authoring.trigger_capture_missing"
     assert caught.value.offending_element == "schedule"
     assert PATH in caught.value.message

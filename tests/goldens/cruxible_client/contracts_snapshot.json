@@ -4538,36 +4538,19 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
-          "CaptureEventSelector": {
+          "CaptureEventByNameWindow": {
             "additionalProperties": false,
-            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "description": "An observation window anchored on a named CaptureContract's landings.",
             "properties": {
-              "capture_contract_digest": {
-                "title": "Capture Contract Digest",
+              "capture_contract": {
+                "title": "Capture Contract",
                 "type": "string"
               },
-              "capture_contract_identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              }
-            },
-            "required": [
-              "capture_contract_identity",
-              "capture_contract_digest"
-            ],
-            "title": "CaptureEventSelector",
-            "type": "object"
-          },
-          "CaptureEventWindow": {
-            "additionalProperties": false,
-            "properties": {
               "duration_seconds": {
                 "description": "Reads VALIDITY WINDOW.",
                 "exclusiveMinimum": 0,
                 "title": "Duration Seconds",
                 "type": "integer"
-              },
-              "event": {
-                "$ref": "#/$defs/CaptureEventSelector"
               },
               "kind": {
                 "const": "capture_event",
@@ -4577,10 +4560,10 @@
               }
             },
             "required": [
-              "event",
+              "capture_contract",
               "duration_seconds"
             ],
-            "title": "CaptureEventWindow",
+            "title": "CaptureEventByNameWindow",
             "type": "object"
           },
           "CaptureLandingByNameSchedule": {
@@ -4602,26 +4585,6 @@
               "capture_contract"
             ],
             "title": "CaptureLandingByNameSchedule",
-            "type": "object"
-          },
-          "CaptureLandingSchedule": {
-            "additionalProperties": false,
-            "description": "Fire once for each retained Capture landing under one exact CaptureContract.",
-            "properties": {
-              "event": {
-                "$ref": "#/$defs/CaptureEventSelector"
-              },
-              "kind": {
-                "const": "capture_landing",
-                "default": "capture_landing",
-                "title": "Kind",
-                "type": "string"
-              }
-            },
-            "required": [
-              "event"
-            ],
-            "title": "CaptureLandingSchedule",
             "type": "object"
           },
           "CarriedContractInput": {
@@ -9174,7 +9137,7 @@
           },
           "TriggerInput": {
             "additionalProperties": false,
-            "description": "One schedule aimed at an accepted or same-set Line, or a registered action.\n\nActions admit cadence, cron and generation_accepted. Every target's declared\ninput must be supplied by its schedule. Change or retire through a successor.",
+            "description": "One schedule aimed at an accepted or same-set Line, or a registered action.\n\nActions admit cadence, cron and generation_accepted. Every target's declared\ninput must be supplied by its schedule. Capture-based schedules name the\nCaptureContract; prepare pins its digest. Exact event selectors are refused.\nRetirement retains the predecessor's schedule and target without resolution.",
             "properties": {
               "action": {
                 "anyOf": [
@@ -9226,38 +9189,31 @@
                 "type": "boolean"
               },
               "schedule": {
-                "anyOf": [
+                "discriminator": {
+                  "mapping": {
+                    "cadence": "#/$defs/CadenceSchedule",
+                    "capture_landing": "#/$defs/CaptureLandingByNameSchedule",
+                    "cron": "#/$defs/CronSchedule",
+                    "generation_accepted": "#/$defs/GenerationAcceptedSchedule",
+                    "window_close": "#/$defs/WindowCloseAuthoringSchedule"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
                   {
-                    "discriminator": {
-                      "mapping": {
-                        "cadence": "#/$defs/CadenceSchedule",
-                        "capture_landing": "#/$defs/CaptureLandingSchedule",
-                        "cron": "#/$defs/CronSchedule",
-                        "generation_accepted": "#/$defs/GenerationAcceptedSchedule",
-                        "window_close": "#/$defs/WindowCloseSchedule"
-                      },
-                      "propertyName": "kind"
-                    },
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/CadenceSchedule"
-                      },
-                      {
-                        "$ref": "#/$defs/CronSchedule"
-                      },
-                      {
-                        "$ref": "#/$defs/CaptureLandingSchedule"
-                      },
-                      {
-                        "$ref": "#/$defs/WindowCloseSchedule"
-                      },
-                      {
-                        "$ref": "#/$defs/GenerationAcceptedSchedule"
-                      }
-                    ]
+                    "$ref": "#/$defs/CadenceSchedule"
+                  },
+                  {
+                    "$ref": "#/$defs/CronSchedule"
                   },
                   {
                     "$ref": "#/$defs/CaptureLandingByNameSchedule"
+                  },
+                  {
+                    "$ref": "#/$defs/WindowCloseAuthoringSchedule"
+                  },
+                  {
+                    "$ref": "#/$defs/GenerationAcceptedSchedule"
                   }
                 ],
                 "title": "Schedule"
@@ -9271,9 +9227,9 @@
             "title": "TriggerInput",
             "type": "object"
           },
-          "WindowCloseSchedule": {
+          "WindowCloseAuthoringSchedule": {
             "additionalProperties": false,
-            "description": "Fire when a fixed window, or a window anchored on a Capture landing, closes.",
+            "description": "Close a fixed window or resolve a named CaptureContract event anchor.",
             "properties": {
               "kind": {
                 "const": "window_close",
@@ -9284,7 +9240,7 @@
               "window": {
                 "discriminator": {
                   "mapping": {
-                    "capture_event": "#/$defs/CaptureEventWindow",
+                    "capture_event": "#/$defs/CaptureEventByNameWindow",
                     "fixed": "#/$defs/FixedWindow"
                   },
                   "propertyName": "kind"
@@ -9294,7 +9250,7 @@
                     "$ref": "#/$defs/FixedWindow"
                   },
                   {
-                    "$ref": "#/$defs/CaptureEventWindow"
+                    "$ref": "#/$defs/CaptureEventByNameWindow"
                   }
                 ],
                 "title": "Window"
@@ -9303,7 +9259,7 @@
             "required": [
               "window"
             ],
-            "title": "WindowCloseSchedule",
+            "title": "WindowCloseAuthoringSchedule",
             "type": "object"
           },
           "WorkingSelectionInput": {

@@ -1539,8 +1539,12 @@ accepts: the Source's CaptureContract. Once enabled, a Line runs on the
 Triggers aimed at it (a Trigger aimed at a Line that is not enabled does
 nothing); `ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one; its
 `schedule` is a `CadenceSchedule`, `CronSchedule(expression=...)`,
-`GenerationAcceptedSchedule`, `CaptureLandingSchedule` or
-`WindowCloseSchedule`. A cron expression is
+`GenerationAcceptedSchedule`, `CaptureLandingByNameSchedule(capture_contract=...)`
+or `WindowCloseAuthoringSchedule(window=...)`. Import the last two from
+`cruxible_client.contracts.authoring.models`; a Capture-anchored window uses
+`CaptureEventByNameWindow(capture_contract=..., duration_seconds=...)` from that
+module. Capture-based authoring takes names only: prepare resolves and pins the
+live contract, and exact event selectors are refused. A cron expression is
 evaluated in UTC, always; convert local times first (09:00 New York in winter
 is 14:00 UTC). `action=` aims it at a registered internal action (cadence, cron
 or generation_accepted schedules only) instead of a Line. Every
