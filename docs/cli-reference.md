@@ -2283,6 +2283,23 @@ Trigger (`triggers/<name>.json`) whose `schedule` is a `cadence`, a `cron`,
 `window_close`, and whose
 target is one Line (`line_name`) or one registered internal action (`action`,
 which takes a `cadence`, `cron`, or `generation_accepted` schedule).
+For Capture landings, author by contract name:
+
+```json
+{"kind":"trigger","name":"on-advisory","line_name":"triage",
+ "schedule":{"kind":"capture_landing","capture_contract":"security.advisory"}}
+```
+
+Prepare resolves the live contract at the pinned base or from the same ChangeSet
+(in either declaration order), shows its identity and digest in
+`resolved_trigger_contracts`, and stores the existing exact selector and pins.
+Contract succession still requires the existing dependency-closure dispositions;
+this feature never retargets a Trigger. The explicit
+`schedule.event` selector form still works; combining it with `capture_contract`
+refuses. Missing, retired or wrong-kind contracts refuse with a repair, as does
+a resolved digest differing from the Line's Source pin (both digests are shown).
+Next: submit the prepared intent, then `cruxible line enable NAME`.
+
 A `cron` schedule is a standard five-field expression (`minute hour
 day-of-month month day-of-week`; numbers, `*`, ranges, steps and lists, with
 day-of-week 0-7 and Sunday both 0 and 7; no names or `@` macros) evaluated in
