@@ -2582,14 +2582,24 @@ def approve_proposal(
         _emit_json(_json_receipt(result))
         return
     if isinstance(result, contracts.ProposalRecompiled):
-        click.echo(
-            f"Recompiled as {result.proposal_id}; review this new proposal "
-            f"(members identical: {result.members_identical})"
-        )
+        _echo_recompiled_proposal(result)
         return
     click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
     for line in _approval_outcome_lines(result):
         click.echo(line)
+
+
+def _echo_recompiled_proposal(result: contracts.ProposalRecompiled) -> None:
+    click.echo(
+        f"Recompiled as {result.proposal_id}; review this new proposal "
+        f"(members identical: {result.members_identical})"
+    )
+    for member in result.changed_members:
+        click.echo(f"  {member.change}: {member.path}")
+    if result.changed_members_truncated:
+        click.echo("  Changed member paths truncated; review the new proposal for all members.")
+    operation = "review" if result.status == "pending_review" else "activate"
+    click.echo(f"Next: cruxible proposal {operation} {result.proposal_id}")
 
 
 def _approval_outcome_lines(receipt: contracts.ApprovalReceipt) -> list[str]:
@@ -2668,10 +2678,7 @@ def activate_proposal(proposal_id: str, output_brief: bool, output_json: bool) -
         _emit_json(result.model_dump(mode="json"))
         return
     if isinstance(result, contracts.ProposalRecompiled):
-        click.echo(
-            f"Recompiled as {result.proposal_id}; review this new proposal "
-            f"(members identical: {result.members_identical})"
-        )
+        _echo_recompiled_proposal(result)
         return
     if result.status == "accepted" and result.accepted_coordinate is not None:
         click.echo(f"accepted ({result.accepted_coordinate.git_oid[:12]}) by {result.activated_by}")

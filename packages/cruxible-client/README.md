@@ -2090,7 +2090,7 @@ Activates this proposal once its approvals are in: `Cruxible.activate` by handle
 readmit(*, dry_run: bool | None=None, at: str | None=None) -> api.ProposalReadmitResult
 ```
 
-Recompiles retained authoring/write or Procedure input at head (other origins readmit bytes) under a fresh proposal ID; review it normally. Activate and approve may return `ProposalRecompiled`, naming the new ID and `members_identical`; no approval carries.
+Recompiles retained authoring/write or Procedure input at head (other origins readmit bytes) under a fresh proposal ID; review it normally. Activate and approve may return `ProposalRecompiled`, naming the new ID and `members_identical`; no approval carries. `changed_members` lists up to 50 sorted member paths with an `added`, `replaced`, or `removed` change; `changed_members_truncated` marks a longer list.
 
 <a id="api-proposal-approve"></a>
 

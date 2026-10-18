@@ -478,4 +478,4 @@ and input contracts declared in accepted state, which the daemon validates. A `p
 value may be `null`, which binds an optional parameter explicitly; omitting it takes the
 parameter's default.
 
-Stale authoring/write and Procedure proposals recompile on approve or activate. A typed recompilation result names the fresh proposal and whether its members are byte-identical. Review it normally; no approval carries. Providers are not run again.
+Stale authoring/write and Procedure proposals recompile on approve or activate. A typed recompilation result names the fresh proposal and whether its members are byte-identical. `changed_members` lists up to 50 sorted paths marked added, replaced, or removed; `changed_members_truncated` marks a longer list. Review it normally; no approval carries. Providers are not run again.

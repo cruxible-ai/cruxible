@@ -1369,6 +1369,10 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     assert row.repair.operation == EXPECTED_OPERATIONS["proposal_stale"]
     assert row.repair.command == f"cruxible proposal readmit {stale_id}"
     assert row.detail["actor_id"] == "owner"
+    assert row.detail["stale_repair"] == (
+        "Approve, activate, or readmit recompiles at the head when the origin lowers; "
+        "review any new candidate normally, or withdraw."
+    )
     # Only the author may readmit, so only the author's queue carries the row.
     _assert_gone(instance, "proposal_stale", _request(instance), caller_principal_id="reviewer")
     _assert_gone(instance, "proposal_stale", _request(instance))
