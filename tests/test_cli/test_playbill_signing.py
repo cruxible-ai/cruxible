@@ -24,10 +24,14 @@ from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
 
 
 @pytest.mark.parametrize("hold", (False, True))
+@pytest.mark.parametrize("recompiled_status", (None, "pending_review", "ready_to_activate"))
+@pytest.mark.parametrize("output_json", (False, True))
 def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     tmp_path: Path,
     monkeypatch,
     hold: bool,
+    recompiled_status: str | None,
+    output_json: bool,
 ) -> None:
     instance, owner, reviewer = _instance(tmp_path)
     body = service_store_playbill_body(instance, content=b"# Review me\n")
@@ -54,6 +58,14 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     proposal_id = proposal.admission.proposal_id
     submitted: list[dict[str, Any]] = []
     holds: list[bool] = []
+    recompiled = None if recompiled_status is None else contracts.ProposalRecompiled(
+        status=recompiled_status,
+        source_proposal_id=proposal_id,
+        proposal_id="sha256:" + "a" * 64,
+        candidate_digest="sha256:" + "b" * 64,
+        members_identical=True,
+        accepted_coordinate=contracts.AcceptedCoordinate.model_validate(instance.accepted_coordinate().model_dump(mode="json")),
+    )
 
     class StubClient:
         def resolve_proposal_selector(
@@ -91,10 +103,12 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
             *,
             attestation: dict[str, Any],
             hold: bool = False,
-        ) -> contracts.ApprovalReceipt:
+        ) -> contracts.ApprovalReceipt | contracts.ProposalRecompiled:
             assert instance_id == "inst_cli"
             submitted.append(attestation)
             holds.append(hold)
+            if recompiled is not None:
+                return recompiled
             receipt = service_submit_playbill_approval(
                 instance,
                 proposal_id=selected_proposal_id,
@@ -125,12 +139,24 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
             str(reviewer.private_key_path),
             "--yes",
             *(("--hold",) if hold else ()),
-            "--json",
+            *(("--json",) if output_json else ()),
         ],
     )
 
     assert result.exit_code == 0, result.output
     assert holds == [hold]
+    if recompiled is not None:
+        if output_json:
+            assert json.loads(result.stdout) == recompiled.model_dump(mode="json")
+        else:
+            operation = "review" if recompiled_status == "pending_review" else "activate"
+            assert result.stdout.splitlines()[-1] == (
+                f"Next: cruxible proposal {operation} {recompiled.proposal_id}"
+            )
+        return
+    if not output_json:
+        assert "Approved " in result.stdout
+        return
     receipt = json.loads(result.stdout)
     # The reviewer's signature completes the candidate: it activates unless held.
     if hold:

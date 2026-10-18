@@ -3914,7 +3914,9 @@ Procedure proposal from its retained input at the current head, without running
 providers. The fresh proposal supersedes the stale one. Activation lands it
 in the same call when no approval is required; otherwise the typed
 `cruxible-proposal-recompiled-v1` result names its new ID and whether its own
-member bytes are identical. Review that new proposal normally: approvals are
+member bytes are identical. Text output ends with `Next: cruxible proposal review <new-id>`
+for a pending review, or `Next: cruxible proposal activate <new-id>` when ready.
+Review that new proposal normally: approvals are
 never carried or signed for it. A lowering or pin refusal leaves the source
 stale with `cruxible.proposal.stale` and `context.recompile_reason`; repair by
 readmitting, withdrawing, or submitting corrected input. Exact-byte origins
