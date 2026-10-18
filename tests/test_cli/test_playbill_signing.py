@@ -58,13 +58,19 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     proposal_id = proposal.admission.proposal_id
     submitted: list[dict[str, Any]] = []
     holds: list[bool] = []
-    recompiled = None if recompiled_status is None else contracts.ProposalRecompiled(
-        status=recompiled_status,
-        source_proposal_id=proposal_id,
-        proposal_id="sha256:" + "a" * 64,
-        candidate_digest="sha256:" + "b" * 64,
-        members_identical=True,
-        accepted_coordinate=contracts.AcceptedCoordinate.model_validate(instance.accepted_coordinate().model_dump(mode="json")),
+    recompiled = (
+        None
+        if recompiled_status is None
+        else contracts.ProposalRecompiled(
+            status=recompiled_status,
+            source_proposal_id=proposal_id,
+            proposal_id="sha256:" + "a" * 64,
+            candidate_digest="sha256:" + "b" * 64,
+            members_identical=True,
+            accepted_coordinate=contracts.AcceptedCoordinate.from_internal(
+                instance.accepted_coordinate()
+            ),
+        )
     )
 
     class StubClient:

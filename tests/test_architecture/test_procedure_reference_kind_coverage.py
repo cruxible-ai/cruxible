@@ -11,26 +11,26 @@ from cruxible_core.compiler.compiler import artifact_kinds_for_compiler, current
 REFERENCEABLE = {
     "approval-policy": ("ApprovalPolicy:instance", "governance/approval-policy.json"),
     "procedure-runtime-policy": (
-        "ProcedureRuntimePolicy:instance", "governance/procedure-runtime-policy.json"
+        "ProcedureRuntimePolicy:instance",
+        "governance/procedure-runtime-policy.json",
     ),
     "blueprint": ("Blueprint:example", "blueprints/example.json"),
     "capture-contract": ("CaptureContract:example", "capture-contracts/example.json"),
     "claim": ("Claim:CLM-" + "a" * 32, "claims/aa/CLM-" + "a" * 32 + ".json"),
-    "attestation": (
-        "ClaimAttestation:sha256:" + "a" * 64, "attestations/aa/" + "a" * 64 + ".json"
-    ),
+    "attestation": ("ClaimAttestation:sha256:" + "a" * 64, "attestations/aa/" + "a" * 64 + ".json"),
     "claim-type": ("ClaimType:example.title", "claim-types/example/title.json"),
     "document": ("document:example", "documents/example.json"),
     "exhaust-promotion": ("ExhaustPromotion:example", "exhaust-promotions/example.json"),
     "line": ("Line:example", "lines/example.json"),
     "procedure": ("Procedure:example", "procedures/example.json"),
     "procedure-mandate": ("ProcedureMandate:example", "procedure-mandates/example.json"),
-    "provider": ("Provider:example/build", "providers/example/build.json"),
+    "provider": ("Provider:example/" + "a" * 64, "providers/example/" + "a" * 64 + ".json"),
     "provider-interface": ("ProviderInterface:example", "provider-interfaces/example.json"),
     "query-definition": ("QueryDefinition:example", "query-definitions/example.json"),
     "resolution-contract": ("ResolutionContract:example", "resolution-contracts/example.json"),
     "source-acquisition-policy": (
-        "SourceAcquisitionPolicy:example", "source-acquisition-policies/example.json"
+        "SourceAcquisitionPolicy:example",
+        "source-acquisition-policies/example.json",
     ),
     "subject": ("Subject:example/item", "subjects/example/item.json"),
     "subject-kind": ("SubjectKind:example", "subject-kinds/example.json"),

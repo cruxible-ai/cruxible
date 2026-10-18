@@ -84,11 +84,13 @@ def test_recompile_matches_fresh_at_head_and_preserves_source(
 def test_unavailable_input_is_stale_but_storage_faults_propagate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
+    import errno
+
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.authoring.store import AuthoringIntentStoreError
-    from pydantic import ValidationError
-    from cruxible_client.contracts.artifacts import ArtifactIdentity
-    import errno
 
     instance, owner = initialize_local(tmp_path)
     _seed(instance, owner)

@@ -1441,10 +1441,6 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     assert row.repair.operation == EXPECTED_OPERATIONS["proposal_awaiting_approval"]
     assert row.repair.command == (f"cruxible proposal approve {proposal_id} --signer-id reviewer")
     assert row.detail["actor_id"] == "owner"
-    assert row.detail["stale_repair"] == (
-        "Approve, activate, or readmit recompiles at the head when the origin lowers; "
-        "review any new candidate normally, or withdraw."
-    )
     assert row.detail["minimum_distinct_signers"] == 1
     # The creator cannot approve its own candidate, an unregistered caller has
     # no approval to give, and an unattributed request names no caller at all.

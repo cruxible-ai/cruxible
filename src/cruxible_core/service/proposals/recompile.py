@@ -85,10 +85,15 @@ def _changed_members(
             for path, digest in after.items()
             if path not in before or before[path] != digest
         ),
-        (RecompiledMemberChange(path=path, change="removed") for path in before if path not in after),
+        (
+            RecompiledMemberChange(path=path, change="removed")
+            for path in before
+            if path not in after
+        ),
     )
     selected = nsmallest(RECOMPILED_MEMBER_PATH_LIMIT + 1, changes, key=lambda item: item.path)
-    return tuple(selected[:RECOMPILED_MEMBER_PATH_LIMIT]), len(selected) > RECOMPILED_MEMBER_PATH_LIMIT
+    truncated = len(selected) > RECOMPILED_MEMBER_PATH_LIMIT
+    return tuple(selected[:RECOMPILED_MEMBER_PATH_LIMIT]), truncated
 
 
 def recompiled_successor(instance: PlaybillInstance, source: ProposalResult) -> ProposalResult:
@@ -324,12 +329,16 @@ def _recompile_proposal(
         )
     # Member evidence pins exact own bytes (including deletions); daemon cards
     # and change-set records are not part of this informational comparison.
-    before = {} if source.candidate is None else {
-        member.path: getattr(
-            member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
-        )
-        for member in source.candidate.members
-    }
+    before = (
+        {}
+        if source.candidate is None
+        else {
+            member.path: getattr(
+                member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
+            )
+            for member in source.candidate.members
+        }
+    )
     after = {
         member.path: getattr(
             member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)

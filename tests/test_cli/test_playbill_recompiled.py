@@ -33,10 +33,19 @@ def test_activate_recompiled_next_step(monkeypatch, status, output_json):
             return receipt
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", Client)
-    result = CliRunner().invoke(cli, [
-        "--server-url", "https://example.invalid", "--instance-id", "inst_cli",
-        "proposal", "activate", PROPOSAL_ID, *(("--json",) if output_json else ()),
-    ])
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://example.invalid",
+            "--instance-id",
+            "inst_cli",
+            "proposal",
+            "activate",
+            PROPOSAL_ID,
+            *(("--json",) if output_json else ()),
+        ],
+    )
     assert result.exit_code == 0, result.output
     if output_json:
         assert json.loads(result.stdout) == receipt.model_dump(mode="json")

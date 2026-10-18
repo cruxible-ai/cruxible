@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
-
 RECOMPILED_MEMBER_PATH_LIMIT = 50
 
 

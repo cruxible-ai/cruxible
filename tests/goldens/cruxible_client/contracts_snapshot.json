@@ -73116,6 +73116,36 @@
             "type": "string"
           }
         },
+        "changed_members": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "changed_members",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/RecompiledMemberChange"
+            },
+            "maxItems": 50,
+            "title": "Changed Members",
+            "type": "array"
+          }
+        },
+        "changed_members_truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "changed_members_truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Changed Members Truncated",
+            "type": "boolean"
+          }
+        },
         "members_identical": {
           "has_default": false,
           "has_default_factory": false,
@@ -73212,6 +73242,31 @@
             ],
             "title": "AcceptedCoordinate",
             "type": "object"
+          },
+          "RecompiledMemberChange": {
+            "additionalProperties": false,
+            "description": "One own-member byte change between the stale and fresh candidates.",
+            "properties": {
+              "change": {
+                "enum": [
+                  "added",
+                  "replaced",
+                  "removed"
+                ],
+                "title": "Change",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "change"
+            ],
+            "title": "RecompiledMemberChange",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -73223,6 +73278,20 @@
           "candidate_digest": {
             "title": "Candidate Digest",
             "type": "string"
+          },
+          "changed_members": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/RecompiledMemberChange"
+            },
+            "maxItems": 50,
+            "title": "Changed Members",
+            "type": "array"
+          },
+          "changed_members_truncated": {
+            "default": false,
+            "title": "Changed Members Truncated",
+            "type": "boolean"
           },
           "members_identical": {
             "title": "Members Identical",

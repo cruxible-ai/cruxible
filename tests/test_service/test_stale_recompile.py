@@ -122,10 +122,13 @@ def test_stale_approve_returns_new_pending_id_without_recording_old_signature(
     successor = _proposal_result(instance, result.proposal_id)
     assert successor.candidate is not None
     before = {member.path: member.candidate_artifact_digest for member in source.candidate.members}
-    after = {member.path: member.candidate_artifact_digest for member in successor.candidate.members}
+    after = {
+        member.path: member.candidate_artifact_digest for member in successor.candidate.members
+    }
     expected = sorted(
         (path, "added" if path not in before else "replaced")
-        for path, digest in after.items() if path not in before or before[path] != digest
+        for path, digest in after.items()
+        if path not in before or before[path] != digest
     ) + sorted((path, "removed") for path in before if path not in after)
     assert [(item.path, item.change) for item in result.changed_members] == sorted(expected)
     assert not result.changed_members_truncated
