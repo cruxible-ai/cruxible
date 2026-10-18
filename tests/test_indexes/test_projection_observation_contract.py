@@ -119,6 +119,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "mandate_expiring",
         # An armed Line that stopped by itself, or stopped draining its own work.
         "consumer_stalled",
+        # D8 carry (dev.decision/d8-carry-1016) disables the upgraded Line version.
+        "line_disabled_by_upgrade",
         "evidence_unavailable",
         # A closed prediction window its own resolution journal has not answered.
         "prediction_settleable",

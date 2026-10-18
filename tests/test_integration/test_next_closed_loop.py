@@ -176,6 +176,8 @@ EXPECTED_OPERATIONS = {
     "mandate_expiring": "cruxible.authoring.example",
     # A stopped enablement is resumed by enabling again under authority that holds.
     "consumer_stalled": "cruxible.line.enable",
+    # A carried Line resumes only after the operator enables its upgraded version.
+    "line_disabled_by_upgrade": "cruxible.line.enable",
     # A restart leaves the downtime unmatched: evaluating that exact range covers it.
     "line_coverage_gap": "cruxible.line.evaluate",
     # Work matched before a restart waits for an explicit dispatch.
@@ -1812,6 +1814,94 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "consumer_stalled", request)
 
 
+def _line_disabled_by_upgrade(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from cruxible_client.contracts.procedures.artifacts import (
+        parse_procedure,
+        procedure_artifact_digest,
+    )
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest, parse_line_spec
+    from cruxible_client.contracts.provider_installation import ProviderMoveRequest
+    from cruxible_client.contracts.triggers import CadenceSchedule
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from tests.test_server.test_kit_providers import (
+        PROCEDURE,
+        _author,
+        _client,
+        _install,
+        _package,
+        _tree,
+        _worlds,
+    )
+
+    opened = _worlds(root, monkeypatch)
+    world, _consumer = next(opened)
+    try:
+        checkout = _PROVIDER_CHECKOUT.get()
+        first = _package(root / "before", checkout, name="kit-call", increment=1)
+        _install(world, first)
+        _author(world)
+        intent = (
+            world.pb.changes(rationale="Exercise the upgrade repair for an enabled Line.")
+            .line(
+                name="user.upgrade",
+                procedure=PROCEDURE,
+                parameters={"n": 2},
+                max_authority="observe",
+            )
+            .trigger(
+                name="user.upgrade-clock",
+                line="user.upgrade",
+                schedule=CadenceSchedule(interval_seconds=3600),
+            )
+            .prepare()
+        )
+        assert not intent.refused, intent.diagnostics
+        submitted = intent.submit()
+        world.approve(submitted._candidate_status.proposal_id)
+        client = _client(world.http)
+        original = client.enable_line(world.instance_id, "user.upgrade")
+        assert original.state == "enabled"
+        instance = get_playbill_manager().get(world.instance_id)
+        _assert_gone(instance, "line_disabled_by_upgrade", _request(instance))
+
+        second = _package(root / "after", checkout, name="kit-call", increment=2)
+        _install(world, second)
+        moved = client.move_provider(
+            world.instance_id, ProviderMoveRequest(provider="kit-call", dry_run=False)
+        )
+        assert moved.status == "accepted", moved
+        assert any(
+            item.identity == "Line:user.upgrade" and item.enablement == "disabled"
+            for item in moved.automation_carries
+        )
+        tree = _tree(world)
+        path = "lines/user.upgrade.json"
+        upgraded = parse_line_spec(tree[path], path=path)
+        procedure_path = f"procedures/{PROCEDURE}.json"
+        procedure = parse_procedure(tree[procedure_path], path=procedure_path)
+        assert procedure.lifecycle.predecessor_digest is not None
+        assert upgraded.lifecycle.predecessor_digest == original.line_artifact_digest
+        assert upgraded.procedure.artifact_digest == procedure_artifact_digest(procedure).tagged
+        assert upgraded.procedure.artifact_digest != procedure.lifecycle.predecessor_digest
+
+        request = _request(instance)
+        row = _row(instance, "line_disabled_by_upgrade", request)
+        assert row.subject_identity == upgraded.identity.qualified
+        assert row.detail["procedure_version"] == upgraded.procedure.artifact_digest
+        assert row.repair.operation == EXPECTED_OPERATIONS["line_disabled_by_upgrade"]
+        assert row.repair.command == "cruxible line enable user.upgrade"
+
+        # The named repair runs as the same authenticated operator that enabled it.
+        enabled = client.enable_line(world.instance_id, row.repair.arguments["line"])
+        assert enabled.state == "enabled"
+        assert enabled.enabled_by == original.enabled_by
+        assert enabled.line_artifact_digest == line_spec_digest(upgraded).tagged
+        _assert_gone(instance, "line_disabled_by_upgrade", request)
+    finally:
+        for _ in opened:
+            pass
+
+
 def _restarted_line(root: Path):  # type: ignore[no-untyped-def]
     """An enabled Line whose daemon restarted after matching one event, missing another."""
 
@@ -2021,9 +2111,9 @@ def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) 
     _assert_gone(instance, "prediction_window_unbindable", _request(instance))
 
 
-#: ``_kit_resume_blocked`` needs the session-scoped ``provider_checkout`` fixture,
+#: Provider upgrade and kit resume cases need the session-scoped ``provider_checkout`` fixture,
 #: which the ``RepairCase`` signature has no room for; the test fetches it lazily
-#: (``request.getfixturevalue``, only for this one case) and hands it over here,
+#: (``request.getfixturevalue``, only for these cases) and hands it over here,
 #: so every other case's run pays nothing towards building the provider wheels.
 _PROVIDER_CHECKOUT: ContextVar[Any] = ContextVar("next_closed_loop_provider_checkout")
 
@@ -2155,6 +2245,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("proposal_awaiting_activation", None): _proposal_awaiting_activation,
     ("mandate_expiring", None): _mandate_expiring,
     ("consumer_stalled", None): _consumer_stalled,
+    ("line_disabled_by_upgrade", None): _line_disabled_by_upgrade,
     ("line_coverage_gap", None): _line_coverage_gap,
     ("line_work_pending", None): _line_work_pending,
     ("line_settled_prior_refusals", None): _line_settled_prior_refusals,
@@ -2192,8 +2283,8 @@ def test_every_next_reason_has_an_effective_named_repair(
 
     case_root = tmp_path / "-".join(part for part in key if part is not None)
     case_root.mkdir()
-    if key == ("kit_resume_blocked", None):
-        # The only case needing the provider wheels; fetched lazily so every
+    if key[0] in {"kit_resume_blocked", "line_disabled_by_upgrade"}:
+        # These cases need provider wheels; fetched lazily so every
         # other case's run never builds them.
         _PROVIDER_CHECKOUT.set(request.getfixturevalue("provider_checkout"))
     CLOSED_LOOP_CASES[key](case_root, monkeypatch)
