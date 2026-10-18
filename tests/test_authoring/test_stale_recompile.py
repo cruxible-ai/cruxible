@@ -80,11 +80,15 @@ def test_recompile_matches_fresh_at_head_and_preserves_source(
     )
 
 
-def test_missing_intent_refuses_without_a_successor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("failure", ("missing", "invalid", "disk_full", "permission"))
+def test_unavailable_input_is_stale_but_storage_faults_propagate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.authoring.store import AuthoringIntentStoreError
+    from pydantic import ValidationError
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    import errno
 
     instance, owner = initialize_local(tmp_path)
     _seed(instance, owner)
@@ -97,15 +101,31 @@ def test_missing_intent_refuses_without_a_successor(
     assert submitted.status.proposal_id is not None
     source = _proposal_result(instance, submitted.status.proposal_id)
 
+    error: Exception
+    if failure == "missing":
+        error = AuthoringIntentStoreError("pruned")
+    elif failure == "invalid":
+        try:
+            ArtifactIdentity(kind="invalid kind", name="example")
+        except ValidationError as exc:
+            error = exc
+    else:
+        error = OSError(errno.ENOSPC if failure == "disk_full" else errno.EACCES, failure)
+
     def missing(*args: object, **kwargs: object) -> None:
-        raise AuthoringIntentStoreError("pruned")
+        raise error
 
     monkeypatch.setattr(
         type(AuthoringIntentCoordinator.for_instance(instance).store), "get", missing
     )
     before = instance.proposal_evidence().list_admissions()
-    with pytest.raises(ProposalStale) as refusal:
-        recompile_proposal(instance, source)
-    assert refusal.value.reason == "input_unavailable"
+    if isinstance(error, OSError):
+        with pytest.raises(OSError) as fault:
+            recompile_proposal(instance, source)
+        assert fault.value is error
+    else:
+        with pytest.raises(ProposalStale) as refusal:
+            recompile_proposal(instance, source)
+        assert refusal.value.reason == "input_unavailable"
     assert instance.proposal_evidence().list_admissions() == before
     assert instance.proposal_evidence().read_withdrawal(source.admission.proposal_id) is None

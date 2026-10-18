@@ -281,7 +281,7 @@ def _recompile_proposal(
             if exc.proposal_id == source_id:
                 raise
             raise ProposalStale(source_id, reason=exc.reason, detail=exc.detail) from exc
-        except (CruxibleError, OSError, ValidationError) as exc:
+        except (CruxibleError, ValidationError) as exc:
             raise ProposalStale(
                 source_id, reason=str(getattr(exc, "code", "input_unavailable")), detail=str(exc)
             ) from exc
