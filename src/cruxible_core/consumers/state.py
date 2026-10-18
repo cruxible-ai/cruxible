@@ -73,8 +73,8 @@ class DisposableState:
         if not create and not path.is_file():
             yield None
             return
-        if not path.parent.exists():
-            path.parent.mkdir(mode=0o700, parents=True)
+        # Two first opens may race (orient and next in parallel): never check-then-create.
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         key = path.resolve()
         with _LOCKS_GUARD:
             lock = _LOCKS.setdefault(key, threading.Lock())
