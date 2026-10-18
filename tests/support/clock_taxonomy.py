@@ -74,6 +74,7 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 # `observed_at` the instant the daemon evaluated the source, while an attestation
 # is `observed_at` the time its attestor asserts.
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
+    ("RecompileInput", "timestamp"): "EVALUATION INSTANT",
     ("BuildRow", "registration_sequence"): "SETTLEMENT ORDER",
     ("FloorConsumerOutcome", "generation"): "SETTLEMENT ORDER",
     # The generation a forward floor render reached.

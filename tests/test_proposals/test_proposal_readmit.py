@@ -490,3 +490,50 @@ def test_a_readmission_keeps_its_link_when_head_moves_before_evaluation(
     landed = readmitted.proposal.proposal.admission.proposal_id
     assert carried is not None and (carried.proposal_id, carried.accepted) == (landed, True)
     assert _stale_ids(instance) == []
+
+
+@pytest.mark.parametrize("target", ["kit-example-123", "provider-move-example"])
+def test_nonlowering_origins_still_refuse_stale_activation_and_readmit_exact_bytes(
+    tmp_path: Path, target: str
+) -> None:
+    from cruxible_client.contracts.documents import document_path, render_document
+    from cruxible_client.contracts.errors import ProposalStale
+    from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+
+    instance, owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    digest = service_store_playbill_body(instance, content=b"exact-byte artifact").digest
+    shell = _shell("exact", digest, title="Exact")
+    tree = instance.immutable_tree_at(base.git_oid).fork()
+    tree[document_path(shell.document_id)] = render_document(shell)
+    source = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/{target}", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp=TIMESTAMP,
+    )
+    assert source.candidate is not None
+    moving = service_propose_playbill_document(
+        instance,
+        shell=_shell("moving", digest, title="Moving"),
+        actor_id="owner",
+        proposal_name="moving",
+        timestamp=TIMESTAMP,
+    )
+    _accept(instance, owner, moving)
+    before = instance.proposal_evidence().list_admissions()
+    with pytest.raises(ProposalStale):
+        service_activate_playbill_proposal(
+            instance, proposal_id=source.admission.proposal_id, activated_by="owner"
+        )
+    assert instance.proposal_evidence().list_admissions() == before
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=source.admission.proposal_id, actor_id="owner"
+    )
+    assert readmitted.proposal.proposal.candidate is not None
+    assert instance._ledger.blob_at(
+        readmitted.proposal.proposal.admission.candidate_tree_oid, document_path(shell.document_id)
+    ) == render_document(shell)
+    assert instance.proposal_evidence().read_withdrawal(source.admission.proposal_id) is None

@@ -29,6 +29,7 @@ from pydantic import (
 )
 
 from cruxible_client.contracts.authoring.models import (
+    AUTHORING_INTENT_ID_RE,
     AuthoringIntent,
     AuthoringIntentV1,
     AuthoringPayload,
@@ -632,6 +633,8 @@ class AuthoringIntentStore:
     def resolve_intent_id(self, intent_id: str) -> str:
         """Accept a unique AIT- prefix where a full intent id is expected."""
 
+        if AUTHORING_INTENT_ID_RE.fullmatch(intent_id):
+            return intent_id
         return resolve_id_prefix(
             intent_id,
             tuple(path.name for path in self._intent_directories())
@@ -739,9 +742,15 @@ class AuthoringIntentStore:
         operation_key: str,
         transform: Callable[[AuthoringIntentV1], AuthoringIntentV1],
         allow_rebase: bool = False,
+        recover_creates: bool = True,
         program_stamp: AuthoringProgramStamp | None = None,
     ) -> AuthoringIntentV1:
-        """Append one idempotent state transition under the store-wide CAS lock."""
+        """Append one idempotent state transition under the store-wide CAS lock.
+
+        Recompilation of an already-published stream sets ``recover_creates``
+        false: its keyed read proved that stream exists, and there is no need
+        to scan staging directories belonging to unrelated operations.
+        """
 
         with self._locked():
             return self._transition_locked(
@@ -750,6 +759,7 @@ class AuthoringIntentStore:
                 operation_key=operation_key,
                 transform=transform,
                 allow_rebase=allow_rebase,
+                recover_creates=recover_creates,
                 program_stamp=program_stamp,
             )
 
@@ -794,9 +804,11 @@ class AuthoringIntentStore:
         operation_key: str,
         transform: Callable[[AuthoringIntentV1], AuthoringIntentV1],
         allow_rebase: bool = False,
+        recover_creates: bool = True,
         program_stamp: AuthoringProgramStamp | None = None,
     ) -> AuthoringIntentV1:
-        self._recover_creating_directories()
+        if recover_creates:
+            self._recover_creating_directories()
         directory = self.root / intent_id
         events = self._validated_events(directory)
         for event in events:

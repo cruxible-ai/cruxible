@@ -8,13 +8,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
+
+from pydantic import ValidationError
 
 from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
-from cruxible_client.contracts.errors import ProposalStale
+from cruxible_client.contracts.errors import CruxibleError, ProposalNotFoundError, ProposalStale
 from cruxible_client.contracts.proposal_models import (
     ProposalReadmissionLink,
     ProposalSettleSubmission,
 )
+from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import (
     authoring_intent_id_for_proposal_ref,
@@ -29,10 +33,12 @@ from cruxible_core.proposals.proposals import (
     ProposalHeadMovedError,
     ProposalPreview,
     ProposalResult,
+    ProposalService,
     ProposalWithdrawalRecord,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import preview_guards
+from cruxible_core.storage.cas import dry_run_held_bodies
 
 
 @dataclass(frozen=True)
@@ -57,23 +63,61 @@ class Recompilation:
     coordinate: AcceptedCoordinate
 
 
+def recompiled_successor(instance: PlaybillInstance, source: ProposalResult) -> ProposalResult:
+    """The last replacement of this proposal, from keyed immutable links only."""
+    from cruxible_core.service.proposals.proposals import _proposal_result
+
+    admission = source.admission
+    seen: set[str] = set()
+    while True:
+        pid = admission.proposal_id
+        if pid in seen:
+            raise ProposalStale(pid, reason="origin_cycle")
+        seen.add(pid)
+        withdrawal = instance.proposal_evidence().read_withdrawal(pid)
+        if withdrawal is None or withdrawal.superseded_by is None:
+            break
+        successor = instance.proposal_evidence().read_admission(withdrawal.superseded_by)
+        if successor.readmits is None or successor.readmits.source_proposal_id != pid:
+            break
+        admission = successor
+    return (
+        source
+        if admission.proposal_id == source.admission.proposal_id
+        else _proposal_result(instance, admission.proposal_id)
+    )
+
+
 def lowering_origin(instance: PlaybillInstance, source: ProposalResult) -> ProposalResult | None:
     """Follow only this proposal's immutable chain; raw/exact-byte origins return None."""
     from cruxible_core.service.proposals.proposals import _proposal_result
 
-    seen: set[str] = set()
-    while source.admission.readmits is not None:
-        if source.admission.proposal_id in seen:
-            raise ProposalStale(source.admission.proposal_id, reason="origin_cycle")
-        seen.add(source.admission.proposal_id)
-        source = _proposal_result(instance, source.admission.readmits.source_proposal_id)
     admission = source.admission
+    seen: set[str] = set()
+    while admission.readmits is not None:
+        if admission.proposal_id in seen:
+            raise ProposalStale(source.admission.proposal_id, reason="origin_cycle")
+        seen.add(admission.proposal_id)
+        try:
+            admission = instance.proposal_evidence().read_admission(
+                admission.readmits.source_proposal_id
+            )
+        except ProposalNotFoundError as exc:
+            raise ProposalStale(
+                source.admission.proposal_id,
+                reason="input_unavailable",
+                detail="Readmission origin is unavailable",
+            ) from exc
     if (
         admission.procedure_operation is not None
         or authoring_intent_id_for_proposal_ref(admission.target_ref, actor_id=admission.actor_id)
         is not None
     ):
-        return source
+        return (
+            source
+            if admission.proposal_id == source.admission.proposal_id
+            else _proposal_result(instance, admission.proposal_id)
+        )
     return None
 
 
@@ -125,6 +169,18 @@ def recompile_proposal(
     preview: bool = False,
     confirm_head: Callable[[str], None] | None = None,
 ) -> Recompilation | None:
+    """Serialize recompilation with withdrawal/rejection of this same source."""
+    with instance.refusal_index().closing(source.admission.proposal_id):
+        return _recompile_proposal(instance, source, preview=preview, confirm_head=confirm_head)
+
+
+def _recompile_proposal(
+    instance: PlaybillInstance,
+    source: ProposalResult,
+    *,
+    preview: bool = False,
+    confirm_head: Callable[[str], None] | None = None,
+) -> Recompilation | None:
     """Prepare completely before publication; refusal leaves the old proposal alone.
 
     None means this origin does not lower and keeps ordinary byte readmission.
@@ -149,46 +205,58 @@ def recompile_proposal(
             instance, existing[0].proposal_id
         )
     else:
-        with preview_guards(True):
-            if origin.admission.procedure_operation is not None:
-                from cruxible_core.service.proposals.procedure_recompile import procedure_input
+        try:
+            # One body overlay lasts through lowering AND ordinary evaluation.
+            # In particular self-source Capture envelopes bind the new head.
+            with preview_guards(True):
+                if origin.admission.procedure_operation is not None:
+                    from cruxible_core.service.proposals.procedure_recompile import procedure_input
 
-                inputs = procedure_input(instance, origin, head)
-            else:
-                inputs = _authoring_input(instance, origin, head)
-        request = ProposalAdmissionRequest(
-            target_ref=target,
-            proposed_base_oid=head.git_oid,
-            source_compilation_digest=link.operation_digest,
-            rationale=inputs.rationale,
-        )
+                    inputs = procedure_input(instance, origin, head)
+                else:
+                    inputs = _authoring_input(instance, origin, head)
+                request = ProposalAdmissionRequest(
+                    target_ref=target,
+                    proposed_base_oid=head.git_oid,
+                    source_compilation_digest=link.operation_digest,
+                    rationale=inputs.rationale,
+                )
 
-        def authorize(
-            current: AcceptedProjectionCoordinate, tree: Mapping[str, bytes]
-        ) -> Mapping[str, bytes] | None:
-            if current.git_oid != head.git_oid:
-                raise ProposalStale(source_id, reason="head_moved")
-            return None if inputs.authorize is None else inputs.authorize(current, tree)
+                def authorize(
+                    current: AcceptedProjectionCoordinate, tree: Mapping[str, bytes]
+                ) -> Mapping[str, bytes] | None:
+                    if current.git_oid != head.git_oid:
+                        raise ProposalStale(source_id, reason="head_moved")
+                    return None if inputs.authorize is None else inputs.authorize(current, tree)
 
-        service = instance.proposal_service()
-        authority = service.subject_assignment_authority
-        own = frozenset(inputs.creations)
-        service.subject_assignment_authority = lambda operation, creation: (
-            (operation == inputs.operation and creation in own)
-            or (authority is not None and authority(operation, creation))
-        )
-        # Run the ordinary admission evaluation before any record is written.
-        # Its candidate is pinned through publication, which refuses a head race.
-        with preview_guards(True):
-            checked = service.preview(
-                actor=AuthenticatedActor(actor_id=source.admission.actor_id),
-                request=request,
-                candidate_tree=inputs.tree,
-                timestamp=inputs.timestamp,
-                readmits=link,
-                authorize=authorize,
-                settle_submission=inputs.settle_submission,
-            )
+                def service_with_creations() -> ProposalService:
+                    service = instance.proposal_service()
+                    authority = service.subject_assignment_authority
+                    own = frozenset(inputs.creations)
+                    service.subject_assignment_authority = lambda operation, creation: (
+                        (operation == inputs.operation and creation in own)
+                        or (authority is not None and authority(operation, creation))
+                    )
+                    return service
+
+                checked = service_with_creations().preview(
+                    actor=AuthenticatedActor(actor_id=source.admission.actor_id),
+                    request=request,
+                    candidate_tree=inputs.tree,
+                    timestamp=inputs.timestamp,
+                    readmits=link,
+                    authorize=authorize,
+                    settle_submission=inputs.settle_submission,
+                )
+                generated_bodies = dict(dry_run_held_bodies() or {})
+        except ProposalStale as exc:
+            if exc.proposal_id == source_id:
+                raise
+            raise ProposalStale(source_id, reason=exc.reason, detail=exc.detail) from exc
+        except (CruxibleError, OSError, ValidationError) as exc:
+            raise ProposalStale(
+                source_id, reason=str(getattr(exc, "code", "input_unavailable")), detail=str(exc)
+            ) from exc
         if checked.candidate is None:
             raise ProposalStale(
                 source_id,
@@ -198,12 +266,16 @@ def recompile_proposal(
         if preview:
             result = checked
         else:
+            # Only clean preparations publish bodies, assignments or proposals.
+            # This loop is exactly this input's newly lowered material.
+            for content in generated_bodies.values():
+                instance.body_store().store(content)
             if inputs.creations:
                 instance.subject_assignment_authority().record_creations(
                     inputs.operation, inputs.creations
                 )
             try:
-                result = service.submit(
+                result = service_with_creations().submit(
                     actor=AuthenticatedActor(actor_id=source.admission.actor_id),
                     request=request,
                     candidate_tree=inputs.tree,
@@ -254,22 +326,22 @@ def recompile_proposal(
                 intent_id,
                 actor_id=origin.admission.actor_id,
                 operation_key=link.operation_digest,
+                recover_creates=False,
                 transform=lambda intent: intent.model_copy(
                     update={
                         "candidate_status": status,
                     }
                 ),
             )
-        with instance.refusal_index().closing(source_id):
-            _close_once(
-                instance,
-                ChangeMode(instance, previewing=False),
-                ProposalWithdrawalRecord(
-                    proposal_id=source_id,
-                    actor_id=source.admission.actor_id,
-                    reason=f"Recompiled at the head as {result.admission.proposal_id}.",
-                    withdrawn_at=source.admission.admitted_at,
-                    superseded_by=result.admission.proposal_id,
-                ),
-            )
+        _close_once(
+            instance,
+            ChangeMode(instance, previewing=False),
+            ProposalWithdrawalRecord(
+                proposal_id=source_id,
+                actor_id=source.admission.actor_id,
+                reason=f"Recompiled at the head as {result.admission.proposal_id}.",
+                withdrawn_at=str(format_datetime(datetime.now(timezone.utc))),
+                superseded_by=result.admission.proposal_id,
+            ),
+        )
     return Recompilation(source_id, result, identical, head)

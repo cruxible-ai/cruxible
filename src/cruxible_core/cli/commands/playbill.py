@@ -3201,7 +3201,9 @@ def add_principal(
         # The actor's own signature completes a lifecycle candidate, so the
         # approval activates it unless more approvals are required.
         outcome.activated = (
-            approval.activation is not None and approval.activation.status == "accepted"
+            isinstance(approval, contracts.ApprovalReceipt)
+            and approval.activation is not None
+            and approval.activation.status == "accepted"
         )
         if outcome.activated and identity.authenticated and principal_kind == "ordinary":
             minted = client.create_runtime_credential(

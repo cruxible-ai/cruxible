@@ -54,7 +54,15 @@ def test_recompile_matches_fresh_at_head_and_preserves_source(
         oracle = compute_preflight(
             instance, intent=intent.model_copy(update={"base_coordinate": head}), actor=actor
         )
-    result = recompile_proposal(instance, source)
+    from cruxible_core.authoring.store import AuthoringIntentStore
+
+    def population(*args: object, **kwargs: object) -> None:
+        pytest.fail("recompilation enumerated the intent population")
+
+    with monkeypatch.context() as bounded:
+        for name in ("_intent_directories", "_finished_receipts", "_recover_creating_directories"):
+            bounded.setattr(AuthoringIntentStore, name, population)
+        result = recompile_proposal(instance, source)
     assert result is not None and isinstance(result.proposal, ProposalResult)
     assert oracle.evaluation is not None
     assert result.proposal.candidate is not None and oracle.evaluation.candidate is not None

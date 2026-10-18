@@ -957,13 +957,9 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
             json={"attestation": dict(attestation), "hold": hold},
         )
-        return self._parse_model(
-            response,
-            contracts.ProposalRecompiled
-            if response.is_success
-            and response.json().get("tag") == "cruxible-proposal-recompiled-v1"
-            else contracts.ApprovalReceipt,
-        )
+        if response.is_success and response.json().get("tag") == "cruxible-proposal-recompiled-v1":
+            return self._parse_model(response, contracts.ProposalRecompiled)
+        return self._parse_model(response, contracts.ApprovalReceipt)
 
     def approve_proposal(
         self,
@@ -992,13 +988,9 @@ class CruxibleClient:
         self, instance_id: str, proposal_id: str
     ) -> contracts.ProposalActivationResult:
         response = self._client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
-        return self._parse_model(
-            response,
-            contracts.ProposalRecompiled
-            if response.is_success
-            and response.json().get("tag") == "cruxible-proposal-recompiled-v1"
-            else contracts.ActivationReceipt,
-        )
+        if response.is_success and response.json().get("tag") == "cruxible-proposal-recompiled-v1":
+            return self._parse_model(response, contracts.ProposalRecompiled)
+        return self._parse_model(response, contracts.ActivationReceipt)
 
     def read_capture(self, instance_id: str, request: CaptureReadRequest) -> CaptureRead:
         response = self._client.post(

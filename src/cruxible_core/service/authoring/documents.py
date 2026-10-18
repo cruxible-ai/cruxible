@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import Literal, cast
 
 import structlog
@@ -38,6 +39,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
+from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
@@ -663,7 +665,11 @@ def service_activate_playbill_proposal(
         ):
             raise
     else:
-        if not isinstance(result, ActivationReceipt) or result.status != "lost_cas":
+        if (
+            not isinstance(result, ActivationReceipt)
+            or result.status != "lost_cas"
+            or result.proposal_id != proposal_id
+        ):
             return result
     return _activate_candidate(
         instance, proposal_id=proposal_id, activated_by=activated_by, mandate_digest=mandate_digest
@@ -749,6 +755,26 @@ def _activate_candidate(
         )
     if candidate.candidate.parent_semantic_root != base.semantic_root:
         raise SettlementIntegrityError("candidate parent root differs from evaluated base")
+    settle = proposal.admission.settle_submission
+    if settle is not None and settle.mode == "delegated":
+        if mandate_digest is not None and mandate_digest != settle.mandate_digest:
+            raise SettlementIntegrityError("delegated settlement names another mandate")
+        mandate_digest = settle.mandate_digest
+        with instance.bind_accepted_projection(base) as projection:
+            row = projection.typed.connection.execute(
+                "SELECT identity FROM procedure_mandates WHERE artifact_digest=?", (mandate_digest,)
+            ).fetchone()
+            mandate = None if row is None else projection.typed.source(row[0])
+        now = datetime.now(timezone.utc)
+        if (
+            not isinstance(mandate, ProcedureMandate)
+            or mandate.suspended
+            or not (mandate.valid_from <= now < mandate.expires_at)
+        ):
+            raise SettlementIntegrityError(
+                "delegated settle mandate expired, was suspended, or was superseded "
+                "before publication"
+            )
     approvals = (
         ()
         if mandate_digest is not None

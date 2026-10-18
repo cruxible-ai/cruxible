@@ -888,7 +888,7 @@ def service_readmit_playbill_proposal(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> PlaybillProposalReadmitResultV1:
-    """Replay one stale authored tree through the current ProposalService rebase.
+    """Recompile retained input, or replay an exact-byte origin, at the head.
 
     ``dry_run`` evaluates the readmission on the admission path and admits
     nothing (R12); ``at`` pins a commit to the head the preview saw.
@@ -911,6 +911,24 @@ def _readmit(
     source = _proposal_result(instance, proposal_id)
     if source.admission.actor_id != actor_id:
         raise ProposalAdmissionError("only the source proposal actor may readmit it")
+    from cruxible_core.service.proposals.recompile import recompiled_successor
+
+    successor = recompiled_successor(instance, source)
+    if successor.admission.proposal_id != source.admission.proposal_id:
+        status = service_playbill_proposal_status(
+            instance, proposal_id=successor.admission.proposal_id
+        )
+        if status.terminal_reason == "accepted":
+            raise ProposalReadmitAlreadyAccepted(
+                proposal_id, accepted_as=successor.admission.proposal_id
+            )
+        link = successor.admission.readmits
+        assert link is not None
+        return PlaybillProposalReadmitResultV1(
+            source_proposal_id=proposal_id,
+            operation_digest=link.operation_digest,
+            proposal=ProposalInspection(proposal=successor, accepted_coordinate=link.coordinate),
+        )
     # A stale proposal may be withdrawn instead of readmitted, and that is the
     # actor saying this tree will never be settled. Readmitting it would settle
     # exactly that tree, under a new proposal id, so it refuses here.

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.errors import CruxibleError, ProposalStale
+from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_core.authoring.assignment_records import procedure_operation_id
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -17,7 +18,11 @@ from cruxible_core.procedures.egress import (
     TerminalEgressRequestV2,
     require_procedure_mandate_at_head,
 )
-from cruxible_core.procedures.execution import ProcedureRunAdmissionV5, parse_admission_payload
+from cruxible_core.procedures.execution import (
+    ProcedureAdmissionBoundPayloadV5,
+    ProcedureRunAdmissionV5,
+    parse_admission_payload,
+)
 from cruxible_core.procedures.proposal_delivery import ProposalTerminalEgressSink
 from cruxible_core.procedures.terminal_services import ProposalDeliveryRefused
 from cruxible_core.proposals.proposals import ProposalResult
@@ -25,7 +30,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures.procedure_runs import (
     _accepted_line_mandates,
     _accepted_procedure,
-    _journal_for_write,
+    _journal,
     _stream,
 )
 from cruxible_core.service.proposals.recompile import RecompileInput
@@ -53,19 +58,24 @@ def procedure_input(
         raise ProposalStale(
             source_id, reason="input_unavailable", detail="Procedure run locator is unavailable"
         )
-    journal, _ = _journal_for_write(instance)
+    if not (instance.root / instance.descriptor.storage.exhaust / "procedure-runs").is_dir():
+        raise ProposalStale(
+            source_id, reason="input_unavailable", detail="Procedure journal is unavailable"
+        )
+    journal, _ = _journal(instance)
     stream = _stream(instance)
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="proposal-recompile", can_read_body=True)
     admission: ProcedureRunAdmissionV5 | None = None
-    prepared_payload: dict[str, object] | None = None
+    prepared_payload: Mapping[str, object] | None = None
     for stored in journal.select_records(
         stream, run_id=reason.run_id, event_kind="admission_bound"
     ):
         payload = read_payload(bodies, stored.record.payload_digest, access=access)
         if not isinstance(payload, UnavailablePayload):
             parsed = parse_admission_payload(payload)
-            admission = parsed.admission
+            if isinstance(parsed, ProcedureAdmissionBoundPayloadV5):
+                admission = parsed.admission
     for stored in journal.select_records(
         stream, run_id=reason.run_id, event_kind="terminal_egress"
     ):
@@ -103,6 +113,7 @@ def procedure_input(
             reason="input_unavailable",
             detail="Procedure request does not match its origin",
         )
+    admitted_request = request
     request = request.model_copy(update={"accepted_coordinate": head})
     raw_evidence = prepared_payload.get("evidence")
     evidence = (
@@ -158,7 +169,7 @@ def procedure_input(
             mandate = dict(mandates).get(settle.mandate_digest)
             now = datetime.now(timezone.utc)
             if (
-                mandate is None
+                not isinstance(mandate, ProcedureMandate)
                 or mandate.suspended
                 or not (mandate.valid_from <= now < mandate.expires_at)
             ):
@@ -170,6 +181,15 @@ def procedure_input(
         raise ProposalStale(
             source_id, reason=getattr(exc, "code", "lowering_refused"), detail=str(exc)
         ) from exc
+    # Authority authenticates the original admitted run; only lowering moves
+    # its coordinate. The current projection below rechecks the bound grant,
+    # so this does not invent a new admission or read the old accepted state.
+    authority_request = admitted_request.model_copy(
+        update={
+            "target_paths": prepared.prepared.target_paths,
+            "procedure_mandate_digest": prepared.prepared.procedure_mandate_digest,
+        }
+    )
     claim_outputs = {
         path: content for path, content in prepared.changed_members if path.startswith("claims/")
     }
@@ -179,7 +199,7 @@ def procedure_input(
     ) -> Mapping[str, bytes]:
         with instance.bind_accepted_projection(current) as projection:
             require_procedure_mandate_at_head(
-                request, admission=admission, projection=projection, delegation=delegation
+                authority_request, admission=admission, projection=projection, delegation=delegation
             )
         return claim_outputs
 

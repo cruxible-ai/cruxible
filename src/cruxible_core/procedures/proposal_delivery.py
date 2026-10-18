@@ -2358,6 +2358,9 @@ class ProposalTerminalEgressSink:
                 settle_submission=submission,
                 handoff=handoff,
             )
+        from cruxible_core.service.proposals.recompile import recompiled_successor
+
+        result = recompiled_successor(self.instance, result)
         settle = result.admission.settle_submission
         assert settle is not None  # submitted above, or verified by recover_existing
         if settle.mode == "fallback":

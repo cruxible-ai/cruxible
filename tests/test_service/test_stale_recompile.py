@@ -118,7 +118,7 @@ def test_stale_approve_returns_new_pending_id_without_recording_old_signature(
         may_activate=True,
     )
     assert isinstance(result, ProposalRecompiled) and result.status == "pending_review"
-    assert result.members_identical
+    assert not result.members_identical  # self-source Capture now binds the new head
     assert instance.proposal_evidence().read_approvals(result.candidate_digest) == ()
     assert instance.proposal_evidence().read_approvals(source.candidate.candidate_digest) == ()
     fresh = service_submit_playbill_approval(
@@ -132,3 +132,29 @@ def test_stale_approve_returns_new_pending_id_without_recording_old_signature(
         may_activate=True,
     )
     assert fresh.activation is not None and fresh.activation.status == "accepted"
+
+
+def test_same_request_write_recompiles_once_after_unrelated_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.authoring import documents
+
+    instance, _ = seed_write_surface(tmp_path)
+    activate = documents.service_activate_playbill_proposal
+    moved = []
+
+    def racing(target: PlaybillInstance, **kwargs):  # type: ignore[no-untyped-def]
+        if not moved:
+            moved.append(True)
+            assert _write(target, _set(f"{KIND}/wi-2", "title", "contender")).status == "accepted"
+        return activate(target, **kwargs)
+
+    monkeypatch.setattr(documents, "service_activate_playbill_proposal", racing)
+    outcome = _write(instance, _set(f"{KIND}/wi-1", "title", "survives the race"))
+    assert outcome.status == "accepted", outcome
+    assert outcome.proposal is not None
+    result = _proposal_result(instance, outcome.proposal.proposal_id)
+    assert result.admission.readmits is not None
+    source_id = result.admission.readmits.source_proposal_id
+    withdrawal = instance.proposal_evidence().read_withdrawal(source_id)
+    assert withdrawal is not None and withdrawal.superseded_by == outcome.proposal.proposal_id
