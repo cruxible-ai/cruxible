@@ -97,13 +97,17 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
         assert intent_id is None
         return stub_preflight_result(verdict="refused", diagnostics=(stub_diagnostic("example"),))
 
-    def submit_stub(selected: str, intent_id: str):
+    def submit_stub(selected: str, intent_id: str, *, accept: str):
+        assert accept == "if_allowed"
         seen.append((selected, intent_id))
         status = contracts.CandidateStatusRecord(
             state="draft",
             current_accepted_coordinate=COORDINATE,
         )
         return contracts.AuthoringSubmitResultRecord(
+            outcome=contracts.AuthoringProposed(
+                reason="not_ready_to_activate", message="candidate is draft"
+            ),
             intent={"intent_id": intent_id},
             status=status,
         )
@@ -775,3 +779,50 @@ def test_raw_claim_type_envelopes_are_no_longer_an_http_variant(playbill_http) -
         json={"claim_type": raw.model_dump(mode="json"), "proposal_name": "removed-raw"},
     )
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("entrypoint", ["input", "compiled", "staged"])
+@pytest.mark.parametrize("accept", ["if_allowed", "never"])
+def test_http_submit_forwards_accept(playbill_http, monkeypatch, entrypoint, accept):
+    from tests.test_authoring.test_authoring_program_stamp import _stamp
+    from tests.test_client.test_playbill_authoring import _claim_payload
+
+    client, instance_id, _ = playbill_http
+    seen = []
+
+    def submit(*args, **kwargs):
+        seen.append(kwargs["accept"])
+        return contracts.AuthoringSubmitResultRecord(
+            intent={"intent_id": INTENT_ID},
+            status=contracts.CandidateStatusRecord(
+                state="draft", current_accepted_coordinate=COORDINATE
+            ),
+            outcome=contracts.AuthoringProposed(reason="not_ready_to_activate", message="draft"),
+        )
+
+    path = f"/api/v1/{instance_id}/authoring/submit"
+    if entrypoint == "input":
+        function = "playbill_authoring_submit_input"
+        request = {
+            "tag": "playbill-authoring-input-submit-request-v1",
+            "input": {"kind": "subject", "subject_kind": "project.work_item", "key": "new"},
+        }
+    elif entrypoint == "compiled":
+        function = "playbill_authoring_compile_and_submit"
+        request = {
+            "tag": "playbill-authoring-intent-compile-request-v3",
+            "payload": _claim_payload(),
+            "reference_expectations": [],
+            "program_stamp": _stamp().model_dump(mode="json"),
+        }
+    else:
+        function = "playbill_authoring_submit"
+        path = f"/api/v1/{instance_id}/authoring/intents/{INTENT_ID}/submit"
+        request = {"tag": "playbill-authoring-intent-submit-request-v1"}
+    monkeypatch.setattr(f"cruxible_core.runtime.playbill_api.{function}", submit)
+    if accept != "if_allowed":
+        request["accept"] = accept
+    response = client.post(path, json=request)
+    assert response.status_code == 200, response.text
+    assert seen == [accept]
+    assert response.json()["outcome"]["status"] == "proposed"

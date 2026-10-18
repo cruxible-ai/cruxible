@@ -46,6 +46,7 @@ from cruxible_client.authoring.write_evidence import observe_changes, observe_ev
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockDetachResult
+from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
@@ -1011,6 +1012,7 @@ def handle_playbill_authoring_submit(
     *,
     payload: dict[str, Any] | None = None,
     intent_id: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.AuthoringSubmitResultRecord:
     """Submit a payload directly, a staged intent, or a payload onto a staged intent."""
 
@@ -1019,7 +1021,7 @@ def handle_playbill_authoring_submit(
             raise ConfigError("cruxible_authoring_submit takes a payload, an intent_id, or both")
         staged = intent_id
         return _daemon_call(
-            lambda client: client.submit_authoring_intent(instance_id, staged),
+            lambda client: client.submit_authoring_intent(instance_id, staged, accept=accept),
             operation_name="cruxible_authoring_submit",
         )
     request = _AUTHORING_INPUT.validate_python(payload)
@@ -1028,6 +1030,7 @@ def handle_playbill_authoring_submit(
             instance_id,
             input=request.model_dump(mode="json"),
             intent_id=intent_id,
+            accept=accept,
         ),
         operation_name="cruxible_authoring_submit",
     )

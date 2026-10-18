@@ -31,6 +31,7 @@ from cruxible_client.contracts.authoring.models import (
     PreflightResult,
     WorkingSelectionObservation,
 )
+from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
@@ -174,12 +175,16 @@ from cruxible_core.server.auth import (
 from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.registry import get_registry
 from cruxible_core.service.authoring.documents import (
+    ActivationReceipt as ServiceActivationReceipt,
+)
+from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_propose_playbill_document,
     service_propose_playbill_principal_change,
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
+from cruxible_core.service.authoring.landing import service_land_authoring_submit
 from cruxible_core.service.authoring.projection_sync import (
     service_read_playbill_block_sync_backing,
 )
@@ -1302,7 +1307,7 @@ def playbill_submit_approval(
         contracts.ProposalRecompiled.model_validate(result.model_dump(mode="json"))
         if isinstance(result, contracts.ProposalRecompiled)
         else contracts.ActivationReceipt.model_validate(result.model_dump(mode="json"))
-        if isinstance(result, contracts.ActivationReceipt)
+        if isinstance(result, ServiceActivationReceipt)
         else contracts.ApprovalReceipt.model_validate(result.model_dump(mode="json"))
     )
 
@@ -1816,6 +1821,7 @@ def playbill_authoring_compile_and_submit(
     reference_expectations: tuple[AuthoringExpectation, ...],
     program_stamp: AuthoringProgramStamp,
     intent_id: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.AuthoringSubmitResultRecord:
     check_permission("cruxible_authoring_compile", instance_id=instance_id)
     check_permission("cruxible_authoring_submit", instance_id=instance_id)
@@ -1828,7 +1834,13 @@ def playbill_authoring_compile_and_submit(
         reference_expectations=reference_expectations,
         program_stamp=program_stamp,
     )
-    submitted = contracts.AuthoringSubmitResultRecord.model_validate(result.model_dump(mode="json"))
+    submitted = service_land_authoring_submit(
+        coordinator,
+        actor=actor,
+        submitted=result,
+        accept=accept,
+        may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
+    )
     preflight = result.intent.last_preflight
     if preflight is None:
         return submitted
@@ -1844,6 +1856,7 @@ def playbill_authoring_submit_input(
     *,
     input: AuthoringInput,
     intent_id: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.AuthoringSubmitResultRecord:
     """Compile one tagless input and submit it; the preflight it ran rides along."""
 
@@ -1856,7 +1869,13 @@ def playbill_authoring_submit_input(
         canonical_timestamp=canonical_candidate_timestamp(utc_now()),
         intent_id=intent_id,
     )
-    submitted = contracts.AuthoringSubmitResultRecord.model_validate(result.model_dump(mode="json"))
+    submitted = service_land_authoring_submit(
+        coordinator,
+        actor=actor,
+        submitted=result,
+        accept=accept,
+        may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
+    )
     preflight = result.intent.last_preflight
     if preflight is None:
         return submitted
@@ -1921,11 +1940,19 @@ def playbill_authoring_preflight(
 def playbill_authoring_submit(
     instance_id: str,
     intent_id: str,
+    *,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.AuthoringSubmitResultRecord:
     check_permission("cruxible_authoring_submit", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.submit(intent_id, actor=actor)
-    return contracts.AuthoringSubmitResultRecord.model_validate(result.model_dump(mode="json"))
+    return service_land_authoring_submit(
+        coordinator,
+        actor=actor,
+        submitted=result,
+        accept=accept,
+        may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
+    )
 
 
 def playbill_authoring_status(

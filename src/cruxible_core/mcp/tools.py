@@ -18,6 +18,7 @@ from cruxible_client.contracts.authoring.models import (
     BlockDetachResult,
     WorkingSelectionObservation,
 )
+from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.captures import CanonicalDuration
@@ -852,17 +853,20 @@ def register_tools(
         *,
         payload: AuthoringInput | None = None,
         intent_id: str | None = None,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.AuthoringSubmitResultRecord:
         """Compile and submit a payload in one call, or submit a staged intent by ID.
 
         With both, the payload replaces that staged intent's payload first. A
         refused preflight returns the unsubmitted intent with its diagnostics.
-        Idempotent: resubmitting the same passing intent answers the same proposal.
+        Lands when policy and caller allow; accept="never" keeps the proposal.
+        Idempotent: resubmitting an accepted intent reports its coordinate.
         """
         return handlers.handle_playbill_authoring_submit(
             require_instance_id(instance_id),
             payload=None if payload is None else payload.model_dump(mode="json"),
             intent_id=intent_id,
+            accept=accept,
         )
 
     @_tool

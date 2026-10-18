@@ -107,6 +107,11 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
                 "tag": "playbill-authoring-submit-result-v1",
                 "intent": {"intent_id": INTENT_ID},
                 "status": _status(),
+                "outcome": {
+                    "status": "proposed",
+                    "reason": "not_ready_to_activate",
+                    "message": "candidate is draft",
+                },
             },
         )
 
@@ -122,7 +127,10 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
         "payload": payload,
         "intent_id": None,
     }
-    assert json.loads(captured[1].content) == {"tag": "playbill-authoring-intent-submit-request-v1"}
+    assert json.loads(captured[1].content) == {
+        "tag": "playbill-authoring-intent-submit-request-v1",
+        "accept": "if_allowed",
+    }
     compiled_request = json.loads(captured[0].content)
     assert "base" not in compiled_request
     assert "claim_id" not in compiled_request["payload"]
@@ -484,3 +492,41 @@ def test_exhaust_tap_wire_and_sdk_authoring_refuse_without_transport(
     with pytest.raises(AuthoringInputError) as sdk_caught:
         Cruxible.procedure(object(), definition=definition)
     assert sdk_caught.value.code == caught.value.code
+
+
+@pytest.mark.parametrize("entrypoint", ["input", "compiled", "intent"])
+@pytest.mark.parametrize("accept", ["if_allowed", "never"])
+def test_submit_transport_carries_accept_and_parses_landed_outcome(entrypoint, accept):
+    from cruxible_client import contracts
+    from tests.test_authoring.test_authoring_program_stamp import _stamp
+
+    captured = []
+    coordinate = contracts.AcceptedCoordinate.model_validate(COORDINATE)
+    outcome = contracts.AuthoringLanded(proposal_id="proposal", accepted_coordinate=coordinate)
+
+    def handler(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "intent": {"intent_id": INTENT_ID},
+                "status": {**_status(), "state": "accepted", "accepted_generation": COORDINATE},
+                "outcome": outcome.model_dump(mode="json"),
+            },
+        )
+
+    client = _client(handler)
+    if entrypoint == "input":
+        result = client.submit_authoring_input("inst", input={"kind": "claim"}, accept=accept)
+    elif entrypoint == "compiled":
+        result = client.submit_authoring(
+            "inst",
+            payload=_claim_payload(),
+            reference_expectations=[],
+            program_stamp=_stamp().model_dump(mode="json"),
+            accept=accept,
+        )
+    else:
+        result = client.submit_authoring_intent("inst", INTENT_ID, accept=accept)
+    assert len(captured) == 1 and captured[0]["accept"] == accept
+    assert result.outcome == outcome

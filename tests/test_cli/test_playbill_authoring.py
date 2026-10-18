@@ -142,7 +142,7 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
             return stub_preflight_result(verdict="refused", diagnostics=(stub_diagnostic("x"),))
 
         def submit_authoring_intent(
-            self, instance_id: str, intent_id: str
+            self, instance_id: str, intent_id: str, *, accept: str = "if_allowed"
         ) -> contracts.AuthoringSubmitResultRecord:
             calls.append((instance_id, intent_id))
             status = contracts.CandidateStatusRecord(
@@ -150,6 +150,9 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
                 current_accepted_coordinate=COORDINATE,
             )
             return contracts.AuthoringSubmitResultRecord(
+                outcome=contracts.AuthoringProposed(
+                    reason="not_ready_to_activate", message="candidate is draft"
+                ),
                 intent={"intent_id": intent_id},
                 status=status,
             )
@@ -187,10 +190,18 @@ def test_cli_submit_takes_a_payload_directly_and_dry_run_saves_nothing(
 
     class StubClient:
         def submit_authoring_input(
-            self, instance_id: str, *, input: dict[str, object], intent_id: str | None
+            self,
+            instance_id: str,
+            *,
+            input: dict[str, object],
+            intent_id: str | None,
+            accept: str = "if_allowed",
         ) -> contracts.AuthoringSubmitResultRecord:
             calls.append(("submit", input, intent_id))
             return contracts.AuthoringSubmitResultRecord(
+                outcome=contracts.AuthoringProposed(
+                    reason="not_ready_to_activate", message="candidate is draft"
+                ),
                 intent={"intent_id": INTENT_ID},
                 status=contracts.CandidateStatusRecord(
                     state="draft", current_accepted_coordinate=COORDINATE
@@ -496,7 +507,7 @@ def test_cli_claim_type_migration_submit_names_the_proposal_and_next_step(
 def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     class StubClient:
         def authoring_intent_status(
-            self, instance_id: str, intent_id: str
+            self, instance_id: str, intent_id: str, *, accept: str = "if_allowed"
         ) -> contracts.CandidateStatusRecord:
             assert (instance_id, intent_id) == ("inst_authoring", INTENT_ID)
             return contracts.CandidateStatusRecord(

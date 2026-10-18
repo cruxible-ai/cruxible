@@ -77,6 +77,7 @@ from cruxible_client.authoring.write_evidence import observe_changes, observe_ev
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockSyncResult
+from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BUILTIN_CLAIM_TYPES, BuiltinClaimTypeName
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
@@ -157,7 +158,6 @@ from cruxible_core.cli.commands._common import (
     _require_instance_id,
     _root_ctx_obj,
     _transport_target,
-    and_activate_option,
     brief_option,
     change_control_options,
     echo_preview_next,
@@ -4308,14 +4308,14 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool) -> None:
     default=False,
     help="Return the preflight submitting PAYLOAD would run, with every refusal; save nothing.",
 )
-@and_activate_option
+@click.option("--no-accept", is_flag=True, help="Submit a proposal without activating it.")
 @brief_option
 @handle_errors
 def submit_authoring_intent(
     payload: str | None,
     intent_id: str | None,
     dry_run: bool,
-    and_activate: bool,
+    no_accept: bool,
     output_brief: bool,
 ) -> None:
     """Compile, check and submit PAYLOAD as one proposal, or submit a staged intent.
@@ -4328,17 +4328,14 @@ def submit_authoring_intent(
 
     PAYLOAD is a tagless authoring input file, or - for stdin. A refused
     preflight returns the unsubmitted intent with its diagnostics; a passing one
-    returns the proposal and what it still needs (approval or activation).
-    Submitting never approves. --and-activate activates a candidate that needs
-    nothing further and leaves any other untouched.
+    lands immediately when policy and caller allow. Otherwise the typed result
+    names why it stopped and the next step. --no-accept keeps the proposal.
     """
 
     if payload is None and intent_id is None:
         raise click.UsageError("provide PAYLOAD, --intent-id, or both")
     if dry_run and (payload is None or intent_id is not None):
         raise click.UsageError("--dry-run previews a new PAYLOAD and takes no --intent-id")
-    if dry_run and and_activate:
-        raise click.UsageError("--dry-run saves nothing, so it cannot --and-activate")
     # Parsed before any daemon call: a malformed payload names its field path
     # and the matching example without needing a reachable daemon.
     parsed = None if payload is None else _read_authoring_input(payload).model_dump(mode="json")
@@ -4364,60 +4361,31 @@ def submit_authoring_intent(
         _emit_json(preview.model_dump(mode="json"))
         return
 
-    def call(client: CruxibleClient, instance_id: str) -> tuple[Any, Any]:
+    def call(client: CruxibleClient, instance_id: str) -> contracts.AuthoringSubmitResultRecord:
+        accept: AuthoringAccept = "never" if no_accept else "if_allowed"
         if parsed is None:
             assert intent_id is not None
-            submitted = client.submit_authoring_intent(instance_id, intent_id)
-        else:
-            submitted = client.submit_authoring_input(
-                instance_id, input=parsed, intent_id=intent_id
-            )
-        if not and_activate or submitted.status.state != "ready_to_activate":
-            return submitted, None
-        # Only a candidate that needs nothing further is activated here. Anything
-        # else returns the submit result untouched: a partly-activated candidate
-        # would be a worse answer than an unactivated one.
-        proposal_id = submitted.status.proposal_id
-        if proposal_id is None:  # pragma: no cover - ready_to_activate carries one
-            return submitted, None
-        return submitted, client.activate_proposal(instance_id, proposal_id)
+            return client.submit_authoring_intent(instance_id, intent_id, accept=accept)
+        return client.submit_authoring_input(
+            instance_id, input=parsed, intent_id=intent_id, accept=accept
+        )
 
-    submitted, activation = _server_call(call, command_name="cruxible authoring submit")
-    result: dict[str, Any] = {"submit": submitted.model_dump(mode="json")}
-    if activation is not None:
-        result["activation"] = activation.model_dump(mode="json")
-    elif and_activate:
-        result["activation_note"] = _not_activated_note(submitted.status.state)
+    submitted = _server_call(call, command_name="cruxible authoring submit")
+    outcome = submitted.outcome
     if output_brief:
-        accepted = activation is not None and activation.accepted_coordinate is not None
+        landed = isinstance(outcome, contracts.AuthoringLanded)
         _emit_brief(
-            outcome=(
-                str(activation.status)
-                if activation is not None
-                else f"submitted ({submitted.status.state})"
-            ),
+            outcome="accepted" if landed else f"submitted ({submitted.status.state})",
             ids={
                 "intent": str(submitted.intent.get("intent_id")),
-                "proposal": submitted.status.proposal_id,
-                "coordinate": activation.accepted_coordinate.git_oid if accepted else None,
-                "receipt": activation.tag if activation is not None else None,
+                "proposal": outcome.proposal_id,
+                "coordinate": outcome.accepted_coordinate.git_oid if landed else None,
             },
-            reason=_submit_refusal_reason(submitted),
-            next_command=_submit_next_command(submitted, activated=activation is not None),
+            reason=_submit_refusal_reason(submitted) or (None if landed else outcome.message),
+            next_command=None if landed else outcome.next,
         )
         return
-    _emit_json(result if (and_activate or activation is not None) else result["submit"])
-
-
-def _not_activated_note(state: str) -> str:
-    """Say why --and-activate stopped, in the caller's terms."""
-
-    if state == "awaiting_external_approval":
-        return (
-            "not activated: the candidate needs an external approval. "
-            "The eligible signer's `cruxible proposal approve` activates it."
-        )
-    return f"not activated: the candidate is {state}, not ready_to_activate"
+    _emit_json(submitted.model_dump(mode="json"))
 
 
 def _submit_refusal_reason(submitted: Any) -> str | None:
@@ -4458,19 +4426,6 @@ def _submit_refusal_reason(submitted: Any) -> str | None:
         one_line_reason = " ".join(reason.split())
         rendered.append(f"blocked {check} by {dependencies}: {one_line_reason}")
     return "; ".join(rendered) or "preflight refused without a delivered diagnostic"
-
-
-def _submit_next_command(submitted: Any, *, activated: bool) -> str | None:
-    if activated:
-        return None
-    proposal_id = submitted.status.proposal_id
-    if submitted.status.state == "ready_to_activate" and proposal_id:
-        return f"cruxible proposal activate {proposal_id}"
-    if submitted.status.state == "awaiting_external_approval" and proposal_id:
-        return f"cruxible proposal approve {proposal_id}"
-    if submitted.status.state == "preflight_refused":
-        return f"cruxible authoring preflight {submitted.intent['intent_id']}"
-    return None
 
 
 @authoring_group.command("status")

@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import (
+    AuthoringCompileSubmitRequest,
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
 )
@@ -829,7 +830,7 @@ def preflight_authoring_intent(
 )
 def compile_and_submit_authoring(
     instance_id: str,
-    req: AuthoringIntentCompileRequest | AuthoringInputSubmitRequest,
+    req: AuthoringCompileSubmitRequest | AuthoringInputSubmitRequest,
 ) -> contracts.AuthoringSubmitResultRecord | contracts.AuthoringPreflightResult:
     """Compile and submit one payload; a dry-run input answers with its preflight."""
 
@@ -842,6 +843,7 @@ def compile_and_submit_authoring(
             resolve_server_instance_id(instance_id),
             input=req.input,
             intent_id=req.intent_id,
+            accept=req.accept,
         )
     return playbill_api.playbill_authoring_compile_and_submit(
         resolve_server_instance_id(instance_id),
@@ -849,6 +851,7 @@ def compile_and_submit_authoring(
         reference_expectations=req.reference_expectations,
         program_stamp=req.program_stamp,
         intent_id=req.intent_id,
+        accept=req.accept,
     )
 
 
@@ -859,10 +862,10 @@ def compile_and_submit_authoring(
 def submit_authoring_intent(
     instance_id: str,
     intent_id: str,
-    _req: AuthoringSubmitRequest,
+    req: AuthoringSubmitRequest,
 ) -> contracts.AuthoringSubmitResultRecord:
     return playbill_api.playbill_authoring_submit(
-        resolve_server_instance_id(instance_id), intent_id
+        resolve_server_instance_id(instance_id), intent_id, accept=req.accept
     )
 
 

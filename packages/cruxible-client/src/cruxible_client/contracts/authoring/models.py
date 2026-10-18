@@ -28,6 +28,7 @@ from cruxible_client.contracts.approval_policy import (
     ApprovalPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.candidates import validate_candidate_timestamp
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
@@ -2105,6 +2106,12 @@ class AuthoringIntentCompileRequest(_StrictAuthoringModel):
         return canonical_reference_expectations(value)
 
 
+class AuthoringCompileSubmitRequest(AuthoringIntentCompileRequest):
+    """Compile and submit, landing immediately when policy and caller allow."""
+
+    accept: AuthoringAccept = "if_allowed"
+
+
 class AuthoringIntentPreflightRequest(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-preflight-request-v1"] = (
         "playbill-authoring-intent-preflight-request-v1"
@@ -2115,6 +2122,8 @@ class AuthoringIntentSubmitRequest(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-submit-request-v1"] = (
         "playbill-authoring-intent-submit-request-v1"
     )
+
+    accept: AuthoringAccept = "if_allowed"
 
 
 class AuthoringSubmitMember(_StrictAuthoringModel):
@@ -2439,6 +2448,7 @@ __all__ = [
     "AuthoringReferenceKind",
     "AuthoringSlotExpectation",
     "AuthoringReferenceSuccessor",
+    "AuthoringCompileSubmitRequest",
     "AuthoringSubmitMember",
     "AuthoringSubmitResult",
     "BlockedCheck",

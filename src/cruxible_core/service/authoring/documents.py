@@ -401,11 +401,7 @@ def service_submit_playbill_approval(
     if proposal.evaluation.evaluated_base_oid != instance.accepted_coordinate().git_oid:
         recompiled = _recompile_for_review(instance, proposal)
         if recompiled is not None:
-            if (
-                recompiled.status == "ready_to_activate"
-                and activate_when_complete
-                and may_activate
-            ):
+            if recompiled.status == "ready_to_activate" and activate_when_complete and may_activate:
                 return service_activate_playbill_proposal(
                     instance,
                     proposal_id=recompiled.proposal_id,
