@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from heapq import nsmallest
+from itertools import chain
 
 from pydantic import ValidationError
 
@@ -17,6 +19,10 @@ from cruxible_client.contracts.errors import CruxibleError, ProposalNotFoundErro
 from cruxible_client.contracts.proposal_models import (
     ProposalReadmissionLink,
     ProposalSettleSubmission,
+)
+from cruxible_client.contracts.recompilation import (
+    RECOMPILED_MEMBER_PATH_LIMIT,
+    RecompiledMemberChange,
 )
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -61,6 +67,28 @@ class Recompilation:
     proposal: ProposalResult | ProposalPreview
     members_identical: bool
     coordinate: AcceptedCoordinate
+    changed_members: tuple[RecompiledMemberChange, ...]
+    changed_members_truncated: bool
+
+
+def _changed_members(
+    before: Mapping[str, str | None], after: Mapping[str, str | None]
+) -> tuple[tuple[RecompiledMemberChange, ...], bool]:
+    """On explicit recompilation, compare only these candidates' own members.
+
+    Two keyed lists plus a fixed-size selection keep work O(members), including
+    the sorted bounded preview. No accepted-instance population is visited.
+    """
+    changes = chain(
+        (
+            RecompiledMemberChange(path=path, change="added" if path not in before else "replaced")
+            for path, digest in after.items()
+            if path not in before or before[path] != digest
+        ),
+        (RecompiledMemberChange(path=path, change="removed") for path in before if path not in after),
+    )
+    selected = nsmallest(RECOMPILED_MEMBER_PATH_LIMIT + 1, changes, key=lambda item: item.path)
+    return tuple(selected[:RECOMPILED_MEMBER_PATH_LIMIT]), len(selected) > RECOMPILED_MEMBER_PATH_LIMIT
 
 
 def recompiled_successor(instance: PlaybillInstance, source: ProposalResult) -> ProposalResult:
@@ -296,17 +324,20 @@ def _recompile_proposal(
         )
     # Member evidence pins exact own bytes (including deletions); daemon cards
     # and change-set records are not part of this informational comparison.
-    identical = source.candidate is not None and {
+    before = {} if source.candidate is None else {
         member.path: getattr(
             member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
         )
         for member in source.candidate.members
-    } == {
+    }
+    after = {
         member.path: getattr(
             member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
         )
         for member in result.candidate.members
     }
+    identical = source.candidate is not None and before == after
+    changed_members, truncated = _changed_members(before, after)
     if not preview:
         assert isinstance(result, ProposalResult)
         from cruxible_core.service.change_preview import ChangeMode
@@ -344,4 +375,4 @@ def _recompile_proposal(
                 superseded_by=result.admission.proposal_id,
             ),
         )
-    return Recompilation(source_id, result, identical, head)
+    return Recompilation(source_id, result, identical, head, changed_members, truncated)

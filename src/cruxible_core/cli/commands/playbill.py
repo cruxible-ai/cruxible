@@ -2594,6 +2594,10 @@ def _echo_recompiled_proposal(result: contracts.ProposalRecompiled) -> None:
         f"Recompiled as {result.proposal_id}; review this new proposal "
         f"(members identical: {result.members_identical})"
     )
+    for member in result.changed_members:
+        click.echo(f"  {member.change}: {member.path}")
+    if result.changed_members_truncated:
+        click.echo("  Changed member paths truncated; review the new proposal for all members.")
     operation = "review" if result.status == "pending_review" else "activate"
     click.echo(f"Next: cruxible proposal {operation} {result.proposal_id}")
 

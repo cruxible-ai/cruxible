@@ -846,6 +846,8 @@ def _recompile_for_review(
         proposal_id=result.admission.proposal_id,
         candidate_digest=result.candidate.candidate_digest,
         members_identical=recompiled.members_identical,
+        changed_members=recompiled.changed_members,
+        changed_members_truncated=recompiled.changed_members_truncated,
         accepted_coordinate=recompiled.coordinate,
     )
 
