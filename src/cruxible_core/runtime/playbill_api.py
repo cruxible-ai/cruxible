@@ -1301,6 +1301,8 @@ def playbill_submit_approval(
     return (
         contracts.ProposalRecompiled.model_validate(result.model_dump(mode="json"))
         if isinstance(result, contracts.ProposalRecompiled)
+        else contracts.ActivationReceipt.model_validate(result.model_dump(mode="json"))
+        if isinstance(result, contracts.ActivationReceipt)
         else contracts.ApprovalReceipt.model_validate(result.model_dump(mode="json"))
     )
 

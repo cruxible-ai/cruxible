@@ -2584,6 +2584,9 @@ def approve_proposal(
     if isinstance(result, contracts.ProposalRecompiled):
         _echo_recompiled_proposal(result)
         return
+    if isinstance(result, contracts.ActivationReceipt):
+        _echo_activation(result)
+        return
     click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
     for line in _approval_outcome_lines(result):
         click.echo(line)
@@ -2680,6 +2683,10 @@ def activate_proposal(proposal_id: str, output_brief: bool, output_json: bool) -
     if isinstance(result, contracts.ProposalRecompiled):
         _echo_recompiled_proposal(result)
         return
+    _echo_activation(result)
+
+
+def _echo_activation(result: contracts.ActivationReceipt) -> None:
     if result.status == "accepted" and result.accepted_coordinate is not None:
         click.echo(f"accepted ({result.accepted_coordinate.git_oid[:12]}) by {result.activated_by}")
         click.echo("next: cruxible next")

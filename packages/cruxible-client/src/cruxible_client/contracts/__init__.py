@@ -1051,7 +1051,7 @@ class ApprovalReceipt(BaseModel):
 
 
 ProposalActivationResult = ActivationReceipt | ProposalRecompiled
-ProposalApprovalResult = ApprovalReceipt | ProposalRecompiled
+ProposalApprovalResult = ApprovalReceipt | ActivationReceipt | ProposalRecompiled
 
 
 class FloorRefreshResult(BaseModel):

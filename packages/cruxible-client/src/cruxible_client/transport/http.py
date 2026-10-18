@@ -959,6 +959,8 @@ class CruxibleClient:
         )
         if response.is_success and response.json().get("tag") == "cruxible-proposal-recompiled-v1":
             return self._parse_model(response, contracts.ProposalRecompiled)
+        if response.is_success and response.json().get("tag") == "playbill-activation-receipt-v1":
+            return self._parse_model(response, contracts.ActivationReceipt)
         return self._parse_model(response, contracts.ApprovalReceipt)
 
     def approve_proposal(

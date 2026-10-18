@@ -379,7 +379,7 @@ def service_submit_playbill_approval(
     activate_when_complete: bool = False,
     may_activate: bool = False,
     may_activate_compiler_upgrade: bool = False,
-) -> ApprovalReceipt | ProposalRecompiled:
+) -> ApprovalReceipt | ActivationReceipt | ProposalRecompiled:
     """Verify and persist one public attestation; activate when it completes the candidate.
 
     When this signature leaves no approval outstanding, ``activate_when_complete``
@@ -401,6 +401,16 @@ def service_submit_playbill_approval(
     if proposal.evaluation.evaluated_base_oid != instance.accepted_coordinate().git_oid:
         recompiled = _recompile_for_review(instance, proposal)
         if recompiled is not None:
+            if (
+                recompiled.status == "ready_to_activate"
+                and activate_when_complete
+                and may_activate
+            ):
+                return service_activate_playbill_proposal(
+                    instance,
+                    proposal_id=recompiled.proposal_id,
+                    activated_by=authenticated_submitter,
+                )
             return recompiled
     if attestation.payload_digest != candidate.candidate_digest:
         raise ProposalIntegrityError("attestation payload differs from proposal candidate")
