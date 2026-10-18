@@ -412,9 +412,9 @@ class ProposalReadmitNotStale(ProposalAdmissionError):
 class ProposalStale(ProposalAdmissionError):
     """Activation refused: accepted state moved since the proposal was evaluated.
 
-    A stale proposal cannot settle where it stands. Its author readmits it,
-    which rebases the same authored change onto the current head as a new
-    proposal to review, or withdraws it.
+    Retained lowering inputs recompile at head on explicit operations. A
+    refusal leaves this proposal stale with a typed reason and readmit/withdraw
+    repair. Exact-byte origins keep ordinary readmission.
     """
 
     error_code = "cruxible.proposal.stale"

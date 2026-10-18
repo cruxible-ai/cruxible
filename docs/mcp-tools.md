@@ -194,7 +194,7 @@ ordinary steps.
 | `cruxible_proposal_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call; the approval that completes the candidate activates it unless `hold` | `GRAPH_WRITE` |
 | `cruxible_proposal_activate` | Activate by compare-and-set; returns the activation receipt (the daemon delivers the floor) | `GRAPH_WRITE` |
 | `cruxible_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
-| `cruxible_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
+| `cruxible_proposal_readmit` | Recompile retained inputs at head, or readmit exact bytes | `GOVERNED_WRITE` |
 | `cruxible_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
 | `cruxible_proposal_reject` | Reject another actor's open proposal as its reviewer, with a recorded reason | `GRAPH_WRITE` |
 
@@ -477,3 +477,5 @@ or paths are refused. Named-query `params` and Procedure `input` use the vocabul
 and input contracts declared in accepted state, which the daemon validates. A `params`
 value may be `null`, which binds an optional parameter explicitly; omitting it takes the
 parameter's default.
+
+Stale authoring/write and Procedure proposals recompile on approve or activate. A typed recompilation result names the fresh proposal and whether its members are byte-identical. Review it normally; no approval carries. Providers are not run again.

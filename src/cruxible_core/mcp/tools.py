@@ -551,7 +551,7 @@ def register_tools(
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.ProposalReadmitResult:
-        """Re-admit one stale proposal against the current accepted coordinate."""
+        """Recompile retained input at head; other origins readmit their exact bytes."""
         return handlers.handle_playbill_readmit_proposal(
             require_instance_id(instance_id), proposal_id, dry_run=dry_run, at=at
         )

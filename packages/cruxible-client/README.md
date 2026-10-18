@@ -2090,7 +2090,7 @@ Activates this proposal once its approvals are in: `Cruxible.activate` by handle
 readmit(*, dry_run: bool | None=None, at: str | None=None) -> api.ProposalReadmitResult
 ```
 
-Re-admits this stale proposal at the current head under a new proposal ID; review it again.
+Recompiles retained authoring/write or Procedure input at head (other origins readmit bytes) under a fresh proposal ID; review it normally. Activate and approve may return `ProposalRecompiled`, naming the new ID and `members_identical`; no approval carries.
 
 <a id="api-proposal-approve"></a>
 

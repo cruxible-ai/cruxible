@@ -242,7 +242,7 @@ def _status_for_error(exc: CoreError) -> int:
             ProposalIntegrityError,
             ReviewOperationalConcurrentChangeError,
             ProposalSelectorAmbiguousError,
-    ProposalStale,
+            ProposalStale,
         ),
     ):
         return 409

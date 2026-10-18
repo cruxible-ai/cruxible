@@ -278,6 +278,14 @@ editor or a model. It depends on the vocabulary alone (Subjects are typed by
 kind), so floor delivery keeps it current by rewriting it only when the
 vocabulary changes; `cruxible stub --out PATH` writes one explicitly.
 
+A proposal becomes stale when accepted head moves past its base. On activate,
+approve, or readmit, retained authoring/write and Procedure inputs are compiled
+again at the head as a fresh proposal that supersedes the old one. Normal
+approval policy applies, with no carried approvals. Providers and state-tap
+reads are not repeated. Pins and delegated settle authority are checked again;
+a refusal leaves the source stale with its repair. Other origins keep byte
+readmission. This work happens only on those explicit operations.
+
 ## Work queues
 
 Three queues tell you what to do, each a read:

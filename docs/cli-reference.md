@@ -3909,8 +3909,16 @@ full digest, a unique digest prefix (`sha256:` plus at least 8 hex characters),
 or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
-Activating a stale proposal refuses `cruxible.proposal.stale`, naming
-`proposal readmit` (or `withdraw`) as the repair.
+`proposal activate` and `proposal approve` recompile a stale authoring/write or
+Procedure proposal from its retained input at the current head, without running
+providers. The fresh proposal supersedes the stale one. Activation lands it
+in the same call when no approval is required; otherwise the typed
+`cruxible-proposal-recompiled-v1` result names its new ID and whether its own
+member bytes are identical. Review that new proposal normally: approvals are
+never carried or signed for it. A lowering or pin refusal leaves the source
+stale with `cruxible.proposal.stale` and `context.recompile_reason`; repair by
+readmitting, withdrawing, or submitting corrected input. Exact-byte origins
+(such as kit add and provider move) keep their existing stale behavior.
 
 `proposal approve` signs the reviewed candidate. When that signature completes
 the candidate's required approvals and your tier may activate (`graph_write`),
@@ -3923,18 +3931,21 @@ it first). `proposal activate` remains for a held approval, a candidate that
 needs no approval, and activation by someone other than the last signer. The
 SDK (`proposal.approve(..., hold=)`), HTTP (`hold` in the approval body) and
 MCP (`hold` on `cruxible_proposal_approve` and `_submit`) behave the same.
-`proposal readmit` replays a stale proposal's authored content through the current
-governed rebase and returns a fresh, idempotent proposal without changing the old
-proposal evidence. It refuses `cruxible.proposal.readmit_already_accepted` when
+`proposal readmit` recompiles retained authoring/write and Procedure inputs at
+the head; other origins replay their authored bytes. Successful recompilation
+links the fresh proposal to its source and records a superseded withdrawal on
+the source, preserving its immutable admission and evaluation. It refuses `cruxible.proposal.readmit_already_accepted` when
 the change is in accepted state -- the proposal itself was accepted, or its
 readmission was (`context.accepted_as`) -- and `cruxible.proposal.readmit_not_stale`
 for an open or refused proposal. A stale ClaimType migration is not
 byte-rebased because its dependent inventory may have changed; run
 `cruxible claim-type migrate` again at the current head instead.
 
-A readmitted proposal that becomes stale can be readmitted again. Each link
-replays its retained tree from the base where that tree was evaluated; the
-original Procedure item reasons remain available in review and after acceptance.
+A readmitted proposal that becomes stale can be readmitted again. Recompilation
+follows the chain to its retained input. Procedure output and state-tap reads
+are retained, write names stay as resolved, and delegated settlement rechecks
+its Mandate and condition at the head. Original item reasons remain available
+in review and after acceptance.
 
 `proposal withdraw` is the terminal statement for the opposite case: an open (or
 stale) proposal that will never be activated, because a hard limit refuses its
