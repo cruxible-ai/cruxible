@@ -13,6 +13,7 @@ from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
 from cruxible_client.contracts.errors import ProposalStale
 from cruxible_client.contracts.proposal_models import (
     ProposalReadmissionLink,
+    ProposalSettleSubmission,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import (
@@ -41,6 +42,7 @@ class RecompileInput:
     rationale: str | None
     operation: str
     creations: tuple[RecordedCreation, ...] = ()
+    settle_submission: ProposalSettleSubmission | None = None
     authorize: (
         Callable[[AcceptedProjectionCoordinate, Mapping[str, bytes]], Mapping[str, bytes] | None]
         | None
@@ -98,7 +100,7 @@ def _authoring_input(
         instance, intent=intent, actor=AuthenticatedActor(actor_id=admission.actor_id)
     )
     if computed.result.verdict != "passed" or computed.lowered is None:
-        diagnostics = computed.result.diagnostics
+        diagnostics = computed.result.frontier.diagnostics
         raise ProposalStale(
             admission.proposal_id,
             reason=diagnostics[0].code if diagnostics else "lowering_refused",
@@ -238,6 +240,26 @@ def recompile_proposal(
         from cruxible_core.service.change_preview import ChangeMode
         from cruxible_core.service.proposals.proposals import _close_once
 
+        if origin.admission.procedure_operation is None:
+            intent_id = authoring_intent_id_for_proposal_ref(
+                origin.admission.target_ref, actor_id=origin.admission.actor_id
+            )
+            assert intent_id is not None
+            coordinator = AuthoringIntentCoordinator.for_instance(instance)
+            status = coordinator._candidate_status(
+                proposal_id=result.admission.proposal_id,
+                candidate_digest=result.candidate.candidate_digest,
+            )
+            coordinator.store.transition(
+                intent_id,
+                actor_id=origin.admission.actor_id,
+                operation_key=link.operation_digest,
+                transform=lambda intent: intent.model_copy(
+                    update={
+                        "candidate_status": status,
+                    }
+                ),
+            )
         with instance.refusal_index().closing(source_id):
             _close_once(
                 instance,

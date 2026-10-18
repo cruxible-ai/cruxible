@@ -38,6 +38,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
+from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
 from cruxible_client.contracts.workspace_advertisement import (
@@ -376,7 +377,7 @@ def service_submit_playbill_approval(
     activate_when_complete: bool = False,
     may_activate: bool = False,
     may_activate_compiler_upgrade: bool = False,
-) -> ApprovalReceipt:
+) -> ApprovalReceipt | ProposalRecompiled:
     """Verify and persist one public attestation; activate when it completes the candidate.
 
     When this signature leaves no approval outstanding, ``activate_when_complete``
@@ -395,6 +396,10 @@ def service_submit_playbill_approval(
 
     instance.require_writable()
     proposal, candidate = _candidate_for_proposal(instance, proposal_id)
+    if proposal.evaluation.evaluated_base_oid != instance.accepted_coordinate().git_oid:
+        recompiled = _recompile_for_review(instance, proposal)
+        if recompiled is not None:
+            return recompiled
     if attestation.payload_digest != candidate.candidate_digest:
         raise ProposalIntegrityError("attestation payload differs from proposal candidate")
     signing_generation = instance.generation_for_semantic_root(
@@ -480,6 +485,8 @@ def service_submit_playbill_approval(
             # with the signature already persisted above.
             reason = "activation_not_permitted"
         else:
+            if isinstance(activation, ProposalRecompiled):
+                return activation
             return _approval_receipt(proposal_id, candidate, verified, activation=activation)
     # Publication is deliberately OUTSIDE the lock: it rebuilds the advisory
     # branch and its notes from the store and now takes the same candidate lock
@@ -637,7 +644,41 @@ def service_activate_playbill_proposal(
     activated_by: str,
     mandate_digest: str | None = None,
     handoff: SettlementHandoff | None = None,
-) -> ActivationReceipt:
+) -> ActivationReceipt | ProposalRecompiled:
+    """Activate once, recompiling once if a head race invalidated the candidate."""
+    try:
+        result = _activate_candidate(
+            instance,
+            proposal_id=proposal_id,
+            activated_by=activated_by,
+            mandate_digest=mandate_digest,
+            handoff=handoff,
+        )
+    except (ProposalStale, SettlementIntegrityError) as exc:
+        if isinstance(exc, ProposalStale) and exc.reason is not None:
+            raise
+        if (
+            instance.proposal_evidence().read_evaluation(proposal_id).evaluated_base_oid
+            == instance.accepted_coordinate().git_oid
+        ):
+            raise
+    else:
+        if not isinstance(result, ActivationReceipt) or result.status != "lost_cas":
+            return result
+    return _activate_candidate(
+        instance, proposal_id=proposal_id, activated_by=activated_by, mandate_digest=mandate_digest
+    )
+
+
+def _activate_candidate(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    activated_by: str,
+    mandate_digest: str | None = None,
+    handoff: SettlementHandoff | None = None,
+    _recompiled: bool = False,
+) -> ActivationReceipt | ProposalRecompiled:
     """Settle, prebuild, and atomically activate one admitted candidate.
 
     ``mandate_digest`` is passed only by the settle terminal for a candidate it
@@ -659,6 +700,26 @@ def service_activate_playbill_proposal(
             f"{ProposalActivationRequestInvalid.error_code}: proposal_id must be a "
             "canonical sha256 digest"
         ) from exc
+    evidence = instance.proposal_evidence()
+    evaluation_at_entry = evidence.read_evaluation(proposal_id)
+    if evaluation_at_entry.evaluated_base_oid != instance.accepted_coordinate().git_oid:
+        if _recompiled:
+            raise ProposalStale(proposal_id, reason="head_moved")
+        proposal, _candidate = _candidate_for_proposal(instance, proposal_id)
+        recompiled = _recompile_for_review(instance, proposal)
+        if recompiled is None:
+            raise ProposalStale(proposal_id)
+        if recompiled.status == "pending_review" and mandate_digest is None:
+            return recompiled
+        # An ordinary no-approval candidate can land in this same call. The
+        # new id has no carried signatures. A settle's authority is reverified.
+        return _activate_candidate(
+            instance,
+            proposal_id=recompiled.proposal_id,
+            activated_by=activated_by,
+            mandate_digest=mandate_digest,
+            _recompiled=True,
+        )
     submitted = None if handoff is None else handoff.take(proposal_id)
     in_hand = None if submitted is None else _submitted_for_activation(instance, submitted)
     if submitted is not None and in_hand is not None:
@@ -740,6 +801,26 @@ def service_activate_playbill_proposal(
             else None
         ),
         workspace_advertisement=advertisement,
+    )
+
+
+def _recompile_for_review(
+    instance: PlaybillInstance, source: ProposalResult
+) -> ProposalRecompiled | None:
+    from cruxible_core.service.proposals.recompile import recompile_proposal
+
+    recompiled = recompile_proposal(instance, source)
+    if recompiled is None:
+        return None
+    result = recompiled.proposal
+    assert isinstance(result, ProposalResult) and result.candidate is not None
+    return ProposalRecompiled(
+        status="pending_review" if result.candidate.approval_requirements else "ready_to_activate",
+        source_proposal_id=recompiled.source_proposal_id,
+        proposal_id=result.admission.proposal_id,
+        candidate_digest=result.candidate.candidate_digest,
+        members_identical=recompiled.members_identical,
+        accepted_coordinate=recompiled.coordinate,
     )
 
 

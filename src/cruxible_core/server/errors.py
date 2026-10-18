@@ -24,6 +24,7 @@ from cruxible_client.contracts.errors import (
     ProposalReadmitAlreadyAccepted,
     ProposalReadmitNotStale,
     ProposalSelectorAmbiguousError,
+    ProposalStale,
     SettlementIntegrityError,
     SinceRequestInvalid,
     SubjectNotFoundError,
@@ -241,6 +242,7 @@ def _status_for_error(exc: CoreError) -> int:
             ProposalIntegrityError,
             ReviewOperationalConcurrentChangeError,
             ProposalSelectorAmbiguousError,
+    ProposalStale,
         ),
     ):
         return 409
@@ -306,6 +308,12 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     if isinstance(exc, ProposalReadmitAlreadyAccepted):
         context["proposal_id"] = exc.proposal_id
         context["accepted_as"] = exc.accepted_as
+    if isinstance(exc, ProposalStale):
+        context["proposal_id"] = exc.proposal_id
+        if exc.reason is not None:
+            context["recompile_reason"] = exc.reason
+        if exc.detail is not None:
+            context["detail"] = exc.detail
     if isinstance(exc, ProposalReadmitNotStale):
         context["proposal_id"] = exc.proposal_id
         context["status"] = exc.status

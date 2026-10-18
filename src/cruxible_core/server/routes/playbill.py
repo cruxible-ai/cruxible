@@ -568,7 +568,7 @@ def prepare_approval(
 
 @router.post(
     "/{instance_id}/proposals/{proposal_id}/approvals",
-    response_model=contracts.ApprovalReceipt,
+    response_model=contracts.ProposalApprovalResult,
     response_model_exclude={"git_workspace_note"},
 )
 # Synchronous, like every other mutating Cruxible route: this one now publishes
@@ -580,7 +580,7 @@ def submit_approval(
     instance_id: str,
     proposal_id: str,
     req: ApprovalRequest,
-) -> contracts.ApprovalReceipt:
+) -> contracts.ProposalApprovalResult:
     return playbill_api.playbill_submit_approval(
         resolve_server_instance_id(instance_id),
         proposal_id,
@@ -591,12 +591,12 @@ def submit_approval(
 
 @router.post(
     "/{instance_id}/proposals/{proposal_id}/activate",
-    response_model=contracts.ActivationReceipt,
+    response_model=contracts.ProposalActivationResult,
 )
 def activate_proposal(
     instance_id: str,
     proposal_id: str,
-) -> contracts.ActivationReceipt:
+) -> contracts.ProposalActivationResult:
     return playbill_api.playbill_activate(resolve_server_instance_id(instance_id), proposal_id)
 
 

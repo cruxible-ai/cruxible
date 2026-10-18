@@ -3203,7 +3203,7 @@ def _service_write(
                 request=request,
                 changes=changes,
                 subjects_added=subjects_added,
-                proposal=WriteProposalRef(proposal_id=proposal_id, state="accepted"),
+                proposal=WriteProposalRef(proposal_id=receipt.proposal_id, state="accepted"),
                 candidate=admitted[-1] if admitted else None,
             )
         return WriteOutcome(

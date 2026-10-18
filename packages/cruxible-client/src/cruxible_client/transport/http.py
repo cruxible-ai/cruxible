@@ -948,7 +948,7 @@ class CruxibleClient:
         *,
         attestation: Mapping[str, Any],
         hold: bool = False,
-    ) -> contracts.ApprovalReceipt:
+    ) -> contracts.ProposalApprovalResult:
         """Submit one approval; the daemon activates a candidate it completes.
 
         ``hold=True`` signs only and leaves activation to someone else.
@@ -957,7 +957,13 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
             json={"attestation": dict(attestation), "hold": hold},
         )
-        return self._parse_model(response, contracts.ApprovalReceipt)
+        return self._parse_model(
+            response,
+            contracts.ProposalRecompiled
+            if response.is_success
+            and response.json().get("tag") == "cruxible-proposal-recompiled-v1"
+            else contracts.ApprovalReceipt,
+        )
 
     def approve_proposal(
         self,
@@ -968,7 +974,7 @@ class CruxibleClient:
         signer: Callable[[dict[str, Any]], Mapping[str, Any]],
         include_body: bool = False,
         hold: bool = False,
-    ) -> contracts.ApprovalReceipt:
+    ) -> contracts.ProposalApprovalResult:
         challenge = self.prepare_approval(
             instance_id,
             proposal_id,
@@ -982,9 +988,17 @@ class CruxibleClient:
             hold=hold,
         )
 
-    def activate_proposal(self, instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
+    def activate_proposal(
+        self, instance_id: str, proposal_id: str
+    ) -> contracts.ProposalActivationResult:
         response = self._client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
-        return self._parse_model(response, contracts.ActivationReceipt)
+        return self._parse_model(
+            response,
+            contracts.ProposalRecompiled
+            if response.is_success
+            and response.json().get("tag") == "cruxible-proposal-recompiled-v1"
+            else contracts.ActivationReceipt,
+        )
 
     def read_capture(self, instance_id: str, request: CaptureReadRequest) -> CaptureRead:
         response = self._client.post(

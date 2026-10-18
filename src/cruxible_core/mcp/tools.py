@@ -435,8 +435,8 @@ def register_tools(
         proposal_id: str,
         attestation: ApprovalAttestation,
         hold: Annotated[bool, Field(description=_HOLD_DESCRIPTION)] = False,
-    ) -> contracts.ApprovalReceipt:
-        """Submit a public approval attestation."""
+    ) -> contracts.ProposalApprovalResult:
+        """Submit an approval; stale lowering origins return a fresh proposal to review."""
         return handlers.handle_playbill_submit_approval(
             require_instance_id(instance_id),
             proposal_id,
@@ -468,8 +468,8 @@ def register_tools(
             ),
         ] = None,
         hold: Annotated[bool, Field(description=_HOLD_DESCRIPTION)] = False,
-    ) -> contracts.ApprovalReceipt:
-        """Approve a proposal with a local key: challenge, sign and submit in one call."""
+    ) -> contracts.ProposalApprovalResult:
+        """Approve with a local key; stale lowering origins recompile for fresh review."""
         return handlers.handle_playbill_approve(
             require_instance_id(instance_id),
             proposal_id,
@@ -481,8 +481,8 @@ def register_tools(
     @_tool
     def cruxible_proposal_activate(
         instance_id: InstanceId = None, *, proposal_id: str
-    ) -> contracts.ActivationReceipt:
-        """Settle an approved candidate by compare-and-set; returns the activation receipt.
+    ) -> contracts.ProposalActivationResult:
+        """Activate a candidate; stale lowering origins recompile at head under normal policy.
 
         The daemon delivers the floor to a workspace it serves; exact reads after
         activation use get or query at the receipt's coordinate.

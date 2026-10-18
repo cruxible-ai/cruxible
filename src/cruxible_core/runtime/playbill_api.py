@@ -1280,7 +1280,7 @@ def playbill_submit_approval(
     *,
     attestation: ApprovalAttestation,
     hold: bool = False,
-) -> contracts.ApprovalReceipt:
+) -> contracts.ProposalApprovalResult:
     """Submit one approval; it activates the candidate when it completes it.
 
     ``hold`` signs only, leaving activation to someone else. Activation runs
@@ -1298,13 +1298,17 @@ def playbill_submit_approval(
             "cruxible_compiler_upgrade", instance_id=instance_id
         ),
     )
-    return contracts.ApprovalReceipt.model_validate(result.model_dump(mode="json"))
+    return (
+        contracts.ProposalRecompiled.model_validate(result.model_dump(mode="json"))
+        if isinstance(result, contracts.ProposalRecompiled)
+        else contracts.ApprovalReceipt.model_validate(result.model_dump(mode="json"))
+    )
 
 
 def playbill_activate(
     instance_id: str,
     proposal_id: str,
-) -> contracts.ActivationReceipt:
+) -> contracts.ProposalActivationResult:
     check_permission("cruxible_proposal_activate", instance_id=instance_id)
     activated_by = _actor_id(instance_id)
     result = service_activate_playbill_proposal(
@@ -1312,7 +1316,11 @@ def playbill_activate(
         proposal_id=proposal_id,
         activated_by=activated_by,
     )
-    return contracts.ActivationReceipt.model_validate(result.model_dump(mode="json"))
+    return (
+        contracts.ProposalRecompiled.model_validate(result.model_dump(mode="json"))
+        if isinstance(result, contracts.ProposalRecompiled)
+        else contracts.ActivationReceipt.model_validate(result.model_dump(mode="json"))
+    )
 
 
 def playbill_read_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead:

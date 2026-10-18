@@ -2581,6 +2581,12 @@ def approve_proposal(
     if output_json:
         _emit_json(_json_receipt(result))
         return
+    if isinstance(result, contracts.ProposalRecompiled):
+        click.echo(
+            f"Recompiled as {result.proposal_id}; review this new proposal "
+            f"(members identical: {result.members_identical})"
+        )
+        return
     click.echo(f"Approved {result.candidate_digest} as {result.signer_id}")
     for line in _approval_outcome_lines(result):
         click.echo(line)
@@ -2660,6 +2666,12 @@ def activate_proposal(proposal_id: str, output_brief: bool, output_json: bool) -
         return
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        return
+    if isinstance(result, contracts.ProposalRecompiled):
+        click.echo(
+            f"Recompiled as {result.proposal_id}; review this new proposal "
+            f"(members identical: {result.members_identical})"
+        )
         return
     if result.status == "accepted" and result.accepted_coordinate is not None:
         click.echo(f"accepted ({result.accepted_coordinate.git_oid[:12]}) by {result.activated_by}")
@@ -3282,7 +3294,7 @@ def _approve_with_key(
     *,
     signer_id: str,
     private_key_path: Path,
-) -> contracts.ApprovalReceipt:
+) -> contracts.ProposalApprovalResult:
     challenge = client.prepare_approval(instance_id, proposal_id, signer_id=signer_id)
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     signer = LocalEd25519ApprovalSigner.open(

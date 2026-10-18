@@ -499,7 +499,7 @@ def _observe_presentation_policy(
 class _FloorClient(Protocol):
     def activate_proposal(
         self, instance_id: str, proposal_id: str
-    ) -> contracts.ActivationReceipt: ...
+    ) -> contracts.ProposalActivationResult: ...
 
     def export_floor(
         self,

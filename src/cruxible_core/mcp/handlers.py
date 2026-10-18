@@ -459,7 +459,7 @@ def handle_playbill_submit_approval(
     attestation: dict[str, Any],
     *,
     hold: bool = False,
-) -> contracts.ApprovalReceipt:
+) -> contracts.ProposalApprovalResult:
     public_attestation = ApprovalAttestation.model_validate(attestation)
     return _daemon_call(
         lambda client: client.submit_approval(
@@ -479,7 +479,7 @@ def handle_playbill_approve(
     signer_id: str | None,
     candidate_digest: str | None,
     hold: bool = False,
-) -> contracts.ApprovalReceipt:
+) -> contracts.ProposalApprovalResult:
     """Challenge, sign with the configured local key, and submit, as `proposal approve` does.
 
     Only the public attestation leaves this process; the key's bytes and path
@@ -525,7 +525,9 @@ def _sole_approval_signer(key_dir: Path) -> str:
     return signers[0]
 
 
-def handle_playbill_activate(instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
+def handle_playbill_activate(
+    instance_id: str, proposal_id: str
+) -> contracts.ProposalActivationResult:
     """Activation is a daemon act; the daemon's trigger delivers the floor."""
 
     return _daemon_call(

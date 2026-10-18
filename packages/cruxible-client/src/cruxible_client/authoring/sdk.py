@@ -2130,7 +2130,7 @@ class Proposal:
 
     def approve(
         self, *, signer: ApprovalSigner, reviewed: ReviewedProposal, hold: bool = False
-    ) -> api.ApprovalReceipt:
+    ) -> api.ProposalApprovalResult:
         """Sign this exact review with caller-configured custody.
 
         The approval that completes the candidate activates it in the same call
@@ -2143,10 +2143,11 @@ class Proposal:
         receipt = approve_reviewed(
             self._playbill, self.proposal_id, signer=signer, reviewed=reviewed, hold=hold
         )
-        self._playbill._observe_activation(receipt.activation)
+        if isinstance(receipt, api.ApprovalReceipt):
+            self._playbill._observe_activation(receipt.activation)
         return receipt
 
-    def activate(self) -> api.ActivationReceipt:
+    def activate(self) -> api.ProposalActivationResult:
         """Activate this proposal once its approvals are in: ``Cruxible.activate`` by handle.
 
         Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
@@ -2737,7 +2738,7 @@ class Cruxible:
             self._client, self._instance_id, workspace=self._workspace_root, at=coordinate
         )
 
-    def activate(self, proposal_id: str) -> api.ActivationReceipt:
+    def activate(self, proposal_id: str) -> api.ProposalActivationResult:
         """Activate one proposal: the daemon settles it, nothing local is written.
 
         The daemon's floor-refresh trigger delivers the floor to a local
@@ -2750,7 +2751,8 @@ class Cruxible:
         """
 
         receipt = self._client.activate_proposal(self._instance_id, proposal_id)
-        self._observe_activation(receipt)
+        if isinstance(receipt, api.ActivationReceipt):
+            self._observe_activation(receipt)
         return receipt
 
     def _observe_activation(self, receipt: api.ActivationReceipt | None) -> None:
