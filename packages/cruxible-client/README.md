@@ -1751,10 +1751,13 @@ Compile and preflight the whole changeset as one intent.
 ## Drafts, intents, proposals, and approvals
 
 `ClaimDraft`, `ProcedureDraft`, `QueryDraft`, and `SubjectDraft` inherit
-`prepare() -> Intent` and `submit() -> Intent`. They expose `payload`, `reference_expectations`,
+`prepare() -> Intent` and `submit(accept="if_allowed") -> Intent`. They expose `payload`, `reference_expectations`,
 `program_stamp`, and `source_map` for inspection. `prepare()` performs server
-compilation/preflight; `submit()` compiles and submits in one request, with the
-daemon preflighting once, and a refused intent carries the same `refused` and
+compilation/preflight; `submit()` compiles and lands in one request when no
+approval is required and the caller may activate. `intent.outcome` reports
+`landed` with the accepted coordinate or `proposed` with the proposal ID,
+typed stop reason and next step. `submit(accept="never")` keeps the proposal.
+The daemon preflights once, and a refused intent carries the same `refused` and
 `diagnostics` that `prepare()` reports; the program stamp is structured authoring provenance,
 not retained executable Python source. `ClaimTypeDraft.propose(...)` is a direct
 proposal helper and submits immediately; it is not a synonym for local staging. It
@@ -2027,7 +2030,7 @@ reprepare(*, draft: ClaimDraft | ProcedureDraft | SubjectDraft) -> Intent
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-submit() -> Intent
+submit(*, accept: WriteAccept = "if_allowed") -> Intent
 ```
 
 <a id="api-intent-status"></a>

@@ -1589,8 +1589,8 @@ than choosing between ambiguous histories.
 ## authoring
 
 ~~~text
-cruxible authoring submit PAYLOAD|- [--dry-run] [--and-activate] [--brief]
-cruxible authoring submit --intent-id INTENT_ID [PAYLOAD|-] [--dry-run] [--and-activate]
+cruxible authoring submit PAYLOAD|- [--dry-run] [--no-accept] [--brief]
+cruxible authoring submit --intent-id INTENT_ID [PAYLOAD|-] [--dry-run] [--no-accept]
   [--brief]
 cruxible authoring example [NAME]
 cruxible authoring example claim-cite-supporting-evidence
@@ -1607,7 +1607,10 @@ cruxible authoring list
 
 Authoring commands emit JSON; `--brief` selects the compact rendering where offered.
 PAYLOAD is a tagless authoring input file, or `-` for stdin. `authoring submit
-PAYLOAD` compiles, checks and submits in one call; `--dry-run` returns the
+PAYLOAD` compiles, checks and lands in one call when no approval is required and
+the caller has GRAPH_WRITE. Otherwise `outcome` reports `proposed`, the proposal
+ID, the typed stop reason and the next step; `landed` carries the accepted
+coordinate. `--no-accept` keeps the proposal. `--dry-run` returns the
 preflight the submit would run, with every refusal, and saves no intent. Durable
 intents are optional, for staged work on large definitions: `compile PAYLOAD`
 creates one (its ID is `certificate.intent_id`), `compile PAYLOAD --intent-id ID`

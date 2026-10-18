@@ -154,7 +154,9 @@ current value.
 **Definitions** go through `authoring`: Subjects, named queries, Procedures,
 Blueprints, Lines, Triggers, mandates, acquisition policies and the approval
 policy, alone or as members of one change set. `cruxible authoring submit
-PAYLOAD` checks and submits a payload in one call, and `--dry-run` returns
+PAYLOAD` checks and lands a payload in one call when no approval is required
+and the caller may activate. Otherwise the typed outcome names the proposal,
+stop reason and next step. `--no-accept` keeps the proposal; `--dry-run` returns
 every refusal without saving anything. For staged work on a large definition,
 `authoring compile` keeps a durable intent that `compile --intent-id`,
 `preflight` and `submit --intent-id` revise and advance. In the SDK,

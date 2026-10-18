@@ -121,9 +121,12 @@ terminal creates or reuses the Subject; the Claim item states the real fact.
 
 Check, then submit:
 
+Submit lands immediately when no approval is required and the caller may
+activate. Use `--no-accept` to keep a proposal; a stop names its reason and next step.
+
 ```bash
 cruxible authoring submit PROCEDURE.json --dry-run
-cruxible authoring submit PROCEDURE.json --and-activate
+cruxible authoring submit PROCEDURE.json
 cruxible get Procedure:NAME        # runnable: direct, line, or unsupported
 ```
 
@@ -147,7 +150,7 @@ budgets, authority ceiling (`max_authority`) and acquisition policy:
 
 ```bash
 cruxible authoring example line          # a Line over the example Procedure
-cruxible authoring submit LINE.json --and-activate
+cruxible authoring submit LINE.json
 cruxible line run LINE                   # one manual occurrence, now
 ```
 
@@ -183,7 +186,7 @@ carries another ClaimType proposes instead (`fallback_reason`
 
 ```bash
 cruxible authoring example trigger       # an hourly cron Trigger for the example Line
-cruxible authoring submit TRIGGER.json --and-activate
+cruxible authoring submit TRIGGER.json
 cruxible get Line:LINE                   # its Triggers; "triggers_inactive: not enabled"
 cruxible line enable LINE
 ```
