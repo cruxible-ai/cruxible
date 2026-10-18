@@ -5164,7 +5164,7 @@ def _proposal_items(
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Stale proposals: admitted work that can no longer activate where it stands.
 
-    Activate/readmit recompile retained authoring/write or Procedure inputs at
+    Approve/activate/readmit recompile retained authoring/write or Procedure inputs at
     the head, then follow ordinary approval policy; exact-byte origins retain
     byte readmission. Withdraw closes work that should never settle. The queue
     only explains the repair: it never recompiles while listing a row.
@@ -5192,7 +5192,7 @@ def _proposal_items(
         }
         required_change = "readmit_as_its_author_or_withdraw_the_stale_proposal"
         detail["stale_repair"] = (
-            "Activate or readmit recompiles at the head when the origin lowers; "
+            "Approve, activate, or readmit recompiles at the head when the origin lowers; "
             "review any new candidate normally, or withdraw."
         )
         # A delegated settle re-lowers retained input and re-verifies its
