@@ -5663,6 +5663,11 @@ class ProposalService:
         candidate_tree: Mapping[str, bytes],
         timestamp: str,
         readmits: ProposalReadmissionLink | None = None,
+        authorize: Callable[
+            [AcceptedProjectionCoordinate, Mapping[str, bytes]], Mapping[str, bytes] | None
+        ]
+        | None = None,
+        settle_submission: ProposalSettleSubmission | None = None,
     ) -> ProposalPreview:
         """Evaluate one candidate tree exactly as `submit` would, and write nothing.
 
@@ -5677,9 +5682,9 @@ class ProposalService:
             request=request,
             candidate_tree=candidate_tree,
             timestamp=timestamp,
-            authorize=None,
+            authorize=authorize,
             prepared=None,
-            settle_submission=None,
+            settle_submission=settle_submission,
             expected_candidate=None,
             readmits=readmits,
         )

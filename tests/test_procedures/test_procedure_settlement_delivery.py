@@ -804,10 +804,10 @@ def test_a_crashed_settlement_recovers_one_accepted_result(
     )
 
 
-def test_a_crashed_settlement_whose_head_moved_recovers_as_refused(
+def test_a_crashed_settlement_whose_head_moved_recompiles_and_settles(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """A stale proposal is a typed publication refusal, not stranded recovery."""
+    """A moved head re-lowers the retained request and rechecks settle authority."""
 
     from cruxible_core.service.procedures.procedure_runs import service_get_playbill_procedure_run
     from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
@@ -835,10 +835,11 @@ def test_a_crashed_settlement_whose_head_moved_recovers_as_refused(
         instance, recorded_at=fixtures.NOW + timedelta(minutes=1)
     )
     ((run_id, disposition),) = recovered.items()
-    assert disposition == "refused"
-    assert len(instance.accepted_history()) == generations
+    assert disposition == "delivered"
+    assert len(instance.accepted_history()) == generations + 1
     (egress,) = service_get_playbill_procedure_run(instance, run_id=run_id).terminal_egress
-    assert egress.verdict == "refused"
+    assert egress.verdict == "delivered"
+    assert egress.accepted_git_oid == instance.accepted_coordinate().git_oid
     # Finalized: recovery has nothing left to do.
     assert (
         service_recover_proposal_egress(instance, recorded_at=fixtures.NOW + timedelta(minutes=2))

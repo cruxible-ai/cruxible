@@ -11,7 +11,9 @@ from dataclasses import dataclass
 
 from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
 from cruxible_client.contracts.errors import ProposalStale
-from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
+from cruxible_client.contracts.proposal_models import (
+    ProposalReadmissionLink,
+)
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import (
     authoring_intent_id_for_proposal_ref,
@@ -146,7 +148,12 @@ def recompile_proposal(
         )
     else:
         with preview_guards(True):
-            inputs = _authoring_input(instance, origin, head)
+            if origin.admission.procedure_operation is not None:
+                from cruxible_core.service.proposals.procedure_recompile import procedure_input
+
+                inputs = procedure_input(instance, origin, head)
+            else:
+                inputs = _authoring_input(instance, origin, head)
         request = ProposalAdmissionRequest(
             target_ref=target,
             proposed_base_oid=head.git_oid,
@@ -161,23 +168,40 @@ def recompile_proposal(
                 raise ProposalStale(source_id, reason="head_moved")
             return None if inputs.authorize is None else inputs.authorize(current, tree)
 
-        # Preflight already evaluated authoring. Publication checks exactly the
-        # same head, so no byte rebase can bypass its slot/reference checks.
-        if preview:
-            result = instance.proposal_service().preview(
+        service = instance.proposal_service()
+        authority = service.subject_assignment_authority
+        own = frozenset(inputs.creations)
+        service.subject_assignment_authority = lambda operation, creation: (
+            (operation == inputs.operation and creation in own)
+            or (authority is not None and authority(operation, creation))
+        )
+        # Run the ordinary admission evaluation before any record is written.
+        # Its candidate is pinned through publication, which refuses a head race.
+        with preview_guards(True):
+            checked = service.preview(
                 actor=AuthenticatedActor(actor_id=source.admission.actor_id),
                 request=request,
                 candidate_tree=inputs.tree,
                 timestamp=inputs.timestamp,
                 readmits=link,
+                authorize=authorize,
+                settle_submission=inputs.settle_submission,
             )
+        if checked.candidate is None:
+            raise ProposalStale(
+                source_id,
+                reason="evaluation_refused",
+                detail="; ".join(item.code for item in checked.evaluation.diagnostics),
+            )
+        if preview:
+            result = checked
         else:
             if inputs.creations:
                 instance.subject_assignment_authority().record_creations(
                     inputs.operation, inputs.creations
                 )
             try:
-                result = instance.proposal_service().submit(
+                result = service.submit(
                     actor=AuthenticatedActor(actor_id=source.admission.actor_id),
                     request=request,
                     candidate_tree=inputs.tree,
@@ -185,6 +209,8 @@ def recompile_proposal(
                     readmits=link,
                     authorize=authorize,
                     confirm_head=confirm_head,
+                    settle_submission=inputs.settle_submission,
+                    expected_candidate=(head.git_oid, checked.candidate.candidate_digest),
                 )
             except ProposalHeadMovedError as exc:
                 raise ProposalStale(source_id, reason="head_moved") from exc
@@ -196,9 +222,17 @@ def recompile_proposal(
         )
     # Member evidence pins exact own bytes (including deletions); daemon cards
     # and change-set records are not part of this informational comparison.
-    identical = (
-        source.candidate is not None and source.candidate.members == result.candidate.members
-    )
+    identical = source.candidate is not None and {
+        member.path: getattr(
+            member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
+        )
+        for member in source.candidate.members
+    } == {
+        member.path: getattr(
+            member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
+        )
+        for member in result.candidate.members
+    }
     if not preview:
         assert isinstance(result, ProposalResult)
         from cruxible_core.service.change_preview import ChangeMode
