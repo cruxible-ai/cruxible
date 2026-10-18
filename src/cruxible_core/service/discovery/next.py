@@ -5164,12 +5164,10 @@ def _proposal_items(
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Stale proposals: admitted work that can no longer activate where it stands.
 
-    Activation settles a candidate only onto the state it was evaluated
-    against, so a proposal whose parent head has moved past waits on its
-    author: readmit rebases the same tree onto the current head, and withdraw
-    says it will never be settled. Either one closes the row, and so does a
-    readmission that carries the change: once it is accepted the source is
-    superseded, not stale work.
+    Activate/readmit recompile retained authoring/write or Procedure inputs at
+    the head, then follow ordinary approval policy; exact-byte origins retain
+    byte readmission. Withdraw closes work that should never settle. The queue
+    only explains the repair: it never recompiles while listing a row.
 
     Only the author may readmit, so a row shows only to its author: the
     daemon's authenticated caller, never a request field. A queue read
@@ -5193,11 +5191,13 @@ def _proposal_items(
             **_prior_refusal_detail(instance, proposal.proposal_id),
         }
         required_change = "readmit_as_its_author_or_withdraw_the_stale_proposal"
-        # A settle terminal's proposal says how it was submitted. A delegated
-        # settle that lost its race with head is automation that did not
-        # finish: readmitting it re-evaluates it as an ordinary proposal that
-        # needs approval, because the mandate authorized the submission it
-        # was, not a rebased one.
+        detail["stale_repair"] = (
+            "Activate or readmit recompiles at the head when the origin lowers; "
+            "review any new candidate normally, or withdraw."
+        )
+        # A delegated settle re-lowers retained input and re-verifies its
+        # mandate and condition at the head before publication. No authority
+        # or human approval carries from the stale candidate.
         settle = evidence.read_admission(proposal.proposal_id).settle_submission
         if settle is not None:
             detail["settle_submission"] = {
@@ -5206,7 +5206,7 @@ def _proposal_items(
             }
             if settle.mode == "delegated":
                 required_change = (
-                    "readmit_to_route_the_delegated_settle_for_approval_or_withdraw_it"
+                    "activate_or_readmit_to_recompile_and_reverify_the_settle_or_withdraw_it"
                 )
         items.append(
             _item(

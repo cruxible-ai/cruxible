@@ -115,6 +115,7 @@ from cruxible_client.contracts.read_values import (
     summary_value,
     whole_value_read,
 )
+from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import (
     SubjectKeyPart,
@@ -3182,12 +3183,44 @@ def _service_write(
                 handoff=handoff,
             )
         except (SettlementIntegrityError, ProposalStale):
-            # Activation refuses a candidate evaluated at any head but the
-            # current one (as stale, or in settlement); a write the head moved
-            # past is refused, not settled.
+            # A lost-head write may recompile once. A pin/lowering refusal
+            # still reports the write's existing slot/head repair below.
             if instance.accepted_coordinate().git_oid == evaluated_at.git_oid:
                 raise
             receipt = None
+        if isinstance(receipt, ProposalRecompiled):
+            checked_at = instance.coordinate_for_oid(receipt.accepted_coordinate.git_oid)
+            approval = _approval(
+                instance,
+                checked_at,
+                reason="independent_approval_required",
+                minimum=1,
+                caller=caller,
+                surface=request.surface,
+                proposal_id=receipt.proposal_id,
+            )
+            return WriteOutcome(
+                status="awaiting_approval",
+                changes=changes,
+                subjects_added=subjects_added,
+                proposal=WriteProposalRef(
+                    proposal_id=receipt.proposal_id, state="awaiting_external_approval"
+                ),
+                coordinate=compact_coordinate(instance, checked_at),
+                approval=approval,
+                next=approval.approve or approval.activate,
+            )
+        if (
+            receipt is not None
+            and receipt.proposal_id != proposal_id
+            and receipt.status == "accepted"
+        ):
+            from cruxible_core.service.proposals.proposals import _proposal_result
+
+            successor = _proposal_result(instance, receipt.proposal_id)
+            evaluated_at = instance.coordinate_for_oid(successor.evaluation.evaluated_base_oid)
+            if successor.candidate is not None:
+                admitted.append(successor.candidate)
         if (
             receipt is not None
             and receipt.status == "accepted"
@@ -3203,7 +3236,7 @@ def _service_write(
                 request=request,
                 changes=changes,
                 subjects_added=subjects_added,
-                proposal=WriteProposalRef(proposal_id=proposal_id, state="accepted"),
+                proposal=WriteProposalRef(proposal_id=receipt.proposal_id, state="accepted"),
                 candidate=admitted[-1] if admitted else None,
             )
         return WriteOutcome(

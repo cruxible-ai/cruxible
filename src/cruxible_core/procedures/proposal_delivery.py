@@ -1807,6 +1807,20 @@ class ProposalTerminalEgressSink:
         )
         return prepared
 
+    def prepare_recompilation(
+        self,
+        *,
+        request: TerminalEgressRequestV2,
+        admission: ProcedureRunAdmissionV1,
+        evidence: Mapping[str, str],
+        journaled: PreparedTerminalEgressV1,
+    ) -> PreparedProposal:
+        """Use recovery's normal lowering at a new coordinate, without delivery."""
+        self.prepare_terminal_egress(
+            request=request, admission=admission, evidence=evidence, journaled=journaled
+        )
+        return self._prepared[(request.admission_binding_digest, request.node_id)]
+
     def _line_proposal(
         self,
         request: TerminalEgressRequestV1,
@@ -2344,6 +2358,9 @@ class ProposalTerminalEgressSink:
                 settle_submission=submission,
                 handoff=handoff,
             )
+        from cruxible_core.service.proposals.recompile import recompiled_successor
+
+        result = recompiled_successor(self.instance, result)
         settle = result.admission.settle_submission
         assert settle is not None  # submitted above, or verified by recover_existing
         if settle.mode == "fallback":
@@ -2375,7 +2392,7 @@ class ProposalTerminalEgressSink:
             )
         accepted_oid = self._accepted_oid(result.candidate.candidate_digest, digest=digest)
         if accepted_oid is None:
-            accepted_oid = self._activate(
+            accepted_oid, result = self._activate(
                 result, request=request, mandate=mandate, digest=digest, handoff=handoff
             )
         return settle_terminal_receipt(
@@ -2416,8 +2433,9 @@ class ProposalTerminalEgressSink:
         mandate: ProcedureMandate,
         digest: str,
         handoff: SettlementHandoff | None = None,
-    ) -> str:
+    ) -> tuple[str, ProposalResult]:
         from cruxible_client.contracts.errors import ProposalStale, SettlementIntegrityError
+        from cruxible_client.contracts.recompilation import ProposalRecompiled
         from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 
         # No late acceptance: the mandate must still stand when the change lands.
@@ -2448,13 +2466,21 @@ class ProposalTerminalEgressSink:
                 "The delegated candidate no longer reproduces under its mandate at publication.",
                 details={"proposal_id": result.admission.proposal_id},
             ) from None
-        if receipt.status != "accepted" or receipt.accepted_coordinate is None:
+        if (
+            isinstance(receipt, ProposalRecompiled)
+            or receipt.status != "accepted"
+            or receipt.accepted_coordinate is None
+        ):
             raise ProposalDeliveryRefused(
                 "settle_publication_refused",
                 "Accepted state moved before the settlement published.",
                 details={"proposal_id": result.admission.proposal_id, "status": receipt.status},
             )
-        return receipt.accepted_coordinate.git_oid
+        if receipt.proposal_id != result.admission.proposal_id:
+            from cruxible_core.service.proposals.proposals import _proposal_result
+
+            result = _proposal_result(self.instance, receipt.proposal_id)
+        return receipt.accepted_coordinate.git_oid, result
 
     @staticmethod
     def _require_same_member_bytes(

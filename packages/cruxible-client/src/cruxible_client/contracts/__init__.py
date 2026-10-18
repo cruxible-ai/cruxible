@@ -320,6 +320,7 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.read_values import TruncatedText as TruncatedText
 from cruxible_client.contracts.read_values import WholeValueRead as WholeValueRead
+from cruxible_client.contracts.recompilation import ProposalRecompiled as ProposalRecompiled
 from cruxible_client.contracts.refusal_receipts import (
     PriorRefusalCoverage as PriorRefusalCoverage,
 )
@@ -1047,6 +1048,10 @@ class ApprovalReceipt(BaseModel):
     not_activated: ApprovalNotActivated | None = None
     approvals_remaining: int = Field(default=0, ge=0)
     git_workspace_note: GitWorkspaceNote | None = None
+
+
+ProposalActivationResult = ActivationReceipt | ProposalRecompiled
+ProposalApprovalResult = ApprovalReceipt | ProposalRecompiled
 
 
 class FloorRefreshResult(BaseModel):

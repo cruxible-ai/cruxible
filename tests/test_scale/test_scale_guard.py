@@ -465,6 +465,28 @@ def _activate_proposal(world: World) -> object:
     return receipt
 
 
+def _prepare_stale_activation(world: World) -> None:
+    pending = _worlds.write(
+        world,
+        [{"op": "set", "subject": world.subject(0), "field": "title", "value": "stale title"}],
+        accept="never",
+    )
+    assert pending.proposal is not None
+    world.prepared = pending.proposal.proposal_id
+    _worlds.write(
+        world, [{"op": "set", "subject": world.subject(1), "field": "title", "value": "head moved"}]
+    )
+    settle_advertisement(world.instance)
+
+
+def _activate_stale(world: World) -> object:
+    result = playbill_api.playbill_activate(world.instance_id, world.prepared)
+    assert result.status == "accepted", result
+    assert result.proposal_id != world.prepared
+    world.generation += 1
+    return result
+
+
 def _attestation(basis: str, subject: int) -> Callable[[World], object]:
     """Build and sign the request client-side, before the window."""
 
@@ -690,6 +712,7 @@ def _routes() -> list[Route]:
         Route("read.next.no_stored_queue", _next()),
         Route("read.orient.after_activation", _orient),
         Route("authoring.submit_and_activate", _authoring_claims),
+        Route("proposal.stale.activate", _activate_stale, prepare=_prepare_stale_activation),
         Route("procedure.propose", _run_line(_worlds.PROPOSE)),
         Route("procedure.propose.activate", _activate_proposal),
         Route("procedure.settle", _run_line(_worlds.SETTLE)),

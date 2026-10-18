@@ -804,10 +804,10 @@ def test_a_crashed_settlement_recovers_one_accepted_result(
     )
 
 
-def test_a_crashed_settlement_whose_head_moved_recovers_as_refused(
+def test_a_crashed_settlement_whose_head_moved_recompiles_and_settles(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """A stale proposal is a typed publication refusal, not stranded recovery."""
+    """A moved head re-lowers the retained request and rechecks settle authority."""
 
     from cruxible_core.service.procedures.procedure_runs import service_get_playbill_procedure_run
     from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
@@ -835,10 +835,11 @@ def test_a_crashed_settlement_whose_head_moved_recovers_as_refused(
         instance, recorded_at=fixtures.NOW + timedelta(minutes=1)
     )
     ((run_id, disposition),) = recovered.items()
-    assert disposition == "refused"
-    assert len(instance.accepted_history()) == generations
+    assert disposition == "delivered"
+    assert len(instance.accepted_history()) == generations + 1
     (egress,) = service_get_playbill_procedure_run(instance, run_id=run_id).terminal_egress
-    assert egress.verdict == "refused"
+    assert egress.verdict == "delivered"
+    assert egress.accepted_git_oid == instance.accepted_coordinate().git_oid
     # Finalized: recovery has nothing left to do.
     assert (
         service_recover_proposal_egress(instance, recorded_at=fixtures.NOW + timedelta(minutes=2))
@@ -1276,7 +1277,7 @@ def test_a_stale_fallback_settle_names_how_it_was_submitted(tmp_path: Path) -> N
     assert row.repair.required_change == "readmit_as_its_author_or_withdraw_the_stale_proposal"
 
 
-def test_a_delegated_settle_that_lost_its_race_says_readmit_routes_it_for_approval(
+def test_a_delegated_settle_that_lost_its_race_says_recompile_reverifies_authority(
     tmp_path: Path, monkeypatch
 ) -> None:
     instance, root, line = settle_world(tmp_path)
@@ -1295,7 +1296,7 @@ def test_a_delegated_settle_that_lost_its_race_says_readmit_routes_it_for_approv
 
     assert row.detail["settle_submission"]["mode"] == "delegated"
     assert row.repair.required_change == (
-        "readmit_to_route_the_delegated_settle_for_approval_or_withdraw_it"
+        "activate_or_readmit_to_recompile_and_reverify_the_settle_or_withdraw_it"
     )
     assert row.repair.command == f"cruxible proposal readmit {pending.proposal_id}"
 
@@ -2034,3 +2035,93 @@ def test_a_settle_grant_naming_no_kind_never_creates_a_subject(tmp_path: Path) -
     egress = _egress(state)
     assert (egress.verdict, egress.refusal_code) == ("refused", "settle_mandate_missing"), egress
     assert instance.accepted_coordinate() == base
+
+
+def test_a_moved_head_with_suspended_mandate_leaves_delegated_proposal_stale(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+
+    instance, root, line = settle_world(tmp_path)
+    _crash_settle(monkeypatch, after_activation=False)
+    with pytest.raises(_Crash):
+        run_settle(instance, root, line)
+    monkeypatch.undo()
+    (pending,) = [
+        item
+        for item in instance.proposal_evidence().list_admissions()
+        if item.settle_submission is not None
+    ]
+    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    # Locate only the bound grant, rather than relying on the fixture's name.
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        (identity,) = projection.typed.connection.execute(
+            "SELECT identity FROM procedure_mandates WHERE artifact_digest=?",
+            (pending.settle_submission.mandate_digest,),
+        ).fetchone()
+        mandate = projection.typed.source(identity)
+    assert isinstance(mandate, ProcedureMandate)
+    path = procedure_mandate_path(mandate.identity.name)
+    suspended = mandate.model_copy(
+        update={
+            "suspended": True,
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=procedure_mandate_digest(mandate).tagged
+            ),
+        }
+    )
+    assert path in tree
+    fixtures._accept_more(
+        instance,
+        OWNERS[instance.root],
+        {path: render_procedure_mandate(suspended)},
+        name="suspend-before-publication",
+    )
+    head = instance.accepted_coordinate()
+    recovered = service_recover_proposal_egress(
+        instance, recorded_at=fixtures.NOW + timedelta(minutes=1)
+    )
+    assert set(recovered.values()) == {"refused"}
+    assert instance.accepted_coordinate() == head
+    assert (
+        service_playbill_proposal_status(instance, proposal_id=pending.proposal_id).terminal_reason
+        == "stale"
+    )
+    assert instance.proposal_evidence().read_withdrawal(pending.proposal_id) is None
+
+
+def test_recovery_follows_a_recompiled_settle_accepted_before_its_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, root, line = settle_world(tmp_path)
+    _crash_settle(monkeypatch, after_activation=False)
+    with pytest.raises(_Crash):
+        run_settle(instance, root, line)
+    monkeypatch.undo()
+    moved = _subject().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Subject", name=f"{SUBJECT_KIND}/recovery-head"),
+            "subject_id": "recovery-head",
+        }
+    )
+    fixtures._accept_more(
+        instance,
+        OWNERS[instance.root],
+        {subject_path(SUBJECT_KIND, "recovery-head"): render_subject(moved)},
+        name="move-before-recovery",
+    )
+    before = len(instance.accepted_history())
+    _crash_settle(monkeypatch, after_activation=True)
+    with pytest.raises(_Crash):
+        service_recover_proposal_egress(instance, recorded_at=fixtures.NOW + timedelta(minutes=1))
+    monkeypatch.undo()
+    assert len(instance.accepted_history()) == before + 1
+    recovered = service_recover_proposal_egress(
+        instance, recorded_at=fixtures.NOW + timedelta(minutes=2)
+    )
+    assert set(recovered.values()) == {"delivered"}
+    assert len(instance.accepted_history()) == before + 1

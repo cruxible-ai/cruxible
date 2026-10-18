@@ -73095,6 +73095,182 @@
         "tag"
       ]
     },
+    "ProposalRecompiled": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "candidate_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "candidate_digest",
+          "required": true,
+          "schema": {
+            "title": "Candidate Digest",
+            "type": "string"
+          }
+        },
+        "members_identical": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "members_identical",
+          "required": true,
+          "schema": {
+            "title": "Members Identical",
+            "type": "boolean"
+          }
+        },
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "source_proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Source Proposal Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "pending_review",
+              "ready_to_activate"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "cruxible-proposal-recompiled-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-proposal-recompiled-v1",
+            "default": "cruxible-proposal-recompiled-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Review the new proposal normally; this call recorded no approval for it.",
+        "properties": {
+          "accepted_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "candidate_digest": {
+            "title": "Candidate Digest",
+            "type": "string"
+          },
+          "members_identical": {
+            "title": "Members Identical",
+            "type": "boolean"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "source_proposal_id": {
+            "title": "Source Proposal Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending_review",
+              "ready_to_activate"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "cruxible-proposal-recompiled-v1",
+            "default": "cruxible-proposal-recompiled-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "source_proposal_id",
+          "proposal_id",
+          "candidate_digest",
+          "members_identical",
+          "accepted_coordinate"
+        ],
+        "title": "ProposalRecompiled",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "candidate_digest",
+        "members_identical",
+        "proposal_id",
+        "source_proposal_id",
+        "status"
+      ]
+    },
     "ProposalRejectResult": {
       "fields": {
         "actor_id": {

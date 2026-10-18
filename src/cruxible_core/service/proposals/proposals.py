@@ -20,6 +20,7 @@ from cruxible_client.contracts.errors import (
     ProposalReadmitNotStale,
     ProposalReadmitRequiresResubmission,
     ProposalSelectorAmbiguousError,
+    ProposalStale,
 )
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
@@ -887,7 +888,7 @@ def service_readmit_playbill_proposal(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> PlaybillProposalReadmitResultV1:
-    """Replay one stale authored tree through the current ProposalService rebase.
+    """Recompile retained input, or replay an exact-byte origin, at the head.
 
     ``dry_run`` evaluates the readmission on the admission path and admits
     nothing (R12); ``at`` pins a commit to the head the preview saw.
@@ -910,6 +911,24 @@ def _readmit(
     source = _proposal_result(instance, proposal_id)
     if source.admission.actor_id != actor_id:
         raise ProposalAdmissionError("only the source proposal actor may readmit it")
+    from cruxible_core.service.proposals.recompile import recompiled_successor
+
+    successor = recompiled_successor(instance, source)
+    if successor.admission.proposal_id != source.admission.proposal_id:
+        status = service_playbill_proposal_status(
+            instance, proposal_id=successor.admission.proposal_id
+        )
+        if status.terminal_reason == "accepted":
+            raise ProposalReadmitAlreadyAccepted(
+                proposal_id, accepted_as=successor.admission.proposal_id
+            )
+        link = successor.admission.readmits
+        assert link is not None
+        return PlaybillProposalReadmitResultV1(
+            source_proposal_id=proposal_id,
+            operation_digest=link.operation_digest,
+            proposal=ProposalInspection(proposal=successor, accepted_coordinate=link.coordinate),
+        )
     # A stale proposal may be withdrawn instead of readmitted, and that is the
     # actor saying this tree will never be settled. Readmitting it would settle
     # exactly that tree, under a new proposal id, so it refuses here.
@@ -941,17 +960,38 @@ def _readmit(
     )
     if carried is not None and carried.accepted:
         raise ProposalReadmitAlreadyAccepted(proposal_id, accepted_as=carried.proposal_id)
+    from cruxible_core.service.proposals.recompile import recompile_proposal
+
+    try:
+        recompiled = recompile_proposal(
+            instance, source, preview=mode.previewing, confirm_head=mode.confirm_head
+        )
+    except ProposalStale as exc:
+        if exc.reason == "cruxible.authoring.slot_membership_changed":
+            raise ProposalReadmitRequiresResubmission(
+                f"Pinned slot membership changed ({exc.reason}); {exc.detail}. "
+                "Run the write again at the current head."
+            ) from exc
+        raise
+    if recompiled is not None:
+        link = ProposalReadmissionLink(
+            source_proposal_id=proposal_id, coordinate=recompiled.coordinate
+        )
+        return PlaybillProposalReadmitResultV1(
+            source_proposal_id=proposal_id,
+            operation_digest=link.operation_digest,
+            proposal=ProposalInspection(
+                status="would_propose" if mode.previewing else "admitted",
+                proposal=recompiled.proposal,
+                accepted_coordinate=recompiled.coordinate,
+            ),
+        )
     if (
         source.candidate is not None
         and len(source.candidate.members) > 1
         and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
     ):
         raise ProposalReadmitRequiresResubmission()
-    if _pins_slots(instance, target_ref=source.admission.target_ref, actor_id=actor_id):
-        raise ProposalReadmitRequiresResubmission(
-            "this stale proposal was admitted against pinned slot membership, which a "
-            "byte rebase would not check; run the write again at the current head"
-        )
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     link = ProposalReadmissionLink(source_proposal_id=proposal_id, coordinate=coordinate)
     operation_digest = link.operation_digest
@@ -1025,32 +1065,6 @@ def _readmit(
             workspace_advertisement=result.workspace_advertisement,
             accepted_coordinate=coordinate,
         ),
-    )
-
-
-def _pins_slots(instance: PlaybillInstance, *, target_ref: str, actor_id: str) -> bool:
-    """Whether the proposal's authoring intent pinned any slot's live membership.
-
-    Slot pins are checked by authoring preflight at the evaluated head. A
-    readmission rebases the stored tree without that preflight, so it would
-    admit the change over a slot it never saw.
-    """
-
-    from cruxible_client.contracts.authoring.models import (
-        AuthoringIntent,
-        AuthoringSlotExpectation,
-    )
-    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-    from cruxible_core.authoring.preflight import authoring_intent_id_for_proposal_ref
-
-    intent_id = authoring_intent_id_for_proposal_ref(target_ref, actor_id=actor_id)
-    if intent_id is None:
-        return False
-    intent = AuthoringIntentCoordinator.for_instance(instance).store.get(
-        intent_id, actor_id=actor_id
-    )
-    return isinstance(intent, AuthoringIntent) and any(
-        isinstance(item, AuthoringSlotExpectation) for item in intent.reference_expectations
     )
 
 

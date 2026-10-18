@@ -948,7 +948,7 @@ class CruxibleClient:
         *,
         attestation: Mapping[str, Any],
         hold: bool = False,
-    ) -> contracts.ApprovalReceipt:
+    ) -> contracts.ProposalApprovalResult:
         """Submit one approval; the daemon activates a candidate it completes.
 
         ``hold=True`` signs only and leaves activation to someone else.
@@ -957,6 +957,8 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/proposals/{proposal_id}/approvals",
             json={"attestation": dict(attestation), "hold": hold},
         )
+        if response.is_success and response.json().get("tag") == "cruxible-proposal-recompiled-v1":
+            return self._parse_model(response, contracts.ProposalRecompiled)
         return self._parse_model(response, contracts.ApprovalReceipt)
 
     def approve_proposal(
@@ -968,7 +970,7 @@ class CruxibleClient:
         signer: Callable[[dict[str, Any]], Mapping[str, Any]],
         include_body: bool = False,
         hold: bool = False,
-    ) -> contracts.ApprovalReceipt:
+    ) -> contracts.ProposalApprovalResult:
         challenge = self.prepare_approval(
             instance_id,
             proposal_id,
@@ -982,8 +984,12 @@ class CruxibleClient:
             hold=hold,
         )
 
-    def activate_proposal(self, instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
+    def activate_proposal(
+        self, instance_id: str, proposal_id: str
+    ) -> contracts.ProposalActivationResult:
         response = self._client.post(f"/api/v1/{instance_id}/proposals/{proposal_id}/activate")
+        if response.is_success and response.json().get("tag") == "cruxible-proposal-recompiled-v1":
+            return self._parse_model(response, contracts.ProposalRecompiled)
         return self._parse_model(response, contracts.ActivationReceipt)
 
     def read_capture(self, instance_id: str, request: CaptureReadRequest) -> CaptureRead:

@@ -125,7 +125,7 @@ def approve_reviewed(
     signer: ApprovalSigner,
     reviewed: ReviewedProposal,
     hold: bool = False,
-) -> api.ApprovalReceipt:
+) -> api.ProposalApprovalResult:
     if (
         not isinstance(reviewed, ReviewedProposal)
         or reviewed._owner is not cx
@@ -203,6 +203,10 @@ def approve_reviewed(
     raw_receipt = cx._client.submit_approval(
         cx._instance_id, proposal_id, attestation=attestation.model_dump(mode="json"), hold=hold
     )
+    if isinstance(raw_receipt, api.ProposalRecompiled):
+        if raw_receipt.source_proposal_id != proposal_id:
+            raise ApprovalReviewMismatch("Recompilation receipt names a different source")
+        return raw_receipt
     receipt = api.ApprovalReceipt.model_validate(raw_receipt.model_dump(mode="json"))
     if (
         receipt.proposal_id != proposal_id
