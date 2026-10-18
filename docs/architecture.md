@@ -154,6 +154,12 @@ parsing within a large change. Sealed models are shared; unsealable parses stay
 detached. Refusals are never retained. Request memory grows with the artifacts
 this request touches, and all of it is released at outer scope exit.
 
+Graph-format Procedure authoring resolves references with exact canonical-path
+reads at the intent base and in the staged ChangeSet. Only referenced artifacts
+are parsed, including a named acquisition policy; unrelated Claims, Subjects and
+Document bodies add no reference-resolution work. Pins and typed refusals use
+the same artifact parsers as accepted-tree reconstruction.
+
 The write pipeline shares each Claim's sealed member: exact bytes, strict
 parsed model, digests and normalized intrinsic projection facts. The bounded
 cache keys all of these by path, codec and exact bytes. Changed bytes derive a

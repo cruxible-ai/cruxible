@@ -12,6 +12,7 @@ from typing import Literal, NoReturn, TypeAlias, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
+from cruxible_client.contracts.accepted_attestations import attestation_path
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
     acquisition_policy_digest,
@@ -20,6 +21,7 @@ from cruxible_client.contracts.acquisition_policies import (
     render_acquisition_policy,
 )
 from cruxible_client.contracts.approval_policy import (
+    APPROVAL_POLICY_IDENTITY,
     APPROVAL_POLICY_PATH,
     approval_policy_digest,
     render_approval_policy,
@@ -83,6 +85,7 @@ from cruxible_client.contracts.builtin_claim_types import (
 )
 from cruxible_client.contracts.canonical import (
     Sha256Value,
+    artifact_path_for_codec,
     canonical_bytes,
     file_digest,
     normalize_canonical,
@@ -159,6 +162,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_window_intersecting,
     stamped_projection_windows,
 )
+from cruxible_client.contracts.documents import document_path
 from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
@@ -171,6 +175,7 @@ from cruxible_client.contracts.procedure_mandates import (
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_IDENTITY,
     PROCEDURE_RUNTIME_POLICY_PATH,
     procedure_runtime_policy_digest,
     render_procedure_runtime_policy,
@@ -221,6 +226,7 @@ from cruxible_client.contracts.procedures.windows import (
     CaptureEventWindow,
     FixedWindow,
 )
+from cruxible_client.contracts.provider_interfaces import provider_interface_path
 from cruxible_client.contracts.providers import (
     AcceptedProvider,
     parse_provider,
@@ -235,6 +241,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
     render_query_definition,
 )
+from cruxible_client.contracts.resolution_contracts import resolution_contract_path
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.source_references import (
     ExternalSourceReference,
@@ -304,6 +311,7 @@ from cruxible_core.compiler.projection_artifacts import (
     parse_projection_tree,
 )
 from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree, fork_tree
+from cruxible_core.exhaust.promotions import exhaust_promotion_path
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.subject_aliases import (
     candidate_creation_collisions,
@@ -2291,20 +2299,102 @@ def _resolve_authoring_references(
     return value
 
 
+def _reference_identities(value: object) -> set[ArtifactIdentity]:
+    """Collect only this graph's authoring references; resolution owns refusals."""
+    identities: set[ArtifactIdentity] = set()
+    if isinstance(value, dict):
+        if value.get("tag") in (
+            "playbill-authoring-artifact-reference-v1",
+            "playbill-authoring-candidate-reference-v1",
+        ):
+            try:
+                identities.add(ArtifactIdentity.model_validate(value.get("target")))
+            except ValidationError:
+                # Preserve the resolver's field-specific invalid-reference diagnostic.
+                pass
+        else:
+            for member in value.values():
+                identities.update(_reference_identities(member))
+    elif isinstance(value, list):
+        for member in value:
+            identities.update(_reference_identities(member))
+    return identities
+
+
+def _reference_path(identity: ArtifactIdentity) -> str | None:
+    """Every projected identity has one path, including exact Provider builds.
+
+    Kind-specific path validators reject identities the generic wire grammar
+    permits but no accepted artifact can own. Unknown kinds likewise remain
+    unresolved. Canonical identity/path validation prevents a second placement
+    of the same identity; no population index or sibling enumeration is needed.
+    """
+    singletons = {
+        APPROVAL_POLICY_IDENTITY: APPROVAL_POLICY_PATH,
+        PROCEDURE_RUNTIME_POLICY_IDENTITY: PROCEDURE_RUNTIME_POLICY_PATH,
+    }
+    if identity.qualified in singletons:
+        return singletons[identity.qualified]
+    paths: dict[str, Callable[[str], str]] = {
+        "Blueprint": blueprint_path,
+        "CaptureContract": capture_contract_path,
+        "Claim": claim_path,
+        "ClaimAttestation": attestation_path,
+        "ClaimType": claim_type_path,
+        "document": document_path,
+        "ExhaustPromotion": exhaust_promotion_path,
+        "Line": line_spec_path,
+        "Procedure": procedure_path,
+        "ProcedureMandate": procedure_mandate_path,
+        "Provider": provider_path,
+        "ProviderInterface": provider_interface_path,
+        "QueryDefinition": query_definition_path,
+        "ResolutionContract": resolution_contract_path,
+        "SourceAcquisitionPolicy": acquisition_policy_path,
+        "SubjectKind": subject_kind_path,
+        "Trigger": trigger_path,
+    }
+    try:
+        if identity.kind == "Subject":
+            kind, subject_id = identity.name.split("/", 1)
+            return subject_path(kind, subject_id)
+        path_of = paths.get(identity.kind)
+        return None if path_of is None else path_of(identity.name)
+    except (CruxibleError, ValueError):
+        return None
+
+
+def _reference_blobs(
+    tree: Mapping[str, bytes],
+    identities: Iterable[ArtifactIdentity],
+    *,
+    base: AcceptedProjectionCoordinate,
+) -> Mapping[str, bytes]:
+    """Read exact paths, with work bounded by the Procedure's reference set."""
+    codec = artifact_codec_for_compiler(base.compiler)
+    selected: dict[str, bytes] = {}
+    for identity in sorted(identities, key=lambda item: item.qualified.encode("utf-8")):
+        path = _reference_path(identity)
+        if path is None:
+            continue
+        path = artifact_path_for_codec(path, codec)
+        content = tree.get(path)
+        if content is not None:
+            selected[path] = content
+    return selected
+
+
 def _parse_reference_tree(
     instance: PlaybillInstance,
     tree: Mapping[str, bytes],
     *,
     base: AcceptedProjectionCoordinate,
 ) -> ParsedProjectionTree:
-    """Read the accepted tree a Procedure's references resolve against.
+    """Parse the selected blobs a Procedure's references resolve against.
 
     The body-metadata resolver is not optional here. A Document is registered
-    with its body's digest and nothing else, so parsing one asks the managed
-    CAS for that body's metadata; without the resolver every tree holding a
-    `documents/*.json` refuses outright, and a Procedure could not be authored
-    at all in a world that governs a single Document. Every other reader of the
-    accepted tree hands it over, and so does this one.
+    with its body's digest and nothing else, so a referenced Document still
+    asks the managed CAS for its metadata. Unrelated Documents are never read.
     """
 
     try:
@@ -2441,9 +2531,24 @@ def _lower_procedure(
                 repair_description="Repair the indicated source and prepare again.",
             )
     else:
+        references = _reference_identities(payload.definition)
+        if payload.acquisition_policy is not None:
+            try:
+                references.add(
+                    ArtifactIdentity(
+                        kind="SourceAcquisitionPolicy", name=payload.acquisition_policy
+                    )
+                )
+            except ValueError:
+                # _acquisition_policy_pin retains the typed invalid-name refusal.
+                pass
         parsed = _parse_reference_tree(
             instance,
-            base_tree if accepted_reference_tree is None else accepted_reference_tree,
+            _reference_blobs(
+                base_tree if accepted_reference_tree is None else accepted_reference_tree,
+                references,
+                base=base,
+            ),
             base=base,
         )
         duplicates: set[str] = set()
@@ -2454,7 +2559,15 @@ def _lower_procedure(
         for duplicate_identity in duplicates:
             accepted.pop(duplicate_identity, None)
         if candidate_identities:
-            candidate_parsed = _parse_reference_tree(instance, base_tree, base=base)
+            candidate_parsed = _parse_reference_tree(
+                instance,
+                _reference_blobs(
+                    base_tree,
+                    (item for item in references if item.qualified in candidate_identities),
+                    base=base,
+                ),
+                base=base,
+            )
             for envelope in candidate_parsed.envelopes:
                 if envelope.identity in candidate_identities:
                     candidate_artifacts[envelope.identity] = (
