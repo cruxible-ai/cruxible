@@ -451,15 +451,7 @@ def _list_contract_payload() -> ProcedureAuthoringPayload:
 def test_a_procedure_can_be_authored_in_a_world_that_governs_a_document(
     tmp_path: Path,
 ) -> None:
-    """Procedure lowering reads the accepted tree, so it must read all of it.
-
-    Resolving a Procedure's references parses every accepted artifact, and a
-    Document is registered by its body's DIGEST alone -- parsing one asks the
-    managed CAS for that body's metadata. Lowering asked without the resolver,
-    so the parse refused on the first `documents/*.json` it met and every
-    Procedure payload died with an untyped fault: an instance governing a
-    single Document could not author a Procedure at all.
-    """
+    """Unrelated governed Documents must not prevent Procedure authoring."""
 
     coordinator, actor = _world_holding_a_document(tmp_path)
 
@@ -477,12 +469,7 @@ def test_an_unreadable_accepted_tree_refuses_typed_rather_than_faulting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The author asked a question and is owed an answer with a repair.
-
-    A tree this instance cannot parse is the instance's fault, not the
-    payload's, but it reached the author as a bare internal error whose only
-    diagnosis was the daemon log.
-    """
+    """An unreadable referenced artifact yields a typed repair."""
 
     coordinator, actor = _world_holding_a_document(tmp_path)
 
@@ -491,9 +478,22 @@ def test_an_unreadable_accepted_tree_refuses_typed_rather_than_faulting(
 
     monkeypatch.setattr(lowering, "parse_projection_tree", unreadable)
 
+    payload = _list_contract_payload()
+    definition = {
+        **payload.definition,
+        "annotations": {
+            "design": {
+                "tag": "playbill-authoring-artifact-reference-v1",
+                "role": "design",
+                "target": {"kind": "document", "name": "design"},
+                "resolution": "accepted_at_intent_base",
+            }
+        },
+    }
+
     compiled = coordinator.compile(
         actor=actor,
-        payload=_list_contract_payload(),
+        payload=payload.model_copy(update={"definition": definition}),
         canonical_timestamp="2026-08-21T12:03:00.000000Z",
     )
 
