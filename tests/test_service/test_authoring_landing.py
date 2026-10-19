@@ -84,3 +84,51 @@ def test_authoring_submit_lands_when_allowed(
             "approve" if expected == "independent_approval_required" else "activate"
         ) in submitted.outcome.next
         assert instance.accepted_coordinate() == before
+
+
+def test_submit_reports_the_recompiled_candidate_after_a_head_race(tmp_path, monkeypatch):
+    from cruxible_client.contracts.claims import claim_path
+    from cruxible_core.service.authoring import landing
+    from cruxible_core.service.proposals.proposals import _proposal_result
+    from tests.test_service.test_write_verbs import _set, _write
+
+    instance, _ = seed_write_surface(tmp_path)
+    actor = AuthenticatedActor(actor_id="owner")
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    monkeypatch.setattr(playbill_api, "_authoring_coordinator", lambda _: (coordinator, actor))
+    activate = landing.service_activate_playbill_proposal
+    moved = []
+
+    def racing(target, **kwargs):
+        if not moved:
+            moved.append(True)
+            assert _write(target, _set(f"{KIND}/wi-2", "title", "contender")).status == "accepted"
+        return activate(target, **kwargs)
+
+    monkeypatch.setattr(landing, "service_activate_playbill_proposal", racing)
+    value = ClaimInput.model_validate(
+        {
+            "kind": "claim",
+            "subject": f"{KIND}/wi-1",
+            "predicate": f"{KIND}.title",
+            "object": {"kind": "literal", "value": "survives"},
+            "role": "observation",
+            "rationale": "Record the title",
+            "source": {"kind": "self_source", "body": "survives"},
+        }
+    )
+    with request_permission_scope(PermissionMode.GRAPH_WRITE):
+        result = playbill_api.playbill_authoring_submit_input("test", input=value)
+    assert isinstance(result.outcome, contracts.AuthoringLanded)
+    proposal = _proposal_result(instance, result.outcome.proposal_id)
+    assert proposal.admission.readmits is not None and proposal.candidate is not None
+    assert result.status.candidate_digest == proposal.candidate.candidate_digest
+    assert result.status.proposal_id == result.outcome.proposal_id
+    assert result.status == contracts.CandidateStatusRecord.model_validate(
+        coordinator.status(result.intent["intent_id"], actor=actor).model_dump(mode="json")
+    )
+    assert result.intent["candidate_status"] == result.status.model_dump(mode="json")
+    member = result.members[0]
+    path = claim_path(member["identity"].removeprefix("Claim:"))
+    actual = next(item for item in proposal.candidate.members if item.path == path)
+    assert member["artifact_digest"] == actual.candidate_artifact_digest

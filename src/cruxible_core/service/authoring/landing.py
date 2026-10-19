@@ -8,6 +8,7 @@ from cruxible_client.contracts.authoring_landing import (
     AuthoringLanding,
     AuthoringProposed,
 )
+from cruxible_client.contracts.candidates import CandidateMemberEvidence, CandidateMemberLawEvidence
 from cruxible_client.contracts.proposal_models import AuthenticatedActor
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
@@ -46,12 +47,20 @@ def service_land_authoring_submit(
         )
     elif accept == "never":
         outcome = _stopped(proposal_id, reason="accept_never")
+        if not may_activate:
+            outcome = outcome.model_copy(update={"next": f"someone who can runs {outcome.next}"})
     elif not may_activate:
         outcome = _stopped(proposal_id, reason="activation_not_permitted")
     else:
         receipt = service_activate_playbill_proposal(
             coordinator.instance, proposal_id=proposal_id, activated_by=actor.actor_id
         )
+        if receipt.proposal_id != proposal_id:
+            # Recompilation updated this intent's candidate association. Return
+            # that association and the replacement member digests, not the
+            # candidate originally submitted before the head moved.
+            submitted = _recompiled_submission(coordinator, actor=actor, submitted=submitted)
+            status = submitted.status
         if isinstance(receipt, contracts.ProposalRecompiled):
             outcome = _stopped(receipt.proposal_id, reason="independent_approval_required")
             status = status.model_copy(
@@ -87,6 +96,43 @@ def service_land_authoring_submit(
     data["status"] = status.model_dump(mode="json")
     data["intent"]["candidate_status"] = data["status"]
     return contracts.AuthoringSubmitResultRecord.model_validate(data)
+
+
+def _recompiled_submission(
+    coordinator: AuthoringIntentCoordinator,
+    *,
+    actor: AuthenticatedActor,
+    submitted: AuthoringSubmitResult,
+) -> AuthoringSubmitResult:
+    """Only a head race reaches here; work grows with this candidate's members."""
+
+    intent = coordinator.get(submitted.intent.intent_id, actor=actor).intent
+    status = intent.candidate_status
+    old_digest, new_digest = submitted.status.candidate_digest, status.candidate_digest
+    members = submitted.members
+    if old_digest is not None and new_digest is not None and old_digest != new_digest:
+        evidence = coordinator.instance.proposal_evidence()
+        original = evidence.read_candidate(old_digest)
+        replacement = evidence.read_candidate(new_digest)
+        by_path = {member.path: _member_digest(member) for member in replacement.members}
+        digests = {_member_digest(member): by_path.get(member.path) for member in original.members}
+        members = tuple(
+            member.model_copy(
+                update={
+                    "artifact_digest": digests.get(member.artifact_digest) or member.artifact_digest
+                }
+            )
+            for member in members
+        )
+    return submitted.model_copy(update={"intent": intent, "status": status, "members": members})
+
+
+def _member_digest(member: CandidateMemberEvidence | CandidateMemberLawEvidence) -> str | None:
+    return (
+        member.artifact_digest
+        if isinstance(member, CandidateMemberEvidence)
+        else member.candidate_artifact_digest
+    )
 
 
 def _stopped(
