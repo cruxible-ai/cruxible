@@ -175,6 +175,7 @@
     "NextRepairOperation": {
       "values": [
         "cruxible.authoring.example",
+        "cruxible.authoring.submit",
         "cruxible.authoring.bind",
         "cruxible.claim.retire",
         "cruxible.set",
@@ -31588,6 +31589,7 @@
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -31660,6 +31662,7 @@
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -32042,6 +32045,7 @@
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -32114,6 +32118,7 @@
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -32624,6 +32629,7 @@
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -32696,6 +32702,7 @@
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -33113,6 +33120,7 @@
           "schema": {
             "enum": [
               "cruxible.authoring.example",
+              "cruxible.authoring.submit",
               "cruxible.authoring.bind",
               "cruxible.claim.retire",
               "cruxible.set",
@@ -33181,6 +33189,7 @@
           "operation": {
             "enum": [
               "cruxible.authoring.example",
+              "cruxible.authoring.submit",
               "cruxible.authoring.bind",
               "cruxible.claim.retire",
               "cruxible.set",
@@ -33276,6 +33285,7 @@
           "schema": {
             "enum": [
               "cruxible.authoring.example",
+              "cruxible.authoring.submit",
               "cruxible.authoring.bind",
               "cruxible.claim.retire",
               "cruxible.set",
@@ -33490,6 +33500,7 @@
           "operation": {
             "enum": [
               "cruxible.authoring.example",
+              "cruxible.authoring.submit",
               "cruxible.authoring.bind",
               "cruxible.claim.retire",
               "cruxible.set",
@@ -34146,6 +34157,7 @@
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -34218,6 +34230,7 @@
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -34820,6 +34833,7 @@
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
@@ -34892,6 +34906,7 @@
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
                   "cruxible.set",
