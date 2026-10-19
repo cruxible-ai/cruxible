@@ -232,7 +232,7 @@ def test_lost_cas_retries_only_a_lowering_origin(
         assert attempts == ["lost_cas"]
         assert receipt.status == "lost_cas" and receipt.proposal_id == source_id
         assert receipt.accepted_coordinate is None
-        assert instance.accepted_coordinate().git_oid == winner_heads[0].git_oid
+        assert instance.accepted_coordinate().git_oid == winner_bundle.oid
         assert withdrawal is None
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate() == instance.accepted_coordinate()
