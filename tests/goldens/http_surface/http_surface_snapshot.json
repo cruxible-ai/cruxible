@@ -244,7 +244,7 @@
     "POST": "ApprovalChallenge"
   },
   "/api/v1/{instance_id}/proposals/{proposal_id}/approvals": {
-    "POST": "ApprovalReceipt | ProposalRecompiled"
+    "POST": "ApprovalReceipt | ActivationReceipt | ProposalRecompiled"
   },
   "/api/v1/{instance_id}/proposals/{proposal_id}/readmit": {
     "POST": "ProposalReadmitResult"
