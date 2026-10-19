@@ -2003,3 +2003,52 @@ def test_a_kit_carries_its_subject_kinds_and_their_keys(
     assert not declared.unique
     (status,) = playbill_api.playbill_kit_status(consumer.instance_id).kits
     assert status.drifted == ()
+
+
+def test_orient_and_get_name_the_kit_that_owns_each_claim_type_and_subject_kind(
+    worlds: tuple[_World, _World],
+) -> None:
+    """The owning kit is its receipt's: a consumer's own definitions name none."""
+
+    from cruxible_client.contracts.get_reads import GetRequest
+    from tests.core_support._subject_kind_support import bare_slug_claim_type
+
+    publisher, consumer = worlds
+    draft = publisher.pb.changes(rationale="Name accounts by their slug.")
+    draft.claim_type(bare_slug_claim_type("acme.account"))
+    draft.claim_type(_claim_type(SEATS, {"type": "integer"}))
+    draft.subject_kind(name="acme.account", keys=("acme.account.slug",), uniqueness="unique")
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit(accept="never")
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    publisher.approve(submitted._candidate_status.proposal_id)
+    publisher.pb.refresh()
+    consumer.add(publisher.build("1.0.0"))
+    consumer.author(_claim_type(UNOWNED, {"type": "boolean"}))
+
+    claim_types = playbill_api.playbill_orient(consumer.instance_id, section="claim_types")
+    owners = {row.predicate: row.kit for row in claim_types.claim_types or ()}
+    assert owners["acme.account.slug"] == "acme"
+    assert owners[SEATS] == "acme"
+    assert owners[UNOWNED] is None
+    unowned = next(row for row in claim_types.claim_types or () if row.predicate == UNOWNED)
+    assert "kit" not in unowned.model_dump(mode="json")
+    kinds = playbill_api.playbill_orient(consumer.instance_id, section="subject_kinds")
+    assert {row.kind: row.kit for row in kinds.subject_kinds or ()}["acme.account"] == "acme"
+
+    def card(ref: str) -> typing.Any:
+        return playbill_api.playbill_get(consumer.instance_id, request=GetRequest(ref=ref)).card
+
+    assert card(f"ClaimType:{SEATS}").kit == "acme"
+    assert card(f"ClaimType:{UNOWNED}").kit is None
+    assert card("SubjectKind:acme.account").kit == "acme"
+
+    # Removing the kit retires what it installed; nothing names it any more.
+    consumer.settle(
+        playbill_api.playbill_kit_remove(
+            consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
+        )
+    )
+    assert card(f"ClaimType:{SEATS}").kit is None

@@ -273,6 +273,9 @@ class GetClaimTypeCard(_StrictGetModel):
     evidence: tuple[str, ...]
     evidence_rules: tuple[GetEvidenceRule, ...] = ()
     live_claims: int
+    # The installed kit that owns the ClaimType (its receipt records it); absent
+    # when no kit owns it.
+    kit: str | None = Field(default=None, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 
@@ -397,6 +400,8 @@ class GetSubjectKindCard(_StrictGetModel):
     uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_omit_none)
     #: How many Subjects of the kind are live at this coordinate.
     live_subjects: int
+    #: The installed kit that owns the SubjectKind; absent when no kit owns it.
+    kit: str | None = Field(default=None, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 

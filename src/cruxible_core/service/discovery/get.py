@@ -141,6 +141,7 @@ from cruxible_core.service.discovery.discovery import (
 )
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
+from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
 from cruxible_core.service.discovery.operational import (
     LIVE_CARD_FIELDS,
     capture_card,
@@ -1347,6 +1348,9 @@ def _claim_type_card(
                 (claim_type.predicate,),
             ).fetchone()[0]
         )
+        kit = owned_by(
+            kit_owners(instance, projection.typed.connection), "ClaimType", claim_type.predicate
+        )
     names = CaptureContractNames(instance, coordinate)
     evidence = names.admitted(claim_type, qualified=True)
     rules = tuple(
@@ -1384,6 +1388,7 @@ def _claim_type_card(
         evidence=evidence,
         evidence_rules=rules,
         live_claims=live,
+        kit=kit,
         next=tuple(next_steps),
     )
 
@@ -1839,6 +1844,7 @@ def _subject_kind_card(
         (live,) = projection.typed.connection.execute(
             "SELECT COUNT(*) FROM subjects WHERE subject_kind=? AND lifecycle='live'", (kind,)
         ).fetchone()
+        kit = owned_by(kit_owners(instance, projection.typed.connection), "SubjectKind", kind)
     rule = declared.identity_rule
     return GetSubjectKindCard(
         subject_kind=resolved.identity,
@@ -1848,6 +1854,7 @@ def _subject_kind_card(
         keys=declared.keys,
         uniqueness=getattr(rule, "uniqueness", None),
         live_subjects=int(live),
+        kit=kit,
         next=(
             _render_get(surface, resolved.display, "history"),
             {

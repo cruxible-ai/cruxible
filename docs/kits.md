@@ -273,6 +273,11 @@ Blueprints) forward to the new version in the same change set.
 For a carried Claim, `get --detail evidence` and the floor's `changes/` file
 show the kit transition as the rationale for that revision.
 
+Reads name the owner: `cruxible orient --section claim_types` and `--section
+subject_kinds` mark each row an installed kit owns with `kit`, and so do the
+`get ClaimType:` and `get SubjectKind:` cards. A definition the kit only
+carried, or one you authored yourself, names none.
+
 `kit add` refuses a release older than the one installed unless you pass
 `--allow-downgrade`; the preview names the transition (install, upgrade,
 downgrade or reinstall).

@@ -3611,7 +3611,10 @@ does not exist is refused as `cruxible.orient.kind_not_found` with the nearest
 kinds. `--section` pages one artifact family as compact rows; follow
 `next_cursor` with `--cursor` while `truncated` is true. `--section
 subject_kinds` lists each live SubjectKind and how a new Subject of the kind is
-named (`keys: <key ClaimTypes> (unique|hint)` or `minted`). `--section runs` lists
+named (`keys: <key ClaimTypes> (unique|hint)` or `minted`), and `--section
+claim_types` each live ClaimType in full; a row an installed kit owns names it as
+`kit` (the kit whose receipt records the definition), as do the `get
+ClaimType:` and `get SubjectKind:` cards. `--section runs` lists
 Procedure runs, newest admission first, each with its Procedure, status,
 admission time, Line and finished-node count, and `--section running` lists
 only the runs still running. Both page by the admission's immutable position,

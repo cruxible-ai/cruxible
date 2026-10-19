@@ -7790,12 +7790,15 @@ def _render_orient(result: Mapping[str, Any]) -> str:
                 if row["rule"] == "minted"
                 else f"keys: {', '.join(row.get('keys', ()))} ({row.get('uniqueness')})"
             )
-            lines.append(f"{row['kind']}  {rule}")
+            lines.append(
+                f"{row['kind']}  {rule}" + (f"  kit={row['kit']}" if row.get("kit") else "")
+            )
     if section == "claim_types":
         for row in result["claim_types"]:
             lines.append(
                 f"{row['predicate']}  kinds={','.join(row['subject_kinds'])}  "
                 + _orient_predicate_line(row).split("  ", 1)[1]
+                + (f"  kit={row['kit']}" if row.get("kit") else "")
             )
     queries = result.get("queries")
     if queries:

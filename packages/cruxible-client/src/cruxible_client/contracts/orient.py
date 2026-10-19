@@ -114,6 +114,8 @@ class OrientPredicate(_StrictOrientModel):
     contract is required). A full descriptor also carries each described enum
     member, the role a write defaults to, and ``revision_evidence``: what a
     statement-changing revision keeps (``accumulate`` before v7).
+    ``kit`` (claim_types section only) is the installed kit that owns the
+    ClaimType: its receipt records the definition. Absent when no kit owns it.
     """
 
     name: str
@@ -136,6 +138,7 @@ class OrientPredicate(_StrictOrientModel):
     revision_evidence: RevisionEvidence | None = Field(default=None, exclude_if=_is_none)
     stale_after: str | None = Field(default=None, exclude_if=_is_none)
     live_claims: int | None = Field(default=None, ge=0, exclude_if=_is_none)
+    kit: str | None = Field(default=None, exclude_if=_is_none)
 
 
 class OrientSubjectKind(_StrictOrientModel):
@@ -143,13 +146,15 @@ class OrientSubjectKind(_StrictOrientModel):
 
     ``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``
     or ``hint``) or ``minted`` (core mints the id). A kind with no live
-    SubjectKind has no row: no new Subject of it can be created.
+    SubjectKind has no row: no new Subject of it can be created. ``kit`` is
+    the installed kit that owns the SubjectKind, absent when no kit owns it.
     """
 
     kind: str
     rule: Literal["keys", "minted"]
     keys: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_is_none)
+    kit: str | None = Field(default=None, exclude_if=_is_none)
 
 
 #: A kind no accepted SubjectKind declares: its Subjects are grandfathered.

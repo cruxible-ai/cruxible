@@ -77,6 +77,7 @@ from cruxible_core.service.discovery.discovery import (
     accepted_provider_interfaces,
 )
 from cruxible_core.service.discovery.field_names import short_field_name
+from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
 from cruxible_core.service.discovery.next import (
     NextRequest,
     PlaybillNextItemV1,
@@ -881,6 +882,11 @@ def service_playbill_orient(
         # never with the Subjects the full map counts.
         with instance.bind_accepted_projection(coordinate) as projection:
             declared = accepted_subject_kinds(projection.typed.connection)
+            owners = kit_owners(instance, projection.typed.connection)
+        declared = tuple(
+            item.model_copy(update={"kit": owned_by(owners, "SubjectKind", item.kind)})
+            for item in declared
+        )
         page, next_cursor = _page(
             declared,
             [item.kind for item in declared],
@@ -963,6 +969,13 @@ def service_playbill_orient(
             if section in _GOVERNANCE_SECTIONS
             else _section_rows(state, section)
         )
+        if section == "claim_types":
+            with instance.bind_accepted_projection(coordinate) as projection:
+                owners = kit_owners(instance, projection.typed.connection)
+            rows = tuple(
+                row.model_copy(update={"kit": owned_by(owners, "ClaimType", row.predicate)})
+                for row in rows
+            )
         page, next_cursor = _page(
             rows, keys, view=view, served=served, continuation=continuation, limit=limit
         )
