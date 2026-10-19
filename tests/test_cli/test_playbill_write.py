@@ -80,14 +80,14 @@ def test_write_doc_payload_creates_file_and_cites_section(
 ) -> None:
     payload = {
         "because": "The checks passed",
-        "docs": [{"op": "append", "file": "notes.md", "text": "# Decision\nReady"}],
+        "docs": [{"op": "append", "id": "basis", "file": "notes.md", "text": "# Decision\nReady"}],
         "changes": [
             {
                 "op": "set",
                 "subject": WI1,
                 "field": "status",
                 "value": "ready",
-                "evidence": {"kind": "section", "file": "notes.md", "section": ["Decision"]},
+                "evidence": {"kind": "section", "ref": "basis"},
             }
         ],
     }
@@ -495,3 +495,26 @@ def test_a_subject_named_by_key_text_reaches_core_as_written(served: _ServiceCli
     linked = _run("add", WI1, "governs", f"{KIND}/WI-2", "--because", "Linked.", "--json")
     assert linked.exit_code == 0, linked.output
     assert json.loads(linked.stdout)["changes"][0]["after"] == f"{KIND}/wi-2"
+
+
+def test_docs_only_hint_in_cli_text_and_json(served, tmp_path):
+    from cruxible_client.contracts.write import DOCS_ONLY_HINT
+
+    payload = json.dumps(
+        {
+            "because": "A note",
+            "docs": [
+                {"op": "append", "id": "note", "file": "notes.md", "text": "# Note\nDraft"},
+            ],
+        }
+    )
+    for output in ([], ["--json"]):
+        result = CliRunner().invoke(
+            cli, [*PREFIX, "write", "-", "--workspace-root", str(tmp_path), *output], input=payload
+        )
+        assert result.exit_code == 0, result.output
+        if output:
+            assert json.loads(result.stdout)["hint"] == DOCS_ONLY_HINT
+        else:
+            assert DOCS_ONLY_HINT in result.stdout.splitlines()
+            assert "warning" not in result.stdout

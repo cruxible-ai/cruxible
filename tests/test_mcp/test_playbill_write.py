@@ -41,14 +41,14 @@ def test_mcp_doc_write_observes_and_applies_through_shared_seam(monkeypatch, tmp
     outcome = handlers.handle_playbill_write(
         "inst_write",
         because="Record basis",
-        docs=[{"op": "append", "file": "notes.md", "text": "# Decision\nReady"}],
+        docs=[{"op": "append", "id": "basis", "file": "notes.md", "text": "# Decision\nReady"}],
         changes=[
             {
                 "op": "set",
                 "subject": f"{KIND}/wi-1",
                 "field": "status",
                 "value": "ready",
-                "evidence": {"kind": "section", "file": "notes.md", "section": ["Decision"]},
+                "evidence": {"kind": "section", "ref": "basis"},
             }
         ],
     )
@@ -294,3 +294,37 @@ def test_write_tool_outputs_declare_each_warning_variant(
         assert newer["properties"]["code"]["const"] == "cruxible.write.newer_capture_not_citable"
         assert "verdict" in verdict["required"] and "capture" not in verdict["properties"]
         assert "capture" in newer["required"] and "verdict" not in newer["properties"]
+
+
+def test_docs_only_hint_in_mcp_structured_and_text_results(monkeypatch, tmp_path):
+    import json
+
+    from cruxible_client.contracts.write import DOCS_ONLY_HINT
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._write_support import caller, seed_write_surface
+
+    (tmp_path / "state").mkdir()
+    instance, _ = seed_write_surface(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+
+    class Client:
+        def write(self, instance_id, *, request):
+            return service_playbill_write(instance, request=request, caller=caller())
+
+    monkeypatch.setattr(handlers, "_get_client", lambda: Client())
+    server = create_server()
+    content, structured = asyncio.run(
+        server.call_tool(
+            "cruxible_write",
+            {
+                "instance_id": "inst_write",
+                "because": "A note",
+                "docs": [{"op": "append", "file": "notes.md", "text": "# Note\nDraft"}],
+            },
+        )
+    )
+    assert structured["hint"] == DOCS_ONLY_HINT
+    assert any(json.loads(block.text).get("hint") == DOCS_ONLY_HINT for block in content)
+    assert not structured.get("warnings")

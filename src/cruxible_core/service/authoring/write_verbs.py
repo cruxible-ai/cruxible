@@ -126,6 +126,7 @@ from cruxible_client.contracts.subject_kinds import (
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.write import (
+    DOCS_ONLY_HINT,
     AddChange,
     ApprovalNeeded,
     ApprovalReason,
@@ -3095,6 +3096,7 @@ def service_playbill_write(
         if request.docs:
             outcome = outcome.model_copy(
                 update={
+                    "hint": DOCS_ONLY_HINT if not request.changes and not outcome.refused else None,
                     "docs": tuple(
                         DocOutcome(
                             source_id=edit.source_id,
@@ -3104,7 +3106,7 @@ def service_playbill_write(
                         )
                         for edit in request.docs
                         if isinstance(edit, DocEditObservation)
-                    )
+                    ),
                 }
             )
         if request.full_coordinate and outcome.accepted_coordinate is None:

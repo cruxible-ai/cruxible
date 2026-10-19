@@ -3382,11 +3382,17 @@ cruxible write --schema
 the preamble after frontmatter). Optional `expect` is the prior subtree digest.
 A created file contains your text, including any frontmatter you supply, and
 gets a catalog entry. No `type` option is inferred.
+An operation may declare an `id`; `{kind: section, ref: ID}` cites the section
+that operation authors, including a replacement's new heading or preamble.
+IDs must be unique in the payload. Unknown refs and refs combined with explicit
+`file` or `section` refuse before submission. Explicit `file` plus `section`
+continues to cite other sections. Adapters resolve refs before sending observations.
 
 ```yaml
 because: Record the rationale and its Claim together.
 docs:
   - op: append
+    id: basis
     file: notes.md
     text: "# Decision\nThe work is ready because the checks passed.\n"
 changes:
@@ -3394,7 +3400,7 @@ changes:
     subject: project.work_item/wi-1
     field: status
     value: ready
-    evidence: {kind: section, file: notes.md, section: [Decision]}
+    evidence: {kind: section, ref: basis}
 ```
 
 Use `write - --workspace-root DIR` for stdin and `write --schema` for the

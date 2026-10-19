@@ -4500,6 +4500,8 @@ def _write_options(function: Callable[..., Any]) -> Callable[..., Any]:
 def _write_text(outcome: WriteOutcome) -> None:
     head = outcome.status.replace("_", " ")
     click.echo(f"{head} (generation {outcome.coordinate.generation}, {outcome.coordinate.git_oid})")
+    if outcome.hint is not None:
+        click.echo(outcome.hint)
     for doc in outcome.docs:
         click.echo(
             f"  doc {doc.file or doc.source_id} {list(doc.section)}: "

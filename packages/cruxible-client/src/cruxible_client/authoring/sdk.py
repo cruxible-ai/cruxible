@@ -73,6 +73,7 @@ from cruxible_client.authoring.sdk_types import (
     TypedRef,
     WholeValueUnavailable,
 )
+from cruxible_client.authoring.section_evidence import AuthoredSection
 from cruxible_client.authoring.selectors import (
     EvidenceSelection,
     FileSelector,
@@ -263,6 +264,7 @@ from cruxible_client.contracts.write import (
     ReplaceSection,
     RetireChange,
     RetireRequest,
+    SectionEvidence,
     SetChange,
     SetRequest,
     SlotRef,
@@ -1658,18 +1660,39 @@ class WriteBatch:
         self.docs: list[DocOp] = []
 
     def append_section(
-        self, file: str, text: str, *, under: tuple[str, ...] = (), name: str | None = None
+        self,
+        file: str,
+        text: str,
+        *,
+        under: tuple[str, ...] = (),
+        name: str | None = None,
+        id: str | None = None,
     ) -> WriteBatch:
         """Append a child, creating a missing file with your text. Next: .write()."""
-        self.docs.append(AppendSection(file=file, under=under, text=text, name=name))
+        self.docs.append(AppendSection(id=id, file=file, under=under, text=text, name=name))
         return self
 
     def replace_section(
-        self, file: str, section: tuple[str, ...], text: str, *, expect: str | None = None
+        self,
+        file: str,
+        section: tuple[str, ...],
+        text: str,
+        *,
+        expect: str | None = None,
+        id: str | None = None,
     ) -> WriteBatch:
         """Replace a subtree or preamble, checking expect when supplied. Next: .write()."""
-        self.docs.append(ReplaceSection(file=file, section=section, text=text, expect=expect))
+        self.docs.append(
+            ReplaceSection(id=id, file=file, section=section, text=text, expect=expect)
+        )
         return self
+
+    def section(self, id: str) -> SectionEvidence:
+        """Cite the section authored by a doc operation's id in this batch.
+
+        Next: ``batch.set(..., supported_by=batch.section(id))``, then ``.write()``.
+        """
+        return SectionEvidence(ref=id)
 
     @overload
     def set(
@@ -1680,6 +1703,7 @@ class WriteBatch:
         /,
         *,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
@@ -1694,6 +1718,7 @@ class WriteBatch:
         *,
         subject: _WriteSubject | None = None,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
@@ -1704,6 +1729,7 @@ class WriteBatch:
         *operands: Any,
         subject: _WriteSubject | None = None,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
@@ -1714,6 +1740,10 @@ class WriteBatch:
         unless the field holds that value now. Next: more changes, then ``.write()``.
         """
 
+        if supported_by is not None:
+            if evidence is not None:
+                raise ValueError("choose evidence or supported_by, not both")
+            evidence = supported_by
         named, field_name, value = _batch_operands("set", operands, subject)
         self.changes.append(
             SetChange(
@@ -1737,6 +1767,7 @@ class WriteBatch:
         /,
         *,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
     ) -> WriteBatch: ...
@@ -1750,6 +1781,7 @@ class WriteBatch:
         *,
         subject: _WriteSubject | None = None,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
     ) -> WriteBatch: ...
@@ -1759,6 +1791,7 @@ class WriteBatch:
         *operands: Any,
         subject: _WriteSubject | None = None,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
     ) -> WriteBatch:
@@ -1769,6 +1802,10 @@ class WriteBatch:
         ``.write()``.
         """
 
+        if supported_by is not None:
+            if evidence is not None:
+                raise ValueError("choose evidence or supported_by, not both")
+            evidence = supported_by
         named, field_name, value = _batch_operands("add", operands, subject)
         self.changes.append(
             AddChange(
@@ -3258,6 +3295,34 @@ class Cruxible:
             outcome=outcome,
         )
 
+    def section(
+        self,
+        file: str,
+        heading_path: tuple[str, ...],
+        *,
+        text: str,
+        under: tuple[str, ...] = (),
+        replace: bool = False,
+        expect: str | None = None,
+    ) -> AuthoredSection:
+        """Carry a new section's text as evidence for one typed write.
+
+        Append a heading subtree, or ``replace=True`` to replace ``heading_path``
+        (empty: preamble). ``expect`` checks the prior subtree digest on replace.
+        The heading path cites the resulting section, so a renamed heading must
+        be cited explicitly through a batch instead.
+        Next: ``subject.set(status=..., evidence=section, because=...)``; inspect
+        ``outcome.docs`` for file conflicts even after a Claim was admitted.
+        """
+        if expect is not None and not replace:
+            raise ValueError("expect is only available for a replacement")
+        operation: DocOp = (
+            ReplaceSection(file=file, section=heading_path, text=text, expect=expect)
+            if replace
+            else AppendSection(file=file, under=under, text=text)
+        )
+        return AuthoredSection(operation, SectionEvidence(file=file, section=heading_path))
+
     def set(
         self,
         subject: str | SubjectRef,
@@ -3265,7 +3330,7 @@ class Cruxible:
         value: ClaimValue | SubjectRef | LiteralValue,
         *,
         because: str,
-        evidence: Evidence | None = None,
+        evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
@@ -3288,6 +3353,29 @@ class Cruxible:
         the value back with its verdict.
         """
 
+        if isinstance(evidence, AuthoredSection):
+            return self._write(
+                WriteRequest(
+                    because=because,
+                    docs=(evidence.operation,),
+                    changes=(
+                        SetChange(
+                            subject=_write_subject(subject),
+                            field=_write_field(field),
+                            value=_write_value(value),
+                            evidence=evidence.citation,
+                            role=role,
+                            contend=contend,
+                            expect=_write_expect(expect),
+                        ),
+                    ),
+                    dry_run=dry_run,
+                    accept=accept,
+                    at=self._write_at(at),
+                    surface="sdk",
+                    full_coordinate=True,
+                )
+            )
         request = SetRequest(
             subject=_write_subject(subject),
             field=_write_field(field),

@@ -222,10 +222,16 @@ yourself. Append accepts `file`, `under` (default `[]`), and `text`; replace
 accepts `file`, `section`, `text`, and optional subtree-digest `expect`. Supply
 any frontmatter in your own text. Docs-only calls are allowed.
 
-On the SDK use `.append_section(file, text, under=(...))` or
-`.replace_section(file, section, text, expect=digest)` on
-`cx.changes(because=...)`, then `.write()`. In authoring drafts,
-`cx.file(path).section(*headings)` is a source citation for `supported_by=`.
+A docs-only write returns this advisory hint: “No Claim cites this text. If it records a belief or decision, add a Claim citing the section; if it is a draft or a note, prose is right.”
+
+On the SDK prefer a typed set with
+`evidence=cx.section("notes.md", ("Decision",), text="# Decision\nThe checks passed.")`.
+Use `replace=True, expect=digest` to replace that section. This carries the prose
+and citation through the same admitted write. For a batch, use
+`.append_section(..., id="basis")` or `.replace_section(..., id="basis")`, then
+`.set(..., supported_by=batch.section("basis"))`. Inspect `outcome.docs` for
+post-admission conflicts. `cx.file(path).section(*headings)` selects existing
+text for authoring-lane `supported_by=`.
 On MCP pass `docs` to `cruxible_write`; on CLI use the `write FILE|-` payload.
 Dry-run first to learn digests, and inspect `outcome.docs[].written` and `next`.
 Authored section evidence is own words with a retained basis and a drifting

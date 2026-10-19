@@ -259,7 +259,12 @@ def _write_doc_sections(world: World) -> object:
         {
             "because": "The edited section records the basis.",
             "docs": [
-                {"op": "append", "file": "doc-write.md", "text": "# Decision\nThe checks passed.\n"}
+                {
+                    "op": "append",
+                    "id": "basis",
+                    "file": "doc-write.md",
+                    "text": "# Decision\nThe checks passed.\n",
+                }
             ],
             "changes": [
                 {
@@ -269,8 +274,7 @@ def _write_doc_sections(world: World) -> object:
                     "value": "Document write",
                     "evidence": {
                         "kind": "section",
-                        "file": "doc-write.md",
-                        "section": ["Decision"],
+                        "ref": "basis",
                     },
                 }
             ],
