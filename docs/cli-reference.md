@@ -3639,6 +3639,13 @@ ClaimTypes admit each), `predictions` (each live ResolutionContract with its
 bound windows by status and the next close) and `mandates` (grant, state and
 expiry). The default map counts each family under `Artifacts` and never
 inlines their rows; each section suggests the `get` of its first row.
+`--section generations` is the ledger's timeline: accepted generations newest
+first from the answer's own (or `--at`), each with its sequence and git oid,
+acceptance time, change-set digest, the proposal it accepted (`get` it for the
+changes), the proposer, the approving signers, the change set's `because` (cut
+at 500 characters) and its member count. It pages by sequence, so a page reads
+only its own generations; pass a row's sequence back as `--at` to read state as
+that generation left it.
 `--section interfaces` lists the provider interfaces a Procedure node can call,
 each with its interface digest, operation contract and the implementing
 Providers with their implementation digests (`get ProviderInterface:NAME`
@@ -3705,6 +3712,9 @@ cruxible since GENERATION [--max-rows N] [--max-bytes N]
 Returns signed accepted ChangeSet members in `(GENERATION, pinned head]` order.
 Follow `next_cursor` to continue against the same historical head even if main
 advances; the cursor binds the lower bound, access profile, and page budgets.
+A page reads only the generations it shows, starting where the cursor stopped,
+never the accepted history before it. `orient --section generations` lists the
+generations themselves.
 
 ## floor
 

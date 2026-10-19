@@ -377,6 +377,28 @@ def _orient(world: World) -> object:
     return playbill_api.playbill_orient(world.instance_id)
 
 
+def _orient_generations(world: World) -> object:
+    result = playbill_api.playbill_orient(world.instance_id, section="generations", limit=5)
+    assert result.generations is not None and len(result.generations) == 5, result
+    assert result.truncated, result
+    return result
+
+
+def _since_first_page(world: World) -> object:
+    """The first page after genesis: only its generations are read, never the rest."""
+
+    result = playbill_api.playbill_since(
+        world.instance_id,
+        request={
+            "generation": 0,
+            "access_profile": _ACCESS.model_dump(mode="json"),
+            "max_rows": 10,
+        },
+    )
+    assert len(result.rows) == 10 and result.truncated, result
+    return result
+
+
 def _get(ref: Callable[[World], str]) -> Callable[[World], object]:
     def run(world: World) -> object:
         return playbill_api.playbill_get(world.instance_id, request=GetRequest(ref=ref(world)))
@@ -733,6 +755,8 @@ def _routes() -> list[Route]:
             for part in ticks
         ),
         Route("read.orient", _orient),
+        Route("read.orient.generations", _orient_generations),
+        Route("read.since.first_page", _since_first_page),
         Route("read.get.subject", _get(lambda w: w.subject(7))),
         Route("read.get.claim", _get(lambda w: w.claims[f"{w.subject(7)}#title"])),
         Route("read.query.where", _query_where),

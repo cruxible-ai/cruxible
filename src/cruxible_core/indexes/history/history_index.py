@@ -205,7 +205,7 @@ class GenerationRecordFacts:
     """The small immutable facts of one verified retained change-set record.
 
     They are derived once from the verified record and shared without copies:
-    every field is a string, a tuple of strings, or None. A read that needs only
+    every field is a number, a string, a tuple of strings, or None. A read that needs only
     these never copies or re-parses the whole record, so its cost does not grow
     with the size of the change set that accepted a revision.
     """
@@ -218,6 +218,8 @@ class GenerationRecordFacts:
     # Approval signers in record order, repeats included.
     approval_signers: tuple[str, ...]
     mandate_digest: str | None
+    # How many members the change set carries.
+    member_count: int
 
 
 def _record_facts(record: ChangeSetRecordAnyVersion) -> GenerationRecordFacts:
@@ -229,6 +231,7 @@ def _record_facts(record: ChangeSetRecordAnyVersion) -> GenerationRecordFacts:
         source_compilation_digest=record.actor_binding.source_compilation_digest,
         approval_signers=tuple(item.attestation.signer_id for item in record.approvals),
         mandate_digest=record.mandate_digest,
+        member_count=len(record.members),
     )
 
 

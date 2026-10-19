@@ -7792,6 +7792,17 @@ def _render_orient(result: Mapping[str, Any]) -> str:
                 lines.append(f"  {row['description']}")
             lines.append(f"  in:  {', '.join(row.get('input', ())) or '-'}")
             lines.append(f"  out: {', '.join(row.get('output', ())) or '-'}")
+    if section == "generations":
+        for row in result["generations"]:
+            approvals = ",".join(row.get("approvals", ())) or "-"
+            lines.append(
+                f"seq {row['sequence']} at {row['git_oid'][:12]}  {row['accepted_at']}  "
+                f"by {row.get('proposer') or '-'}  approved {approvals}  "
+                f"members={row['members']}"
+                + (f"  {row['proposal']}" if row.get("proposal") else "")
+            )
+            if row.get("because"):
+                lines.append(f"  because: {printable(row['because'])}")
     if section == "subject_kinds":
         for row in result["subject_kinds"]:
             rule = (
