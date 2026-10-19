@@ -182,8 +182,8 @@ EXPECTED_OPERATIONS = {
     "line_coverage_gap": "cruxible.line.evaluate",
     # Work matched before a restart waits for an explicit dispatch.
     "line_work_pending": "cruxible.line.dispatch",
-    # Demoting the Line, or repointing it at a fixed Procedure, is a Line successor.
-    "line_settled_prior_refusals": "cruxible.authoring.example",
+    # Demoting the Line is a Line successor the row carries in full, ready to submit.
+    "line_settled_prior_refusals": "cruxible.authoring.submit",
     # A Line's unread inbox items: the list shows them; judging each clears the row.
     "line_inbox_unread": "cruxible.inbox.list",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
@@ -1695,13 +1695,9 @@ def _subject_kind_undeclared(root: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def _line_settled_prior_refusals(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    from cruxible_client.contracts.procedures.line_specs import (
-        line_spec_digest,
-        line_spec_path,
-        render_line_spec,
-    )
-    from tests.core_support._candidate_support import submit_member_candidate
-    from tests.core_support._knowledge_loop_support import accept_proposal
+    import json
+    import shlex
+
     from tests.test_procedures import test_procedure_settlement_delivery as settle
 
     instance, _root, line, second = settle.settled_refusal_world(root)
@@ -1709,26 +1705,25 @@ def _line_settled_prior_refusals(root: Path, _monkeypatch: pytest.MonkeyPatch) -
     assert row.subject_identity == line.identity.qualified
     assert row.related_identities == (f"ProcedureRun:{second.run_id}",)
     assert row.repair.operation == EXPECTED_OPERATIONS["line_settled_prior_refusals"]
-    assert row.repair.command == "cruxible authoring example line"
-
-    # The repair: a Line successor, here demoted to propose.
-    demoted = line.model_copy(
-        update={
-            "max_authority": "propose",
-            "lifecycle": line.lifecycle.model_copy(
-                update={"predecessor_digest": line_spec_digest(line).tagged}
-            ),
-        }
+    payload = row.repair.arguments["payload"]
+    assert (payload["kind"], payload["name"], payload["max_authority"]) == (
+        "line",
+        line.identity.name,
+        "propose",
     )
-    inspection = submit_member_candidate(
+    # The command carries the whole payload: the here-string is the payload.
+    head, here = row.repair.command.split(" <<< ", 1)
+    assert head == "cruxible authoring submit -"
+    assert json.loads(shlex.split(here)[0]) == payload
+    mcp = _row(
         instance,
-        members={line_spec_path(demoted.identity.name): render_line_spec(demoted)},
-        actor_id="owner",
-        proposal_name="closed-loop-demote-line",
-        proposal_family="procedure",
-        timestamp="2026-09-12T12:30:00.000000Z",
+        "line_settled_prior_refusals",
+        _request(instance).model_copy(update={"caller_surface": "mcp"}),
     )
-    accept_proposal(instance, settle.OWNERS[instance.root], inspection)
+    assert mcp.repair.command == f"cruxible_authoring_submit(payload={json.dumps(payload)})"
+
+    # The repair, run as emitted: the successor's count starts empty.
+    settle.submit_line_repair(instance, row)
     _assert_gone(instance, "line_settled_prior_refusals", _request(instance))
 
 

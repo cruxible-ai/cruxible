@@ -27,6 +27,7 @@ from cruxible_client.contracts import (
 )
 from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidence
 from cruxible_client.contracts.artifacts import parse_artifact_identity
+from cruxible_client.contracts.authoring.inputs import LineInput
 from cruxible_client.contracts.authoring.models import BlockSyncReadRequest
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
@@ -88,6 +89,11 @@ from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityErr
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate, ProcedureMandateV1
+from cruxible_client.contracts.procedures.line_specs import (
+    LineSpec,
+    line_spec_path,
+    parse_line_spec,
+)
 from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReference
@@ -868,6 +874,7 @@ class PlaybillNextResultV2(_StrictNextModel):
 
 _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.authoring.example": "authoring example",
+    "cruxible.authoring.submit": "authoring submit",
     "cruxible.authoring.bind": "authoring bind",
     "cruxible.claim.retire": "retire",
     "cruxible.set": "set",
@@ -955,6 +962,8 @@ NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
 _REPAIR_TOOLS: Mapping[str, str | None] = {
     # The template starts the repair; compile is the door that performs it.
     "cruxible.authoring.example": "cruxible_authoring_compile",
+    # A payload the queue filled in full: submitting it is the repair.
+    "cruxible.authoring.submit": "cruxible_authoring_submit",
     "cruxible.authoring.bind": "cruxible_authoring_bind",
     "cruxible.claim.retire": "cruxible_retire",
     "cruxible.set": "cruxible_set",
@@ -1018,6 +1027,29 @@ def _write_changes(values: Mapping[str, object]) -> list[dict[str, object]]:
     if not isinstance(changes, list | tuple):
         return []
     return [dict(item) for item in changes if isinstance(item, Mapping)]
+
+
+def _submitted_payload(values: Mapping[str, object]) -> Mapping[str, object] | None:
+    """The authoring input a `cruxible.authoring.submit` repair carries in full, or None."""
+
+    payload = values.get("payload")
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("kind"), str):
+        return None
+    return payload
+
+
+#: SDK `ChangeSetDraft.line` keywords for a Line input's fields, with each default.
+_SDK_LINE_KEYWORDS: tuple[tuple[str, str, object], ...] = (
+    ("name", "name", None),
+    ("procedure_name", "procedure", None),
+    ("acquisition_policy_name", "acquisition_policy", None),
+    ("max_authority", "max_authority", None),
+    ("trigger_input", "trigger_input", None),
+    ("parameters", "parameters", {}),
+    ("budgets", "budgets", None),
+    ("occurrence_epoch", "occurrence_epoch", 1),
+    ("retire", "retire", False),
+)
 
 
 def _cli_scalar(value: object) -> str:
@@ -1152,6 +1184,8 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _mcp_call("cruxible_prediction_settle", prediction_id=text("prediction_id"))
     if operation == "cruxible.authoring.example" and text("example"):
         return _mcp_call("cruxible_authoring_example", name=text("example"))
+    if operation == "cruxible.authoring.submit" and (payload := _submitted_payload(values)):
+        return _mcp_call("cruxible_authoring_submit", payload=dict(payload))
     if operation == "cruxible.proposal.readmit" and text("proposal_id"):
         return _mcp_call("cruxible_proposal_readmit", proposal_id=text("proposal_id"))
     if operation == "cruxible.proposal.activate" and text("proposal_id"):
@@ -1258,6 +1292,18 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
     if operation == "cruxible.authoring.example":
         example = text("example")
         return None if example is None else _sdk_call("authoring_example", example)
+    if operation == "cruxible.authoring.submit":
+        # The facade authors a Line as a changeset member; other kinds have
+        # their own builders, which no repair names yet.
+        payload = _submitted_payload(values)
+        if payload is None or payload.get("kind") != "line":
+            return None
+        keywords = {
+            keyword: payload[field]
+            for field, keyword, default in _SDK_LINE_KEYWORDS
+            if field in payload and payload[field] != default
+        }
+        return _sdk_call("cx.changes().line", **keywords) + ".submit()"
     if operation == "cruxible.proposal.activate" and (proposal := text("proposal_id")):
         return _sdk_call("cx.activate", proposal)
     if operation == "cruxible.proposal.approve" and (proposal := text("proposal_id")):
@@ -1353,6 +1399,13 @@ def _repair_command(
         example = values.get("example")
         if isinstance(example, str) and example:
             parts.append(shlex.quote(example))
+    elif operation == "cruxible.authoring.submit":
+        # The payload is complete, so the command carries it on stdin rather
+        # than naming a file the caller would have to write first.
+        payload = _submitted_payload(values)
+        if payload is None:
+            return None
+        parts.extend(["-", "<<<", shlex.quote(canonical_json(payload))])
     elif operation == "cruxible.compiler.upgrade":
         target = values.get("to")
         name = values.get("name")
@@ -4309,11 +4362,21 @@ def _line_settled_refusal_items(
         step = count_settled_refusals_step(instance, wait=False)
         if step.records:
             counts, coverage = index.settled_refusals_with_coverage(instance, lines)
+    flagged = [found for key in lines if (found := counts.get(key)) is not None]
+    if not flagged:
+        return ()
+    # The repair payload restates each flagged Line from its record: one batched
+    # read of the flagged Lines' specs at the coordinate, never of their runs.
+    paths = {
+        found.line_identity: line_spec_path(found.line_identity.removeprefix("Line:"))
+        for found in flagged
+    }
+    specs = instance.blobs_at(coordinate.git_oid, tuple(sorted(set(paths.values()))))
     items: list[PlaybillNextItemV1] = []
-    for key in lines:
-        found = counts.get(key)
-        if found is None:
-            continue
+    for found in flagged:
+        path = paths[found.line_identity]
+        content = specs.get(path)
+        spec = None if content is None else parse_line_spec(content, path=path)
         items.append(
             _item(
                 severity="warning",
@@ -4335,18 +4398,59 @@ def _line_settled_refusal_items(
                         f"{found.line_identity} settled {found.items} item"
                         f"{'s' if found.items != 1 else ''} that match earlier refusals "
                         "of the same statement on the same evidence; settled items skip "
-                        "review. Read the runs, then fix the Procedure or demote the Line."
+                        "review. Read the runs, then submit the repair payload: the same "
+                        "Line capped at max_authority: propose, so its results are "
+                        "reviewed again. Or bind it to a fixed Procedure: the same payload "
+                        "with procedure_name naming the fixed version."
                     ),
                 },
-                repair=PlaybillNextRepairV1(
-                    operation="cruxible.authoring.example",
-                    target=found.line_identity,
-                    required_change="read_the_runs_then_demote_the_line_or_fix_its_procedure",
-                    arguments={"example": "line"},
-                ),
+                repair=_line_demotion_repair(found.line_identity, spec),
             )
         )
     return tuple(items)
+
+
+def _line_demotion_repair(line_identity: str, spec: LineSpec | None) -> PlaybillNextRepairV1:
+    """The Line successor that closes a settled-prior-refusals row, filled from the Line.
+
+    Same identity, the same Procedure, acquisition policy, parameters, budgets
+    and trigger input, capped at `max_authority: propose`: lowering pins the
+    Procedure and policy by name and makes it the Line's successor, whose count
+    starts empty. A Line whose record cannot be read (never at an accepted
+    coordinate) keeps the template that starts the payload.
+    """
+
+    if spec is None:
+        return PlaybillNextRepairV1(
+            operation="cruxible.authoring.example",
+            target=line_identity,
+            required_change="demote_the_line_to_propose_or_bind_a_fixed_procedure",
+            arguments={"example": "line"},
+        )
+    budgets = spec.budgets
+    payload = LineInput(
+        kind="line",
+        name=spec.identity.name,
+        procedure_name=spec.procedure.target.name,
+        acquisition_policy_name=(
+            None if spec.acquisition_policy is None else spec.acquisition_policy.target.name
+        ),
+        max_authority="propose",
+        trigger_input=spec.trigger_input,
+        parameters=cast(dict[str, object], spec.model_dump(mode="json")["parameters"]),
+        budgets=(
+            {str(key): int(value) for key, value in budgets.items()}
+            if isinstance(budgets, Mapping)
+            else None
+        ),
+        occurrence_epoch=spec.occurrence_epoch,
+    )
+    return PlaybillNextRepairV1(
+        operation="cruxible.authoring.submit",
+        target=line_identity,
+        required_change="demote_the_line_to_propose_or_bind_a_fixed_procedure",
+        arguments={"line": spec.identity.name, "payload": payload.model_dump(mode="json")},
+    )
 
 
 def _line_upgrade_items(

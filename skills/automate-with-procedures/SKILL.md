@@ -213,9 +213,10 @@ cruxible next                    # stopped enablements, coverage gaps, stalled w
   `line_work_pending` while work waits for `cruxible line dispatch LINE`.
 - A settling Line whose settled items match earlier refusals (a retired Claim,
   or a rejected proposal, of the same statement on the same evidence) shows as
-  `line_settled_prior_refusals`. Read the runs it names, then fix the
-  Procedure or demote the Line to `max_authority: propose` with a Line
-  successor (`cruxible authoring example line`).
+  `line_settled_prior_refusals`. Read the runs it names, then run its repair:
+  it submits the Line's successor, filled from the live Line and capped at
+  `max_authority: propose` (or submit its payload with `procedure_name`
+  naming a fixed Procedure).
 - `line evaluate LINE --dry-run` shows what a range would make eligible,
   without recording anything.
 - An enablement that stopped by itself (a revoked credential, a changed Line

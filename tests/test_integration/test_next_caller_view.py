@@ -415,6 +415,19 @@ def test_supporting_evidence_folded_into_a_conflict_is_rendered_for_the_caller(
     _assert_rendered_for(surface, items)
 
 
+_LINE_SUCCESSOR: dict[str, object] = {
+    "kind": "line",
+    "name": "hourly",
+    "procedure_name": "triage",
+    "acquisition_policy_name": "files",
+    "max_authority": "propose",
+    "trigger_input": None,
+    "parameters": {"queue": "it's due"},
+    "budgets": {"max_items": 5},
+    "occurrence_epoch": 2,
+    "retire": False,
+}
+
 _SDK_REPAIRS: tuple[tuple[str, dict[str, object]], ...] = (
     ("cruxible.line.enable", {"line": "hourly"}),
     ("cruxible.line.dispatch", {"line": "hourly", "limit": 3}),
@@ -425,6 +438,7 @@ _SDK_REPAIRS: tuple[tuple[str, dict[str, object]], ...] = (
     ),
     ("cruxible.prediction.settle", {"prediction_id": "RSC-0001"}),
     ("cruxible.authoring.example", {"example": "procedure-mandate"}),
+    ("cruxible.authoring.submit", {"line": "hourly", "payload": _LINE_SUCCESSOR}),
     ("cruxible.proposal.approve", {"proposal_id": "PRP-0001", "signer_id": "reviewer"}),
     ("cruxible.claim.retire", {"claim_id": "CLM-0001"}),
     ("cruxible.block.repin", {"source_id": "SRC-1", "block_id": "b1", "claim_id": "CLM-0001"}),
@@ -462,6 +476,36 @@ def test_the_inbox_repair_renders_on_every_surface() -> None:
     assert _repair_command("cruxible.inbox.list", arguments=arguments, surface="sdk") == (
         'cx.inbox().list(line="hourly", status="unread")'
     )
+
+
+def test_the_line_successor_repair_carries_its_payload_on_every_surface() -> None:
+    """The settled-prior-refusals repair is a submit of the payload it names, as is."""
+    import json
+    import shlex
+
+    from cruxible_core.service.discovery.next import _repair_command
+
+    arguments = {"line": "hourly", "payload": _LINE_SUCCESSOR}
+    cli = _repair_command("cruxible.authoring.submit", arguments=arguments)
+    assert cli is not None
+    head, here = cli.split(" <<< ", 1)
+    assert head == "cruxible authoring submit -"
+    (word,) = shlex.split(here)
+    assert json.loads(word) == _LINE_SUCCESSOR
+    assert _repair_command("cruxible.authoring.submit", arguments=arguments, surface="mcp") == (
+        f"cruxible_authoring_submit(payload={json.dumps(_LINE_SUCCESSOR)})"
+    )
+    assert _repair_command("cruxible.authoring.submit", arguments=arguments, surface="sdk") == (
+        'cx.changes().line(name="hourly", procedure="triage", acquisition_policy="files", '
+        'max_authority="propose", parameters={"queue": "it\'s due"}, '
+        'budgets={"max_items": 5}, occurrence_epoch=2).submit()'
+    )
+    # Without a payload there is nothing to submit, on any surface.
+    for surface in (None, "mcp", "sdk"):
+        assert (
+            _repair_command("cruxible.authoring.submit", arguments={}, surface=surface)  # type: ignore[arg-type]
+            is None
+        )
 
 
 def test_every_sdk_rendered_repair_is_python() -> None:

@@ -454,6 +454,7 @@ NextReason: TypeAlias = Literal[
 NextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
 NextRepairOperation: TypeAlias = Literal[
     "cruxible.authoring.example",
+    "cruxible.authoring.submit",
     "cruxible.authoring.bind",
     "cruxible.claim.retire",
     "cruxible.set",

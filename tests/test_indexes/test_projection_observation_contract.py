@@ -139,6 +139,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
     }
     assert set(get_args(NextRepairOperation)) == {
         "cruxible.authoring.example",
+        # A repair the queue fills in full (a Line successor): submitting it is the fix.
+        "cruxible.authoring.submit",
         "cruxible.authoring.bind",
         "cruxible.claim.retire",
         # The write verbs: a row that asks for a Claim stated again, or a
