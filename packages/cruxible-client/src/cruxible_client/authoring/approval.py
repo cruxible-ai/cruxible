@@ -207,6 +207,10 @@ def approve_reviewed(
         if raw_receipt.source_proposal_id != proposal_id:
             raise ApprovalReviewMismatch("Recompilation receipt names a different source")
         return raw_receipt
+    if isinstance(raw_receipt, api.ActivationReceipt):
+        # A stale candidate that recompiles without approval requirements lands
+        # without recording the old signature against the new candidate.
+        return raw_receipt
     receipt = api.ApprovalReceipt.model_validate(raw_receipt.model_dump(mode="json"))
     if (
         receipt.proposal_id != proposal_id

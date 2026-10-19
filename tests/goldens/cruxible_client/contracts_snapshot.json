@@ -9525,6 +9525,125 @@
         "intent"
       ]
     },
+    "AuthoringLanded": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "status": {
+          "default": "landed",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "const": "landed",
+            "default": "landed",
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "accepted_coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "status": {
+            "const": "landed",
+            "default": "landed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accepted_coordinate"
+        ],
+        "title": "AuthoringLanded",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate"
+      ]
+    },
     "AuthoringPreflightResult": {
       "fields": {
         "certificate": {
@@ -10276,6 +10395,154 @@
         "verdict"
       ]
     },
+    "AuthoringProposed": {
+      "fields": {
+        "message": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "message",
+          "required": true,
+          "schema": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "next": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next"
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "enum": [
+              "independent_approval_required",
+              "activation_not_permitted",
+              "accept_never",
+              "preflight_refused",
+              "not_ready_to_activate",
+              "head_moved"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "status": {
+          "default": "proposed",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "const": "proposed",
+            "default": "proposed",
+            "title": "Status",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Why submit stopped; a refused preflight has no proposal yet.",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "reason": {
+            "enum": [
+              "independent_approval_required",
+              "activation_not_permitted",
+              "accept_never",
+              "preflight_refused",
+              "not_ready_to_activate",
+              "head_moved"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "const": "proposed",
+            "default": "proposed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "message"
+        ],
+        "title": "AuthoringProposed",
+        "type": "object"
+      },
+      "required_fields": [
+        "message",
+        "reason"
+      ]
+    },
     "AuthoringRefusal": {
       "fields": {
         "code": {
@@ -10487,6 +10754,30 @@
             },
             "title": "Members",
             "type": "array"
+          }
+        },
+        "outcome": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "outcome",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "landed": "#/$defs/AuthoringLanded",
+                "proposed": "#/$defs/AuthoringProposed"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/AuthoringLanded"
+              },
+              {
+                "$ref": "#/$defs/AuthoringProposed"
+              }
+            ],
+            "title": "Outcome"
           }
         },
         "preflight": {
@@ -10706,6 +10997,37 @@
             "title": "AuthoringDiagnostic",
             "type": "object"
           },
+          "AuthoringLanded": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "status": {
+                "const": "landed",
+                "default": "landed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted_coordinate"
+            ],
+            "title": "AuthoringLanded",
+            "type": "object"
+          },
           "AuthoringPreflightResult": {
             "additionalProperties": false,
             "properties": {
@@ -10755,6 +11077,64 @@
               "frontier"
             ],
             "title": "AuthoringPreflightResult",
+            "type": "object"
+          },
+          "AuthoringProposed": {
+            "additionalProperties": false,
+            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "reason": {
+                "enum": [
+                  "independent_approval_required",
+                  "activation_not_permitted",
+                  "accept_never",
+                  "preflight_refused",
+                  "not_ready_to_activate",
+                  "head_moved"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "proposed",
+                "default": "proposed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "message"
+            ],
+            "title": "AuthoringProposed",
             "type": "object"
           },
           "BlockedCheck": {
@@ -11398,6 +11778,24 @@
             "title": "Members",
             "type": "array"
           },
+          "outcome": {
+            "discriminator": {
+              "mapping": {
+                "landed": "#/$defs/AuthoringLanded",
+                "proposed": "#/$defs/AuthoringProposed"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/AuthoringLanded"
+              },
+              {
+                "$ref": "#/$defs/AuthoringProposed"
+              }
+            ],
+            "title": "Outcome"
+          },
           "preflight": {
             "anyOf": [
               {
@@ -11431,6 +11829,7 @@
           }
         },
         "required": [
+          "outcome",
           "intent",
           "status"
         ],
@@ -11439,6 +11838,7 @@
       },
       "required_fields": [
         "intent",
+        "outcome",
         "status"
       ]
     },

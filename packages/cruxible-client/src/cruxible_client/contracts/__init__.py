@@ -48,6 +48,15 @@ from cruxible_client.contracts.authoring.models import (
     ProjectionCheckResult as ProjectionCheckResult,
 )
 from cruxible_client.contracts.authoring.models import ResolvedTriggerCaptureContract
+from cruxible_client.contracts.authoring_landing import (
+    AuthoringLanded as AuthoringLanded,
+)
+from cruxible_client.contracts.authoring_landing import (
+    AuthoringLanding as AuthoringLanding,
+)
+from cruxible_client.contracts.authoring_landing import (
+    AuthoringProposed as AuthoringProposed,
+)
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claims import ClaimStatementCard as ClaimStatementCard
@@ -1051,7 +1060,7 @@ class ApprovalReceipt(BaseModel):
 
 
 ProposalActivationResult = ActivationReceipt | ProposalRecompiled
-ProposalApprovalResult = ApprovalReceipt | ProposalRecompiled
+ProposalApprovalResult = ApprovalReceipt | ActivationReceipt | ProposalRecompiled
 
 
 class FloorRefreshResult(BaseModel):
@@ -1396,6 +1405,7 @@ class AuthoringSubmitResultRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
+    outcome: AuthoringLanding
     intent: dict[str, Any]
     status: CandidateStatusRecord
     workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT

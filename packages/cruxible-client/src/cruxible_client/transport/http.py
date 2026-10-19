@@ -11,9 +11,11 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import (
+    AuthoringCompileSubmitRequest,
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
 )
+from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
@@ -959,6 +961,8 @@ class CruxibleClient:
         )
         if response.is_success and response.json().get("tag") == "cruxible-proposal-recompiled-v1":
             return self._parse_model(response, contracts.ProposalRecompiled)
+        if response.is_success and response.json().get("tag") == "playbill-activation-receipt-v1":
+            return self._parse_model(response, contracts.ActivationReceipt)
         return self._parse_model(response, contracts.ApprovalReceipt)
 
     def approve_proposal(
@@ -1225,14 +1229,16 @@ class CruxibleClient:
         reference_expectations: Sequence[Mapping[str, Any]],
         program_stamp: Mapping[str, Any],
         intent_id: str | None = None,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.AuthoringSubmitResultRecord:
-        """Compile and submit in one request; the daemon preflights once, on submit."""
-        request = AuthoringIntentCompileRequest.model_validate(
+        """Compile, preflight and land when allowed; accept="never" keeps the proposal."""
+        request = AuthoringCompileSubmitRequest.model_validate(
             {
                 "payload": dict(payload),
                 "reference_expectations": [dict(item) for item in reference_expectations],
                 "program_stamp": dict(program_stamp),
                 "intent_id": intent_id,
+                "accept": accept,
             }
         )
         response = self._client.post(
@@ -1264,8 +1270,9 @@ class CruxibleClient:
         *,
         input: Mapping[str, Any],
         intent_id: str | None = None,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.AuthoringSubmitResultRecord:
-        """Compile one tagless input and submit it; with ``intent_id``, onto that intent."""
+        """Submit tagless input and land when allowed; accept="never" keeps the proposal."""
 
         response = self._client.post(
             f"/api/v1/{instance_id}/authoring/submit",
@@ -1273,6 +1280,7 @@ class CruxibleClient:
                 "tag": "playbill-authoring-input-submit-request-v1",
                 "input": dict(input),
                 "intent_id": intent_id,
+                "accept": accept,
             },
         )
         return self._parse_model(response, contracts.AuthoringSubmitResultRecord)
@@ -1310,10 +1318,12 @@ class CruxibleClient:
         self,
         instance_id: str,
         intent_id: str,
+        *,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.AuthoringSubmitResultRecord:
         response = self._client.post(
             f"/api/v1/{instance_id}/authoring/intents/{intent_id}/submit",
-            json={"tag": "playbill-authoring-intent-submit-request-v1"},
+            json={"tag": "playbill-authoring-intent-submit-request-v1", "accept": accept},
         )
         return self._parse_model(response, contracts.AuthoringSubmitResultRecord)
 

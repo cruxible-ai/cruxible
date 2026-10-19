@@ -1,11 +1,4 @@
-"""`--and-activate` never half-activates, and says why when it stops.
-
-The convenience flag exists so one command replaces two. The thing it must not
-do is turn a candidate that needs an approval into a partly-applied change: an
-unactivated candidate is recoverable, a half-activated one is a mess. So the
-flag activates only a candidate that needs nothing further, and every other
-state returns the submit result plus a typed note naming the next step.
-"""
+"""Authoring submit lands in the daemon and explains every stop."""
 
 from __future__ import annotations
 
@@ -44,8 +37,9 @@ class _SubmitClient:
         self.activations: list[str] = []
 
     def submit_authoring_intent(
-        self, instance_id: str, intent_id: str
+        self, instance_id: str, intent_id: str, *, accept: str = "if_allowed"
     ) -> contracts.AuthoringSubmitResultRecord:
+        self.accept = accept
         intent: dict[str, object] = {"intent_id": intent_id}
         if self.state == "preflight_refused":
             intent["last_preflight"] = {
@@ -66,6 +60,18 @@ class _SubmitClient:
                 }
             }
         return contracts.AuthoringSubmitResultRecord(
+            outcome=contracts.AuthoringProposed(
+                proposal_id=PROPOSAL_ID,
+                reason="independent_approval_required"
+                if self.state == "awaiting_external_approval"
+                else "not_ready_to_activate",
+                message="not activated: the candidate needs an external approval"
+                if self.state == "awaiting_external_approval"
+                else f"not activated: the candidate is {self.state}, not ready_to_activate",
+                next=f"cruxible proposal approve {PROPOSAL_ID}"
+                if self.state == "awaiting_external_approval"
+                else None,
+            ),
             intent=intent,
             status=contracts.CandidateStatusRecord(
                 state=self.state,
@@ -87,7 +93,7 @@ class _SubmitClient:
         ("draft", "not ready_to_activate"),
     ],
 )
-def test_and_activate_stops_and_names_the_step_when_the_candidate_is_not_ready(
+def test_default_submit_stops_and_names_the_step_when_the_candidate_is_not_ready(
     monkeypatch: pytest.MonkeyPatch,
     state: str,
     marker: str,
@@ -96,28 +102,24 @@ def test_and_activate_stops_and_names_the_step_when_the_candidate_is_not_ready(
     client = _SubmitClient(state)
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
 
-    result = CliRunner().invoke(
-        cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--and-activate"]
-    )
+    result = CliRunner().invoke(cli, [*COMMON, "submit", "--intent-id", INTENT_ID])
 
     assert result.exit_code == 0, result.output
     assert client.activations == []
     # The CLI prints a target banner before its JSON document.
     payload = json.loads(result.output[result.output.index("{") :])
     assert "activation" not in payload
-    assert marker in payload["activation_note"]
+    assert marker in payload["outcome"]["message"]
 
 
-def test_and_activate_names_the_approve_command_in_brief_when_it_stops(
+def test_default_submit_names_the_approve_command_in_brief_when_it_stops(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Stopping is only useful if the caller is told what to run instead."""
     client = _SubmitClient("awaiting_external_approval")
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
 
-    result = CliRunner().invoke(
-        cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--and-activate", "--brief"]
-    )
+    result = CliRunner().invoke(cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--brief"])
 
     assert result.exit_code == 0, result.output
     assert client.activations == []
@@ -144,35 +146,41 @@ def test_refused_brief_prints_the_typed_reason_on_one_line(
     assert result.output.count("reason:") == 1
 
 
-def test_and_activate_brief_prints_the_accepted_coordinate_and_receipt(
+def test_default_submit_brief_prints_the_accepted_coordinate_and_proposal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _SubmitClient("ready_to_activate")
-    activation = contracts.ActivationReceipt(
-        proposal_id=PROPOSAL_ID,
-        activated_by="owner",
-        status="accepted",
-        accepted_coordinate=COORDINATE,
-        workspace_advertisement={"status": "not_attached", "workspace_path": None},
-    )
 
-    def activate(instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
-        client.activations.append(proposal_id)
-        return activation
+    def submit(
+        instance_id: str, intent_id: str, *, accept: str
+    ) -> contracts.AuthoringSubmitResultRecord:
+        assert accept == "if_allowed"
+        return contracts.AuthoringSubmitResultRecord(
+            intent={"intent_id": intent_id},
+            status=contracts.CandidateStatusRecord(
+                state="accepted",
+                proposal_id=PROPOSAL_ID,
+                current_accepted_coordinate=COORDINATE,
+                accepted_generation=COORDINATE,
+            ),
+            outcome=contracts.AuthoringLanded(
+                proposal_id=PROPOSAL_ID, accepted_coordinate=COORDINATE
+            ),
+        )
 
-    client.activate_proposal = activate  # type: ignore[method-assign]
+    client.submit_authoring_intent = submit  # type: ignore[method-assign]
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     result = CliRunner().invoke(
         cli,
-        [*COMMON, "submit", "--intent-id", INTENT_ID, "--and-activate", "--brief"],
+        [*COMMON, "submit", "--intent-id", INTENT_ID, "--brief"],
     )
 
     assert result.exit_code == 0, result.output
     # Activation is the daemon act alone: one call, no floor or block step.
-    assert client.activations == [PROPOSAL_ID]
+    assert client.activations == []
     assert "outcome: accepted" in result.output
     assert f"coordinate: {COORDINATE.git_oid}" in result.output
-    assert "receipt: playbill-activation-receipt-v1" in result.output
+    assert f"proposal: {PROPOSAL_ID}" in result.output
 
 
 @pytest.mark.parametrize(
@@ -214,3 +222,12 @@ def test_proposal_activate_prints_the_outcome_and_next_step_as_text(
 
     as_json = CliRunner().invoke(cli, [*base, "--json"])
     assert json.loads(as_json.stdout)["status"] == status
+
+
+def test_submit_no_accept_passes_the_explicit_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _SubmitClient("ready_to_activate")
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    result = CliRunner().invoke(cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--no-accept"])
+    assert result.exit_code == 0, result.output
+    assert client.accept == "never"
+    assert client.activations == []

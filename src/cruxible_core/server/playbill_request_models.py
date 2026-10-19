@@ -16,6 +16,7 @@ from cruxible_client.contracts import (
 )
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInput
+from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.declared_blocks import (
@@ -208,6 +209,7 @@ class AuthoringInputSubmitRequest(_StrictPlaybillRequest):
     )
     input: AuthoringInput
     intent_id: str | None = None
+    accept: AuthoringAccept = "if_allowed"
     dry_run: bool = False
 
     @model_validator(mode="after")
@@ -227,6 +229,8 @@ class AuthoringSubmitRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-intent-submit-request-v1"] = (
         "playbill-authoring-intent-submit-request-v1"
     )
+
+    accept: AuthoringAccept = "if_allowed"
 
 
 class BlockDeclareRequest(_StrictPlaybillRequest):

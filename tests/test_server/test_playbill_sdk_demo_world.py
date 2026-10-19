@@ -154,7 +154,7 @@ def _land_subjects(
         draft.subject(pb.new_subject(kind, key=slug))
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    intent.submit()
+    intent.submit(accept="never")
     proposal_id = intent.status().proposal_id
     assert proposal_id is not None
     _approve_and_activate(client, instance_id, private_key_path, proposal_id)
@@ -555,7 +555,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         claim_type_definition=claim_type,
     ).prepare()
     assert not initial.refused, initial.diagnostics
-    initial.submit()
+    initial.submit(accept="never")
     first_proposal = initial.status().proposal_id
     assert first_proposal is not None
     original_coordinate = pb.coordinate
@@ -586,7 +586,9 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
 
     # A `revises` submit amends one Claim identity in place; the result says so
     # rather than reading like an ordinary create.
-    revision_submit = transport.submit_authoring_intent(instance_id, prepared_revision.intent_id)
+    revision_submit = transport.submit_authoring_intent(
+        instance_id, prepared_revision.intent_id, accept="never"
+    )
     assert revision_submit.identity_stable is True
     assert revision_submit.claim_revision == 2
 
@@ -729,7 +731,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     assert revision.reference_expectations == ()
     intent = revision.prepare()
     assert not intent.refused, intent.diagnostics
-    intent.submit()
+    intent.submit(accept="never")
     proposal_id = intent.status().proposal_id
     assert proposal_id is not None
     _approve_and_activate(http, instance_id, private_key_path, proposal_id)
@@ -794,7 +796,7 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
     )
     assert compiled.verdict == "passed", compiled.frontier
     intent_id = str(compiled.certificate.intent_id)
-    submitted = transport.submit_authoring_intent(instance_id, intent_id)
+    submitted = transport.submit_authoring_intent(instance_id, intent_id, accept="never")
     assert submitted.status.proposal_id is not None
     _approve_and_activate(
         http,
@@ -879,7 +881,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         claim_type_definition=triage_type,
     ).prepare()
     assert not kev.refused
-    kev.submit()
+    kev.submit(accept="never")
     kev_proposal = kev.status().proposal_id
     assert kev_proposal is not None
     _approve_and_activate(http, instance_id, private_key_path, kev_proposal)
@@ -904,7 +906,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         claim_type_definition=None,
     ).prepare()
     assert not critical.refused, critical.diagnostics
-    critical.submit()
+    critical.submit(accept="never")
     critical_proposal = critical.status().proposal_id
     assert critical_proposal is not None
     _approve_and_activate(http, instance_id, private_key_path, critical_proposal)
@@ -967,7 +969,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
             claim_type_definition=None,
         ).prepare()
         assert not intent.refused, intent.diagnostics
-        intent.submit()
+        intent.submit(accept="never")
         proposal_id = intent.status().proposal_id
         assert proposal_id is not None
         _approve_and_activate(http, instance_id, private_key_path, proposal_id)
@@ -996,7 +998,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         claim_type_definition=None,
     ).prepare()
     assert not guidance.refused, guidance.diagnostics
-    guidance.submit()
+    guidance.submit(accept="never")
     guidance_proposal = guidance.status().proposal_id
     assert guidance_proposal is not None
     _approve_and_activate(http, instance_id, private_key_path, guidance_proposal)
@@ -1045,8 +1047,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     query_intent_id = query_preflight.certificate.intent_id
     assert isinstance(query_intent_id, str)
     submitted_query = transport.submit_authoring_intent(
-        instance_id,
-        query_intent_id,
+        instance_id, query_intent_id, accept="never"
     )
     query_proposal_id = submitted_query.status.proposal_id
     assert query_proposal_id is not None
@@ -1066,7 +1067,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         definition=_assess_procedure(query.identity.qualified),
     ).prepare()
     assert not procedure.refused, procedure.diagnostics
-    procedure.submit()
+    procedure.submit(accept="never")
     procedure_proposal = procedure.status().proposal_id
     assert procedure_proposal is not None
     _approve_and_activate(http, instance_id, private_key_path, procedure_proposal)

@@ -289,7 +289,7 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
             else {"kind": kind, "query_definition": {**payload, "pins": []}}
         )
         authoring_path.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
-        submitted = run_cli_json("authoring", "submit", str(authoring_path))
+        submitted = run_cli_json("authoring", "submit", "--no-accept", str(authoring_path))
         proposal = submitted["status"].get("proposal_id")
         if not isinstance(proposal, str):
             raise RuntimeError(f"authoring {kind} did not submit: {submitted}")
@@ -341,7 +341,7 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
     kinds_path = key_dir / "seed-authoring-inputs" / "subject-kind-project.work_item.json"
     kinds_path.parent.mkdir(parents=True, exist_ok=True)
     kinds_path.write_text(_work_item_kind_input() + "\n", encoding="utf-8")
-    declared = run_cli_json("authoring", "submit", str(kinds_path))
+    declared = run_cli_json("authoring", "submit", "--no-accept", str(kinds_path))
     record(
         "subject_kind:project.work_item",
         "playbill_authoring_submit",
@@ -412,9 +412,11 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
                 str(path),
             )
             intent_id = prepared["certificate"]["intent_id"]
-            submitted = run_cli_json("authoring", "submit", "--intent-id", str(intent_id))
+            submitted = run_cli_json(
+                "authoring", "submit", "--no-accept", "--intent-id", str(intent_id)
+            )
         else:
-            submitted = run_cli_json("authoring", "submit", str(path))
+            submitted = run_cli_json("authoring", "submit", "--no-accept", str(path))
         record(
             f"claim_input:{payload['subject']}#{payload['predicate']}",
             "playbill_authoring_submit",
@@ -435,7 +437,7 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         )
 
     for path in sorted((bundle_dir / "procedures").glob("*.json")):
-        submitted = run_cli_json("authoring", "submit", str(path))
+        submitted = run_cli_json("authoring", "submit", "--no-accept", str(path))
         record(
             f"procedure:{path.stem}",
             "playbill_authoring_submit",

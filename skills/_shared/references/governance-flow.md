@@ -20,15 +20,16 @@ at:
    and where the daemon's evaluation and approval records are.
 3. **Approve**, when the policy requires it. `cruxible proposal approve
    PROPOSAL_ID` signs the exact candidate with the approver's private key on
-   the client and sends only the signature. An approval does not activate
-   anything. On MCP, `cruxible_proposal_approve` signs with a key from the
+   the client and sends only the signature. The approval that completes the
+   candidate activates it unless held. On MCP, `cruxible_proposal_approve` signs with a key from the
    server's `CRUXIBLE_MCP_KEY_DIR`; pass the reviewed `candidate_digest`.
 4. **Activate.** `cruxible proposal activate PROPOSAL_ID` checks approvals and
    the policy and advances accepted state by compare-and-set.
 
-Writes, kit adds and removes, and provider installs do all of this in one call
+Writes, authoring submits, kit adds and removes, and provider installs do all of this in one call
 when the approval policy requires no approval and the caller's tier may
-activate; otherwise they stop at the proposal and name who may approve it.
+activate; otherwise they stop at the proposal and name the reason and next step.
+Authoring's `--no-accept` / `accept="never"` explicitly keeps the proposal.
 
 ## Stale and unwanted proposals
 
@@ -40,7 +41,7 @@ activate as it is. `cruxible next` lists it (`proposal_stale`) for its author.
 - `cruxible proposal withdraw PROPOSAL_ID --reason "..."` retires a proposal
   that will never be wanted.
 
-To avoid staleness while setting up, propose and activate one change at a time,
+To avoid staleness while setting up, submit and land one change at a time,
 or put related changes in one change set (`write` for values, a `change_set`
 authoring input or `cx.changes(rationale=...)` for definitions).
 
@@ -49,8 +50,8 @@ authoring input or `cx.changes(rationale=...)` for definitions).
 Decide with the user, early:
 
 - **The approval policy** (`cruxible get ApprovalPolicy:instance`).
-  `self_approval_allowed`, the default, lets an author approve and activate
-  their own changes. `independent_approval_required` needs an approval from
+  `self_approval_allowed`, the default, needs no approval for ordinary changes;
+  submit lands them when the caller may activate. `independent_approval_required` needs an approval from
   someone other than the author for every governed change (`cruxible init
   --require-independent-approval` sets it at creation; afterwards it changes
   through an `approval_policy` authoring input, `cruxible authoring example

@@ -165,14 +165,6 @@ brief_option = click.option(
     help="Render only the outcome, the ids, and the command to run next.",
 )
 
-and_activate_option = click.option(
-    "--and-activate",
-    "and_activate",
-    is_flag=True,
-    default=False,
-    help="Activate immediately when the candidate needs no approval; never half-activate.",
-)
-
 
 def _emit_brief(
     *,

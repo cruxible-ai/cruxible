@@ -186,7 +186,7 @@ def _run_call(
     pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
     intent = pb.procedure(definition=authored).prepare()
     assert not intent.refused, intent.diagnostics
-    intent.submit()
+    intent.submit(accept="never")
     _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
     run = pb.accepted_procedure(name).run()
     state = client.get_procedure_run(instance_id, run.run_id)
@@ -679,7 +679,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     )
     prepared = draft.prepare()
     assert not prepared.refused, prepared.diagnostics
-    prepared.submit()
+    prepared.submit(accept="never")
     _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
     interface = interface_entry(client, instance_id, "web.fetch")
     provider = interface["providers"][0]
@@ -750,7 +750,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     )
     prepared = pb.procedure(definition=authored).prepare()
     assert not prepared.refused, prepared.diagnostics
-    prepared.submit()
+    prepared.submit(accept="never")
     _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
     run = pb.accepted_procedure("installed-web-fetch").run()
     state = client.get_procedure_run(instance_id, run.run_id)

@@ -169,10 +169,13 @@ Keep the real fact in the change: a creation already supplies its key Claims.
 Add the named queries the user will ask repeatedly. Start from a template and
 check before submitting:
 
+Submit lands immediately when no approval is required and the caller may
+activate. Use `--no-accept` to keep a proposal; a stop names its reason and next step.
+
 ```bash
 cruxible authoring example query-claims-by-type
 cruxible authoring submit QUERY.json --dry-run
-cruxible authoring submit QUERY.json --and-activate
+cruxible authoring submit QUERY.json
 cruxible query --name NAME
 ```
 

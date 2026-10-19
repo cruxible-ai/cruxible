@@ -28,6 +28,7 @@ from cruxible_client.contracts.approval_policy import (
     ApprovalPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.candidates import validate_candidate_timestamp
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
@@ -114,7 +115,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:63a0c9f45aac85c9d42b19e7df45524ec5ee35df48992be67303f114f9bdd83d"
+    "sha256:3393f72e5cb675c9fa8c6eb19758535af4faaa9e83533a5148504db0fd52db18"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -2105,6 +2106,12 @@ class AuthoringIntentCompileRequest(_StrictAuthoringModel):
         return canonical_reference_expectations(value)
 
 
+class AuthoringCompileSubmitRequest(AuthoringIntentCompileRequest):
+    """Compile and submit, landing immediately when policy and caller allow."""
+
+    accept: AuthoringAccept = "if_allowed"
+
+
 class AuthoringIntentPreflightRequest(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-preflight-request-v1"] = (
         "playbill-authoring-intent-preflight-request-v1"
@@ -2115,6 +2122,8 @@ class AuthoringIntentSubmitRequest(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-submit-request-v1"] = (
         "playbill-authoring-intent-submit-request-v1"
     )
+
+    accept: AuthoringAccept = "if_allowed"
 
 
 class AuthoringSubmitMember(_StrictAuthoringModel):
@@ -2439,6 +2448,7 @@ __all__ = [
     "AuthoringReferenceKind",
     "AuthoringSlotExpectation",
     "AuthoringReferenceSuccessor",
+    "AuthoringCompileSubmitRequest",
     "AuthoringSubmitMember",
     "AuthoringSubmitResult",
     "BlockedCheck",

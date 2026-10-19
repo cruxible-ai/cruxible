@@ -196,8 +196,8 @@ EOF
 
 `--dry-run` reports every refusal without saving anything: a missing or
 retired Blueprint, a provider that does not implement the slot's interface, a
-slot left unbound. Submit without `--dry-run` (add `--and-activate` to settle
-it at once when no approval is needed). The result is an ordinary Procedure:
+slot left unbound. Submit without `--dry-run` to land when policy and caller
+allow; `--no-accept` keeps the proposal. The result is an ordinary Procedure:
 run it with `cruxible procedure run`, or author a Line over it.
 
 ### Check and upgrade

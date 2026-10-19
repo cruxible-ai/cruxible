@@ -98,9 +98,16 @@ def test_proposal_uses_submit_result_without_status_read(pb, monkeypatch):
     )
     calls = []
 
-    def submit(*args):
+    def submit(*args, **kwargs):
+        assert kwargs == {"accept": "if_allowed"}
         calls.append("submit")
-        return api.AuthoringSubmitResultRecord(intent=intent._raw, status=status)
+        return api.AuthoringSubmitResultRecord(
+            intent=intent._raw,
+            status=status,
+            outcome=api.AuthoringProposed(
+                proposal_id=status.proposal_id, reason="accept_never", message="held"
+            ),
+        )
 
     def refresh(*args):
         calls.append("status")
@@ -140,7 +147,7 @@ def test_mutations_clear_previous_candidate_even_on_uncertain_failure(
             raise TimeoutError("Remote outcome unknown")
         if operation in ("prepare", "reprepare"):
             return intent._preflight
-        return SimpleNamespace(intent=intent._raw, status=None)
+        return SimpleNamespace(intent=intent._raw, status=None, outcome=None)
 
     monkeypatch.setattr(pb._client, methods[operation], response, raising=False)
     options = {"draft": draft} if operation == "reprepare" else {}
@@ -372,3 +379,51 @@ def test_sdk_trigger_refuses_exact_event_authoring(pb, window_close):
             line="triage",
             schedule=schedule,
         )
+
+
+@pytest.mark.parametrize("entrypoint", ["draft", "changes", "intent"])
+@pytest.mark.parametrize("accept", ["if_allowed", "never"])
+@pytest.mark.parametrize("landed", [False, True])
+def test_sdk_submit_forwards_accept_and_exposes_typed_outcome(
+    pb, monkeypatch, entrypoint, accept, landed
+):
+    draft = pb.claim(**claim_args(), self_source="affected package")
+    target = draft
+    if entrypoint == "changes":
+        target = pb.changes(rationale="One change").claim(
+            **claim_args(), self_source="affected package"
+        )
+    elif entrypoint == "intent":
+        target = draft.prepare()
+    landed_coordinate = _COORDINATE.model_copy(update={"git_oid": "b" * 40})
+    outcome = (
+        api.AuthoringLanded(proposal_id="proposal", accepted_coordinate=landed_coordinate)
+        if landed
+        else api.AuthoringProposed(proposal_id="proposal", reason="accept_never", message="held")
+    )
+    seen = []
+
+    def submit(*args, **kwargs):
+        seen.append(kwargs["accept"])
+        return api.AuthoringSubmitResultRecord(
+            intent={"intent_id": "saved-intent"},
+            status=api.CandidateStatusRecord(
+                state="accepted" if landed else "ready_to_activate",
+                proposal_id="proposal",
+                current_accepted_coordinate=landed_coordinate if landed else _COORDINATE,
+                accepted_generation=landed_coordinate if landed else None,
+            ),
+            outcome=outcome,
+        )
+
+    method = "submit_authoring_intent" if entrypoint == "intent" else "submit_authoring"
+    monkeypatch.setattr(pb._client, method, submit, raising=False)
+    result = target.submit() if accept == "if_allowed" else target.submit(accept=accept)
+    assert seen == [accept]
+    assert result.outcome == outcome
+    if landed and entrypoint != "changes":
+        assert pb._coordinate == landed_coordinate
+    elif entrypoint == "changes":
+        # A changeset retains its pinned read context; its outcome carries the
+        # new coordinate without changing that context or its parent.
+        assert pb._coordinate == _COORDINATE

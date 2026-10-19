@@ -53,7 +53,7 @@ def _instantiate(world, name):
         .prepare()
     )
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     world.approve(submitted._candidate_status.proposal_id)
     world.pb.refresh()
 
@@ -105,7 +105,7 @@ def test_kit_101_to_102_is_one_add_and_keep_build_is_per_procedure(
             .prepare()
         )
         assert not intent.refused, intent.diagnostics
-        submitted = intent.submit()
+        submitted = intent.submit(accept="never")
         consumer.approve(submitted._candidate_status.proposal_id)
         procedure_path = "procedures/user.increment.json"
         procedure = parse_procedure(_tree(consumer)[procedure_path], path=procedure_path)

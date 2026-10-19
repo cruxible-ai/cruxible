@@ -40,7 +40,9 @@ def _accept(http: TestClient, instance_id: str, key: Path, payload: object) -> s
         input=payload.model_dump(mode="json"),  # type: ignore[attr-defined]
     )
     assert compiled.verdict == "passed", compiled.frontier
-    submitted = transport.submit_authoring_intent(instance_id, str(compiled.certificate.intent_id))
+    submitted = transport.submit_authoring_intent(
+        instance_id, str(compiled.certificate.intent_id), accept="never"
+    )
     proposal_id = submitted.status.proposal_id
     assert proposal_id is not None
     _approve_and_activate(http, instance_id, key, proposal_id)

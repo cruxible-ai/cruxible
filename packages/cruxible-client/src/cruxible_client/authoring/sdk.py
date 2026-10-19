@@ -744,14 +744,15 @@ class _IntentDraft:
         )
         return Intent.from_preflight(self._playbill, self, result)
 
-    def submit(self) -> Intent:
+    def submit(self, *, accept: WriteAccept = "if_allowed") -> Intent:
         """Compile and submit in one request; the daemon preflights once.
 
         Equivalent to ``prepare().submit()`` without the separate preflight and
         its round trips. A refused preflight returns an unsubmitted intent whose
         ``refused`` and ``diagnostics`` report it, exactly as ``prepare()`` does.
 
-        Next: ``intent.proposal`` for the proposal, then ``proposal.review()``;
+        Lands when policy and caller allow; ``accept="never"`` keeps the proposal.
+        Next: ``intent.outcome`` for its coordinate or stop reason;
         ``intent.diagnostics`` if it was refused.
         """
 
@@ -762,13 +763,16 @@ class _IntentDraft:
                 item.model_dump(mode="json") for item in self.reference_expectations
             ],
             program_stamp=self.program_stamp.model_dump(mode="json"),
+            accept=accept,
         )
+        self._playbill._observe_authoring_submit(result)
         return Intent(
             self._playbill,
             self,
             result.intent,
             preflight=result.preflight,
             candidate_status=result.status,
+            outcome=result.outcome,
         )
 
 
@@ -1495,13 +1499,14 @@ class ChangeSetDraft:
 
         return self._compiled().prepare()
 
-    def submit(self) -> Intent:
+    def submit(self, *, accept: WriteAccept = "if_allowed") -> Intent:
         """Compile and submit the whole changeset as one intent in one request.
 
-        Next: ``intent.proposal.review()``, then approve and accept it.
+        Lands when policy and caller allow; ``accept="never"`` keeps the proposal.
+        Next: ``intent.outcome`` for its coordinate or stop reason.
         """
 
-        return self._compiled().submit()
+        return self._compiled().submit(accept=accept)
 
     def _compiled(self) -> _IntentDraft:
         """Fold every member into exactly one intent draft."""
@@ -1867,7 +1872,7 @@ class Intent:
     """One authoring intent: a draft compiled by the daemon, then preflighted and submitted.
 
     An intent is revised in place (``reprepare``) and owns the proposal its
-    submission makes. Next: ``intent.submit()``, then ``intent.proposal.review()``.
+    submission makes. Next: ``intent.submit()``, then ``intent.outcome``.
     """
 
     def __init__(
@@ -1878,12 +1883,14 @@ class Intent:
         *,
         preflight: api.AuthoringPreflightResult | None = None,
         candidate_status: api.CandidateStatusRecord | None = None,
+        outcome: api.AuthoringLanding | None = None,
     ) -> None:
         self._playbill = cx
         self._draft = draft
         self._raw = dict(raw)
         self._preflight = preflight
         self._candidate_status = candidate_status
+        self.outcome = outcome
 
     @classmethod
     def from_preflight(
@@ -2030,6 +2037,7 @@ class Intent:
         """
 
         self._candidate_status = None
+        self.outcome = None
         result = self._playbill._client.preflight_authoring_intent(
             self._playbill._instance_id, self.intent_id
         )
@@ -2048,6 +2056,7 @@ class Intent:
         if draft._playbill is not self._playbill:
             raise ValueError("replacement draft belongs to another Cruxible connection")
         self._candidate_status = None
+        self.outcome = None
         result = self._playbill._client.compile_authoring(
             self._playbill._instance_id,
             payload=draft.payload.model_dump(mode="json"),
@@ -2064,19 +2073,23 @@ class Intent:
         ).intent
         return self
 
-    def submit(self) -> Intent:
-        """Submit this intent: the daemon admits it as a proposal.
+    def submit(self, *, accept: WriteAccept = "if_allowed") -> Intent:
+        """Submit this intent and land when policy and caller allow.
 
-        Next: ``intent.proposal.review()``, then approve and ``activate()``;
+        ``accept="never"`` keeps the proposal.
+        Next: ``intent.outcome`` for its coordinate or stop reason;
         ``intent.status()`` for its state.
         """
 
         self._candidate_status = None
+        self.outcome = None
         result = self._playbill._client.submit_authoring_intent(
-            self._playbill._instance_id, self.intent_id
+            self._playbill._instance_id, self.intent_id, accept=accept
         )
+        self._playbill._observe_authoring_submit(result)
         self._raw = result.intent
         self._candidate_status = result.status
+        self.outcome = result.outcome
         return self
 
     def status(self) -> api.CandidateStatusRecord:
@@ -2136,15 +2149,20 @@ class Proposal:
         The approval that completes the candidate activates it in the same call
         (``receipt.activation``) when the caller may activate; ``hold=True``
         signs only. ``receipt.not_activated`` says why nothing activated.
+        A stale candidate is recompiled: it returns an ``ActivationReceipt``
+        directly when no approval is needed and the caller may activate, or a
+        ``ProposalRecompiled`` naming the replacement proposal.
 
-        Next: ``cx.at(receipt.activation.accepted_coordinate)`` once activated, or
-        ``proposal.activate()`` for a held approval.
+        Next: read at the returned activation's ``accepted_coordinate``, or
+        follow the replacement proposal; ``proposal.activate()`` for a held approval.
         """
         receipt = approve_reviewed(
             self._playbill, self.proposal_id, signer=signer, reviewed=reviewed, hold=hold
         )
         if isinstance(receipt, api.ApprovalReceipt):
             self._playbill._observe_activation(receipt.activation)
+        elif isinstance(receipt, api.ActivationReceipt):
+            self._playbill._observe_activation(receipt)
         return receipt
 
     def activate(self) -> api.ProposalActivationResult:
@@ -2754,6 +2772,11 @@ class Cruxible:
         if isinstance(receipt, api.ActivationReceipt):
             self._observe_activation(receipt)
         return receipt
+
+    def _observe_authoring_submit(self, result: api.AuthoringSubmitResultRecord) -> None:
+        """A landed submit advances this connection's last observed coordinate."""
+        if isinstance(result.outcome, api.AuthoringLanded):
+            self._observe_read(_coordinate(result.outcome.accepted_coordinate), expected=None)
 
     def _observe_activation(self, receipt: api.ActivationReceipt | None) -> None:
         """An accepted activation's coordinate becomes this connection's last observation."""

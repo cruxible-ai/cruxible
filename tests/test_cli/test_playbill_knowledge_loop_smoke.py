@@ -131,6 +131,7 @@ def _author_and_accept(
         "authoring",
         "submit",
         _write(path, payload),
+        "--no-accept",
     )
     accepted = cruxible.accept(str(submitted["status"]["proposal_id"]))
     return submitted, accepted
@@ -591,12 +592,11 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
                 "submit",
                 "--intent-id",
                 intent_id,
-                "--and-activate",
                 "--brief",
             ).stdout
             assert "outcome: accepted" in brief
             assert "coordinate: " in brief
-            assert "receipt: playbill-activation-receipt-v1" in brief
+            assert "proposal: " in brief
             intent = cruxible.json("authoring", "get", intent_id)["intent"]
             claim_identities.append(f"Claim:{intent['semantic_identity']}")
         else:
@@ -605,6 +605,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
                 "submit",
                 "--intent-id",
                 intent_id,
+                "--no-accept",
             )
             claim_identities.append(f"Claim:{submitted['intent']['semantic_identity']}")
             cruxible.accept(str(submitted["status"]["proposal_id"]))

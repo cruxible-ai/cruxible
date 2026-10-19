@@ -116,7 +116,9 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
     submit_schema = schemas["cruxible_authoring_submit"].inputSchema
 
     assert set(compile_schema["properties"]) == {"instance_id", "payload", "intent_id"}
-    assert set(submit_schema["properties"]) == {"instance_id", "payload", "intent_id"}
+    assert set(submit_schema["properties"]) == {"instance_id", "payload", "intent_id", "accept"}
+    assert submit_schema["properties"]["accept"]["default"] == "if_allowed"
+    assert submit_schema["properties"]["accept"]["enum"] == ["if_allowed", "never"]
     forbidden = {"base", "claim_id", "candidate_digest", "predecessor_digest"}
     assert forbidden.isdisjoint(compile_schema["properties"])
     assert forbidden.isdisjoint(submit_schema["properties"])

@@ -1860,7 +1860,7 @@ def _line_disabled_by_upgrade(root: Path, monkeypatch: pytest.MonkeyPatch) -> No
             .prepare()
         )
         assert not intent.refused, intent.diagnostics
-        submitted = intent.submit()
+        submitted = intent.submit(accept="never")
         world.approve(submitted._candidate_status.proposal_id)
         client = _client(world.http)
         original = client.enable_line(world.instance_id, "user.upgrade")

@@ -15,6 +15,7 @@ from cruxible_core.authoring.preflight import (
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
+    ActivationReceipt,
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
@@ -278,3 +279,44 @@ def test_changed_member_preview_is_sorted_bounded_and_marks_truncation(size: int
     assert [(item.path, item.change) for item in changes] == expected[:RECOMPILED_MEMBER_PATH_LIMIT]
     assert truncated == (len(expected) > RECOMPILED_MEMBER_PATH_LIMIT)
     assert _changed_members(before, before) == ((), False)
+
+
+@pytest.mark.parametrize(("hold", "may_activate"), [(False, True), (True, True), (False, False)])
+def test_stale_approve_lands_no_approval_candidate_when_permitted(
+    tmp_path: Path, hold: bool, may_activate: bool
+) -> None:
+    from cruxible_client import contracts
+
+    instance, owner = seed_write_surface(tmp_path)
+    pending = _write(instance, _set(f"{KIND}/wi-1", "title", "land on approve"), accept="never")
+    assert pending.proposal is not None
+    source = _proposal_result(instance, pending.proposal.proposal_id)
+    assert source.candidate is not None
+    signed = _sign(
+        owner, source.candidate.candidate_digest, instance.accepted_coordinate().semantic_root
+    )
+    assert _write(instance, _set(f"{KIND}/wi-2", "title", "move head")).status == "accepted"
+    before = instance.accepted_coordinate()
+    result = service_submit_playbill_approval(
+        instance,
+        proposal_id=source.admission.proposal_id,
+        attestation=signed.attestation,
+        authenticated_submitter="owner",
+        activate_when_complete=not hold,
+        may_activate=may_activate,
+    )
+    assert result.proposal_id != source.admission.proposal_id
+    successor = _proposal_result(instance, result.proposal_id)
+    assert successor.candidate is not None
+    assert instance.proposal_evidence().read_approvals(successor.candidate.candidate_digest) == ()
+    assert instance.proposal_evidence().read_approvals(source.candidate.candidate_digest) == ()
+    if not hold and may_activate:
+        assert isinstance(result, ActivationReceipt)
+        assert result.status == "accepted"
+        assert result.accepted_coordinate == contracts.AcceptedCoordinate.from_internal(
+            instance.accepted_coordinate()
+        )
+    else:
+        assert isinstance(result, ProposalRecompiled)
+        assert result.status == "ready_to_activate"
+        assert instance.accepted_coordinate() == before

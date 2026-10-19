@@ -259,19 +259,22 @@ approval policy, and Claims that need a role, evidence or an effective period
 the value verbs do not express.
 
 - **MCP** (full profile): `cruxible_authoring_submit` with a `payload` checks
-  and submits in one call; `cruxible_authoring_compile` stages a durable
+  and lands in one call when policy and caller allow; `accept="never"` keeps
+  the proposal. `cruxible_authoring_compile` stages a durable
   intent you can revise (`intent_id`), `preflight` and submit;
   `cruxible_authoring_status` says what still separates it from acceptance;
   `cruxible_authoring_list` and `cruxible_authoring_get` find unfinished work.
   `cruxible_authoring_example` prints a template for every input kind.
 - **CLI**: `cruxible authoring submit -` (or `PAYLOAD`), `--dry-run` for every
-  refusal without saving anything, `--and-activate` to settle at once when no
-  approval is needed. `cruxible authoring example NAME` lists the templates.
+  refusal without saving anything. Submit lands when policy and caller allow;
+  `--no-accept` keeps the proposal. `cruxible authoring example NAME` lists the templates.
 - **SDK**: `cx.changes(rationale=...)` opens a change set that `.claim(...)`,
   `.subject(...)`, `.query_definition(...)`, `.procedure(...)`, `.line(...)`,
   `.trigger(...)`, `.claim_type(...)`, `.retire(...)` and the other members
-  write into; `.submit()` compiles the whole set as one intent and submits it,
-  returning the diagnostics on a refusal, and `.prepare()` checks without
+  write into; `.submit()` compiles the whole set and lands when allowed.
+  `intent.outcome` reports the accepted coordinate or why it stopped at a
+  proposal; `.submit(accept="never")` keeps the proposal. A refused intent
+  carries diagnostics, and `.prepare()` checks without
   submitting.
 
 ~~~python

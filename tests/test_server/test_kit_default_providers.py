@@ -93,7 +93,7 @@ def _worlds(
 def _accept(world: Any, draft: Any) -> None:
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     world.approve(submitted._candidate_status.proposal_id)
     world.pb.refresh()

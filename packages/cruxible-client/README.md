@@ -1751,10 +1751,13 @@ Compile and preflight the whole changeset as one intent.
 ## Drafts, intents, proposals, and approvals
 
 `ClaimDraft`, `ProcedureDraft`, `QueryDraft`, and `SubjectDraft` inherit
-`prepare() -> Intent` and `submit() -> Intent`. They expose `payload`, `reference_expectations`,
+`prepare() -> Intent` and `submit(accept="if_allowed") -> Intent`. They expose `payload`, `reference_expectations`,
 `program_stamp`, and `source_map` for inspection. `prepare()` performs server
-compilation/preflight; `submit()` compiles and submits in one request, with the
-daemon preflighting once, and a refused intent carries the same `refused` and
+compilation/preflight; `submit()` compiles and lands in one request when no
+approval is required and the caller may activate. `intent.outcome` reports
+`landed` with the accepted coordinate or `proposed` with the proposal ID,
+typed stop reason and next step. `submit(accept="never")` keeps the proposal.
+The daemon preflights once, and a refused intent carries the same `refused` and
 `diagnostics` that `prepare()` reports; the program stamp is structured authoring provenance,
 not retained executable Python source. `ClaimTypeDraft.propose(...)` is a direct
 proposal helper and submits immediately; it is not a synonym for local staging. It
@@ -1772,7 +1775,10 @@ refused. `reprepare()` requires the same owning connection.
 `approve(signer=..., reviewed=...)` checks exact proposal/candidate/session/instance
 binding, obtains current governance/challenge data, signs locally, and submits
 public approval; the approval that completes the candidate also activates it
-unless `hold=True`. Its `.details` returns a fresh copy. The token is not proof a
+unless `hold=True`. A stale candidate recompiles: approval returns an
+`ActivationReceipt` directly when no approval is needed and the caller may
+activate, or `ProposalRecompiled` for the replacement proposal. The review token's
+`.details` returns a fresh copy. The token is not proof a
 human read it. A new process must review again. Wait methods return the last
 observed status at timeout; they do not throw a synthetic failure or retry writes.
 
@@ -2027,7 +2033,7 @@ reprepare(*, draft: ClaimDraft | ProcedureDraft | SubjectDraft) -> Intent
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-submit() -> Intent
+submit(*, accept: WriteAccept = "if_allowed") -> Intent
 ```
 
 <a id="api-intent-status"></a>

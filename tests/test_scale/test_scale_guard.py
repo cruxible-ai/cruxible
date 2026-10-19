@@ -418,12 +418,10 @@ def _authoring_claims(world: World) -> object:
 
 def _submit_and_activate(world: World, value: Any) -> object:
     submitted = playbill_api.playbill_authoring_submit_input(world.instance_id, input=value)
-    assert submitted.status.state == "ready_to_activate", submitted.status
-    assert submitted.status.proposal_id is not None
-    receipt = playbill_api.playbill_activate(world.instance_id, submitted.status.proposal_id)
-    assert receipt.status == "accepted", receipt
+    assert submitted.status.state == "accepted", submitted.status
+    assert submitted.outcome.status == "landed", submitted.outcome
     world.generation += 1
-    return receipt
+    return submitted
 
 
 def _authoring_trigger(world: World) -> object:

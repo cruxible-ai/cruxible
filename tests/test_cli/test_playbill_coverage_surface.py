@@ -127,6 +127,7 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
     submitted = cruxible.json(
         "authoring",
         "submit",
+        "--no-accept",
         _write(tmp_path / "claim.json", authoring.model_dump(mode="json")),
     )
     cruxible.accept(str(submitted["status"]["proposal_id"]))
@@ -228,6 +229,7 @@ def _govern_a_foreign_span(
     submitted = cruxible.json(
         "authoring",
         "submit",
+        "--no-accept",
         "--intent-id",
         str(preflight["certificate"]["intent_id"]),
     )

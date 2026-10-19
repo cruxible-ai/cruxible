@@ -25,10 +25,10 @@ def test_public_claim_review_and_repair_example(playbill_http, tmp_path: Path, m
     submit = Intent.submit
     recovered = []
 
-    def submit_after_reopen(intent):
+    def submit_after_reopen(intent, *, accept="if_allowed"):
         reopened = pb.resume_intent(intent.intent_id)
         assert reopened.revision == intent.revision and not reopened.refused
-        submit(reopened)
+        submit(reopened, accept=accept)
         again = pb.resume_intent(intent.intent_id)
         assert again.proposal.proposal_id == reopened.proposal.proposal_id
         recovered.append(again.proposal.proposal_id)

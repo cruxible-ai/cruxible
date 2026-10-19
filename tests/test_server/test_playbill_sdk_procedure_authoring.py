@@ -78,7 +78,7 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
         assert compiled.verdict == "passed", compiled.frontier
         intent_id = compiled.certificate.intent_id
         assert isinstance(intent_id, str)
-        submitted = transport.submit_authoring_intent(instance_id, intent_id)
+        submitted = transport.submit_authoring_intent(instance_id, intent_id, accept="never")
         proposal_id = submitted.status.proposal_id
         assert proposal_id is not None
         _approve_and_activate(http, instance_id, reviewer_key, proposal_id)
@@ -88,7 +88,7 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
     else:
         intent = pb.procedure(definition=definition).prepare()
     assert not intent.refused, intent.diagnostics
-    intent.submit()
+    intent.submit(accept="never")
     proposal = intent.proposal
     assert proposal is not None
     proposal.review()
@@ -184,7 +184,7 @@ def test_sdk_capture_terminal_prepares_but_cannot_continue(
     contract = capture_contract()
     prepared = pb.changes().capture_contract(contract).prepare()
     assert not prepared.refused, prepared.diagnostics
-    submitted = prepared.submit().status()
+    submitted = prepared.submit(accept="never").status()
     assert submitted.proposal_id is not None
     _approve_and_activate(http, instance_id, reviewer_key, submitted.proposal_id)
     pb.refresh()

@@ -113,7 +113,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     def accept(draft):
         prepared = draft.prepare()
         assert not prepared.refused, prepared.diagnostics
-        prepared.submit()
+        prepared.submit(accept="never")
         _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
 
     base = capture_contract(name="test.web")
