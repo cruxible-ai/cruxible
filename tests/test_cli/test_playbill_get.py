@@ -613,3 +613,41 @@ def test_output_writes_a_whole_binary_body_across_ranges(
         cli, [*PREFIX, "get", "Document:blob", "--output", str(tmp_path / "x")]
     )
     assert refused.exit_code != 0 and "--detail body" in refused.output
+
+
+def test_incoming_prints_each_pointing_edge_and_the_next_page_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.get_reads import GetIncoming, GetIncomingClaim
+
+    stub = _stub(
+        monkeypatch,
+        _result(
+            "subject",
+            detail="incoming",
+            incoming=GetIncoming(
+                claims=(
+                    GetIncomingClaim(
+                        claim="CLM-0001",
+                        subject="project.work_item/wi-2",
+                        predicate="project.work_item.governs",
+                    ),
+                )
+            ),
+            truncated=True,
+            next_cursor="CURSOR",
+        ),
+    )
+
+    paged = CliRunner().invoke(
+        cli,
+        [*PREFIX, "get", "project.work_item/wi-1", "--detail", "incoming", "--limit", "1"],
+    )
+
+    assert paged.exit_code == 0, paged.output
+    assert stub.requests[0].detail == "incoming" and stub.requests[0].limit == 1
+    assert "project.work_item/wi-2  project.work_item.governs  CLM-0001" in paged.output
+    assert (
+        "next: cruxible get project.work_item/wi-1 --detail incoming --cursor CURSOR"
+        in paged.output
+    )

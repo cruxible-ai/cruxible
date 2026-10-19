@@ -909,6 +909,55 @@ def test_a_subject_history_page_grows_only_in_the_rows_that_locate_it(session: S
         )
 
 
+def test_an_incoming_page_reads_only_its_own_rows(session: Session) -> None:
+    """6 vs 60 Claims pointing at a Subject, one page of five: no counter grows.
+
+    The page is a keyset seek of the object index (``claims_by_object_subject``)
+    after its last Claim, bounded by the page: unlike a history page, locating
+    it costs nothing of the Subject's whole incoming set, so even the VM steps
+    stay at the page's.
+    """
+
+    world = session.small
+    six, sixty = world.subject(1), world.subject(2)
+    for target, sources in ((six, 6), (sixty, 60)):
+        _worlds.write(
+            world,
+            [
+                {
+                    "op": "add",
+                    "subject": f"{KIND}/points-{sources}-{index:02d}",
+                    "field": "governs",
+                    "value": target,
+                }
+                for index in range(sources)
+            ],
+        )
+    settle_advertisement(world.instance)
+
+    def page(target: str) -> object:
+        result = playbill_api.playbill_get(
+            world.instance_id, request=GetRequest(ref=target, detail="incoming", limit=5)
+        )
+        assert result.incoming is not None and len(result.incoming.claims) == 5, result
+        assert result.truncated, result
+        return result
+
+    for target in (six, sixty):
+        page(target)
+    measured: dict[str, dict[str, Any]] = {}
+    for target in (six, sixty):
+        with counting(world.root) as window:
+            page(target)
+        assert not window.unexplained, window.unexplained[:5]
+        measured[target] = {name: window.counts[name] for name in COUNTERS}
+    for counter in COUNTERS:
+        small, large = measured[six][counter], measured[sixty][counter]
+        assert large <= small * RATIO + SLACK[counter], (
+            f"incoming page {counter}: 6 pointing {small}, 60 pointing {large}"
+        )
+
+
 def _top_statements(measured: dict[str, dict[str, Any]], shown: int = 5) -> str:
     """The heaviest statements in LARGE, with their steps in SMALL, where they ran from,
     their tables and how each cursor moved."""

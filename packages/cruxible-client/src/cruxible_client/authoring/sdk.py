@@ -4242,6 +4242,9 @@ class Cruxible:
         read (``GetSubjectHistory``): each revision of each Claim about it,
         newest first, with what changed and why; ``field`` narrows them to one
         field. On anything else it answers its revisions (``GetHistory``).
+        ``detail="incoming"`` on a Subject answers every live Claim whose
+        Subject-valued object it is (``GetIncoming``), every page read: the
+        asserting Subject, predicate and Claim of each edge pointing at it.
 
         Next: ``detail="evidence"`` for what backs a Claim, ``detail="history"`` for its
         revisions, ``detail="proof"`` for the full envelope; ``card.ref`` passes the thing
@@ -4305,7 +4308,14 @@ class Cruxible:
         else:
             value = next(
                 item
-                for item in (result.evidence, result.history, result.body, result.why, result.proof)
+                for item in (
+                    result.evidence,
+                    result.history,
+                    result.incoming,
+                    result.body,
+                    result.why,
+                    result.proof,
+                )
                 if item is not None
             )
         return KnowledgeCard(kind, identity, _get_coordinate(result), value)
@@ -4498,6 +4508,24 @@ class Cruxible:
             )
             result = result.model_copy(
                 update={"history": whole, "truncated": False, "next_cursor": None}
+            )
+        if result.incoming is not None:
+            # Every page, pinned to the first page's coordinate by the cursor.
+            pointing = list(result.incoming.claims)
+            page = result
+            while page.truncated and page.next_cursor is not None:
+                page = self._client.get(
+                    self._instance_id,
+                    request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
+                )
+                assert page.incoming is not None
+                pointing.extend(page.incoming.claims)
+            result = result.model_copy(
+                update={
+                    "incoming": result.incoming.model_copy(update={"claims": tuple(pointing)}),
+                    "truncated": False,
+                    "next_cursor": None,
+                }
             )
         return result
 

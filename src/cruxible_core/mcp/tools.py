@@ -1006,7 +1006,9 @@ def register_tools(
                 )
             ),
         ],
-        detail: Literal["summary", "evidence", "why", "history", "proof", "body"] = "summary",
+        detail: Literal[
+            "summary", "evidence", "why", "history", "incoming", "proof", "body"
+        ] = "summary",
         range: Annotated[
             ByteRange | None,
             Field(description='Byte range [start, end) of a Document body; detail="body" only.'),
@@ -1022,14 +1024,14 @@ def register_tools(
                 ge=1,
                 le=GET_HISTORY_MAX_LIMIT,
                 description=(
-                    'Revisions (a Subject\'s field events) per detail="history" page, '
-                    "newest first; default 20."
+                    'Rows per detail="history" or "incoming" page (history newest '
+                    "first); default 20."
                 ),
             ),
         ] = None,
         cursor: Annotated[
             str | None,
-            Field(description='next_cursor of the previous detail="history" page.'),
+            Field(description='next_cursor of the previous detail="history"/"incoming" page.'),
         ] = None,
         field: Annotated[
             str | None,

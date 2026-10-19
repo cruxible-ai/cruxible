@@ -4948,7 +4948,7 @@ def write_changes(
 @click.argument("ref")
 @click.option(
     "--detail",
-    type=click.Choice(["summary", "evidence", "why", "history", "proof", "body"]),
+    type=click.Choice(["summary", "evidence", "why", "history", "incoming", "proof", "body"]),
     default="summary",
     show_default=True,
     help="How deep to read the one thing REF names.",
@@ -4973,9 +4973,11 @@ def write_changes(
     "--limit",
     type=int,
     default=None,
-    help="Revisions per --detail history page, newest first (default 20).",
+    help="Rows per --detail history or incoming page (default 20).",
 )
-@click.option("--cursor", default=None, help="Continue --detail history from its next_cursor.")
+@click.option(
+    "--cursor", default=None, help="Continue --detail history or incoming from its next_cursor."
+)
 @click.option(
     "--field",
     "field_name",
@@ -5051,7 +5053,7 @@ def get_by_ref(
     if result.next_cursor is not None:
         narrowed = "" if field_name is None else f" --field {shlex.quote(field_name)}"
         click.echo(
-            f"next: cruxible get {shlex.quote(ref)} --detail history{narrowed} "
+            f"next: cruxible get {shlex.quote(ref)} --detail {detail}{narrowed} "
             f"--cursor {result.next_cursor}"
         )
 
@@ -5267,6 +5269,13 @@ def _emit_get_text(result: Any) -> None:
         return
     if result.history is not None:
         _echo_history(result.history)
+        return
+    if result.incoming is not None:
+        if not result.incoming.claims:
+            click.echo("(nothing points at this Subject)")
+        for row in result.incoming.claims:
+            qualifier = "" if row.qualifier is None else f"[{row.qualifier}]"
+            click.echo(f"{row.subject}  {row.predicate}{qualifier}  {row.claim}")
         return
     if result.body is not None:
         body = result.body

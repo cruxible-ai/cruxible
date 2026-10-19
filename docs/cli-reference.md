@@ -1297,11 +1297,13 @@ paging past the cap.
 
 A Subject is an identity-only referent named by its canonical `kind/name`
 address, the spelling the SDK, claim objects, floor profiles, and `get` all
-use. `cruxible get KIND/ID` renders the Subject's own facts and an
-`incoming` section: every live Claim whose subject-valued object is this
-Subject, grouped by predicate and naming the asserting Subject and the Claim
-id. A relation is stored once, on the asserting Subject, so without this
-section nothing answers "what touches this package" from the object side.
+use. `cruxible get KIND/ID` renders the Subject's own facts and how many live
+Claims point at it (`incoming_count`); `--detail incoming` pages those Claims:
+each live Claim whose subject-valued object is this Subject, naming the
+asserting Subject, the predicate and the Claim id, in Claim id order (`--limit`,
+default 20; `--cursor` continues). A relation is stored once, on the asserting
+Subject, so this is what answers "what touches this package" from the object
+side; each page reads only its own rows of the object index.
 `--detail history` reads the Subject's revisions.
 
 ## claim-type
@@ -3513,7 +3515,7 @@ depend on it.
 ## get
 
 ~~~text
-cruxible get REF [--detail summary|evidence|why|history|proof|body]
+cruxible get REF [--detail summary|evidence|why|history|incoming|proof|body]
   [--range START:END] [--output FILE] [--limit N] [--cursor C] [--field FIELD]
   [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
@@ -3554,7 +3556,8 @@ aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
 CaptureContract name and version, its attestations and rationale, `why` and
 `proof` print today's explanation and full envelope, `history` lists revisions
 newest first with values, who changed them and why (`--limit`, default 20, per
-page; a cut page prints the `--cursor` command that continues it), and `body`
+page; a cut page prints the `--cursor` command that continues it), `incoming`
+pages the live Claims that point at a Subject the same way, and `body`
 prints a Document's bytes. A Claim's revision says what it did -- `stated` (its
 first), `changed`, `reobserved` (the same value on new backing) or `retired`
 (with `was-rescinded`, `was-wrong` or `superseded`) -- and every revision its

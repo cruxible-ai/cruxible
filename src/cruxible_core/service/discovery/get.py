@@ -83,6 +83,8 @@ from cruxible_client.contracts.get_reads import (
     GetFieldRetired,
     GetFieldStated,
     GetHistory,
+    GetIncoming,
+    GetIncomingClaim,
     GetPrincipalCard,
     GetProcedureCard,
     GetProcedureNode,
@@ -1314,6 +1316,8 @@ def _subject_card(
             # some claim here is actually notable.
             *((_render_get(surface, subject, "why"),) if any_claim_flagged else ()),
             _render_get(surface, subject, "history"),
+            # What points at it: the edges stored on other Subjects.
+            *((_render_get(surface, subject, "incoming"),) if incoming else ()),
         ),
     )
 
@@ -2075,6 +2079,9 @@ def _claim_rationale(
 # -- history -------------------------------------------------------------------------
 
 _HISTORY_LIST = "get history"
+_INCOMING_LIST = "get incoming"
+#: A keyset cursor's snapshot: it continues after its last key, whatever lands meanwhile.
+_KEYSET = "keyset"
 
 
 @dataclass(frozen=True)
@@ -2638,16 +2645,22 @@ def _history_selection(request: GetRequest) -> dict[str, str]:
     return {"ref": request.ref, **({} if request.field is None else {"field": request.field})}
 
 
+#: Each paged detail's cursor list: a cursor from one never continues another.
+_PAGED_LISTS = {"history": _HISTORY_LIST, "incoming": _INCOMING_LIST}
+
+
 def _history_continuation(
     instance: PlaybillInstance,
     request: GetRequest,
 ) -> tuple[ListContinuation | None, ClientCoordinate | str | None]:
-    """The page a history cursor continues, pinned to the coordinate it was cut at."""
+    """The page a paged detail's cursor continues, pinned to the coordinate it was cut at."""
 
     if request.cursor is None:
         return None, request.at
     continuation = decode_list_cursor(
-        request.cursor, list_name=_HISTORY_LIST, selection=_history_selection(request)
+        request.cursor,
+        list_name=_PAGED_LISTS[request.detail],
+        selection=_history_selection(request),
     )
     pinned = ClientCoordinate.model_validate(continuation.coordinate)
     at = request.at
@@ -2659,6 +2672,71 @@ def _history_continuation(
             "coordinate; omit at to continue it, or read history again without a cursor"
         )
     return continuation, pinned
+
+
+# -- incoming --------------------------------------------------------------------------
+
+#: One incoming page: a seek of the object index after the last Claim, bounded by LIMIT.
+INCOMING_PAGE_SQL = (
+    "SELECT identity, subject_path, predicate, qualifier FROM claims "
+    "INDEXED BY claims_by_object_subject "
+    "WHERE object_kind='subject' AND object_path=? AND identity>? AND lifecycle='live' "
+    "ORDER BY identity LIMIT ?"
+)
+
+
+def _incoming(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    request: GetRequest,
+    limit: int,
+    continuation: ListContinuation | None,
+) -> tuple[GetIncoming, bool, str | None]:
+    """One page of the live Claims whose Subject-valued object is this Subject.
+
+    A keyset walk of the object index (``claims_by_object_subject``) after the
+    cursor's Claim: the page reads its own rows and one more, never the
+    Subject's whole incoming set.
+    """
+
+    after = ""
+    if continuation is not None:
+        if continuation.snapshot != _KEYSET or len(continuation.last_key) != 1:
+            raise ListCursorMismatch(
+                f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+                "listing; read incoming again without a cursor"
+            )
+        after = continuation.last_key[0]
+    path = resolved.path or f"subjects/{_name(resolved.identity)}.json"
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = projection.typed.connection.execute(
+            INCOMING_PAGE_SQL, (path, after, limit + 1)
+        ).fetchall()
+    truncated = len(rows) > limit
+    page = rows[:limit]
+    claims = tuple(
+        GetIncomingClaim(
+            claim=str(identity).removeprefix("Claim:"),
+            subject=_subject_ref(str(subject_path)),
+            predicate=str(predicate),
+            qualifier=None if qualifier is None else str(qualifier),
+        )
+        for identity, subject_path, predicate, qualifier in page
+    )
+    next_cursor = (
+        encode_list_cursor(
+            list_name=_INCOMING_LIST,
+            coordinate=AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json"),
+            selection=_history_selection(request),
+            snapshot=_KEYSET,
+            last_key=(str(page[-1][0]),),
+        )
+        if truncated and page
+        else None
+    )
+    return GetIncoming(claims=claims), truncated, next_cursor
 
 
 # -- body ------------------------------------------------------------------------------
@@ -3075,6 +3153,15 @@ def service_playbill_get(
         )
         if resolved.kind == "procedure" and fields["history"].measurement_reviews:
             fields["live"] = live_view(instance, ("history.measurement_reviews",))
+    elif request.detail == "incoming":
+        fields["incoming"], fields["truncated"], fields["next_cursor"] = _incoming(
+            instance,
+            coordinate,
+            resolved,
+            request=request,
+            limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
+            continuation=continuation,
+        )
     elif request.detail == "proof":
         fields["proof"] = _proof(
             instance,
