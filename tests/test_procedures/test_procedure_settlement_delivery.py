@@ -1528,14 +1528,15 @@ def test_next_names_a_line_that_settles_what_was_refused_before(tmp_path: Path) 
     assert row.related_identities == (f"ProcedureRun:{second.run_id}",)
     assert row.detail["settled_items_matching_refusals"] == 1
     assert row.detail["settled_runs"] == 1
-    assert row.repair.operation == "cruxible.authoring.example"
-    assert row.repair.command == "cruxible authoring example line"
+    assert row.repair.operation == "cruxible.authoring.submit"
+    assert row.repair.command.startswith("cruxible authoring submit - <<< ")
+    assert row.repair.arguments["payload"]["max_authority"] == "propose"
 
 
 def test_the_line_row_reads_a_maintained_count_not_the_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One keyed probe per live Line, no blob or CAS reads, whatever the settled runs."""
+    """One keyed probe per live Line and one Line record read, whatever the settled runs."""
 
     from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.runtime.instance import PlaybillInstance
@@ -1581,35 +1582,55 @@ def test_the_line_row_reads_a_maintained_count_not_the_runs(
     large, row = counted()
     assert row.detail["settled_items_matching_refusals"] == 2
     assert row.detail["settled_runs"] == 2
-    assert small == large == (1, 0, 0)
+    # One read of the flagged Line's own record, for its repair payload.
+    assert small == large == (1, 1, 0)
+
+
+def submit_line_repair(instance: Any, row: Any) -> Any:
+    """Submit a settled-prior-refusals row's repair payload exactly as emitted, and land it."""
+
+    from pydantic import TypeAdapter
+
+    from cruxible_client import contracts
+    from cruxible_client.contracts.authoring.inputs import AuthoringInput
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from cruxible_core.service.authoring.landing import service_land_authoring_submit
+
+    payload = TypeAdapter(AuthoringInput).validate_python(row.repair.arguments["payload"])
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    submitted = coordinator.submit_input(
+        actor=actor, input=payload, canonical_timestamp="2026-09-12T12:30:00.000000Z"
+    )
+    landed = service_land_authoring_submit(
+        coordinator, actor=actor, submitted=submitted, accept="if_allowed", may_activate=True
+    )
+    assert isinstance(landed.outcome, contracts.AuthoringLanded), landed
+    return landed
 
 
 def test_demoting_the_line_closes_its_row(tmp_path: Path) -> None:
-    """The repair: a Line successor (here capped at propose) starts a new, empty count."""
+    """The repair payload is the Line successor: same Line, same pins, capped at propose."""
 
-    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
-    from tests.core_support._candidate_support import submit_member_candidate
-    from tests.core_support._knowledge_loop_support import accept_proposal
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest, parse_line_spec
 
     instance, _root, line, _second = settled_refusal_world(tmp_path)
-    assert _next_rows(instance, "line_settled_prior_refusals")
-    demoted = line.model_copy(
-        update={
-            "max_authority": "propose",
-            "lifecycle": line.lifecycle.model_copy(
-                update={"predecessor_digest": line_spec_digest(line).tagged}
-            ),
-        }
+    (row,) = _next_rows(instance, "line_settled_prior_refusals")
+    assert row.repair.target == line.identity.qualified
+    submit_line_repair(instance, row)
+
+    path = line_spec_path(line.identity.name)
+    successor = parse_line_spec(
+        instance.blob_at(instance.accepted_coordinate().git_oid, path), path=path
     )
-    inspection = submit_member_candidate(
-        instance,
-        members={line_spec_path(demoted.identity.name): render_line_spec(demoted)},
-        actor_id="owner",
-        proposal_name="demote-line",
-        proposal_family="procedure",
-        timestamp="2026-09-12T12:30:00.000000Z",
-    )
-    accept_proposal(instance, OWNERS[instance.root], inspection)
+    assert successor.identity == line.identity
+    assert successor.procedure == line.procedure
+    assert successor.acquisition_policy == line.acquisition_policy
+    assert successor.max_authority == "propose"
+    assert (successor.parameters, successor.budgets) == (line.parameters, line.budgets)
+    assert successor.occurrence_epoch == line.occurrence_epoch
+    assert successor.lifecycle.predecessor_digest == line_spec_digest(line).tagged
     assert _next_rows(instance, "line_settled_prior_refusals") == []
 
 

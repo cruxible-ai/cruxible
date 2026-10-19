@@ -2427,9 +2427,15 @@ is current when looked at. A busy refusal index skips a step and the cursor
 makes that lossless; a discarded index resets the cursor and the journal is
 counted again. Each settled proposal counts once, and the latest run named is
 the latest settlement, whatever order deliveries and recoveries arrive in. Its
-repair is a Line successor, from `cruxible authoring example line`: demote the
-Line to `max_authority: propose` so its results are reviewed again, or point it
-at a fixed Procedure. Either starts a new Line version, and the row closes.
+repair is the Line successor itself, filled from the live Line: the row's
+`repair.arguments.payload` is a `line` authoring input with the same name,
+Procedure, acquisition policy, parameters, budgets and trigger input, capped at
+`max_authority: propose` so its results are reviewed again, and its command
+submits it as is (`cruxible authoring submit - <<< '{...}'`; on MCP,
+`cruxible_authoring_submit(payload=...)`). Read the runs first; to point the
+Line at a fixed Procedure instead, submit the same payload with
+`procedure_name` naming it. Either starts a new Line version, and the row
+closes.
 
 `evaluate` checks a historical `[since, until)` range against every live
 Trigger aimed at the Line and records its matches as pending; it never runs
