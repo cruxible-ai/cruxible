@@ -110,6 +110,7 @@ def test_a_page_continues_at_its_own_coordinate_and_refuses_another_lists_cursor
     assert len(second.incoming.claims) == len(_SOURCES) - 2
     assert second.coordinate == first.coordinate
 
+    _write(instance, [{"op": "set", "subject": _TARGET, "field": "title", "value": "Target"}])
     history = _get(instance, _TARGET, detail="history", limit=1)
     assert history.next_cursor is not None
     with pytest.raises(ListCursorMismatch):
@@ -134,7 +135,5 @@ def test_a_page_seeks_the_object_index_and_reads_only_its_rows(
             "EXPLAIN QUERY PLAN " + INCOMING_PAGE_SQL, (f"subjects/{_TARGET}.json", "", 3)
         ).fetchall()
     details = " ".join(str(row[-1]) for row in plan)
-    assert "USING INDEX claims_by_object_subject (object_path=? AND identity>?)" in details, (
-        details
-    )
+    assert "USING INDEX claims_by_object_subject (object_path=? AND identity>?)" in details, details
     assert "TEMP B-TREE" not in details, details

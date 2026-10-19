@@ -983,7 +983,7 @@ def test_history_pages_newest_first_with_a_bound_cursor(tmp_path: Path) -> None:
     # A cursor continues only the listing it was cut from.
     with pytest.raises(ListCursorMismatch):
         _get(instance, "project.work_item/wi-42", detail="history", cursor=first_page.next_cursor)
-    with pytest.raises(ValueError, match="page detail=.history. only"):
+    with pytest.raises(ValueError, match="page detail=.history., .incoming. or .runs. only"):
         GetRequest(ref=first, limit=5)
 
 
