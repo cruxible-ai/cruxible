@@ -266,3 +266,76 @@ def test_a_run_interrupted_mid_graph_names_the_node_it_is_on(tmp_path: Path) -> 
     assert card.current_node.node == nodes[1].node_id
     assert card.current_node.kind == nodes[1].kind
     assert card.elapsed_us == 0 and card.elapsed_basis == "read_time"
+
+
+def test_a_lines_runs_page_newest_first_through_its_partition_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``get Line:<name> detail="runs"``: every run of the Line, a keyset page at a time."""
+
+    from cruxible_core.service.discovery import runs as runs_module
+    from cruxible_core.service.list_pages import ListCursorMismatch
+
+    instance, line, procedure, start = _armed_world(tmp_path)
+    for index in range(7):
+        capture(
+            instance,
+            procedure,
+            at=start + timedelta(seconds=1, milliseconds=index),
+            partition=f"run:anchor-{index}",
+        )
+    later = start + timedelta(seconds=2)
+    service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(since=start, until=later),
+        actor=_actor(instance),
+        now=later,
+    )
+    dispatched = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequest(limit=7),
+        actor=_actor(instance),
+        now=later + timedelta(seconds=1),
+        caller_rung=3,
+    )
+    run_ids = [item.run_id for item in dispatched.items if item.run_id is not None]
+    assert len(run_ids) == 7
+    ref = line.identity.qualified
+
+    rows_read: list[str] = []
+    real = runs_module.run_row
+
+    def counted(instance, locator):  # type: ignore[no-untyped-def]
+        rows_read.append(locator.run_id)
+        return real(instance, locator)
+
+    monkeypatch.setattr(runs_module, "run_row", counted)
+    pages = [_get(instance, ref, detail="runs", limit=3)]
+    # A page reads its own rows: never the Line's whole run history.
+    assert len(rows_read) == 3
+    while pages[-1].next_cursor is not None:
+        pages.append(_get(instance, ref, detail="runs", limit=3, cursor=pages[-1].next_cursor))
+    assert len(rows_read) == 7
+    assert [len(page.runs.runs) for page in pages if page.runs] == [3, 3, 1]
+    assert [page.truncated for page in pages] == [True, True, False]
+    listed = [row.run for page in pages if page.runs for row in page.runs.runs]
+    assert sorted(listed) == sorted(run_ids)
+    # Newest admission first, exactly as the runs section orders them.
+    everything = service_playbill_orient(instance, section="runs", limit=50)
+    assert everything.runs is not None
+    assert listed == [row.run for row in everything.runs]
+    assert all(page.live is not None and page.live.fields == ("runs",) for page in pages)
+    assert all(page.runs is not None and page.runs.line == ref for page in pages)
+
+    card = _get(instance, ref).card
+    assert card is not None and card.runs_total == 7  # type: ignore[union-attr]
+    assert f'cruxible_get(ref="{ref}", detail="runs")' in card.next
+    history = _get(instance, ref, detail="history")
+    assert history.next_cursor is None
+    with pytest.raises(ListCursorMismatch):
+        _get(instance, ref, detail="history", cursor=pages[0].next_cursor)
+    with pytest.raises(ReadRefusalError) as refused:
+        _get(instance, run_ids[0], detail="runs")
+    assert refused.value.error_code == "cruxible.get.detail_unsupported"

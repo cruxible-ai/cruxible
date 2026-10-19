@@ -1007,7 +1007,7 @@ def register_tools(
             ),
         ],
         detail: Literal[
-            "summary", "evidence", "why", "history", "incoming", "proof", "body"
+            "summary", "evidence", "why", "history", "incoming", "runs", "proof", "body"
         ] = "summary",
         range: Annotated[
             ByteRange | None,
@@ -1024,14 +1024,14 @@ def register_tools(
                 ge=1,
                 le=GET_HISTORY_MAX_LIMIT,
                 description=(
-                    'Rows per detail="history" or "incoming" page (history newest '
-                    "first); default 20."
+                    'Rows per detail="history", "incoming" or "runs" page (history and '
+                    "runs newest first); default 20."
                 ),
             ),
         ] = None,
         cursor: Annotated[
             str | None,
-            Field(description='next_cursor of the previous detail="history"/"incoming" page.'),
+            Field(description="next_cursor of the previous history, incoming or runs page."),
         ] = None,
         field: Annotated[
             str | None,

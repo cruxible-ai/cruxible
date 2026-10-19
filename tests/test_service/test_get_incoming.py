@@ -121,7 +121,7 @@ def test_a_page_continues_at_its_own_coordinate_and_refuses_another_lists_cursor
 def test_incoming_applies_to_subjects_only(instance: PlaybillInstance) -> None:
     with pytest.raises(ReadRefusalError) as caught:
         _get(instance, f"ClaimType:{KIND}.governs", detail="incoming")
-    assert caught.value.code == "cruxible.get.detail_unsupported"
+    assert caught.value.error_code == "cruxible.get.detail_unsupported"
 
 
 def test_a_page_seeks_the_object_index_and_reads_only_its_rows(

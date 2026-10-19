@@ -4948,7 +4948,9 @@ def write_changes(
 @click.argument("ref")
 @click.option(
     "--detail",
-    type=click.Choice(["summary", "evidence", "why", "history", "incoming", "proof", "body"]),
+    type=click.Choice(
+        ["summary", "evidence", "why", "history", "incoming", "runs", "proof", "body"]
+    ),
     default="summary",
     show_default=True,
     help="How deep to read the one thing REF names.",
@@ -4973,10 +4975,12 @@ def write_changes(
     "--limit",
     type=int,
     default=None,
-    help="Rows per --detail history or incoming page (default 20).",
+    help="Rows per --detail history, incoming or runs page (default 20).",
 )
 @click.option(
-    "--cursor", default=None, help="Continue --detail history or incoming from its next_cursor."
+    "--cursor",
+    default=None,
+    help="Continue --detail history, incoming or runs from its next_cursor.",
 )
 @click.option(
     "--field",
@@ -5269,6 +5273,15 @@ def _emit_get_text(result: Any) -> None:
         return
     if result.history is not None:
         _echo_history(result.history)
+        return
+    if result.runs is not None:
+        if not result.runs.runs:
+            click.echo(f"(no runs of {result.runs.line})")
+        for run in result.runs.runs:
+            click.echo(
+                f"{run.run}  {run.status}  started {run.started_at.isoformat()}  "
+                f"nodes_done={run.nodes_done}  {run.procedure}"
+            )
         return
     if result.incoming is not None:
         if not result.incoming.claims:

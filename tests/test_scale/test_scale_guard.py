@@ -399,6 +399,15 @@ def _since_first_page(world: World) -> object:
     return result
 
 
+def _line_runs(world: World) -> object:
+    result = playbill_api.playbill_get(
+        world.instance_id,
+        request=GetRequest(ref=f"Line:{_worlds.SETTLE}-line", detail="runs", limit=5),
+    )
+    assert result.runs is not None and result.runs.runs, result
+    return result
+
+
 def _get(ref: Callable[[World], str]) -> Callable[[World], object]:
     def run(world: World) -> object:
         return playbill_api.playbill_get(world.instance_id, request=GetRequest(ref=ref(world)))
@@ -780,6 +789,7 @@ def _routes() -> list[Route]:
             prepare=_settle_pending,
             verify=_settle_counted,
         ),
+        Route("read.get.line_runs", _line_runs),
         Route(
             "attestation.examined_existing",
             _append_attestation,

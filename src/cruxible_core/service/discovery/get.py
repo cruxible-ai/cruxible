@@ -27,6 +27,7 @@ from typing import Any, cast
 from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import CandidateMemberEvidence
 from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.captures import (
@@ -85,6 +86,7 @@ from cruxible_client.contracts.get_reads import (
     GetHistory,
     GetIncoming,
     GetIncomingClaim,
+    GetLineRuns,
     GetPrincipalCard,
     GetProcedureCard,
     GetProcedureNode,
@@ -128,6 +130,7 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.triggers import Trigger
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import SUBJECT_KIND_PATTERN, SUBJECT_REF_TEXT_PATTERN
+from cruxible_core.exhaust.journal_index import RunPageInvalidated
 from cruxible_core.indexes.history.history_index import (
     AcceptedGenerationLocation,
     AcceptedMemberLocation,
@@ -168,10 +171,12 @@ from cruxible_core.service.discovery.runs import (
     procedure_run_card,
     procedure_run_proof,
     run_ids_with_prefix,
+    run_rows,
 )
 from cruxible_core.service.list_pages import (
     ListContinuation,
     ListCursorMismatch,
+    ListCursorStale,
     decode_list_cursor,
     encode_list_cursor,
     list_snapshot,
@@ -2080,6 +2085,7 @@ def _claim_rationale(
 
 _HISTORY_LIST = "get history"
 _INCOMING_LIST = "get incoming"
+_RUNS_LIST = "get runs"
 #: A keyset cursor's snapshot: it continues after its last key, whatever lands meanwhile.
 _KEYSET = "keyset"
 
@@ -2646,7 +2652,7 @@ def _history_selection(request: GetRequest) -> dict[str, str]:
 
 
 #: Each paged detail's cursor list: a cursor from one never continues another.
-_PAGED_LISTS = {"history": _HISTORY_LIST, "incoming": _INCOMING_LIST}
+_PAGED_LISTS = {"history": _HISTORY_LIST, "incoming": _INCOMING_LIST, "runs": _RUNS_LIST}
 
 
 def _history_continuation(
@@ -2737,6 +2743,55 @@ def _incoming(
         else None
     )
     return GetIncoming(claims=claims), truncated, next_cursor
+
+
+# -- a Line's runs ----------------------------------------------------------------------
+
+
+def _line_runs(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    request: GetRequest,
+    limit: int,
+    continuation: ListContinuation | None,
+) -> tuple[GetLineRuns, bool, str | None]:
+    """One page of a Line's runs, newest admission first, through its partition index.
+
+    The cursor names the last admission's immutable position in the run
+    index, so the page continues by key: one bounded locator read per page,
+    whatever the Line's run history holds.
+    """
+
+    after: tuple[str, int] | None = None
+    if continuation is not None:
+        key = continuation.last_key
+        if continuation.snapshot != _KEYSET or len(key) != 2 or not key[1].isdigit():
+            raise ListCursorMismatch(
+                f"{ListCursorMismatch.error_code}: the cursor does not continue this "
+                "listing; read the runs again without a cursor"
+            )
+        after = (key[0], int(key[1]))
+    line = ArtifactIdentity(kind="Line", name=_name(resolved.identity))
+    try:
+        rows, stop = run_rows(instance, limit=limit, line=line, after=after)
+    except RunPageInvalidated as exc:
+        raise ListCursorStale(
+            f"{ListCursorStale.error_code}: {exc}; read the runs again without a cursor"
+        ) from exc
+    next_cursor = (
+        None
+        if stop is None
+        else encode_list_cursor(
+            list_name=_RUNS_LIST,
+            coordinate=AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json"),
+            selection=_history_selection(request),
+            snapshot=_KEYSET,
+            last_key=(stop[0], str(stop[1])),
+        )
+    )
+    return GetLineRuns(line=line.qualified, runs=rows), stop is not None, next_cursor
 
 
 # -- body ------------------------------------------------------------------------------
@@ -3153,6 +3208,16 @@ def service_playbill_get(
         )
         if resolved.kind == "procedure" and fields["history"].measurement_reviews:
             fields["live"] = live_view(instance, ("history.measurement_reviews",))
+    elif request.detail == "runs":
+        fields["runs"], fields["truncated"], fields["next_cursor"] = _line_runs(
+            instance,
+            coordinate,
+            resolved,
+            request=request,
+            limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
+            continuation=continuation,
+        )
+        fields["live"] = live_view(instance, ("runs",))
     elif request.detail == "incoming":
         fields["incoming"], fields["truncated"], fields["next_cursor"] = _incoming(
             instance,

@@ -521,6 +521,9 @@ def line_card(
         runs_total=total,
     )
     next_steps.extend(render(f"ProcedureRun:{row.run}", None) for row in runs[:1])
+    if total > len(runs):
+        # More runs than the card holds: the Line's paged run history.
+        next_steps.append(render(line.identity.qualified, "runs"))
     next_steps.append(render(line.identity.qualified, "history"))
     return GetLineCard(
         line=line.identity.qualified,

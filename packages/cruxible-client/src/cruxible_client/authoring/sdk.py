@@ -4245,6 +4245,8 @@ class Cruxible:
         ``detail="incoming"`` on a Subject answers every live Claim whose
         Subject-valued object it is (``GetIncoming``), every page read: the
         asserting Subject, predicate and Claim of each edge pointing at it.
+        ``detail="runs"`` on a Line answers its Procedure runs newest
+        admission first (``GetLineRuns``), every page read.
 
         Next: ``detail="evidence"`` for what backs a Claim, ``detail="history"`` for its
         revisions, ``detail="proof"`` for the full envelope; ``card.ref`` passes the thing
@@ -4312,6 +4314,7 @@ class Cruxible:
                     result.evidence,
                     result.history,
                     result.incoming,
+                    result.runs,
                     result.body,
                     result.why,
                     result.proof,
@@ -4508,6 +4511,24 @@ class Cruxible:
             )
             result = result.model_copy(
                 update={"history": whole, "truncated": False, "next_cursor": None}
+            )
+        if result.runs is not None:
+            # Every page, continued by each admission's immutable position.
+            runs = list(result.runs.runs)
+            page = result
+            while page.truncated and page.next_cursor is not None:
+                page = self._client.get(
+                    self._instance_id,
+                    request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
+                )
+                assert page.runs is not None
+                runs.extend(page.runs.runs)
+            result = result.model_copy(
+                update={
+                    "runs": result.runs.model_copy(update={"runs": tuple(runs)}),
+                    "truncated": False,
+                    "next_cursor": None,
+                }
             )
         if result.incoming is not None:
             # Every page, pinned to the first page's coordinate by the cursor.

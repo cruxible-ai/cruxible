@@ -3515,7 +3515,7 @@ depend on it.
 ## get
 
 ~~~text
-cruxible get REF [--detail summary|evidence|why|history|incoming|proof|body]
+cruxible get REF [--detail summary|evidence|why|history|incoming|runs|proof|body]
   [--range START:END] [--output FILE] [--limit N] [--cursor C] [--field FIELD]
   [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
@@ -3539,7 +3539,10 @@ at it but it is not enabled, its enablements (the principal kind, state and
 stop reason, the pinned Line digest and Trigger versions, how far its daemon
 matched (`evaluated_until`), and who enabled each: a runtime credential's id
 and label only to that credential or an admin, otherwise
-`enabled_by_withheld`), due and waiting occurrences and recent runs; `CAP-<12+ hex>` or `Capture:<digest>`
+`enabled_by_withheld`), due and waiting occurrences and recent runs (`--detail
+runs` pages all of the Line's runs, newest admission first, through the run
+journal's per-Line index: each page reads only its rows, and a run admitted or
+finished between pages is never repeated or skipped); `CAP-<12+ hex>` or `Capture:<digest>`
 answers a Capture's contract and version, observation time, size, availability
 and the Claims (and their Subjects) that cite it; `ResolutionContract:<name>`
 answers the hypothesis Claim, window, rule and bound-window state; and
