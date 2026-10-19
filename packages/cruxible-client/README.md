@@ -52,18 +52,33 @@ frontmatter. The agent chooses the file and heading paths.
 `DocOutcome` describe document writes through CLI, MCP, and SDK. Section evidence
 selects the heading and its own body, ending before the first child. An optional
 `located_at` observation gives own words a file location; ClaimType rules still
-admit only their named contracts. Use
-`cx.changes(because="Reason").append_section("notes.md", "# Decision\n...")`
-or `.replace_section("notes.md", ("Decision",), "# Decision\n...", expect=digest)`;
-finish with `.write()`. In that batch, a change's
-`SectionEvidence(file="notes.md", section=("Decision",))` cites the new prose as
-own words with a location. `cx.file("notes.md").section("Decision")` returns a
-source selection for authoring-lane `supported_by=`.
+admit only their named contracts. The primary typed lane carries the prose:
+
+```python
+w = cx.world()
+item = w.project.work_item["wi-1"]
+outcome = item.set(
+    status="ready",
+    because="Record the decision and its basis together.",
+    evidence=cx.section("notes.md", ("Decision",),
+                        text="# Decision\nThe checks passed.\n"),
+)
+# Next: inspect outcome.docs[0].written and outcome.next, then cx.get(item.address).
+```
+
+`cx.section(file, heading_path, text=..., under=())` appends a subtree; with
+`replace=True, expect=digest` it replaces the named subtree or preamble. It
+returns `authoring.section_evidence.AuthoredSection`, an immutable client-only
+evidence object. Construction writes nothing. Accepted Subjects, their edits,
+new Subject drafts' `.set(...).write(...)`, and `cx.set` accept it as evidence.
+A shared evidence object authors its section once across a World write.
 
 For an explicit batch, give `.append_section(..., id="basis")` or
 `.replace_section(..., id="basis")` an ID and pass `batch.section("basis")`
 as a change's `supported_by=` or `evidence=`. Both document methods return the
 batch. Next: `batch.write()`, then inspect `outcome.docs[].written`.
+`cx.file("notes.md").section("Decision")` continues to select existing text
+for authoring-lane `supported_by=`; it does not carry a new edit.
 
 Files are written after accepted or awaiting-approval admission. Dry runs report
 digests and write nothing. Inspect `outcome.docs`: a concurrent edit can leave

@@ -251,6 +251,7 @@ from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyRe
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.contracts.triggers import InternalActionName
+from cruxible_client.authoring.section_evidence import AuthoredSection
 from cruxible_client.contracts.write import (
     AddChange,
     AppendSection,
@@ -3280,6 +3281,33 @@ class Cruxible:
             outcome=outcome,
         )
 
+    def section(
+        self,
+        file: str,
+        heading_path: tuple[str, ...],
+        *,
+        text: str,
+        under: tuple[str, ...] = (),
+        replace: bool = False,
+        expect: str | None = None,
+    ) -> AuthoredSection:
+        """Carry a new section's text as evidence for one typed write.
+
+        Append a heading subtree, or ``replace=True`` to replace ``heading_path``
+        (empty: preamble). ``expect`` checks the prior subtree digest on replace.
+        The heading path cites the resulting section, so a renamed heading must
+        be cited explicitly through a batch instead.
+        Next: ``subject.set(status=..., evidence=section, because=...)``; inspect
+        ``outcome.docs`` for file conflicts even after a Claim was admitted.
+        """
+        if expect is not None and not replace:
+            raise ValueError("expect is only available for a replacement")
+        operation: DocOp = (
+            ReplaceSection(file=file, section=heading_path, text=text, expect=expect)
+            if replace else AppendSection(file=file, under=under, text=text)
+        )
+        return AuthoredSection(operation, SectionEvidence(file=file, section=heading_path))
+
     def set(
         self,
         subject: str | SubjectRef,
@@ -3287,7 +3315,7 @@ class Cruxible:
         value: ClaimValue | SubjectRef | LiteralValue,
         *,
         because: str,
-        evidence: Evidence | None = None,
+        evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
@@ -3310,6 +3338,18 @@ class Cruxible:
         the value back with its verdict.
         """
 
+        if isinstance(evidence, AuthoredSection):
+            return self._write(WriteRequest(
+                because=because,
+                docs=(evidence.operation,),
+                changes=(SetChange(
+                    subject=_write_subject(subject), field=_write_field(field),
+                    value=_write_value(value), evidence=evidence.citation,
+                    role=role, contend=contend, expect=_write_expect(expect),
+                ),),
+                dry_run=dry_run, accept=accept, at=self._write_at(at),
+                surface="sdk", full_coordinate=True,
+            ))
         request = SetRequest(
             subject=_write_subject(subject),
             field=_write_field(field),

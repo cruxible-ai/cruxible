@@ -112,6 +112,8 @@ cited; `cruxible files add NAME PATH` writes one. Two different things can then 
 | When the file changes | `next` reports `citation_drifted`; re-bind the Claim to the new text or retire it | `next` reports `document_modified`; `files check` shows the detail |
 | How | `set --evidence-file`, `cx.file(...)` | Add `document_id`, `document_kind`, `title`, `media_type` and `governance_scope` to the entry, then `files compile` and `files propose` |
 
+Typed writes can carry new prose as `evidence=cx.section(file, heading_path, text=...)`, authoring the section and citing it in the same admitted write.
+
 Most usage is citations. A Document whose bytes are not a workspace file (for
 example bytes a remote agent supplies) goes through `body store` and
 `document propose` instead. `coverage resolve` answers which Claim citations

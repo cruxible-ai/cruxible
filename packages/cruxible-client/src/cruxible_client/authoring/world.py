@@ -36,6 +36,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from cruxible_client.authoring.section_evidence import AuthoredSection
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
     Cardinality,
@@ -70,6 +71,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyValue
     from cruxible_client.contracts.write import (
         Change,
+        DocOp,
         Evidence,
         RetireChange,
         WriteAccept,
@@ -490,7 +492,7 @@ class WorldSubject(SubjectRef):
         /,
         *,
         because: str,
-        evidence: Evidence | None = None,
+        evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
         dry_run: bool = False,
@@ -499,6 +501,7 @@ class WorldSubject(SubjectRef):
     ) -> WriteOutcome:
         """Set single-value fields of this Subject, by leaf: ``set(status="done", because=...)``.
 
+        ``evidence=cx.section(file, path, text=...)`` carries prose and its citation.
         Every field set here is one change of one change set. The names are
         checked against this World before the wire; a leaf that is a Python
         keyword takes one trailing underscore (``class_``). A value may be a new
@@ -518,7 +521,7 @@ class WorldSubject(SubjectRef):
         /,
         *,
         because: str,
-        evidence: Evidence | None = None,
+        evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
         dry_run: bool = False,
@@ -612,7 +615,7 @@ class _FieldChange:
     op: Literal["set", "add"]
     field: str
     value: object
-    evidence: Evidence | None = None
+    evidence: Evidence | AuthoredSection | None = None
     role: WriteRole | None = None
     contend: bool = False
     expect_absent: bool = False
@@ -667,11 +670,14 @@ class WorldNewSubject(WorldWritable):
         self,
         /,
         *,
-        evidence: Evidence | None = None,
+        evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         **fields: object,
     ) -> WorldNewSubject:
-        """This draft with single-value fields set, by leaf. Next: ``.write(because=...)``."""
+        """Set fields; evidence may carry ``cx.section(..., text=...)`` prose.
+
+        Next: ``.write(because=...)`` authors the section and creates this Subject.
+        """
 
         changes = self._world._field_changes(
             self.subject_kind, "set", fields, evidence=evidence, role=role
@@ -682,7 +688,7 @@ class WorldNewSubject(WorldWritable):
         self,
         /,
         *,
-        evidence: Evidence | None = None,
+        evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         **fields: object,
     ) -> WorldNewSubject:
@@ -724,12 +730,15 @@ class WorldSubjectEdit(WorldWritable):
         self,
         /,
         *,
-        evidence: Evidence | None = None,
+        evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
         **fields: object,
     ) -> WorldSubjectEdit:
-        """This edit with single-value fields set, by leaf, as ``WorldSubject.set`` takes them."""
+        """Set fields with optional ``cx.section(..., text=...)`` evidence.
+
+        Next: ``.write(because=...)``, then inspect ``outcome.docs`` for file conflicts.
+        """
 
         kind = self.address.split("/", 1)[0]
         changes = self._world._field_changes(
@@ -741,7 +750,7 @@ class WorldSubjectEdit(WorldWritable):
         self,
         /,
         *,
-        evidence: Evidence | None = None,
+        evidence: Evidence | AuthoredSection | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
         **fields: object,
@@ -1174,6 +1183,8 @@ class World:
         sent: dict[int, list[_FieldChange]] = {}
         creates: list[tuple[_Landing, CreateChange]] = []
         changes: list[Change] = []
+        docs: list[DocOp] = []
+        authored: set[int] = set()
 
         def mine(item: WorldWritable) -> None:
             if getattr(item, "_world", None) is not self:
@@ -1195,12 +1206,18 @@ class World:
                 if any(item is earlier for earlier in done):
                     continue
                 done.append(item)
+                evidence = item.evidence
+                if isinstance(evidence, AuthoredSection):
+                    if id(evidence) not in authored:
+                        authored.add(id(evidence))
+                        docs.append(evidence.operation)
+                    evidence = evidence.citation
                 changes.append(
                     SetChange(
                         subject=subject,
                         field=item.field,
                         value=value(item.value),
-                        evidence=item.evidence,
+                        evidence=evidence,
                         role=item.role,
                         contend=item.contend,
                     )
@@ -1209,7 +1226,7 @@ class World:
                         subject=subject,
                         field=item.field,
                         value=value(item.value),
-                        evidence=item.evidence,
+                        evidence=evidence,
                         role=item.role,
                         expect_absent=item.expect_absent,
                     )
@@ -1251,6 +1268,7 @@ class World:
                 raise TypeError(f"write() takes drafts and edits, not {type(item).__name__}")
         outcome = self._write(
             [create for _landing, create in creates] + changes,
+            docs=docs,
             because=because,
             dry_run=dry_run,
             accept=accept,
@@ -1345,7 +1363,7 @@ class World:
         op: Literal["set", "add"],
         fields: Mapping[str, object],
         *,
-        evidence: Evidence | None,
+        evidence: Evidence | AuthoredSection | None,
         role: WriteRole | None,
         contend: bool = False,
         expect_absent: bool = False,
@@ -1374,6 +1392,7 @@ class World:
         *,
         because: str,
         dry_run: bool,
+        docs: Sequence[DocOp] = (),
         accept: WriteAccept,
     ) -> WriteOutcome:
         """Send this World's changes, checked from its write basis; keep references valid.
@@ -1393,6 +1412,7 @@ class World:
             WriteRequest(
                 because=because,
                 changes=tuple(changes),
+                docs=tuple(docs),
                 dry_run=dry_run,
                 accept=accept,
                 at=self._write_basis,
