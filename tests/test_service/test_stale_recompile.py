@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.errors import ProposalStale, SettlementIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.recompilation import ProposalRecompiled
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -25,6 +26,7 @@ from cruxible_core.service.proposals.proposals import (
 from tests.core_support._support import client_material
 from tests.core_support._write_support import KIND, seed_write_surface
 from tests.test_ledger.test_activation import _sign
+from tests.test_ledger.test_activation_handoff import _arguments, _proposal
 from tests.test_service.test_write_verbs import _set, _write
 
 
@@ -171,6 +173,93 @@ def test_same_request_write_recompiles_once_after_unrelated_acceptance(
     source_id = result.admission.readmits.source_proposal_id
     withdrawal = instance.proposal_evidence().read_withdrawal(source_id)
     assert withdrawal is not None and withdrawal.superseded_by == outcome.proposal.proposal_id
+
+
+@pytest.mark.parametrize("origin", ["exact_bytes", "write"])
+def test_lost_cas_retries_only_a_lowering_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, origin: str
+) -> None:
+    from cruxible_core.ledger.activation import ActivationPublisher
+
+    instance, owner = seed_write_surface(tmp_path)
+    if origin == "write":
+        pending = _write(instance, _set(f"{KIND}/wi-1", "title", "loser"), accept="never")
+        assert pending.proposal is not None
+        source_id = pending.proposal.proposal_id
+    else:
+        source_id = _proposal(instance, owner, "loser").admission.proposal_id
+    winner = _proposal(instance, owner, "winner")
+    winner_kwargs = _arguments(instance, winner)
+    winner_bundle = instance.prepare_generation(
+        **winner_kwargs, sequence=instance._recovered.head.sequence + 1
+    )
+    winner_publisher = instance.activation_publisher()
+    winner_projection = winner_publisher.prebuild(winner_bundle, base=winner_kwargs["base"])
+    activate = ActivationPublisher.activate
+    attempts = []
+    winner_heads = []
+    moved = False
+
+    def race(publisher, bundle, projection, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal moved
+        if not moved:
+            moved = True
+            # The competing acceptance publishes directly, as the ledger race
+            # test does: re-entering the write service here would deadlock on
+            # the review lock the outer activation already holds.
+            assert (
+                activate(
+                    winner_publisher, winner_bundle, winner_projection, base=winner_kwargs["base"]
+                ).status
+                == "accepted"
+            )
+            winner_heads.append(instance.accepted_coordinate())
+        result = activate(publisher, bundle, projection, **kwargs)
+        attempts.append(result.status)
+        return result
+
+    monkeypatch.setattr(ActivationPublisher, "activate", race)
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=source_id, activated_by="owner"
+    )
+    withdrawal = instance.proposal_evidence().read_withdrawal(source_id)
+    if origin == "write":
+        assert attempts == ["lost_cas", "accepted"]
+        assert receipt.status == "accepted" and receipt.proposal_id != source_id
+        assert withdrawal is not None and withdrawal.superseded_by == receipt.proposal_id
+    else:
+        assert attempts == ["lost_cas"]
+        assert receipt.status == "lost_cas" and receipt.proposal_id == source_id
+        assert receipt.accepted_coordinate is None
+        assert instance.accepted_coordinate().git_oid == winner_heads[0].git_oid
+        assert withdrawal is None
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert reopened.accepted_coordinate() == instance.accepted_coordinate()
+
+
+@pytest.mark.parametrize("error_type", [ProposalStale, SettlementIntegrityError])
+def test_non_lowering_head_race_preserves_original_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[Exception]
+) -> None:
+    instance, owner = seed_write_surface(tmp_path)
+    source_id = _proposal(instance, owner, "loser").admission.proposal_id
+    refusal = error_type(source_id)
+    settle = instance.settle_and_activate
+    moved = False
+
+    def race(**kwargs):  # type: ignore[no-untyped-def]
+        nonlocal moved
+        if not moved:
+            moved = True
+            assert _write(instance, _set(f"{KIND}/wi-2", "title", "winner")).status == "accepted"
+            raise refusal
+        return settle(**kwargs)
+
+    monkeypatch.setattr(instance, "settle_and_activate", race)
+    with pytest.raises(error_type) as caught:
+        service_activate_playbill_proposal(instance, proposal_id=source_id, activated_by="owner")
+    assert caught.value is refusal
+    assert instance.proposal_evidence().read_withdrawal(source_id) is None
 
 
 @pytest.mark.parametrize("size", (0, 1, 50, 51, 500))

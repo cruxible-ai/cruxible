@@ -3923,6 +3923,8 @@ never carried or signed for it. A lowering or pin refusal leaves the source
 stale with `cruxible.proposal.stale` and `context.recompile_reason`; repair by
 readmitting, withdrawing, or submitting corrected input. Exact-byte origins
 (such as kit add and provider move) keep their existing stale behavior.
+If an exact-byte proposal loses the publication compare-and-swap, activation
+recovers the winner and returns its `lost_cas` receipt without recompiling or retrying.
 
 `proposal approve` signs the reviewed candidate. When that signature completes
 the candidate's required approvals and your tier may activate (`graph_write`),

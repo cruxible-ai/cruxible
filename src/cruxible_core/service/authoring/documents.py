@@ -648,6 +648,8 @@ def service_activate_playbill_proposal(
     handoff: SettlementHandoff | None = None,
 ) -> ActivationReceipt | ProposalRecompiled:
     """Activate once, recompiling once if a head race invalidated the candidate."""
+    from cruxible_core.service.proposals.recompile import lowering_origin
+
     try:
         result = _activate_candidate(
             instance,
@@ -662,6 +664,7 @@ def service_activate_playbill_proposal(
         if (
             instance.proposal_evidence().read_evaluation(proposal_id).evaluated_base_oid
             == instance.accepted_coordinate().git_oid
+            or lowering_origin(instance, _candidate_for_proposal(instance, proposal_id)[0]) is None
         ):
             raise
     else:
@@ -669,6 +672,9 @@ def service_activate_playbill_proposal(
             not isinstance(result, ActivationReceipt)
             or result.status != "lost_cas"
             or result.proposal_id != proposal_id
+            # Exact-byte origins retain their terminal outcome, including the
+            # winner recovery already completed by a lost-CAS activation.
+            or lowering_origin(instance, _candidate_for_proposal(instance, proposal_id)[0]) is None
         ):
             return result
     return _activate_candidate(
