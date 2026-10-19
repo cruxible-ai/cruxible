@@ -1777,8 +1777,8 @@ binding, obtains current governance/challenge data, signs locally, and submits
 public approval; the approval that completes the candidate also activates it
 unless `hold=True`. A stale candidate recompiles: approval returns an
 `ActivationReceipt` directly when no approval is needed and the caller may
-activate, or `ProposalRecompiled` for the replacement proposal. Its `.details`
-returns a fresh copy. The token is not proof a
+activate, or `ProposalRecompiled` for the replacement proposal. The review token's
+`.details` returns a fresh copy. The token is not proof a
 human read it. A new process must review again. Wait methods return the last
 observed status at timeout; they do not throw a synthetic failure or retry writes.
 
