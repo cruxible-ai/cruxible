@@ -222,7 +222,8 @@
         "predictions",
         "mandates",
         "principals",
-        "policies"
+        "policies",
+        "generations"
       ]
     },
     "OrientSurface": {
@@ -35519,6 +35520,29 @@
             "type": "integer"
           }
         },
+        "generations": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "generations",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientGeneration"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Generations"
+          }
+        },
         "instance": {
           "has_default": false,
           "has_default_factory": false,
@@ -35878,7 +35902,8 @@
                   "predictions",
                   "mandates",
                   "principals",
-                  "policies"
+                  "policies",
+                  "generations"
                 ],
                 "type": "string"
               },
@@ -36527,6 +36552,100 @@
             "title": "OrientFloor",
             "type": "object"
           },
+          "OrientGeneration": {
+            "additionalProperties": false,
+            "description": "One accepted generation, newest first: what accepted it and how much it changed.\n\n``changeset_digest`` names the change-set record; ``proposal`` is the\nproposal whose admission it accepted (``get <proposal>`` reads its card and\nchanges), ``proposer`` the actor bound to it, and ``approvals`` the\napproving signers in record order. ``because`` is that admission's\nrationale, cut at 500 characters (``because_truncated``). ``members``\ncounts the change set's members; ``since(generation=sequence-1,\nat=<this generation>)`` lists them. Genesis (sequence 0) carries only its\nsequence, git oid and acceptance time. Pass ``sequence`` or ``git_oid`` as\n``at`` to read state as this generation left it.",
+            "properties": {
+              "accepted_at": {
+                "format": "date-time",
+                "title": "Accepted At",
+                "type": "string"
+              },
+              "approvals": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Approvals",
+                "type": "array"
+              },
+              "because": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Because"
+              },
+              "because_truncated": {
+                "default": false,
+                "title": "Because Truncated",
+                "type": "boolean"
+              },
+              "changeset_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Changeset Digest"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "members": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Members",
+                "type": "integer"
+              },
+              "proposal": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal"
+              },
+              "proposer": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposer"
+              },
+              "sequence": {
+                "minimum": 0,
+                "title": "Sequence",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "sequence",
+              "git_oid",
+              "accepted_at"
+            ],
+            "title": "OrientGeneration",
+            "type": "object"
+          },
           "OrientInterface": {
             "additionalProperties": false,
             "description": "One live provider interface a Procedure node can call.\n\n``input`` and ``output`` list the operation contract's fields as\n``name: type`` (``?`` when optional); an acquisition interface's output is\nthe named external-capture contract instead. ``effect`` is the interface's\ngoverned effect class: an ``external_mutation`` call needs an effect policy\non its node. ``providers`` are the live Providers implementing it, each\nwith the implementation digest a Procedure node pins; one with none has\nnothing to run it yet. ``interface_digest`` and ``operation_contract`` are\nwhat a node pins the interface by; ``get(\"ProviderInterface:<name>\")``\nreads the whole accepted entry.",
@@ -36859,7 +36978,7 @@
           },
           "OrientPredicate": {
             "additionalProperties": false,
-            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps (``accumulate`` before v7).",
+            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps (``accumulate`` before v7).\n``kit`` (claim_types section only) is the installed kit that owns the\nClaimType: its receipt records the definition. Absent when no kit owns it.",
             "properties": {
               "cardinality": {
                 "enum": [
@@ -36930,6 +37049,18 @@
                 ],
                 "default": null,
                 "title": "Evidence Requirement"
+              },
+              "kit": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kit"
               },
               "live_claims": {
                 "anyOf": [
@@ -37188,7 +37319,7 @@
           },
           "OrientSubjectKind": {
             "additionalProperties": false,
-            "description": "One live SubjectKind: how core names a new Subject of the kind.\n\n``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``\nor ``hint``) or ``minted`` (core mints the id). A kind with no live\nSubjectKind has no row: no new Subject of it can be created.",
+            "description": "One live SubjectKind: how core names a new Subject of the kind.\n\n``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``\nor ``hint``) or ``minted`` (core mints the id). A kind with no live\nSubjectKind has no row: no new Subject of it can be created. ``kit`` is\nthe installed kit that owns the SubjectKind, absent when no kit owns it.",
             "properties": {
               "keys": {
                 "default": [],
@@ -37201,6 +37332,18 @@
               "kind": {
                 "title": "Kind",
                 "type": "string"
+              },
+              "kit": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kit"
               },
               "rule": {
                 "enum": [
@@ -37653,7 +37796,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), the principal registry (``principals``)\n  or the governed policies in force (``policies``), paged. The default map counts the\n  operational families under ``artifacts`` and never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), the principal registry (``principals``),\n  the governed policies in force (``policies``) or the accepted generations\n  newest first (``generations``), paged. The default map counts the\n  operational families under ``artifacts`` and never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
           "accepted_at": {
             "format": "date-time",
@@ -37765,6 +37908,21 @@
             "minimum": 0,
             "title": "Generation",
             "type": "integer"
+          },
+          "generations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrientGeneration"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Generations"
           },
           "instance": {
             "title": "Instance",
@@ -37992,7 +38150,8 @@
                   "predictions",
                   "mandates",
                   "principals",
-                  "policies"
+                  "policies",
+                  "generations"
                 ],
                 "type": "string"
               },
