@@ -118,3 +118,29 @@ def test_a_page_reads_only_its_own_generations(
     assert page.next_cursor is not None
     following = _orient(instance, limit=2, cursor=page.next_cursor)
     assert seen == [row.sequence for row in following.generations]
+
+
+class _Unwalkable(tuple):  # type: ignore[type-arg]
+    """Accepted history that may be indexed but never walked."""
+
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        raise AssertionError("resolving a generation number walked the accepted history")
+
+    def __reversed__(self):  # type: ignore[no-untyped-def]
+        raise AssertionError("resolving a generation number walked the accepted history")
+
+
+def test_a_generation_number_at_resolves_by_index_not_by_walking_history(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.read_refusals import ReadRefusalError, resolve_read_coordinate
+
+    history = instance.accepted_history()
+    head = history[-1].sequence
+    monkeypatch.setattr(PlaybillInstance, "accepted_history", lambda self: _Unwalkable(history))
+    for sequence in (0, 2, head):
+        assert resolve_read_coordinate(instance, str(sequence)).git_oid == history[sequence].oid
+    with pytest.raises(ReadRefusalError) as refused:
+        resolve_read_coordinate(instance, str(head + 1))
+    assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
+    assert refused.value.candidates[0] == str(head)

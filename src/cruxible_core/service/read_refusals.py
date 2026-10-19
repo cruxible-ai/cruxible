@@ -87,10 +87,11 @@ _GENERATION = re.compile(rf"[0-9]{{1,{OID_PREFIX_MIN - 1}}}")
 def _oid_for_generation(instance: PlaybillInstance, at: str) -> str:
     sequence = int(at)
     history = instance.accepted_history()
-    for generation in history:
-        if generation.sequence == sequence:
-            return generation.oid
-    newest = [f"{item.sequence}" for item in reversed(history)][:_MAX_OID_CANDIDATES]
+    # Replayed history is genesis-rooted and contiguous: generation N is entry N,
+    # so a generation number is one index, never a walk of the accepted history.
+    if 0 <= sequence < len(history) and history[sequence].sequence == sequence:
+        return history[sequence].oid
+    newest = [f"{item.sequence}" for item in history[::-1][:_MAX_OID_CANDIDATES]]
     raise ReadRefusalError(
         "cruxible.read.coordinate_not_accepted",
         f"at does not name an accepted generation of this instance (no generation {sequence}; "
