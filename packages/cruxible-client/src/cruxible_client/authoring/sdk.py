@@ -91,6 +91,7 @@ from cruxible_client.authoring.workspace import (
     workspace_floor_freshness,
 )
 from cruxible_client.authoring.write_evidence import observe_changes
+from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicy,
 )
@@ -3181,10 +3182,10 @@ class Cruxible:
     def _write(self, request: WriteRequest) -> WriteOutcome:
         """Send one write and answer its outcome, or raise its refusal."""
 
-        request = request.model_copy(
-            update={"changes": observe_changes(request.changes, workspace=self._workspace_root)}
+        outcome = write_workspace(
+            request, workspace=self._workspace_root,
+            submit=lambda observed: self._client.write(self._instance_id, request=observed),
         )
-        outcome = self._client.write(self._instance_id, request=request)
         return self._written(outcome)
 
     def _written(self, outcome: WriteOutcome) -> WriteOutcome:

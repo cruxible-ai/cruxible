@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import yaml
@@ -96,9 +97,18 @@ class EvidenceSelection:
     anchor_text: str
     start_byte: int
     end_byte: int
+    section_path: tuple[str, ...] | None = None
 
     def observation(self) -> WorkingSelectionObservation:
         selected = self.content[self.start_byte : self.end_byte]
+        selector = WorkingAnchorWindow(
+            anchor=self.anchor_text, start_byte=self.start_byte, end_byte=self.end_byte,
+            observed_occurrence_count=1,
+        )
+        if self.section_path is not None:
+            from cruxible_client.contracts.authoring.models import SectionSelector
+
+            selector = selector.model_copy(update={"section": SectionSelector(path=self.section_path)})
         return WorkingSelectionObservation(
             source_id=self.source_id,
             coordinate=WorkingDigestCoordinate(
@@ -108,12 +118,7 @@ class EvidenceSelection:
             source_content_base64=source_content_for_observation(self.content),
             selected_content_base64=base64.b64encode(selected).decode("ascii"),
             selected_bytes_digest=_digest(selected),
-            selector=WorkingAnchorWindow(
-                anchor=self.anchor_text,
-                start_byte=self.start_byte,
-                end_byte=self.end_byte,
-                observed_occurrence_count=1,
-            ),
+            selector=selector,
         )
 
 
@@ -122,6 +127,22 @@ class FileSelector:
     path: Path
     source_id: str
     content: bytes
+
+    def section(self, *path: str) -> EvidenceSelection:
+        """Select a heading and its own body. Next: supported_by= on a Claim."""
+        from cruxible_client.contracts.doc_sections import parse_sections
+
+        document = parse_sections(self.content, file=str(self.path))
+        selected = document.section(path)
+        body = document.own_body(path)
+        if not body:
+            raise SourceSelectionError("the selected preamble is empty; cite a nonempty section")
+        anchor = body.splitlines()[0].decode("utf-8").strip()
+        if not anchor:
+            anchor = body.decode("utf-8").strip()
+        return EvidenceSelection(
+            self.path, self.source_id, self.content, anchor, selected.start, selected.own_end, path,
+        )
 
     def anchor(self, text: str) -> EvidenceSelection:
         start, end = _unique_window(self.content, text)
@@ -133,6 +154,24 @@ class FileSelector:
             start_byte=start,
             end_byte=end,
         )
+
+
+@lru_cache(maxsize=32)
+def _cached_workspace_files(workspace: Path, signature: tuple[object, ...]) -> WorkspaceFiles:
+    return WorkspaceFiles(workspace)
+
+
+def workspace_files(workspace: Path) -> WorkspaceFiles:
+    """Parse/index a catalog once per revision; validity costs three stats, not a fold."""
+    root = workspace.expanduser().resolve()
+    signature: list[object] = []
+    for path in (workspace_path(root, "files.yaml"), root / "files.yaml", workspace_path(root, "files.local.yaml")):
+        try:
+            stat = path.stat()
+            signature.append((stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+        except FileNotFoundError:
+            signature.append(None)
+    return _cached_workspace_files(root, tuple(signature))
 
 
 class WorkspaceFiles:
@@ -168,10 +207,19 @@ class WorkspaceFiles:
             ) from exc
         except (OSError, ValueError, yaml.YAMLError) as exc:
             raise SourceSelectionError(f"file catalog is invalid: {exc}") from exc
+        self._file_entries = tuple(entry for entry in self.catalog.entries if isinstance(entry, FileCatalogEntry))
+        self._by_name = {entry.name: entry for entry in self._file_entries}
+        self._by_path: dict[Path, list[FileCatalogEntry]] = {}
+        for entry in self.file_entries:
+            if entry.root_alias is None:
+                self._by_path.setdefault(self._resolved_path(entry), []).append(entry)
+
+    def entries_for_path(self, path: Path) -> tuple[FileCatalogEntry, ...]:
+        return tuple(self._by_path.get(path.resolve(), ()))
 
     @property
     def file_entries(self) -> tuple[FileCatalogEntry, ...]:
-        return tuple(entry for entry in self.catalog.entries if isinstance(entry, FileCatalogEntry))
+        return self._file_entries
 
     @property
     def procedure_projection_entries(self) -> tuple[ProcedureProjectionCatalogEntry, ...]:
@@ -201,9 +249,7 @@ class WorkspaceFiles:
     def select(self, requested: str | Path) -> FileSelector:
         path = Path(requested)
         resolved = (path if path.is_absolute() else self.workspace / path).expanduser().resolve()
-        matches = tuple(
-            entry for entry in self.file_entries if self._resolved_path(entry) == resolved
-        )
+        matches = self.entries_for_path(resolved)
         if len(matches) != 1:
             raise SourceSelectionError(
                 f"path {requested!s} maps to {len(matches)} catalogued files; exactly one required"
@@ -217,7 +263,7 @@ class WorkspaceFiles:
     def entry_for_file(self, file: str) -> FileCatalogEntry:
         """The one catalog entry named ``file``, or a refusal naming the known ones."""
 
-        matches = tuple(entry for entry in self.file_entries if entry.name == file)
+        matches = () if file not in self._by_name else (self._by_name[file],)
         if len(matches) != 1:
             known = ", ".join(entry.name for entry in self.file_entries) or "none"
             raise SourceSelectionError(

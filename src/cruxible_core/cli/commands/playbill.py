@@ -74,6 +74,7 @@ from cruxible_client.authoring.workspace import (
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for, write_world_stub
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
+from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockSyncResult
@@ -4937,7 +4938,7 @@ def write_changes(
     request = _write_request(
         WriteRequest,
         {
-            "changes": observe_changes(parsed.changes, workspace=Path(workspace_root)),
+            "changes": parsed.changes,
             "subject": parsed.subject,
             "because": rationale,
             "dry_run": dry_run,
@@ -4946,9 +4947,12 @@ def write_changes(
         },
         example="cruxible write changes.yaml",
     )
-    outcome = _server_call(
-        lambda client, instance_id: client.write(instance_id, request=request),
-        command_name="cruxible write",
+    outcome = write_workspace(
+        request, workspace=Path(workspace_root),
+        submit=lambda observed: _server_call(
+            lambda client, instance_id: client.write(instance_id, request=observed),
+            command_name="cruxible write",
+        ),
     )
     _finish_write(outcome, output_json=output_json)
 
