@@ -209,8 +209,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "value. Its dependent Claims retire with it, in one change set."
     ),
     "cruxible_write": (
-        "Use to make several changes as one change set: set, add (one more value in a "
-        "many-valued field, e.g. two links) and retire, all accepted or refused together."
+        "Write Claims and Markdown sections together. docs: append under or replace section "
+        "(heading lists; [] preamble). Cite with kind=section, file, section. "
+        "The client writes only after admission."
     ),
     "cruxible_get": (
         "Use when you have a reference to one thing -- a Claim id or prefix, kind/id, a "

@@ -23,6 +23,7 @@ from cruxible_client.authoring.attestations import (
 )
 from cruxible_client.authoring.bind import bind_catalogued_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
+from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.authoring.examples import authoring_example, authoring_example_note
 from cruxible_client.authoring.files import (
     compile_client_file_context,
@@ -43,7 +44,6 @@ from cruxible_client.authoring.workspace import (
     write_workspace_floor_delta,
 )
 from cruxible_client.authoring.write_evidence import observe_evidence
-from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockDetachResult
@@ -98,8 +98,8 @@ from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_lines
 from cruxible_client.contracts.write import (
     FileEvidence,
-    SectionEvidence,
     RetireRequest,
+    SectionEvidence,
     SetRequest,
     WriteOutcome,
     WriteRequest,
@@ -1273,7 +1273,9 @@ def _write_request(
                 for error in exc.errors(include_url=False)
             ],
         ) from exc
-    if isinstance(request, SetRequest) and isinstance(request.evidence, FileEvidence | SectionEvidence):
+    if isinstance(request, SetRequest) and isinstance(
+        request.evidence, FileEvidence | SectionEvidence
+    ):
         request = request.model_copy(
             update={"evidence": observe_evidence(request.evidence, workspace=mcp_workspace_root())}
         )
@@ -1302,12 +1304,20 @@ def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
     """Apply create, set, add and retire changes as one change set."""
 
     request = _write_request(WriteRequest, "cruxible_write", fields)
-    if not request.docs and not any(isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence) for c in request.changes):
-        return _daemon_call(lambda client: client.write(instance_id, request=request), operation_name="cruxible_write")
+    if not request.docs and not any(
+        isinstance(getattr(c, "evidence", None), FileEvidence | SectionEvidence)
+        for c in request.changes
+    ):
+        return _daemon_call(
+            lambda client: client.write(instance_id, request=request),
+            operation_name="cruxible_write",
+        )
     return write_workspace(
-        request, workspace=mcp_workspace_root(),
+        request,
+        workspace=mcp_workspace_root(),
         submit=lambda observed: _daemon_call(
-            lambda client: client.write(instance_id, request=observed), operation_name="cruxible_write"
+            lambda client: client.write(instance_id, request=observed),
+            operation_name="cruxible_write",
         ),
     )
 

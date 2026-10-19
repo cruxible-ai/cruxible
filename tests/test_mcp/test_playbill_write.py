@@ -21,6 +21,41 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
 
 
+def test_mcp_doc_write_observes_and_applies_through_shared_seam(monkeypatch, tmp_path):
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from tests.core_support._write_support import KIND, caller, seed_write_surface
+
+    (tmp_path / "state").mkdir()
+    instance, _ = seed_write_surface(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+
+    class Client:
+        def write(self, instance_id, *, request):
+            assert request.docs[0].source_id == "doc-notes.md"
+            assert "notes.md" not in request.model_dump_json().replace("doc-notes.md", "")
+            return service_playbill_write(instance, request=request, caller=caller())
+
+    monkeypatch.setattr(handlers, "_get_client", lambda: Client())
+    outcome = handlers.handle_playbill_write(
+        "inst_write",
+        because="Record basis",
+        docs=[{"op": "append", "file": "notes.md", "text": "# Decision\nReady"}],
+        changes=[
+            {
+                "op": "set",
+                "subject": f"{KIND}/wi-1",
+                "field": "status",
+                "value": "ready",
+                "evidence": {"kind": "section", "file": "notes.md", "section": ["Decision"]},
+            }
+        ],
+    )
+    assert outcome.docs[0].written and outcome.changes[0].verdict == "supported"
+    assert (workspace / "notes.md").read_text() == "# Decision\nReady\n"
+
+
 def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     stack = [schema]
@@ -65,8 +100,8 @@ def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dic
         ),
         (
             "cruxible_write",
-            ["changes", "because"],
-            {"instance_id", "changes", "because", "subject", "dry_run", "accept", "at"},
+            ["because"],
+            {"instance_id", "changes", "docs", "because", "subject", "dry_run", "accept", "at"},
         ),
     ],
 )

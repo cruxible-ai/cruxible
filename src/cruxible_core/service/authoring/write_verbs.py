@@ -134,9 +134,9 @@ from cruxible_client.contracts.write import (
     ContractEvidence,
     CreateChange,
     CreatedSubject,
-    ExpectedValue,
     DocEditObservation,
     DocOutcome,
+    ExpectedValue,
     FileEvidence,
     NewerCaptureNotCitableWarning,
     RetireChange,
@@ -1540,17 +1540,27 @@ class _Planner:
                 raise _refuse(
                     "cruxible.write.section_evidence_unobserved",
                     "Section evidence must be read by the writer's adapter.",
-                    change=index, field_path=path,
+                    change=index,
+                    field_path=path,
                     repair="Use write through the CLI, MCP or SDK beside the workspace",
                 )
             if not evidence.own_words:
                 return evidence.observation, "evidence"
+            if exact is not None and evidence.observation.selected_content != exact:
+                raise _refuse(
+                    "cruxible.write.exact_content_evidence_mismatch",
+                    "An exact-content Claim's own-words section must be the value itself.",
+                    change=index,
+                    field_path=path,
+                    repair="Use the section's exact text as the value, or cite a source",
+                )
             if requires_captured_evidence(info.claim_type):
                 raise _refuse(
                     "cruxible.write.evidence_required",
                     f"{field_name} requires captured evidence; own words cannot back it",
-                    change=index, field_path=path,
-                    repair="Cite a produced Capture under one of the ClaimType's admitted contracts",
+                    change=index,
+                    field_path=path,
+                    repair="Cite a produced Capture under a ClaimType-admitted contract",
                 )
             return SelfSourceBody(content_base64=evidence.observation.selected_content_base64), None
         if exact is not None:
@@ -3083,11 +3093,20 @@ def service_playbill_write(
     ):
         outcome = _service_write(instance, request=request, caller=caller)
         if request.docs:
-            outcome = outcome.model_copy(update={"docs": tuple(
-                DocOutcome(source_id=edit.source_id, section=edit.section,
-                    before_digest=edit.before_digest, after_digest=edit.after_digest)
-                for edit in request.docs if isinstance(edit, DocEditObservation)
-            )})
+            outcome = outcome.model_copy(
+                update={
+                    "docs": tuple(
+                        DocOutcome(
+                            source_id=edit.source_id,
+                            section=edit.section,
+                            before_digest=edit.before_digest,
+                            after_digest=edit.after_digest,
+                        )
+                        for edit in request.docs
+                        if isinstance(edit, DocEditObservation)
+                    )
+                }
+            )
         if request.full_coordinate and outcome.accepted_coordinate is None:
             pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
             outcome = outcome.model_copy(update={"accepted_coordinate": _full(pinned)})

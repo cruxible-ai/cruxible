@@ -102,13 +102,30 @@ class EvidenceSelection:
     def observation(self) -> WorkingSelectionObservation:
         selected = self.content[self.start_byte : self.end_byte]
         selector = WorkingAnchorWindow(
-            anchor=self.anchor_text, start_byte=self.start_byte, end_byte=self.end_byte,
+            anchor=self.anchor_text,
+            start_byte=self.start_byte,
+            end_byte=self.end_byte,
             observed_occurrence_count=1,
         )
         if self.section_path is not None:
             from cruxible_client.contracts.authoring.models import SectionSelector
 
-            selector = selector.model_copy(update={"section": SectionSelector(path=self.section_path)})
+            offsets = _offsets(self.content, self.anchor_text.encode("utf-8"))
+            chosen = next(
+                (
+                    i + 1
+                    for i, offset in enumerate(offsets)
+                    if self.start_byte <= offset < self.end_byte
+                ),
+                None,
+            )
+            selector = selector.model_copy(
+                update={
+                    "section": SectionSelector(path=self.section_path),
+                    "observed_occurrence_count": len(offsets),
+                    "selected_occurrence": chosen if len(offsets) > 1 else None,
+                }
+            )
         return WorkingSelectionObservation(
             source_id=self.source_id,
             coordinate=WorkingDigestCoordinate(
@@ -141,7 +158,13 @@ class FileSelector:
         if not anchor:
             anchor = body.decode("utf-8").strip()
         return EvidenceSelection(
-            self.path, self.source_id, self.content, anchor, selected.start, selected.own_end, path,
+            self.path,
+            self.source_id,
+            self.content,
+            anchor,
+            selected.start,
+            selected.own_end,
+            path,
         )
 
     def anchor(self, text: str) -> EvidenceSelection:
@@ -165,7 +188,11 @@ def workspace_files(workspace: Path) -> WorkspaceFiles:
     """Parse/index a catalog once per revision; validity costs three stats, not a fold."""
     root = workspace.expanduser().resolve()
     signature: list[object] = []
-    for path in (workspace_path(root, "files.yaml"), root / "files.yaml", workspace_path(root, "files.local.yaml")):
+    for path in (
+        workspace_path(root, "files.yaml"),
+        root / "files.yaml",
+        workspace_path(root, "files.local.yaml"),
+    ):
         try:
             stat = path.stat()
             signature.append((stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
@@ -207,15 +234,31 @@ class WorkspaceFiles:
             ) from exc
         except (OSError, ValueError, yaml.YAMLError) as exc:
             raise SourceSelectionError(f"file catalog is invalid: {exc}") from exc
-        self._file_entries = tuple(entry for entry in self.catalog.entries if isinstance(entry, FileCatalogEntry))
+        self._file_entries = tuple(
+            entry for entry in self.catalog.entries if isinstance(entry, FileCatalogEntry)
+        )
         self._by_name = {entry.name: entry for entry in self._file_entries}
         self._by_path: dict[Path, list[FileCatalogEntry]] = {}
         for entry in self.file_entries:
             if entry.root_alias is None:
-                self._by_path.setdefault(self._resolved_path(entry), []).append(entry)
+                try:
+                    resolved = self._resolved_path(entry)
+                except SourceSelectionError:
+                    # Inventory callers report/refuse an invalid entry on its
+                    # own; it must not abort unrelated catalogued sources.
+                    continue
+                self._by_path.setdefault(resolved, []).append(entry)
 
     def entries_for_path(self, path: Path) -> tuple[FileCatalogEntry, ...]:
-        return tuple(self._by_path.get(path.resolve(), ()))
+        resolved = path.resolve()
+        matches = []
+        for entry in self._by_path.get(resolved, ()):
+            try:
+                if self._resolved_path(entry) == resolved:
+                    matches.append(entry)
+            except SourceSelectionError:
+                continue
+        return tuple(matches)
 
     @property
     def file_entries(self) -> tuple[FileCatalogEntry, ...]:

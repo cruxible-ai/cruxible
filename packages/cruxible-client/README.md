@@ -49,11 +49,21 @@ An append creating a file uses the agent's text, including any agent-authored
 frontmatter. The agent chooses the file and heading paths.
 
 `AppendSection`, `ReplaceSection`, `DocEditObservation`, `SectionEvidence`, and
-`DocOutcome` describe the pending client/daemon integration. Section evidence
+`DocOutcome` describe document writes through CLI, MCP, and SDK. Section evidence
 selects the heading and its own body, ending before the first child. An optional
 `located_at` observation gives own words a file location; ClaimType rules still
-admit only their named contracts. The contracts alone do not apply edits or
-enable document writes on the served adapters. Citing-Claim reports are deferred.
+admit only their named contracts. Use
+`cx.changes(because="Reason").append_section("notes.md", "# Decision\n...")`
+or `.replace_section("notes.md", ("Decision",), "# Decision\n...", expect=digest)`;
+finish with `.write()`. In that batch, a change's
+`SectionEvidence(file="notes.md", section=("Decision",))` cites the new prose as
+own words with a location. `cx.file("notes.md").section("Decision")` returns a
+source selection for authoring-lane `supported_by=`.
+
+Files are written after accepted or awaiting-approval admission. Dry runs report
+digests and write nothing. Inspect `outcome.docs`: a concurrent edit can leave
+`written=False` with a repair even after Claims were admitted. Document targets
+also return a `files propose` follow-up. Citing-Claim reports are deferred.
 
 Signatures show actual types and defaults. An argument whose type includes
 `None` is still required when no default is displayed. `*` begins keyword-only

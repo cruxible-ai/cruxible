@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client._safe_files import read_regular_file
 from cruxible_client.authoring.page_writes import PageWriteError, replace_page_file
 
 
@@ -22,16 +23,18 @@ def test_page_replace_refuses_a_concurrent_edit(
     source = tmp_path / "runbook.md"
     source.write_bytes(b"before\n")
     concurrent = b"concurrent author edit\n"
-    original = Path.read_bytes
+    original = read_regular_file
 
     def edit_before_compare(path: Path) -> bytes:
         if path == source:
             source.write_bytes(concurrent)
         return original(path)
 
-    monkeypatch.setattr(Path, "read_bytes", edit_before_compare)
+    monkeypatch.setattr(
+        "cruxible_client.authoring.page_writes.read_regular_file", edit_before_compare
+    )
     with pytest.raises(PageWriteError, match="compare-and-swap"):
         replace_page_file(source, expected=b"before\n", replacement=b"after\n")
 
-    monkeypatch.setattr(Path, "read_bytes", original)
+    monkeypatch.setattr("cruxible_client.authoring.page_writes.read_regular_file", original)
     assert source.read_bytes() == concurrent

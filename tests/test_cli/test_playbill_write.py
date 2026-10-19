@@ -75,6 +75,35 @@ def _run(*args: str) -> Any:
     return CliRunner().invoke(cli, [*PREFIX, *args])
 
 
+def test_write_doc_payload_creates_file_and_cites_section(
+    served: _ServiceClient, tmp_path: Path
+) -> None:
+    payload = {
+        "because": "The checks passed",
+        "docs": [{"op": "append", "file": "notes.md", "text": "# Decision\nReady"}],
+        "changes": [
+            {
+                "op": "set",
+                "subject": WI1,
+                "field": "status",
+                "value": "ready",
+                "evidence": {"kind": "section", "file": "notes.md", "section": ["Decision"]},
+            }
+        ],
+    }
+    result = CliRunner().invoke(
+        cli,
+        [*PREFIX, "write", "-", "--workspace-root", str(tmp_path), "--json"],
+        input=json.dumps(payload),
+    )
+    assert result.exit_code == 0, result.output
+    outcome = json.loads(result.stdout)
+    assert outcome["docs"][0]["written"] and outcome["changes"][0]["verdict"] == "supported"
+    assert (tmp_path / "notes.md").read_text() == "# Decision\nReady\n"
+    schema = _run("write", "--schema")
+    assert "docs" in json.loads(schema.stdout)["properties"]
+
+
 def test_set_prints_before_and_after_then_revises_on_the_next_set(served: _ServiceClient) -> None:
     first = _run("set", WI1, "status", "ready", "--because", "Checked.")
     assert first.exit_code == 0, first.output
@@ -241,7 +270,7 @@ def test_write_applies_a_file_of_changes_and_prints_its_schema(
     schema = _run("write", "--schema")
     assert schema.exit_code == 0, schema.output
     printed = json.loads(schema.stdout)
-    assert set(printed["properties"]) == {"because", "subject", "changes"}
+    assert set(printed["properties"]) == {"because", "subject", "changes", "docs"}
 
     changes = tmp_path / "changes.yaml"
     changes.write_text(

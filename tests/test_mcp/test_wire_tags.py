@@ -209,3 +209,20 @@ def test_default_profile_calls_without_tags_match_the_schema_and_validate(
         validate(arguments, tools[name].inputSchema)
         arg_model = manager.get_tool(name).fn_metadata.arg_model
         arg_model.model_validate(fill_tool_arguments(arg_model, arguments))
+
+
+def test_write_schema_compaction_preserves_constraints_and_title_property():
+    from cruxible_core.mcp.wire_tags import compact_write_schema
+
+    schema = {
+        "title": "Example",
+        "type": "object",
+        "required": ["title"],
+        "properties": {"title": {"title": "Title", "type": "string", "minLength": 1}},
+    }
+    assert compact_write_schema(schema) == {
+        "type": "object",
+        "required": ["title"],
+        "properties": {"title": {"type": "string", "minLength": 1}},
+    }
+    assert schema["title"] == "Example"

@@ -29,7 +29,13 @@ def observe_evidence(evidence: Evidence | None, *, workspace: Path) -> Evidence 
         return evidence
     if isinstance(evidence, SectionEvidence):
         selection = workspace_files(workspace).select(evidence.file).section(*evidence.section)
-        return evidence.model_copy(update={"observation": selection.observation(), "file": selection.source_id, "own_words": evidence.own_words or False})
+        return evidence.model_copy(
+            update={
+                "observation": selection.observation(),
+                "file": selection.source_id,
+                "own_words": evidence.own_words or False,
+            }
+        )
     selection = workspace_files(workspace).select(evidence.path).anchor(evidence.anchor)
     return evidence.model_copy(update={"observation": selection.observation()})
 
@@ -39,7 +45,9 @@ def observe_changes(changes: Sequence[Change], *, workspace: Path) -> tuple[Chan
 
     observed: list[Change] = []
     for change in changes:
-        if isinstance(change, SetChange | AddChange) and isinstance(change.evidence, FileEvidence | SectionEvidence):
+        if isinstance(change, SetChange | AddChange) and isinstance(
+            change.evidence, FileEvidence | SectionEvidence
+        ):
             change = change.model_copy(
                 update={"evidence": observe_evidence(change.evidence, workspace=workspace)}
             )

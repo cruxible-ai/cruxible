@@ -700,7 +700,7 @@ class WriteOutcome(_StrictWriteModel):
     tag: Literal["playbill-write-outcome-v1"] = "playbill-write-outcome-v1"
     status: WriteStatus
     changes: tuple[ChangeOutcome, ...] = ()
-    docs: tuple[DocOutcome, ...] = ()
+    docs: tuple[DocOutcome, ...] = Field(default=(), exclude_if=_omit_empty)
     subjects_added: tuple[str, ...] = Field(
         default=(),
         exclude_if=_omit_empty,
@@ -731,13 +731,6 @@ class WriteOutcome(_StrictWriteModel):
     warnings: tuple[WriteWarning, ...] = Field(default=(), exclude_if=_omit_empty)
     refusal: WriteRefusal | None = Field(default=None, exclude_if=_omit_none)
     next: str | None = Field(default=None, exclude_if=_omit_none)
-
-    @model_serializer(mode="wrap")
-    def _preserve_docs_presence(self, handler: Any) -> dict[str, object]:
-        payload = cast(dict[str, object], handler(self))
-        if "docs" not in self.model_fields_set:
-            payload.pop("docs", None)
-        return payload
 
     @property
     def refused(self) -> bool:
