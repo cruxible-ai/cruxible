@@ -4948,7 +4948,9 @@ def write_changes(
 @click.argument("ref")
 @click.option(
     "--detail",
-    type=click.Choice(["summary", "evidence", "why", "history", "proof", "body"]),
+    type=click.Choice(
+        ["summary", "evidence", "why", "history", "incoming", "runs", "proof", "body"]
+    ),
     default="summary",
     show_default=True,
     help="How deep to read the one thing REF names.",
@@ -4973,9 +4975,13 @@ def write_changes(
     "--limit",
     type=int,
     default=None,
-    help="Revisions per --detail history page, newest first (default 20).",
+    help="Rows per --detail history, incoming or runs page (default 20).",
 )
-@click.option("--cursor", default=None, help="Continue --detail history from its next_cursor.")
+@click.option(
+    "--cursor",
+    default=None,
+    help="Continue --detail history, incoming or runs from its next_cursor.",
+)
 @click.option(
     "--field",
     "field_name",
@@ -5051,7 +5057,7 @@ def get_by_ref(
     if result.next_cursor is not None:
         narrowed = "" if field_name is None else f" --field {shlex.quote(field_name)}"
         click.echo(
-            f"next: cruxible get {shlex.quote(ref)} --detail history{narrowed} "
+            f"next: cruxible get {shlex.quote(ref)} --detail {detail}{narrowed} "
             f"--cursor {result.next_cursor}"
         )
 
@@ -5267,6 +5273,22 @@ def _emit_get_text(result: Any) -> None:
         return
     if result.history is not None:
         _echo_history(result.history)
+        return
+    if result.runs is not None:
+        if not result.runs.runs:
+            click.echo(f"(no runs of {result.runs.line})")
+        for run in result.runs.runs:
+            click.echo(
+                f"{run.run}  {run.status}  started {run.started_at.isoformat()}  "
+                f"nodes_done={run.nodes_done}  {run.procedure}"
+            )
+        return
+    if result.incoming is not None:
+        if not result.incoming.claims:
+            click.echo("(nothing points at this Subject)")
+        for row in result.incoming.claims:
+            qualifier = "" if row.qualifier is None else f"[{row.qualifier}]"
+            click.echo(f"{row.subject}  {row.predicate}{qualifier}  {row.claim}")
         return
     if result.body is not None:
         body = result.body
@@ -7783,6 +7805,17 @@ def _render_orient(result: Mapping[str, Any]) -> str:
                 lines.append(f"  {row['description']}")
             lines.append(f"  in:  {', '.join(row.get('input', ())) or '-'}")
             lines.append(f"  out: {', '.join(row.get('output', ())) or '-'}")
+    if section == "generations":
+        for row in result["generations"]:
+            approvals = ",".join(row.get("approvals", ())) or "-"
+            lines.append(
+                f"seq {row['sequence']} at {row['git_oid'][:12]}  {row['accepted_at']}  "
+                f"by {row.get('proposer') or '-'}  approved {approvals}  "
+                f"members={row['members']}"
+                + (f"  {row['proposal']}" if row.get("proposal") else "")
+            )
+            if row.get("because"):
+                lines.append(f"  because: {printable(row['because'])}")
     if section == "subject_kinds":
         for row in result["subject_kinds"]:
             rule = (
@@ -7790,12 +7823,15 @@ def _render_orient(result: Mapping[str, Any]) -> str:
                 if row["rule"] == "minted"
                 else f"keys: {', '.join(row.get('keys', ()))} ({row.get('uniqueness')})"
             )
-            lines.append(f"{row['kind']}  {rule}")
+            lines.append(
+                f"{row['kind']}  {rule}" + (f"  kit={row['kit']}" if row.get("kit") else "")
+            )
     if section == "claim_types":
         for row in result["claim_types"]:
             lines.append(
                 f"{row['predicate']}  kinds={','.join(row['subject_kinds'])}  "
                 + _orient_predicate_line(row).split("  ", 1)[1]
+                + (f"  kit={row['kit']}" if row.get("kit") else "")
             )
     queries = result.get("queries")
     if queries:

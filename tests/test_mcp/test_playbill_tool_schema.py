@@ -43,6 +43,8 @@ def test_get_publishes_its_protocol_enums_and_setup_stays_off_mcp() -> None:
         "evidence",
         "why",
         "history",
+        "incoming",
+        "runs",
         "proof",
         "body",
     ]

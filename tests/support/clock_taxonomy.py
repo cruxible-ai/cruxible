@@ -354,6 +354,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("OrientResult", "accepted_at"): "ASSERTION TIME",
     ("OrientResult", "evaluation_time"): "EVALUATION INSTANT",
     ("OrientResult", "generation"): "SETTLEMENT ORDER",
+    ("OrientGeneration", "sequence"): "SETTLEMENT ORDER",
+    ("OrientGeneration", "accepted_at"): "ASSERTION TIME",
     # The get read: its evaluation instant, and the times it reads back.
     ("GetRequest", "evaluation_time"): "EVALUATION INSTANT",
     ("GetResult", "evaluation_time"): "EVALUATION INSTANT",

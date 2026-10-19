@@ -38,6 +38,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.orient import (
     ORIENT_ATTENTION_TOP,
+    ORIENT_BECAUSE_MAX_CHARS,
     ORIENT_DEFAULT_LIMIT,
     ORIENT_DEFAULT_QUERIES,
     ORIENT_SAMPLE_SUBJECTS,
@@ -48,6 +49,7 @@ from cruxible_client.contracts.orient import (
     OrientClaimCounts,
     OrientDocument,
     OrientEnablements,
+    OrientGeneration,
     OrientInterface,
     OrientInterfaceProvider,
     OrientKind,
@@ -71,12 +73,14 @@ from cruxible_core.exhaust.journal_index import RunPageInvalidated
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
+from cruxible_core.service.discovery.change_reasons import ChangeReasons
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.discovery import (
     AcceptedProviderInterface,
     accepted_provider_interfaces,
 )
 from cruxible_core.service.discovery.field_names import short_field_name
+from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
 from cruxible_core.service.discovery.next import (
     NextRequest,
     PlaybillNextItemV1,
@@ -881,6 +885,11 @@ def service_playbill_orient(
         # never with the Subjects the full map counts.
         with instance.bind_accepted_projection(coordinate) as projection:
             declared = accepted_subject_kinds(projection.typed.connection)
+            owners = kit_owners(instance, projection.typed.connection)
+        declared = tuple(
+            item.model_copy(update={"kit": owned_by(owners, "SubjectKind", item.kind)})
+            for item in declared
+        )
         page, next_cursor = _page(
             declared,
             [item.kind for item in declared],
@@ -900,6 +909,16 @@ def service_playbill_orient(
             truncated=next_cursor is not None,
             next_cursor=next_cursor,
             next=tuple(render_orient_call(call, surface) for call in calls),
+        )
+    # The ledger timeline reads the history index alone, never the vocabulary.
+    if section == "generations":
+        return _generations_section(
+            instance,
+            base,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
         )
     state = _read_state(instance, coordinate)
 
@@ -963,6 +982,13 @@ def service_playbill_orient(
             if section in _GOVERNANCE_SECTIONS
             else _section_rows(state, section)
         )
+        if section == "claim_types":
+            with instance.bind_accepted_projection(coordinate) as projection:
+                owners = kit_owners(instance, projection.typed.connection)
+            rows = tuple(
+                row.model_copy(update={"kit": owned_by(owners, "ClaimType", row.predicate)})
+                for row in rows
+            )
         page, next_cursor = _page(
             rows, keys, view=view, served=served, continuation=continuation, limit=limit
         )
@@ -1398,6 +1424,93 @@ def _runs_section(
         section=section,
         live=live_view(instance, ("runs",)),
         runs=rows,
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
+
+
+def _generations_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: OrientSurface,
+) -> OrientResult:
+    """Accepted generations newest first from the served one, paged by sequence.
+
+    Each row is one history-index locator, the generation record's small facts
+    (parsed once per process per generation) and its accepting admission (read
+    once per process by digest): a page costs its own generations, never the
+    accepted history before or after it.
+    """
+
+    after = _keyset_after(continuation)
+    if after is not None and (len(after) != 1 or not after[0].isdigit()):
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
+    reasons = ChangeReasons(instance)
+    records = instance.retained_record_reader()
+    rows: list[OrientGeneration] = []
+    with instance.accepted_history_reader(at=served) as history:
+        top = history.sequence if after is None else int(after[0]) - 1
+        locations = [
+            history.generation(sequence) for sequence in range(top, max(top - limit, -1), -1)
+        ]
+        reasons.prefetch(item for item in locations if item.sequence > 0)
+        for location in locations:
+            if location.sequence == 0:
+                rows.append(
+                    OrientGeneration(
+                        sequence=0,
+                        git_oid=location.git_oid,
+                        accepted_at=instance.accepted_evaluation_time(location.git_oid),
+                    )
+                )
+                continue
+            facts = history.read_generation_facts(location.sequence, records)
+            admission = reasons.admission(location)
+            because = None if admission is None else admission.rationale or None
+            cut = because is not None and len(because) > ORIENT_BECAUSE_MAX_CHARS
+            rows.append(
+                OrientGeneration(
+                    sequence=location.sequence,
+                    git_oid=location.git_oid,
+                    accepted_at=datetime.strptime(facts.timestamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+                        tzinfo=UTC
+                    ),
+                    changeset_digest=location.source_record_digest,
+                    proposal=None if admission is None else admission.proposal_id,
+                    proposer=location.actor_id,
+                    approvals=tuple(dict.fromkeys(facts.approval_signers)),
+                    because=(
+                        because[: ORIENT_BECAUSE_MAX_CHARS - 1] + "…"
+                        if cut and because is not None
+                        else because
+                    ),
+                    because_truncated=cut,
+                    members=facts.member_count,
+                )
+            )
+    last = rows[-1].sequence if rows else 0
+    next_cursor = (
+        _keyset_cursor(view="generations", served=served, last_key=[str(last)])
+        if last > 0
+        else None
+    )
+    calls: list[_Call] = []
+    if rows and rows[0].proposal is not None:
+        calls.append(_Call("get", (("ref", rows[0].proposal),)))
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "generations"), ("cursor", next_cursor))))
+    return OrientResult(
+        **base,
+        section="generations",
+        generations=tuple(rows),
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
         next=tuple(render_orient_call(call, surface) for call in calls),

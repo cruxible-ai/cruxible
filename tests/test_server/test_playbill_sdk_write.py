@@ -259,3 +259,36 @@ def test_the_world_stub_types_set_with_enum_literals(pb: Cruxible) -> None:
     assert "status: Literal['blocked', 'done', 'ready'] = ...," in stub
     assert "governs: str | SubjectRef | WorldNewSubject = ...," in stub
     assert "ruling: str = ...," in stub
+
+
+def test_incoming_reads_the_edges_pointing_at_a_subject_over_http_and_the_sdk(
+    pb: Cruxible, playbill_http: tuple[TestClient, str, Path]
+) -> None:
+    from cruxible_client.contracts.get_reads import GetIncoming
+
+    target = f"{KIND}/wi-2"
+    outcome = (
+        pb.changes(because="Both govern wi-2.")
+        .add(WI1, "governs", target)
+        .add(f"{KIND}/wi-3", "governs", target)
+        .write()
+    )
+    assert outcome.status == "accepted", outcome
+    client, instance_id, _key = playbill_http
+    url = f"/api/v1/{instance_id}/get"
+    first = client.post(url, json={"ref": target, "detail": "incoming", "limit": 1})
+    assert first.status_code == 200, first.text
+    page = first.json()
+    assert page["truncated"] is True and len(page["incoming"]["claims"]) == 1
+    rest = client.post(
+        url, json={"ref": target, "detail": "incoming", "cursor": page["next_cursor"]}
+    )
+    assert rest.status_code == 200, rest.text
+    assert rest.json().get("next_cursor") is None
+    assert len(rest.json()["incoming"]["claims"]) == 1
+
+    # The SDK reads every page, pinned to the first page's coordinate.
+    whole = pb.get(target, detail="incoming").value
+    assert isinstance(whole, GetIncoming)
+    assert sorted(row.subject for row in whole.claims) == [WI1, f"{KIND}/wi-3"]
+    assert {row.predicate for row in whole.claims} == {f"{KIND}.governs"}

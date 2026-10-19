@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from itertools import islice
 
 from pydantic import ValidationError
 
@@ -113,33 +114,51 @@ def _result(
 def _normalized_rows(
     instance: PlaybillInstance,
     *,
-    lower_generation: int,
+    after: tuple[int, str | None],
     head_generation: int,
     access_profile: CoverageAccessProfile,
-) -> tuple[contracts.SinceRow, ...]:
+) -> Iterator[contracts.SinceRow]:
+    """Every visible row after ``after`` through the head, in (generation, UTF-8 path) order.
+
+    ``after`` is a generation and, within it, the member path a page stopped
+    at (``None``: the whole generation is before the range). Rows are made one
+    generation at a time as they are taken, so a page reads the generations it
+    shows (and the next one's first row), never the whole accepted history.
+    """
+
     # Accepted artifacts are instance-scoped. Filtering happens before either
     # budget is applied, so this branch discloses no member metadata or count.
     if not access_profile.permits("instance"):
-        return ()
-    rows: list[contracts.SinceRow] = []
-    for generation in instance.accepted_history():
-        if not lower_generation < generation.sequence <= head_generation:
-            continue
-        record = generation.record
+        return
+    history = instance.accepted_history()
+    generation, after_path = after
+    first = generation if after_path is not None else generation + 1
+    for sequence in range(first, head_generation + 1):
+        record = history[sequence].record
         if not isinstance(record, ChangeSetRecord | ChangeSetRecordV2 | ChangeSetRecordV3):
             raise SinceAcceptedStateInvalid(
                 f"{SinceAcceptedStateInvalid.code}: accepted generation has no ChangeSet"
             )
-        for member in record.members:
-            rows.append(
+        rows = sorted(
+            (
                 _normalized_member_row(
-                    generation=generation.sequence,
+                    generation=sequence,
                     changeset_digest=record.changeset_digest,
                     candidate_digest=record.candidate_digest,
                     member=member,
                 )
-            )
-    return tuple(sorted(rows, key=lambda row: (row.generation, row.member_path.encode("utf-8"))))
+                for member in record.members
+            ),
+            key=lambda row: row.member_path.encode("utf-8"),
+        )
+        if sequence == generation and after_path is not None:
+            boundary = after_path.encode("utf-8")
+            if not any(row.member_path == after_path for row in rows):
+                raise SinceCursorCoordinateMismatch(
+                    f"{SinceCursorCoordinateMismatch.code}: cursor boundary is absent"
+                )
+            rows = [row for row in rows if row.member_path.encode("utf-8") > boundary]
+        yield from rows
 
 
 def _normalized_member_row(
@@ -209,34 +228,37 @@ def service_playbill_since(
         raise SinceGenerationUnknown(
             f"{SinceGenerationUnknown.code}: head coordinate is not accepted"
         ) from exc
-    history = instance.accepted_history()
-    head_generation = next(item.sequence for item in history if item.oid == accepted_head.git_oid)
-    if request.generation > head_generation or not any(
-        item.sequence == request.generation for item in history
-    ):
+    # The head is the newest generation or near it: found from the end.
+    head_generation = next(
+        item.sequence
+        for item in reversed(instance.accepted_history())
+        if item.oid == accepted_head.git_oid
+    )
+    if not 0 <= request.generation <= head_generation:
         raise SinceGenerationUnknown(
             f"{SinceGenerationUnknown.code}: lower generation is not accepted"
         )
-    rows = _normalized_rows(
-        instance,
-        lower_generation=request.generation,
-        head_generation=head_generation,
-        access_profile=profile,
-    )
-    start = 0
+    after: tuple[int, str | None] = (request.generation, None)
     if cursor is not None:
-        keys = tuple((row.generation, row.member_path) for row in rows)
-        key = (cursor.last_generation, cursor.last_member_path)
-        if key not in keys:
+        if not request.generation < cursor.last_generation <= head_generation:
             raise SinceCursorCoordinateMismatch(
                 f"{SinceCursorCoordinateMismatch.code}: cursor boundary is absent"
             )
-        start = keys.index(key) + 1
+        after = (cursor.last_generation, cursor.last_member_path)
+    # One page and one row more, which says whether another page follows.
+    rows = list(
+        islice(
+            _normalized_rows(
+                instance, after=after, head_generation=head_generation, access_profile=profile
+            ),
+            request.max_rows + 1,
+        )
+    )
 
     page: list[contracts.SinceRow] = []
-    for row in rows[start : start + request.max_rows]:
+    for row in rows[: request.max_rows]:
         candidate = [*page, row]
-        more = start + len(candidate) < len(rows)
+        more = len(candidate) < len(rows)
         next_cursor = (
             _cursor(
                 instance_id=instance.descriptor.instance_id,
@@ -266,7 +288,7 @@ def service_playbill_since(
             break
         page = candidate
 
-    more = start + len(page) < len(rows)
+    more = len(page) < len(rows)
     next_cursor = (
         _cursor(
             instance_id=instance.descriptor.instance_id,

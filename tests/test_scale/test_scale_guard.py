@@ -377,6 +377,37 @@ def _orient(world: World) -> object:
     return playbill_api.playbill_orient(world.instance_id)
 
 
+def _orient_generations(world: World) -> object:
+    result = playbill_api.playbill_orient(world.instance_id, section="generations", limit=5)
+    assert result.generations is not None and len(result.generations) == 5, result
+    assert result.truncated, result
+    return result
+
+
+def _since_first_page(world: World) -> object:
+    """The first page after genesis: only its generations are read, never the rest."""
+
+    result = playbill_api.playbill_since(
+        world.instance_id,
+        request={
+            "generation": 0,
+            "access_profile": _ACCESS.model_dump(mode="json"),
+            "max_rows": 10,
+        },
+    )
+    assert len(result.rows) == 10 and result.truncated, result
+    return result
+
+
+def _line_runs(world: World) -> object:
+    result = playbill_api.playbill_get(
+        world.instance_id,
+        request=GetRequest(ref=f"Line:{_worlds.SETTLE}-line", detail="runs", limit=5),
+    )
+    assert result.runs is not None and result.runs.runs, result
+    return result
+
+
 def _get(ref: Callable[[World], str]) -> Callable[[World], object]:
     def run(world: World) -> object:
         return playbill_api.playbill_get(world.instance_id, request=GetRequest(ref=ref(world)))
@@ -733,6 +764,8 @@ def _routes() -> list[Route]:
             for part in ticks
         ),
         Route("read.orient", _orient),
+        Route("read.orient.generations", _orient_generations),
+        Route("read.since.first_page", _since_first_page),
         Route("read.get.subject", _get(lambda w: w.subject(7))),
         Route("read.get.claim", _get(lambda w: w.claims[f"{w.subject(7)}#title"])),
         Route("read.query.where", _query_where),
@@ -756,6 +789,7 @@ def _routes() -> list[Route]:
             prepare=_settle_pending,
             verify=_settle_counted,
         ),
+        Route("read.get.line_runs", _line_runs),
         Route(
             "attestation.examined_existing",
             _append_attestation,
@@ -906,6 +940,55 @@ def test_a_subject_history_page_grows_only_in_the_rows_that_locate_it(session: S
         small, large = measured[six][counter], measured[sixty][counter]
         assert large <= small * RATIO + SLACK[counter], (
             f"subject history {counter}: 6 revisions {small}, 60 revisions {large}"
+        )
+
+
+def test_an_incoming_page_reads_only_its_own_rows(session: Session) -> None:
+    """6 vs 60 Claims pointing at a Subject, one page of five: no counter grows.
+
+    The page is a keyset seek of the object index (``claims_by_object_subject``)
+    after its last Claim, bounded by the page: unlike a history page, locating
+    it costs nothing of the Subject's whole incoming set, so even the VM steps
+    stay at the page's.
+    """
+
+    world = session.small
+    six, sixty = world.subject(1), world.subject(2)
+    for target, sources in ((six, 6), (sixty, 60)):
+        _worlds.write(
+            world,
+            [
+                {
+                    "op": "add",
+                    "subject": f"{KIND}/points-{sources}-{index:02d}",
+                    "field": "governs",
+                    "value": target,
+                }
+                for index in range(sources)
+            ],
+        )
+    settle_advertisement(world.instance)
+
+    def page(target: str) -> object:
+        result = playbill_api.playbill_get(
+            world.instance_id, request=GetRequest(ref=target, detail="incoming", limit=5)
+        )
+        assert result.incoming is not None and len(result.incoming.claims) == 5, result
+        assert result.truncated, result
+        return result
+
+    for target in (six, sixty):
+        page(target)
+    measured: dict[str, dict[str, Any]] = {}
+    for target in (six, sixty):
+        with counting(world.root) as window:
+            page(target)
+        assert not window.unexplained, window.unexplained[:5]
+        measured[target] = {name: window.counts[name] for name in COUNTERS}
+    for counter in COUNTERS:
+        small, large = measured[six][counter], measured[sixty][counter]
+        assert large <= small * RATIO + SLACK[counter], (
+            f"incoming page {counter}: 6 pointing {small}, 60 pointing {large}"
         )
 
 

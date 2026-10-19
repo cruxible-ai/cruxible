@@ -4242,6 +4242,11 @@ class Cruxible:
         read (``GetSubjectHistory``): each revision of each Claim about it,
         newest first, with what changed and why; ``field`` narrows them to one
         field. On anything else it answers its revisions (``GetHistory``).
+        ``detail="incoming"`` on a Subject answers every live Claim whose
+        Subject-valued object it is (``GetIncoming``), every page read: the
+        asserting Subject, predicate and Claim of each edge pointing at it.
+        ``detail="runs"`` on a Line answers its Procedure runs newest
+        admission first (``GetLineRuns``), every page read.
 
         Next: ``detail="evidence"`` for what backs a Claim, ``detail="history"`` for its
         revisions, ``detail="proof"`` for the full envelope; ``card.ref`` passes the thing
@@ -4305,7 +4310,15 @@ class Cruxible:
         else:
             value = next(
                 item
-                for item in (result.evidence, result.history, result.body, result.why, result.proof)
+                for item in (
+                    result.evidence,
+                    result.history,
+                    result.incoming,
+                    result.runs,
+                    result.body,
+                    result.why,
+                    result.proof,
+                )
                 if item is not None
             )
         return KnowledgeCard(kind, identity, _get_coordinate(result), value)
@@ -4499,6 +4512,42 @@ class Cruxible:
             result = result.model_copy(
                 update={"history": whole, "truncated": False, "next_cursor": None}
             )
+        if result.runs is not None:
+            # Every page, continued by each admission's immutable position.
+            runs = list(result.runs.runs)
+            page = result
+            while page.truncated and page.next_cursor is not None:
+                page = self._client.get(
+                    self._instance_id,
+                    request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
+                )
+                assert page.runs is not None
+                runs.extend(page.runs.runs)
+            result = result.model_copy(
+                update={
+                    "runs": result.runs.model_copy(update={"runs": tuple(runs)}),
+                    "truncated": False,
+                    "next_cursor": None,
+                }
+            )
+        if result.incoming is not None:
+            # Every page, pinned to the first page's coordinate by the cursor.
+            pointing = list(result.incoming.claims)
+            page = result
+            while page.truncated and page.next_cursor is not None:
+                page = self._client.get(
+                    self._instance_id,
+                    request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
+                )
+                assert page.incoming is not None
+                pointing.extend(page.incoming.claims)
+            result = result.model_copy(
+                update={
+                    "incoming": result.incoming.model_copy(update={"claims": tuple(pointing)}),
+                    "truncated": False,
+                    "next_cursor": None,
+                }
+            )
         return result
 
     def _source_card(self, ref: SourceRef) -> KnowledgeCard:
@@ -4540,7 +4589,8 @@ class Cruxible:
         predicates that point at it (``incoming``: follow one with
         ``query(kind, follow=[(predicate, alias, "reverse")])``); ``section``
         pages documents, procedures, claim_types, queries or interfaces (the
-        provider interfaces a Procedure can call), or an operational family:
+        provider interfaces a Procedure can call), generations (the ledger
+        timeline, newest first, paged by sequence), or an operational family:
         runs, lines, captures, capture_contracts, predictions or mandates. Follow
         ``next_cursor`` while ``truncated``. When this workspace holds an
         exported floor, ``floor`` says the coordinate it is at and how many

@@ -58,6 +58,7 @@ OrientSection: TypeAlias = Literal[
     "mandates",
     "principals",
     "policies",
+    "generations",
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 OrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -114,6 +115,8 @@ class OrientPredicate(_StrictOrientModel):
     contract is required). A full descriptor also carries each described enum
     member, the role a write defaults to, and ``revision_evidence``: what a
     statement-changing revision keeps (``accumulate`` before v7).
+    ``kit`` (claim_types section only) is the installed kit that owns the
+    ClaimType: its receipt records the definition. Absent when no kit owns it.
     """
 
     name: str
@@ -136,6 +139,7 @@ class OrientPredicate(_StrictOrientModel):
     revision_evidence: RevisionEvidence | None = Field(default=None, exclude_if=_is_none)
     stale_after: str | None = Field(default=None, exclude_if=_is_none)
     live_claims: int | None = Field(default=None, ge=0, exclude_if=_is_none)
+    kit: str | None = Field(default=None, exclude_if=_is_none)
 
 
 class OrientSubjectKind(_StrictOrientModel):
@@ -143,13 +147,15 @@ class OrientSubjectKind(_StrictOrientModel):
 
     ``rule`` is ``keys`` (named by its key ClaimTypes, in key order, ``unique``
     or ``hint``) or ``minted`` (core mints the id). A kind with no live
-    SubjectKind has no row: no new Subject of it can be created.
+    SubjectKind has no row: no new Subject of it can be created. ``kit`` is
+    the installed kit that owns the SubjectKind, absent when no kit owns it.
     """
 
     kind: str
     rule: Literal["keys", "minted"]
     keys: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_is_none)
+    kit: str | None = Field(default=None, exclude_if=_is_none)
 
 
 #: A kind no accepted SubjectKind declares: its Subjects are grandfathered.
@@ -335,6 +341,36 @@ class Head(_StrictOrientModel):
     generation: int = Field(ge=0)
 
 
+#: The most characters of a generation's ``because`` an orient row carries.
+ORIENT_BECAUSE_MAX_CHARS = 500
+
+
+class OrientGeneration(_StrictOrientModel):
+    """One accepted generation, newest first: what accepted it and how much it changed.
+
+    ``changeset_digest`` names the change-set record; ``proposal`` is the
+    proposal whose admission it accepted (``get <proposal>`` reads its card and
+    changes), ``proposer`` the actor bound to it, and ``approvals`` the
+    approving signers in record order. ``because`` is that admission's
+    rationale, cut at 500 characters (``because_truncated``). ``members``
+    counts the change set's members; ``since(generation=sequence-1,
+    at=<this generation>)`` lists them. Genesis (sequence 0) carries only its
+    sequence, git oid and acceptance time. Pass ``sequence`` or ``git_oid`` as
+    ``at`` to read state as this generation left it.
+    """
+
+    sequence: int = Field(ge=0)
+    git_oid: str
+    accepted_at: datetime
+    changeset_digest: str | None = Field(default=None, exclude_if=_is_none)
+    proposal: str | None = Field(default=None, exclude_if=_is_none)
+    proposer: str | None = Field(default=None, exclude_if=_is_none)
+    approvals: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
+    because: str | None = Field(default=None, exclude_if=_is_none)
+    because_truncated: bool = Field(default=False, exclude_if=lambda value: value is False)
+    members: int = Field(default=0, ge=0)
+
+
 class OrientResult(_StrictOrientModel):
     """One orient answer; which parts are present depends on the request.
 
@@ -345,8 +381,9 @@ class OrientResult(_StrictOrientModel):
       ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an
       operational family:
       ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
-      ``predictions``, ``mandates``), the principal registry (``principals``)
-      or the governed policies in force (``policies``), paged. The default map counts the
+      ``predictions``, ``mandates``), the principal registry (``principals``),
+      the governed policies in force (``policies``) or the accepted generations
+      newest first (``generations``), paged. The default map counts the
       operational families under ``artifacts`` and never inlines their rows.
 
     ``next`` is rendered for the requesting surface.
@@ -391,6 +428,9 @@ class OrientResult(_StrictOrientModel):
     # Every live governed policy, standalone or embedded in its declaring
     # artifact; ``get`` reads the declaring artifact (``ApprovalPolicy:instance``).
     policies: tuple[PolicyInForce, ...] | None = Field(default=None, exclude_if=_is_none)
+    # Accepted generations newest first from the answer's own, paged by sequence
+    # (section "generations"): the ledger's timeline.
+    generations: tuple[OrientGeneration, ...] | None = Field(default=None, exclude_if=_is_none)
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
     # Present when part of the answer is operational state -- runs, Line enablements and
@@ -402,6 +442,7 @@ class OrientResult(_StrictOrientModel):
 
 __all__ = [
     "ORIENT_ATTENTION_TOP",
+    "ORIENT_BECAUSE_MAX_CHARS",
     "ORIENT_DEFAULT_LIMIT",
     "ORIENT_DEFAULT_QUERIES",
     "ORIENT_MAX_LIMIT",
@@ -414,6 +455,7 @@ __all__ = [
     "OrientClaimCounts",
     "OrientDocument",
     "OrientFloor",
+    "OrientGeneration",
     "OrientInterfaceProvider",
     "OrientInterface",
     "OrientKindDetail",

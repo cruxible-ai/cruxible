@@ -353,15 +353,22 @@ def test_v1_normalization_preserves_disposition_and_never_infers_predecessor(
 
 
 def test_non_changeset_accepted_source_is_rejected() -> None:
-    fake = SimpleNamespace(accepted_history=lambda: (SimpleNamespace(sequence=1, record=object()),))
+    fake = SimpleNamespace(
+        accepted_history=lambda: (
+            SimpleNamespace(sequence=0, record=None),
+            SimpleNamespace(sequence=1, record=object()),
+        )
+    )
     with pytest.raises(
         SinceAcceptedStateInvalid,
         match="accepted generation has no ChangeSet",
     ) as raised:
-        _normalized_rows(
-            cast(Any, fake),
-            lower_generation=0,
-            head_generation=1,
-            access_profile=CoverageAccessProfile(profile_id="since-test"),
+        list(
+            _normalized_rows(
+                cast(Any, fake),
+                after=(0, None),
+                head_generation=1,
+                access_profile=CoverageAccessProfile(profile_id="since-test"),
+            )
         )
     assert getattr(raised.value, "code") == "cruxible.since.accepted_state_invalid"

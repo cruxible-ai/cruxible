@@ -1297,11 +1297,13 @@ paging past the cap.
 
 A Subject is an identity-only referent named by its canonical `kind/name`
 address, the spelling the SDK, claim objects, floor profiles, and `get` all
-use. `cruxible get KIND/ID` renders the Subject's own facts and an
-`incoming` section: every live Claim whose subject-valued object is this
-Subject, grouped by predicate and naming the asserting Subject and the Claim
-id. A relation is stored once, on the asserting Subject, so without this
-section nothing answers "what touches this package" from the object side.
+use. `cruxible get KIND/ID` renders the Subject's own facts and how many live
+Claims point at it (`incoming_count`); `--detail incoming` pages those Claims:
+each live Claim whose subject-valued object is this Subject, naming the
+asserting Subject, the predicate and the Claim id, in Claim id order (`--limit`,
+default 20; `--cursor` continues). A relation is stored once, on the asserting
+Subject, so this is what answers "what touches this package" from the object
+side; each page reads only its own rows of the object index.
 `--detail history` reads the Subject's revisions.
 
 ## claim-type
@@ -3513,7 +3515,7 @@ depend on it.
 ## get
 
 ~~~text
-cruxible get REF [--detail summary|evidence|why|history|proof|body]
+cruxible get REF [--detail summary|evidence|why|history|incoming|runs|proof|body]
   [--range START:END] [--output FILE] [--limit N] [--cursor C] [--field FIELD]
   [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
@@ -3537,7 +3539,10 @@ at it but it is not enabled, its enablements (the principal kind, state and
 stop reason, the pinned Line digest and Trigger versions, how far its daemon
 matched (`evaluated_until`), and who enabled each: a runtime credential's id
 and label only to that credential or an admin, otherwise
-`enabled_by_withheld`), due and waiting occurrences and recent runs; `CAP-<12+ hex>` or `Capture:<digest>`
+`enabled_by_withheld`), due and waiting occurrences and recent runs (`--detail
+runs` pages all of the Line's runs, newest admission first, through the run
+journal's per-Line index: each page reads only its rows, and a run admitted or
+finished between pages is never repeated or skipped); `CAP-<12+ hex>` or `Capture:<digest>`
 answers a Capture's contract and version, observation time, size, availability
 and the Claims (and their Subjects) that cite it; `ResolutionContract:<name>`
 answers the hypothesis Claim, window, rule and bound-window state; and
@@ -3554,7 +3559,8 @@ aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
 CaptureContract name and version, its attestations and rationale, `why` and
 `proof` print today's explanation and full envelope, `history` lists revisions
 newest first with values, who changed them and why (`--limit`, default 20, per
-page; a cut page prints the `--cursor` command that continues it), and `body`
+page; a cut page prints the `--cursor` command that continues it), `incoming`
+pages the live Claims that point at a Subject the same way, and `body`
 prints a Document's bytes. A Claim's revision says what it did -- `stated` (its
 first), `changed`, `reobserved` (the same value on new backing) or `retired`
 (with `was-rescinded`, `was-wrong` or `superseded`) -- and every revision its
@@ -3611,7 +3617,10 @@ does not exist is refused as `cruxible.orient.kind_not_found` with the nearest
 kinds. `--section` pages one artifact family as compact rows; follow
 `next_cursor` with `--cursor` while `truncated` is true. `--section
 subject_kinds` lists each live SubjectKind and how a new Subject of the kind is
-named (`keys: <key ClaimTypes> (unique|hint)` or `minted`). `--section runs` lists
+named (`keys: <key ClaimTypes> (unique|hint)` or `minted`), and `--section
+claim_types` each live ClaimType in full; a row an installed kit owns names it as
+`kit` (the kit whose receipt records the definition), as do the `get
+ClaimType:` and `get SubjectKind:` cards. `--section runs` lists
 Procedure runs, newest admission first, each with its Procedure, status,
 admission time, Line and finished-node count, and `--section running` lists
 only the runs still running. Both page by the admission's immutable position,
@@ -3633,6 +3642,13 @@ ClaimTypes admit each), `predictions` (each live ResolutionContract with its
 bound windows by status and the next close) and `mandates` (grant, state and
 expiry). The default map counts each family under `Artifacts` and never
 inlines their rows; each section suggests the `get` of its first row.
+`--section generations` is the ledger's timeline: accepted generations newest
+first from the answer's own (or `--at`), each with its sequence and git oid,
+acceptance time, change-set digest, the proposal it accepted (`get` it for the
+changes), the proposer, the approving signers, the change set's `because` (cut
+at 500 characters) and its member count. It pages by sequence, so a page reads
+only its own generations; pass a row's sequence back as `--at` to read state as
+that generation left it.
 `--section interfaces` lists the provider interfaces a Procedure node can call,
 each with its interface digest, operation contract and the implementing
 Providers with their implementation digests (`get ProviderInterface:NAME`
@@ -3699,6 +3715,9 @@ cruxible since GENERATION [--max-rows N] [--max-bytes N]
 Returns signed accepted ChangeSet members in `(GENERATION, pinned head]` order.
 Follow `next_cursor` to continue against the same historical head even if main
 advances; the cursor binds the lower bound, access profile, and page budgets.
+A page reads only the generations it shows, starting where the cursor stopped,
+never the accepted history before it. `orient --section generations` lists the
+generations themselves.
 
 ## floor
 

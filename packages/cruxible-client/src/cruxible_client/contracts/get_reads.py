@@ -29,12 +29,13 @@ from cruxible_client.contracts.operational_reads import (
     GetProcedureRunCard,
     GetResolutionContractCard,
     LiveView,
+    RunRow,
 )
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
 from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.repairs import ServedRepair
 
-GetDetail = Literal["summary", "evidence", "why", "history", "proof", "body"]
+GetDetail = Literal["summary", "evidence", "why", "history", "incoming", "runs", "proof", "body"]
 GetRefKind = Literal[
     "claim",
     "subject",
@@ -69,10 +70,13 @@ ReadSurface = Literal["mcp", "cli", "sdk"]
 GET_BODY_DEFAULT_MAX_BYTES = 64 * 1024
 #: The widest byte range one ``get(detail="body")`` returns.
 GET_BODY_RANGE_MAX_BYTES = 256 * 1024
-#: Revisions (a Subject's field events) per ``get(detail="history")`` page,
-#: by default and at most.
+#: Rows per paged ``get`` detail (``history``: revisions or a Subject's field
+#: events; ``incoming``: the Claims pointing at a Subject; ``runs``: a Line's
+#: runs), by default and at most.
 GET_HISTORY_DEFAULT_LIMIT = 20
 GET_HISTORY_MAX_LIMIT = 200
+#: The ``get`` details that page with ``limit`` and ``cursor``.
+GET_PAGED_DETAILS: tuple[str, ...] = ("history", "incoming", "runs")
 
 # A git oid or a prefix of one; the read resolves it (at least 12 hex, unique).
 _GIT_OID = r"^[0-9a-f]{1,64}$"
@@ -80,7 +84,7 @@ _GIT_OID = r"^[0-9a-f]{1,64}$"
 # Which details apply to which kind of reference.
 GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "claim": ("summary", "evidence", "why", "history", "proof"),
-    "subject": ("summary", "why", "history", "proof"),
+    "subject": ("summary", "why", "history", "incoming", "proof"),
     "claim_type": ("summary", "history", "proof"),
     "document": ("summary", "why", "history", "proof", "body"),
     "procedure": ("summary", "history", "proof"),
@@ -90,7 +94,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "trigger": ("summary", "history", "proof"),
     "subject_kind": ("summary", "history", "proof"),
     "proposal": ("summary", "proof"),
-    "line": ("summary", "history", "proof"),
+    "line": ("summary", "history", "runs", "proof"),
     "capture": ("summary", "proof"),
     "resolution_contract": ("summary", "history", "proof"),
     "mandate": ("summary", "history", "proof"),
@@ -147,8 +151,8 @@ class GetRequest(_StrictGetModel):
     at: AcceptedCoordinate | str | None = None
     evaluation_time: datetime | None = None
     surface: ReadSurface = "mcp"
-    # ``detail="history"`` pages: revisions per page (default 20) and the
-    # opaque ``next_cursor`` of the page before.
+    # ``detail="history"``, ``"incoming"`` and ``"runs"`` page: rows per page
+    # (default 20) and the opaque ``next_cursor`` of the page before.
     limit: int | None = Field(default=None, ge=1, le=GET_HISTORY_MAX_LIMIT)
     cursor: str | None = Field(default=None, min_length=1)
     # ``detail="history"`` on a Subject: only this field's events.
@@ -179,8 +183,10 @@ class GetRequest(_StrictGetModel):
     def _range_only_for_body(self) -> GetRequest:
         if self.range is not None and self.detail != "body":
             raise ValueError('range applies only to detail="body"')
-        if (self.limit is not None or self.cursor is not None) and self.detail != "history":
-            raise ValueError('limit and cursor page detail="history" only')
+        if (
+            self.limit is not None or self.cursor is not None
+        ) and self.detail not in GET_PAGED_DETAILS:
+            raise ValueError('limit and cursor page detail="history", "incoming" or "runs" only')
         if self.field is not None and self.detail != "history":
             raise ValueError('field narrows detail="history" on a Subject only')
         return self
@@ -232,6 +238,46 @@ class GetSubjectClaim(_StrictGetModel):
     flags: tuple[ReadFlag, ...] = ()
 
 
+class GetIncomingClaim(_StrictGetModel):
+    """One live Claim whose Subject-valued object is the Subject read.
+
+    ``subject`` is the asserting Subject (``kind/id``): a relation is stored
+    once, on it, so this is the edge read from its object's side.
+    """
+
+    claim: str
+    subject: str
+    predicate: str
+    qualifier: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class GetIncoming(_StrictGetModel):
+    """One page of the live Claims pointing at a Subject, in Claim id order.
+
+    Read through the object index one page at a time: a page costs its rows,
+    never the Subject's whole incoming set. ``get`` each Claim (or batch them)
+    for its verdict and value.
+    """
+
+    kind: Literal["incoming"] = "incoming"
+    claims: tuple[GetIncomingClaim, ...]
+
+
+class GetLineRuns(_StrictGetModel):
+    """One page of a Line's Procedure runs, newest admission first.
+
+    Read through the run journal's per-Line partition index one page at a
+    time, keyed by each admission's immutable position: a run admitted or
+    finished between pages is never repeated or skipped, and a page costs its
+    rows, never the Line's whole run history. Runs are operational state, read
+    live at the current head. ``get ProcedureRun:<run>`` reads one.
+    """
+
+    kind: Literal["line_runs"] = "line_runs"
+    line: str
+    runs: tuple[RunRow, ...]
+
+
 class GetSubjectCard(_StrictGetModel):
     subject: str
     kind: str
@@ -273,6 +319,9 @@ class GetClaimTypeCard(_StrictGetModel):
     evidence: tuple[str, ...]
     evidence_rules: tuple[GetEvidenceRule, ...] = ()
     live_claims: int
+    # The installed kit that owns the ClaimType (its receipt records it); absent
+    # when no kit owns it.
+    kit: str | None = Field(default=None, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 
@@ -397,6 +446,8 @@ class GetSubjectKindCard(_StrictGetModel):
     uniqueness: Literal["unique", "hint"] | None = Field(default=None, exclude_if=_omit_none)
     #: How many Subjects of the kind are live at this coordinate.
     live_subjects: int
+    #: The installed kit that owns the SubjectKind; absent when no kit owns it.
+    kit: str | None = Field(default=None, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 
@@ -749,6 +800,8 @@ class GetResult(_StrictGetModel):
     card: GetCard | None = Field(default=None, exclude_if=_omit_none)
     evidence: GetEvidence | None = Field(default=None, exclude_if=_omit_none)
     history: GetHistoryAny | None = Field(default=None, exclude_if=_omit_none)
+    incoming: GetIncoming | None = Field(default=None, exclude_if=_omit_none)
+    runs: GetLineRuns | None = Field(default=None, exclude_if=_omit_none)
     body: GetBody | None = Field(default=None, exclude_if=_omit_none)
     # Today's explain output, unchanged.
     why: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
@@ -757,7 +810,7 @@ class GetResult(_StrictGetModel):
     reason: GetProposedReason | None = Field(default=None, exclude_if=_omit_none)
     # Today's full accepted envelope, unchanged.
     proof: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
-    # ``detail="history"`` paging; absent on every other detail.
+    # Paging of ``detail="history"``, ``"incoming"`` and ``"runs"``; absent on every other detail.
     truncated: bool | None = Field(default=None, exclude_if=_omit_none)
     next_cursor: str | None = Field(default=None, exclude_if=_omit_none)
     coordinate: GetCoordinate
@@ -812,6 +865,7 @@ __all__ = [
     "GET_DETAILS_BY_KIND",
     "GET_HISTORY_DEFAULT_LIMIT",
     "GET_HISTORY_MAX_LIMIT",
+    "GET_PAGED_DETAILS",
     "ByteRange",
     "GetAcquisitionInput",
     "GetApprovalPolicyCard",
@@ -842,6 +896,9 @@ __all__ = [
     "GetFieldStated",
     "GetHistory",
     "GetHistoryAny",
+    "GetIncoming",
+    "GetIncomingClaim",
+    "GetLineRuns",
     "GetPrincipalCard",
     "GetBlueprintCard",
     "GetBlueprintSlot",
