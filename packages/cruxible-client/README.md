@@ -60,6 +60,11 @@ finish with `.write()`. In that batch, a change's
 own words with a location. `cx.file("notes.md").section("Decision")` returns a
 source selection for authoring-lane `supported_by=`.
 
+For an explicit batch, give `.append_section(..., id="basis")` or
+`.replace_section(..., id="basis")` an ID and pass `batch.section("basis")`
+as a change's `supported_by=` or `evidence=`. Both document methods return the
+batch. Next: `batch.write()`, then inspect `outcome.docs[].written`.
+
 Files are written after accepted or awaiting-approval admission. Dry runs report
 digests and write nothing. Inspect `outcome.docs`: a concurrent edit can leave
 `written=False` with a repair even after Claims were admitted. Document targets

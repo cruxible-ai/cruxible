@@ -144,3 +144,23 @@ def test_retry_after_admission_before_file_write_keeps_the_same_claim(
     assert second.coordinate == first.coordinate
     assert second.changes[0].claim == first.changes[0].claim
     assert second.docs[0].written and (workspace / "notes.md").exists()
+
+
+@pytest.mark.parametrize("keyword", ["supported_by", "evidence"])
+def test_batch_section_handle_cites_its_operation(playbill_http, tmp_path, keyword):
+    cx, _, _ = _context(playbill_http, tmp_path)
+    batch = cx.changes(because="Recorded the rationale")
+    assert batch.append_section("notes.md", "# Decision\nReady", id="basis") is batch
+    batch.set(f"{KIND}/wi-1", "status", "ready", **{keyword: batch.section("basis")})
+    result = batch.write()
+    assert result.status == "accepted" and result.docs[0].written
+    assert result.changes[0].verdict == "supported"
+    assert batch.replace_section("notes.md", ("Decision",), "# Decision\nDone", id="revision") is batch
+
+
+def test_batch_refuses_two_evidence_arguments(playbill_http, tmp_path):
+    cx, _, _ = _context(playbill_http, tmp_path)
+    batch = cx.changes(because="Reason")
+    with pytest.raises(ValueError, match="choose evidence"):
+        batch.set(f"{KIND}/wi-1", "status", "ready", evidence=batch.section("a"),
+                  supported_by=batch.section("b"))

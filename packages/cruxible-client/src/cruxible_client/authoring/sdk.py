@@ -263,6 +263,7 @@ from cruxible_client.contracts.write import (
     ReplaceSection,
     RetireChange,
     RetireRequest,
+    SectionEvidence,
     SetChange,
     SetRequest,
     SlotRef,
@@ -1658,18 +1659,25 @@ class WriteBatch:
         self.docs: list[DocOp] = []
 
     def append_section(
-        self, file: str, text: str, *, under: tuple[str, ...] = (), name: str | None = None
+        self, file: str, text: str, *, under: tuple[str, ...] = (), name: str | None = None, id: str | None = None
     ) -> WriteBatch:
         """Append a child, creating a missing file with your text. Next: .write()."""
-        self.docs.append(AppendSection(file=file, under=under, text=text, name=name))
+        self.docs.append(AppendSection(id=id, file=file, under=under, text=text, name=name))
         return self
 
     def replace_section(
-        self, file: str, section: tuple[str, ...], text: str, *, expect: str | None = None
+        self, file: str, section: tuple[str, ...], text: str, *, expect: str | None = None, id: str | None = None
     ) -> WriteBatch:
         """Replace a subtree or preamble, checking expect when supplied. Next: .write()."""
-        self.docs.append(ReplaceSection(file=file, section=section, text=text, expect=expect))
+        self.docs.append(ReplaceSection(id=id, file=file, section=section, text=text, expect=expect))
         return self
+
+    def section(self, id: str) -> SectionEvidence:
+        """Cite the section authored by a doc operation's id in this batch.
+
+        Next: ``batch.set(..., supported_by=batch.section(id))``, then ``.write()``.
+        """
+        return SectionEvidence(ref=id)
 
     @overload
     def set(
@@ -1680,6 +1688,7 @@ class WriteBatch:
         /,
         *,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
@@ -1694,6 +1703,7 @@ class WriteBatch:
         *,
         subject: _WriteSubject | None = None,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
@@ -1704,6 +1714,7 @@ class WriteBatch:
         *operands: Any,
         subject: _WriteSubject | None = None,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
         expect: WriteExpect | None = None,
@@ -1714,6 +1725,10 @@ class WriteBatch:
         unless the field holds that value now. Next: more changes, then ``.write()``.
         """
 
+        if supported_by is not None:
+            if evidence is not None:
+                raise ValueError("choose evidence or supported_by, not both")
+            evidence = supported_by
         named, field_name, value = _batch_operands("set", operands, subject)
         self.changes.append(
             SetChange(
@@ -1737,6 +1752,7 @@ class WriteBatch:
         /,
         *,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
     ) -> WriteBatch: ...
@@ -1750,6 +1766,7 @@ class WriteBatch:
         *,
         subject: _WriteSubject | None = None,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
     ) -> WriteBatch: ...
@@ -1759,6 +1776,7 @@ class WriteBatch:
         *operands: Any,
         subject: _WriteSubject | None = None,
         evidence: Evidence | None = None,
+        supported_by: SectionEvidence | None = None,
         role: WriteRole | None = None,
         expect_absent: bool = False,
     ) -> WriteBatch:
@@ -1769,6 +1787,10 @@ class WriteBatch:
         ``.write()``.
         """
 
+        if supported_by is not None:
+            if evidence is not None:
+                raise ValueError("choose evidence or supported_by, not both")
+            evidence = supported_by
         named, field_name, value = _batch_operands("add", operands, subject)
         self.changes.append(
             AddChange(
