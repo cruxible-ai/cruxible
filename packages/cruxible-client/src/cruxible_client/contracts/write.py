@@ -277,6 +277,9 @@ class DocEditObservation(_StrictWriteModel):
     content_base64: str = Field(max_length=4 * ((FOREIGN_SOURCE_MAX_BYTES + 2) // 3))
     before_coordinate: WorkingDigestCoordinate | None = None
     after_coordinate: WorkingDigestCoordinate
+    start_byte: int = Field(default=0, ge=0)
+    end_byte: int = Field(default=0, ge=0)
+    source_content_base64: str | None = None
 
     @property
     def content(self) -> bytes:
@@ -295,6 +298,18 @@ class DocEditObservation(_StrictWriteModel):
             raise ValueError("append must label a new section, not the preamble")
         if self.op == "replace" and (self.before_coordinate is None or self.before_digest is None):
             raise ValueError("replace requires the prior file coordinate and subtree digest")
+        if self.end_byte < self.start_byte or (
+            self.before_coordinate is not None
+            and self.end_byte > self.before_coordinate.source_byte_length
+        ):
+            raise ValueError("document edit window exceeds the prior file")
+        if self.source_content_base64 is not None:
+            whole = _canonical_base64(self.source_content_base64, label="document preimage")
+            if self.before_coordinate is None or (
+                section_digest(whole) != self.before_coordinate.source_content_digest
+                or len(whole) != self.before_coordinate.source_byte_length
+            ):
+                raise ValueError("document preimage differs from its coordinate")
         return self
 
 
@@ -669,11 +684,14 @@ class WriteRefusal(_StrictWriteModel):
 class DocOutcome(_StrictWriteModel):
     """The client's section result; citing-Claim reports are deferred."""
 
-    file: str = Field(min_length=1)
+    file: str | None = Field(default=None, min_length=1)
+    source_id: str | None = None
     section: SectionPath
     before_digest: str | None = Field(default=None, pattern=CAPTURE_DIGEST_PATTERN)
     after_digest: str = Field(pattern=CAPTURE_DIGEST_PATTERN)
     written: bool = False
+    refusal: WriteRefusal | None = None
+    next: str | None = None
 
 
 class WriteOutcome(_StrictWriteModel):

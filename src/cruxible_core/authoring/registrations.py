@@ -79,6 +79,35 @@ def _declaration_path(root: Path, source_id: str, block_id: str) -> Path:
     return root / source_id / f"{block_id}.json"
 
 
+def source_projection_blocks(instance: PlaybillInstance, source_id: str) -> tuple[str, ...] | None:
+    """Read only the touched source's block declarations, never other sources.
+
+    Trigger: a doc edit/citation; O(blocks in that source). The directory is the
+    maintained source index written by write_projection_block_declaration.
+    """
+
+    if not _SAFE_SEGMENT.fullmatch(source_id):
+        return ()
+    root = _declaration_root(instance) / source_id
+    try:
+        if not root.exists():
+            return ()
+        blocks = []
+        for path in root.glob("*.json"):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data["source_id"] != source_id or data["block_id"] != path.stem:
+                return None
+            int(data["declared_generation"])
+            AcceptedCoordinate.model_validate(data["declared_coordinate"])
+            for key in ("declared_by", "declared_at", "stamp_digest"):
+                if not isinstance(data[key], str):
+                    return None
+            blocks.append(path.stem)
+        return tuple(sorted(blocks))
+    except (OSError, KeyError, ValueError, TypeError):
+        return None
+
+
 def projection_block_declarations(
     instance: PlaybillInstance,
 ) -> tuple[DeclaredBlockRegistration, ...] | None:

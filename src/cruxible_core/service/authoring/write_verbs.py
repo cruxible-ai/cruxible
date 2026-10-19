@@ -135,9 +135,12 @@ from cruxible_client.contracts.write import (
     CreateChange,
     CreatedSubject,
     ExpectedValue,
+    DocEditObservation,
+    DocOutcome,
     FileEvidence,
     NewerCaptureNotCitableWarning,
     RetireChange,
+    SectionEvidence,
     SelfEvidence,
     SetChange,
     SlotRef,
@@ -1532,6 +1535,24 @@ class _Planner:
                     field_path=path,
                 )
             return evidence.observation, "evidence"
+        if isinstance(evidence, SectionEvidence):
+            if evidence.observation is None:
+                raise _refuse(
+                    "cruxible.write.section_evidence_unobserved",
+                    "Section evidence must be read by the writer's adapter.",
+                    change=index, field_path=path,
+                    repair="Use write through the CLI, MCP or SDK beside the workspace",
+                )
+            if not evidence.own_words:
+                return evidence.observation, "evidence"
+            if requires_captured_evidence(info.claim_type):
+                raise _refuse(
+                    "cruxible.write.evidence_required",
+                    f"{field_name} requires captured evidence; own words cannot back it",
+                    change=index, field_path=path,
+                    repair="Cite a produced Capture under one of the ClaimType's admitted contracts",
+                )
+            return SelfSourceBody(content_base64=evidence.observation.selected_content_base64), None
         if exact is not None:
             if isinstance(evidence, SelfEvidence) and evidence.self.encode("utf-8") != exact:
                 raise _refuse(
@@ -2075,6 +2096,8 @@ class _Planner:
             "revises": revises,
             "dependency_drafts": ClaimDependencyDrafts(),
         }
+        if isinstance(change.evidence, SectionEvidence) and change.evidence.own_words:
+            values["located_at"] = change.evidence.observation
         member: ClaimAuthoringPayloadV1 = (
             ClaimAuthoringPayload(**values)
             if isinstance(source, ExistingCaptureCitationSource)
@@ -3059,6 +3082,12 @@ def service_playbill_write(
         instance.capture_verification_request(),
     ):
         outcome = _service_write(instance, request=request, caller=caller)
+        if request.docs:
+            outcome = outcome.model_copy(update={"docs": tuple(
+                DocOutcome(source_id=edit.source_id, section=edit.section,
+                    before_digest=edit.before_digest, after_digest=edit.after_digest)
+                for edit in request.docs if isinstance(edit, DocEditObservation)
+            )})
         if request.full_coordinate and outcome.accepted_coordinate is None:
             pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
             outcome = outcome.model_copy(update={"accepted_coordinate": _full(pinned)})
@@ -3082,6 +3111,9 @@ def _service_write(
         )
 
     try:
+        from cruxible_core.service.authoring.doc_writes import validate_doc_edits
+
+        validate_doc_edits(instance, request.docs)
         request = _with_default_subject(request)
         read_at = resolve_read_coordinate(instance, request.at) if request.at is not None else head
         plan = _Planner(instance, head=head, read_at=read_at, request=request).build()

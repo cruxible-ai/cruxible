@@ -287,7 +287,7 @@ from cruxible_client.contracts.triggers import (
     trigger_path,
     trigger_schedule_pins,
 )
-from cruxible_core.authoring.registrations import registered_projection_blocks
+from cruxible_core.authoring.registrations import source_projection_blocks
 from cruxible_core.claims.claim_retirement import (
     ClaimRetireError,
     build_claim_retirement_candidate,
@@ -1323,7 +1323,7 @@ def _refuse_citation_into_projection_window(
     # is gone, every new block is declaration-road, and reading only the
     # publication registrations would leave this gate blind to exactly the
     # blocks the instance now mints.
-    registered = registered_projection_blocks(instance)
+    registered = source_projection_blocks(instance, cited_source)
     if registered is None:
         _refuse(
             "cruxible.projection.window_unverifiable",
@@ -1333,7 +1333,7 @@ def _refuse_citation_into_projection_window(
             repair_kind="restore_registry",
             repair_description="Restore the instance exhaust so registrations can be read.",
         )
-    expected = sorted(block_id for source, block_id in registered if source == cited_source)
+    expected = registered
     if not expected:
         return
     if page is None:
@@ -1826,11 +1826,51 @@ def _lower_claim(
         if inherited is not None and isinstance(inherited.backing, ClaimBacking)
         else ()
     )
+    located = None
+    located_citation = None
+    located_contract = None
+    located_install = False
+    if payload.located_at is not None:
+        location = payload.located_at
+        if not isinstance(payload.source, SelfSourceBody) or location.selected_content != payload.source.content:
+            _refuse(
+                "cruxible.authoring.location_mismatch", "located_at",
+                "A location must cite the same bytes as the Claim's own words.",
+                repair_kind="observe_section", repair_description="Observe the authored section again.",
+            )
+        located_path = capture_contract_path(foreign_source_capture_contract(location.source_id).identity.name)
+        previous_contract = candidate_base_tree.get(located_path)
+        located_contract = None if previous_contract is None else parse_capture_contract(previous_contract, path=located_path)
+        located_install = located_contract is None or located_contract.lifecycle.state != "live"
+        try:
+            located = build_working_selection_capture(
+                store=instance.body_store(), actor_id=actor_id, claim_id=claim_id,
+                rationale=payload.rationale, observed_at=observed_at,
+                accepted_coordinate=public_base, source_id=location.source_id,
+                coordinate=location.coordinate.model_dump(mode="json"),
+                selector=location.selector.model_dump(mode="json"),
+                selected_content=location.selected_content,
+                accepted_contract=None if located_install else located_contract,
+            )
+        except (CruxibleError, ValueError) as exc:
+            _refuse(
+                "cruxible.authoring.working_selection_refused", "located_at",
+                f"The located selection cannot be captured: {exc}",
+                repair_kind="revise_selection", repair_description="Select admitted prose outside projection blocks.",
+            )
+        located_contract = located.contract
+        _refuse_citation_into_projection_window(
+            instance, payload=payload.model_copy(update={"source": location}), envelope=located.envelope,
+        )
+        located_citation = build_claim_citation(
+            identity, capture_digest=located.capture_digest, role="copy", origin="independent",
+        )
     capture_digests = tuple(
         sorted(
             {
                 *(() if inherited is None else inherited.backing.capture_digests),
                 capture_digest_value,
+                *(() if located is None else (located.capture_digest,)),
             },
             key=lambda item: item.encode("ascii"),
         )
@@ -1862,6 +1902,11 @@ def _lower_claim(
             artifact_digest=subject_digest_value,
         ),
     ]
+    if located_contract is not None:
+        pins.append(_claim_pin(
+            role="capture-contract", target=located_contract.identity,
+            artifact_digest=capture_contract_digest(located_contract).tagged,
+        ))
     for producer_identity in {
         capture_envelope.producer,
         capture_envelope.run_coordinate.executable_identity,
@@ -1924,7 +1969,7 @@ def _lower_claim(
         backing=ClaimBacking(
             referent_context=context,
             capture_digests=capture_digests,
-            citations=merge_claim_citations(predecessor_citations, (citation,)),
+            citations=merge_claim_citations(predecessor_citations, (citation,) + (() if located_citation is None else (located_citation,))),
             input_claim_digests=(
                 tuple(sorted(pin.artifact_digest for pin in derivation.inputs))
                 if derivation is not None
@@ -2004,10 +2049,14 @@ def _lower_claim(
         pass
     if install_contract:
         candidate_tree[contract_member_path] = contract_bytes
+    if located_install and located_contract is not None:
+        candidate_tree[located_path] = render_capture_contract(located_contract)
     candidate_tree[path] = claim_bytes
     member_paths = {path}
     if install_contract:
         member_paths.add(contract_member_path)
+    if located_install and located_contract is not None:
+        member_paths.add(located_path)
     member_paths.update(dependency_paths)
     changed = tuple(
         (member_path, candidate_tree[member_path])
@@ -2050,6 +2099,11 @@ def _lower_claim(
     idempotent = (
         isinstance(payload.source, ExistingCaptureCitationSource) and bool(recited)
     ) or bool(reobserved)
+    if idempotent and located is not None:
+        idempotent = (
+            located.envelope.capture_contract_digest,
+            observed_content(located.envelope).digest, "copy", "independent",
+        ) in _cited_associations(instance, predecessor_citations)
     if idempotent:
         candidate_tree = fork_tree(candidate_base_tree)
         changed = ()
