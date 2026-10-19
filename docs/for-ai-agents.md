@@ -222,6 +222,8 @@ yourself. Append accepts `file`, `under` (default `[]`), and `text`; replace
 accepts `file`, `section`, `text`, and optional subtree-digest `expect`. Supply
 any frontmatter in your own text. Docs-only calls are allowed.
 
+A docs-only write returns this advisory hint: “No Claim cites this text. If it records a belief or decision, add a Claim citing the section; if it is a draft or a note, prose is right.”
+
 On the SDK prefer a typed set with
 `evidence=cx.section("notes.md", ("Decision",), text="# Decision\nThe checks passed.")`.
 Use `replace=True, expect=digest` to replace that section. This carries the prose
@@ -540,5 +542,3 @@ Stop and surface the typed refusal when:
 
 Recovery is a governed principal operation, not a bypass for ordinary
 approval.
-
-No Claim cites this text. If it records a belief or decision, add a Claim citing the section; if it is a draft or a note, prose is right.

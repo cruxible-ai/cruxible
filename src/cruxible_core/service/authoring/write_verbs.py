@@ -3106,7 +3106,7 @@ def service_playbill_write(
                         )
                         for edit in request.docs
                         if isinstance(edit, DocEditObservation)
-                    )
+                    ),
                 }
             )
         if request.full_coordinate and outcome.accepted_coordinate is None:

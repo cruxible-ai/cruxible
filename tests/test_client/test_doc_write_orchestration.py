@@ -153,10 +153,19 @@ def test_section_ref_resolves_resulting_path_and_never_crosses_wire(tmp_path, re
 
     result = write_workspace(
         WriteRequest(
-            because="Reason", docs=(op,),
-            changes=(SetChange(subject="project.item/a", field="status", value="ready",
-                               evidence=SectionEvidence(ref="basis")),),
-        ), workspace=tmp_path, submit=submit,
+            because="Reason",
+            docs=(op,),
+            changes=(
+                SetChange(
+                    subject="project.item/a",
+                    field="status",
+                    value="ready",
+                    evidence=SectionEvidence(ref="basis"),
+                ),
+            ),
+        ),
+        workspace=tmp_path,
+        submit=submit,
     )
     assert result.docs[0].written
 
@@ -166,14 +175,27 @@ def test_unknown_and_duplicate_refs_refuse_before_submit(tmp_path):
 
     for ops, code in [
         ((AppendSection(id="other", file="notes.md", text="# A"),), "section_ref_unknown"),
-        ((AppendSection(id="basis", file="notes.md", text="# A"),
-          AppendSection(id="basis", file="notes.md", text="# B")), "section_ref_ambiguous"),
+        (
+            (
+                AppendSection(id="basis", file="notes.md", text="# A"),
+                AppendSection(id="basis", file="notes.md", text="# B"),
+            ),
+            "section_ref_ambiguous",
+        ),
     ]:
         with pytest.raises(WriteRefusalError, match=code):
             write_workspace(
-                WriteRequest(because="Reason", docs=ops, changes=(
-                    SetChange(field="status", value="ready", evidence=SectionEvidence(ref="basis")),
-                )), workspace=tmp_path, submit=lambda _: pytest.fail("must not submit"),
+                WriteRequest(
+                    because="Reason",
+                    docs=ops,
+                    changes=(
+                        SetChange(
+                            field="status", value="ready", evidence=SectionEvidence(ref="basis")
+                        ),
+                    ),
+                ),
+                workspace=tmp_path,
+                submit=lambda _: pytest.fail("must not submit"),
             )
         assert not (tmp_path / "notes.md").exists()
 
@@ -192,7 +214,14 @@ def test_ref_to_preamble_is_citable(tmp_path):
         assert evidence.observation.selected_content == b"new preamble\n"
         return _answer()
 
-    write_workspace(WriteRequest(
-        because="Reason", docs=(ReplaceSection(id="intro", file="notes.md", section=(), text="new preamble"),),
-        changes=(SetChange(field="status", value="ready", evidence=SectionEvidence(ref="intro")),),
-    ), workspace=tmp_path, submit=submit)
+    write_workspace(
+        WriteRequest(
+            because="Reason",
+            docs=(ReplaceSection(id="intro", file="notes.md", section=(), text="new preamble"),),
+            changes=(
+                SetChange(field="status", value="ready", evidence=SectionEvidence(ref="intro")),
+            ),
+        ),
+        workspace=tmp_path,
+        submit=submit,
+    )

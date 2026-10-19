@@ -253,6 +253,7 @@ def test_the_world_stub_types_set_with_enum_literals(pb: Cruxible) -> None:
     stub = pb.world().stub()
     ast.parse(stub)
     assert "def set(" in stub and "def add(" in stub and "def retire(" in stub
+    assert "evidence: Evidence | AuthoredSection | None" in stub
     add = stub[stub.index("def add(") :]
     assert "expect_absent: bool = ...," in add[: add.index(") -> WriteOutcome")]
     assert "status: Literal['blocked', 'done', 'ready'] = ...," in stub

@@ -57,6 +57,8 @@ The usual answer is a **hybrid**: the prose stays in a Markdown file, and a few
 typed values are extracted from it with a citation of the passage. When the
 prose changes, `next` reports the citation as drifted.
 
+A docs-only write returns this advisory hint: “No Claim cites this text. If it records a belief or decision, add a Claim citing the section; if it is a draft or a note, prose is right.”
+
 Then sketch the model:
 
 - **Subject kinds**: dotted names (`project.task`, `sec.package`). A kind is
@@ -198,5 +200,3 @@ cruxible stub --out world.pyi               # if the user works in Python
 
 Then follow `../_shared/references/governance-flow.md` for the approval
 policy, agent principals and the final handoff.
-
-No Claim cites this text. If it records a belief or decision, add a Claim citing the section; if it is a draft or a note, prose is right.

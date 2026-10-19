@@ -87,6 +87,7 @@ _STUB_IMPORTS = (
     "    ReferentSensitivity,",
     "    SubjectRef,",
     ")",
+    "from cruxible_client.authoring.section_evidence import AuthoredSection",
     "from cruxible_client.authoring.world import (",
     "    KindNamespace,",
     "    Names,",
@@ -337,7 +338,7 @@ def _write_members(world: World, kind: str, body: _Body) -> None:
     by_cardinality = _field_parameters(world, kind)
     common = [
         "    because: str,",
-        "    evidence: Evidence | None = ...,",
+        "    evidence: Evidence | AuthoredSection | None = ...,",
         "    role: WriteRole | None = ...,",
     ]
     tail = ["    dry_run: bool = ...,", "    accept: WriteAccept = ...,"]
@@ -390,7 +391,10 @@ def _edit_block(world: World, node: _Node) -> list[str]:
     lines.append("")
     body = _Body()
     by_cardinality = _field_parameters(world, node.path)
-    common = ["    evidence: Evidence | None = ...,", "    role: WriteRole | None = ...,"]
+    common = [
+        "    evidence: Evidence | AuthoredSection | None = ...,",
+        "    role: WriteRole | None = ...,",
+    ]
     # ``address`` is the runtime edit's own.
     body.declare_lines(
         ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]
@@ -423,7 +427,10 @@ def _new_block(world: World, node: _Node) -> list[str]:
     # The key is the creation's to write: a draft takes every other field.
     keys = frozenset(() if node.identity is None else node.identity.keys)
     by_cardinality = _field_parameters(world, node.path, skip=keys)
-    common = ["    evidence: Evidence | None = ...,", "    role: WriteRole | None = ...,"]
+    common = [
+        "    evidence: Evidence | AuthoredSection | None = ...,",
+        "    role: WriteRole | None = ...,",
+    ]
     # ``subject_kind`` and ``address`` are the runtime draft's own.
     body.declare_lines(
         ["def set(  # type: ignore[override]", "    self,", "    /,", "    *,", *common]

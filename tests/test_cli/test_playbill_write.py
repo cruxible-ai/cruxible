@@ -500,12 +500,18 @@ def test_a_subject_named_by_key_text_reaches_core_as_written(served: _ServiceCli
 def test_docs_only_hint_in_cli_text_and_json(served, tmp_path):
     from cruxible_client.contracts.write import DOCS_ONLY_HINT
 
-    payload = json.dumps({"because": "A note", "docs": [
-        {"op": "append", "id": "note", "file": "notes.md", "text": "# Note\nDraft"},
-    ]})
+    payload = json.dumps(
+        {
+            "because": "A note",
+            "docs": [
+                {"op": "append", "id": "note", "file": "notes.md", "text": "# Note\nDraft"},
+            ],
+        }
+    )
     for output in ([], ["--json"]):
-        result = CliRunner().invoke(cli, [*PREFIX, "write", "-", "--workspace-root",
-            str(tmp_path), *output], input=payload)
+        result = CliRunner().invoke(
+            cli, [*PREFIX, "write", "-", "--workspace-root", str(tmp_path), *output], input=payload
+        )
         assert result.exit_code == 0, result.output
         if output:
             assert json.loads(result.stdout)["hint"] == DOCS_ONLY_HINT

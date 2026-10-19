@@ -193,8 +193,9 @@ def test_outcome_round_trip_and_old_outcome_field_presence() -> None:
     assert updated.docs[0].written
 
 
-@pytest.mark.parametrize("explicit", [{"file": "notes.md"}, {"section": []},
-                                      {"file": "notes.md", "section": ["A"]}])
+@pytest.mark.parametrize(
+    "explicit", [{"file": "notes.md"}, {"section": []}, {"file": "notes.md", "section": ["A"]}]
+)
 def test_ref_and_explicit_address_are_mutually_exclusive(explicit):
     with pytest.raises(ValidationError, match="cannot be combined"):
         SectionEvidence.model_validate({"kind": "section", "ref": "basis", **explicit})

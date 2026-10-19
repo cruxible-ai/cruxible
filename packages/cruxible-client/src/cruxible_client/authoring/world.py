@@ -36,7 +36,6 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from cruxible_client.authoring.section_evidence import AuthoredSection
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
     Cardinality,
@@ -49,6 +48,7 @@ from cruxible_client.authoring.sdk_types import (
     SdkError,
     SubjectRef,
 )
+from cruxible_client.authoring.section_evidence import AuthoredSection
 from cruxible_client.contracts.builtin_claim_types import DESCRIPTOR_KINDS
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.claim_type_structure import (

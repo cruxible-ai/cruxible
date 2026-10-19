@@ -1315,12 +1315,16 @@ write.
 Import: `cruxible_client.authoring.sdk.WriteBatch`. [Source](src/cruxible_client/authoring/sdk.py)
 
 Obtained from `cx.changes(because=..., subject=...)`: value changes written
-together as one change set, accepted or refused whole. Each method returns the
-batch for chaining; `.write()` sends it.
+together as one change set, accepted or refused whole. Change and document
+methods return the batch for chaining; `.section(id)` returns a citation,
+and `.write()` sends the batch.
 
 ```text
-set(*operands, subject=None, evidence=None, role=None, contend=False, expect=None) -> WriteBatch
-add(*operands, subject=None, evidence=None, role=None, expect_absent=False) -> WriteBatch
+append_section(file, text, *, under=(), name=None, id=None) -> WriteBatch
+replace_section(file, section, text, *, expect=None, id=None) -> WriteBatch
+section(id: str) -> SectionEvidence
+set(*operands, subject=None, evidence=None, supported_by=None, role=None, contend=False, expect=None) -> WriteBatch
+add(*operands, subject=None, evidence=None, supported_by=None, role=None, expect_absent=False) -> WriteBatch
 retire(target: str | ClaimRef | SlotRef, *, because=None, reason='was-rescinded', expect=None) -> WriteBatch
 write(*, dry_run=False, accept='if_allowed', at=<this context's coordinate>) -> WriteOutcome
 ```

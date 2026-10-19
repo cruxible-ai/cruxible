@@ -73,6 +73,7 @@ from cruxible_client.authoring.sdk_types import (
     TypedRef,
     WholeValueUnavailable,
 )
+from cruxible_client.authoring.section_evidence import AuthoredSection
 from cruxible_client.authoring.selectors import (
     EvidenceSelection,
     FileSelector,
@@ -251,7 +252,6 @@ from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyRe
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.contracts.triggers import InternalActionName
-from cruxible_client.authoring.section_evidence import AuthoredSection
 from cruxible_client.contracts.write import (
     AddChange,
     AppendSection,
@@ -1660,17 +1660,31 @@ class WriteBatch:
         self.docs: list[DocOp] = []
 
     def append_section(
-        self, file: str, text: str, *, under: tuple[str, ...] = (), name: str | None = None, id: str | None = None
+        self,
+        file: str,
+        text: str,
+        *,
+        under: tuple[str, ...] = (),
+        name: str | None = None,
+        id: str | None = None,
     ) -> WriteBatch:
         """Append a child, creating a missing file with your text. Next: .write()."""
         self.docs.append(AppendSection(id=id, file=file, under=under, text=text, name=name))
         return self
 
     def replace_section(
-        self, file: str, section: tuple[str, ...], text: str, *, expect: str | None = None, id: str | None = None
+        self,
+        file: str,
+        section: tuple[str, ...],
+        text: str,
+        *,
+        expect: str | None = None,
+        id: str | None = None,
     ) -> WriteBatch:
         """Replace a subtree or preamble, checking expect when supplied. Next: .write()."""
-        self.docs.append(ReplaceSection(id=id, file=file, section=section, text=text, expect=expect))
+        self.docs.append(
+            ReplaceSection(id=id, file=file, section=section, text=text, expect=expect)
+        )
         return self
 
     def section(self, id: str) -> SectionEvidence:
@@ -3304,7 +3318,8 @@ class Cruxible:
             raise ValueError("expect is only available for a replacement")
         operation: DocOp = (
             ReplaceSection(file=file, section=heading_path, text=text, expect=expect)
-            if replace else AppendSection(file=file, under=under, text=text)
+            if replace
+            else AppendSection(file=file, under=under, text=text)
         )
         return AuthoredSection(operation, SectionEvidence(file=file, section=heading_path))
 
@@ -3339,17 +3354,28 @@ class Cruxible:
         """
 
         if isinstance(evidence, AuthoredSection):
-            return self._write(WriteRequest(
-                because=because,
-                docs=(evidence.operation,),
-                changes=(SetChange(
-                    subject=_write_subject(subject), field=_write_field(field),
-                    value=_write_value(value), evidence=evidence.citation,
-                    role=role, contend=contend, expect=_write_expect(expect),
-                ),),
-                dry_run=dry_run, accept=accept, at=self._write_at(at),
-                surface="sdk", full_coordinate=True,
-            ))
+            return self._write(
+                WriteRequest(
+                    because=because,
+                    docs=(evidence.operation,),
+                    changes=(
+                        SetChange(
+                            subject=_write_subject(subject),
+                            field=_write_field(field),
+                            value=_write_value(value),
+                            evidence=evidence.citation,
+                            role=role,
+                            contend=contend,
+                            expect=_write_expect(expect),
+                        ),
+                    ),
+                    dry_run=dry_run,
+                    accept=accept,
+                    at=self._write_at(at),
+                    surface="sdk",
+                    full_coordinate=True,
+                )
+            )
         request = SetRequest(
             subject=_write_subject(subject),
             field=_write_field(field),

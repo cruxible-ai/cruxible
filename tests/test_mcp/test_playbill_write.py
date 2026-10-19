@@ -298,6 +298,7 @@ def test_write_tool_outputs_declare_each_warning_variant(
 
 def test_docs_only_hint_in_mcp_structured_and_text_results(monkeypatch, tmp_path):
     import json
+
     from cruxible_client.contracts.write import DOCS_ONLY_HINT
     from cruxible_core.service.authoring.write_verbs import service_playbill_write
     from tests.core_support._write_support import caller, seed_write_surface
@@ -314,10 +315,16 @@ def test_docs_only_hint_in_mcp_structured_and_text_results(monkeypatch, tmp_path
 
     monkeypatch.setattr(handlers, "_get_client", lambda: Client())
     server = create_server()
-    content, structured = asyncio.run(server.call_tool("cruxible_write", {
-        "instance_id": "inst_write", "because": "A note",
-        "docs": [{"op": "append", "file": "notes.md", "text": "# Note\nDraft"}],
-    }))
+    content, structured = asyncio.run(
+        server.call_tool(
+            "cruxible_write",
+            {
+                "instance_id": "inst_write",
+                "because": "A note",
+                "docs": [{"op": "append", "file": "notes.md", "text": "# Note\nDraft"}],
+            },
+        )
+    )
     assert structured["hint"] == DOCS_ONLY_HINT
     assert any(json.loads(block.text).get("hint") == DOCS_ONLY_HINT for block in content)
     assert not structured.get("warnings")

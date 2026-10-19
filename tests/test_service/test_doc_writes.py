@@ -102,13 +102,24 @@ def test_docs_only_hint_is_advisory_and_absent_with_any_changes(tmp_path):
     instance, _ = seed_write_surface(tmp_path)
     edit = DocEditObservation.model_validate(_edit())
     for dry_run in (False, True):
-        result = service_playbill_write(instance, request=WriteRequest(
-            because="Note", docs=(edit,), dry_run=dry_run,
-        ), caller=caller())
+        result = service_playbill_write(
+            instance,
+            request=WriteRequest(
+                because="Note",
+                docs=(edit,),
+                dry_run=dry_run,
+            ),
+            caller=caller(),
+        )
         assert result.hint == DOCS_ONLY_HINT
         assert not result.refused and not result.warnings
-    result = service_playbill_write(instance, request=WriteRequest(
-        because="Decision", docs=(edit,), changes=(SetChange(
-            subject=f"{KIND}/wi-1", field="status", value="ready"),),
-    ), caller=caller())
+    result = service_playbill_write(
+        instance,
+        request=WriteRequest(
+            because="Decision",
+            docs=(edit,),
+            changes=(SetChange(subject=f"{KIND}/wi-1", field="status", value="ready"),),
+        ),
+        caller=caller(),
+    )
     assert result.hint is None and "hint" not in result.model_dump(mode="json")

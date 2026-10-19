@@ -69,6 +69,7 @@ def test_replace_cas_dry_run_docs_only_and_document_followup(playbill_http, tmp_
     created = cx.changes(because="Prose only").append_section("notes.md", "# Decision\nold").write()
     assert created.proposal is None and not created.changes and cx.coordinate == before
     from cruxible_client.contracts.write import DOCS_ONLY_HINT
+
     assert created.hint == DOCS_ONLY_HINT
     assert preview.hint == DOCS_ONLY_HINT
     digest = created.docs[0].after_digest
@@ -159,19 +160,28 @@ def test_batch_section_handle_cites_its_operation(playbill_http, tmp_path, keywo
     result = batch.write()
     assert result.status == "accepted" and result.docs[0].written
     assert result.changes[0].verdict == "supported"
-    assert batch.replace_section("notes.md", ("Decision",), "# Decision\nDone", id="revision") is batch
+    assert (
+        batch.replace_section("notes.md", ("Decision",), "# Decision\nDone", id="revision") is batch
+    )
 
 
 def test_batch_refuses_two_evidence_arguments(playbill_http, tmp_path):
     cx, _, _ = _context(playbill_http, tmp_path)
     batch = cx.changes(because="Reason")
     with pytest.raises(ValueError, match="choose evidence"):
-        batch.set(f"{KIND}/wi-1", "status", "ready", evidence=batch.section("a"),
-                  supported_by=batch.section("b"))
+        batch.set(
+            f"{KIND}/wi-1",
+            "status",
+            "ready",
+            evidence=batch.section("a"),
+            supported_by=batch.section("b"),
+        )
 
 
 @pytest.mark.parametrize("lane", ["subject", "edit", "new", "direct"])
-def test_typed_set_carries_new_section_and_catalogues_after_admission(playbill_http, tmp_path, lane):
+def test_typed_set_carries_new_section_and_catalogues_after_admission(
+    playbill_http, tmp_path, lane
+):
     cx, instance, workspace = _context(playbill_http, tmp_path)
     w = cx.world()
     evidence = cx.section("decisions.md", ("Decision",), text="# Decision\nThe checks passed.")
@@ -179,7 +189,12 @@ def test_typed_set_carries_new_section_and_catalogues_after_admission(playbill_h
     if lane == "subject":
         result = w.project.work_item["wi-1"].set(status="ready", evidence=evidence, because="Ready")
     elif lane == "edit":
-        result = w.project.work_item["wi-1"].edit().set(status="ready", evidence=evidence).write(because="Ready")
+        result = (
+            w.project.work_item["wi-1"]
+            .edit()
+            .set(status="ready", evidence=evidence)
+            .write(because="Ready")
+        )
     elif lane == "new":
         draft = w.project.work_item.define("new-doc-item").set(status="ready", evidence=evidence)
         result = draft.write(because="Ready")
@@ -199,25 +214,43 @@ def test_typed_carried_replace_and_stale_expect(playbill_http, tmp_path):
     cx, _, workspace = _context(playbill_http, tmp_path)
     w = cx.world()
     subject = w.project.work_item["wi-1"]
-    first = subject.set(status="ready", because="Ready", evidence=cx.section(
-        "notes.md", ("Decision",), text="# Decision\nReady"))
+    first = subject.set(
+        status="ready",
+        because="Ready",
+        evidence=cx.section("notes.md", ("Decision",), text="# Decision\nReady"),
+    )
     digest = first.docs[0].after_digest
-    second = subject.set(status="done", because="Done", evidence=cx.section(
-        "notes.md", ("Decision",), text="# Decision\nDone", replace=True, expect=digest))
+    second = subject.set(
+        status="done",
+        because="Done",
+        evidence=cx.section(
+            "notes.md", ("Decision",), text="# Decision\nDone", replace=True, expect=digest
+        ),
+    )
     assert second.docs[0].written
     assert second.changes[0].revises == first.changes[0].claim
     with pytest.raises(WriteRefusalError, match="section_changed"):
-        subject.set(status="blocked", because="Stale", evidence=cx.section(
-            "notes.md", ("Decision",), text="# Decision\nBlocked", replace=True, expect=digest))
+        subject.set(
+            status="blocked",
+            because="Stale",
+            evidence=cx.section(
+                "notes.md", ("Decision",), text="# Decision\nBlocked", replace=True, expect=digest
+            ),
+        )
     assert (workspace / "notes.md").read_text() == "# Decision\nDone\n"
 
 
-def test_typed_carried_section_reports_post_admission_cas_conflict(playbill_http, tmp_path, monkeypatch):
+def test_typed_carried_section_reports_post_admission_cas_conflict(
+    playbill_http, tmp_path, monkeypatch
+):
     cx, _, workspace = _context(playbill_http, tmp_path)
     w = cx.world()
     subject = w.project.work_item["wi-1"]
-    subject.set(status="ready", because="Ready", evidence=cx.section(
-        "notes.md", ("Decision",), text="# Decision\nReady"))
+    subject.set(
+        status="ready",
+        because="Ready",
+        evidence=cx.section("notes.md", ("Decision",), text="# Decision\nReady"),
+    )
     original = cx._client.write
 
     def submit(instance_id, *, request):
@@ -226,8 +259,11 @@ def test_typed_carried_section_reports_post_admission_cas_conflict(playbill_http
         return result
 
     monkeypatch.setattr(cx._client, "write", submit)
-    result = subject.set(status="done", because="Done", evidence=cx.section(
-        "notes.md", ("Decision",), text="# Decision\nDone", replace=True))
+    result = subject.set(
+        status="done",
+        because="Done",
+        evidence=cx.section("notes.md", ("Decision",), text="# Decision\nDone", replace=True),
+    )
     assert result.status == "accepted" and not result.docs[0].written
     assert result.docs[0].refusal.code == "cruxible.doc.doc_write_conflict"
     assert (workspace / "notes.md").read_text() == "# Decision\nConcurrent edit\n"
