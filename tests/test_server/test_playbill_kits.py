@@ -167,7 +167,7 @@ class _World:
             draft.succeed_claim_type(successor, dependents=dependents)
         intent = draft.prepare()
         assert not intent.refused, intent.diagnostics
-        submitted = intent.submit()
+        submitted = intent.submit(accept="never")
         assert submitted._candidate_status is not None
         proposal_id = submitted._candidate_status.proposal_id
         assert proposal_id is not None
@@ -502,7 +502,7 @@ def test_changing_a_claim_type_carries_its_live_claims_as_a_succession_would(
     )
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     consumer.approve(submitted._candidate_status.proposal_id)
@@ -579,7 +579,7 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
     )
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     consumer.approve(submitted._candidate_status.proposal_id)
@@ -1249,7 +1249,7 @@ def _author_contract(world: _World, contract: CaptureContract) -> None:
     draft.capture_contract(contract)
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     proposal_id = submitted._candidate_status.proposal_id
     assert proposal_id is not None
@@ -1462,7 +1462,7 @@ def _author_query(world: _World, definition: QueryDefinitionInput) -> None:
     draft.query_definition(definition)
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     world.approve(submitted._candidate_status.proposal_id)
@@ -1691,7 +1691,7 @@ def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_clai
     )
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     consumer.approve(submitted._candidate_status.proposal_id)
@@ -1814,7 +1814,7 @@ def _author_policy(world: _World, variant: int) -> None:
         draft.procedure(definition=_counting_procedure())
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     world.approve(submitted._candidate_status.proposal_id)
@@ -1836,7 +1836,7 @@ def _author_counting_procedure(world: _World) -> None:
     draft.procedure(definition=_counting_procedure())
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     world.approve(submitted._candidate_status.proposal_id)
@@ -1967,7 +1967,7 @@ def test_a_kit_carries_its_subject_kinds_and_their_keys(
     draft.subject_kind(name="acme.account", keys=("acme.account.slug",), uniqueness="unique")
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     publisher.approve(submitted._candidate_status.proposal_id)
@@ -1983,7 +1983,7 @@ def test_a_kit_carries_its_subject_kinds_and_their_keys(
     creating.subject(consumer.pb.new_subject("acme.account", key="Acme Corp"))
     created = creating.prepare()
     assert not created.refused, created.diagnostics
-    landed = created.submit()
+    landed = created.submit(accept="never")
     assert landed._candidate_status is not None and landed._candidate_status.proposal_id
     consumer.approve(landed._candidate_status.proposal_id)
     assert "subjects/acme.account/acme-corp.json" in consumer.tree()
@@ -1993,7 +1993,7 @@ def test_a_kit_carries_its_subject_kinds_and_their_keys(
     succeed.subject_kind(name="acme.account", keys=("acme.account.slug",), uniqueness="hint")
     succeeded = succeed.prepare()
     assert not succeeded.refused, succeeded.diagnostics
-    sent = succeeded.submit()
+    sent = succeeded.submit(accept="never")
     assert sent._candidate_status is not None and sent._candidate_status.proposal_id
     publisher.approve(sent._candidate_status.proposal_id)
     publisher.pb.refresh()

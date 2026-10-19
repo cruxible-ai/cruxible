@@ -96,7 +96,7 @@ def run(
     def settle(intent):
         if intent.refused:
             raise ValueError(f"Preflight refused: {intent.diagnostics}")
-        intent.submit()
+        intent.submit(accept="never")
         proposal = intent.proposal
         if proposal is None:
             raise ValueError("Submission did not produce a proposal")

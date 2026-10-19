@@ -276,7 +276,7 @@ def test_object_values_shaped_like_markers_read_back_as_themselves(
             role="observation",
             rationale="Recorded.",
             self_source="Recorded.",
-        ).submit()
+        ).submit(accept="never")
         proposal_id = submitted.proposal.proposal_id
         receipt = service_activate_playbill_proposal(
             instance, proposal_id=proposal_id, activated_by=actor

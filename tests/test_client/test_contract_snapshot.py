@@ -158,6 +158,8 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "AuthoringIntentListRecord",
         "AuthoringIntentViewRecord",
         "AuthoringPreflightResult",
+        "AuthoringLanded",
+        "AuthoringProposed",
         "AuthoringSubmitResultRecord",
         "BlockDeclareResult",
         "BlockDepublishResult",

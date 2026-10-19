@@ -383,7 +383,10 @@ def test_sdk_trigger_refuses_exact_event_authoring(pb, window_close):
 
 @pytest.mark.parametrize("entrypoint", ["draft", "changes", "intent"])
 @pytest.mark.parametrize("accept", ["if_allowed", "never"])
-def test_sdk_submit_forwards_accept_and_exposes_typed_outcome(pb, monkeypatch, entrypoint, accept):
+@pytest.mark.parametrize("landed", [False, True])
+def test_sdk_submit_forwards_accept_and_exposes_typed_outcome(
+    pb, monkeypatch, entrypoint, accept, landed
+):
     draft = pb.claim(**claim_args(), self_source="affected package")
     target = draft
     if entrypoint == "changes":
@@ -392,7 +395,12 @@ def test_sdk_submit_forwards_accept_and_exposes_typed_outcome(pb, monkeypatch, e
         )
     elif entrypoint == "intent":
         target = draft.prepare()
-    outcome = api.AuthoringProposed(proposal_id="proposal", reason="accept_never", message="held")
+    landed_coordinate = _COORDINATE.model_copy(update={"git_oid": "b" * 40})
+    outcome = (
+        api.AuthoringLanded(proposal_id="proposal", accepted_coordinate=landed_coordinate)
+        if landed
+        else api.AuthoringProposed(proposal_id="proposal", reason="accept_never", message="held")
+    )
     seen = []
 
     def submit(*args, **kwargs):
@@ -400,9 +408,10 @@ def test_sdk_submit_forwards_accept_and_exposes_typed_outcome(pb, monkeypatch, e
         return api.AuthoringSubmitResultRecord(
             intent={"intent_id": "saved-intent"},
             status=api.CandidateStatusRecord(
-                state="ready_to_activate",
+                state="accepted" if landed else "ready_to_activate",
                 proposal_id="proposal",
-                current_accepted_coordinate=_COORDINATE,
+                current_accepted_coordinate=landed_coordinate if landed else _COORDINATE,
+                accepted_generation=landed_coordinate if landed else None,
             ),
             outcome=outcome,
         )
@@ -412,3 +421,9 @@ def test_sdk_submit_forwards_accept_and_exposes_typed_outcome(pb, monkeypatch, e
     result = target.submit() if accept == "if_allowed" else target.submit(accept=accept)
     assert seen == [accept]
     assert result.outcome == outcome
+    if landed and entrypoint != "changes":
+        assert pb._coordinate == landed_coordinate
+    elif entrypoint == "changes":
+        # A changeset retains its pinned read context; its outcome carries the
+        # new coordinate without changing that context or its parent.
+        assert pb._coordinate == _COORDINATE

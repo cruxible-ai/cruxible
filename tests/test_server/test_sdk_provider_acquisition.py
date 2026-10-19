@@ -269,7 +269,7 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
     pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
     intent = pb.procedure(definition=source._sdk_procedure_input(procedure)).prepare()
     assert not intent.refused, intent.diagnostics
-    intent.submit()
+    intent.submit(accept="never")
     _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
     run = pb.accepted_procedure(procedure.identity.name).run()
     assert run.status == "succeeded", transport.get_procedure_run(instance_id, run.run_id)
@@ -394,7 +394,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     )
     intent = pb.procedure(definition=authored).prepare()
     assert not intent.refused, intent.diagnostics
-    intent.submit()
+    intent.submit(accept="never")
     _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
     run = pb.accepted_procedure("replace-me").run()
     state = transport.get_procedure_run(instance_id, run.run_id)

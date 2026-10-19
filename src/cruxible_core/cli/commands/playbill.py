@@ -4373,16 +4373,25 @@ def submit_authoring_intent(
     submitted = _server_call(call, command_name="cruxible authoring submit")
     outcome = submitted.outcome
     if output_brief:
-        landed = isinstance(outcome, contracts.AuthoringLanded)
+        if isinstance(outcome, contracts.AuthoringLanded):
+            landed = True
+            coordinate = outcome.accepted_coordinate.git_oid
+            reason = None
+            next_command = None
+        else:
+            landed = False
+            coordinate = None
+            reason = outcome.message
+            next_command = outcome.next
         _emit_brief(
             outcome="accepted" if landed else f"submitted ({submitted.status.state})",
             ids={
                 "intent": str(submitted.intent.get("intent_id")),
                 "proposal": outcome.proposal_id,
-                "coordinate": outcome.accepted_coordinate.git_oid if landed else None,
+                "coordinate": coordinate,
             },
-            reason=_submit_refusal_reason(submitted) or (None if landed else outcome.message),
-            next_command=None if landed else outcome.next,
+            reason=_submit_refusal_reason(submitted) or reason,
+            next_command=next_command,
         )
         return
     _emit_json(submitted.model_dump(mode="json"))

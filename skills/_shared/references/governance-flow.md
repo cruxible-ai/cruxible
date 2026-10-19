@@ -50,8 +50,8 @@ authoring input or `cx.changes(rationale=...)` for definitions).
 Decide with the user, early:
 
 - **The approval policy** (`cruxible get ApprovalPolicy:instance`).
-  `self_approval_allowed`, the default, lets an author approve and activate
-  their own changes. `independent_approval_required` needs an approval from
+  `self_approval_allowed`, the default, needs no approval for ordinary changes;
+  submit lands them when the caller may activate. `independent_approval_required` needs an approval from
   someone other than the author for every governed change (`cruxible init
   --require-independent-approval` sets it at creation; afterwards it changes
   through an `approval_policy` authoring input, `cruxible authoring example

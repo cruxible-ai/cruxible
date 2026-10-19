@@ -503,7 +503,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         )
         assert compiled.verdict == "passed", compiled.frontier
         intent_id = str(compiled.certificate.intent_id)
-        submitted = transport.submit_authoring_intent(instance_id, intent_id)
+        submitted = transport.submit_authoring_intent(instance_id, intent_id, accept="never")
         assert submitted.status.proposal_id is not None, submitted
         _approve_and_activate(http, instance_id, reviewer_key, submitted.status.proposal_id)
 
@@ -539,7 +539,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         )
         prepared = pb.procedure(definition=authored).prepare()
         assert not prepared.refused, prepared.diagnostics
-        submitted_procedure = prepared.submit().status()
+        submitted_procedure = prepared.submit(accept="never").status()
         assert submitted_procedure.proposal_id is not None
         _approve_and_activate(http, instance_id, reviewer_key, submitted_procedure.proposal_id)
         accept_members([member for member in members if member["tag"] in line_tags])
@@ -594,7 +594,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             supported_by=captured.ref,
         ).prepare()
         assert not claim.refused, claim.diagnostics
-        submitted_claim = claim.submit()
+        submitted_claim = claim.submit(accept="never")
         status = submitted_claim.status()
         assert status.proposal_id is not None, status
         _approve_and_activate(http, instance_id, reviewer_key, status.proposal_id)

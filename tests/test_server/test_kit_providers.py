@@ -324,7 +324,7 @@ def _author(world: Any, *, procedure: bool = True) -> None:
     )
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
     world.approve(submitted._candidate_status.proposal_id)
@@ -460,7 +460,7 @@ def test_a_kit_bundles_its_provider_installs_it_first_and_its_blueprint_takes_an
         )
         intent = draft.prepare()
         assert not intent.refused, intent.diagnostics
-        submitted = intent.submit()
+        submitted = intent.submit(accept="never")
         assert submitted._candidate_status is not None
         consumer.approve(submitted._candidate_status.proposal_id)
         consumer.pb.refresh()

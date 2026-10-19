@@ -67,6 +67,8 @@ def test_draft_submit_is_one_request_with_one_preflight(
     assert not submitted.refused, submitted.diagnostics
     assert submitted._candidate_status is not None
     assert submitted._candidate_status.proposal_id is not None
+    assert submitted._candidate_status.state == "accepted"
+    assert submitted.outcome is not None and submitted.outcome.status == "landed"
     assert submitted._raw["change_set_claim_identities"]
     # The bound preflight is the one this submit ran, lint included.
     assert submitted._preflight is not None
@@ -95,14 +97,14 @@ def test_staged_submit_costs_two_preflights_and_a_replay_costs_none(
 
     first = draft()
     requests.clear()
-    staged = first.prepare().submit()
+    staged = first.prepare().submit(accept="never")
     staged_requests, staged_preflights = list(requests), len(preflights)
     second = draft()
     requests.clear()
     preflights.clear()
     # The same content again resolves to the same intent, already submitted at
     # this head: one request, no preflight, the same proposal.
-    once = second.submit()
+    once = second.submit(accept="never")
 
     assert once._candidate_status is not None and staged._candidate_status is not None
     assert once._candidate_status.proposal_id == staged._candidate_status.proposal_id
@@ -165,6 +167,8 @@ def test_a_tagless_input_submits_in_one_call_and_a_dry_run_saves_nothing(
     submitted = transport.submit_authoring_input(instance_id, input=payload)
 
     assert submitted.status.proposal_id is not None
+    assert submitted.status.state == "accepted"
+    assert submitted.outcome.status == "landed"
     assert submitted.preflight is not None and submitted.preflight.verdict == "passed"
     assert str(submitted.intent["semantic_identity"]).startswith("ChangeSet:")
     # The preview ran the same checks over the same lowered payload.

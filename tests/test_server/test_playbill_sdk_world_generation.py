@@ -175,7 +175,7 @@ def _accept_vocabulary(
     draft.subject(playbill.new_subject(VULNERABILITY_KIND, key="cve-2026-69247"))
     intent = draft.prepare()
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     proposal_id = submitted._candidate_status.proposal_id
     assert proposal_id is not None
@@ -235,7 +235,7 @@ def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generat
     assert not intent.refused, intent.diagnostics
     assert len(intent._raw["payload"]["members"]) == 3
 
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     proposal_id = submitted._candidate_status.proposal_id
     assert proposal_id is not None
@@ -293,7 +293,7 @@ def test_a_same_set_claim_type_ref_states_a_claim_under_the_type_it_defines(
     intent = draft.prepare()
 
     assert not intent.refused, intent.diagnostics
-    submitted = intent.submit()
+    submitted = intent.submit(accept="never")
     assert submitted._candidate_status is not None
     proposal_id = submitted._candidate_status.proposal_id
     assert proposal_id is not None
