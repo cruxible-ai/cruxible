@@ -576,6 +576,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
 # policy flag, and the kernel start tick that disambiguates a recycled pid.
 NON_CLOCK_DECLARED_FIELDS: frozenset[tuple[str, str]] = frozenset(
     {
+        # A retained source selection locating own words in a file, not a time.
+        ("ClaimAuthoringPayloadV1", "located_at"),
         ("AuthoringIntentCoordinator", "clock"),
         # Reads re-observations at the instant it is given; it holds no time.
         ("ClaimFactRowV1", "_reobserved"),

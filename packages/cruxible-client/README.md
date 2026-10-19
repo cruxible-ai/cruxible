@@ -40,6 +40,21 @@ signature and the next call to make.
 
 ## Conventions and lifecycle
 
+Document-write foundations live in `contracts.doc_sections` and `contracts.write`.
+`parse_sections`, `append_section`, and `replace_section` are pure byte operations:
+ATX heading paths address subtrees; the empty path addresses the preamble after
+frontmatter. Fenced headings, setext headings, and HTML headings are text. Edits
+preserve newline style and return exact subtree digests for compare-and-set.
+An append creating a file uses the agent's text, including any agent-authored
+frontmatter. The agent chooses the file and heading paths.
+
+`AppendSection`, `ReplaceSection`, `DocEditObservation`, `SectionEvidence`, and
+`DocOutcome` describe the pending client/daemon integration. Section evidence
+selects the heading and its own body, ending before the first child. An optional
+`located_at` observation gives own words a file location; ClaimType rules still
+admit only their named contracts. The contracts alone do not apply edits or
+enable document writes on the served adapters. Citing-Claim reports are deferred.
+
 Signatures show actual types and defaults. An argument whose type includes
 `None` is still required when no default is displayed. `*` begins keyword-only
 arguments. Names beginning `api.` refer to `cruxible_client.contracts`.

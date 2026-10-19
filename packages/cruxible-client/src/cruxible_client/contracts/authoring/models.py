@@ -53,6 +53,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBacking,
     ProjectionBlockStampAny,
 )
+from cruxible_client.contracts.doc_sections import SectionPath
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
@@ -465,6 +466,13 @@ WorkingSelectionCoordinate = Annotated[
 ]
 
 
+class SectionSelector(_StrictAuthoringModel):
+    """A heading-path label; byte commitments, never this label, decide drift."""
+
+    path: SectionPath
+    extent: Literal["section"] = "section"
+
+
 class WorkingAnchorWindow(_StrictAuthoringModel):
     tag: Literal["playbill-working-anchor-window-v1"] = "playbill-working-anchor-window-v1"
     anchor: str
@@ -472,6 +480,14 @@ class WorkingAnchorWindow(_StrictAuthoringModel):
     end_byte: int = Field(ge=1)
     observed_occurrence_count: int = Field(ge=0)
     selected_occurrence: int | None = Field(default=None, ge=1)
+    section: SectionSelector | None = None
+
+    @model_serializer(mode="wrap")
+    def _preserve_section_presence(self, handler: Any) -> dict[str, object]:
+        payload = cast(dict[str, object], handler(self))
+        if "section" not in self.model_fields_set:
+            payload.pop("section", None)
+        return payload
 
     @field_validator("anchor")
     @classmethod
@@ -632,6 +648,15 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
     citation_role: Literal["evidence", "copy"] | None = None
     revises: str | None = None
     existing_claim_dispositions: tuple[AuthoringExistingClaimDisposition, ...] = ()
+    located_at: WorkingSelectionObservation | None = None
+
+    @model_serializer(mode="wrap")
+    def _preserve_location_presence(self, handler: Any) -> dict[str, object]:
+        # Missing and explicit-null are distinct historical digest preimages.
+        payload = cast(dict[str, object], handler(self))
+        if "located_at" not in self.model_fields_set:
+            payload.pop("located_at", None)
+        return payload
 
     @field_validator("rationale")
     @classmethod
@@ -2497,6 +2522,7 @@ __all__ = [
     "ExistingCaptureCitationSource",
     "SelfSourceBody",
     "WorkingAnchorWindow",
+    "SectionSelector",
     "WorkingDigestCoordinate",
     "WorkingGitBlobCoordinate",
     "WorkingSelectionObservation",
