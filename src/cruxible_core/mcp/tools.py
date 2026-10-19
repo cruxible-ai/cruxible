@@ -1023,15 +1023,12 @@ def register_tools(
             Field(
                 ge=1,
                 le=GET_HISTORY_MAX_LIMIT,
-                description=(
-                    'Rows per detail="history", "incoming" or "runs" page (history and '
-                    "runs newest first); default 20."
-                ),
+                description="Rows per paged detail; default 20.",
             ),
         ] = None,
         cursor: Annotated[
             str | None,
-            Field(description="next_cursor of the previous history, incoming or runs page."),
+            Field(description="next_cursor of the previous page."),
         ] = None,
         field: Annotated[
             str | None,

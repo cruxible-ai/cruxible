@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-19:app-read-gaps",
-    "surface_digest": "sha256:e68061c4982afd47185c2c04ec8ec59c952ac66d89c5bf5ecf5f38b496c97cbf"
+    "surface_digest": "sha256:dc5f37de78f64209d373c1ae7547443986cc9a35abd6203b15477542e8444b49"
   },
   "surface": {
     "cli_leaves": [
@@ -2311,7 +2311,7 @@
           "get"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_get",
-        "input_schema_digest": "sha256:c5231888dcb0ace6a67b477b5e08a9fc7df1288123a5c15fbdd776edab10d664",
+        "input_schema_digest": "sha256:d02942900c57c9275a0729357ff2f26f07615d60de576aa4b193ac5b151550ff",
         "name": "cruxible_get",
         "output_schema_digest": "sha256:1a8905445142e827ba6cb71d8db72190adaf7eecf6c91550cad503a4945ad5fb",
         "permission": "READ_ONLY"
