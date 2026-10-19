@@ -22,6 +22,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_client.contracts.write import WriteOutcome, WriteRequest
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring import write_verbs
 from cruxible_core.service.authoring.write_verbs import WriteCaller, service_playbill_write
@@ -607,7 +608,9 @@ def test_every_sdk_evidence_repair_runs_against_the_real_builders(
         assert change.evidence == CaptureEvidence(capture=digest)
 
 
-def _move_to_v7(instance: PlaybillInstance, field: str, **fields: object) -> None:
+def _move_to_v7(
+    instance: PlaybillInstance, field: str, *, actor_id: str = "owner", **fields: object
+) -> None:
     """Accept a ClaimType v7 successor of one write-vocabulary field."""
 
     from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactRef
@@ -661,16 +664,16 @@ def _move_to_v7(instance: PlaybillInstance, field: str, **fields: object) -> Non
     tree = instance.tree_at(coordinate.git_oid)
     tree[claim_type_path(successor.predicate)] = render_claim_type(successor)
     proposed = instance.proposal_service().submit(
-        actor=OWNER,
+        actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/owner/v7-{field}", proposed_base_oid=coordinate.git_oid
+            target_ref=f"refs/proposals/{actor_id}/v7-{field}", proposed_base_oid=coordinate.git_oid
         ),
         candidate_tree=tree,
         timestamp="2026-09-29T11:59:45.000000Z",
     )
     assert proposed.candidate is not None, proposed.evaluation
     receipt = service_activate_playbill_proposal(
-        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+        instance, proposal_id=proposed.admission.proposal_id, activated_by=actor_id
     )
     assert receipt.status == "accepted"
 

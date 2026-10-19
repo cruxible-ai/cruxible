@@ -250,6 +250,41 @@ def _write(
     return run
 
 
+def _write_doc_sections(world: World) -> object:
+    """Count one identical section/Claim write in SMALL and ten-times LARGE."""
+    from cruxible_client.authoring.doc_writes import write_workspace
+    from cruxible_client.contracts.write import WriteRequest
+
+    request = WriteRequest.model_validate(
+        {
+            "because": "The edited section records the basis.",
+            "docs": [
+                {"op": "append", "file": "doc-write.md", "text": "# Decision\nThe checks passed.\n"}
+            ],
+            "changes": [
+                {
+                    "op": "set",
+                    "subject": f"{KIND}/doc-scale",
+                    "field": "title",
+                    "value": "Document write",
+                    "evidence": {
+                        "kind": "section",
+                        "file": "doc-write.md",
+                        "section": ["Decision"],
+                    },
+                }
+            ],
+        }
+    )
+    result = write_workspace(
+        request,
+        workspace=world.workspace,
+        submit=lambda observed: playbill_api.playbill_write(world.instance_id, request=observed),
+    )
+    assert result.status == "accepted" and result.docs[0].written, result
+    return result
+
+
 def _typed_creates(world: World) -> list[dict[str, Any]]:
     """Two Subjects by ``create`` changes, one naming the other by its label."""
 
@@ -569,11 +604,6 @@ _CURATION = (
     "(curation_detectors.py:182 _curation_history_index) and every dependency artifact "
     "(claims/closure.py:417), via service/discovery/curation.py:738"
 )
-_CITATIONS = (
-    "audit#6: next with workspace sources builds unscoped facts and each Claim's law "
-    "record and reads a Capture per citation (service/discovery/next.py:2870-2934 "
-    "_citation_commitments via :3827 _workspace_items; service/claims/claims.py:512)"
-)
 _COVERAGE = (
     "audit#10: coverage reads every cited Capture envelope and re-derives every citation "
     "id (indexes/evidence/citation_coverage.py:103-174 via "
@@ -646,7 +676,8 @@ GROWS: dict[str, dict[str, str]] = {
             "service/evidence/evidence.py:926, from service/discovery/query.py:493)"
         ),
     },
-    "read.next.workspace_sources": {"canonical_digests": _CITATIONS},
+    # Workspace-source next digests passed with section-copy commitments (strict XPASS).
+    # Keep that case under the ordinary guard, without changing ratio or slack.
     # Its encodes no longer grow after the encode-once batch (measured XPASS).
     "read.coverage.workspace_sources": _grows(
         _COVERAGE, "canonical_digests", "file_opens", "cas_body_reads"
@@ -684,6 +715,7 @@ def _routes() -> list[Route]:
     return [
         Route("write.create.dry_run", _write(lambda w: _creates(w, "dry"), dry_run=True)),
         Route("write.create", _write(lambda w: _creates(w, "new"))),
+        Route("write.doc_sections", _write_doc_sections),
         *(
             Route(
                 f"tick.after_generation.{part}",
@@ -814,7 +846,14 @@ def test_route_work_does_not_grow_with_the_instance(
 
 @pytest.mark.parametrize(
     "route",
-    ["write.create", "write.revise", "write.create.typed", "cold.write", "procedure.settle"],
+    [
+        "write.create",
+        "write.doc_sections",
+        "write.revise",
+        "write.create.typed",
+        "cold.write",
+        "procedure.settle",
+    ],
 )
 def test_write_routes_spawn_no_git(session: Session, route: str) -> None:
     if route in session.failed:

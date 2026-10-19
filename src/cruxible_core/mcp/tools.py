@@ -73,9 +73,11 @@ from cruxible_client.contracts.write import (
     ClaimValue,
     ContractEvidence,
     CreateChange,
+    DocOp,
     ExpectedValue,
     FileEvidence,
     RetireChange,
+    SectionEvidence,
     SelfEvidence,
     SetChange,
     SlotRef,
@@ -148,18 +150,20 @@ def _source_bindings(rows: list[McpSourceBinding] | None) -> dict[str, str] | No
     return result
 
 
-class McpFileEvidence(FileEvidence):
-    """File evidence as an MCP caller names it; this adapter reads the file.
+class McpSectionEvidence(SectionEvidence):
+    """Cite a Markdown heading path."""
 
-    The daemon never reads workspace files, so the adapter fills ``observation``
-    before the request leaves it. The field stays out of the advertised schema.
-    """
+    observation: SkipJsonSchema[WorkingSelectionObservation | None] = None
+
+
+class McpFileEvidence(FileEvidence):
+    """Cite catalogued file text; the adapter reads the file."""
 
     observation: SkipJsonSchema[WorkingSelectionObservation | None] = None
 
 
 McpEvidence = Annotated[
-    SelfEvidence | CaptureEvidence | McpFileEvidence | ContractEvidence,
+    SelfEvidence | CaptureEvidence | McpFileEvidence | ContractEvidence | McpSectionEvidence,
     Field(discriminator="kind"),
 ]
 _EVIDENCE_DEFAULT = "Default: the write's `because` as self evidence."
@@ -1181,16 +1185,16 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         changes: Annotated[
-            list[McpChange],
+            list[McpChange] | None,
             Field(
-                min_length=1,
                 description=(
                     'Refer to a create\'s Subject as {"created": label} in subject or value, '
                     "in any order."
                 ),
             ),
-        ],
+        ] = None,
         because: Annotated[str, Field(description="Why: the change set's rationale.")],
+        docs: list[DocOp] | None = None,
         subject: Annotated[
             str | None,
             Field(
@@ -1212,10 +1216,11 @@ def register_tools(
             Field(description="The coordinate you read at; default: current head."),
         ] = None,
     ) -> WriteOutcome:
-        """Apply create, set, add and retire changes together as one change set."""
+        """Write doc sections and Claims together. Cite prose with kind=section evidence."""
         return handlers.handle_playbill_write(
             require_instance_id(instance_id),
-            changes=changes,
+            changes=changes or [],
+            docs=docs or [],
             because=because,
             subject=subject,
             dry_run=dry_run,

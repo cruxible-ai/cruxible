@@ -35,6 +35,7 @@ from cruxible_client.authoring.context import (
     ContextResolutionError,
     resolve_context,
 )
+from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.authoring.principal_settings import remembered_principal_settings
 from cruxible_client.authoring.procedures import ProviderBinding, procedure_record_constructor
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
@@ -252,11 +253,14 @@ from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.contracts.triggers import InternalActionName
 from cruxible_client.contracts.write import (
     AddChange,
+    AppendSection,
     Change,
     ClaimValue,
     CreateChange,
+    DocOp,
     Evidence,
     ExpectedValue,
+    ReplaceSection,
     RetireChange,
     RetireRequest,
     SetChange,
@@ -1651,6 +1655,21 @@ class WriteBatch:
         self.because = because
         self.subject = None if subject is None else _write_subject(subject)
         self.changes: list[Change] = []
+        self.docs: list[DocOp] = []
+
+    def append_section(
+        self, file: str, text: str, *, under: tuple[str, ...] = (), name: str | None = None
+    ) -> WriteBatch:
+        """Append a child, creating a missing file with your text. Next: .write()."""
+        self.docs.append(AppendSection(file=file, under=under, text=text, name=name))
+        return self
+
+    def replace_section(
+        self, file: str, section: tuple[str, ...], text: str, *, expect: str | None = None
+    ) -> WriteBatch:
+        """Replace a subtree or preamble, checking expect when supplied. Next: .write()."""
+        self.docs.append(ReplaceSection(file=file, section=section, text=text, expect=expect))
+        return self
 
     @overload
     def set(
@@ -1801,13 +1820,14 @@ class WriteBatch:
         ``outcome.warnings`` for verdicts that are not supported.
         """
 
-        if not self.changes:
-            raise ValueError("a write needs at least one change")
+        if not self.changes and not self.docs:
+            raise ValueError("a write needs at least one change or document operation")
         return self._playbill._write(
             WriteRequest(
                 because=self.because,
                 subject=self.subject,
                 changes=tuple(self.changes),
+                docs=tuple(self.docs),
                 dry_run=dry_run,
                 accept=accept,
                 at=self._playbill._write_at(at),
@@ -2448,8 +2468,9 @@ class Cruxible:
         actually selects from the workspace.
         """
 
-        if self._workspace_files is None:
-            self._workspace_files = WorkspaceFiles(self._workspace_root)
+        from cruxible_client.authoring.selectors import workspace_files
+
+        self._workspace_files = workspace_files(self._workspace_root)
         return self._workspace_files
 
     @property
@@ -2848,7 +2869,8 @@ class Cruxible:
     def file(self, path: str | Path) -> FileSelector:
         """Select text from a catalogued workspace file, to cite as evidence.
 
-        Next: ``cx.file(path).anchor("text found once")`` and pass it as ``supported_by=``.
+        Next: ``cx.file(path).section("Heading", "Child")`` or ``.anchor("text found once")``;
+        pass the selection as ``supported_by=``.
         """
 
         return self._files.select(path)
@@ -3204,10 +3226,11 @@ class Cruxible:
     def _write(self, request: WriteRequest) -> WriteOutcome:
         """Send one write and answer its outcome, or raise its refusal."""
 
-        request = request.model_copy(
-            update={"changes": observe_changes(request.changes, workspace=self._workspace_root)}
+        outcome = write_workspace(
+            request,
+            workspace=self._workspace_root,
+            submit=lambda observed: self._client.write(self._instance_id, request=observed),
         )
-        outcome = self._client.write(self._instance_id, request=request)
         return self._written(outcome)
 
     def _written(self, outcome: WriteOutcome) -> WriteOutcome:

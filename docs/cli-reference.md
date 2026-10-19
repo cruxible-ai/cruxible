@@ -3377,6 +3377,33 @@ cruxible write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-ac
 cruxible write --schema
 ~~~
 
+`write` accepts `docs` with heading paths as lists. Append adds a child subtree
+(`under: []` appends at EOF); replace replaces a subtree (`section: []` selects
+the preamble after frontmatter). Optional `expect` is the prior subtree digest.
+A created file contains your text, including any frontmatter you supply, and
+gets a catalog entry. No `type` option is inferred.
+
+```yaml
+because: Record the rationale and its Claim together.
+docs:
+  - op: append
+    file: notes.md
+    text: "# Decision\nThe work is ready because the checks passed.\n"
+changes:
+  - op: set
+    subject: project.work_item/wi-1
+    field: status
+    value: ready
+    evidence: {kind: section, file: notes.md, section: [Decision]}
+```
+
+Use `write - --workspace-root DIR` for stdin and `write --schema` for the
+payload schema. Docs-only writes create no change set. Accepted and
+awaiting-approval outcomes write files; dry runs and refusals do not. Inspect
+`docs[].written`, digests, refusal/repair, and `next`: post-admission conflicts
+retain Claims but leave the file untouched. Projection blocks and paths under
+`.cruxible` or `.git` refuse. Document targets name `files propose`.
+
 `set` puts VALUE in FIELD of SUBJECT (`kind/id`). On a single-value field it
 replaces the live value: the Claim it revises is found for you. SUBJECT
 `kind/<text>` naming no Subject of a one-key kind (see Subject kinds under

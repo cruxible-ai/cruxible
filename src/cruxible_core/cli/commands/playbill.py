@@ -39,6 +39,7 @@ from cruxible_client.authoring.compact_query import (
     parse_where,
     render_query_table,
 )
+from cruxible_client.authoring.doc_writes import write_workspace
 from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
     AUTHORING_EXAMPLE_NAMES,
@@ -73,7 +74,7 @@ from cruxible_client.authoring.workspace import (
     write_workspace_floor_delta,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for, write_world_stub
-from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
+from cruxible_client.authoring.write_evidence import observe_evidence
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockSyncResult
@@ -128,6 +129,7 @@ from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.write import (
     Change,
+    DocOp,
     FileEvidence,
     RetireRequest,
     SetRequest,
@@ -4469,7 +4471,8 @@ class _WriteFileV1(BaseModel):
         default=None,
         description="The Subject (kind/id) of every change that names none.",
     )
-    changes: list[Change] = Field(min_length=1)
+    changes: list[Change] = Field(default_factory=list, max_length=500)
+    docs: list[DocOp] = Field(default_factory=list, max_length=500)
 
 
 def _write_options(function: Callable[..., Any]) -> Callable[..., Any]:
@@ -4497,6 +4500,13 @@ def _write_options(function: Callable[..., Any]) -> Callable[..., Any]:
 def _write_text(outcome: WriteOutcome) -> None:
     head = outcome.status.replace("_", " ")
     click.echo(f"{head} (generation {outcome.coordinate.generation}, {outcome.coordinate.git_oid})")
+    for doc in outcome.docs:
+        click.echo(
+            f"  doc {doc.file or doc.source_id} {list(doc.section)}: "
+            f"{'written' if doc.written else 'not written'} ({doc.after_digest})"
+        )
+        if doc.refusal:
+            click.echo(f"{doc.refusal.code}: {doc.refusal.message}. {doc.refusal.repair}", err=True)
     for change in outcome.changes:
         target = " ".join(part for part in (change.subject, change.field) if part)
         if change.op == "create":
@@ -4876,7 +4886,7 @@ def write_changes(
     at_oid: str | None,
     output_json: bool,
 ) -> None:
-    """Apply FILE's create, set, add and retire changes as one change set.
+    """Apply FILE's document edits and create, set, add and retire changes.
 
     FILE (YAML or JSON; - reads stdin) holds {"because": ..., "changes": [...]},
     or a bare list of changes with --because. Each change is {"op": "set" |
@@ -4884,6 +4894,9 @@ def write_changes(
     "create", "label", "subject_kind", "key"}; other changes name a created
     Subject {"created": label}, as subject or value. A top-level "subject" is
     the Subject of every change that names none. --schema prints the schema.
+    Optional docs hold append {file, under, text} or replace {file, section,
+    text, expect}. Paths are heading lists; [] selects the preamble. Section
+    evidence {kind: section, file, section} cites the edited text in the same call.
     """
 
     if schema:
@@ -4908,7 +4921,8 @@ def write_changes(
     request = _write_request(
         WriteRequest,
         {
-            "changes": observe_changes(parsed.changes, workspace=Path(workspace_root)),
+            "changes": parsed.changes,
+            "docs": parsed.docs,
             "subject": parsed.subject,
             "because": rationale,
             "dry_run": dry_run,
@@ -4917,9 +4931,13 @@ def write_changes(
         },
         example="cruxible write changes.yaml",
     )
-    outcome = _server_call(
-        lambda client, instance_id: client.write(instance_id, request=request),
-        command_name="cruxible write",
+    outcome = write_workspace(
+        request,
+        workspace=Path(workspace_root),
+        submit=lambda observed: _server_call(
+            lambda client, instance_id: client.write(instance_id, request=observed),
+            command_name="cruxible write",
+        ),
     )
     _finish_write(outcome, output_json=output_json)
 

@@ -59,6 +59,22 @@ you observed instead, rather than minting an adjacent inverse concept.
 
 ## Evidence
 
+Markdown prose and the Claims it supports can land in one `write`. The agent
+chooses the file and ATX heading path, supplies `docs` append/replace operations,
+and cites `{"kind":"section","file":"notes.md","section":["Decision"]}`.
+The selected bytes include the heading and its own body, ending before the first
+child. Prose authored by that write counts as the author's own words: a retained
+self-source Capture keeps the basis and an ordinary file-copy citation records
+its location for drift. Existing sections are file evidence. ClaimType rules
+still admit their named contracts; captured-only requirements reject own words.
+
+The client applies only agent-authored text after admission, including when
+approval remains pending. The daemon receives bytes and logical source IDs,
+never opens workspace paths, and never writes prose. Dry runs write nothing.
+Section digests provide compare-and-set; concurrent changes to other sections
+can rebase, while a changed target yields a repair. Check each document outcome's
+`written` flag. Editing a Document also names the `files propose` follow-up.
+
 A Claim's evidence is one or more of:
 
 - **its author's own words**: the `--because` text every write carries;

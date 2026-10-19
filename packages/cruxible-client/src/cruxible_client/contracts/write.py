@@ -24,7 +24,7 @@ the nearest valid names.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
@@ -32,11 +32,19 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
+    model_serializer,
+    model_validator,
 )
 
 from cruxible_client.contracts import AcceptedCoordinate
-from cruxible_client.contracts.authoring.models import WorkingSelectionObservation
+from cruxible_client.contracts.authoring.models import (
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
+    _canonical_base64,
+)
+from cruxible_client.contracts.captures import FOREIGN_SOURCE_MAX_BYTES
 from cruxible_client.contracts.codes import CurrentCode, code_told_union
+from cruxible_client.contracts.doc_sections import SectionPath, section_digest
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
 from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyValue
@@ -193,10 +201,116 @@ class FileEvidence(_StrictWriteModel):
         return self.file.partition("#")[2]
 
 
+class SectionEvidence(_StrictWriteModel):
+    """Cite a section's own body; the client observes it after this write's edits.
+
+    Authored prose may be used as the writer's own words, with a locating copy.
+    ClaimType admission still names fetched contracts; no authored-byte tracking
+    or new provenance authority is implied by ``own_words``.
+    """
+
+    kind: Literal["section"] = "section"
+    file: str = Field(min_length=1)
+    section: SectionPath
+    own_words: bool | None = None
+    observation: WorkingSelectionObservation | None = Field(
+        default=None, description="Filled by the client that read the section; leave it out."
+    )
+
+    @model_validator(mode="after")
+    def _section_label(self) -> SectionEvidence:
+        if self.observation is not None:
+            label = self.observation.selector.section
+            if label is None or label.path != self.section:
+                raise ValueError("section evidence observation must label the cited heading path")
+        return self
+
+
 Evidence = Annotated[
-    SelfEvidence | CaptureEvidence | FileEvidence | ContractEvidence,
+    SelfEvidence | CaptureEvidence | FileEvidence | ContractEvidence | SectionEvidence,
     Field(discriminator="kind"),
 ]
+
+
+# -- document operations --------------------------------------------------------
+
+
+class AppendSection(_StrictWriteModel):
+    """Append a child subtree, creating a missing file with exactly the agent's text."""
+
+    op: Literal["append"] = "append"
+    file: str = Field(min_length=1)
+    under: SectionPath = ()
+    text: str = Field(min_length=1)
+    name: str | None = Field(
+        default=None, min_length=1, description="Catalog name, used only when creating a file."
+    )
+
+
+class ReplaceSection(_StrictWriteModel):
+    """Replace a whole subtree, or the preamble at the empty heading path."""
+
+    op: Literal["replace"] = "replace"
+    file: str = Field(min_length=1)
+    section: SectionPath
+    text: str
+    expect: str | None = Field(default=None, pattern=CAPTURE_DIGEST_PATTERN)
+
+
+DocOp = Annotated[AppendSection | ReplaceSection, Field(discriminator="op")]
+
+
+class DocEditObservation(_StrictWriteModel):
+    """Bounded wire observation of an edit; carries no workspace path or locator.
+
+    ``section`` labels the resulting subtree. ``before_digest`` is absent for a
+    new child. Whole-file coordinates support client-side compare-and-set;
+    the daemon never opens the file they describe.
+    """
+
+    tag: Literal["playbill-doc-edit-observation-v1"] = "playbill-doc-edit-observation-v1"
+    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
+    op: Literal["append", "replace"]
+    section: SectionPath
+    before_digest: str | None = Field(default=None, pattern=CAPTURE_DIGEST_PATTERN)
+    after_digest: str = Field(pattern=CAPTURE_DIGEST_PATTERN)
+    content_base64: str = Field(max_length=4 * ((FOREIGN_SOURCE_MAX_BYTES + 2) // 3))
+    before_coordinate: WorkingDigestCoordinate | None = None
+    after_coordinate: WorkingDigestCoordinate
+    start_byte: int = Field(default=0, ge=0)
+    end_byte: int = Field(default=0, ge=0)
+    source_content_base64: str | None = None
+
+    @property
+    def content(self) -> bytes:
+        return _canonical_base64(self.content_base64, label="document subtree")
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> DocEditObservation:
+        content = self.content
+        if len(content) > FOREIGN_SOURCE_MAX_BYTES:
+            raise ValueError("document subtree exceeds the foreign-source byte budget")
+        if section_digest(content) != self.after_digest:
+            raise ValueError("document subtree digest does not reproduce")
+        if len(content) > self.after_coordinate.source_byte_length:
+            raise ValueError("document subtree exceeds the whole-file length")
+        if self.op == "append" and not self.section:
+            raise ValueError("append must label a new section, not the preamble")
+        if self.op == "replace" and (self.before_coordinate is None or self.before_digest is None):
+            raise ValueError("replace requires the prior file coordinate and subtree digest")
+        if self.end_byte < self.start_byte or (
+            self.before_coordinate is not None
+            and self.end_byte > self.before_coordinate.source_byte_length
+        ):
+            raise ValueError("document edit window exceeds the prior file")
+        if self.source_content_base64 is not None:
+            whole = _canonical_base64(self.source_content_base64, label="document preimage")
+            if self.before_coordinate is None or (
+                section_digest(whole) != self.before_coordinate.source_content_digest
+                or len(whole) != self.before_coordinate.source_byte_length
+            ):
+                raise ValueError("document preimage differs from its coordinate")
+        return self
 
 
 # -- changes --------------------------------------------------------------------
@@ -398,7 +512,21 @@ class WriteRequest(_WriteRequestBase):
             "subject overrides it."
         ),
     )
-    changes: tuple[Change, ...] = Field(min_length=1, max_length=500)
+    changes: tuple[Change, ...] = Field(default=(), max_length=500)
+    docs: tuple[DocOp | DocEditObservation, ...] = Field(default=(), max_length=500)
+
+    @model_validator(mode="after")
+    def _nonempty(self) -> WriteRequest:
+        if not self.changes and not self.docs:
+            raise ValueError("write requires at least one change or document operation")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _preserve_docs_presence(self, handler: Any) -> dict[str, object]:
+        payload = cast(dict[str, object], handler(self))
+        if "docs" not in self.model_fields_set:
+            payload.pop("docs", None)
+        return payload
 
 
 def as_write_request(
@@ -553,12 +681,26 @@ class WriteRefusal(_StrictWriteModel):
     repair: str | None = Field(default=None, exclude_if=_omit_none)
 
 
+class DocOutcome(_StrictWriteModel):
+    """The client's section result; citing-Claim reports are deferred."""
+
+    file: str | None = Field(default=None, min_length=1)
+    source_id: str | None = None
+    section: SectionPath
+    before_digest: str | None = Field(default=None, pattern=CAPTURE_DIGEST_PATTERN)
+    after_digest: str = Field(pattern=CAPTURE_DIGEST_PATTERN)
+    written: bool = False
+    refusal: WriteRefusal | None = None
+    next: str | None = None
+
+
 class WriteOutcome(_StrictWriteModel):
     """The answer to ``set``, ``retire`` and ``write``: an outcome, not a record."""
 
     tag: Literal["playbill-write-outcome-v1"] = "playbill-write-outcome-v1"
     status: WriteStatus
     changes: tuple[ChangeOutcome, ...] = ()
+    docs: tuple[DocOutcome, ...] = Field(default=(), exclude_if=_omit_empty)
     subjects_added: tuple[str, ...] = Field(
         default=(),
         exclude_if=_omit_empty,
@@ -596,6 +738,13 @@ class WriteOutcome(_StrictWriteModel):
 
 
 __all__ = [
+    "AppendSection",
+    "DocEditObservation",
+    "DocOp",
+    "DocOutcome",
+    "ReplaceSection",
+    "SectionEvidence",
+    "SectionPath",
     "ApprovalNeeded",
     "ApprovalReason",
     "CaptureEvidence",

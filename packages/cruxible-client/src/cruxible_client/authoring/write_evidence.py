@@ -11,12 +11,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from cruxible_client.authoring.selectors import WorkspaceFiles
+from cruxible_client.authoring.selectors import workspace_files
 from cruxible_client.contracts.write import (
     AddChange,
     Change,
     Evidence,
     FileEvidence,
+    SectionEvidence,
     SetChange,
 )
 
@@ -24,9 +25,18 @@ from cruxible_client.contracts.write import (
 def observe_evidence(evidence: Evidence | None, *, workspace: Path) -> Evidence | None:
     """Fill a file evidence's observation from the workspace; other evidence passes through."""
 
-    if not isinstance(evidence, FileEvidence) or evidence.observation is not None:
+    if not isinstance(evidence, FileEvidence | SectionEvidence) or evidence.observation is not None:
         return evidence
-    selection = WorkspaceFiles(workspace).select(evidence.path).anchor(evidence.anchor)
+    if isinstance(evidence, SectionEvidence):
+        selection = workspace_files(workspace).select(evidence.file).section(*evidence.section)
+        return evidence.model_copy(
+            update={
+                "observation": selection.observation(),
+                "file": selection.source_id,
+                "own_words": evidence.own_words or False,
+            }
+        )
+    selection = workspace_files(workspace).select(evidence.path).anchor(evidence.anchor)
     return evidence.model_copy(update={"observation": selection.observation()})
 
 
@@ -35,7 +45,9 @@ def observe_changes(changes: Sequence[Change], *, workspace: Path) -> tuple[Chan
 
     observed: list[Change] = []
     for change in changes:
-        if isinstance(change, SetChange | AddChange) and isinstance(change.evidence, FileEvidence):
+        if isinstance(change, SetChange | AddChange) and isinstance(
+            change.evidence, FileEvidence | SectionEvidence
+        ):
             change = change.model_copy(
                 update={"evidence": observe_evidence(change.evidence, workspace=workspace)}
             )

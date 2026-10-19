@@ -3027,7 +3027,13 @@ def claim_citation_commitments(
     commitments: list[_CitationCommitment] = []
     unavailable: list[_UnavailableCitation] = []
     for citation in claim_citation_references(claim):
-        if citation.capture_digest not in effective_captures:
+        # A located section is a copy, so it does not have to contribute to
+        # the verdict. Its independent location still commits to drift.
+        location_copy = (
+            getattr(citation, "role", None) == "copy"
+            and getattr(citation, "origin", None) == "independent"
+        )
+        if citation.capture_digest not in effective_captures and not location_copy:
             continue
         # Present as of the read's landing position, or missing to it.
         try:
@@ -3043,6 +3049,19 @@ def claim_citation_commitments(
                 )
             )
             continue
+        if citation.capture_digest not in effective_captures:
+            selector = (
+                envelope.source.selector
+                if isinstance(envelope.source, ExternalSourceReference)
+                else None
+            )
+            window = (
+                selector.get("working_selection", selector)
+                if isinstance(selector, Mapping)
+                else None
+            )
+            if not isinstance(window, Mapping) or not isinstance(window.get("section"), Mapping):
+                continue
         source_id: str | None = None
         source_digest: str | None = None
         if (

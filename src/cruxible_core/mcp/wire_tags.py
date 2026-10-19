@@ -120,6 +120,29 @@ def hide_wire_tags(schema: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def compact_write_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop redundant display titles from write grammars; keep every constraint.
+
+    Runs once when constructing the static MCP catalog, O(schema bytes). Field
+    names, descriptions, refs, discriminators, and validation remain unchanged.
+    A property named title is retained: only string-valued schema annotations
+    are removed, never its object-valued property definition.
+    """
+
+    def compact(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: compact(item)
+                for key, item in value.items()
+                if not (key == "title" and isinstance(item, str))
+            }
+        if isinstance(value, list):
+            return [compact(item) for item in value]
+        return value
+
+    return typing.cast(dict[str, Any], compact(schema))
+
+
 def exposed_wire_tags(schema: object) -> list[str]:
     """Every format tag an input schema still offers as a const or enum value."""
 

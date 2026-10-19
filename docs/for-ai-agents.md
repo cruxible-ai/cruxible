@@ -215,6 +215,24 @@ and `cruxible stub --out PATH` writes one explicitly.
 
 ## Write values
 
+Write long rationale into Markdown through `write`'s `docs` operations, and cite
+its section in the same batch with `kind: section`, `file`, and `section`
+(a list of exact ATX heading texts). Choose the file and heading structure
+yourself. Append accepts `file`, `under` (default `[]`), and `text`; replace
+accepts `file`, `section`, `text`, and optional subtree-digest `expect`. Supply
+any frontmatter in your own text. Docs-only calls are allowed.
+
+On the SDK use `.append_section(file, text, under=(...))` or
+`.replace_section(file, section, text, expect=digest)` on
+`cx.changes(because=...)`, then `.write()`. In authoring drafts,
+`cx.file(path).section(*headings)` is a source citation for `supported_by=`.
+On MCP pass `docs` to `cruxible_write`; on CLI use the `write FILE|-` payload.
+Dry-run first to learn digests, and inspect `outcome.docs[].written` and `next`.
+Authored section evidence is own words with a retained basis and a drifting
+file location; ClaimType restrictions still apply. When `next` reports drift,
+re-cite or retire the Claim. Citing-Claims reports are deferred. Heading labels
+containing `://` retain the existing locator-policy restriction.
+
 Values change in the value lane: one change with its verb, several changes
 that must land together with `write`.
 
