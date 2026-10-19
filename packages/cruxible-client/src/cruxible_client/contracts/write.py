@@ -210,15 +210,29 @@ class SectionEvidence(_StrictWriteModel):
     """
 
     kind: Literal["section"] = "section"
-    file: str = Field(min_length=1)
-    section: SectionPath
+    file: str = ""
+    section: SectionPath = ()
+    ref: str | None = Field(default=None, min_length=1, exclude_if=_omit_none)
     own_words: bool | None = None
     observation: WorkingSelectionObservation | None = Field(
         default=None, description="Filled by the client that read the section; leave it out."
     )
 
+    @model_serializer(mode="wrap")
+    def _reference_shape(self, handler: Any) -> dict[str, Any]:
+        result: dict[str, Any] = handler(self)
+        if self.ref is not None:
+            result.pop("file", None)
+            result.pop("section", None)
+        return result
+
     @model_validator(mode="after")
     def _section_label(self) -> SectionEvidence:
+        if self.ref is not None:
+            if {"file", "section"} & self.model_fields_set or self.observation is not None:
+                raise ValueError("section ref cannot be combined with file, section or observation")
+        elif not self.file or "section" not in self.model_fields_set:
+            raise ValueError("section evidence needs ref, or explicit file and section")
         if self.observation is not None:
             label = self.observation.selector.section
             if label is None or label.path != self.section:
@@ -239,6 +253,7 @@ class AppendSection(_StrictWriteModel):
     """Append a child subtree, creating a missing file with exactly the agent's text."""
 
     op: Literal["append"] = "append"
+    id: str | None = Field(default=None, min_length=1, exclude_if=_omit_none)
     file: str = Field(min_length=1)
     under: SectionPath = ()
     text: str = Field(min_length=1)
@@ -251,6 +266,7 @@ class ReplaceSection(_StrictWriteModel):
     """Replace a whole subtree, or the preamble at the empty heading path."""
 
     op: Literal["replace"] = "replace"
+    id: str | None = Field(default=None, min_length=1, exclude_if=_omit_none)
     file: str = Field(min_length=1)
     section: SectionPath
     text: str

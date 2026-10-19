@@ -127,3 +127,72 @@ def test_symlink_into_floor_refuses(tmp_path: Path) -> None:
             workspace=tmp_path,
             submit=lambda _: pytest.fail("must refuse locally"),
         )
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_section_ref_resolves_resulting_path_and_never_crosses_wire(tmp_path, replace):
+    from cruxible_client.contracts.write import SectionEvidence, SetChange
+
+    if replace:
+        (tmp_path / "notes.md").write_text("# Before\nold\n")
+    op = (
+        ReplaceSection(id="basis", file="notes.md", section=("Before",), text="# After\nnew")
+        if replace
+        else AppendSection(id="basis", file="notes.md", text="# After\nnew")
+    )
+
+    def submit(request):
+        evidence = request.changes[0].evidence
+        assert evidence.ref is None and evidence.section == ("After",)
+        assert evidence.observation.selected_content == b"# After\nnew\n"
+        assert evidence.own_words
+        assert '"ref"' not in request.model_dump_json()
+        assert '"id"' not in request.model_dump_json()
+        assert WriteRequest.model_validate_json(request.model_dump_json()) == request
+        return _answer()
+
+    result = write_workspace(
+        WriteRequest(
+            because="Reason", docs=(op,),
+            changes=(SetChange(subject="project.item/a", field="status", value="ready",
+                               evidence=SectionEvidence(ref="basis")),),
+        ), workspace=tmp_path, submit=submit,
+    )
+    assert result.docs[0].written
+
+
+def test_unknown_and_duplicate_refs_refuse_before_submit(tmp_path):
+    from cruxible_client.contracts.write import SectionEvidence, SetChange
+
+    for ops, code in [
+        ((AppendSection(id="other", file="notes.md", text="# A"),), "section_ref_unknown"),
+        ((AppendSection(id="basis", file="notes.md", text="# A"),
+          AppendSection(id="basis", file="notes.md", text="# B")), "section_ref_ambiguous"),
+    ]:
+        with pytest.raises(WriteRefusalError, match=code):
+            write_workspace(
+                WriteRequest(because="Reason", docs=ops, changes=(
+                    SetChange(field="status", value="ready", evidence=SectionEvidence(ref="basis")),
+                )), workspace=tmp_path, submit=lambda _: pytest.fail("must not submit"),
+            )
+        assert not (tmp_path / "notes.md").exists()
+
+
+def test_ref_to_preamble_is_citable(tmp_path):
+    from cruxible_client.authoring.files import add_catalog_entry
+    from cruxible_client.contracts.write import SectionEvidence, SetChange
+
+    path = tmp_path / "notes.md"
+    path.write_text("old preamble\n# A\nbody\n")
+    add_catalog_entry(tmp_path, name="notes", path=path, fields={})
+
+    def submit(request):
+        evidence = request.changes[0].evidence
+        assert evidence.section == ()
+        assert evidence.observation.selected_content == b"new preamble\n"
+        return _answer()
+
+    write_workspace(WriteRequest(
+        because="Reason", docs=(ReplaceSection(id="intro", file="notes.md", section=(), text="new preamble"),),
+        changes=(SetChange(field="status", value="ready", evidence=SectionEvidence(ref="intro")),),
+    ), workspace=tmp_path, submit=submit)

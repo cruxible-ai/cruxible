@@ -187,6 +187,7 @@ def write_workspace(
 
     try:
         observations: list[DocEditObservation] = []
+        sections: dict[str, tuple[str, tuple[str, ...]]] = {}
         for op in request.docs:
             if isinstance(op, DocEditObservation):
                 raise DocSectionError(
@@ -198,6 +199,10 @@ def write_workspace(
             )
             before = state.current
             result, start, end = _apply(before, op)
+            if op.id is not None:
+                if op.id in sections:
+                    raise DocSectionError("section_ref_ambiguous", f"Duplicate doc id {op.id!r}.")
+                sections[op.id] = (op.file, result.section)
             observation = DocEditObservation(
                 source_id=state.source_id,
                 op=op.op,
@@ -221,6 +226,15 @@ def write_workspace(
         changes = []
         for change in request.changes:
             evidence = getattr(change, "evidence", None)
+            if isinstance(evidence, SectionEvidence) and evidence.ref is not None:
+                target = sections.get(evidence.ref)
+                if target is None:
+                    raise DocSectionError(
+                        "section_ref_unknown", f"No doc operation has id {evidence.ref!r}."
+                    )
+                evidence = SectionEvidence(
+                    file=target[0], section=target[1], own_words=evidence.own_words
+                )
             if isinstance(change, SetChange | AddChange) and isinstance(
                 evidence, SectionEvidence | FileEvidence
             ):
