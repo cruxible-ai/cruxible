@@ -198,3 +198,5 @@ cruxible stub --out world.pyi               # if the user works in Python
 
 Then follow `../_shared/references/governance-flow.md` for the approval
 policy, agent principals and the final handoff.
+
+No Claim cites this text. If it records a belief or decision, add a Claim citing the section; if it is a draft or a note, prose is right.

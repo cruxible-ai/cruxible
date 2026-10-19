@@ -84,6 +84,7 @@ Files are written after accepted or awaiting-approval admission. Dry runs report
 digests and write nothing. Inspect `outcome.docs`: a concurrent edit can leave
 `written=False` with a repair even after Claims were admitted. Document targets
 also return a `files propose` follow-up. Citing-Claim reports are deferred.
+Docs-only writes return the advisory `outcome.hint`: No Claim cites this text. If it records a belief or decision, add a Claim citing the section; if it is a draft or a note, prose is right.
 
 Signatures show actual types and defaults. An argument whose type includes
 `None` is still required when no default is displayed. `*` begins keyword-only

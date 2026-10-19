@@ -710,6 +710,12 @@ class DocOutcome(_StrictWriteModel):
     next: str | None = None
 
 
+DOCS_ONLY_HINT = (
+    "No Claim cites this text. If it records a belief or decision, add a Claim citing "
+    "the section; if it is a draft or a note, prose is right."
+)
+
+
 class WriteOutcome(_StrictWriteModel):
     """The answer to ``set``, ``retire`` and ``write``: an outcome, not a record."""
 
@@ -717,6 +723,7 @@ class WriteOutcome(_StrictWriteModel):
     status: WriteStatus
     changes: tuple[ChangeOutcome, ...] = ()
     docs: tuple[DocOutcome, ...] = Field(default=(), exclude_if=_omit_empty)
+    hint: str | None = Field(default=None, exclude_if=_omit_none)
     subjects_added: tuple[str, ...] = Field(
         default=(),
         exclude_if=_omit_empty,

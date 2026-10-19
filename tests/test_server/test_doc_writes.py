@@ -42,6 +42,7 @@ def test_sdk_create_catalog_citation_retry_and_hand_edit_drift(playbill_http, tm
     cx, instance, workspace = _context(playbill_http, tmp_path)
     result = _batch(cx).write()
     assert result.status == "accepted" and result.docs[0].written, result
+    assert result.hint is None
     assert result.changes[0].verdict == "supported"
     assert len(cited_captures(instance, result.changes[0].claim)) == 2
     assert cx.file("notes.md").section("Decision").observation().selector.section.path == (
@@ -67,6 +68,9 @@ def test_replace_cas_dry_run_docs_only_and_document_followup(playbill_http, tmp_
     assert preview.status == "would_accept" and not (workspace / "notes.md").exists()
     created = cx.changes(because="Prose only").append_section("notes.md", "# Decision\nold").write()
     assert created.proposal is None and not created.changes and cx.coordinate == before
+    from cruxible_client.contracts.write import DOCS_ONLY_HINT
+    assert created.hint == DOCS_ONLY_HINT
+    assert preview.hint == DOCS_ONLY_HINT
     digest = created.docs[0].after_digest
     replaced = (
         cx.changes(because="Revise prose")
