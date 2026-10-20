@@ -136,7 +136,7 @@ from cruxible_core.indexes.projection_retention import (
 )
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.indexes.proposals.proposal_note_reader import proposal_note_snapshot
-from cruxible_core.indexes.serving import bind_current_projection
+from cruxible_core.indexes.serving import ServingPointerMoved, bind_current_projection
 from cruxible_core.indexes.sqlite import (
     ProjectionEvicted,
     ProjectionHandle,
@@ -2668,7 +2668,21 @@ class PlaybillInstance:
         directory = paths["projections"]
         if verified == self.accepted_coordinate():
             # The serving head is never evicted; its handle holds its piece too.
-            return self._projection_sources(bind_current_projection(directory, expected=verified))
+            try:
+                return self._projection_sources(
+                    bind_current_projection(directory, expected=verified)
+                )
+            except ServingPointerMoved:
+                # A settle publishes the next serving pointer before this
+                # process advances its head. A read is a snapshot at its own
+                # coordinate: bind that coordinate's own manifest, built when it
+                # was accepted. Never builds; a missing one stays refused.
+                return self._projection_sources(
+                    bind_projection(
+                        directory / self._manifest_name_for_coordinate(verified, directory),
+                        expected=verified,
+                    )
+                )
         # Naming the manifest needs only this coordinate. The replay-proven
         # coordinates of every generation are built only for a rebuild, so a
         # bind at a base behind the head costs the same at any history length.
@@ -2721,6 +2735,24 @@ class PlaybillInstance:
         if location is not None:
             with held_here(manifest_path, location.sequence):
                 pass
+
+    @staticmethod
+    def _manifest_name_for_coordinate(
+        coordinate: AcceptedProjectionCoordinate, directory: Path
+    ) -> str:
+        return projection_manifest_name(
+            AssemblerRequest(
+                instance_id=coordinate.instance_id,
+                repository_path=coordinate.repository_path,
+                git_object_format=coordinate.git_object_format,
+                git_oid=coordinate.git_oid,
+                semantic_root=coordinate.semantic_root,
+                generation_root=coordinate.generation_root,
+                compiler_digest=coordinate.compiler.rule_digest,
+                schema_version=coordinate.compiler.schema_version,
+                output_staging_directory=str(directory),
+            )
+        )
 
     def _manifest_name_for(self, generation: RecoveredGeneration, directory: Path) -> str:
         return projection_manifest_name(
