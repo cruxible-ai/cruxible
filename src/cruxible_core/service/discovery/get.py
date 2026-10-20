@@ -136,6 +136,7 @@ from cruxible_core.indexes.history.history_index import (
     AcceptedMemberLocation,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL
 from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
@@ -1850,9 +1851,9 @@ def _subject_kind_card(
     kind = _name(resolved.identity)
     with instance.bind_accepted_projection(coordinate) as projection:
         declared = cast(SubjectKind, projection.typed.source(resolved.identity))
-        (live,) = projection.typed.connection.execute(
-            "SELECT COUNT(*) FROM subjects WHERE subject_kind=? AND lifecycle='live'", (kind,)
-        ).fetchone()
+        # The kind's maintained counter: one key seek, never a count of its Subjects.
+        counted = projection.typed.connection.execute(LIVE_SUBJECT_COUNT_SQL, (kind,)).fetchone()
+        live = 0 if counted is None else counted[0]
         kit = owned_by(kit_owners(instance, projection.typed.connection), "SubjectKind", kind)
     rule = declared.identity_rule
     return GetSubjectKindCard(

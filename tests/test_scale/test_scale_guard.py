@@ -1055,6 +1055,61 @@ def test_a_graph_edge_page_reads_only_its_own_rows(session: Session) -> None:
         )
 
 
+#: The ontology reads a kind page makes, each answered from maintained counters.
+_ONTOLOGY_READS: dict[str, Callable[[World], object]] = {
+    "orient.claim_types": lambda world: playbill_api.playbill_orient(
+        world.instance_id, section="claim_types", limit=5
+    ),
+    "get.subject_kind": lambda world: playbill_api.playbill_get(
+        world.instance_id, request=GetRequest(ref=f"SubjectKind:{KIND}")
+    ),
+}
+
+
+def test_ontology_reads_never_count_their_population(session: Session) -> None:
+    """10 vs 250 more Subjects (each with a title Claim): the ontology reads stay flat.
+
+    Subject counts come from ``query_subject_counts``, which Subject writes
+    maintain; nothing on these reads counts the kind's Subjects or Claims. The
+    bound is absolute (``SLACK`` alone, no ratio): a recount of 240 more rows
+    costs well over 1,024 VM steps, so it fails here however large the read's
+    fixed work is.
+    """
+
+    world = session.small
+
+    def add(count: int, tag: str) -> None:
+        _worlds.write(
+            world,
+            [
+                {
+                    "op": "set",
+                    "subject": f"{KIND}/onto-{tag}-{index:03d}",
+                    "field": "title",
+                    "value": tag,
+                }
+                for index in range(count)
+            ],
+        )
+        settle_advertisement(world.instance)
+
+    measured: dict[str, dict[str, dict[str, Any]]] = {name: {} for name in _ONTOLOGY_READS}
+    for count, tag in ((10, "ten"), (240, "many")):
+        add(count, tag)
+        for name, read in _ONTOLOGY_READS.items():
+            read(world)
+            with counting(world.root) as window:
+                read(world)
+            assert not window.unexplained, window.unexplained[:5]
+            measured[name][tag] = {counter: window.counts[counter] for counter in COUNTERS}
+    for name, by_tag in measured.items():
+        for counter in COUNTERS:
+            small, large = by_tag["ten"][counter], by_tag["many"][counter]
+            assert large <= small + SLACK[counter], (
+                f"{name} {counter}: 10 more Subjects {small}, 250 more Subjects {large}"
+            )
+
+
 def _top_statements(measured: dict[str, dict[str, Any]], shown: int = 5) -> str:
     """The heaviest statements in LARGE, with their steps in SMALL, where they ran from,
     their tables and how each cursor moved."""

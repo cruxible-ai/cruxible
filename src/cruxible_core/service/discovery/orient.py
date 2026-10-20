@@ -72,6 +72,7 @@ from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.exhaust.journal_index import RunPageInvalidated
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNTS_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
@@ -294,12 +295,9 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
             claim_types.append(claim_type)
             evidence[claim_type.predicate] = names.admitted(claim_type)
             digest_named += names.names_by_digest(claim_type)
+        # The per-kind counters Subject writes maintain (vocabulary-sized), never a recount.
         subjects_by_kind = {
-            str(kind): int(count)
-            for kind, count in connection.execute(
-                "SELECT subject_kind, count(*) FROM subjects WHERE lifecycle='live' "
-                "GROUP BY subject_kind"
-            )
+            str(kind): int(count) for kind, count in connection.execute(LIVE_SUBJECT_COUNTS_SQL)
         }
         identities = {
             item.kind: "minted"

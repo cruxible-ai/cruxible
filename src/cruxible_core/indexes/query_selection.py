@@ -39,3 +39,12 @@ CREATE TRIGGER query_subject_update AFTER UPDATE OF subject_kind,lifecycle ON su
     ON CONFLICT(subject_kind,lifecycle) DO UPDATE SET amount=amount+1;
 END;
 """
+
+#: Every kind's live Subject count, from the maintained counters (vocabulary-sized).
+LIVE_SUBJECT_COUNTS_SQL = (
+    "SELECT subject_kind, amount FROM query_subject_counts WHERE lifecycle='live'"
+)
+#: One kind's live Subject count: a primary-key seek of its counter.
+LIVE_SUBJECT_COUNT_SQL = (
+    "SELECT amount FROM query_subject_counts WHERE subject_kind=? AND lifecycle='live'"
+)
