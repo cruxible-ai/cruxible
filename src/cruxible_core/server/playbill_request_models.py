@@ -121,9 +121,12 @@ class ProposeDocumentRequest(_StrictPlaybillRequest):
 
 
 class CompilerUpgradeRequest(_StrictPlaybillRequest):
-    target: CompilerCoordinate
-    base: AcceptedCoordinate
-    proposal_name: str
+    #: Omitted: the compiler this daemon runs.
+    target: CompilerCoordinate | None = None
+    #: Omitted: the current accepted coordinate.
+    base: AcceptedCoordinate | None = None
+    #: Omitted: ``upgrade-to-<revision label>``.
+    proposal_name: str | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
 

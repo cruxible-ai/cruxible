@@ -46,6 +46,7 @@ import sqlite3
 import threading
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import partial
@@ -76,6 +77,7 @@ from cruxible_core.consumers.protocol import ConsumerHealth, ConsumerRepair, Con
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.indexes.typed_state import utc_microseconds
 from cruxible_core.server.config import get_disabled_consumers
+from cruxible_core.startup_progress import slow_step
 from cruxible_core.storage.read_positions import (
     ReadPositions,
     body_identity,
@@ -2088,24 +2090,37 @@ def _catch_up_to(
     except _StateGone:
         return  # another pass moved the state; the next pass starts from there
     rebuild = change is None
-    if change is None:
-        change = _Change(_rebuild(instance, heads, at=now), now)
-    with _STATE.open(instance) as connection:
-        assert connection is not None
-        if _read_cursors(connection) != original:
-            return  # another catch-up moved the state; the next pass starts from there
-        _settle(
-            instance,
-            connection,
-            coordinate=heads.coordinate,
-            at=change.at,
-            delta=change.delta,
-            rebuild=rebuild,
+    # A build from nothing derives every Claim: say so where the daemon logs it.
+    progress = (
+        slow_step(
+            "next_facts_build",
+            instance_id=instance.descriptor.instance_id,
+            reason="cold_start" if original is None else "cursors_not_followable",
         )
-        _write_cursors(connection, change.delta, heads=heads, at=change.at)
-        # Armed before the commit: no published fact or row is left without its
-        # refresh signal. An early fire is a no-op pass that arms again.
-        _arm(instance, _earliest_end(connection))
+        if rebuild
+        else nullcontext()
+    )
+    with progress as step:
+        if change is None:
+            change = _Change(_rebuild(instance, heads, at=now), now)
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            if _read_cursors(connection) != original:
+                return  # another catch-up moved the state; the next pass starts from there
+            _settle(
+                instance,
+                connection,
+                coordinate=heads.coordinate,
+                at=change.at,
+                delta=change.delta,
+                rebuild=rebuild,
+            )
+            _write_cursors(connection, change.delta, heads=heads, at=change.at)
+            # Armed before the commit: no published fact or row is left without its
+            # refresh signal. An early fire is a no-op pass that arms again.
+            _arm(instance, _earliest_end(connection))
+            if step is not None:
+                step.set(claims=len(change.delta.facts), slots=len(change.delta.slots))
 
 
 @dataclass(frozen=True)

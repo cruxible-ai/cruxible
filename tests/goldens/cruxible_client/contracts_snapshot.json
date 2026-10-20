@@ -1077,6 +1077,70 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "CompilerUpgradeNotice": {
+            "additionalProperties": false,
+            "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
+            "properties": {
+              "message": {
+                "minLength": 1,
+                "title": "Message",
+                "type": "string"
+              },
+              "one_way": {
+                "const": true,
+                "default": true,
+                "title": "One Way",
+                "type": "boolean"
+              },
+              "source_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Source Compiler Digest",
+                "type": "string"
+              },
+              "source_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Revision"
+              },
+              "tag": {
+                "const": "cruxible-compiler-upgrade-notice-v1",
+                "default": "cruxible-compiler-upgrade-notice-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Target Compiler Digest",
+                "type": "string"
+              },
+              "target_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Target Revision"
+              }
+            },
+            "required": [
+              "source_compiler_digest",
+              "target_compiler_digest",
+              "message"
+            ],
+            "title": "CompilerUpgradeNotice",
+            "type": "object"
+          },
           "PriorRefusalCoverage": {
             "additionalProperties": false,
             "description": "How far earlier retirements were indexed when receipts were read.\n\nPresent only while the index is catching up: receipts then reflect\nretirements accepted through ``indexed_through_generation`` of\n``accepted_generation``. Rejections are always current.",
@@ -1365,6 +1429,17 @@
               "candidate_digest": {
                 "title": "Candidate Digest",
                 "type": "string"
+              },
+              "compiler_upgrade": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompilerUpgradeNotice"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "complete_members": {
                 "items": {
@@ -15934,11 +16009,86 @@
             "title": "ClaimTypeProposalLint",
             "type": "object"
           },
+          "CompilerUpgradeNotice": {
+            "additionalProperties": false,
+            "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
+            "properties": {
+              "message": {
+                "minLength": 1,
+                "title": "Message",
+                "type": "string"
+              },
+              "one_way": {
+                "const": true,
+                "default": true,
+                "title": "One Way",
+                "type": "boolean"
+              },
+              "source_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Source Compiler Digest",
+                "type": "string"
+              },
+              "source_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Revision"
+              },
+              "tag": {
+                "const": "cruxible-compiler-upgrade-notice-v1",
+                "default": "cruxible-compiler-upgrade-notice-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Target Compiler Digest",
+                "type": "string"
+              },
+              "target_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Target Revision"
+              }
+            },
+            "required": [
+              "source_compiler_digest",
+              "target_compiler_digest",
+              "message"
+            ],
+            "title": "CompilerUpgradeNotice",
+            "type": "object"
+          },
           "ProposalInspection": {
             "additionalProperties": false,
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "compiler_upgrade": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompilerUpgradeNotice"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "lint": {
                 "anyOf": [
@@ -16837,11 +16987,86 @@
             "title": "ClaimTypeProposalLint",
             "type": "object"
           },
+          "CompilerUpgradeNotice": {
+            "additionalProperties": false,
+            "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
+            "properties": {
+              "message": {
+                "minLength": 1,
+                "title": "Message",
+                "type": "string"
+              },
+              "one_way": {
+                "const": true,
+                "default": true,
+                "title": "One Way",
+                "type": "boolean"
+              },
+              "source_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Source Compiler Digest",
+                "type": "string"
+              },
+              "source_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Revision"
+              },
+              "tag": {
+                "const": "cruxible-compiler-upgrade-notice-v1",
+                "default": "cruxible-compiler-upgrade-notice-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Target Compiler Digest",
+                "type": "string"
+              },
+              "target_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Target Revision"
+              }
+            },
+            "required": [
+              "source_compiler_digest",
+              "target_compiler_digest",
+              "message"
+            ],
+            "title": "CompilerUpgradeNotice",
+            "type": "object"
+          },
           "ProposalInspection": {
             "additionalProperties": false,
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "compiler_upgrade": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompilerUpgradeNotice"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "lint": {
                 "anyOf": [
@@ -17313,11 +17538,86 @@
             "title": "ClaimTypeProposalLint",
             "type": "object"
           },
+          "CompilerUpgradeNotice": {
+            "additionalProperties": false,
+            "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
+            "properties": {
+              "message": {
+                "minLength": 1,
+                "title": "Message",
+                "type": "string"
+              },
+              "one_way": {
+                "const": true,
+                "default": true,
+                "title": "One Way",
+                "type": "boolean"
+              },
+              "source_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Source Compiler Digest",
+                "type": "string"
+              },
+              "source_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Revision"
+              },
+              "tag": {
+                "const": "cruxible-compiler-upgrade-notice-v1",
+                "default": "cruxible-compiler-upgrade-notice-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Target Compiler Digest",
+                "type": "string"
+              },
+              "target_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Target Revision"
+              }
+            },
+            "required": [
+              "source_compiler_digest",
+              "target_compiler_digest",
+              "message"
+            ],
+            "title": "CompilerUpgradeNotice",
+            "type": "object"
+          },
           "ProposalInspection": {
             "additionalProperties": false,
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "compiler_upgrade": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompilerUpgradeNotice"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "lint": {
                 "anyOf": [
@@ -17789,11 +18089,86 @@
             "title": "ClaimTypeProposalLint",
             "type": "object"
           },
+          "CompilerUpgradeNotice": {
+            "additionalProperties": false,
+            "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
+            "properties": {
+              "message": {
+                "minLength": 1,
+                "title": "Message",
+                "type": "string"
+              },
+              "one_way": {
+                "const": true,
+                "default": true,
+                "title": "One Way",
+                "type": "boolean"
+              },
+              "source_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Source Compiler Digest",
+                "type": "string"
+              },
+              "source_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Revision"
+              },
+              "tag": {
+                "const": "cruxible-compiler-upgrade-notice-v1",
+                "default": "cruxible-compiler-upgrade-notice-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Target Compiler Digest",
+                "type": "string"
+              },
+              "target_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Target Revision"
+              }
+            },
+            "required": [
+              "source_compiler_digest",
+              "target_compiler_digest",
+              "message"
+            ],
+            "title": "CompilerUpgradeNotice",
+            "type": "object"
+          },
           "ProposalInspection": {
             "additionalProperties": false,
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "compiler_upgrade": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompilerUpgradeNotice"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "lint": {
                 "anyOf": [
@@ -18883,6 +19258,180 @@
         "facts",
         "statement",
         "tag"
+      ]
+    },
+    "CompilerUpgradeNotice": {
+      "fields": {
+        "message": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "message",
+          "required": true,
+          "schema": {
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "one_way": {
+          "default": true,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "one_way",
+          "required": false,
+          "schema": {
+            "const": true,
+            "default": true,
+            "title": "One Way",
+            "type": "boolean"
+          }
+        },
+        "source_compiler_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_compiler_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Source Compiler Digest",
+            "type": "string"
+          }
+        },
+        "source_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "source_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Revision"
+          }
+        },
+        "tag": {
+          "default": "cruxible-compiler-upgrade-notice-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "cruxible-compiler-upgrade-notice-v1",
+            "default": "cruxible-compiler-upgrade-notice-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "target_compiler_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target_compiler_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Target Compiler Digest",
+            "type": "string"
+          }
+        },
+        "target_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "target_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Target Revision"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
+        "properties": {
+          "message": {
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "one_way": {
+            "const": true,
+            "default": true,
+            "title": "One Way",
+            "type": "boolean"
+          },
+          "source_compiler_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Source Compiler Digest",
+            "type": "string"
+          },
+          "source_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Revision"
+          },
+          "tag": {
+            "const": "cruxible-compiler-upgrade-notice-v1",
+            "default": "cruxible-compiler-upgrade-notice-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "target_compiler_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Target Compiler Digest",
+            "type": "string"
+          },
+          "target_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Target Revision"
+          }
+        },
+        "required": [
+          "source_compiler_digest",
+          "target_compiler_digest",
+          "message"
+        ],
+        "title": "CompilerUpgradeNotice",
+        "type": "object"
+      },
+      "required_fields": [
+        "message",
+        "source_compiler_digest",
+        "target_compiler_digest"
       ]
     },
     "ConsumerStatus": {
@@ -72131,6 +72680,25 @@
             "$ref": "#/$defs/AcceptedCoordinate"
           }
         },
+        "compiler_upgrade": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "compiler_upgrade",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CompilerUpgradeNotice"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "lint": {
           "default": null,
           "default_json_serializable": true,
@@ -72340,6 +72908,70 @@
             "title": "ClaimTypeProposalLint",
             "type": "object"
           },
+          "CompilerUpgradeNotice": {
+            "additionalProperties": false,
+            "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
+            "properties": {
+              "message": {
+                "minLength": 1,
+                "title": "Message",
+                "type": "string"
+              },
+              "one_way": {
+                "const": true,
+                "default": true,
+                "title": "One Way",
+                "type": "boolean"
+              },
+              "source_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Source Compiler Digest",
+                "type": "string"
+              },
+              "source_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Revision"
+              },
+              "tag": {
+                "const": "cruxible-compiler-upgrade-notice-v1",
+                "default": "cruxible-compiler-upgrade-notice-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Target Compiler Digest",
+                "type": "string"
+              },
+              "target_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Target Revision"
+              }
+            },
+            "required": [
+              "source_compiler_digest",
+              "target_compiler_digest",
+              "message"
+            ],
+            "title": "CompilerUpgradeNotice",
+            "type": "object"
+          },
           "WorkspaceAdvertisement": {
             "additionalProperties": false,
             "properties": {
@@ -72419,6 +73051,17 @@
         "properties": {
           "accepted_coordinate": {
             "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "compiler_upgrade": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CompilerUpgradeNotice"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "lint": {
             "anyOf": [
@@ -73502,11 +74145,86 @@
             "title": "ClaimTypeProposalLint",
             "type": "object"
           },
+          "CompilerUpgradeNotice": {
+            "additionalProperties": false,
+            "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
+            "properties": {
+              "message": {
+                "minLength": 1,
+                "title": "Message",
+                "type": "string"
+              },
+              "one_way": {
+                "const": true,
+                "default": true,
+                "title": "One Way",
+                "type": "boolean"
+              },
+              "source_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Source Compiler Digest",
+                "type": "string"
+              },
+              "source_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Revision"
+              },
+              "tag": {
+                "const": "cruxible-compiler-upgrade-notice-v1",
+                "default": "cruxible-compiler-upgrade-notice-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Target Compiler Digest",
+                "type": "string"
+              },
+              "target_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Target Revision"
+              }
+            },
+            "required": [
+              "source_compiler_digest",
+              "target_compiler_digest",
+              "message"
+            ],
+            "title": "CompilerUpgradeNotice",
+            "type": "object"
+          },
           "ProposalInspection": {
             "additionalProperties": false,
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "compiler_upgrade": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompilerUpgradeNotice"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "lint": {
                 "anyOf": [
@@ -74169,6 +74887,25 @@
             "type": "string"
           }
         },
+        "compiler_upgrade": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "compiler_upgrade",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CompilerUpgradeNotice"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "complete_members": {
           "has_default": false,
           "has_default_factory": false,
@@ -74505,6 +75242,70 @@
               "artifact_digest"
             ],
             "title": "ArtifactPin",
+            "type": "object"
+          },
+          "CompilerUpgradeNotice": {
+            "additionalProperties": false,
+            "description": "What sets a compiler upgrade apart from every other proposal: it is one-way.\n\nCarried by the upgrade's preview, its proposal and its review, where the\ndecision to activate is made. Once activated, the accepted head names\n``target_compiler_digest``, and a release whose daemon does not install\nthat compiler can no longer serve the instance; there is no downgrade.",
+            "properties": {
+              "message": {
+                "minLength": 1,
+                "title": "Message",
+                "type": "string"
+              },
+              "one_way": {
+                "const": true,
+                "default": true,
+                "title": "One Way",
+                "type": "boolean"
+              },
+              "source_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Source Compiler Digest",
+                "type": "string"
+              },
+              "source_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Revision"
+              },
+              "tag": {
+                "const": "cruxible-compiler-upgrade-notice-v1",
+                "default": "cruxible-compiler-upgrade-notice-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Target Compiler Digest",
+                "type": "string"
+              },
+              "target_revision": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Target Revision"
+              }
+            },
+            "required": [
+              "source_compiler_digest",
+              "target_compiler_digest",
+              "message"
+            ],
+            "title": "CompilerUpgradeNotice",
             "type": "object"
           },
           "PriorRefusalCoverage": {
@@ -74969,6 +75770,17 @@
           "candidate_digest": {
             "title": "Candidate Digest",
             "type": "string"
+          },
+          "compiler_upgrade": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CompilerUpgradeNotice"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "complete_members": {
             "items": {

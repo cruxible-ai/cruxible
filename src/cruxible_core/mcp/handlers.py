@@ -739,16 +739,18 @@ def handle_playbill_files_propose(
 
 def handle_playbill_compiler_upgrade(
     instance_id: str,
-    target_compiler_digest: str,
-    base: dict[str, Any],
-    proposal_name: str,
+    target_compiler_digest: str | None = None,
+    base: dict[str, Any] | None = None,
+    proposal_name: str | None = None,
     *,
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalInspection:
     request = CompilerUpgradeRequest.model_validate(
         {
-            "target": {"rule_digest": target_compiler_digest},
+            "target": (
+                None if target_compiler_digest is None else {"rule_digest": target_compiler_digest}
+            ),
             "base": base,
             "proposal_name": proposal_name,
             "dry_run": dry_run,

@@ -24,6 +24,11 @@ from cruxible_client.contracts.candidates import (
     CandidateRecordAnyVersion,
     CandidateRecordV1,
 )
+from cruxible_client.contracts.compiler_upgrade import (
+    COMPILER_UPGRADE_PATH,
+    CompilerUpgradeNotice,
+    parse_compiler_upgrade,
+)
 from cruxible_client.contracts.declared_blocks import (
     PresentationPolicyV1,
     ReviewWorkspaceObservation,
@@ -40,6 +45,7 @@ from cruxible_client.contracts.semantic import SourceMapping, whole_body_mapping
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.claims.closure import parse_dependency_artifact
+from cruxible_core.compiler.upgrades import upgrade_notice
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.git import NOTE_REFS
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -166,6 +172,11 @@ class ProposalReview(_StrictReviewModel):
     # Present only while the earlier-refusal index is catching up: members'
     # receipts then reflect retirements accepted through the generation named.
     prior_refusal_coverage: PriorRefusalCoverage | None = None
+    # A compiler upgrade's one-way notice: what activating it means.
+    compiler_upgrade: CompilerUpgradeNotice | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class ApprovalChallenge(_StrictReviewModel):
@@ -618,7 +629,21 @@ def service_review_playbill_proposal(
         ),
         projection_evidence=projection_evidence,
         prior_refusal_coverage=prior_refusal_coverage,
+        compiler_upgrade=_compiler_upgrade_notice(candidate, candidate_tree),
     )
+
+
+def _compiler_upgrade_notice(
+    candidate: CandidateRecordAnyVersion, candidate_tree: Mapping[str, bytes]
+) -> CompilerUpgradeNotice | None:
+    """The one-way notice of a compiler upgrade, read from its exact candidate bytes."""
+
+    if not any(member.artifact_kind == "compiler-upgrade" for member in candidate.members):
+        return None
+    content = candidate_tree.get(COMPILER_UPGRADE_PATH)
+    if content is None:
+        raise ProposalIntegrityError("compiler upgrade member is missing from its exact tree")
+    return upgrade_notice(parse_compiler_upgrade(content))
 
 
 def service_prepare_playbill_approval(
@@ -801,6 +826,22 @@ def proposal_change_lines(review: ProposalReview) -> list[str]:
     return lines
 
 
+def _compiler_upgrade_lines(review: ProposalReview) -> list[str]:
+    """A compiler upgrade's source, exact target digest and one-way notice."""
+
+    notice = review.compiler_upgrade
+    if notice is None:
+        return []
+    source = notice.source_revision or notice.source_compiler_digest
+    target = notice.target_revision or notice.target_compiler_digest
+    return [
+        "",
+        f"Compiler upgrade: {source} -> {target}",
+        f"Target compiler: {notice.target_compiler_digest}",
+        notice.message,
+    ]
+
+
 def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     """Point a reviewer at the ledger instead of re-rendering the ledger.
 
@@ -825,6 +866,7 @@ def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
                 f"Settlement base OID: {review.base_oid}",
                 "",
                 *proposal_change_lines(review),
+                *_compiler_upgrade_lines(review),
                 *_item_reason_lines(review),
                 *_prior_refusal_lines(review),
                 "",
@@ -860,6 +902,7 @@ def render_playbill_approval_summary(review: ProposalReview) -> str:
         "Required approvals: " + _required_approvals_text(review),
         "",
         *proposal_change_lines(review),
+        *_compiler_upgrade_lines(review),
         *_item_reason_lines(review),
         *_prior_refusal_lines(review),
     ]
@@ -867,10 +910,16 @@ def render_playbill_approval_summary(review: ProposalReview) -> str:
 
 
 def _required_approvals_text(review: ProposalReview) -> str:
-    return ", ".join(
+    required = ", ".join(
         f"{item.minimum_distinct_signers} {item.role}"
         for item in review.candidate.approval_requirements
-    ) or (
+    )
+    if required:
+        return required
+    if review.compiler_upgrade is not None:
+        # Settlement requires one signed approval whatever the policy says.
+        return "one signature from any active ordinary principal, the proposer included"
+    return (
         f"{review.provenance.get('actor_id', 'the proposing actor')}'s "
         "own signature (lifecycle actor binding)"
         if all(member.artifact_kind == "principal-lifecycle" for member in review.complete_members)
@@ -901,6 +950,7 @@ def render_playbill_proposal_review(review: ProposalReview) -> str:
     ]
     if review.rationale is not None:
         lines.extend(("", "Rationale:", *(f"  {line}" for line in review.rationale.splitlines())))
+    lines.extend(_compiler_upgrade_lines(review))
     lines.extend(_item_reason_lines(review))
     lines.extend(_prior_refusal_lines(review))
     if review.projection_evidence is not None:

@@ -130,8 +130,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "name the catalog file; this adapter reads and compiles the file and proposes it."
     ),
     "cruxible_compiler_upgrade": (
-        "Use to propose an explicit compiler upgrade bound to the exact accepted base. "
-        "Requires admin permission; approve and activate through the normal proposal workflow."
+        "Use to propose a compiler upgrade (default: the daemon's compiler, at the head). "
+        "Admin only; one-way once active; settles on one signed cruxible_proposal_approve."
     ),
     "cruxible_principal_propose": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."

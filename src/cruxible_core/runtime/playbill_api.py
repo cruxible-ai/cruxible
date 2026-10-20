@@ -997,9 +997,9 @@ def playbill_propose_document(
 def playbill_propose_compiler_upgrade(
     instance_id: str,
     *,
-    target: CompilerCoordinate,
-    base: AcceptedCoordinate,
-    proposal_name: str,
+    target: CompilerCoordinate | None = None,
+    base: AcceptedCoordinate | None = None,
+    proposal_name: str | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.ProposalInspection:

@@ -58,6 +58,19 @@ it was accepted under.
    cruxible server restart
    ~~~
 
+   A start after a release can migrate derived state before the daemon
+   answers: evicting projection pieces past retention, compacting a loose
+   ledger, rebuilding a missing head projection, and (just after it starts
+   serving) building the `next` facts from nothing. On a large instance each
+   can take minutes. The daemon logs a start line and a done line with counts
+   and elapsed time for each (`startup_step_started` and
+   `startup_step_finished` in `STATE_ROOT/daemon/logs/server.log`);
+   When the daemon runs on this machine, `server restart` prints them while
+   it waits, and each one restarts its `--timeout`; `cruxible server status`
+   against a daemon that is still starting (it answers nothing until every
+   instance has opened) says which step it is on rather than only failing to
+   connect. A foreground `cruxible server start` prints them too.
+
 3. Check the instance:
 
    ~~~bash
@@ -78,27 +91,110 @@ If the `compiler` facet reads `current`, the upgrade is done.
 
 When the running daemon installs a newer compiler than the instance's accepted
 head uses, and an explicit upgrade path exists between them, `next` reports the
-`compiler` facet as `upgrade_available`. Its repair is the exact command, with
-the target digest and a proposal name filled in:
+`compiler` facet as `upgrade_available`, and its repair is the bare command:
 
 ~~~bash
-cruxible compiler upgrade --to sha256:... --name upgrade-to-...
+cruxible compiler upgrade
 ~~~
 
-That only proposes the upgrade. The proposal is admin-only and bound to the
-exact accepted head and target compiler. Then:
+With no `--to`, the upgrade targets the compiler the daemon runs and is named
+`upgrade-to-<revision>` (for example `upgrade-to-provider-builds-v1`). The
+proposal pins that compiler's full digest, bound to the exact accepted head,
+and its preview and review show the digest. `--to DIGEST` and `--name NAME`
+override either default. The proposal is admin-only.
+
+### Back up first
+
+Activating a compiler upgrade is one-way. The accepted head then names the new
+compiler, and a daemon serves an instance only through the compilers it
+installs: an earlier release replays the upgrade on open, finds a target it does
+not install, and refuses to open or serve the instance. No upgrade path leads
+back. The upgrade's preview, proposal and review say so in a typed
+`compiler_upgrade` notice (`one_way: true`).
+
+So before you activate, stop the daemon and copy, from the state root
+(`CRUXIBLE_STATE_ROOT`, else `~/.cruxible`):
+
+- the instance directory, `instances/INSTANCE_ID/`, except `projections/`:
+  projections are derived and rebuilt from the ledger when the instance
+  opens;
+- the daemon registry and runtime credential store,
+  `daemon/registry.db` and `daemon/runtime_credentials.db` (and
+  `daemon/provider-secrets/` if Providers use secrets);
+- the pinned trust roots, `trust/` (`trust/INSTANCE_ID.json` for this
+  instance).
 
 ~~~bash
-cruxible proposal review PROPOSAL_ID
-cruxible proposal approve PROPOSAL_ID
+cruxible server stop
+mkdir -p BACKUP/instances BACKUP/daemon
+rsync -a --exclude projections/ ~/.cruxible/instances/INSTANCE_ID BACKUP/instances/
+cp -p ~/.cruxible/daemon/registry.db ~/.cruxible/daemon/runtime_credentials.db BACKUP/daemon/
+cp -Rp ~/.cruxible/trust BACKUP/
+cruxible server start   # or however you run the daemon
 ~~~
 
-Approval follows the instance's approval policy, as for any proposal; the
-approval that completes it activates it (`cruxible proposal activate` after
-`proposal approve --hold`).
-Activation validates the full projection under the target compiler before it
-advances the signed ledger; a projection that does not validate leaves the
-instance on its current compiler.
+To go back, stop the daemon, put these back in place, and install the earlier
+release. Signing keys live outside the state root (see below) and are not
+part of this copy.
+
+### Upgrade in one command
+
+~~~bash
+cruxible compiler upgrade          # preview; at a terminal, asks to commit
+cruxible compiler upgrade --yes    # commit without asking
+~~~
+
+Because activation is one-way, the command previews first when it would
+activate: it prints the source and target compiler, the exact target digest,
+the one-way notice, and the signing key it will use, and writes nothing. The
+commit (`y` at the prompt, `--yes`, or `--commit --at OID` with the OID the
+preview printed) proposes the upgrade, signs it with your key and activates
+it, in one command, when nothing else is needed:
+
+- you are an admin (proposing and activating a compiler upgrade both need
+  it);
+- you hold your signing key;
+- the approval policy needs no other principal's approval.
+
+A compiler upgrade settles only with at least one signed approval, whatever
+the approval policy says; a policy that asks for none still needs one
+signature. Under the default policy your own signature is that approval, so
+the one command lands it. Activation then validates the full projection under
+the target compiler before it advances the signed ledger; a projection that
+does not validate leaves the instance on its current compiler.
+
+Otherwise the command proposes the upgrade and stops, and its result
+(`outcome` in `--json`) names the reason and the next step:
+
+| Reason | Meaning | Next |
+|---|---|---|
+| `independent_approval_required` | The policy (`init --require-independent-approval`) needs an ordinary principal other than the proposer; your own signature never counts toward it, so nothing is signed. | That principal runs `cruxible proposal approve PROPOSAL_ID`; their signature completes and activates it (activation needs admin: a graph_write approver's signature is recorded and an admin runs `cruxible proposal activate PROPOSAL_ID`). |
+| `signing_key_missing` | No signing key was given or found. | `cruxible proposal approve PROPOSAL_ID --key PATH` (see below). |
+| `accept_never` | `--no-accept`: propose only. | `cruxible proposal approve PROPOSAL_ID`. |
+| `activation_not_permitted` | Your signature was recorded; your credential cannot activate a compiler upgrade. | An admin runs `cruxible proposal activate PROPOSAL_ID`. |
+| `head_moved` | Accepted state moved after the proposal was checked. | `cruxible proposal readmit PROPOSAL_ID`. |
+| `recompiled`, `approvals_remaining`, `refused` | As named. | The `next` the result carries. |
+
+The two-step path stays available: `cruxible compiler upgrade --no-accept`,
+then `cruxible proposal review PROPOSAL_ID` and
+`cruxible proposal approve PROPOSAL_ID` (the approval that completes it
+activates it; `--hold` signs only, and `cruxible proposal activate` lands it
+later).
+
+### Your signing key
+
+`cruxible init` generates the owner's Ed25519 key in a per-user custody
+directory outside every workspace and the state root:
+`$XDG_CONFIG_HOME/cruxible/keys/INSTANCE_ID/PRINCIPAL_ID/PRINCIPAL_ID.ed25519`,
+by default under `~/.config`. It prints that path, writes `cruxible.env`
+beside it (which exports `CRUXIBLE_PRINCIPAL_KEY`), and the CLI remembers those
+settings and loads them itself. So after `cruxible init`, `compiler upgrade`
+and `proposal approve` find the key with no flag, and say where they found it.
+They look, in order, at `--key`, `CRUXIBLE_PRINCIPAL_KEY` (your remembered
+settings set it), then that default directory. A principal added with
+`cruxible principal add ID --key-dir DIR` keeps its key and settings in `DIR`;
+`cruxible context use --principal ID` makes the CLI act as it. When no key is
+found, the refusal names the default path it checked and these commands.
 
 After activation, new generations are accepted under the new compiler and
 authoring that needs it is accepted. Earlier generations keep their original
@@ -115,7 +211,7 @@ its current compiler and refuses authoring that needs the new revision.
 | State | Meaning | What to do |
 |---|---|---|
 | `current` | The accepted head uses the compiler the daemon runs. | Nothing. |
-| `upgrade_available` | The daemon runs a newer compiler with an explicit upgrade path from the accepted one. | Run the repair to propose the upgrade, then approve and activate it. |
+| `upgrade_available` | The daemon runs a newer compiler with an explicit upgrade path from the accepted one. | Back up, then run the repair, `cruxible compiler upgrade`. |
 | `no_upgrade_path` | The accepted compiler has no path to the running one, for example when the daemon is older than the state it serves. | Install a release whose daemon supports the accepted compiler. Nothing is proposed. |
 
 Downgrades and unsupported transitions are refused.

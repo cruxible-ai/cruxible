@@ -163,7 +163,7 @@ def test_an_activation_during_a_pass_never_loses_the_new_head(
     evict = projection_retention.evict_projection
     writers: list[threading.Thread] = []
 
-    def interleaved(directory: Path, name: str) -> bool | None:
+    def interleaved(directory: Path, name: str, **keywords: Any) -> bool | None:
         if not writers:
             # Another request accepts a generation while this pass runs.
             writer = threading.Thread(target=_write, args=(instance, _set(WI1, "title", "New")))
@@ -173,7 +173,7 @@ def test_an_activation_during_a_pass_never_loses_the_new_head(
             while instance.accepted_coordinate() == before and time.monotonic() < deadline:
                 time.sleep(0.01)
             assert instance.accepted_coordinate() != before
-        return evict(directory, name)
+        return evict(directory, name, **keywords)
 
     monkeypatch.setattr(projection_retention, "evict_projection", interleaved)
     instance.retention = RetentionSettings(generations=1)
@@ -233,9 +233,9 @@ def test_each_pass_handles_only_the_generations_that_crossed_the_cutoff(
     tried: list[str] = []
     evict = instance_module.evict_or_wait
 
-    def counted(directory: Path, name: str, sequence: int) -> Any:
+    def counted(directory: Path, name: str, sequence: int, **keywords: Any) -> Any:
         tried.append(name)
-        return evict(directory, name, sequence)
+        return evict(directory, name, sequence, **keywords)
 
     monkeypatch.setattr(instance_module, "evict_or_wait", counted)
     for value in ("blocked", "done", "ready"):
@@ -262,7 +262,7 @@ def test_a_held_population_is_tried_again_only_as_its_holds_are_released(
     directory = _projections(instance)
     tried: list[str] = []
 
-    def counted(directory: Path, name: str, sequence: int) -> Any:
+    def counted(directory: Path, name: str, sequence: int, **_keywords: Any) -> Any:
         tried.append(name)
         return "absent"
 
@@ -321,9 +321,9 @@ def test_a_piece_another_process_holds_waits_for_the_next_open(
         tried: list[str] = []
         evict = projection_retention.evict_projection
 
-        def counted(directory: Path, name: str) -> bool | None:
+        def counted(directory: Path, name: str, **keywords: Any) -> bool | None:
             tried.append(name)
-            return evict(directory, name)
+            return evict(directory, name, **keywords)
 
         monkeypatch.setattr(projection_retention, "evict_projection", counted)
         # Not retried pass after pass while it stays held.

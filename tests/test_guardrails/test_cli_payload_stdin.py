@@ -35,6 +35,7 @@ ARTIFACT_FILES: dict[tuple[tuple[str, ...], str], str] = {
     (("provider", "install"), "dependencies"): "provider wheel files",
     (("principal", "add"), "signer_key"): "private key",
     (("proposal", "approve"), "private_key_path"): "private key",
+    (("compiler", "upgrade"), "private_key_path"): "private key",
 }
 
 
