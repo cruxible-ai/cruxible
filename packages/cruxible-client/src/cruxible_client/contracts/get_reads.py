@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts import AcceptedCoordinate
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
+    ClaimTypeContention,
     ClaimTypeMemberDescription,
     EvidenceRequirement,
     RevisionEvidence,
@@ -318,6 +319,14 @@ class GetClaimTypeCard(_StrictGetModel):
     # contract's identity resolves. ``unresolved:<digest prefix>`` otherwise.
     evidence: tuple[str, ...]
     evidence_rules: tuple[GetEvidenceRule, ...] = ()
+    # How rival Claims of one slot settle: the resolution selector, what a
+    # conflict resolves to, and the admission policy's requirement counts.
+    contention: ClaimTypeContention
+    # The format version (7 for ``playbill-claim-type-v7``), the accepted
+    # revision and the ledger path (which a kit's drifted paths name).
+    format: int = Field(ge=1)
+    revision: int = Field(ge=1)
+    path: str
     live_claims: int
     # The installed kit that owns the ClaimType (its receipt records it); absent
     # when no kit owns it.

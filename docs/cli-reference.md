@@ -3640,7 +3640,12 @@ subject_kinds` lists each live SubjectKind and how a new Subject of the kind is
 named (`keys: <key ClaimTypes> (unique|hint)` or `minted`), and `--section
 claim_types` each live ClaimType in full; a row an installed kit owns names it as
 `kit` (the kit whose receipt records the definition), as do the `get
-ClaimType:` and `get SubjectKind:` cards. `--section runs` lists
+ClaimType:` and `get SubjectKind:` cards. A full ClaimType descriptor (here and
+under `--kind`) and the `get ClaimType:` card also carry `contention` (the
+resolution `selector`, `on_conflict`: `unresolved` or `refuse`, and the
+admission policy's `corroboration` and `freeze` requirement counts when there
+are any), `format` (7 for `playbill-claim-type-v7`), the accepted `revision`
+and the ledger `path`. `--section runs` lists
 Procedure runs, newest admission first, each with its Procedure, status,
 admission time, Line and finished-node count, and `--section running` lists
 only the runs still running. Both page by the admission's immutable position,

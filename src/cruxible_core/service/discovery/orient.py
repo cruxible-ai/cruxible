@@ -33,6 +33,8 @@ from cruxible_client import contracts
 from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
 from cruxible_client.contracts.claim_types import (
     ClaimType,
+    claim_type_contention,
+    claim_type_format_version,
     effective_evidence_requirement,
     effective_revision_evidence,
 )
@@ -175,6 +177,8 @@ class _State:
     #: Each declared kind's identity rule as orient shows it: ``keys: a, b (unique)``
     #: or ``minted``.
     identities: dict[str, str] = dataclass_field(default_factory=dict)
+    #: Each live ClaimType's ledger path and accepted revision, by predicate.
+    placements: dict[str, tuple[str, int]] = dataclass_field(default_factory=dict)
 
 
 def accepted_subject_kinds(connection: sqlite3.Connection) -> tuple[OrientSubjectKind, ...]:
@@ -285,14 +289,17 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         names = CaptureContractNames(instance, coordinate, connection=connection)
         claim_types: list[ClaimType] = []
         evidence: dict[str, tuple[str, ...]] = {}
+        placements: dict[str, tuple[str, int]] = {}
         digest_named = 0
-        for (identity,) in connection.execute(
-            "SELECT identity FROM claim_types WHERE lifecycle='live' ORDER BY identity"
+        for identity, path, revision in connection.execute(
+            "SELECT identity, path, revision FROM claim_types WHERE lifecycle='live' "
+            "ORDER BY identity"
         ).fetchall():
             claim_type = typed.source(str(identity))
             if not isinstance(claim_type, ClaimType):
                 continue
             claim_types.append(claim_type)
+            placements[claim_type.predicate] = (str(path), int(revision))
             evidence[claim_type.predicate] = names.admitted(claim_type)
             digest_named += names.names_by_digest(claim_type)
         # The per-kind counters Subject writes maintain (vocabulary-sized), never a recount.
@@ -333,6 +340,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         claim_types=tuple(claim_types),
         subjects_by_kind=subjects_by_kind,
         evidence=evidence,
+        placements=placements,
         digest_named=digest_named,
         procedures=procedures,
         documents=documents,
@@ -409,6 +417,7 @@ def _descriptor(
     evidence: tuple[str, ...],
     full: bool,
     live_claims: int | None = None,
+    placement: tuple[str, int] | None = None,
 ) -> OrientPredicate:
     value_type, members = _value_type(claim_type)
     freshness = claim_type.evidence_freshness
@@ -436,6 +445,10 @@ def _descriptor(
             if full and freshness is not None
             else None
         ),
+        contention=claim_type_contention(claim_type) if full else None,
+        format=claim_type_format_version(claim_type) if full else None,
+        revision=placement[1] if full and placement is not None else None,
+        path=placement[0] if full and placement is not None else None,
         live_claims=live_claims if full else None,
     )
 
@@ -1609,6 +1622,7 @@ def _kind_detail(
                 evidence=state.evidence.get(item.predicate, ()),
                 full=True,
                 live_claims=counts.get(item.predicate, 0),
+                placement=state.placements.get(item.predicate),
             )
             for item in of_kind
         ),
@@ -1699,6 +1713,7 @@ def _section_rows(state: _State, section: OrientSection) -> tuple[tuple[Any, ...
             ),
             evidence=state.evidence.get(item.predicate, ()),
             full=True,
+            placement=state.placements.get(item.predicate),
         )
         for item in sorted(state.claim_types, key=lambda item: item.predicate)
     )

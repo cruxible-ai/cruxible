@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
+    ClaimTypeContention,
     ClaimTypeMemberDescription,
     EvidenceRequirement,
     RevisionEvidence,
@@ -116,6 +117,10 @@ class OrientPredicate(_StrictOrientModel):
     contract is required). A full descriptor also carries each described enum
     member, the role a write defaults to, and ``revision_evidence``: what a
     statement-changing revision keeps (``accumulate`` before v7).
+    A full descriptor also names how the ClaimType settles rival Claims
+    (``contention``), its format version (``format``: 7 for
+    ``playbill-claim-type-v7``), its accepted ``revision`` and its ledger
+    ``path``, which a kit's drifted paths name.
     ``kit`` (claim_types section only) is the installed kit that owns the
     ClaimType: its receipt records the definition. Absent when no kit owns it.
     """
@@ -139,6 +144,10 @@ class OrientPredicate(_StrictOrientModel):
     )
     revision_evidence: RevisionEvidence | None = Field(default=None, exclude_if=_is_none)
     stale_after: str | None = Field(default=None, exclude_if=_is_none)
+    contention: ClaimTypeContention | None = Field(default=None, exclude_if=_is_none)
+    format: int | None = Field(default=None, ge=1, exclude_if=_is_none)
+    revision: int | None = Field(default=None, ge=1, exclude_if=_is_none)
+    path: str | None = Field(default=None, exclude_if=_is_none)
     live_claims: int | None = Field(default=None, ge=0, exclude_if=_is_none)
     kit: str | None = Field(default=None, exclude_if=_is_none)
 

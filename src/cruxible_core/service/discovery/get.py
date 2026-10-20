@@ -36,6 +36,8 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_reads import ClaimValueRecord, ClaimValuesRequest
 from cruxible_client.contracts.claim_types import (
     ClaimType,
+    claim_type_contention,
+    claim_type_format_version,
     effective_evidence_requirement,
     effective_revision_evidence,
 )
@@ -1352,6 +1354,8 @@ def _claim_type_card(
 ) -> GetClaimTypeCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         claim_type = cast(ClaimType, projection.typed.source(resolved.identity))
+        envelope = projection.typed.envelope(resolved.identity)
+        assert envelope is not None, resolved.identity
         live = int(
             projection.typed.connection.execute(
                 "SELECT count(*) FROM claims WHERE predicate=? AND lifecycle='live'",
@@ -1397,6 +1401,10 @@ def _claim_type_card(
         revision_evidence=effective_revision_evidence(claim_type),
         evidence=evidence,
         evidence_rules=rules,
+        contention=claim_type_contention(claim_type),
+        format=claim_type_format_version(claim_type),
+        revision=envelope.revision,
+        path=envelope.path,
         live_claims=live,
         kit=kit,
         next=tuple(next_steps),

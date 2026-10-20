@@ -648,6 +648,41 @@ def effective_evidence_requirement(claim_type: ClaimType) -> EvidenceRequirement
     return claim_type.evidence_requirement or "self"
 
 
+class ClaimTypeContention(_StrictClaimTypeModel):
+    """How a ClaimType settles rival Claims of one slot, as a read shows it.
+
+    ``selector`` is its resolution policy's: ``only_contender`` (a one-valued
+    slot is answered by its single eligible Claim) or ``all`` (every eligible
+    Claim of a many-valued slot answers). ``on_conflict`` is what a one-valued
+    slot with rival contenders resolves to: ``unresolved`` (the slot stays
+    conflicted until one is retired) or ``refuse``. ``corroboration`` and
+    ``freeze`` count its admission policy's corroboration and freeze
+    requirements, omitted at zero.
+    """
+
+    selector: Literal["all", "only_contender"]
+    on_conflict: Literal["unresolved", "refuse"]
+    corroboration: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+    freeze: int = Field(default=0, ge=0, exclude_if=lambda value: not value)
+
+
+def claim_type_contention(claim_type: ClaimType) -> ClaimTypeContention:
+    """The contention policy a read shows for one ClaimType."""
+
+    return ClaimTypeContention(
+        selector=claim_type.resolution_policy.selector,
+        on_conflict=claim_type.resolution_policy.conflict_result,
+        corroboration=len(claim_type.admission_policy.corroboration_requirements),
+        freeze=len(claim_type.admission_policy.freeze_requirements),
+    )
+
+
+def claim_type_format_version(claim_type: ClaimType) -> int:
+    """The ClaimType format's version number: ``playbill-claim-type-v7`` is 7."""
+
+    return int(claim_type.artifact_format.rpartition("-v")[2])
+
+
 def claim_type_accepts_subject(claim_type: ClaimType, subject_kind: str) -> bool:
     return subject_kind in claim_type.allowed_subject_kinds
 
@@ -852,6 +887,7 @@ __all__ = [
     "ClaimAttestationConsequencePolicy",
     "ClaimAttestationConsequenceRule",
     "ClaimType",
+    "ClaimTypeContention",
     "ClaimTypeMemberDescription",
     "EvidenceRequirement",
     "RevisionEvidence",
@@ -859,6 +895,8 @@ __all__ = [
     "V7_FIELDS",
     "V8_FIELDS",
     "canonical_description_text",
+    "claim_type_contention",
+    "claim_type_format_version",
     "effective_canonical_form",
     "effective_evidence_requirement",
     "effective_revision_evidence",
