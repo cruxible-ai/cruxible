@@ -29,7 +29,12 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.source_references import ExternalSourceReference
-from cruxible_core.coverage.contracts import CoverageAccessProfile
+from cruxible_core.coverage.contracts import (
+    CitationWindowObservation,
+    CoverageAccessProfile,
+    CoverageCommitmentScanProof,
+    LogicalSourceIdentity,
+)
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.service.claims.claims import (
     _claim_from_view,
@@ -41,7 +46,7 @@ from cruxible_core.service.discovery.next import (
     NextDriftObservation,
     NextReason,
     NextRequest,
-    NextSourceObservationV3,
+    NextSourceObservation,
     NextWorkspaceObservation,
     NextWorkspaceObservationInvalid,
     _citation_commitments,
@@ -510,16 +515,15 @@ def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path
                 access_profile=access_profile,
                 workspace_observation=NextWorkspaceObservation(
                     source_observations=(
-                        NextSourceObservationV3(
-                            tag="playbill-next-source-observation-v3",
+                        NextSourceObservation(
                             source_id="corpus.runbook",
                             document_id="runbook",
                             observed_source_digest=observed_digest,
                             byte_length=0,
                             marker_summaries=(),
                             occurrences=(),
-                            scanned_commitment_digests=(),
-                            scan_complete=True,
+                            commitment_scan_proofs=(),
+                            citation_window_observations=(),
                             scan_notes=(),
                             marker_notes=(),
                         ),
@@ -571,7 +575,13 @@ def test_malformed_capture_snapshot_never_hides_another_citations_repair(
                 malformed_coordinate if calls == 1 else {"source_content_digest": captured_digest}
             ),
             selector_type=FOREIGN_SOURCE_SELECTOR_TYPE,
-            selector={},
+            # The healthy citation names its original window, so a complete scan
+            # that no longer finds its bytes there reads as drift.
+            selector=(
+                {}
+                if calls == 1
+                else {"start_byte": 0, "end_byte": envelope.commitment.byte_length or 0}
+            ),
             replayability="attested_only",
         )
         return envelope.model_copy(update={"source": source})
@@ -585,6 +595,7 @@ def test_malformed_capture_snapshot_never_hides_another_citations_repair(
         evaluation_time=EVALUATION_TIME,
     )
     healthy = next(item for item in inventory.by_id.values() if item.source_id == "corpus.healthy")
+    healthy_source = LogicalSourceIdentity(plane="external", identity="corpus.healthy")
     calls = 0
 
     result = service_playbill_next(
@@ -594,15 +605,30 @@ def test_malformed_capture_snapshot_never_hides_another_citations_repair(
             access_profile=_access(),
             workspace_observation=NextWorkspaceObservation(
                 source_observations=(
-                    NextSourceObservationV3(
-                        tag="playbill-next-source-observation-v3",
+                    NextSourceObservation(
                         source_id="corpus.healthy",
                         observed_source_digest=observed_digest,
                         byte_length=healthy.byte_length,
                         marker_summaries=(),
                         occurrences=(),
-                        scanned_commitment_digests=(healthy.commitment_digest,),
-                        scan_complete=True,
+                        commitment_scan_proofs=(
+                            CoverageCommitmentScanProof(
+                                source=healthy_source,
+                                commitment_digest=healthy.commitment_digest,
+                                byte_length=healthy.byte_length,
+                            ),
+                        ),
+                        citation_window_observations=(
+                            CitationWindowObservation(
+                                source=healthy_source,
+                                citation_id=healthy.citation_id,
+                                commitment_digest=healthy.commitment_digest,
+                                original_start=0,
+                                original_end=healthy.byte_length,
+                                addressable=True,
+                                observed_window_digest=observed_digest,
+                            ),
+                        ),
                         scan_notes=(),
                         marker_notes=(),
                     ),

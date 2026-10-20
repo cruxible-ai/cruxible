@@ -13,7 +13,6 @@ from cruxible_core.coverage.indexes import WorkingOccurrence
 from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.discovery.next import (
     NextSourceObservation,
-    NextSourceObservationV3,
     _CitationCommitment,
     _source_citation_item,
 )
@@ -26,28 +25,25 @@ CHANGED_SOURCE = "sha256:" + "4" * 64
 SOURCE_ID = "corpus.runbook"
 
 
-def _commitment(
-    *, whole_source: bool = False, with_original_span: bool = False
-) -> _CitationCommitment:
+def _commitment(*, length: int = 10, start: int = 5) -> _CitationCommitment:
     return _CitationCommitment(
         citation_id=CITATION,
         commitment_digest=SELECTION,
-        byte_length=10,
+        byte_length=length,
         claim_identity="Claim:CLM-example",
         source_id=SOURCE_ID,
         source_digest=ORIGINAL_SOURCE,
-        original_start=5 if with_original_span else None,
-        original_end=15 if with_original_span else None,
-        whole_source=whole_source,
+        original_start=start,
+        original_end=start + length,
     )
 
 
-def _occurrence(start: int = 5, *, ordinal: int = 0) -> WorkingOccurrence:
+def _occurrence(start: int = 5, *, ordinal: int = 0, length: int = 10) -> WorkingOccurrence:
     source = LogicalSourceIdentity(plane="external", identity=SOURCE_ID)
     return WorkingOccurrence(
         source=source,
         observed_commitment_digest=SELECTION,
-        byte_length=10,
+        byte_length=length,
         ordinal=ordinal,
         identity_digest=occurrence_identity_digest(
             source=source,
@@ -56,7 +52,7 @@ def _occurrence(start: int = 5, *, ordinal: int = 0) -> WorkingOccurrence:
         ),
         line_overlay=CoverageLineOverlay(
             start_byte=start,
-            end_byte=start + 10,
+            end_byte=start + length,
             start_line=1,
             end_line=1,
         ),
@@ -66,56 +62,25 @@ def _occurrence(start: int = 5, *, ordinal: int = 0) -> WorkingOccurrence:
 def _observed(
     *,
     occurrences: tuple[WorkingOccurrence, ...] = (),
-    scanned: tuple[str, ...] = (),
-    complete: bool = True,
-    digest: str = CHANGED_SOURCE,
-) -> NextSourceObservationV3:
-    return NextSourceObservationV3(
-        tag="playbill-next-source-observation-v3",
-        source_id=SOURCE_ID,
-        observed_source_digest=digest,
-        byte_length=100,
-        marker_summaries=(),
-        occurrences=occurrences,
-        scanned_commitment_digests=scanned,
-        scan_complete=complete,
-        scan_notes=() if complete else ("coverage_partial",),
-        marker_notes=(),
-    )
-
-
-def _repair(
-    observed: NextSourceObservationV3 | None,
-    *,
-    whole_source: bool = False,
-):  # type: ignore[no-untyped-def]
-    return _source_citation_item(
-        citation_id=CITATION,
-        commitment=_commitment(whole_source=whole_source),
-        observed=observed,
-        coordinate=AcceptedCoordinate.model_validate(coordinate().model_dump()),
-    )
-
-
-def _observed_v4(
-    *,
-    occurrences: tuple[WorkingOccurrence, ...] = (),
     proof: bool = True,
     addressable: bool = True,
     observed_window_digest: str | None = CHANGED_SOURCE,
+    length: int = 10,
+    start: int = 5,
+    byte_length: int = 100,
 ) -> NextSourceObservation:
     source = LogicalSourceIdentity(plane="external", identity=SOURCE_ID)
     return NextSourceObservation(
         source_id=SOURCE_ID,
         observed_source_digest=CHANGED_SOURCE,
-        byte_length=100,
+        byte_length=byte_length,
         marker_summaries=(),
         occurrences=occurrences,
         commitment_scan_proofs=(
             CoverageCommitmentScanProof(
                 source=source,
                 commitment_digest=SELECTION,
-                byte_length=10,
+                byte_length=length,
             ),
         )
         if proof
@@ -125,8 +90,8 @@ def _observed_v4(
                 source=source,
                 citation_id=CITATION,
                 commitment_digest=SELECTION,
-                original_start=5,
-                original_end=15,
+                original_start=start,
+                original_end=start + length,
                 addressable=addressable,
                 observed_window_digest=observed_window_digest if addressable else None,
             ),
@@ -136,67 +101,59 @@ def _observed_v4(
     )
 
 
-def _repair_v4(observed: NextSourceObservation):  # type: ignore[no-untyped-def]
+def _repair(
+    observed: NextSourceObservation | None,
+    commitment: _CitationCommitment | None = None,
+):  # type: ignore[no-untyped-def]
     return _source_citation_item(
         citation_id=CITATION,
-        commitment=_commitment(with_original_span=True),
+        commitment=commitment or _commitment(),
         observed=observed,
         coordinate=AcceptedCoordinate.model_validate(coordinate().model_dump()),
     )
 
 
 def test_unchanged_uniquely_rediscovered_span_survives_unrelated_source_edits() -> None:
-    assert _repair(_observed(occurrences=(_occurrence(),), scanned=(SELECTION,))) is None
-    assert _repair(_observed(occurrences=(_occurrence(80),), scanned=(SELECTION,))) is None
+    assert _repair(_observed(occurrences=(_occurrence(),))) is None
+    # The source digest changed and the span moved: the quoted bytes still occur once.
+    assert _repair(_observed(occurrences=(_occurrence(80),))) is None
 
 
-def test_zero_matches_after_complete_selection_scan_is_drift() -> None:
-    result = _repair(_observed(scanned=(SELECTION,)))
-
-    assert result is not None
-    assert result.reason == "citation_drifted"
-    assert result.detail["expected_commitment_digest"] == SELECTION
-    assert result.detail["drift_state"] == "changed"
-
-
-def test_incomplete_or_unscanned_selection_is_unobserved_never_drift() -> None:
-    for observation in (_observed(complete=False), _observed(), None):
+def test_unproved_or_unobserved_selection_is_unobserved_never_drift() -> None:
+    for observation in (_observed(proof=False), None):
         result = _repair(observation)
         assert result is not None
         assert result.reason == "citation_source_unobserved"
 
 
-def test_whole_source_citation_drifts_on_any_byte_change_even_if_span_is_found() -> None:
-    moved = _observed(occurrences=(_occurrence(),), scanned=(SELECTION,))
+def test_a_citation_spanning_its_whole_source_is_its_quoted_bytes() -> None:
+    """A citation commits to the bytes it quotes, however much of the file they are.
 
-    result = _repair(moved, whole_source=True)
+    Spanning the whole captured file gives it no stricter freshness: appending
+    to the file keeps those bytes in place, so it stays current; changing them
+    drifts it. A Claim that rests on the file saying nothing else rests on a
+    Document (``document_modified``), not on a citation.
+    """
 
-    assert result is not None
-    assert result.reason == "citation_drifted"
-    assert _repair(_observed(digest=ORIGINAL_SOURCE), whole_source=True) is None
+    whole = _commitment(length=100, start=0)
 
-
-def test_occurrence_presentation_offsets_never_change_the_queue_item_identity() -> None:
-    first = _repair(
-        _observed(occurrences=(_occurrence(5),), scanned=(SELECTION,)), whole_source=True
+    # The captured file was 100 bytes; 40 more were appended after it.
+    appended = _observed(
+        occurrences=(_occurrence(0, length=100),), length=100, start=0, byte_length=140
     )
-    relocated = _repair(
-        _observed(occurrences=(_occurrence(80),), scanned=(SELECTION,)), whole_source=True
-    )
+    assert _repair(appended, whole) is None
 
-    assert first is not None and relocated is not None
-    assert first.item_id == relocated.item_id
-    assert first == relocated
-
-
-def test_v4_unique_moved_occurrence_is_current_even_when_source_digest_changed() -> None:
-    assert _repair_v4(_observed_v4(occurrences=(_occurrence(80),))) is None
+    edited = _repair(_observed(length=100, start=0), whole)
+    assert edited is not None
+    assert edited.reason == "citation_drifted"
+    assert edited.detail["drift_state"] == "changed"
+    assert edited.detail["observed_window_digest"] == CHANGED_SOURCE
 
 
-def test_v4_zero_occurrence_distinguishes_changed_gone_and_unobserved() -> None:
-    changed = _repair_v4(_observed_v4())
-    gone = _repair_v4(_observed_v4(addressable=False, observed_window_digest=None))
-    unobserved = _repair_v4(_observed_v4(proof=False))
+def test_zero_occurrence_distinguishes_changed_gone_and_unobserved() -> None:
+    changed = _repair(_observed())
+    gone = _repair(_observed(addressable=False, observed_window_digest=None))
+    unobserved = _repair(_observed(proof=False))
 
     assert changed is not None and changed.detail["drift_state"] == "changed"
     assert changed.repair.required_change == "adjudicate_citation_drift"
@@ -204,9 +161,9 @@ def test_v4_zero_occurrence_distinguishes_changed_gone_and_unobserved() -> None:
     assert unobserved is not None and unobserved.reason == "citation_source_unobserved"
 
 
-def test_v4_multiple_exact_occurrences_are_ambiguous_not_unobserved() -> None:
-    result = _repair_v4(
-        _observed_v4(
+def test_multiple_exact_occurrences_are_ambiguous_not_unobserved() -> None:
+    result = _repair(
+        _observed(
             occurrences=(
                 _occurrence(5, ordinal=0),
                 _occurrence(50, ordinal=1),

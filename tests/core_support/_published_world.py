@@ -37,6 +37,7 @@ from cruxible_client.contracts.semantic import ContentSpan, SourceMapping
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.coverage.contracts import (
     CoverageAccessProfile,
+    CoverageCommitmentScanProof,
     CoverageLineOverlay,
     LogicalSourceIdentity,
 )
@@ -48,7 +49,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.discovery.next import (
     NextRequest,
-    NextSourceObservationV3,
+    NextSourceObservation,
     NextWorkspaceObservation,
 )
 from tests.core_support._support import initialize_local
@@ -266,15 +267,18 @@ def next_request(instance, *, archival: bool = False) -> NextRequest:  # type: i
         ),
         workspace_observation=NextWorkspaceObservation(
             source_observations=(
-                NextSourceObservationV3(
-                    tag="playbill-next-source-observation-v3",
+                NextSourceObservation(
                     source_id="repo.work-items",
                     observed_source_digest=_digest(b"status: ready"),
                     byte_length=13,
                     marker_summaries=(),
                     occurrences=(occurrence,),
-                    scanned_commitment_digests=(commitment,),
-                    scan_complete=True,
+                    commitment_scan_proofs=(
+                        CoverageCommitmentScanProof(
+                            source=source, commitment_digest=commitment, byte_length=5
+                        ),
+                    ),
+                    citation_window_observations=(),
                     scan_notes=(),
                     marker_notes=(),
                 ),

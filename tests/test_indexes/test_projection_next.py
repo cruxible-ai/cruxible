@@ -59,7 +59,7 @@ from cruxible_core.service.claims.claims import (
 )
 from cruxible_core.service.discovery.next import (
     NextRequest,
-    NextSourceObservationV3,
+    NextSourceObservation,
     NextWorkspaceObservation,
     _procedure_catalog_health,
     service_playbill_next,
@@ -228,15 +228,14 @@ def _request(
         ),
         workspace_observation=NextWorkspaceObservation(
             source_observations=(
-                NextSourceObservationV3(
-                    tag="playbill-next-source-observation-v3",
+                NextSourceObservation(
                     source_id="corpus.runbook",
                     observed_source_digest="sha256:" + "a" * 64,
                     byte_length=1000,
                     marker_summaries=(marker,),
                     occurrences=(),
-                    scanned_commitment_digests=(),
-                    scan_complete=complete,
+                    commitment_scan_proofs=(),
+                    citation_window_observations=(),
                     scan_notes=() if complete else ("coverage_partial",),
                     marker_notes=marker_notes,
                 ),
@@ -583,7 +582,7 @@ def test_clean_claim_and_query_backings_do_not_stale_on_coordinate_or_time_alone
     assert advanced.workspace_observation is not None
     assert advanced.workspace_observation.source_observations is not None
     source = advanced.workspace_observation.source_observations[0]
-    assert isinstance(source, NextSourceObservationV3)
+    assert isinstance(source, NextSourceObservation)
     assert source.marker_summaries[0].stamp.declared_coordinate.git_oid == (
         original_coordinate.git_oid
     )

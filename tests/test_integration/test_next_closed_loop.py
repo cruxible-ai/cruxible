@@ -83,7 +83,6 @@ from cruxible_core.service.discovery.next import (
     NextReason,
     NextRequest,
     NextSourceObservation,
-    NextSourceObservationV3,
     NextWorkspaceObservation,
     service_playbill_next,
 )
@@ -1166,16 +1165,15 @@ def _document_modified(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     instance.refresh()
     changed_observation = NextWorkspaceObservation(
         source_observations=(
-            NextSourceObservationV3(
-                tag="playbill-next-source-observation-v3",
+            NextSourceObservation(
                 source_id="corpus.runbook",
                 document_id="runbook",
                 observed_source_digest=changed_body.digest,
                 byte_length=0,
                 marker_summaries=(),
                 occurrences=(),
-                scanned_commitment_digests=(),
-                scan_complete=True,
+                commitment_scan_proofs=(),
+                citation_window_observations=(),
                 scan_notes=(),
                 marker_notes=(),
             ),
