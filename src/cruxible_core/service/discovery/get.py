@@ -36,6 +36,8 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_reads import ClaimValueRecord, ClaimValuesRequest
 from cruxible_client.contracts.claim_types import (
     ClaimType,
+    claim_type_contention,
+    claim_type_format_version,
     effective_evidence_requirement,
     effective_revision_evidence,
 )
@@ -136,6 +138,7 @@ from cruxible_core.indexes.history.history_index import (
     AcceptedMemberLocation,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL, PREDICATE_COUNTS_SQL
 from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
@@ -1351,11 +1354,14 @@ def _claim_type_card(
 ) -> GetClaimTypeCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         claim_type = cast(ClaimType, projection.typed.source(resolved.identity))
-        live = int(
-            projection.typed.connection.execute(
-                "SELECT count(*) FROM claims WHERE predicate=? AND lifecycle='live'",
-                (claim_type.predicate,),
-            ).fetchone()[0]
+        envelope = projection.typed.envelope(resolved.identity)
+        assert envelope is not None, resolved.identity
+        # The predicate's counters Claim writes maintain, summed over its kinds.
+        live, with_value = (
+            int(value)
+            for value in projection.typed.connection.execute(
+                PREDICATE_COUNTS_SQL, (claim_type.predicate,)
+            ).fetchone()
         )
         kit = owned_by(
             kit_owners(instance, projection.typed.connection), "ClaimType", claim_type.predicate
@@ -1396,7 +1402,12 @@ def _claim_type_card(
         revision_evidence=effective_revision_evidence(claim_type),
         evidence=evidence,
         evidence_rules=rules,
+        contention=claim_type_contention(claim_type),
+        format=claim_type_format_version(claim_type),
+        revision=envelope.revision,
+        path=envelope.path,
         live_claims=live,
+        subjects_with_value=with_value,
         kit=kit,
         next=tuple(next_steps),
     )
@@ -1850,9 +1861,9 @@ def _subject_kind_card(
     kind = _name(resolved.identity)
     with instance.bind_accepted_projection(coordinate) as projection:
         declared = cast(SubjectKind, projection.typed.source(resolved.identity))
-        (live,) = projection.typed.connection.execute(
-            "SELECT COUNT(*) FROM subjects WHERE subject_kind=? AND lifecycle='live'", (kind,)
-        ).fetchone()
+        # The kind's maintained counter: one key seek, never a count of its Subjects.
+        counted = projection.typed.connection.execute(LIVE_SUBJECT_COUNT_SQL, (kind,)).fetchone()
+        live = 0 if counted is None else counted[0]
         kit = owned_by(kit_owners(instance, projection.typed.connection), "SubjectKind", kind)
     rule = declared.identity_rule
     return GetSubjectKindCard(

@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
+    ClaimTypeContention,
     ClaimTypeMemberDescription,
     EvidenceRequirement,
     RevisionEvidence,
@@ -60,6 +61,7 @@ OrientSection: TypeAlias = Literal[
     "policies",
     "generations",
     "graph",
+    "pins",
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 OrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -116,6 +118,13 @@ class OrientPredicate(_StrictOrientModel):
     contract is required). A full descriptor also carries each described enum
     member, the role a write defaults to, and ``revision_evidence``: what a
     statement-changing revision keeps (``accumulate`` before v7).
+    A full descriptor also names how the ClaimType settles rival Claims
+    (``contention``), its format version (``format``: 7 for
+    ``playbill-claim-type-v7``), its accepted ``revision`` and its ledger
+    ``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a
+    descriptor counts the kind's ``live_claims`` of the predicate and
+    ``subjects_with_value``: its live Subjects with at least one, both read
+    from counters Claim writes maintain.
     ``kit`` (claim_types section only) is the installed kit that owns the
     ClaimType: its receipt records the definition. Absent when no kit owns it.
     """
@@ -139,7 +148,12 @@ class OrientPredicate(_StrictOrientModel):
     )
     revision_evidence: RevisionEvidence | None = Field(default=None, exclude_if=_is_none)
     stale_after: str | None = Field(default=None, exclude_if=_is_none)
+    contention: ClaimTypeContention | None = Field(default=None, exclude_if=_is_none)
+    format: int | None = Field(default=None, ge=1, exclude_if=_is_none)
+    revision: int | None = Field(default=None, ge=1, exclude_if=_is_none)
+    path: str | None = Field(default=None, exclude_if=_is_none)
     live_claims: int | None = Field(default=None, ge=0, exclude_if=_is_none)
+    subjects_with_value: int | None = Field(default=None, ge=0, exclude_if=_is_none)
     kit: str | None = Field(default=None, exclude_if=_is_none)
 
 
@@ -417,6 +431,42 @@ class OrientGraph(_StrictOrientModel):
     totals: OrientGraphTotals
 
 
+#: The definition kinds whose pins ``orient(section="pins")`` lists, in byte order.
+ORIENT_PIN_SOURCE_KINDS: tuple[str, ...] = (
+    "Blueprint",
+    "CaptureContract",
+    "ClaimType",
+    "Line",
+    "Procedure",
+    "ProcedureMandate",
+    "Provider",
+    "ProviderInterface",
+    "QueryDefinition",
+    "ResolutionContract",
+    "SourceAcquisitionPolicy",
+    "SubjectKind",
+    "Trigger",
+)
+
+
+class OrientPin(_StrictOrientModel):
+    """One required pin of a live definition: ``source`` pins ``target`` as ``role``.
+
+    ``target_digest`` is the exact version pinned; ``current`` says whether
+    that is the target's accepted version at the coordinate (absent when the
+    target is not an indexed artifact). Read in reverse, the rows name who
+    uses a contract, a ClaimType or a Procedure: the Procedures that capture
+    under a contract (role ``capture-contract``), the Lines on a Procedure,
+    the mandates that settle a ClaimType.
+    """
+
+    source: str
+    role: str
+    target: str
+    target_digest: str
+    current: bool | None = Field(default=None, exclude_if=_is_none)
+
+
 class OrientResult(_StrictOrientModel):
     """One orient answer; which parts are present depends on the request.
 
@@ -429,7 +479,8 @@ class OrientResult(_StrictOrientModel):
       ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
       ``predictions``, ``mandates``), the principal registry (``principals``),
       the governed policies in force (``policies``), the accepted generations
-      newest first (``generations``) or the Subject graph (``graph``), paged.
+      newest first (``generations``), the Subject graph (``graph``) or the
+      pins between live definitions (``pins``), paged.
       The default map counts the operational families under ``artifacts`` and
       never inlines their rows.
 
@@ -480,6 +531,9 @@ class OrientResult(_StrictOrientModel):
     generations: tuple[OrientGeneration, ...] | None = Field(default=None, exclude_if=_is_none)
     # Live Subjects and the live Claims between them (section "graph"), keyset-paged.
     graph: OrientGraph | None = Field(default=None, exclude_if=_is_none)
+    # The required pins of live definitions (section "pins"), by source then
+    # ordinal, keyset-paged; never a Claim's, a Subject's or an attestation's.
+    pins: tuple[OrientPin, ...] | None = Field(default=None, exclude_if=_is_none)
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
     # Present when part of the answer is operational state -- runs, Line enablements and
@@ -495,6 +549,7 @@ __all__ = [
     "ORIENT_DEFAULT_LIMIT",
     "ORIENT_DEFAULT_QUERIES",
     "ORIENT_MAX_LIMIT",
+    "ORIENT_PIN_SOURCE_KINDS",
     "ORIENT_SAMPLE_SUBJECTS",
     "UNDECLARED_KIND_IDENTITY",
     "Head",
@@ -509,6 +564,7 @@ __all__ = [
     "OrientGraphEdge",
     "OrientGraphNode",
     "OrientGraphTotals",
+    "OrientPin",
     "OrientInterfaceProvider",
     "OrientInterface",
     "OrientKindDetail",

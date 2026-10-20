@@ -4593,7 +4593,10 @@ class Cruxible:
         timeline, newest first, paged by sequence), graph (``graph.nodes``: each
         live Subject as ``{subject, kind}``, then ``graph.edges``: each live
         Subject-valued Claim as ``{claim, source, predicate, qualifier, target}``,
-        with ``graph.totals.subjects`` on every page), or an operational family:
+        with ``graph.totals.subjects`` on every page), pins (each live
+        definition's required pins as ``{source, role, target, target_digest,
+        current}``: read by target, who uses a contract, ClaimType or
+        Procedure), or an operational family:
         runs, lines, captures, capture_contracts, predictions or mandates. Follow
         ``next_cursor`` while ``truncated``. When this workspace holds an
         exported floor, ``floor`` says the coordinate it is at and how many

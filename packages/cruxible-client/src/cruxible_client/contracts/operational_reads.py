@@ -20,9 +20,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from cruxible_client.contracts.line_dispatch import LineTriggerVersion
+from cruxible_client.contracts.procedure_mandates import MandateChangeKind
 from cruxible_client.contracts.procedures.results import (
     ProcedureTerminal,
     ProcedureTerminalEgress,
@@ -229,7 +230,52 @@ class GetResolutionContractCard(_StrictOperationalModel):
     next: tuple[str, ...] = ()
 
 
+def _omit_false(value: object) -> bool:
+    return value is False
+
+
+class MandateScope(_StrictOperationalModel):
+    """One ClaimType a settle grant covers.
+
+    ``claim_type`` is its ``ClaimType:<predicate>`` ref, ``change_kinds`` the
+    changes the grant may settle on it, and ``binds`` which referent of the
+    changed Claim (its ``subject`` or its ``object``) binds the condition
+    query's parameter.
+    """
+
+    claim_type: str
+    change_kinds: tuple[MandateChangeKind, ...]
+    binds: Literal["subject", "object"]
+
+
+class MandateConditionView(_StrictOperationalModel):
+    """The accepted query that is a settle grant's settlement predicate.
+
+    Core binds ``binding_parameter`` from each target's binding referent; every
+    other parameter is fixed in ``fixed_parameters``. A target settles only on
+    one complete, conflict-free row with every ``required_fields`` value
+    present; otherwise the grant does what ``fallback`` says.
+    """
+
+    query: str
+    binding_parameter: str
+    fixed_parameters: dict[str, JsonValue] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
+    required_fields: tuple[str, ...]
+    fallback: Literal["refuse", "propose"]
+
+
 class GetMandateCard(_StrictOperationalModel):
+    """One mandate: what it grants, to which Procedure, over what, and until when.
+
+    ``scope`` lists the ClaimTypes a settle grant covers; ``subject_scope`` the
+    Subjects it is limited to (artifact paths), absent when it reaches every
+    Subject its namespace does; ``condition`` the settlement predicate;
+    ``subject_creation`` the Subject kinds a settle may create. ``suspended``
+    appears only when the mandate's kill switch is on. A v1 mandate has none.
+    """
+
     mandate: str
     procedure: str
     grants: Literal["propose", "settle"]
@@ -238,6 +284,11 @@ class GetMandateCard(_StrictOperationalModel):
     valid_from: datetime
     expires_at: datetime
     namespace: tuple[str, ...] = ()
+    scope: tuple[MandateScope, ...] = ()
+    subject_scope: tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
+    condition: MandateConditionView | None = Field(default=None, exclude_if=_omit_none)
+    subject_creation: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    suspended: bool = Field(default=False, exclude_if=_omit_false)
     next: tuple[str, ...] = ()
 
 
@@ -359,11 +410,19 @@ class OrientPrediction(_StrictOperationalModel):
 
 
 class OrientMandate(_StrictOperationalModel):
+    """One mandate row: its grant and state, the ClaimTypes a settle grant covers,
+    its condition query's ref, the Subject kinds it may create, and ``suspended``
+    when its kill switch is on. ``get`` reads the rest."""
+
     mandate: str
     procedure: str
     grants: Literal["propose", "settle"]
     state: MandateState
     expires_at: datetime
+    scope: tuple[MandateScope, ...] = Field(default=(), exclude_if=lambda value: not value)
+    condition_query: str | None = Field(default=None, exclude_if=_omit_none)
+    subject_creation: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    suspended: bool = Field(default=False, exclude_if=_omit_false)
 
 
 __all__ = [
@@ -389,6 +448,8 @@ __all__ = [
     "LineTriggersInactive",
     "LiveHead",
     "LiveView",
+    "MandateConditionView",
+    "MandateScope",
     "MandateState",
     "OrientCaptureContract",
     "OrientCapture",

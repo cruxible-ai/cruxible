@@ -5,8 +5,9 @@ predicate descriptors, counts each artifact family, lists the named queries,
 says who the caller is and whether it can author, summarizes what the ``next``
 queue holds, and suggests runnable follow-up calls rendered for the caller's
 surface. ``orient(kind=K)`` widens one kind to every predicate in full plus a
-few sample Subject IDs; ``orient(section=S)`` pages one artifact family, and
-``orient(section="graph")`` the live Subjects and the Claims between them.
+few sample Subject IDs; ``orient(section=S)`` pages one artifact family,
+``orient(section="graph")`` the live Subjects and the Claims between them, and
+``orient(section="pins")`` the pins between live definitions.
 
 Everything here is read from the accepted index at one coordinate. The
 attention summary uses the existing ``next`` service's queue fold, without
@@ -33,6 +34,8 @@ from cruxible_client import contracts
 from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
 from cruxible_client.contracts.claim_types import (
     ClaimType,
+    claim_type_contention,
+    claim_type_format_version,
     effective_evidence_requirement,
     effective_revision_evidence,
 )
@@ -71,7 +74,12 @@ from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.exhaust.journal_index import RunPageInvalidated
+from cruxible_core.indexes.evidence.citation_sql import CAPTURE_COUNT_SQL
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.query_selection import (
+    KIND_PREDICATE_COUNTS_SQL,
+    LIVE_SUBJECT_COUNTS_SQL,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
@@ -96,6 +104,7 @@ from cruxible_core.service.discovery.operational import (
     mandate_rows,
     prediction_rows,
 )
+from cruxible_core.service.discovery.pins import PinKey, pins_page
 from cruxible_core.service.discovery.runs import run_counts, run_rows
 from cruxible_core.service.identity import authoring_refusal, principal_standing
 from cruxible_core.service.list_pages import (
@@ -174,6 +183,8 @@ class _State:
     #: Each declared kind's identity rule as orient shows it: ``keys: a, b (unique)``
     #: or ``minted``.
     identities: dict[str, str] = dataclass_field(default_factory=dict)
+    #: Each live ClaimType's ledger path and accepted revision, by predicate.
+    placements: dict[str, tuple[str, int]] = dataclass_field(default_factory=dict)
 
 
 def accepted_subject_kinds(connection: sqlite3.Connection) -> tuple[OrientSubjectKind, ...]:
@@ -284,22 +295,22 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         names = CaptureContractNames(instance, coordinate, connection=connection)
         claim_types: list[ClaimType] = []
         evidence: dict[str, tuple[str, ...]] = {}
+        placements: dict[str, tuple[str, int]] = {}
         digest_named = 0
-        for (identity,) in connection.execute(
-            "SELECT identity FROM claim_types WHERE lifecycle='live' ORDER BY identity"
+        for identity, path, revision in connection.execute(
+            "SELECT identity, path, revision FROM claim_types WHERE lifecycle='live' "
+            "ORDER BY identity"
         ).fetchall():
             claim_type = typed.source(str(identity))
             if not isinstance(claim_type, ClaimType):
                 continue
             claim_types.append(claim_type)
+            placements[claim_type.predicate] = (str(path), int(revision))
             evidence[claim_type.predicate] = names.admitted(claim_type)
             digest_named += names.names_by_digest(claim_type)
+        # The per-kind counters Subject writes maintain (vocabulary-sized), never a recount.
         subjects_by_kind = {
-            str(kind): int(count)
-            for kind, count in connection.execute(
-                "SELECT subject_kind, count(*) FROM subjects WHERE lifecycle='live' "
-                "GROUP BY subject_kind"
-            )
+            str(kind): int(count) for kind, count in connection.execute(LIVE_SUBJECT_COUNTS_SQL)
         }
         identities = {
             item.kind: "minted"
@@ -335,6 +346,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         claim_types=tuple(claim_types),
         subjects_by_kind=subjects_by_kind,
         evidence=evidence,
+        placements=placements,
         digest_named=digest_named,
         procedures=procedures,
         documents=documents,
@@ -411,6 +423,8 @@ def _descriptor(
     evidence: tuple[str, ...],
     full: bool,
     live_claims: int | None = None,
+    subjects_with_value: int | None = None,
+    placement: tuple[str, int] | None = None,
 ) -> OrientPredicate:
     value_type, members = _value_type(claim_type)
     freshness = claim_type.evidence_freshness
@@ -438,7 +452,12 @@ def _descriptor(
             if full and freshness is not None
             else None
         ),
+        contention=claim_type_contention(claim_type) if full else None,
+        format=claim_type_format_version(claim_type) if full else None,
+        revision=placement[1] if full and placement is not None else None,
+        path=placement[0] if full and placement is not None else None,
         live_claims=live_claims if full else None,
+        subjects_with_value=subjects_with_value if full else None,
     )
 
 
@@ -923,6 +942,17 @@ def service_playbill_orient(
             limit=limit,
             surface=surface,
         )
+    # Definition pins read the pins primary key by definition kind, never the vocabulary.
+    if section == "pins":
+        return _pins_section(
+            instance,
+            base,
+            coordinate=coordinate,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
+        )
     # The ledger timeline reads the history index alone, never the vocabulary.
     if section == "generations":
         return _generations_section(
@@ -1218,11 +1248,13 @@ def _operational_counts(
         connection = projection.typed.connection
 
         def count(sql: str) -> int:
-            return int(connection.execute(sql).fetchone()[0])
+            row = connection.execute(sql).fetchone()
+            return 0 if row is None else int(row[0])
 
         counts = {
             "lines": count("SELECT count(*) FROM lines WHERE lifecycle='live'"),
-            "captures": count("SELECT count(*) FROM captures"),
+            # The counter Capture inserts and deletes keep, never a count of the Captures.
+            "captures": count(CAPTURE_COUNT_SQL),
             "capture_contracts": count(
                 "SELECT count(*) FROM capture_contracts WHERE lifecycle='live'"
             ),
@@ -1400,6 +1432,45 @@ def _graph_section(
         **base,
         section="graph",
         graph=graph,
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
+
+
+def _pins_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: OrientSurface,
+) -> OrientResult:
+    """One keyset page of the required pins of live definitions."""
+
+    after = _keyset_after(continuation)
+    key = None if after is None else PinKey.decode(after)
+    if after is not None and key is None:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        pins, stop = pins_page(projection.typed.connection, limit=limit, after=key)
+    next_cursor = (
+        None if stop is None else _keyset_cursor(view="pins", served=served, last_key=stop.encode())
+    )
+    calls: list[_Call] = []
+    if pins:
+        calls.append(_Call("get", (("ref", pins[0].source),)))
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "pins"), ("cursor", next_cursor))))
+    return OrientResult(
+        **base,
+        section="pins",
+        pins=pins,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
         next=tuple(render_orient_call(call, surface) for call in calls),
@@ -1584,15 +1655,13 @@ def _kind_detail(
         raise _kind_not_found(kind, known)
     of_kind = [item for item in state.claim_types if kind in item.allowed_subject_kinds]
     names = _short_names((item.predicate for item in of_kind), kind, state)
-    prefix = f"subjects/{kind}/"
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
+        # The kind's per-predicate counters Claim writes maintain: one prefix seek.
         counts = {
-            str(predicate): int(count)
-            for predicate, count in connection.execute(
-                "SELECT predicate, count(*) FROM claims WHERE lifecycle='live' "
-                "AND subject_path >= ? AND subject_path < ? GROUP BY predicate",
-                (prefix, prefix[:-1] + "0"),
+            str(predicate): (int(claims), int(subjects))
+            for predicate, claims, subjects in connection.execute(
+                KIND_PREDICATE_COUNTS_SQL, (kind,)
             )
         }
         samples = tuple(
@@ -1610,7 +1679,9 @@ def _kind_detail(
                 name=names[item.predicate],
                 evidence=state.evidence.get(item.predicate, ()),
                 full=True,
-                live_claims=counts.get(item.predicate, 0),
+                live_claims=counts.get(item.predicate, (0, 0))[0],
+                subjects_with_value=counts.get(item.predicate, (0, 0))[1],
+                placement=state.placements.get(item.predicate),
             )
             for item in of_kind
         ),
@@ -1701,6 +1772,7 @@ def _section_rows(state: _State, section: OrientSection) -> tuple[tuple[Any, ...
             ),
             evidence=state.evidence.get(item.predicate, ()),
             full=True,
+            placement=state.placements.get(item.predicate),
         )
         for item in sorted(state.claim_types, key=lambda item: item.predicate)
     )

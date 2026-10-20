@@ -8003,6 +8003,8 @@ def _orient_predicate_line(item: Mapping[str, Any]) -> str:
     parts = [str(item["name"]), str(item["cardinality"]), kind]
     if item.get("live_claims") is not None:
         parts.append(f"claims={item['live_claims']}")
+    if item.get("subjects_with_value") is not None:
+        parts.append(f"subjects={item['subjects_with_value']}")
     if item.get("stale_after"):
         parts.append(f"stale_after={item['stale_after']}")
     if item.get("evidence") is not None:
@@ -8091,10 +8093,28 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         "captures",
         "capture_contracts",
         "predictions",
-        "mandates",
     }:
         for row in result[section]:
             lines.append("  ".join(str(value) for value in row.values()))
+    if section == "pins":
+        for row in result["pins"]:
+            stale = "" if row.get("current", True) else "  (not the current version)"
+            lines.append(f"{row['source']}  -{row['role']}->  {row['target']}{stale}")
+    if section == "mandates":
+        for row in result["mandates"]:
+            lines.append(
+                f"{row['mandate']}  {row['procedure']}  {row['grants']}  {row['state']}  "
+                f"expires {row['expires_at']}" + ("  suspended" if row.get("suspended") else "")
+            )
+            for scope in row.get("scope", ()):
+                lines.append(
+                    f"  settles {scope['claim_type']}  {','.join(scope['change_kinds'])}  "
+                    f"binds {scope['binds']}"
+                )
+            if row.get("condition_query"):
+                lines.append(f"  condition {row['condition_query']}")
+            if row.get("subject_creation"):
+                lines.append(f"  may create {', '.join(row['subject_creation'])}")
     if section == "interfaces":
         for row in result["interfaces"]:
             providers = (
@@ -8168,7 +8188,10 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     "--section",
     type=click.Choice(list(get_args(contracts.OrientSection))),
     default=None,
-    help="Page one artifact family, or graph (live Subjects, then the Claims between them).",
+    help=(
+        "Page one artifact family, graph (live Subjects, then the Claims between them) "
+        "or pins (what each live definition pins)."
+    ),
 )
 @click.option(
     "--limit",

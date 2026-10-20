@@ -196,6 +196,7 @@ def test_a_claim_type_card_maps_stored_playbill_contract_names_for_display(
 ) -> None:
     """Stored evidence contract names keep their playbill spelling; get's text does not."""
 
+    from cruxible_client.contracts.claim_types import ClaimTypeContention
     from cruxible_client.contracts.get_reads import GetClaimTypeCard, GetEvidenceRule
 
     _stub(
@@ -219,7 +220,12 @@ def test_a_claim_type_card_maps_stored_playbill_contract_names_for_display(
                         admission="direct",
                     ),
                 ),
+                contention=ClaimTypeContention(selector="only_contender", on_conflict="unresolved"),
+                format=7,
+                revision=1,
+                path="claim-types/work_item/status.json",
                 live_claims=0,
+                subjects_with_value=0,
             ),
         ),
     )

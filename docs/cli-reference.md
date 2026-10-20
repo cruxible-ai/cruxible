@@ -3630,7 +3630,9 @@ CaptureContracts by digest, attention says so and suggests
 `cruxible claim-type upgrade`.
 
 `--kind` reads one kind in full: every predicate with its roles, freshness
-horizon and live Claim count, the predicates of other kinds that point at it
+horizon, live Claim count and how many of the kind's Subjects hold a live value
+(`subjects_with_value`; both counts come from counters Claim writes maintain,
+never a recount), the predicates of other kinds that point at it
 (`incoming`, full names: follow one backwards with `query KIND --follow-in
 PREDICATE:alias`), plus up to five sample Subject IDs. A kind that
 does not exist is refused as `cruxible.orient.kind_not_found` with the nearest
@@ -3640,7 +3642,12 @@ subject_kinds` lists each live SubjectKind and how a new Subject of the kind is
 named (`keys: <key ClaimTypes> (unique|hint)` or `minted`), and `--section
 claim_types` each live ClaimType in full; a row an installed kit owns names it as
 `kit` (the kit whose receipt records the definition), as do the `get
-ClaimType:` and `get SubjectKind:` cards. `--section runs` lists
+ClaimType:` and `get SubjectKind:` cards. A full ClaimType descriptor (here and
+under `--kind`) and the `get ClaimType:` card also carry `contention` (the
+resolution `selector`, `on_conflict`: `unresolved` or `refuse`, and the
+admission policy's `corroboration` and `freeze` requirement counts when there
+are any), `format` (7 for `playbill-claim-type-v7`), the accepted `revision`
+and the ledger `path`. `--section runs` lists
 Procedure runs, newest admission first, each with its Procedure, status,
 admission time, Line and finished-node count, and `--section running` lists
 only the runs still running. Both page by the admission's immutable position,
@@ -3659,8 +3666,12 @@ when its Triggers do nothing because it is not enabled, and due/waiting counts),
 `captures` (the Captures accepted Claims cite, newest first, keyset-paged,
 each as its `CAP-` handle), `capture_contracts` (version, grade, how many
 ClaimTypes admit each), `predictions` (each live ResolutionContract with its
-bound windows by status and the next close) and `mandates` (grant, state and
-expiry). The default map counts each family under `Artifacts` and never
+bound windows by status and the next close) and `mandates` (grant, state,
+expiry, and for a settle grant its typed `scope` -- each `{claim_type,
+change_kinds, binds}` -- its `condition_query`, the Subject kinds it may create
+and `suspended` when its kill switch is on; the `get Mandate:` card adds the
+`subject_scope` and the whole `condition`: query, binding parameter, fixed
+parameters, required fields and fallback). The default map counts each family under `Artifacts` and never
 inlines their rows; each section suggests the `get` of its first row.
 `--section generations` is the ledger's timeline: accepted generations newest
 first from the answer's own (or `--at`), each with its sequence and git oid,
@@ -3679,6 +3690,16 @@ page reads only its own rows through two projection indexes, so loading the
 whole graph costs its Subjects plus its Subject-valued Claims; every page reads
 at the first page's coordinate. Edges carry no contested status, and there is
 no edge total: neither is kept in those tables.
+`--section pins` lists the required pins of live definitions (Blueprints,
+CaptureContracts, ClaimTypes, Lines, Procedures, mandates, Providers, provider
+interfaces, queries, ResolutionContracts, source acquisition policies,
+SubjectKinds and Triggers), each `{source, role, target, target_digest,
+current}` by source then pin order, `current` false when the pin names an
+earlier version of its target. Read by target, the rows say who uses a
+definition: the Procedures that capture under a contract (role
+`capture-contract`), the Lines on a Procedure, the mandates that settle a
+ClaimType. A page reads only definition rows (never a Claim's or a Subject's
+pins), so the whole listing costs the ontology, not the instance.
 `--section interfaces` lists the provider interfaces a Procedure node can call,
 each with its interface digest, operation contract and the implementing
 Providers with their implementation digests (`get ProviderInterface:NAME`

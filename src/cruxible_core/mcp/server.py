@@ -48,7 +48,7 @@ Read with three verbs. cruxible_orient maps the instance: each Subject
 kind with its predicates, artifact and Claim counts, who you are, what needs
 attention, and the next calls to make; orient(kind=K) widens one kind and
 orient(section=S) pages one family (documents, queries, interfaces,
-principals, policies, runs, graph, ...). cruxible_query answers any question
+principals, policies, runs, graph, pins, ...). cruxible_query answers any question
 as rows of values with verdict flags: a Subject kind with where/select/follow,
 contains for text in values, or a named query. cruxible_get reads one
 thing by any reference you have seen (CLM-..., kind/id, ClaimType:,

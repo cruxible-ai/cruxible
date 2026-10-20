@@ -73,6 +73,16 @@ CREATE INDEX captures_by_commitment ON captures(evidence_commitment_digest,captu
 CREATE INDEX captures_by_observed_content ON captures(observed_content_digest,capture_digest);
 CREATE INDEX captures_by_logical_source ON captures(logical_source_id,capture_digest);
 CREATE INDEX captures_by_source_ref ON captures(source_ref_key,capture_digest);
+CREATE TABLE capture_count (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1), amount INTEGER NOT NULL CHECK(amount>0)
+) STRICT;
+CREATE TRIGGER capture_count_insert AFTER INSERT ON captures BEGIN
+ INSERT INTO capture_count VALUES (1,1) ON CONFLICT(singleton) DO UPDATE SET amount=amount+1;
+END;
+CREATE TRIGGER capture_count_delete AFTER DELETE ON captures BEGIN
+ DELETE FROM capture_count WHERE singleton=1 AND amount=1;
+ UPDATE capture_count SET amount=amount-1 WHERE singleton=1;
+END;
 CREATE TABLE citation_uses (
  owner_kind TEXT NOT NULL CHECK(owner_kind IN ('Claim','attestation')),
  owner_key TEXT NOT NULL, use_key TEXT NOT NULL,
@@ -505,3 +515,7 @@ class CitationReader:
                 key=lambda fact: fact.fact_key,
             )
         )
+
+
+#: How many Captures accepted Claims cite: the one counter row their inserts and deletes keep.
+CAPTURE_COUNT_SQL = "SELECT amount FROM capture_count WHERE singleton=1"
