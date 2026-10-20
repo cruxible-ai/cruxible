@@ -88,6 +88,12 @@ from cruxible_client.contracts.claim_attestations import (
 from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.compact_query import QueryClaim
+from cruxible_client.contracts.compiler_upgrade_landing import (
+    CompilerUpgradeLanded,
+    CompilerUpgradeProposed,
+    CompilerUpgradeResult,
+    CompilerUpgradeSigningKey,
+)
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.duplicates import (
     DUPLICATES_AUDIT_DEFAULT_LIMIT,
@@ -2499,10 +2505,13 @@ def review_proposal(
 @click.option(
     "--key",
     "private_key_path",
-    required=True,
+    default=None,
     envvar=PRINCIPAL_KEY_ENV,
     type=click.Path(dir_okay=False),
-    help="The signer's private key (also CRUXIBLE_PRINCIPAL_KEY).",
+    help=(
+        "The signer's private key (also CRUXIBLE_PRINCIPAL_KEY; default: the key the "
+        "signer's remembered settings or `cruxible init` keep)."
+    ),
 )
 @click.option("--yes", is_flag=True, help="Approve after rendering without an interactive prompt.")
 @click.option(
@@ -2520,7 +2529,7 @@ def review_proposal(
 def approve_proposal(
     proposal_id: str,
     signer_id: str | None,
-    private_key_path: str,
+    private_key_path: str | None,
     yes: bool,
     hold: bool,
     full: bool,
@@ -2546,13 +2555,20 @@ def approve_proposal(
 
     def _resolve_and_prepare(
         client: CruxibleClient, instance_id: str
-    ) -> tuple[str, contracts.ApprovalChallenge]:
+    ) -> tuple[str, contracts.ApprovalChallenge, CompilerUpgradeSigningKey]:
+        key = _signing_key(private_key_path, instance_id=instance_id, signer_id=resolved_signer)
+        if key is None:
+            raise click.UsageError(_missing_signing_key_help(instance_id, resolved_signer))
         resolved_id = client.resolve_proposal_selector(instance_id, proposal_id).proposal_id
-        return resolved_id, client.prepare_approval(
-            instance_id, resolved_id, signer_id=resolved_signer, include_body=True
+        return (
+            resolved_id,
+            client.prepare_approval(
+                instance_id, resolved_id, signer_id=resolved_signer, include_body=True
+            ),
+            key,
         )
 
-    resolved_id, challenge = _server_call(
+    resolved_id, challenge, key = _server_call(
         _resolve_and_prepare,
         command_name="cruxible proposal approve",
     )
@@ -2560,12 +2576,14 @@ def approve_proposal(
     if not output_json:
         render = render_playbill_proposal_review if full else render_playbill_approval_summary
         click.echo(render(review), nl=False)
+    if key.source != "option":
+        click.echo(_signing_key_line(key), err=True)
     if not yes and not click.confirm("Sign this exact candidate?"):
         raise click.Abort()
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     signer = LocalEd25519ApprovalSigner.open(
         signer_id=resolved_signer,
-        private_key_path=Path(private_key_path),
+        private_key_path=Path(key.private_key_path),
         expected_public_key=principal.public_key,
         forbidden_roots=_custody_forbidden_roots(),
     )
@@ -5693,40 +5711,309 @@ def compiler_group() -> None:
 
 @compiler_group.command("upgrade")
 @click.option(
-    "--to", "target_digest", required=True, help="Exact installed target compiler digest."
+    "--to",
+    "target_digest",
+    default=None,
+    help="Target compiler digest (default: the compiler the daemon runs).",
 )
-@click.option("--name", "proposal_name", required=True)
+@click.option(
+    "--name",
+    "proposal_name",
+    default=None,
+    help="Proposal name (default: upgrade-to-<revision label>).",
+)
+@click.option(
+    "--key",
+    "private_key_path",
+    default=None,
+    envvar=PRINCIPAL_KEY_ENV,
+    type=click.Path(dir_okay=False),
+    help=(
+        "Your private key (also CRUXIBLE_PRINCIPAL_KEY; default: the key your remembered "
+        "settings or `cruxible init` keep). With it the upgrade is signed and activated "
+        "in this command when no other principal's approval is needed."
+    ),
+)
+@click.option(
+    "--no-accept",
+    is_flag=True,
+    help="Only propose; sign and activate later with `cruxible proposal approve`.",
+)
 @change_control_options
 @json_option
 @handle_errors
 def propose_compiler_upgrade(
-    target_digest: str,
-    proposal_name: str,
+    target_digest: str | None,
+    proposal_name: str | None,
+    private_key_path: str | None,
+    no_accept: bool,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Create an upgrade proposal at the selected accepted head; does not activate it."""
+    """Propose the compiler upgrade, and sign and activate it when nothing else is needed.
+
+    \b
+    compiler upgrade                    preview, then (at a terminal) ask to commit
+    compiler upgrade --yes              commit without asking
+    compiler upgrade --commit --at OID  commit exactly the preview at OID
+    compiler upgrade --no-accept        propose only
+
+    With no --to it targets the compiler the daemon runs; the proposal pins its
+    full digest. When you hold a signing key and the approval policy needs no
+    other principal, committing proposes, signs with your key and activates:
+    activation is one-way, so the command previews first. Otherwise it proposes
+    and the result names why it stopped and the next step.
+    """
     from cruxible_client.contracts.types import CompilerCoordinate
 
-    def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
+    def call(client: CruxibleClient, instance_id: str) -> CompilerUpgradeResult:
         head = client.head(instance_id)
-        return client.propose_compiler_upgrade(
+        signer_id = None if no_accept else client.whoami(instance_id).actor_id
+        key = (
+            None
+            if signer_id is None
+            else _signing_key(private_key_path, instance_id=instance_id, signer_id=signer_id)
+        )
+        proposed = client.propose_compiler_upgrade(
             instance_id,
-            target=CompilerCoordinate(rule_digest=target_digest),
+            target=None if target_digest is None else CompilerCoordinate(rule_digest=target_digest),
             base=contracts.AcceptedCoordinate.model_validate(
                 head.coordinate.model_dump(mode="json")
             ),
             proposal_name=proposal_name,
-            dry_run=dry_run,
+            # Signing activates, and activation cannot be undone: preview first.
+            dry_run=True if dry_run is None and key is not None else dry_run,
             at=at,
+        )
+        if proposed.status != "admitted":
+            return CompilerUpgradeResult(proposal=proposed, signing_key=key)
+        return _land_compiler_upgrade(
+            client,
+            instance_id,
+            proposed,
+            key=key,
+            no_accept=no_accept,
+            signer_id=signer_id,
         )
 
     result = _server_call(call, command_name="cruxible compiler upgrade")
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        _echo_proposal(result, result.lint)
+        _echo_compiler_upgrade(result)
+
+
+def _signing_key(
+    explicit: str | None, *, instance_id: str, signer_id: str
+) -> CompilerUpgradeSigningKey | None:
+    """The caller's signing key: `--key`, its environment, else the default key directory.
+
+    `cruxible init` keeps the owner's key under the default key directory, and
+    the CLI's remembered settings export it as CRUXIBLE_PRINCIPAL_KEY, so a
+    fresh install needs no flag. The path stays on this client.
+    """
+    if explicit:
+        ctx = click.get_current_context()
+        source = ctx.get_parameter_source("private_key_path")
+        if source is not click.core.ParameterSource.ENVIRONMENT:
+            kind: Literal["option", "environment", "remembered_settings", "default_key_dir"] = (
+                "option"
+            )
+        elif _root_ctx_obj().get("principal_source") == "remembered":
+            kind = "remembered_settings"
+        else:
+            kind = "environment"
+        return CompilerUpgradeSigningKey(
+            signer_id=signer_id,
+            private_key_path=str(Path(explicit).expanduser()),
+            source=kind,
+        )
+    default = default_key_dir(instance_id, signer_id) / f"{signer_id}.ed25519"
+    if default.is_file():
+        return CompilerUpgradeSigningKey(
+            signer_id=signer_id, private_key_path=str(default), source="default_key_dir"
+        )
+    return None
+
+
+def _missing_signing_key_help(instance_id: str, signer_id: str) -> str:
+    """Name where a fresh install keeps the key, and the commands that load or make one."""
+
+    default = default_key_dir(instance_id, signer_id) / f"{signer_id}.ed25519"
+    return (
+        f"no signing key for principal {signer_id}: pass --key PATH (or set "
+        f"CRUXIBLE_PRINCIPAL_KEY). `cruxible init` keeps the owner's key at {default}, "
+        f"and none is there. `cruxible context use --principal {signer_id}` loads a "
+        "principal's remembered settings, key included; settings written elsewhere load "
+        "with `set -a; . DIR/cruxible.env; set +a`; `cruxible principal add ID --key-dir "
+        "DIR` creates a new principal and its key"
+    )
+
+
+def _signing_key_line(key: CompilerUpgradeSigningKey) -> str:
+    where = {
+        "option": "--key",
+        "environment": "CRUXIBLE_PRINCIPAL_KEY",
+        "remembered_settings": f"remembered settings {_root_ctx_obj().get('principal_settings')}",
+        "default_key_dir": "the default key directory",
+    }[key.source]
+    return f"Signing key for {key.signer_id}: {key.private_key_path} (from {where})"
+
+
+def _land_compiler_upgrade(
+    client: CruxibleClient,
+    instance_id: str,
+    proposed: contracts.ProposalInspection,
+    *,
+    key: CompilerUpgradeSigningKey | None,
+    no_accept: bool,
+    signer_id: str | None,
+) -> CompilerUpgradeResult:
+    """Sign and activate an admitted upgrade when policy and caller allow; else say why not.
+
+    The caller's own signature is the one settlement requires when the policy
+    asks for no independent approval; under one, the creator never counts, so
+    nothing is signed and the eligible approver's `proposal approve` lands it.
+    """
+    proposal_id = _admitted_proposal_id(proposed)
+    candidate = proposed.proposal.get("candidate")
+    stop: CompilerUpgradeProposed | None = None
+    if proposal_id is None or not isinstance(candidate, Mapping):
+        stop = CompilerUpgradeProposed(
+            proposal_id=proposal_id,
+            reason="refused",
+            message="not activated: the upgrade was evaluated and refused",
+            next=None if proposal_id is None else f"cruxible get {proposal_id}",
+        )
+    elif no_accept:
+        stop = CompilerUpgradeProposed(
+            proposal_id=proposal_id,
+            reason="accept_never",
+            message="not activated: --no-accept proposes only",
+            next=f"cruxible proposal approve {proposal_id}",
+        )
+    elif candidate.get("approval_requirements"):
+        stop = CompilerUpgradeProposed(
+            proposal_id=proposal_id,
+            reason="independent_approval_required",
+            message=(
+                "not activated: the approval policy needs an ordinary principal other than "
+                "the proposer; that principal's `cruxible proposal approve` activates it"
+            ),
+            next=f"cruxible proposal approve {proposal_id} --signer-id APPROVER --key THEIR_KEY",
+        )
+    elif key is None or signer_id is None:
+        stop = CompilerUpgradeProposed(
+            proposal_id=proposal_id,
+            reason="signing_key_missing",
+            message="not activated: "
+            + (
+                _missing_signing_key_help(instance_id, signer_id)
+                if signer_id is not None
+                else "the credential acts as no principal, so nothing can be signed"
+            ),
+            next=f"cruxible proposal approve {proposal_id} --key PATH",
+        )
+    if stop is not None:
+        return CompilerUpgradeResult(proposal=proposed, signing_key=key, outcome=stop)
+    assert proposal_id is not None and key is not None and signer_id is not None
+    approval = _approve_with_key(
+        client,
+        instance_id,
+        proposal_id,
+        signer_id=signer_id,
+        private_key_path=Path(key.private_key_path),
+    )
+    activation = approval if isinstance(approval, contracts.ActivationReceipt) else None
+    if isinstance(approval, contracts.ApprovalReceipt):
+        activation = approval.activation
+    outcome: CompilerUpgradeLanded | CompilerUpgradeProposed
+    if isinstance(approval, contracts.ProposalRecompiled):
+        outcome = CompilerUpgradeProposed(
+            proposal_id=approval.proposal_id,
+            reason="recompiled",
+            message="not activated: the proposal was recompiled at a new head",
+            next=f"cruxible proposal review {approval.proposal_id}",
+        )
+    elif (
+        activation is not None
+        and activation.accepted_coordinate is not None
+        and (activation.status == "accepted")
+    ):
+        outcome = CompilerUpgradeLanded(
+            proposal_id=proposal_id, accepted_coordinate=activation.accepted_coordinate
+        )
+    elif activation is not None or (
+        isinstance(approval, contracts.ApprovalReceipt) and approval.not_activated == "stale"
+    ):
+        outcome = CompilerUpgradeProposed(
+            proposal_id=proposal_id,
+            reason="head_moved",
+            message="not activated: accepted state moved after this proposal was checked",
+            next=f"cruxible proposal readmit {proposal_id}",
+        )
+    elif isinstance(approval, contracts.ApprovalReceipt) and (
+        approval.not_activated == "activation_not_permitted"
+    ):
+        outcome = CompilerUpgradeProposed(
+            proposal_id=proposal_id,
+            reason="activation_not_permitted",
+            message="signed, not activated: activating a compiler upgrade requires admin",
+            next=f"an admin runs cruxible proposal activate {proposal_id}",
+        )
+    else:
+        remaining = (
+            approval.approvals_remaining if isinstance(approval, contracts.ApprovalReceipt) else 0
+        )
+        outcome = CompilerUpgradeProposed(
+            proposal_id=proposal_id,
+            reason="approvals_remaining",
+            message=f"signed, not activated: {remaining} more approval(s) required",
+            next=f"cruxible proposal approve {proposal_id}",
+        )
+    return CompilerUpgradeResult(
+        proposal=proposed, signing_key=key, approval=approval, outcome=outcome
+    )
+
+
+def _echo_compiler_upgrade(result: CompilerUpgradeResult) -> None:
+    """The proposal, its one-way notice, the key used, and what happened or what is next."""
+    inspection = result.proposal
+    notice = inspection.compiler_upgrade
+    if notice is not None:
+        source = notice.source_revision or notice.source_compiler_digest
+        target = notice.target_revision or notice.target_compiler_digest
+        click.echo(f"Compiler upgrade: {source} -> {target}")
+        click.echo(f"Target compiler: {notice.target_compiler_digest}")
+        click.echo(notice.message)
+    if result.signing_key is not None:
+        click.echo(_signing_key_line(result.signing_key))
+    outcome = result.outcome
+    if outcome is None:
+        if result.signing_key is not None and inspection.status == "would_propose":
+            candidate = inspection.proposal.get("candidate")
+            if isinstance(candidate, Mapping) and candidate.get("approval_requirements"):
+                click.echo("On commit: proposes only; the approval policy needs another principal.")
+            else:
+                click.echo("On commit: proposes, signs with this key and activates.")
+        _echo_proposal(inspection, inspection.lint)
+        return
+    admission = inspection.proposal.get("admission") or {}
+    evaluation = inspection.proposal.get("evaluation") or {}
+    verdict = evaluation.get("verdict", "-") if isinstance(evaluation, Mapping) else "-"
+    proposal_id = admission.get("proposal_id") if isinstance(admission, Mapping) else None
+    click.echo(f"{inspection.status}  {proposal_id or '-'}  verdict={verdict}")
+    diagnostics = evaluation.get("diagnostics", ()) if isinstance(evaluation, Mapping) else ()
+    for item in diagnostics:
+        if isinstance(item, Mapping):
+            click.echo(f"  {item.get('code')}: {printable(str(item.get('message', '')))}")
+    if isinstance(outcome, CompilerUpgradeLanded):
+        click.echo(f"Activated at {outcome.accepted_coordinate.git_oid}")
+        return
+    click.echo(printable(outcome.message))
+    if outcome.next is not None:
+        click.echo(f"Next: {outcome.next}")
 
 
 class _QueryCommand(click.Command):
