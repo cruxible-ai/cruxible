@@ -8091,10 +8091,24 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         "captures",
         "capture_contracts",
         "predictions",
-        "mandates",
     }:
         for row in result[section]:
             lines.append("  ".join(str(value) for value in row.values()))
+    if section == "mandates":
+        for row in result["mandates"]:
+            lines.append(
+                f"{row['mandate']}  {row['procedure']}  {row['grants']}  {row['state']}  "
+                f"expires {row['expires_at']}" + ("  suspended" if row.get("suspended") else "")
+            )
+            for scope in row.get("scope", ()):
+                lines.append(
+                    f"  settles {scope['claim_type']}  {','.join(scope['change_kinds'])}  "
+                    f"binds {scope['binds']}"
+                )
+            if row.get("condition_query"):
+                lines.append(f"  condition {row['condition_query']}")
+            if row.get("subject_creation"):
+                lines.append(f"  may create {', '.join(row['subject_creation'])}")
     if section == "interfaces":
         for row in result["interfaces"]:
             providers = (

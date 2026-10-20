@@ -45,6 +45,8 @@ from cruxible_client.contracts.operational_reads import (
     LineTriggersInactive,
     LiveHead,
     LiveView,
+    MandateConditionView,
+    MandateScope,
     MandateState,
     OrientCapture,
     OrientCaptureContract,
@@ -955,6 +957,32 @@ def mandate_state(mandate: ProcedureMandateV1 | ProcedureMandate, *, now: dateti
     return "active"
 
 
+def _scope(mandate: ProcedureMandateV1 | ProcedureMandate) -> tuple[MandateScope, ...]:
+    if not isinstance(mandate, ProcedureMandate):
+        return ()
+    return tuple(
+        MandateScope(
+            claim_type=item.claim_type.target.qualified,
+            change_kinds=item.change_kinds,
+            binds=item.binding_subject_role,
+        )
+        for item in mandate.scope
+    )
+
+
+def _condition(mandate: ProcedureMandateV1 | ProcedureMandate) -> MandateConditionView | None:
+    if not isinstance(mandate, ProcedureMandate) or mandate.condition is None:
+        return None
+    condition = mandate.condition
+    return MandateConditionView(
+        query=condition.query.target.qualified,
+        binding_parameter=condition.binding_parameter,
+        fixed_parameters=cast(dict[str, Any], condition.fixed_parameters),
+        required_fields=condition.required_fields,
+        fallback=condition.fallback,
+    )
+
+
 def mandate_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -975,6 +1003,17 @@ def mandate_card(
         valid_from=mandate.valid_from,
         expires_at=mandate.expires_at,
         namespace=mandate.namespace,
+        scope=_scope(mandate),
+        subject_scope=(
+            tuple(item.artifact_path for item in mandate.subject_scope)
+            if isinstance(mandate, ProcedureMandate) and mandate.subject_scope is not None
+            else None
+        ),
+        condition=_condition(mandate),
+        subject_creation=(
+            mandate.subject_creation if isinstance(mandate, ProcedureMandate) else ()
+        ),
+        suspended=isinstance(mandate, ProcedureMandate) and mandate.suspended,
         next=(render(procedure, None), render(identity, "history")),
     )
 
@@ -999,6 +1038,14 @@ def mandate_rows(
             grants=mandate_grant(mandate),
             state=mandate_state(mandate, now=evaluation_time),
             expires_at=mandate.expires_at,
+            scope=_scope(mandate),
+            condition_query=(
+                None if (condition := _condition(mandate)) is None else condition.query
+            ),
+            subject_creation=(
+                mandate.subject_creation if isinstance(mandate, ProcedureMandate) else ()
+            ),
+            suspended=isinstance(mandate, ProcedureMandate) and mandate.suspended,
         )
         for mandate in mandates
     )

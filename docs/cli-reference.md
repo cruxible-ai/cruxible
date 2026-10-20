@@ -3664,8 +3664,12 @@ when its Triggers do nothing because it is not enabled, and due/waiting counts),
 `captures` (the Captures accepted Claims cite, newest first, keyset-paged,
 each as its `CAP-` handle), `capture_contracts` (version, grade, how many
 ClaimTypes admit each), `predictions` (each live ResolutionContract with its
-bound windows by status and the next close) and `mandates` (grant, state and
-expiry). The default map counts each family under `Artifacts` and never
+bound windows by status and the next close) and `mandates` (grant, state,
+expiry, and for a settle grant its typed `scope` -- each `{claim_type,
+change_kinds, binds}` -- its `condition_query`, the Subject kinds it may create
+and `suspended` when its kill switch is on; the `get Mandate:` card adds the
+`subject_scope` and the whole `condition`: query, binding parameter, fixed
+parameters, required fields and fallback). The default map counts each family under `Artifacts` and never
 inlines their rows; each section suggests the `get` of its first row.
 `--section generations` is the ledger's timeline: accepted generations newest
 first from the answer's own (or `--at`), each with its sequence and git oid,

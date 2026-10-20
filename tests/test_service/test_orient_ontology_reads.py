@@ -166,3 +166,45 @@ def test_contention_counts_admission_requirements() -> None:
         "freeze": 1,
     }
     assert claim_type_format_version(claim_type) == 1
+
+
+# -- K6: typed Mandate scope on the mandate reads -------------------------------------
+
+
+def test_mandate_reads_carry_the_typed_scope_and_condition(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from tests.test_proposals.test_delegated_settlement import STATUS
+    from tests.test_proposals.test_delegated_settlement import _world as settle_world
+
+    instance, _mandate = settle_world(tmp_path)
+    when = datetime(2026, 6, 1, tzinfo=UTC)
+    scope = [
+        {
+            "claim_type": f"ClaimType:{STATUS}",
+            "change_kinds": ["create", "revise"],
+            "binds": "subject",
+        }
+    ]
+    rows = service_playbill_orient(instance, section="mandates", evaluation_time=when).mandates
+    assert rows is not None
+    (row,) = (item for item in rows if item.mandate == "ProcedureMandate:triage")
+    dumped = row.model_dump(mode="json")
+    assert dumped["scope"] == scope
+    assert dumped["condition_query"] == "QueryDefinition:project.settle-condition"
+    assert "suspended" not in dumped and "subject_creation" not in dumped
+    assert (dumped["grants"], dumped["state"]) == ("settle", "active")
+
+    read = service_playbill_get(
+        instance, request=GetRequest(ref="Mandate:triage", evaluation_time=when), access=_ACCESS
+    )
+    assert read.card is not None
+    card = read.card.model_dump(mode="json")
+    assert card["scope"] == scope
+    assert card["condition"] == {
+        "query": "QueryDefinition:project.settle-condition",
+        "binding_parameter": "item_id",
+        "required_fields": ["id"],
+        "fallback": "propose",
+    }
+    assert "subject_scope" not in card and "suspended" not in card
