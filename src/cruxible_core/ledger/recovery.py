@@ -101,6 +101,7 @@ from cruxible_core.proposals.settlement import (
     semantic_root_for_record,
 )
 from cruxible_core.query.backends import ClaimQueryFactsV1
+from cruxible_core.startup_progress import slow_step
 from cruxible_core.storage.cas import BodyProjectionProtocol
 from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
 
@@ -781,7 +782,12 @@ def _projection_for_head(
             manifest_path.unlink(missing_ok=True)
             (publication_directory / projection_piece_name(request)).unlink(missing_ok=True)
     refuse_write_while_previewing("instance recovery")
-    return assembler.assemble(request)
+    with slow_step(
+        "projection_rebuild", instance_id=coordinate.instance_id, git_oid=coordinate.git_oid
+    ) as step:
+        result = assembler.assemble(request)
+        step.set(rows=sum(result.row_counts.values()))
+    return result
 
 
 def _result_for_manifest(path: Path, manifest: ProjectionManifest) -> AssemblerResult:

@@ -74,12 +74,15 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def evict_projection(directory: Path, manifest_name: str) -> bool | None:
+def evict_projection(
+    directory: Path, manifest_name: str, *, freed: list[int] | None = None
+) -> bool | None:
     """Delete one manifest and its piece unless a reader holds it.
 
     True: deleted. False: held by a reader (try again later). None: there is
     no valid manifest of that name (absent, or recovery's to sweep). The
-    caller holds ``retention_lock``.
+    caller holds ``retention_lock``. ``freed``, when given, receives the byte
+    size of each piece deleted.
     """
 
     manifest_path = directory / manifest_name
@@ -102,6 +105,8 @@ def evict_projection(directory: Path, manifest_name: str) -> bool | None:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return False
+        if freed is not None:
+            freed.extend(os.fstat(descriptor).st_size for descriptor in held)
         # The manifest first: a manifest naming a missing piece refuses binds
         # and recovery, while a piece no manifest names is swept as an orphan.
         manifest_path.unlink(missing_ok=True)
@@ -118,23 +123,25 @@ def evict_projection(directory: Path, manifest_name: str) -> bool | None:
 EvictionOutcome = Literal["evicted", "absent", "waiting", "held_elsewhere"]
 
 
-def evict_or_wait(directory: Path, manifest_name: str, sequence: int) -> EvictionOutcome:
+def evict_or_wait(
+    directory: Path, manifest_name: str, sequence: int, *, freed: list[int] | None = None
+) -> EvictionOutcome:
     """Evict one manifest and its piece, or say what it waits for.
 
     ``waiting``: a handle in this process holds it; its release puts it in
     ``released_pieces``. ``held_elsewhere``: another process holds it.
     ``absent``: no valid manifest of that name. The caller holds
-    ``retention_lock``.
+    ``retention_lock``. ``freed`` receives the byte size of each piece deleted.
     """
 
-    outcome = evict_projection(directory, manifest_name)
+    outcome = evict_projection(directory, manifest_name, freed=freed)
     if outcome is False:
         with held_here(directory / manifest_name, sequence) as here:
             if here:
                 return "waiting"
             # No hold here can come or go now: one released just before the
             # registry was read is evicted, and one still held is elsewhere.
-            outcome = evict_projection(directory, manifest_name)
+            outcome = evict_projection(directory, manifest_name, freed=freed)
         if outcome is False:
             return "held_elsewhere"
     return "evicted" if outcome else "absent"

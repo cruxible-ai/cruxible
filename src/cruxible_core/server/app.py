@@ -33,7 +33,7 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
 from cruxible_client.contracts.validation_messages import internal_validation_segment
-from cruxible_core import __version__
+from cruxible_core import __version__, startup_progress
 from cruxible_core.errors import ConfigError, CoreError
 from cruxible_core.ledger.checkpoints import QUIET_CHECKPOINT_SECONDS
 from cruxible_core.runtime.execution_policy import discover_isolated_executors
@@ -742,8 +742,15 @@ def _serve(resolved_socket: str | None, *, bootstrap_secret_file: Path | None = 
     import uvicorn
 
     configure_request_logging()
+    # Slow start steps log a start and a done line, which `server restart` and
+    # `server info` read back, and print them here for a foreground start.
+    startup_progress.configure(boot_id=PROCESS_BOOT_ID, echo=True)
     get_playbill_manager().quiet_checkpoint_seconds = QUIET_CHECKPOINT_SECONDS
-    app = create_app()
+    # Nothing answers until this returns: every instance opens and recovers here.
+    with startup_progress.slow_step(
+        "daemon_start", instance_id=None, instances=len(registry.list_instances())
+    ):
+        app = create_app()
 
     if resolved_socket:
         socket_file = Path(resolved_socket)

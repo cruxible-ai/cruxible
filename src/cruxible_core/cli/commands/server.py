@@ -15,9 +15,10 @@ This group holds both the daemon-launch verb and the client RPCs:
 
 from __future__ import annotations
 
+import json
 import os
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal, cast
 
@@ -26,6 +27,7 @@ import click
 from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_client.errors import CoreError, DaemonOperationScopeError
 from cruxible_client.transport.lifecycle import DaemonLifecycleClient
+from cruxible_core import startup_progress
 from cruxible_core.cli.commands._common import (
     SERVER_MODE_REQUIRED_MESSAGE,
     _emit_json,
@@ -40,6 +42,7 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.main import handle_errors, long_running_command
 from cruxible_core.runtime.permissions import PERMISSION_MODE_NAMES
 from cruxible_core.server.config import (
+    get_server_log_path,
     get_server_state_root,
     is_server_auth_enabled,
 )
@@ -55,7 +58,11 @@ from cruxible_core.server.service_install import (
     service_config_path,
 )
 from cruxible_core.server.shutdown import ServerStopNotConfirmed
-from cruxible_core.server.state_lock import state_lock_holder_is_alive, state_lock_path
+from cruxible_core.server.state_lock import (
+    read_state_lock,
+    state_lock_holder_is_alive,
+    state_lock_path,
+)
 
 _lifecycle_state_root_option = click.option(
     "--state-root",
@@ -92,8 +99,101 @@ def _client_transport_label() -> str:
     return "configured Cruxible server"
 
 
+def _daemon_log_path(state_root: str | Path) -> Path:
+    """The daemon's log for `state_root`, as the daemon resolves it."""
+
+    environ = {"CRUXIBLE_STATE_ROOT": str(state_root)}
+    override = os.environ.get("CRUXIBLE_SERVER_LOG_PATH")
+    if override:
+        environ["CRUXIBLE_SERVER_LOG_PATH"] = override
+    return get_server_log_path(environ)
+
+
+def _log_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+@dataclass
+class _StartupLog:
+    """The daemon's start step lines, read from its log past a byte offset.
+
+    Only lines of the daemon image being waited for count: a step line that
+    names the boot id the restart was acknowledged by is the old image's.
+    A daemon on another host has no log here, and nothing is read.
+    """
+
+    path: Path
+    offset: int
+    skip_boot_id: str | None = None
+    running: dict[tuple[str, str | None], float] = field(default_factory=dict)
+
+    def poll(self) -> list[dict[str, object]]:
+        size = _log_size(self.path)
+        if size < self.offset:
+            self.offset = 0  # rotated
+        if size == self.offset:
+            return []
+        try:
+            with self.path.open("rb") as handle:
+                handle.seek(self.offset)
+                chunk = handle.read(size - self.offset)
+        except OSError:
+            return []
+        complete = chunk.rfind(b"\n") + 1
+        self.offset += complete
+        lines: list[dict[str, object]] = []
+        for raw in chunk[:complete].splitlines():
+            try:
+                line = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(line, dict) or line.get("event") not in startup_progress.EVENTS:
+                continue
+            if self.skip_boot_id is not None and line.get("boot_id") == self.skip_boot_id:
+                continue
+            key = (str(line.get("step")), _optional_text(line.get("instance_id")))
+            if line["event"] == startup_progress.STARTED:
+                self.running[key] = time.monotonic()
+            else:
+                self.running.pop(key, None)
+            lines.append(line)
+        return lines
+
+
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+_STEP_FIELDS = frozenset({"event", "step", "instance_id", "boot_id", "timestamp", "level"})
+
+
+def _step_text(line: dict[str, object]) -> str:
+    """One startup step line as the user reads it."""
+
+    step = str(line.get("step"))
+    instance_id = _optional_text(line.get("instance_id"))
+    counts = {
+        key: value
+        for key, value in line.items()
+        if key not in _STEP_FIELDS and key not in {"elapsed_s", "reason"}
+    }
+    text = startup_progress.describe(step, instance_id, counts)
+    if line.get("event") == startup_progress.STARTED:
+        return f"Migrating: {text}..." if step != "daemon_start" else f"Starting: {text}..."
+    if line.get("event") == startup_progress.FAILED:
+        return f"  failed after {line.get('elapsed_s')} s: {text}"
+    return f"  done in {line.get('elapsed_s')} s: {text}"
+
+
 def _wait_for_daemon(
-    client: DaemonLifecycleClient, timeout: float, *, old_boot_id: str | None
+    client: DaemonLifecycleClient,
+    timeout: float,
+    *,
+    old_boot_id: str | None,
+    startup_log: _StartupLog | None = None,
 ) -> str:
     """Poll the daemon's /version probe until the NEW image answers.
 
@@ -101,6 +201,10 @@ def _wait_for_daemon(
     restart, and the re-exec keeps its pid, so an answer only counts once its
     boot id differs from the one that acknowledged. Returns the version the new
     image reports; raising here keeps the command skew-proof.
+
+    While the new image runs slow start steps (a projection rebuild, eviction,
+    ledger compaction), their lines from the daemon's log are printed, and
+    each one restarts the timeout: a daemon that is migrating is not hung.
     """
     if old_boot_id is None or not old_boot_id.strip():
         raise click.ClickException(
@@ -111,6 +215,10 @@ def _wait_for_daemon(
     still_old = False
     missing_boot_id = False
     while time.monotonic() < deadline:
+        if startup_log is not None:
+            for line in startup_log.poll():
+                click.echo(_step_text(line), err=True)
+                deadline = time.monotonic() + timeout
         try:
             version, boot_id = client.daemon_identity()
         except Exception as exc:  # connection refused while the image is replaced
@@ -124,12 +232,63 @@ def _wait_for_daemon(
             still_old = identifiable
             last_error = None
         time.sleep(_RESTART_POLL_INTERVAL_SECONDS)
+    if startup_log is not None and startup_log.running:
+        (step, instance_id), began = max(startup_log.running.items(), key=lambda item: item[1])
+        raise click.ClickException(
+            "Daemon is still starting, not hung: "
+            f"{startup_progress.describe(step, instance_id, {})} has run "
+            f"{time.monotonic() - began:.0f}s with no new step. It keeps going; "
+            f"`cruxible server status` answers once it serves (log: {startup_log.path})"
+        )
     raise click.ClickException(
         f"Daemon did not come back within {timeout:.0f}s after restart; "
         "replacement could not be confirmed"
         + ("; the old process image is still answering" if still_old else "")
         + ("; a version probe has no boot ID" if missing_boot_id else "")
         + (f": {last_error}" if last_error is not None else "")
+    )
+
+
+# How much of the log's end `server status` reads to find the start in progress.
+_STATUS_LOG_TAIL_BYTES = 1 << 20
+
+
+def _starting_daemon_note(state_root: Path) -> str | None:
+    """Say a daemon is starting when one holds the state root but cannot answer yet.
+
+    A daemon serves only after it has opened every instance; a slow start step
+    (a migration) is in its log under the boot id its state-root lock records.
+    None when no live daemon holds the root, or its start has finished.
+    """
+
+    if not state_lock_holder_is_alive(state_root):
+        return None
+    holder = read_state_lock(state_root)
+    if holder is None or holder.boot_id is None:
+        return None
+    path = _daemon_log_path(state_root)
+    log = _StartupLog(path=path, offset=max(0, _log_size(path) - _STATUS_LOG_TAIL_BYTES))
+    started: dict[tuple[str, str | None], dict[str, object]] = {}
+    for line in log.poll():
+        if line.get("boot_id") != holder.boot_id:
+            continue
+        key = (str(line.get("step")), _optional_text(line.get("instance_id")))
+        if line.get("event") == startup_progress.STARTED:
+            started[key] = line
+        else:
+            started.pop(key, None)
+    if ("daemon_start", None) not in started:
+        return None
+    running = [line for key, line in started.items() if key != ("daemon_start", None)]
+    shown = running[-1] if running else started[("daemon_start", None)]
+    counts = {key: value for key, value in shown.items() if key not in _STEP_FIELDS}
+    text = startup_progress.describe(
+        str(shown.get("step")), _optional_text(shown.get("instance_id")), counts
+    )
+    since = f" since {shown['timestamp']}" if shown.get("timestamp") else ""
+    return (
+        f"Daemon is starting (pid {holder.pid}), not hung: {text}{since}. "
+        f"It answers once it serves (log: {path})"
     )
 
 
@@ -534,6 +693,11 @@ def server_status_cmd(output_json: bool, state_root: Path | None) -> None:
         # can read its own host and identity; answer with exactly that.
         _echo_instance_scoped_status(client, exc.credential_scope, transport, output_json)
         return
+    except Exception:
+        starting = _starting_daemon_note(state_root or get_server_state_root())
+        if starting is None:
+            raise
+        raise click.ClickException(starting) from None
     if output_json:
         payload = result.model_dump(mode="python")
         payload["scope"] = "daemon"
@@ -584,7 +748,10 @@ def server_status_cmd(output_json: bool, state_root: Path | None) -> None:
     type=float,
     default=30.0,
     show_default=True,
-    help="Seconds to wait for the restarted daemon to answer again.",
+    help=(
+        "Seconds to wait for the restarted daemon to answer again; each start step it "
+        "logs (a migration) restarts the wait."
+    ),
 )
 @_lifecycle_state_root_option
 @handle_errors
@@ -601,11 +768,22 @@ def server_restart_cmd(
     client = _get_client(state_root)
     if client is None:
         raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
+    # Measured before the restart, so the new image's first lines are not missed.
+    guessed_log = _daemon_log_path(state_root or get_server_state_root())
+    before = _log_size(guessed_log)
     result = client.server_restart()
+    log_path = _daemon_log_path(result.state_root)
+    startup_log = _StartupLog(
+        path=log_path,
+        offset=before if log_path == guessed_log else _log_size(log_path),
+        skip_boot_id=result.boot_id,
+    )
 
     confirmed_version: str | None = None
     if not no_wait:
-        confirmed_version = _wait_for_daemon(client, timeout, old_boot_id=result.boot_id)
+        confirmed_version = _wait_for_daemon(
+            client, timeout, old_boot_id=result.boot_id, startup_log=startup_log
+        )
 
     if output_json:
         payload = result.model_dump(mode="python")

@@ -12,7 +12,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import Context, ContextVar
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -201,6 +201,7 @@ from cruxible_core.proposals.settlement import (
 )
 from cruxible_core.runtime.phase_timing import phase
 from cruxible_core.runtime.retention import DEFAULT_RETENTION, RetentionSettings
+from cruxible_core.startup_progress import slow_step
 from cruxible_core.storage.cas import (
     CasObjectMetadata,
     ContentAddressedBodyStore,
@@ -1817,9 +1818,14 @@ class PlaybillInstance:
 
         self._housekeeping("consumption_fold", self.fold_consumption_if_due)
         self._housekeeping("candidate_retirement", self.retire_settled_candidates)
-        if self._ledger.loose_object_count() < LEDGER_START_COMPACTION_LOOSE_OBJECTS:
+        loose = self._ledger.loose_object_count()
+        if loose < LEDGER_START_COMPACTION_LOOSE_OBJECTS:
             return False
-        self.compact_ledger(prune=True)
+        with slow_step(
+            "ledger_compaction", instance_id=self.descriptor.instance_id, loose_objects=loose
+        ) as step:
+            self.compact_ledger(prune=True)
+            step.set(loose_objects_after=self._ledger.loose_object_count())
         return True
 
     @contextmanager
@@ -2799,7 +2805,9 @@ class PlaybillInstance:
         cutoff = recovered.head.sequence - max(self.retention.generations, 2)
         directory = self._validated_paths(self.root, self.descriptor.storage)["projections"]
         evicted: list[str] = []
+        freed: list[int] = []
         with self._eviction_lock, retention_lock(directory):
+            first_pass = self._evicted_through is None
             if self._evicted_through is None:
                 candidates = self._listed_beyond(directory, recovered, cutoff)
             else:
@@ -2811,13 +2819,26 @@ class PlaybillInstance:
                 }
             for name, sequence in released_pieces(directory).items():
                 candidates.setdefault(name, sequence)
-            for name, sequence in candidates.items():
-                if sequence > cutoff:
-                    continue  # inside the window: the cutoff reaches it later
-                # "waiting": its release here makes it a candidate again;
-                # "held_elsewhere": the next open's directory pass retries it.
-                if evict_or_wait(directory, name, sequence) == "evicted":
-                    evicted.append(name)
+            due = [(name, sequence) for name, sequence in candidates.items() if sequence <= cutoff]
+            # The open's directory pass is the one that can find a backlog (an
+            # instance that last ran an earlier release, say): it says so.
+            progress = (
+                slow_step(
+                    "projection_eviction",
+                    instance_id=self.descriptor.instance_id,
+                    candidates=len(due),
+                )
+                if first_pass and due
+                else nullcontext()
+            )
+            with progress as step:
+                for name, sequence in due:
+                    # "waiting": its release here makes it a candidate again;
+                    # "held_elsewhere": the next open's directory pass retries it.
+                    if evict_or_wait(directory, name, sequence, freed=freed) == "evicted":
+                        evicted.append(name)
+                if step is not None:
+                    step.set(evicted=len(evicted), freed_bytes=sum(freed))
             if self._evicted_through is None or cutoff > self._evicted_through:
                 self._evicted_through = cutoff
         return tuple(evicted)
