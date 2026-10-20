@@ -655,9 +655,17 @@ def register_tools(
     def cruxible_compiler_upgrade(
         instance_id: InstanceId = None,
         *,
-        target_compiler_digest: str,
-        base: contracts.AcceptedCoordinate,
-        proposal_name: str,
+        target_compiler_digest: Annotated[
+            str | None,
+            Field(description="Target compiler digest; omit for the compiler the daemon runs."),
+        ] = None,
+        base: Annotated[
+            contracts.AcceptedCoordinate | None,
+            Field(description="Accepted coordinate to bind; omit for the current head."),
+        ] = None,
+        proposal_name: Annotated[
+            str | None, Field(description="Omit for upgrade-to-<revision label>.")
+        ] = None,
         dry_run: DryRun = None,
         at: PreviewAt = None,
     ) -> contracts.ProposalInspection:
@@ -665,7 +673,7 @@ def register_tools(
         return handlers.handle_playbill_compiler_upgrade(
             require_instance_id(instance_id),
             target_compiler_digest,
-            base.model_dump(mode="json"),
+            None if base is None else base.model_dump(mode="json"),
             proposal_name,
             dry_run=dry_run,
             at=at,

@@ -1096,6 +1096,8 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         value = values.get(key)
         return value if isinstance(value, str) and value else None
 
+    if operation == "cruxible.compiler.upgrade":
+        return _mcp_call("cruxible_compiler_upgrade")
     if operation == "cruxible.line.enable" and text("line"):
         return _mcp_call("cruxible_line_enable", line=text("line"))
     if operation == "cruxible.line.evaluate" and text("line") and text("since") and text("until"):
@@ -1341,11 +1343,9 @@ def _repair_command(
             return None
         parts.extend(["-", "<<<", shlex.quote(canonical_json(payload))])
     elif operation == "cruxible.compiler.upgrade":
-        target = values.get("to")
-        name = values.get("name")
-        if not isinstance(target, str) or not isinstance(name, str):
-            return None
-        parts.extend(["--to", shlex.quote(target), "--name", shlex.quote(name)])
+        # No operands: the command targets the compiler the daemon runs, which
+        # is the one this repair names in its facet's detail.
+        pass
     elif operation == "cruxible.line.evaluate":
         line, since, until = values.get("line"), values.get("since"), values.get("until")
         if not all(isinstance(value, str) and value for value in (line, since, until)):
@@ -4725,12 +4725,12 @@ def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
         upgrade_law(accepted, running)
     except ValueError:
         return PlaybillNextHealthV1(state="no_upgrade_path", detail=detail)
-    revision = COMPILER_REVISION_LABELS.get(running) or running.rule_digest.removeprefix("sha256:")
+    # The bare command targets the compiler this daemon runs (the facet's
+    # `running_compiler_digest`) and names the proposal after its revision.
     upgrade = PlaybillNextRepairV1(
         operation="cruxible.compiler.upgrade",
         target=instance.descriptor.instance_id,
         required_change="propose_approve_and_activate_the_compiler_upgrade",
-        arguments={"to": running.rule_digest, "name": f"upgrade-to-{revision[:64]}"},
     )
     return PlaybillNextHealthV1(
         state="upgrade_available",

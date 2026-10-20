@@ -8,7 +8,11 @@ from cruxible_client.contracts.candidates import (
     CandidateMemberLawEvidence,
     MemberLawEvaluation,
 )
-from cruxible_client.contracts.compiler_upgrade import COMPILER_UPGRADE_PATH, CompilerUpgrade
+from cruxible_client.contracts.compiler_upgrade import (
+    COMPILER_UPGRADE_PATH,
+    CompilerUpgrade,
+    CompilerUpgradeNotice,
+)
 from cruxible_client.contracts.errors import SettlementIntegrityError
 from cruxible_client.contracts.laws import (
     AUTHORITY_VERBS_UPGRADE_LAW,
@@ -30,6 +34,7 @@ from cruxible_core.compiler.compiler import (
     ATTESTATION_COMPILER,
     AUTHORITY_VERBS_COMPILER,
     CLAIM_EVIDENCE_COMPILER,
+    COMPILER_REVISION_LABELS,
     GOVERNED_TRIGGERS_COMPILER,
     ONTOLOGY_COMPILER,
     P2_B1_COMPILER,
@@ -231,6 +236,43 @@ def supported_upgrade_targets(source: CompilerCoordinate) -> tuple[str, ...]:
             continue
         targets.append(target.rule_digest)
     return tuple(targets)
+
+
+def default_upgrade_proposal_name(target: CompilerCoordinate) -> str:
+    """The proposal name an upgrade to `target` takes when the caller names none.
+
+    The revision label is display metadata; the proposal itself pins the digest.
+    """
+
+    revision = COMPILER_REVISION_LABELS.get(target) or target.rule_digest.removeprefix("sha256:")
+    return f"upgrade-to-{revision[:64]}"
+
+
+def upgrade_notice(value: CompilerUpgrade) -> CompilerUpgradeNotice:
+    """Say, where activation is decided, that the transition cannot be undone.
+
+    An activated upgrade makes the target the accepted head's compiler, and a
+    daemon resolves every read and write through the compiler it installs
+    under that digest. A release that predates the target installs no such
+    compiler, so it cannot serve the instance; no edge leads back.
+    """
+
+    source = CompilerCoordinate(rule_digest=value.base.compiler_digest)
+    target = value.target
+    target_label = COMPILER_REVISION_LABELS.get(target)
+    named = f"{target_label} ({target.rule_digest})" if target_label else target.rule_digest
+    return CompilerUpgradeNotice(
+        source_compiler_digest=source.rule_digest,
+        source_revision=COMPILER_REVISION_LABELS.get(source),
+        target_compiler_digest=target.rule_digest,
+        target_revision=target_label,
+        message=(
+            f"One-way: activating moves this instance to compiler {named}. A release "
+            "whose daemon does not install that compiler can no longer serve this "
+            "instance, and no upgrade leads back. Back up the instance first "
+            "(docs/upgrading.md, Back up first)."
+        ),
+    )
 
 
 def upgrade_base_matches(value: CompilerUpgrade, base: AcceptedProjectionCoordinate) -> bool:

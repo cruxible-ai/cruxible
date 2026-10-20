@@ -728,21 +728,25 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        target: CompilerCoordinate,
-        base: AcceptedCoordinate | contracts.AcceptedCoordinate,
-        proposal_name: str,
+        target: CompilerCoordinate | None = None,
+        base: AcceptedCoordinate | contracts.AcceptedCoordinate | None = None,
+        proposal_name: str | None = None,
         dry_run: bool | None = None,
         at: str | None = None,
     ) -> contracts.ProposalInspection:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/compiler/proposals",
-            json={
-                "target": target.model_dump(mode="json"),
-                "base": base.model_dump(mode="json"),
-                "proposal_name": proposal_name,
-                **_change_control(dry_run, at),
-            },
-        )
+        """Propose a compiler upgrade; omitted fields take the daemon's defaults.
+
+        No ``target``: the compiler the daemon runs. No ``base``: the current
+        accepted coordinate. No ``proposal_name``: ``upgrade-to-<revision>``.
+        """
+        payload: dict[str, Any] = {**_change_control(dry_run, at)}
+        if target is not None:
+            payload["target"] = target.model_dump(mode="json")
+        if base is not None:
+            payload["base"] = base.model_dump(mode="json")
+        if proposal_name is not None:
+            payload["proposal_name"] = proposal_name
+        response = self._client.post(f"/api/v1/{instance_id}/compiler/proposals", json=payload)
         return self._parse_model(response, contracts.ProposalInspection)
 
     def propose_principal_change(

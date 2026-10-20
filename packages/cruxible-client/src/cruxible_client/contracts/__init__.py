@@ -85,6 +85,7 @@ from cruxible_client.contracts.compact_query import QueryFollow as QueryFollow
 from cruxible_client.contracts.compact_query import QueryReceipt as QueryReceipt
 from cruxible_client.contracts.compact_query import QueryRequest as QueryRequest
 from cruxible_client.contracts.compact_query import QueryResultRecord as QueryResultRecord
+from cruxible_client.contracts.compiler_upgrade import CompilerUpgradeNotice
 from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.line_dispatch import (
     LineDispatchItem as LineDispatchItem,
@@ -787,6 +788,11 @@ class ProposalInspection(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    #: A compiler upgrade's one-way notice: what activating it means.
+    compiler_upgrade: CompilerUpgradeNotice | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class ProposalListEntry(BaseModel):
@@ -1007,6 +1013,11 @@ class ProposalReview(BaseModel):
     projection_advisory: ProjectionAdvisory | None = None
     projection_evidence: ProjectionEvidence | None = None
     prior_refusal_coverage: PriorRefusalCoverage | None = None
+    #: A compiler upgrade's one-way notice: what activating it means.
+    compiler_upgrade: CompilerUpgradeNotice | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class ApprovalChallenge(BaseModel):

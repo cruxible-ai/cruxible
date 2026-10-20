@@ -19,7 +19,7 @@ from cruxible_client.contracts.attestations import (
 )
 from cruxible_client.contracts.candidates import CandidateMemberEvidence, CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import ProposalDigest, file_digest
-from cruxible_client.contracts.compiler_upgrade import CompilerUpgrade
+from cruxible_client.contracts.compiler_upgrade import CompilerUpgrade, CompilerUpgradeNotice
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     DocumentShell,
@@ -122,6 +122,11 @@ class ProposalInspection(_StrictServiceModel):
     #: evaluated at, which a commit passes back as ``at``.
     accepted_coordinate: AcceptedCoordinate
     workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
+    #: A compiler upgrade's one-way notice: what activating it means.
+    compiler_upgrade: CompilerUpgradeNotice | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class ActivationReceipt(_StrictServiceModel):
@@ -1090,18 +1095,22 @@ def _compiler_upgrade_refusal(
 def service_propose_compiler_upgrade(
     instance: PlaybillInstance,
     *,
-    target: CompilerCoordinate,
     actor_id: str,
-    proposal_name: str,
     timestamp: str,
-    base: AcceptedCoordinate,
+    target: CompilerCoordinate | None = None,
+    proposal_name: str | None = None,
+    base: AcceptedCoordinate | None = None,
     dry_run: bool | None = None,
     preview_at: str | None = None,
 ) -> ProposalInspection:
     """Propose an exact forward transition using the normal evidence and review path.
 
-    ``preview_at`` is the request's ``at``: the coordinate of a preview this
-    commit is pinned to (``at`` here already names the resolved base).
+    With no ``target`` the upgrade targets the compiler this daemon runs; with
+    no ``proposal_name`` it is named ``upgrade-to-<revision>``; with no ``base``
+    it is bound to the current accepted coordinate. The proposal pins the
+    target's full digest either way. ``preview_at`` is the request's ``at``:
+    the coordinate of a preview this commit is pinned to (``at`` here already
+    names the resolved base).
     """
     instance.require_writable()
     from cruxible_client.contracts.candidates import LawEvaluationCoordinate
@@ -1110,8 +1119,17 @@ def service_propose_compiler_upgrade(
         CompilerUpgrade,
         render_compiler_upgrade,
     )
-    from cruxible_core.compiler.upgrades import validate_upgrade
+    from cruxible_core.compiler.compiler import current_compiler_coordinate
+    from cruxible_core.compiler.upgrades import (
+        default_upgrade_proposal_name,
+        upgrade_notice,
+        validate_upgrade,
+    )
 
+    if target is None:
+        target = current_compiler_coordinate()
+    if proposal_name is None:
+        proposal_name = default_upgrade_proposal_name(target)
     at = _resolve_coordinate(instance, base)
     value = CompilerUpgrade(
         instance_id=at.instance_id,
@@ -1131,7 +1149,7 @@ def service_propose_compiler_upgrade(
     tree = instance.immutable_tree_at(at.git_oid).fork()
     tree[COMPILER_UPGRADE_PATH] = render_compiler_upgrade(value)
     name = canonical_playbill_proposal_name(proposal_name, family="compiler")
-    return admit_proposal(
+    inspection = admit_proposal(
         instance,
         dry_run=dry_run,
         at=preview_at,
@@ -1146,6 +1164,7 @@ def service_propose_compiler_upgrade(
         candidate_tree=tree,
         timestamp=timestamp,
     )
+    return inspection.model_copy(update={"compiler_upgrade": upgrade_notice(value)})
 
 
 __all__ = [

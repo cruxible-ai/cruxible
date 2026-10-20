@@ -269,10 +269,10 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     behind = _status(instance, _request(instance))
     assert behind.compiler.state == "upgrade_available"
     assert behind.compiler.repair is not None
-    assert behind.compiler.repair.command == (
-        f"cruxible compiler upgrade --to {PROVIDER_BUILDS_COMPILER.rule_digest} "
-        "--name upgrade-to-provider-builds-v1"
-    )
+    # The bare command targets the compiler the daemon runs, which the detail names.
+    assert behind.compiler.repair.command == "cruxible compiler upgrade"
+    assert behind.compiler.detail["running_compiler_digest"] == PROVIDER_BUILDS_COMPILER.rule_digest
+    assert behind.compiler.detail["running_compiler_revision"] == "provider-builds-v1"
     # A compiler before Trigger artifacts schedules no internal action at all.
     assert behind.triggers.state == "unscheduled"
     assert behind.triggers.repair is not None
