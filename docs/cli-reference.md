@@ -341,6 +341,23 @@ rather than claiming a release it cannot see. `--json` reports the same two
 observations as `daemon_exited` and `state_root_released` (`null` when the lock
 is not observable from here).
 
+A daemon answers nothing until every instance has opened, and a start can run
+slow steps first: rebuilding a missing head projection
+(`projection_rebuild`), evicting projection pieces past retention
+(`projection_eviction`, with candidates, evicted and freed bytes), compacting a
+loose ledger (`ledger_compaction`, with loose objects before and after); and,
+on the `next` worker's first pass once serving, building the next facts from
+nothing (`next_facts_build`). The whole start is `daemon_start`. Each logs
+`startup_step_started` and `startup_step_finished` (or `startup_step_failed`)
+with its counts, `elapsed_s` and the daemon's `boot_id` to the daemon log
+(`STATE_ROOT/daemon/logs/server.log`, or `CRUXIBLE_SERVER_LOG_PATH`); a step
+with nothing to do logs nothing. A foreground `server start` prints them to
+stderr. When the daemon's log is on this machine, `server restart` prints the
+new image's lines while it waits, each line restarts `--timeout`, and a wait
+that runs out inside a step says the daemon is still starting, not hung.
+`server status` against a daemon that holds its state root but cannot answer
+yet names the step it is on instead of only failing to connect.
+
 `server install-service` renders a per-user launchd agent on macOS or systemd
 user unit on Linux. It records the resolved `cruxible` executable and explicit
 state-root, transport, capability-ceiling, and auth settings under the daemon
@@ -1741,7 +1758,7 @@ SubjectKinds and identity admission come with compiler revision 33
 (`subject-identity-v1`). An instance pinned to an earlier compiler creates no
 new Subject at all -- every route refuses
 `cruxible.subject.compiler_upgrade_required`; upgrade
-(`cruxible compiler upgrade --to DIGEST --name NAME`) and declare the kind.
+(`cruxible compiler upgrade`) and declare the kind.
 Its existing Subjects stay readable, claimable and retirable, and accepted
 history replays as it was accepted.
 
@@ -3097,8 +3114,9 @@ need attention before the rows.
 
 `compiler` compares the accepted head's compiler with the one the daemon runs.
 `upgrade_available` means an explicit forward edge exists, and its repair is
-`cruxible compiler upgrade --to DIGEST --name NAME`, which only
-proposes the upgrade: an admin still approves and activates it.
+the bare `cruxible compiler upgrade`, which targets the compiler the daemon
+runs (the facet's `running_compiler_digest`); see [compiler](#compiler) for
+when that one command also signs and activates it.
 `no_upgrade_path` means the accepted compiler has no edge to the running one,
 for example a daemon older than the state it serves; nothing is proposed.
 
@@ -3939,7 +3957,7 @@ cruxible proposal reject PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OI
 cruxible proposal review PROPOSAL_ID [--include-body|--redacted]
   [--workspace-root DIR] [--item-reasons-after CURSOR] [--item-reasons-limit N] [--json]
 cruxible proposal approve PROPOSAL_ID
-  [--signer-id ID] --key FILE [--yes] [--hold] [--json]
+  [--signer-id ID] [--key FILE] [--yes] [--hold] [--json]
 cruxible proposal activate PROPOSAL_ID [--brief] [--json]
 cruxible get PROPOSAL_ID [--detail proof]
 ~~~
@@ -4256,15 +4274,57 @@ with --help for its exact options.
 
 ## compiler
 
-`cruxible compiler upgrade --to DIGEST --name NAME [--dry-run|--commit] [--at OID] [--json]`
-creates an admin-only
-proposal bound to the exact accepted head and target compiler. Review it, sign
-through `cruxible proposal approve`, which activates it once that signature
-completes it (`cruxible proposal activate` after `--hold`). Activation validates the full target
-projection before advancing the signed ledger. Installing or restarting a daemon
-does not upgrade an instance. Historical generations keep their original compiler.
-The instance descriptor retains its genesis compiler; inspection reports the
-active compiler from accepted history. Unsupported transitions and downgrades are
-refused. Artifact format migrations are separate work. See
-[Upgrading](upgrading.md) for the whole flow, from installing a release to
-activating a compiler upgrade.
+~~~text
+cruxible compiler upgrade [--to DIGEST] [--name NAME] [--key FILE] [--no-accept]
+  [--dry-run|--commit] [--at OID] [--yes] [--json]
+~~~
+
+With no `--to`, the upgrade targets the compiler the daemon runs; with no
+`--name`, the proposal is named `upgrade-to-<revision label>`. Either way the
+proposal pins the target's full digest and is bound to the exact accepted
+head; HTTP (`POST /api/v1/{instance}/compiler/proposals` with `target`, `base`
+and `proposal_name` all optional), MCP (`cruxible_compiler_upgrade`) and the
+SDK (`propose_compiler_upgrade`) take the same defaults. Creating the proposal
+is admin-only.
+
+The upgrade's preview, proposal and review carry a typed `compiler_upgrade`
+notice (`CompilerUpgradeNotice`: source and target digests and revision
+labels, `one_way: true`, and its message): activation is one-way, because a
+release whose daemon does not install the target compiler cannot open the
+instance afterwards. Back up first ([Upgrading](upgrading.md#back-up-first)).
+
+A compiler upgrade settles only with at least one signed approval, whatever
+the approval policy says. When the policy asks for no independent approval,
+any active ordinary principal's signature counts, the proposer's included, so
+when you hold your signing key the command lands the upgrade itself: it
+previews first (at an interactive terminal it then asks `Commit this
+change?`; `--yes` commits without asking; `--commit --at OID` commits the
+preview at OID), and the commit proposes, signs with your key and activates.
+The key is `--key`, else `CRUXIBLE_PRINCIPAL_KEY` (which the settings
+`cruxible init` remembers export), else the default key directory
+`$XDG_CONFIG_HOME/cruxible/keys/INSTANCE_ID/PRINCIPAL_ID/PRINCIPAL_ID.ed25519`
+(default `~/.config`); the output names which. Activating needs admin.
+
+Otherwise the command proposes and stops; `--json` returns a
+`cruxible-compiler-upgrade-result-v1` record whose `outcome` is `landed` (with
+the accepted coordinate) or `proposed` with a typed `reason` and `next`:
+`independent_approval_required` (the policy needs an ordinary principal other
+than the proposer, whose `cruxible proposal approve` activates it),
+`signing_key_missing`, `accept_never` (`--no-accept`),
+`activation_not_permitted`, `head_moved`, `recompiled`, `approvals_remaining`
+or `refused`. A preview has no outcome. `--no-accept` proposes only: review it,
+then sign through `cruxible proposal approve`, which activates it once that
+signature completes it (`cruxible proposal activate` after `--hold`).
+
+`proposal approve` finds the signing key the same way when `--key` is
+omitted, and when none is found it refuses with the default path it checked
+and the commands that load (`cruxible context use --principal ID`) or create
+(`cruxible principal add ID --key-dir DIR`) one.
+
+Activation validates the full target projection before advancing the signed
+ledger. Installing or restarting a daemon does not upgrade an instance.
+Historical generations keep their original compiler. The instance descriptor
+retains its genesis compiler; inspection reports the active compiler from
+accepted history. Unsupported transitions and downgrades are refused. Artifact
+format migrations are separate work. See [Upgrading](upgrading.md) for the
+whole flow, from installing a release to activating a compiler upgrade.
