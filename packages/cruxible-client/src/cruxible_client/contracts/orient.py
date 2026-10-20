@@ -59,6 +59,7 @@ OrientSection: TypeAlias = Literal[
     "principals",
     "policies",
     "generations",
+    "graph",
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 OrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -371,6 +372,51 @@ class OrientGeneration(_StrictOrientModel):
     members: int = Field(default=0, ge=0)
 
 
+class OrientGraphNode(_StrictOrientModel):
+    """One live Subject: ``subject`` is its ``kind/id`` ref, which ``get`` reads."""
+
+    subject: str
+    kind: str
+
+
+class OrientGraphEdge(_StrictOrientModel):
+    """One live Claim whose object is a Subject: ``source`` --predicate--> ``target``.
+
+    ``claim`` is the Claim's id (``get`` reads it); ``source`` and ``target``
+    are ``kind/id`` refs. A relation is stored once, on its source.
+    """
+
+    claim: str
+    source: str
+    predicate: str
+    qualifier: str | None = Field(default=None, exclude_if=_is_none)
+    target: str
+
+
+class OrientGraphTotals(_StrictOrientModel):
+    """The whole graph's size at the coordinate, on every page.
+
+    ``subjects`` is the live Subject count, read from the per-kind counters
+    the projection maintains (never a recount).
+    """
+
+    subjects: int = Field(ge=0)
+
+
+class OrientGraph(_StrictOrientModel):
+    """One page of the Subject graph: live Subjects, then live Subject-valued Claims.
+
+    A page holds up to ``limit`` rows: nodes first (by kind, then Subject),
+    and once the nodes are done, edges (by target, then Claim). Follow
+    ``next_cursor`` while ``truncated``; every page reads at the first page's
+    coordinate.
+    """
+
+    nodes: tuple[OrientGraphNode, ...] = ()
+    edges: tuple[OrientGraphEdge, ...] = ()
+    totals: OrientGraphTotals
+
+
 class OrientResult(_StrictOrientModel):
     """One orient answer; which parts are present depends on the request.
 
@@ -382,9 +428,10 @@ class OrientResult(_StrictOrientModel):
       operational family:
       ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
       ``predictions``, ``mandates``), the principal registry (``principals``),
-      the governed policies in force (``policies``) or the accepted generations
-      newest first (``generations``), paged. The default map counts the
-      operational families under ``artifacts`` and never inlines their rows.
+      the governed policies in force (``policies``), the accepted generations
+      newest first (``generations``) or the Subject graph (``graph``), paged.
+      The default map counts the operational families under ``artifacts`` and
+      never inlines their rows.
 
     ``next`` is rendered for the requesting surface.
     """
@@ -431,6 +478,8 @@ class OrientResult(_StrictOrientModel):
     # Accepted generations newest first from the answer's own, paged by sequence
     # (section "generations"): the ledger's timeline.
     generations: tuple[OrientGeneration, ...] | None = Field(default=None, exclude_if=_is_none)
+    # Live Subjects and the live Claims between them (section "graph"), keyset-paged.
+    graph: OrientGraph | None = Field(default=None, exclude_if=_is_none)
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
     # Present when part of the answer is operational state -- runs, Line enablements and
@@ -456,6 +505,10 @@ __all__ = [
     "OrientDocument",
     "OrientFloor",
     "OrientGeneration",
+    "OrientGraph",
+    "OrientGraphEdge",
+    "OrientGraphNode",
+    "OrientGraphTotals",
     "OrientInterfaceProvider",
     "OrientInterface",
     "OrientKindDetail",

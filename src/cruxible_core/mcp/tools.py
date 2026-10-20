@@ -509,7 +509,7 @@ def register_tools(
         ] = None,
         section: Annotated[
             contracts.OrientSection | None,
-            Field(description="Page one artifact family as compact rows instead of the map."),
+            Field(description="Page one family as compact rows; graph: Subjects, then edges."),
         ] = None,
         limit: Annotated[
             int, Field(ge=1, le=contracts.ORIENT_MAX_LIMIT)

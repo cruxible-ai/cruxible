@@ -3669,6 +3669,16 @@ changes), the proposer, the approving signers, the change set's `because` (cut
 at 500 characters) and its member count. It pages by sequence, so a page reads
 only its own generations; pass a row's sequence back as `--at` to read state as
 that generation left it.
+`--section graph` pages the Subject graph for a whole-graph view: first the
+live Subjects (`graph.nodes`, each `{subject, kind}` with `subject` the
+`kind/id` ref `get` reads, by kind then Subject), then the live Claims whose
+object is a Subject (`graph.edges`, each `{claim, source, predicate,
+qualifier, target}`, by target then Claim). `graph.totals.subjects` counts the
+live Subjects on every page, from the counters the projection maintains. A
+page reads only its own rows through two projection indexes, so loading the
+whole graph costs its Subjects plus its Subject-valued Claims; every page reads
+at the first page's coordinate. Edges carry no contested status, and there is
+no edge total: neither is kept in those tables.
 `--section interfaces` lists the provider interfaces a Procedure node can call,
 each with its interface digest, operation contract and the implementing
 Providers with their implementation digests (`get ProviderInterface:NAME`
