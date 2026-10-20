@@ -5,8 +5,9 @@ predicate descriptors, counts each artifact family, lists the named queries,
 says who the caller is and whether it can author, summarizes what the ``next``
 queue holds, and suggests runnable follow-up calls rendered for the caller's
 surface. ``orient(kind=K)`` widens one kind to every predicate in full plus a
-few sample Subject IDs; ``orient(section=S)`` pages one artifact family, and
-``orient(section="graph")`` the live Subjects and the Claims between them.
+few sample Subject IDs; ``orient(section=S)`` pages one artifact family,
+``orient(section="graph")`` the live Subjects and the Claims between them, and
+``orient(section="pins")`` the pins between live definitions.
 
 Everything here is read from the accepted index at one coordinate. The
 attention summary uses the existing ``next`` service's queue fold, without
@@ -99,6 +100,7 @@ from cruxible_core.service.discovery.operational import (
     mandate_rows,
     prediction_rows,
 )
+from cruxible_core.service.discovery.pins import PinKey, pins_page
 from cruxible_core.service.discovery.runs import run_counts, run_rows
 from cruxible_core.service.identity import authoring_refusal, principal_standing
 from cruxible_core.service.list_pages import (
@@ -934,6 +936,17 @@ def service_playbill_orient(
             limit=limit,
             surface=surface,
         )
+    # Definition pins read the pins primary key by definition kind, never the vocabulary.
+    if section == "pins":
+        return _pins_section(
+            instance,
+            base,
+            coordinate=coordinate,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
+        )
     # The ledger timeline reads the history index alone, never the vocabulary.
     if section == "generations":
         return _generations_section(
@@ -1411,6 +1424,45 @@ def _graph_section(
         **base,
         section="graph",
         graph=graph,
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
+
+
+def _pins_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: OrientSurface,
+) -> OrientResult:
+    """One keyset page of the required pins of live definitions."""
+
+    after = _keyset_after(continuation)
+    key = None if after is None else PinKey.decode(after)
+    if after is not None and key is None:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        pins, stop = pins_page(projection.typed.connection, limit=limit, after=key)
+    next_cursor = (
+        None if stop is None else _keyset_cursor(view="pins", served=served, last_key=stop.encode())
+    )
+    calls: list[_Call] = []
+    if pins:
+        calls.append(_Call("get", (("ref", pins[0].source),)))
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "pins"), ("cursor", next_cursor))))
+    return OrientResult(
+        **base,
+        section="pins",
+        pins=pins,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
         next=tuple(render_orient_call(call, surface) for call in calls),

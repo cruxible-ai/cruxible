@@ -3688,6 +3688,16 @@ page reads only its own rows through two projection indexes, so loading the
 whole graph costs its Subjects plus its Subject-valued Claims; every page reads
 at the first page's coordinate. Edges carry no contested status, and there is
 no edge total: neither is kept in those tables.
+`--section pins` lists the required pins of live definitions (Blueprints,
+CaptureContracts, ClaimTypes, Lines, Procedures, mandates, Providers, provider
+interfaces, queries, ResolutionContracts, source acquisition policies,
+SubjectKinds and Triggers), each `{source, role, target, target_digest,
+current}` by source then pin order, `current` false when the pin names an
+earlier version of its target. Read by target, the rows say who uses a
+definition: the Procedures that capture under a contract (role
+`capture-contract`), the Lines on a Procedure, the mandates that settle a
+ClaimType. A page reads only definition rows (never a Claim's or a Subject's
+pins), so the whole listing costs the ontology, not the instance.
 `--section interfaces` lists the provider interfaces a Procedure node can call,
 each with its interface digest, operation contract and the implementing
 Providers with their implementation digests (`get ProviderInterface:NAME`

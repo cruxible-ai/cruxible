@@ -3,7 +3,8 @@
 Subject counts on every orient answer and on the SubjectKind card come from
 ``query_subject_counts``, which Subject writes maintain; no read recounts a kind.
 Full ClaimType descriptors and the ClaimType card carry the contention policy,
-format version, revision and ledger path.
+format version, revision and ledger path. Mandate reads carry their typed scope.
+``orient(section="pins")`` pages the pins between live definitions.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from cruxible_client.contracts.claim_types import (
     claim_type_path,
 )
 from cruxible_client.contracts.get_reads import GetRequest
+from cruxible_client.contracts.orient import ORIENT_PIN_SOURCE_KINDS
 from cruxible_client.contracts.write import WriteRequest
 from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL, LIVE_SUBJECT_COUNTS_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -208,3 +210,82 @@ def test_mandate_reads_carry_the_typed_scope_and_condition(tmp_path: Path) -> No
         "fallback": "propose",
     }
     assert "subject_scope" not in card and "suspended" not in card
+
+
+# -- K3: the pins between live definitions ----------------------------------------------
+
+
+def _definition_pins(instance: PlaybillInstance) -> set[tuple[str, str, str, str]]:
+    """Every live definition's required pins, by a full read: the oracle."""
+
+    from cruxible_core.indexes.typed_state import OWNER_BY_IDENTITY_KIND
+
+    found: set[tuple[str, str, str, str]] = set()
+    for kind in ORIENT_PIN_SOURCE_KINDS:
+        table = OWNER_BY_IDENTITY_KIND[kind].table
+        found.update(
+            (str(a), str(b), str(c), str(d))
+            for a, b, c, d in _sql(
+                instance,
+                "SELECT p.source_identity, p.pin_role, p.target_identity, p.target_digest "
+                f"FROM pins p JOIN {table} s ON s.identity=p.source_identity "
+                "WHERE p.edge_kind='required_pin' AND s.lifecycle='live'",
+            )
+        )
+    return found
+
+
+def test_the_pins_section_pages_every_live_definition_pin_once(tmp_path: Path) -> None:
+    from tests.test_proposals.test_delegated_settlement import STATUS
+    from tests.test_proposals.test_delegated_settlement import _world as settle_world
+
+    instance, _mandate = settle_world(tmp_path)
+    pages = [service_playbill_orient(instance, section="pins", limit=2)]
+    while pages[-1].next_cursor is not None:
+        pages.append(
+            service_playbill_orient(instance, section="pins", limit=2, cursor=pages[-1].next_cursor)
+        )
+    rows = [row for page in pages for row in page.pins or ()]
+    assert all(len(page.pins or ()) <= 2 for page in pages)
+    assert [page.truncated for page in pages] == [True] * (len(pages) - 1) + [False]
+    keys = [(row.source, row.role, row.target, row.target_digest) for row in rows]
+    assert len(keys) == len(set(keys)) and set(keys) == _definition_pins(instance)
+    assert [row.source for row in rows] == sorted(row.source for row in rows)
+    assert not any(row.source.startswith(("Claim:", "Subject:")) for row in rows)
+    mandate = {(row.role, row.target) for row in rows if row.source == "ProcedureMandate:triage"}
+    assert ("claim-type", f"ClaimType:{STATUS}") in mandate
+    assert ("condition-query", "QueryDefinition:project.settle-condition") in mandate
+    assert any(role == "procedure" and target.startswith("Procedure:") for role, target in mandate)
+    assert all(row.current for row in rows if row.source == "ProcedureMandate:triage")
+    whole = service_playbill_orient(instance, section="pins", limit=500)
+    assert whole.pins == tuple(rows) and not whole.truncated
+    assert whole.next[0] == f"cruxible get {rows[0].source}"
+
+
+def test_the_pins_section_seeks_definition_rows_only(tmp_path: Path) -> None:
+    from cruxible_core.service.discovery.orient import _keyset_cursor
+    from cruxible_core.service.discovery.pins import _current, pins_sql
+    from cruxible_core.service.list_pages import ListCursorMismatch
+
+    instance = seed_write_surface(tmp_path)[0]
+    prefixes = [f"{kind}:".encode() for kind in ORIENT_PIN_SOURCE_KINDS]
+    assert prefixes == sorted(prefixes)
+    for kind in ORIENT_PIN_SOURCE_KINDS:
+        plan = _plan(instance, pins_sql(kind), (f"{kind}:", -1, f"{kind};", 5))
+        assert plan[0].startswith("SEARCH p USING INDEX sqlite_autoindex_pins_1"), plan
+        assert not any(line.startswith("SCAN") for line in plan), plan
+    title = f"ClaimType:{KIND}.title"
+    coordinate = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        (digest,) = connection.execute(
+            "SELECT artifact_digest FROM claim_types WHERE identity=?", (title,)
+        ).fetchone()
+        assert _current(connection, title, str(digest)) is True
+        assert _current(connection, title, "sha256:" + "0" * 64) is False
+        assert _current(connection, "ApprovalPolicy:instance", str(digest)) is None
+    first = service_playbill_orient(instance, section="pins", limit=1)
+    for key in (["x"], ["ClaimType:a", "one"]):
+        foreign = _keyset_cursor(view="pins", served=first.coordinate, last_key=key)
+        with pytest.raises(ListCursorMismatch):
+            service_playbill_orient(instance, section="pins", cursor=foreign)

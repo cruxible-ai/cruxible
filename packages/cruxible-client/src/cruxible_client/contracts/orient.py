@@ -61,6 +61,7 @@ OrientSection: TypeAlias = Literal[
     "policies",
     "generations",
     "graph",
+    "pins",
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 OrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -426,6 +427,42 @@ class OrientGraph(_StrictOrientModel):
     totals: OrientGraphTotals
 
 
+#: The definition kinds whose pins ``orient(section="pins")`` lists, in byte order.
+ORIENT_PIN_SOURCE_KINDS: tuple[str, ...] = (
+    "Blueprint",
+    "CaptureContract",
+    "ClaimType",
+    "Line",
+    "Procedure",
+    "ProcedureMandate",
+    "Provider",
+    "ProviderInterface",
+    "QueryDefinition",
+    "ResolutionContract",
+    "SourceAcquisitionPolicy",
+    "SubjectKind",
+    "Trigger",
+)
+
+
+class OrientPin(_StrictOrientModel):
+    """One required pin of a live definition: ``source`` pins ``target`` as ``role``.
+
+    ``target_digest`` is the exact version pinned; ``current`` says whether
+    that is the target's accepted version at the coordinate (absent when the
+    target is not an indexed artifact). Read in reverse, the rows name who
+    uses a contract, a ClaimType or a Procedure: the Procedures that capture
+    under a contract (role ``capture-contract``), the Lines on a Procedure,
+    the mandates that settle a ClaimType.
+    """
+
+    source: str
+    role: str
+    target: str
+    target_digest: str
+    current: bool | None = Field(default=None, exclude_if=_is_none)
+
+
 class OrientResult(_StrictOrientModel):
     """One orient answer; which parts are present depends on the request.
 
@@ -438,7 +475,8 @@ class OrientResult(_StrictOrientModel):
       ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
       ``predictions``, ``mandates``), the principal registry (``principals``),
       the governed policies in force (``policies``), the accepted generations
-      newest first (``generations``) or the Subject graph (``graph``), paged.
+      newest first (``generations``), the Subject graph (``graph``) or the
+      pins between live definitions (``pins``), paged.
       The default map counts the operational families under ``artifacts`` and
       never inlines their rows.
 
@@ -489,6 +527,9 @@ class OrientResult(_StrictOrientModel):
     generations: tuple[OrientGeneration, ...] | None = Field(default=None, exclude_if=_is_none)
     # Live Subjects and the live Claims between them (section "graph"), keyset-paged.
     graph: OrientGraph | None = Field(default=None, exclude_if=_is_none)
+    # The required pins of live definitions (section "pins"), by source then
+    # ordinal, keyset-paged; never a Claim's, a Subject's or an attestation's.
+    pins: tuple[OrientPin, ...] | None = Field(default=None, exclude_if=_is_none)
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
     # Present when part of the answer is operational state -- runs, Line enablements and
@@ -504,6 +545,7 @@ __all__ = [
     "ORIENT_DEFAULT_LIMIT",
     "ORIENT_DEFAULT_QUERIES",
     "ORIENT_MAX_LIMIT",
+    "ORIENT_PIN_SOURCE_KINDS",
     "ORIENT_SAMPLE_SUBJECTS",
     "UNDECLARED_KIND_IDENTITY",
     "Head",
@@ -518,6 +560,7 @@ __all__ = [
     "OrientGraphEdge",
     "OrientGraphNode",
     "OrientGraphTotals",
+    "OrientPin",
     "OrientInterfaceProvider",
     "OrientInterface",
     "OrientKindDetail",

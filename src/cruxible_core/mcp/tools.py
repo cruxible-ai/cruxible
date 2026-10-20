@@ -509,7 +509,9 @@ def register_tools(
         ] = None,
         section: Annotated[
             contracts.OrientSection | None,
-            Field(description="Page one family as compact rows; graph: Subjects, then edges."),
+            Field(
+                description="Page one family as rows; graph: Subjects+edges; pins: what pins what."
+            ),
         ] = None,
         limit: Annotated[
             int, Field(ge=1, le=contracts.ORIENT_MAX_LIMIT)

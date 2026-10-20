@@ -393,6 +393,14 @@ def _orient_graph(world: World) -> object:
     return result
 
 
+def _orient_pins(world: World) -> object:
+    """The definition pins' first page: three rows, never a Claim's or a Subject's pins."""
+
+    result = playbill_api.playbill_orient(world.instance_id, section="pins", limit=3)
+    assert result.pins is not None and len(result.pins) == 3 and result.truncated, result
+    return result
+
+
 def _since_first_page(world: World) -> object:
     """The first page after genesis: only its generations are read, never the rest."""
 
@@ -775,6 +783,7 @@ def _routes() -> list[Route]:
         Route("read.orient", _orient),
         Route("read.orient.generations", _orient_generations),
         Route("read.orient.graph", _orient_graph),
+        Route("read.orient.pins", _orient_pins),
         Route("read.since.first_page", _since_first_page),
         Route("read.get.subject", _get(lambda w: w.subject(7))),
         Route("read.get.claim", _get(lambda w: w.claims[f"{w.subject(7)}#title"])),

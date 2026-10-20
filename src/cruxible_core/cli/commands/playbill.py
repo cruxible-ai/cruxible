@@ -8094,6 +8094,10 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     }:
         for row in result[section]:
             lines.append("  ".join(str(value) for value in row.values()))
+    if section == "pins":
+        for row in result["pins"]:
+            stale = "" if row.get("current", True) else "  (not the current version)"
+            lines.append(f"{row['source']}  -{row['role']}->  {row['target']}{stale}")
     if section == "mandates":
         for row in result["mandates"]:
             lines.append(
@@ -8182,7 +8186,10 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     "--section",
     type=click.Choice(list(get_args(contracts.OrientSection))),
     default=None,
-    help="Page one artifact family, or graph (live Subjects, then the Claims between them).",
+    help=(
+        "Page one artifact family, graph (live Subjects, then the Claims between them) "
+        "or pins (what each live definition pins)."
+    ),
 )
 @click.option(
     "--limit",
