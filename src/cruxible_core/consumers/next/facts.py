@@ -97,7 +97,7 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 8  # Include independent section-copy drift commitments, even when non-evidentiary.
+FORMAT = 9  # Citation commitments carry no whole-source flag: a citation is its quoted bytes.
 #: The one deadline next arms: the earliest instant a stored fact or row stops holding.
 NEXT_EXPIRE = "next.expire"
 #: The daily evidence sweep: each fire compares every consulted body's file identity,
@@ -176,7 +176,7 @@ CREATE INDEX door_events_by_claim ON door_events(claim_identity,chain_pos);
 CREATE TABLE citation_commitments (
  claim_id TEXT NOT NULL, citation_id TEXT NOT NULL, commitment_digest TEXT NOT NULL,
  byte_length INTEGER NOT NULL, source_id TEXT, source_digest TEXT, original_start INTEGER,
- original_end INTEGER, whole_source INTEGER NOT NULL, lineage_note TEXT, set_arguments TEXT,
+ original_end INTEGER, lineage_note TEXT, set_arguments TEXT,
  PRIMARY KEY(claim_id,citation_id)
 ) STRICT;
 CREATE INDEX citation_commitments_by_source ON citation_commitments(source_id,claim_id)
@@ -489,7 +489,6 @@ def _citation_row(claim_id: str, commitment: Any) -> tuple[Any, ...]:
         commitment.source_digest,
         commitment.original_start,
         commitment.original_end,
-        int(commitment.whole_source),
         commitment.lineage_note,
         None
         if commitment.set_arguments is None
@@ -1532,7 +1531,7 @@ def _apply_facts(connection: sqlite3.Connection, delta: _Delta) -> set[str]:
             "INSERT INTO fact_reads VALUES (?,?)", ((key, identity) for key in sorted(facts.reads))
         )
         connection.executemany(
-            "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?,?)", facts.citations
+            "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?)", facts.citations
         )
         connection.executemany(
             "INSERT INTO citation_unavailable VALUES (?,?,?)",
@@ -2585,7 +2584,7 @@ def _served_citations(
     error = connection.execute(_CITATION_ERROR).fetchone() is not None
     columns = (
         "claim_id,citation_id,commitment_digest,byte_length,source_id,source_digest,"
-        "original_start,original_end,whole_source,lineage_note,set_arguments"
+        "original_start,original_end,lineage_note,set_arguments"
     )
     found = (
         connection.execute(
@@ -2602,7 +2601,7 @@ def _served_citations(
     commitments: dict[str, Any] = {}
     for row in sorted(found, key=lambda item: (str(item[0]), str(item[1]))):
         (claim_id, citation_id, digest, length, source_id, source_digest) = row[:6]
-        start, end, whole, note, arguments = row[6:]
+        start, end, note, arguments = row[6:]
         commitments[str(citation_id)] = _CitationCommitment(
             citation_id=str(citation_id),
             commitment_digest=str(digest),
@@ -2612,7 +2611,6 @@ def _served_citations(
             source_digest=None if source_digest is None else str(source_digest),
             original_start=start,
             original_end=end,
-            whole_source=bool(whole),
             lineage_note=note,
             set_arguments=(
                 None

@@ -12,7 +12,6 @@ from cruxible_core.service.discovery.next import (
     NextReason,
     NextRepairOperation,
     NextSourceObservation,
-    NextSourceObservationV3,
     NextWorkspaceObservation,
 )
 from tests.test_client.test_playbill_projection_observation import _CoverageClient, _observe
@@ -26,7 +25,7 @@ def _v4(root: Path) -> dict[str, object]:
     return observation["source_observations"][0]  # type: ignore[index,no-any-return]
 
 
-def test_nested_union_refuses_v1_v2_and_accepts_strict_tagged_v3_v4(
+def test_nested_observation_refuses_v1_v2_v3_and_accepts_strict_tagged_v4(
     tmp_path: Path,
 ) -> None:
     previous = {
@@ -51,15 +50,15 @@ def test_nested_union_refuses_v1_v2_and_accepts_strict_tagged_v3_v4(
         "marker_notes": richer["marker_notes"],
     }
     prior_v3 = {**prior_v2, "tag": "playbill-next-source-observation-v3", "document_id": "runbook"}
-    assert NextSourceObservationV3.model_validate(prior_v3).model_dump(mode="json") == prior_v3
     result = NextWorkspaceObservation.model_validate({"source_observations": [richer]})
     assert isinstance(result.source_observations[0], NextSourceObservation)  # type: ignore[index]
     assert result.source_observations[0].model_dump(mode="json") == richer  # type: ignore[index]
 
     with pytest.raises(ValidationError):
         NextWorkspaceObservation.model_validate({"source_observations": [previous]})
-    with pytest.raises(ValidationError):
-        NextWorkspaceObservation.model_validate({"source_observations": [prior_v2]})
+    for prior in (prior_v2, prior_v3):
+        with pytest.raises(ValidationError):
+            NextWorkspaceObservation.model_validate({"source_observations": [prior]})
 
 
 @pytest.mark.parametrize(

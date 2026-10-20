@@ -71,7 +71,7 @@ class _DirectCoverageClient:
         )
 
 
-def _foreign_world(root: Path, *, whole_source: bool = False):  # type: ignore[no-untyped-def]
+def _foreign_world(root: Path, *, whole_file: bool = False):  # type: ignore[no-untyped-def]
     workspace = root / "workspace"
     workspace.mkdir()
     source = _workspace(workspace)
@@ -80,8 +80,8 @@ def _foreign_world(root: Path, *, whole_source: bool = False):  # type: ignore[n
     instance_root.mkdir()
     instance, owner = initialize_local(instance_root)
     stored = instance.body_store().store(SOURCE_CONTENT)
-    start = 0 if whole_source else SOURCE_CONTENT.index(NEEDLE)
-    end = len(SOURCE_CONTENT) if whole_source else start + len(NEEDLE)
+    start = 0 if whole_file else SOURCE_CONTENT.index(NEEDLE)
+    end = len(SOURCE_CONTENT) if whole_file else start + len(NEEDLE)
     proposal = service_propose_playbill_claim(
         instance,
         authoring=authoring("wi-42", "ready", with_claim_type=True).model_copy(
@@ -170,14 +170,29 @@ def test_one_existing_scanner_handles_relocation_duplicate_and_genuine_span_drif
     assert invocations == client.calls == 4
 
 
-def test_whole_file_citation_stays_current_when_its_exact_bytes_move_once(tmp_path: Path) -> None:
-    instance, source, workspace = _foreign_world(tmp_path, whole_source=True)
+def test_whole_file_citation_is_current_while_its_quoted_bytes_occur(tmp_path: Path) -> None:
+    """A citation spanning the whole file commits to those bytes, not to the file.
+
+    It stays current through an append or a prepend (the bytes still occur once)
+    and drifts when the quoted bytes themselves change.
+    """
+
+    instance, source, workspace = _foreign_world(tmp_path, whole_file=True)
     client = _DirectCoverageClient(instance)
+
+    source.write_bytes(SOURCE_CONTENT + b"appended section\n")
+    _observed, appended = _result(instance, client, workspace)
+    assert all(item.reason != "citation_drifted" for item in appended.items)
+
     source.write_bytes(b"Unrelated heading\n" + SOURCE_CONTENT)
+    _observed, prepended = _result(instance, client, workspace)
+    assert all(item.reason != "citation_drifted" for item in prepended.items)
 
-    _observed, result = _result(instance, client, workspace)
-
-    assert all(item.reason != "citation_drifted" for item in result.items)
+    source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, b"status: blocked\n"))
+    _observed, edited = _result(instance, client, workspace)
+    drifted = [item for item in edited.items if item.reason == "citation_drifted"]
+    assert len(drifted) == 1
+    assert drifted[0].detail["drift_state"] == "changed"  # type: ignore[index]
 
 
 def _multi_source_world(

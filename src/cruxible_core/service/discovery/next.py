@@ -191,7 +191,7 @@ CitationLineageNote = Literal[
 # arrived, or arrived reporting itself less than complete, or a per-source count
 # cap discarded a whole class of its evidence. Anything else - an individual
 # proof, window, card or occurrence the observation dropped - is not
-# whole-source and is deliberately absent, because collapsing on it would put a
+# source-wide and is deliberately absent, because collapsing on it would put a
 # cause in the served row that the row cannot prove.
 _COVERAGE_SOURCE_SCAN_DEFECT_NOTES = frozenset(
     {
@@ -265,69 +265,6 @@ class NextDriftObservation(_StrictNextModel):
     def _digest(cls, value: str) -> str:
         Sha256Value.from_tagged(value)
         return value
-
-
-class NextSourceObservationV3(_StrictNextModel):
-    tag: Literal["playbill-next-source-observation-v3"]
-    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
-    document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
-    observed_source_digest: str
-    byte_length: int = Field(ge=0)
-    marker_summaries: tuple[ProjectionMarkerSummary, ...] = Field()
-    occurrences: tuple[WorkingOccurrence, ...] = Field(max_length=MAX_PROJECTION_CARDS_PER_SOURCE)
-    scanned_commitment_digests: tuple[str, ...]
-    scan_complete: bool
-    scan_notes: tuple[str, ...]
-    marker_notes: tuple[str, ...]
-
-    @field_validator("observed_source_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-    @field_validator("scanned_commitment_digests")
-    @classmethod
-    def _commitments(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for digest in value:
-            Sha256Value.from_tagged(digest)
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("next scanned commitment digests must be sorted and unique")
-        return value
-
-    @field_validator("scan_notes", "marker_notes")
-    @classmethod
-    def _notes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("next observation notes must be sorted and unique")
-        return value
-
-    @model_validator(mode="after")
-    def _source_shape(self) -> "NextSourceObservationV3":
-        ids = tuple(marker.stamp.block_id for marker in self.marker_summaries)
-        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("next marker summaries must be sorted and unique by block ID")
-        previous_end = -1
-        for marker in sorted(self.marker_summaries, key=lambda item: item.start_byte):
-            if marker.stamp.source_id != self.source_id:
-                raise ValueError("next marker summary names a different logical source")
-            if marker.start_byte < previous_end or marker.end_byte > self.byte_length:
-                raise ValueError("next marker summary windows overlap or escape the source")
-            previous_end = marker.end_byte
-        keys = tuple(occurrence.sort_key for occurrence in self.occurrences)
-        if keys != tuple(sorted(set(keys))):
-            raise ValueError("next source occurrences must be sorted and unique")
-        for occurrence in self.occurrences:
-            if (
-                occurrence.source.plane != "external"
-                or occurrence.source.identity != self.source_id
-            ):
-                raise ValueError("next occurrence names a different logical source")
-            if occurrence.line_overlay.end_byte > self.byte_length:
-                raise ValueError("next occurrence presentation window escapes the source")
-        if not self.scan_complete and (self.occurrences or self.scanned_commitment_digests):
-            raise ValueError("an incomplete next scan cannot assert occurrences or scanned digests")
-        return self
 
 
 class NextSourceObservation(_StrictNextModel):
@@ -418,9 +355,6 @@ class NextSourceObservation(_StrictNextModel):
         return self
 
 
-PlaybillNextSourceObservationAny: TypeAlias = NextSourceObservationV3 | NextSourceObservation
-
-
 class NextMissingBinding(_StrictNextModel):
     """A catalog entry binding a workspace file that does not exist."""
 
@@ -437,7 +371,7 @@ class NextWorkspaceObservation(_StrictNextModel):
     floor_status: Literal["not_configured", "missing", "current", "stale", "invalid"] | None = None
     installed_coordinate: AcceptedCoordinate | None = None
     drift_observations: tuple[NextDriftObservation, ...] | None = None
-    source_observations: tuple[PlaybillNextSourceObservationAny, ...] | None = None
+    source_observations: tuple[NextSourceObservation, ...] | None = None
     presentation_policy: PresentationPolicyAny | None = None
     presentation_policy_notes: tuple[PresentationPolicyNote, ...] = ()
     projection_coverage: ProjectionCoverageObservation | None = None
@@ -469,8 +403,8 @@ class NextWorkspaceObservation(_StrictNextModel):
     @classmethod
     def _sources(
         cls,
-        value: tuple[PlaybillNextSourceObservationAny, ...] | None,
-    ) -> tuple[PlaybillNextSourceObservationAny, ...] | None:
+        value: tuple[NextSourceObservation, ...] | None,
+    ) -> tuple[NextSourceObservation, ...] | None:
         if value is None:
             return None
         ids = tuple(item.source_id for item in value)
@@ -2891,7 +2825,6 @@ class _CitationCommitment:
     source_digest: str | None
     original_start: int | None = None
     original_end: int | None = None
-    whole_source: bool = False
     lineage_note: CitationLineageNote | None = None
     # The `set` that restates the citing Claim, as sorted items, when it can.
     set_arguments: tuple[tuple[str, object], ...] | None = None
@@ -2920,25 +2853,6 @@ class CitationInventory:
 
     by_id: Mapping[str, _CitationCommitment]
     unavailable: tuple[_UnavailableCitation, ...] = ()
-
-
-def _whole_source_selection(envelope: object) -> bool:
-    source = getattr(envelope, "source", None)
-    if not isinstance(source, ExternalSourceReference):
-        return False
-    coordinate = source.coordinate
-    selector = source.selector
-    if not isinstance(coordinate, Mapping) or not isinstance(selector, Mapping):
-        return False
-    length = coordinate.get("source_byte_length")
-    window = selector.get("working_selection", selector)
-    if not isinstance(window, Mapping) or not isinstance(length, int) or isinstance(length, bool):
-        return False
-    return (
-        window.get("start_byte") == 0
-        and window.get("end_byte") == length
-        and getattr(getattr(envelope, "commitment", None), "byte_length", None) == length
-    )
 
 
 def _source_selection_span(envelope: object) -> tuple[int, int] | None:
@@ -3142,7 +3056,6 @@ def claim_citation_commitments(
                 source_digest=source_digest,
                 original_start=None if selection_span is None else selection_span[0],
                 original_end=None if selection_span is None else selection_span[1],
-                whole_source=_whole_source_selection(envelope),
                 lineage_note=lineage_note,
                 set_arguments=(
                     None
@@ -3782,124 +3695,88 @@ def claim_dependency_row(
 
 
 def _source_scan_defect_notes(
-    observed: PlaybillNextSourceObservationAny,
+    observed: NextSourceObservation,
 ) -> tuple[str, ...] | None:
     """Report the notes evidencing a defect in the source's own scan.
 
-    A defect here is whole-source: the evidence ``_source_citation_item``
+    A defect here is source-wide: the evidence ``_source_citation_item``
     consults was never collected, so every citation to this source falls
     through the same gate no matter what the citation says. ``None`` means the
     scan is healthy and an unobserved citation there is a finding about that
     citation, to be repaired one citation at a time.
-
-    Both observation versions are covered. V4 says so through its notes alone;
-    V3 additionally carries ``scan_complete``, and its own validator forbids an
-    incomplete scan from asserting any occurrence or scanned digest, so an
-    incomplete V3 scan is whole-source by construction even when it names no
-    note at all.
     """
 
     notes = tuple(
         note for note in observed.scan_notes if note in _COVERAGE_SOURCE_SCAN_DEFECT_NOTES
     )
-    if notes:
-        return notes
-    if isinstance(observed, NextSourceObservationV3) and not observed.scan_complete:
-        return ()
-    return None
+    return notes or None
 
 
 def _source_citation_item(
     *,
     citation_id: str,
     commitment: _CitationCommitment,
-    observed: PlaybillNextSourceObservationAny | None,
+    observed: NextSourceObservation | None,
     coordinate: AcceptedCoordinate,
 ) -> PlaybillNextItemV1 | None:
     source_id = commitment.source_id
-    captured_source_digest = commitment.source_digest
-    assert source_id is not None and captured_source_digest is not None
+    assert source_id is not None and commitment.source_digest is not None
     if observed is None:
         return _citation_unobserved_item(commitment)
-    if isinstance(observed, NextSourceObservation):
-        expected_source = LogicalSourceIdentity(plane="external", identity=source_id)
-        proved = any(
-            proof.source == expected_source
-            and proof.commitment_digest == commitment.commitment_digest
-            and proof.byte_length == commitment.byte_length
-            for proof in observed.commitment_scan_proofs
-        )
-        if not proved:
-            return _citation_unobserved_item(commitment)
-        occurrences = tuple(
-            item
-            for item in observed.occurrences
-            if item.source == expected_source
-            and item.observed_commitment_digest == commitment.commitment_digest
-            and item.byte_length == commitment.byte_length
-        )
-        if len(occurrences) == 1:
-            return None
-        if len(occurrences) > 1:
-            return _citation_drift_item(
-                commitment,
-                coordinate=coordinate,
-                drift_state="ambiguous",
-                occurrences=occurrences,
-            )
-        if commitment.original_start is None or commitment.original_end is None:
-            return _citation_unobserved_item(commitment)
-        windows = tuple(
-            item
-            for item in observed.citation_window_observations
-            if item.citation_id == citation_id
-            and item.commitment_digest == commitment.commitment_digest
-            and item.original_start == commitment.original_start
-            and item.original_end == commitment.original_end
-        )
-        if len(windows) != 1:
-            return _citation_unobserved_item(commitment)
-        window = windows[0]
-        if not window.addressable:
-            return _citation_drift_item(
-                commitment,
-                coordinate=coordinate,
-                drift_state="gone",
-            )
-        if window.observed_window_digest == commitment.commitment_digest:
-            raise NextWorkspaceObservationInvalid(
-                f"{NextWorkspaceObservationInvalid.code}: "
-                "a complete zero-occurrence proof contradicts its unchanged original window"
-            )
+    expected_source = LogicalSourceIdentity(plane="external", identity=source_id)
+    proved = any(
+        proof.source == expected_source
+        and proof.commitment_digest == commitment.commitment_digest
+        and proof.byte_length == commitment.byte_length
+        for proof in observed.commitment_scan_proofs
+    )
+    if not proved:
+        return _citation_unobserved_item(commitment)
+    occurrences = tuple(
+        item
+        for item in observed.occurrences
+        if item.source == expected_source
+        and item.observed_commitment_digest == commitment.commitment_digest
+        and item.byte_length == commitment.byte_length
+    )
+    if len(occurrences) == 1:
+        return None
+    if len(occurrences) > 1:
         return _citation_drift_item(
             commitment,
             coordinate=coordinate,
-            drift_state="changed",
-            observed_window_digest=window.observed_window_digest,
+            drift_state="ambiguous",
+            occurrences=occurrences,
         )
-
-    unobserved = isinstance(observed, NextSourceObservationV3) and not observed.scan_complete
-    if isinstance(observed, NextSourceObservationV3):
-        if observed.scan_complete:
-            matched = any(
-                item.observed_commitment_digest == commitment.commitment_digest
-                for item in observed.occurrences
-            )
-            whole_source_current = (
-                commitment.whole_source
-                and observed.observed_source_digest == captured_source_digest
-            )
-            if whole_source_current or (not commitment.whole_source and matched):
-                return None
-            if commitment.commitment_digest not in observed.scanned_commitment_digests:
-                unobserved = True
-    if unobserved:
+    if commitment.original_start is None or commitment.original_end is None:
         return _citation_unobserved_item(commitment)
+    windows = tuple(
+        item
+        for item in observed.citation_window_observations
+        if item.citation_id == citation_id
+        and item.commitment_digest == commitment.commitment_digest
+        and item.original_start == commitment.original_start
+        and item.original_end == commitment.original_end
+    )
+    if len(windows) != 1:
+        return _citation_unobserved_item(commitment)
+    window = windows[0]
+    if not window.addressable:
+        return _citation_drift_item(
+            commitment,
+            coordinate=coordinate,
+            drift_state="gone",
+        )
+    if window.observed_window_digest == commitment.commitment_digest:
+        raise NextWorkspaceObservationInvalid(
+            f"{NextWorkspaceObservationInvalid.code}: "
+            "a complete zero-occurrence proof contradicts its unchanged original window"
+        )
     return _citation_drift_item(
         commitment,
         coordinate=coordinate,
         drift_state="changed",
-        observed_window_digest=observed.observed_source_digest,
+        observed_window_digest=window.observed_window_digest,
     )
 
 
@@ -4255,7 +4132,6 @@ def _backed_claims(observation: NextWorkspaceObservation | None) -> tuple[str, .
             {
                 backing.identity.qualified
                 for source in observation.source_observations
-                if isinstance(source, (NextSourceObservationV3, NextSourceObservation))
                 for marker in source.marker_summaries
                 for backing in marker.stamp.backing
                 if isinstance(backing, ProjectionClaimBacking)
@@ -5692,17 +5568,7 @@ def _projection_items(
         or not access_profile.permits("instance")
     ):
         return ()
-    observed_sources = tuple(
-        source
-        for source in observation.source_observations
-        if isinstance(
-            source,
-            (
-                NextSourceObservationV3,
-                NextSourceObservation,
-            ),
-        )
-    )
+    observed_sources = tuple(observation.source_observations)
     if not observed_sources:
         return ()
 
@@ -6860,7 +6726,6 @@ __all__ = [
     "PlaybillNextItemV1",
     "NextRequest",
     "PlaybillNextResultV2",
-    "NextSourceObservationV3",
     "NextSourceObservation",
     "NextWorkspaceObservationInvalid",
     "NextWorkspaceObservation",

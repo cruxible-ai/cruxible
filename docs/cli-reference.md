@@ -3072,8 +3072,10 @@ integer-microsecond daemon wire, and observes its configured floor locally. If
 `.cruxible/files.yaml` or root-level `files.yaml` exists, the client also
 observes readable source-file digests, including paths explicitly authorized by
 a local overlay. Unreadable or unresolved sources are omitted individually; the
-daemon compares observed sources with accepted whole-source snapshots and names
-drifted or unobserved cited sources. The daemon reads no clock or workspace.
+daemon looks for each citation's quoted bytes in the observed sources and names
+drifted or unobserved citations: a citation stays current while its quoted bytes
+occur unchanged, however much of the file it spans. The daemon reads no clock or
+workspace.
 Without actual source or drift observations, `workspace_sources` remains explicitly
 unobserved. Procedure-catalog coverage is accounted for separately as
 `workspace_projections` and cannot imply that workspace sources were scanned.
