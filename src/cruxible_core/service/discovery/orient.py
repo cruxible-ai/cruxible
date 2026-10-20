@@ -74,8 +74,12 @@ from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.exhaust.journal_index import RunPageInvalidated
+from cruxible_core.indexes.evidence.citation_sql import CAPTURE_COUNT_SQL
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNTS_SQL
+from cruxible_core.indexes.query_selection import (
+    KIND_PREDICATE_COUNTS_SQL,
+    LIVE_SUBJECT_COUNTS_SQL,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
@@ -419,6 +423,7 @@ def _descriptor(
     evidence: tuple[str, ...],
     full: bool,
     live_claims: int | None = None,
+    subjects_with_value: int | None = None,
     placement: tuple[str, int] | None = None,
 ) -> OrientPredicate:
     value_type, members = _value_type(claim_type)
@@ -452,6 +457,7 @@ def _descriptor(
         revision=placement[1] if full and placement is not None else None,
         path=placement[0] if full and placement is not None else None,
         live_claims=live_claims if full else None,
+        subjects_with_value=subjects_with_value if full else None,
     )
 
 
@@ -1242,11 +1248,13 @@ def _operational_counts(
         connection = projection.typed.connection
 
         def count(sql: str) -> int:
-            return int(connection.execute(sql).fetchone()[0])
+            row = connection.execute(sql).fetchone()
+            return 0 if row is None else int(row[0])
 
         counts = {
             "lines": count("SELECT count(*) FROM lines WHERE lifecycle='live'"),
-            "captures": count("SELECT count(*) FROM captures"),
+            # The counter Capture inserts and deletes keep, never a count of the Captures.
+            "captures": count(CAPTURE_COUNT_SQL),
             "capture_contracts": count(
                 "SELECT count(*) FROM capture_contracts WHERE lifecycle='live'"
             ),
@@ -1647,15 +1655,13 @@ def _kind_detail(
         raise _kind_not_found(kind, known)
     of_kind = [item for item in state.claim_types if kind in item.allowed_subject_kinds]
     names = _short_names((item.predicate for item in of_kind), kind, state)
-    prefix = f"subjects/{kind}/"
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
+        # The kind's per-predicate counters Claim writes maintain: one prefix seek.
         counts = {
-            str(predicate): int(count)
-            for predicate, count in connection.execute(
-                "SELECT predicate, count(*) FROM claims WHERE lifecycle='live' "
-                "AND subject_path >= ? AND subject_path < ? GROUP BY predicate",
-                (prefix, prefix[:-1] + "0"),
+            str(predicate): (int(claims), int(subjects))
+            for predicate, claims, subjects in connection.execute(
+                KIND_PREDICATE_COUNTS_SQL, (kind,)
             )
         }
         samples = tuple(
@@ -1673,7 +1679,8 @@ def _kind_detail(
                 name=names[item.predicate],
                 evidence=state.evidence.get(item.predicate, ()),
                 full=True,
-                live_claims=counts.get(item.predicate, 0),
+                live_claims=counts.get(item.predicate, (0, 0))[0],
+                subjects_with_value=counts.get(item.predicate, (0, 0))[1],
                 placement=state.placements.get(item.predicate),
             )
             for item in of_kind

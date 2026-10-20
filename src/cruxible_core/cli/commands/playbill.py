@@ -8003,6 +8003,8 @@ def _orient_predicate_line(item: Mapping[str, Any]) -> str:
     parts = [str(item["name"]), str(item["cardinality"]), kind]
     if item.get("live_claims") is not None:
         parts.append(f"claims={item['live_claims']}")
+    if item.get("subjects_with_value") is not None:
+        parts.append(f"subjects={item['subjects_with_value']}")
     if item.get("stale_after"):
         parts.append(f"stale_after={item['stale_after']}")
     if item.get("evidence") is not None:

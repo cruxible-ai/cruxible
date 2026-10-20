@@ -1072,6 +1072,10 @@ _ONTOLOGY_READS: dict[str, Callable[[World], object]] = {
     "get.subject_kind": lambda world: playbill_api.playbill_get(
         world.instance_id, request=GetRequest(ref=f"SubjectKind:{KIND}")
     ),
+    "orient.kind": lambda world: playbill_api.playbill_orient(world.instance_id, kind=KIND),
+    "get.claim_type": lambda world: playbill_api.playbill_get(
+        world.instance_id, request=GetRequest(ref=f"ClaimType:{KIND}.title")
+    ),
 }
 
 
@@ -1079,7 +1083,9 @@ def test_ontology_reads_never_count_their_population(session: Session) -> None:
     """10 vs 250 more Subjects (each with a title Claim): the ontology reads stay flat.
 
     Subject counts come from ``query_subject_counts``, which Subject writes
-    maintain; nothing on these reads counts the kind's Subjects or Claims. The
+    maintain, and per-predicate Claim and Subject counts from ``predicate_counts``,
+    which Claim writes maintain; nothing on these reads counts the kind's
+    Subjects or Claims (``orient(kind=K)`` still lists five sample ids). The
     bound is absolute (``SLACK`` alone, no ratio): a recount of 240 more rows
     costs well over 1,024 VM steps, so it fails here however large the read's
     fixed work is.

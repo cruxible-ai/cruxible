@@ -4,7 +4,9 @@ Subject counts on every orient answer and on the SubjectKind card come from
 ``query_subject_counts``, which Subject writes maintain; no read recounts a kind.
 Full ClaimType descriptors and the ClaimType card carry the contention policy,
 format version, revision and ledger path. Mandate reads carry their typed scope.
-``orient(section="pins")`` pages the pins between live definitions.
+``orient(section="pins")`` pages the pins between live definitions. Per-predicate
+Claim and Subject counts and the cited-Capture count come from counters the
+projection's triggers maintain, never a recount on read.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.orient import ORIENT_PIN_SOURCE_KINDS
 from cruxible_client.contracts.write import WriteRequest
+from cruxible_core.indexes.evidence.citation_sql import CAPTURE_COUNT_SQL
 from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL, LIVE_SUBJECT_COUNTS_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.write_verbs import service_playbill_write
@@ -289,3 +292,193 @@ def test_the_pins_section_seeks_definition_rows_only(tmp_path: Path) -> None:
         foreign = _keyset_cursor(view="pins", served=first.coordinate, last_key=key)
         with pytest.raises(ListCursorMismatch):
             service_playbill_orient(instance, section="pins", cursor=foreign)
+
+
+# -- K1 (and K0's Capture count): counters Claim and Capture writes maintain ------------
+
+
+def _claim_row(identity: str, *, predicate: str, subject: str, live: bool = True) -> tuple:
+    """A minimal literal-null Claim row: only the counted columns matter here."""
+
+    return (
+        identity, f"claims/{identity}.json", "playbill-claim-v1", "digest", None, 1,
+        "live" if live else "retired", "statement", f"ClaimType:{predicate}", "ct", subject,
+        "path", "", predicate, None, "observation", "literal", None, None, None, None, None,
+        None, "null", None, None, None, None, None, None,
+    )  # fmt: skip
+
+
+def _counts(connection: Any) -> tuple[list[Any], list[Any]]:
+    return (
+        connection.execute("SELECT * FROM predicate_counts ORDER BY 1,2").fetchall(),
+        connection.execute("SELECT * FROM predicate_subjects ORDER BY 1,2").fetchall(),
+    )
+
+
+def _recount(connection: Any) -> tuple[list[Any], list[Any]]:
+    """The oracle: what the counters must equal, by a full recount of live Claims."""
+
+    kind = (
+        "CASE WHEN substr(subject_path,1,9)='subjects/' AND instr(substr(subject_path,10),'/')>0 "
+        "THEN substr(subject_path,10,instr(substr(subject_path,10),'/')-1) ELSE '' END"
+    )
+    return (
+        connection.execute(
+            f"SELECT {kind}, predicate, count(*), count(DISTINCT subject_path) FROM claims "
+            "WHERE lifecycle='live' GROUP BY 1,2 ORDER BY 1,2"
+        ).fetchall(),
+        connection.execute(
+            "SELECT predicate, subject_path, count(*) FROM claims WHERE lifecycle='live' "
+            "GROUP BY 1,2 ORDER BY 1,2"
+        ).fetchall(),
+    )
+
+
+def test_predicate_counts_follow_claim_inserts_moves_retirements_and_deletes() -> None:
+    import random
+    import sqlite3
+
+    from cruxible_core.indexes.typed_state import schema_sql
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(schema_sql())
+    one, two = "subjects/k/one.json", "subjects/k/two.json"
+    insert = "INSERT INTO claims VALUES (" + ",".join("?" * 30) + ")"
+    connection.execute(insert, _claim_row("a", predicate="p", subject=one))
+    connection.execute(insert, _claim_row("b", predicate="p", subject=one))
+    connection.execute(insert, _claim_row("c", predicate="p", subject=two))
+    assert _counts(connection) == ([("k", "p", 3, 2)], [("p", one, 2), ("p", two, 1)])
+    connection.execute("UPDATE claims SET lifecycle='retired' WHERE identity='b'")
+    assert _counts(connection)[0] == [("k", "p", 2, 2)]
+    connection.execute("DELETE FROM claims WHERE identity='a'")
+    assert _counts(connection) == ([("k", "p", 1, 1)], [("p", two, 1)])
+    connection.execute("UPDATE claims SET subject_path=?, predicate='q' WHERE identity='c'", (one,))
+    assert _counts(connection) == ([("k", "q", 1, 1)], [("q", one, 1)])
+    connection.execute("UPDATE claims SET lifecycle='live' WHERE identity='b'")
+    connection.execute(insert, _claim_row("d", predicate="p", subject="documents/x.json"))
+    assert _counts(connection)[0] == [("", "p", 1, 1), ("k", "p", 1, 1), ("k", "q", 1, 1)]
+    connection.commit()
+    connection.execute("DELETE FROM claims")
+    connection.rollback()
+    assert _counts(connection) == _recount(connection)
+
+    # Any sequence of writes leaves the counters equal to a recount.
+    rng = random.Random(20261020)
+    subjects = [f"subjects/{kind}/{n}.json" for kind in ("k", "m") for n in range(4)]
+    for step in range(300):
+        identity = f"r{rng.randrange(40)}"
+        exists = connection.execute("SELECT 1 FROM claims WHERE identity=?", (identity,))
+        if exists.fetchone() is None:
+            connection.execute(
+                insert,
+                _claim_row(
+                    identity,
+                    predicate=rng.choice("pqr"),
+                    subject=rng.choice(subjects),
+                    live=rng.random() < 0.8,
+                ),
+            )
+        elif step % 3 == 0:
+            connection.execute("DELETE FROM claims WHERE identity=?", (identity,))
+        else:
+            connection.execute(
+                "UPDATE claims SET lifecycle=?, predicate=?, subject_path=? WHERE identity=?",
+                (
+                    rng.choice(("live", "retired")),
+                    rng.choice("pqr"),
+                    rng.choice(subjects),
+                    identity,
+                ),
+            )
+    assert _counts(connection) == _recount(connection)
+
+
+def test_the_capture_counter_follows_capture_inserts_and_deletes() -> None:
+    import sqlite3
+
+    from cruxible_core.indexes.typed_sqlite import complete_schema_sql
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(complete_schema_sql())
+
+    def count() -> Any:
+        return connection.execute(CAPTURE_COUNT_SQL).fetchone()
+
+    assert count() is None
+    for digest in ("d1", "d2", "d3"):
+        connection.execute(
+            "INSERT INTO captures VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (digest, "c", "e", None, None, "s", "p", 1, "public", "o", "commitment"),
+        )
+    connection.execute(
+        "INSERT OR IGNORE INTO captures VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        ("d1", "c", "e", None, None, "s", "p", 1, "public", "o", "commitment"),
+    )
+    assert count() == (3,)
+    connection.execute("DELETE FROM captures WHERE capture_digest IN ('d1','d2')")
+    assert count() == (1,)
+    connection.execute("DELETE FROM captures")
+    assert count() is None
+    assert _plan_of(connection, CAPTURE_COUNT_SQL) == [
+        "SEARCH capture_count USING INTEGER PRIMARY KEY (rowid=?)"
+    ]
+
+
+def _plan_of(connection: Any, sql: str, args: tuple[object, ...] = ()) -> list[str]:
+    return [str(row[3]) for row in connection.execute("EXPLAIN QUERY PLAN " + sql, args)]
+
+
+def test_kind_and_claim_type_reads_count_from_the_predicate_counters(
+    instance: PlaybillInstance,
+) -> None:
+    title, governs = f"{KIND}.title", f"{KIND}.governs"
+    _write(
+        instance,
+        {"op": "add", "subject": f"{KIND}/a", "field": "governs", "value": f"{KIND}/b"},
+        {"op": "add", "subject": f"{KIND}/a", "field": "governs", "value": f"{KIND}/c"},
+        {"op": "add", "subject": f"{KIND}/b", "field": "governs", "value": f"{KIND}/c"},
+    )
+
+    def truth(predicate: str) -> tuple[int, int]:
+        ((claims, subjects),) = _sql(
+            instance,
+            "SELECT count(*), count(DISTINCT subject_path) FROM claims "
+            "WHERE predicate=? AND lifecycle='live'",
+            (predicate,),
+        )
+        return int(claims), int(subjects)
+
+    assert truth(governs) == (3, 2)
+    detail = service_playbill_orient(instance, kind=KIND).kind_detail
+    assert detail is not None
+    by_name = {row.predicate: row for row in detail.predicates}
+    for predicate in (title, governs, f"{KIND}.status"):
+        row = by_name[predicate]
+        assert (row.live_claims, row.subjects_with_value) == truth(predicate), predicate
+        card = _get(instance, f"ClaimType:{predicate}")
+        assert (card.live_claims, card.subjects_with_value) == truth(predicate), predicate
+    _write(instance, {"op": "retire", "target": {"subject": f"{KIND}/b", "field": "governs"}})
+    card = _get(instance, f"ClaimType:{governs}")
+    assert (card.live_claims, card.subjects_with_value) == truth(governs) == (2, 1)
+    # Compact descriptors carry neither count.
+    kinds = service_playbill_orient(instance).kinds
+    compact = next(item for item in kinds if item.kind == KIND).predicates
+    assert all(item.subjects_with_value is None for item in compact)
+
+
+def test_the_predicate_counters_are_key_seeks(instance: PlaybillInstance) -> None:
+    from cruxible_core.indexes.query_selection import (
+        KIND_PREDICATE_COUNTS_SQL,
+        PREDICATE_COUNTS_SQL,
+    )
+
+    assert _plan(instance, KIND_PREDICATE_COUNTS_SQL, (KIND,)) == [
+        "SEARCH predicate_counts USING PRIMARY KEY (subject_kind=?)"
+    ]
+    (plan,) = _plan(instance, PREDICATE_COUNTS_SQL, (f"{KIND}.title",))
+    assert plan.startswith("SEARCH predicate_counts USING ") and plan.endswith(
+        "INDEX predicate_counts_by_predicate (predicate=?)"
+    ), plan
+    assert _plan(instance, CAPTURE_COUNT_SQL) == [
+        "SEARCH capture_count USING INTEGER PRIMARY KEY (rowid=?)"
+    ]

@@ -138,7 +138,7 @@ from cruxible_core.indexes.history.history_index import (
     AcceptedMemberLocation,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL
+from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL, PREDICATE_COUNTS_SQL
 from cruxible_core.indexes.subject_identity import KeyReader, KeyTuple
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.change_reasons import ChangeReasons
@@ -1356,11 +1356,12 @@ def _claim_type_card(
         claim_type = cast(ClaimType, projection.typed.source(resolved.identity))
         envelope = projection.typed.envelope(resolved.identity)
         assert envelope is not None, resolved.identity
-        live = int(
-            projection.typed.connection.execute(
-                "SELECT count(*) FROM claims WHERE predicate=? AND lifecycle='live'",
-                (claim_type.predicate,),
-            ).fetchone()[0]
+        # The predicate's counters Claim writes maintain, summed over its kinds.
+        live, with_value = (
+            int(value)
+            for value in projection.typed.connection.execute(
+                PREDICATE_COUNTS_SQL, (claim_type.predicate,)
+            ).fetchone()
         )
         kit = owned_by(
             kit_owners(instance, projection.typed.connection), "ClaimType", claim_type.predicate
@@ -1406,6 +1407,7 @@ def _claim_type_card(
         revision=envelope.revision,
         path=envelope.path,
         live_claims=live,
+        subjects_with_value=with_value,
         kit=kit,
         next=tuple(next_steps),
     )

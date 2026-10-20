@@ -774,13 +774,6 @@ def capture_rows(
     return tuple(page), (None if last is None else (str(last[2]), str(last[0])))
 
 
-def capture_count(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate) -> int:
-    with instance.bind_accepted_projection(coordinate) as projection:
-        return int(
-            projection.typed.connection.execute("SELECT count(*) FROM captures").fetchone()[0]
-        )
-
-
 def capture_contract_rows(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
 ) -> tuple[OrientCaptureContract, ...]:
@@ -1060,7 +1053,6 @@ __all__ = [
     "line_arm_states",
     "capture_card",
     "capture_contract_rows",
-    "capture_count",
     "capture_hex",
     "capture_rows",
     "captures_with_prefix",

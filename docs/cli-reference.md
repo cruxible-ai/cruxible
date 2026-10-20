@@ -3630,7 +3630,9 @@ CaptureContracts by digest, attention says so and suggests
 `cruxible claim-type upgrade`.
 
 `--kind` reads one kind in full: every predicate with its roles, freshness
-horizon and live Claim count, the predicates of other kinds that point at it
+horizon, live Claim count and how many of the kind's Subjects hold a live value
+(`subjects_with_value`; both counts come from counters Claim writes maintain,
+never a recount), the predicates of other kinds that point at it
 (`incoming`, full names: follow one backwards with `query KIND --follow-in
 PREDICATE:alias`), plus up to five sample Subject IDs. A kind that
 does not exist is refused as `cruxible.orient.kind_not_found` with the nearest

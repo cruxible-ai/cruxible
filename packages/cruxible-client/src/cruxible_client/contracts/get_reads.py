@@ -327,7 +327,10 @@ class GetClaimTypeCard(_StrictGetModel):
     format: int = Field(ge=1)
     revision: int = Field(ge=1)
     path: str
+    # Live Claims of the predicate, and the Subjects holding at least one, over
+    # every kind: read from counters Claim writes maintain, never a recount.
     live_claims: int
+    subjects_with_value: int = Field(ge=0)
     # The installed kit that owns the ClaimType (its receipt records it); absent
     # when no kit owns it.
     kit: str | None = Field(default=None, exclude_if=_omit_none)

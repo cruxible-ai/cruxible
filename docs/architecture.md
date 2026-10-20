@@ -325,3 +325,12 @@ Absence, negation, traversals,
 includes, and filters whose refusal or verdict accounting cannot be preserved
 use the full-load evaluator. Projection storage schema 19 rebuilds older derived
 indexes once; accepted ledger formats and query result bytes are unchanged.
+
+Ontology reads count from maintained counters too. Each live Claim's insert,
+delete or move (lifecycle, predicate, Subject) adjusts a per-(predicate, Subject)
+refcount and the per-(Subject kind, predicate) live Claim and Subjects-with-a-value
+counts, and each cited Capture's insert or delete one Capture counter, all by SQL
+trigger in the same transaction. `orient(kind=K)`, the `get ClaimType:` and
+`get SubjectKind:` cards and the default map's Capture count read those rows
+by key and never recount. Projection storage schema 20 adds them and rebuilds
+each projection once on first bind; accepted ledger formats are unchanged.

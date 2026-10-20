@@ -225,6 +225,7 @@ def test_a_claim_type_card_maps_stored_playbill_contract_names_for_display(
                 revision=1,
                 path="claim-types/work_item/status.json",
                 live_claims=0,
+                subjects_with_value=0,
             ),
         ),
     )

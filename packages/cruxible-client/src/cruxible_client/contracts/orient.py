@@ -121,7 +121,10 @@ class OrientPredicate(_StrictOrientModel):
     A full descriptor also names how the ClaimType settles rival Claims
     (``contention``), its format version (``format``: 7 for
     ``playbill-claim-type-v7``), its accepted ``revision`` and its ledger
-    ``path``, which a kit's drifted paths name.
+    ``path``, which a kit's drifted paths name. Under ``orient(kind=K)`` a
+    descriptor counts the kind's ``live_claims`` of the predicate and
+    ``subjects_with_value``: its live Subjects with at least one, both read
+    from counters Claim writes maintain.
     ``kit`` (claim_types section only) is the installed kit that owns the
     ClaimType: its receipt records the definition. Absent when no kit owns it.
     """
@@ -150,6 +153,7 @@ class OrientPredicate(_StrictOrientModel):
     revision: int | None = Field(default=None, ge=1, exclude_if=_is_none)
     path: str | None = Field(default=None, exclude_if=_is_none)
     live_claims: int | None = Field(default=None, ge=0, exclude_if=_is_none)
+    subjects_with_value: int | None = Field(default=None, ge=0, exclude_if=_is_none)
     kit: str | None = Field(default=None, exclude_if=_is_none)
 
 
