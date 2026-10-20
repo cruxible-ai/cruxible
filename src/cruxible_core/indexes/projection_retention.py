@@ -2,10 +2,12 @@
 
 A piece is a full copy of one generation's projection, so pieces are kept only
 for the coordinates reads keep asking for: the serving head, the last
-``RetentionSettings.generations`` accepted generations, and any coordinate a
-reader holds. Every other accepted coordinate is rebuilt from the ledger tree
-and the body store the next time it is bound. No signed record cites a piece;
-logical digests are recomputed from accepted sources.
+``RetentionSettings.generations`` accepted generations (never fewer than the
+head and its parent, which a read binds while the next serving pointer is being
+published), and any coordinate a reader holds. Every other accepted coordinate
+is rebuilt from the ledger tree and the body store the next time it is bound. No
+signed record cites a piece; logical digests are recomputed from accepted
+sources.
 
 A reader holds a coordinate by holding a shared ``flock`` on its piece for the
 life of its handle (``lock_piece_shared``), in any process. Eviction takes the

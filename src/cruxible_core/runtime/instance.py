@@ -136,7 +136,7 @@ from cruxible_core.indexes.projection_retention import (
 )
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
 from cruxible_core.indexes.proposals.proposal_note_reader import proposal_note_snapshot
-from cruxible_core.indexes.serving import bind_current_projection
+from cruxible_core.indexes.serving import ServingPointerMoved, bind_current_projection
 from cruxible_core.indexes.sqlite import (
     ProjectionEvicted,
     ProjectionHandle,
@@ -2668,7 +2668,22 @@ class PlaybillInstance:
         directory = paths["projections"]
         if verified == self.accepted_coordinate():
             # The serving head is never evicted; its handle holds its piece too.
-            return self._projection_sources(bind_current_projection(directory, expected=verified))
+            try:
+                return self._projection_sources(
+                    bind_current_projection(directory, expected=verified)
+                )
+            except ServingPointerMoved:
+                # A settle publishes the next serving pointer before this
+                # process advances its head. A read is a snapshot at its own
+                # coordinate: bind that coordinate's own manifest, built when it
+                # was accepted. Retention keeps the head's parent, so it is
+                # there; this never builds, and a missing one stays refused.
+                return self._projection_sources(
+                    bind_projection(
+                        directory / self._manifest_name_for_coordinate(verified, directory),
+                        expected=verified,
+                    )
+                )
         # Naming the manifest needs only this coordinate. The replay-proven
         # coordinates of every generation are built only for a rebuild, so a
         # bind at a base behind the head costs the same at any history length.
@@ -2722,6 +2737,24 @@ class PlaybillInstance:
             with held_here(manifest_path, location.sequence):
                 pass
 
+    @staticmethod
+    def _manifest_name_for_coordinate(
+        coordinate: AcceptedProjectionCoordinate, directory: Path
+    ) -> str:
+        return projection_manifest_name(
+            AssemblerRequest(
+                instance_id=coordinate.instance_id,
+                repository_path=coordinate.repository_path,
+                git_object_format=coordinate.git_object_format,
+                git_oid=coordinate.git_oid,
+                semantic_root=coordinate.semantic_root,
+                generation_root=coordinate.generation_root,
+                compiler_digest=coordinate.compiler.rule_digest,
+                schema_version=coordinate.compiler.schema_version,
+                output_staging_directory=str(directory),
+            )
+        )
+
     def _manifest_name_for(self, generation: RecoveredGeneration, directory: Path) -> str:
         return projection_manifest_name(
             AssemblerRequest(
@@ -2741,12 +2774,15 @@ class PlaybillInstance:
         """Evict accepted projection pieces past retention; returns the evicted manifest names.
 
         Kept: every generation after the cutoff (the head's sequence less
-        ``retention.generations``, taken once from one snapshot, so a
-        generation accepted meanwhile is always after it), which includes the
-        serving head and every open proposal's base (an open proposal is
-        evaluated at the head; a stale one is rebuilt if it is read), and
-        every piece a reader holds in any process. An evicted coordinate is
-        rebuilt when it is next bound.
+        ``retention.generations``, but never less than two, taken once from
+        one snapshot, so a generation accepted meanwhile is always after it),
+        which includes the serving head and every open proposal's base (an
+        open proposal is evaluated at the head; a stale one is rebuilt if it
+        is read), and every piece a reader holds in any process. The head's
+        parent is always kept: a settling process publishes the next serving
+        pointer before it advances its own head, and a read there binds the
+        parent's manifest by name, never rebuilding it. An evicted coordinate
+        is rebuilt when it is next bound.
 
         Each pass after the first tries only what changed since the last: the
         generations that crossed the cutoff, and the pieces at or before it
@@ -2760,7 +2796,7 @@ class PlaybillInstance:
 
         with self._state_lock:
             recovered = self._recovered
-        cutoff = recovered.head.sequence - self.retention.generations
+        cutoff = recovered.head.sequence - max(self.retention.generations, 2)
         directory = self._validated_paths(self.root, self.descriptor.storage)["projections"]
         evicted: list[str] = []
         with self._eviction_lock, retention_lock(directory):

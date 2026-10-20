@@ -39,6 +39,16 @@ _MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
+class ServingPointerMoved(ProjectionIntegrityError):
+    """The serving pointer is sound but names another coordinate of this instance.
+
+    A settle publishes the next pointer before a process advances its in-memory
+    head, so a read that started at the previous head can see it. The pointer
+    says nothing about the read's own coordinate; a reader binds that
+    coordinate's own immutable manifest instead of refusing.
+    """
+
+
 class ServingCrashHook(Protocol):
     def __call__(self, checkpoint: str) -> None: ...
 
@@ -219,6 +229,11 @@ def bind_current_projection(
 
     serving = load_serving_manifest(publication_directory)
     if not _serving_matches_coordinate(serving, expected):
+        if (
+            serving.instance_id == expected.instance_id
+            and serving.git_object_format == expected.git_object_format
+        ):
+            raise ServingPointerMoved("serving manifest differs from accepted coordinate")
         raise ProjectionIntegrityError("serving manifest differs from accepted coordinate")
     projection_path = publication_directory / serving.projection_manifest_name
     if _file_digest(projection_path) != serving.projection_manifest_digest:
@@ -252,6 +267,7 @@ def remove_exact_projection_build(
 __all__ = [
     "SERVING_MANIFEST_FILE",
     "ServingManifest",
+    "ServingPointerMoved",
     "bind_current_projection",
     "load_serving_manifest",
     "publish_serving_manifest",
