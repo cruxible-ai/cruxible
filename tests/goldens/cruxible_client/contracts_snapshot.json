@@ -223,7 +223,8 @@
         "mandates",
         "principals",
         "policies",
-        "generations"
+        "generations",
+        "graph"
       ]
     },
     "OrientSurface": {
@@ -36092,6 +36093,25 @@
             "title": "Generations"
           }
         },
+        "graph": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "graph",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrientGraph"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "instance": {
           "has_default": false,
           "has_default_factory": false,
@@ -36452,7 +36472,8 @@
                   "mandates",
                   "principals",
                   "policies",
-                  "generations"
+                  "generations",
+                  "graph"
                 ],
                 "type": "string"
               },
@@ -37193,6 +37214,114 @@
               "accepted_at"
             ],
             "title": "OrientGeneration",
+            "type": "object"
+          },
+          "OrientGraph": {
+            "additionalProperties": false,
+            "description": "One page of the Subject graph: live Subjects, then live Subject-valued Claims.\n\nA page holds up to ``limit`` rows: nodes first (by kind, then Subject),\nand once the nodes are done, edges (by target, then Claim). Follow\n``next_cursor`` while ``truncated``; every page reads at the first page's\ncoordinate.",
+            "properties": {
+              "edges": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/OrientGraphEdge"
+                },
+                "title": "Edges",
+                "type": "array"
+              },
+              "nodes": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/OrientGraphNode"
+                },
+                "title": "Nodes",
+                "type": "array"
+              },
+              "totals": {
+                "$ref": "#/$defs/OrientGraphTotals"
+              }
+            },
+            "required": [
+              "totals"
+            ],
+            "title": "OrientGraph",
+            "type": "object"
+          },
+          "OrientGraphEdge": {
+            "additionalProperties": false,
+            "description": "One live Claim whose object is a Subject: ``source`` --predicate--> ``target``.\n\n``claim`` is the Claim's id (``get`` reads it); ``source`` and ``target``\nare ``kind/id`` refs. A relation is stored once, on its source.",
+            "properties": {
+              "claim": {
+                "title": "Claim",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim",
+              "source",
+              "predicate",
+              "target"
+            ],
+            "title": "OrientGraphEdge",
+            "type": "object"
+          },
+          "OrientGraphNode": {
+            "additionalProperties": false,
+            "description": "One live Subject: ``subject`` is its ``kind/id`` ref, which ``get`` reads.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "kind"
+            ],
+            "title": "OrientGraphNode",
+            "type": "object"
+          },
+          "OrientGraphTotals": {
+            "additionalProperties": false,
+            "description": "The whole graph's size at the coordinate, on every page.\n\n``subjects`` is the live Subject count, read from the per-kind counters\nthe projection maintains (never a recount).",
+            "properties": {
+              "subjects": {
+                "minimum": 0,
+                "title": "Subjects",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "subjects"
+            ],
+            "title": "OrientGraphTotals",
             "type": "object"
           },
           "OrientInterface": {
@@ -38345,7 +38474,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), the principal registry (``principals``),\n  the governed policies in force (``policies``) or the accepted generations\n  newest first (``generations``), paged. The default map counts the\n  operational families under ``artifacts`` and never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``subject_kinds``, ``queries``, ``interfaces``, or an\n  operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), the principal registry (``principals``),\n  the governed policies in force (``policies``), the accepted generations\n  newest first (``generations``) or the Subject graph (``graph``), paged.\n  The default map counts the operational families under ``artifacts`` and\n  never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
           "accepted_at": {
             "format": "date-time",
@@ -38472,6 +38601,17 @@
             ],
             "default": null,
             "title": "Generations"
+          },
+          "graph": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrientGraph"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "instance": {
             "title": "Instance",
@@ -38700,7 +38840,8 @@
                   "mandates",
                   "principals",
                   "policies",
-                  "generations"
+                  "generations",
+                  "graph"
                 ],
                 "type": "string"
               },

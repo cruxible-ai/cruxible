@@ -384,6 +384,15 @@ def _orient_generations(world: World) -> object:
     return result
 
 
+def _orient_graph(world: World) -> object:
+    """The graph's first page: five of the world's live Subjects, never the rest."""
+
+    result = playbill_api.playbill_orient(world.instance_id, section="graph", limit=5)
+    assert result.graph is not None and len(result.graph.nodes) == 5, result
+    assert result.graph.totals.subjects >= len(world.items) and result.truncated, result
+    return result
+
+
 def _since_first_page(world: World) -> object:
     """The first page after genesis: only its generations are read, never the rest."""
 
@@ -765,6 +774,7 @@ def _routes() -> list[Route]:
         ),
         Route("read.orient", _orient),
         Route("read.orient.generations", _orient_generations),
+        Route("read.orient.graph", _orient_graph),
         Route("read.since.first_page", _since_first_page),
         Route("read.get.subject", _get(lambda w: w.subject(7))),
         Route("read.get.claim", _get(lambda w: w.claims[f"{w.subject(7)}#title"])),
@@ -989,6 +999,59 @@ def test_an_incoming_page_reads_only_its_own_rows(session: Session) -> None:
         small, large = measured[six][counter], measured[sixty][counter]
         assert large <= small * RATIO + SLACK[counter], (
             f"incoming page {counter}: 6 pointing {small}, 60 pointing {large}"
+        )
+
+
+def test_a_graph_edge_page_reads_only_its_own_rows(session: Session) -> None:
+    """6 vs 60 more Subject-valued Claims, one edge page of five: no counter grows.
+
+    The page is a keyset seek of the object index (``claims_by_object_subject``)
+    from its start, bounded by the page, so the graph's whole edge set costs
+    nothing to locate it.
+    """
+
+    from cruxible_core.service.discovery.orient import _keyset_cursor, service_playbill_head
+
+    world = session.small
+    target = world.subject(3)
+
+    def add(count: int, tag: str) -> None:
+        _worlds.write(
+            world,
+            [
+                {
+                    "op": "add",
+                    "subject": f"{KIND}/graph-{tag}-{index:02d}",
+                    "field": "governs",
+                    "value": target,
+                }
+                for index in range(count)
+            ],
+        )
+        settle_advertisement(world.instance)
+
+    def page() -> object:
+        head = service_playbill_head(world.instance)
+        cursor = _keyset_cursor(view="graph", served=head.coordinate, last_key=["edge", "", ""])
+        result = playbill_api.playbill_orient(
+            world.instance_id, section="graph", limit=5, cursor=cursor
+        )
+        assert result.graph is not None and not result.graph.nodes, result
+        assert len(result.graph.edges) == 5 and result.truncated, result
+        return result
+
+    measured: dict[str, dict[str, Any]] = {}
+    for count, tag in ((6, "six"), (54, "sixty")):
+        add(count, tag)
+        page()
+        with counting(world.root) as window:
+            page()
+        assert not window.unexplained, window.unexplained[:5]
+        measured[tag] = {name: window.counts[name] for name in COUNTERS}
+    for counter in COUNTERS:
+        small, large = measured["six"][counter], measured["sixty"][counter]
+        assert large <= small * RATIO + SLACK[counter], (
+            f"graph edge page {counter}: 6 more edges {small}, 60 more edges {large}"
         )
 
 

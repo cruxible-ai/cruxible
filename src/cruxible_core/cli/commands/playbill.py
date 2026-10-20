@@ -8068,7 +8068,20 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         if detail["sample_subject_ids"]:
             lines.append("Sample subjects: " + ", ".join(detail["sample_subject_ids"]))
     section = result.get("section")
-    if section is not None and not result[section]:
+    if section == "graph":
+        graph = result["graph"]
+        lines.append(
+            f"Graph: subjects={graph['totals']['subjects']}  "
+            f"this page: nodes={len(graph['nodes'])} edges={len(graph['edges'])}"
+        )
+        lines.extend(f"  {node['subject']}" for node in graph["nodes"])
+        for edge in graph["edges"]:
+            qualifier = f"[{edge['qualifier']}]" if edge.get("qualifier") else ""
+            lines.append(
+                f"  {edge['source']} -{edge['predicate']}{qualifier}-> {edge['target']}  "
+                f"{edge['claim']}"
+            )
+    elif section is not None and not result[section]:
         lines.append(f"(no {section.replace('_', ' ')})")
     if section in {
         "documents",
@@ -8155,7 +8168,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     "--section",
     type=click.Choice(list(get_args(contracts.OrientSection))),
     default=None,
-    help="Page one artifact family instead of the map.",
+    help="Page one artifact family, or graph (live Subjects, then the Claims between them).",
 )
 @click.option(
     "--limit",

@@ -4590,7 +4590,10 @@ class Cruxible:
         ``query(kind, follow=[(predicate, alias, "reverse")])``); ``section``
         pages documents, procedures, claim_types, queries or interfaces (the
         provider interfaces a Procedure can call), generations (the ledger
-        timeline, newest first, paged by sequence), or an operational family:
+        timeline, newest first, paged by sequence), graph (``graph.nodes``: each
+        live Subject as ``{subject, kind}``, then ``graph.edges``: each live
+        Subject-valued Claim as ``{claim, source, predicate, qualifier, target}``,
+        with ``graph.totals.subjects`` on every page), or an operational family:
         runs, lines, captures, capture_contracts, predictions or mandates. Follow
         ``next_cursor`` while ``truncated``. When this workspace holds an
         exported floor, ``floor`` says the coordinate it is at and how many

@@ -5,7 +5,8 @@ predicate descriptors, counts each artifact family, lists the named queries,
 says who the caller is and whether it can author, summarizes what the ``next``
 queue holds, and suggests runnable follow-up calls rendered for the caller's
 surface. ``orient(kind=K)`` widens one kind to every predicate in full plus a
-few sample Subject IDs; ``orient(section=S)`` pages one artifact family.
+few sample Subject IDs; ``orient(section=S)`` pages one artifact family, and
+``orient(section="graph")`` the live Subjects and the Claims between them.
 
 Everything here is read from the accepted index at one coordinate. The
 attention summary uses the existing ``next`` service's queue fold, without
@@ -80,6 +81,7 @@ from cruxible_core.service.discovery.discovery import (
     accepted_provider_interfaces,
 )
 from cruxible_core.service.discovery.field_names import short_field_name
+from cruxible_core.service.discovery.graph import GraphKey, graph_page
 from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
 from cruxible_core.service.discovery.next import (
     NextRequest,
@@ -910,6 +912,17 @@ def service_playbill_orient(
             next_cursor=next_cursor,
             next=tuple(render_orient_call(call, surface) for call in calls),
         )
+    # The Subject graph reads two projection indexes, never the vocabulary.
+    if section == "graph":
+        return _graph_section(
+            instance,
+            base,
+            coordinate=coordinate,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
+        )
     # The ledger timeline reads the history index alone, never the vocabulary.
     if section == "generations":
         return _generations_section(
@@ -1344,6 +1357,49 @@ def _captures_section(
         **base,
         section="captures",
         captures=rows,
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
+
+
+def _graph_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: OrientSurface,
+) -> OrientResult:
+    """One keyset page of live Subjects, then the live Claims between them."""
+
+    after = _keyset_after(continuation)
+    key = None if after is None else GraphKey.decode(after)
+    if after is not None and key is None:
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        graph, stop = graph_page(projection.typed.connection, limit=limit, after=key)
+    next_cursor = (
+        None
+        if stop is None
+        else _keyset_cursor(view="graph", served=served, last_key=stop.encode())
+    )
+    calls: list[_Call] = []
+    if graph.nodes:
+        calls.append(_Call("get", (("ref", graph.nodes[0].subject),)))
+    elif graph.edges:
+        calls.append(_Call("get", (("ref", graph.edges[0].claim),)))
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "graph"), ("cursor", next_cursor))))
+    return OrientResult(
+        **base,
+        section="graph",
+        graph=graph,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
         next=tuple(render_orient_call(call, surface) for call in calls),
