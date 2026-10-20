@@ -33,7 +33,7 @@ def test_a_slow_step_logs_its_start_its_counts_and_its_elapsed_time() -> None:
     assert started["event"] == startup_progress.STARTED and started["loose_objects"] == 9
     assert finished["event"] == startup_progress.FINISHED
     assert isinstance(finished["elapsed_s"], float)
-    assert failed["event"] == startup_progress.FAILED and failed["reason"] == "RuntimeError"
+    assert failed["event"] == startup_progress.FAILED and failed["error"] == "RuntimeError"
 
 
 def test_start_compaction_logs_its_loose_objects_before_and_after(

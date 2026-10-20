@@ -86,7 +86,8 @@ def slow_step(step: str, *, instance_id: str | None, **known: int | str) -> Iter
         yield counts
     except BaseException as exc:
         elapsed = round(time.monotonic() - started, 1)
-        _log.warning(FAILED, elapsed_s=elapsed, reason=type(exc).__name__, **fields)
+        # `error`, not `reason`: a caller may say why the step runs as `reason`.
+        _log.warning(FAILED, elapsed_s=elapsed, error=type(exc).__name__, **fields)
         if _echo:
             print(
                 f"cruxible: {describe(step, instance_id, {})} failed after {elapsed} s",

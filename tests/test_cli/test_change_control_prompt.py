@@ -138,7 +138,12 @@ def test_proposal_commands_select_json_or_text_and_preserve_prompt_control(
             compiler_digest="sha256:" + "d" * 64,
         ),
     )
-    monkeypatch.setattr(commands, "_server_call", lambda *_a, **_kw: result)
+    from cruxible_client.contracts.compiler_upgrade_landing import CompilerUpgradeResult
+
+    compiler = path[0] == "compiler"
+    # compiler upgrade returns its proposal inside a landing result
+    served = CompilerUpgradeResult(proposal=result) if compiler else result
+    monkeypatch.setattr(commands, "_server_call", lambda *_a, **_kw: served)
     monkeypatch.setattr(commands, "_principal_successor", lambda **_kw: result)
     monkeypatch.setattr(commands, "_read_model", lambda *_a: document_example())
     _terminal(monkeypatch, True)
@@ -150,5 +155,6 @@ def test_proposal_commands_select_json_or_text_and_preserve_prompt_control(
 
     machine = CliRunner().invoke(cli, [*path, "--json"])
     assert machine.exit_code == 0, machine.output
-    assert json.loads(machine.stdout)["status"] == "would_propose"
+    payload = json.loads(machine.stdout)
+    assert (payload["proposal"] if compiler else payload)["status"] == "would_propose"
     assert "Commit this change?" not in machine.stdout
