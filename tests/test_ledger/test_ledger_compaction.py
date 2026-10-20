@@ -78,6 +78,7 @@ def test_compaction_and_prune_keep_refs_notes_replay_old_reads_and_new_writes(
     assert reopened.accepted_coordinate() == instance.accepted_coordinate()
     # A new write lands, and an evicted old coordinate rebuilds from packed objects.
     _write(reopened, _set(WI1, "status", "ready"))
+    _write(reopened, _set(WI1, "status", "blocked"))
     reopened.retention = RetentionSettings(generations=1)
     reopened.evict_projection_pieces()
     with reopened.bind_accepted_projection(behind) as projection:

@@ -25,6 +25,7 @@ from cruxible_core.indexes.serving import (
     load_serving_manifest,
     render_serving_manifest,
 )
+from cruxible_core.runtime.retention import RetentionSettings
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 
@@ -33,10 +34,15 @@ def _projections(instance: Any) -> Path:
     return instance._validated_paths(instance.root, instance.descriptor.storage)["projections"]
 
 
+@pytest.mark.parametrize("generations", [None, 1])
 def test_a_read_at_the_head_answers_while_the_next_pointer_is_published(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, generations: int | None
 ) -> None:
     instance, owner = initialize_local(tmp_path)
+    if generations is not None:
+        # Even a one-generation window keeps the head's parent: a read there
+        # binds it by name while the next pointer is out.
+        instance.retention = RetentionSettings(generations=generations)
     directory = _projections(instance)
     published = activation_module.publish_serving_manifest
     seen: dict[str, Any] = {}
@@ -65,6 +71,13 @@ def test_a_read_at_the_head_answers_while_the_next_pointer_is_published(
         try:
             with instance.bind_accepted_projection(head) as projection:
                 seen["answered"] = projection.accepted
+                seen["files"] = (
+                    projection.manifest_path,
+                    *(
+                        projection.manifest_path.parent / piece.name
+                        for piece in projection.manifest.pieces
+                    ),
+                )
         except BaseException as exc:  # pragma: no cover - the failure being asserted
             seen["refused"] = exc
 
@@ -91,6 +104,18 @@ def test_a_read_at_the_head_answers_while_the_next_pointer_is_published(
     assert seen["answered"] == head
     assert reader_builds == []
     assert instance.accepted_coordinate() != head
+
+    # The settle's own pass ran at N+1; another pass (as another process at
+    # N+1 would run) still keeps N, and a read at N binds without building.
+    instance.evict_projection_pieces()
+    assert all(path.exists() for path in seen["files"])
+
+    def no_rebuild(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("a retained parent was rebuilt")
+
+    monkeypatch.setattr(assembler, "assemble", no_rebuild)
+    with instance.bind_accepted_projection(head) as projection:
+        assert projection.accepted == head
 
 
 def test_a_foreign_or_malformed_serving_pointer_still_refuses(tmp_path: Path) -> None:

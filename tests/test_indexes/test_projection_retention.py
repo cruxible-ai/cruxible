@@ -91,9 +91,12 @@ def test_an_evicted_coordinate_rebuilds_when_bound_and_is_evicted_again(tmp_path
     _write(instance, _set(WI1, "status", "blocked"))
     with instance.accepted_history_reader() as history:
         head = history.sequence
-    behind = _coordinate(instance, head - 1)
+    # The head's parent is always kept (a read binds it while the next
+    # serving pointer is published): the grandparent is the first evicted.
+    behind = _coordinate(instance, head - 2)
     instance.evict_projection_pieces()
     assert behind.git_oid not in _manifest_oids(instance)
+    assert _history_oids(instance)[head - 1] in _manifest_oids(instance)
     with instance.bind_accepted_projection(behind) as projection:
         assert projection.accepted.git_oid == behind.git_oid
         assert behind.git_oid in _manifest_oids(instance)
@@ -132,15 +135,16 @@ def test_open_evicts_past_retention_and_an_evicted_base_rebuilds_when_read(
     oids = _history_oids(instance)
     behind = instance.coordinate_for_oid(oids[-3])
     assert oids[-3] in _manifest_oids(instance)
-    # Reopening under a one-generation window keeps only the head: an open
-    # proposal is evaluated at the head, and an older base is rebuilt on a read.
+    # Reopening under a one-generation window keeps the head and its parent
+    # (read while the next serving pointer is published): an open proposal is
+    # evaluated at the head, and an older base is rebuilt on a read.
     monkeypatch.setattr(retention, "DEFAULT_RETENTION", RetentionSettings(generations=1))
     monkeypatch.setattr(
         "cruxible_core.runtime.instance.DEFAULT_RETENTION", RetentionSettings(generations=1)
     )
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate() == instance.accepted_coordinate()
-    assert _manifest_oids(reopened) == {oids[-1]}
+    assert _manifest_oids(reopened) == {oids[-2], oids[-1]}
     assert _pieces(reopened) == _referenced_pieces(reopened)
     with reopened.bind_accepted_projection(behind) as projection:
         assert projection.accepted.git_oid == behind.git_oid
@@ -309,7 +313,10 @@ def test_a_piece_another_process_holds_waits_for_the_next_open(
     fcntl.flock(descriptor, fcntl.LOCK_SH)
     try:
         instance.retention = RetentionSettings(generations=1)
+        # Two acceptances: the head's parent is always kept, so the second
+        # takes behind past the cutoff while another process holds it.
         _write(instance, _set(WI1, "status", "blocked"))
+        _write(instance, _set(WI1, "status", "done"))
         assert behind.git_oid in _manifest_oids(instance)
         tried: list[str] = []
         evict = projection_retention.evict_projection
@@ -400,7 +407,8 @@ def test_eviction_deletes_the_manifest_before_its_piece(
     monkeypatch.setattr(projection_retention, "_fsync_directory", observed)
     instance.retention = RetentionSettings(generations=1)
     before = (len(list(directory.glob("projection-*.json"))), len(_pieces(instance)))
-    assert len(instance.evict_projection_pieces()) == before[0] - 1
+    # The head and its parent stay.
+    assert len(instance.evict_projection_pieces()) == before[0] - 2
     # After each manifest unlink, its piece is still there; then it goes.
     first = seen[0]
     assert first == (before[0] - 1, before[1])

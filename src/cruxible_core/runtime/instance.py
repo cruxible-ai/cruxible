@@ -2676,7 +2676,8 @@ class PlaybillInstance:
                 # A settle publishes the next serving pointer before this
                 # process advances its head. A read is a snapshot at its own
                 # coordinate: bind that coordinate's own manifest, built when it
-                # was accepted. Never builds; a missing one stays refused.
+                # was accepted. Retention keeps the head's parent, so it is
+                # there; this never builds, and a missing one stays refused.
                 return self._projection_sources(
                     bind_projection(
                         directory / self._manifest_name_for_coordinate(verified, directory),
@@ -2773,12 +2774,15 @@ class PlaybillInstance:
         """Evict accepted projection pieces past retention; returns the evicted manifest names.
 
         Kept: every generation after the cutoff (the head's sequence less
-        ``retention.generations``, taken once from one snapshot, so a
-        generation accepted meanwhile is always after it), which includes the
-        serving head and every open proposal's base (an open proposal is
-        evaluated at the head; a stale one is rebuilt if it is read), and
-        every piece a reader holds in any process. An evicted coordinate is
-        rebuilt when it is next bound.
+        ``retention.generations``, but never less than two, taken once from
+        one snapshot, so a generation accepted meanwhile is always after it),
+        which includes the serving head and every open proposal's base (an
+        open proposal is evaluated at the head; a stale one is rebuilt if it
+        is read), and every piece a reader holds in any process. The head's
+        parent is always kept: a settling process publishes the next serving
+        pointer before it advances its own head, and a read there binds the
+        parent's manifest by name, never rebuilding it. An evicted coordinate
+        is rebuilt when it is next bound.
 
         Each pass after the first tries only what changed since the last: the
         generations that crossed the cutoff, and the pieces at or before it
@@ -2792,7 +2796,7 @@ class PlaybillInstance:
 
         with self._state_lock:
             recovered = self._recovered
-        cutoff = recovered.head.sequence - self.retention.generations
+        cutoff = recovered.head.sequence - max(self.retention.generations, 2)
         directory = self._validated_paths(self.root, self.descriptor.storage)["projections"]
         evicted: list[str] = []
         with self._eviction_lock, retention_lock(directory):
