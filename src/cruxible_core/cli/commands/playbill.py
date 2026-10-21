@@ -6954,16 +6954,18 @@ def inbox_group() -> None:
     A Line's post_inbox terminal posts items it could not decide, as they are,
     with the Captures behind each. Posting never changes accepted state. Read
     them with list and get, then ack, dismiss (with a reason) or link each to
-    the proposal or Subject that records your judgment. An item that recurs is
-    unread again, its prior disposition still shown.
+    the proposal or Subject that records your judgment. An item that recurs
+    with the same payload is counted and keeps its decision (`linked (+N
+    since)`); a changed payload is a new item.
     """
 
 
 def _inbox_row(envelope: Any) -> str:
     seen = f"x{envelope.occurrences}" if envelope.occurrences > 1 else "-"
+    # A decided item that recurred keeps its decision; say how often it was seen since.
     prior = (
-        f" (was {envelope.disposition.disposition})"
-        if envelope.status == "unread" and envelope.disposition is not None
+        f" (+{envelope.recurred_since_disposition} since)"
+        if envelope.status != "unread" and envelope.recurred_since_disposition
         else ""
     )
     return (

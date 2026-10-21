@@ -6,10 +6,11 @@ is a disposable projection of that journal, caught up from its last applied
 sequence on every open, and never accepted state.
 
 An item is keyed by its dedupe key (payload digest, Line and posting node).
-Posting an existing key creates nothing new: it counts the sighting and keeps
-its Captures in a bounded window, and an item already decided returns to
-``unread`` with that decision still on it. A posting is identified by its run, node and item key, so
-a run that delivers the same terminal twice (recovery) counts once.
+Posting an existing key creates nothing new: it counts the sighting, keeps its
+Captures in a bounded window, and keeps the item's status and decision (an
+identical re-sighting is not new work; only a new dedupe key is). A posting is
+identified by its run, node and item key, so a run that delivers the same
+terminal twice (recovery) counts once.
 
 Every read is keyed: an item by id, a page by recency through an index, and the
 unread volume per Line from a maintained count -- none of them grows with the
@@ -74,7 +75,8 @@ _DISPOSITION: TypeAdapter[InboxDisposition] = TypeAdapter(InboxDisposition)
 _PREVIEW: TypeAdapter[ShownValue] = TypeAdapter(ShownValue)
 #: The projection's layout; a projection written under another one is rebuilt
 #: from the journal, which it only ever caches.
-_SCHEMA_VERSION = 3
+#: 4: an identical re-sighting keeps its decision; older projections replay once.
+_SCHEMA_VERSION = 4
 _TABLES = ("progress", "items", "postings", "unread", "dispositions", "incomplete")
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS incomplete (singleton INTEGER PRIMARY KEY, payload_digest TEXT NOT NULL);
@@ -375,27 +377,27 @@ class LineInboxStore:
             :INBOX_RECENT_SIGHTINGS
         ]
         first = min(current.first_sighting, sighting, key=_sighting_order)
+        # An identical re-sighting is counted and keeps its decision: the same
+        # dedupe key is the same payload, so re-judging it would scale with
+        # the run count, not with what changed. Only a new key is new work.
         updated = InboxItemEnvelope.model_validate(
             {
                 **current.model_dump(),
                 "occurrences": current.occurrences + 1,
                 "first_sighting": first.model_dump(),
                 "recent_sightings": [item.model_dump() for item in recent],
-                "status": "unread",
                 "recurred_since_disposition": current.recurred_since_disposition
                 + (current.disposition is not None),
             }
         )
         conn.execute(
-            "UPDATE items SET status='unread',last_seen=?,envelope=? WHERE item_id=?",
+            "UPDATE items SET last_seen=?,envelope=? WHERE item_id=?",
             (
                 format_datetime(updated.last_sighting.posted_at),
                 updated.model_dump_json(),
                 item_id,
             ),
         )
-        if row["status"] != "unread":
-            self._bump_unread(conn, current.line, 1)
 
     def _apply_disposition(self, conn: sqlite3.Connection, data: dict[str, Any]) -> None:
         """Record one decision: the current one in the envelope, each as its own row."""

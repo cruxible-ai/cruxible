@@ -176,7 +176,7 @@ def test_an_item_keeps_its_first_and_a_bounded_window_of_recent_sightings(
     assert envelope.last_sighting.posted_at == NOW + timedelta(hours=runs - 1)
 
 
-def test_a_recurring_item_counts_and_resurfaces_with_its_prior_disposition(
+def test_an_identical_re_sighting_counts_and_keeps_its_decision(
     tmp_path: Path,
 ) -> None:
     _instance, store, write = _world(tmp_path)
@@ -191,12 +191,16 @@ def test_a_recurring_item_counts_and_resurfaces_with_its_prior_disposition(
     store.post([_posting({"a": 1}, run_id="RUN-2", at=later)], **write)  # type: ignore[arg-type]
 
     envelope = store.get(item_id).envelope
-    assert envelope.status == "unread"
+    # The same dedupe key is the same payload: no new work, the decision stands.
+    assert envelope.status == "dismissed"
     assert envelope.occurrences == 2
     assert envelope.disposition == dismissed
     assert envelope.recurred_since_disposition == 1
     assert (envelope.first_sighting.run_id, envelope.last_sighting.run_id) == ("RUN-1", "RUN-2")
     assert envelope.last_sighting.posted_at == later
+    assert store.unread_by_line() == ()
+    # A changed payload is a new key, and that is new work.
+    store.post([_posting({"a": 2}, run_id="RUN-3", at=later)], **write)  # type: ignore[arg-type]
     assert store.unread_by_line() == (("Line:watch", 1),)
 
 
@@ -359,3 +363,29 @@ def test_an_older_projection_layout_is_rebuilt_from_the_journal(tmp_path: Path) 
     connection.close()
 
     assert store.get(store.resolve(key)).payload == {"a": 1}
+
+
+def test_a_projection_under_the_reopening_rule_replays_once_under_the_new_one(
+    tmp_path: Path,
+) -> None:
+    """Layout 4: the journal is unchanged; an older projection is rebuilt from it once."""
+
+    import sqlite3
+
+    _instance, store, write = _world(tmp_path)
+    (key,) = store.post([_posting({"a": 1})], **write)  # type: ignore[arg-type]
+    item_id = store.resolve(key)
+    dismissed = InboxDismissed(actor_id="agent", decided_at=NOW, reason="known noise")
+    store.record_disposition(item_id, dismissed, **write)  # type: ignore[arg-type]
+    later = NOW + timedelta(hours=1)
+    store.post([_posting({"a": 1}, run_id="RUN-2", at=later)], **write)  # type: ignore[arg-type]
+    # What layout 3 wrote: the identical re-sighting re-opened the item.
+    connection = sqlite3.connect(store.path)
+    connection.execute("PRAGMA user_version=3")
+    connection.execute("UPDATE items SET status='unread'")
+    connection.commit()
+    connection.close()
+
+    envelope = store.get(item_id).envelope
+    assert (envelope.status, envelope.occurrences) == ("dismissed", 2)
+    assert store.unread_by_line() == ()
