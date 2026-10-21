@@ -130,7 +130,8 @@ def test_the_cli_hint_leads_with_the_identity_repair() -> None:
 
     hint = _next_requirement_hint(requires)
 
-    assert hint.startswith("cruxible_set needs a caller that can author")
+    # The CLI names the verb a CLI caller runs, not the MCP tool (row 15).
+    assert hint.startswith("cruxible set needs a caller that can author")
     assert "cruxible.identity.credential_unbound" in hint and "mint one" in hint
     assert hint.endswith("and the governed_write tier")
 
