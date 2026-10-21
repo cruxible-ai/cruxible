@@ -41,6 +41,7 @@ def test_cli_claim_attest_uses_the_real_local_key_path(
             "--support",
             "--note",
             "examined through CLI",
+            "--json",
         ],
     )
 
@@ -68,3 +69,40 @@ def test_cli_claim_attest_requires_exactly_one_stance(flags: list[str]) -> None:
         ],
     )
     assert result.exit_code == 2
+
+
+def test_cli_claim_attest_prints_what_was_recorded_and_whether_it_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    client = ServiceAttestationClient(
+        instance, actor_id="owner", state_dir=tmp_path / "server-state"
+    )
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY", str(owner.private_key_path))
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            instance.descriptor.instance_id,
+            "claim",
+            "attest",
+            claim_id,
+            "--contradict",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    ((event, _payload),) = instance.claim_attestation_evidence_store().events()
+    lines = result.stdout.splitlines()
+    recorded = next(line for line in lines if line.startswith("Recorded "))
+    assert recorded.startswith(f"Recorded contradict on {claim_id} at ")
+    assert recorded.endswith(f"(event {event.event_digest})")
+    counts = next(line for line in lines if line.startswith("counts toward verdict: "))
+    # A recorded examined attestation, and this ClaimType has no consequence policy.
+    assert counts.startswith("counts toward verdict: no (")
+    assert "{" not in result.stdout

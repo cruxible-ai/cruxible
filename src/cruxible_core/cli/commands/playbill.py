@@ -4000,6 +4000,7 @@ def run_action(
         "evidence otherwise lapses after the ClaimType's unsure_hold_for (default 30 days)."
     ),
 )
+@json_option
 @handle_errors
 def attest_claim(
     claim_id: str,
@@ -4008,11 +4009,15 @@ def attest_claim(
     unsure: bool,
     note: str | None,
     valid_until: str | None,
+    output_json: bool,
 ) -> None:
     """Sign that this caller examined the current exact Claim.
 
-    --unsure holds the Claim's contested `next` rows until what you examined
-    changes, instead of forcing a judgment you are not confident in.
+    The attestation is recorded and shown on the Claim (get --detail
+    evidence). It counts toward the verdict only through the ClaimType's
+    consequence policy. --unsure holds the Claim's contested `next` rows until
+    what you examined changes, instead of forcing a judgment you are not
+    confident in. --json prints the structured append result.
     """
 
     selected = tuple(
@@ -4027,6 +4032,8 @@ def attest_claim(
     if len(selected) != 1:
         raise click.UsageError("choose exactly one of --support, --contradict, or --unsure")
     stance = selected[0]
+    claim = claim_id.removeprefix("Claim:")
+    attested_at = datetime.now(UTC)
 
     def call(client: CruxibleClient, instance_id: str):  # type: ignore[no-untyped-def]
         signer = local_attestation_signer_from_environment(
@@ -4034,14 +4041,14 @@ def attest_claim(
             instance_id,
             workspace_root=_custody_workspace_root(),
         )
-        return append_prepared_claim_attestation(
+        appended = append_prepared_claim_attestation(
             client,
             instance_id,
             prepared=PreparedClaimAttestationRequest(
-                claim_id=claim_id.removeprefix("Claim:"),
+                claim_id=claim,
                 attestation_basis="examined_existing",
                 stance=cast(ClaimStance, stance),
-                attested_at=datetime.now(UTC),
+                attested_at=attested_at,
                 valid_until=(
                     None
                     if valid_until is None
@@ -4051,9 +4058,49 @@ def attest_claim(
             ),
             signer=signer,
         )
+        if output_json:
+            return appended, None
+        return appended, _attestation_shown(client, instance_id, claim, appended, attested_at)
 
-    result = _server_call(call, command_name="cruxible claim attest")
-    _emit_json(result.model_dump(mode="json"))
+    result, shown = _server_call(call, command_name="cruxible claim attest")
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(
+        f"Recorded {stance} on {claim} at {result.recorded_at.isoformat()} "
+        f"(event {result.event_digest})"
+    )
+    if isinstance(shown, str):
+        click.echo(f"counts toward verdict: unknown ({shown})")
+    else:
+        click.echo(f"counts toward verdict: {_attestation_counts_text(shown)}")
+
+
+def _attestation_shown(
+    client: Any, instance_id: str, claim: str, appended: Any, attested_at: datetime
+) -> Any:
+    """The Claim's own account of the event just recorded, or why it could not be read."""
+
+    from cruxible_client.contracts.get_reads import GetRequest
+
+    try:
+        read = client.get(
+            instance_id,
+            request=GetRequest(
+                ref=claim,
+                detail="evidence",
+                surface="cli",
+                # Read at the later of the two clocks, so the new word is current.
+                evaluation_time=max(attested_at, appended.recorded_at),
+            ),
+        )
+    except CoreError as exc:
+        return printable(str(exc))
+    evidence = getattr(read, "evidence", None)
+    for item in () if evidence is None else evidence.attestations:
+        if item.event == appended.event_digest:
+            return item
+    return "the Claim's evidence does not list the event"
 
 
 @playbill_group.group("authoring")

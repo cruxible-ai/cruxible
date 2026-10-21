@@ -78,8 +78,8 @@ class _Cli:
         return result
 
     def json(self, *args: str) -> Any:
-        # Authoring and attestation commands already emit JSON unconditionally.
-        extra = () if args[:1] == ("authoring",) or args[:2] == ("claim", "attest") else ("--json",)
+        # Authoring commands already emit JSON unconditionally.
+        extra = () if args[:1] == ("authoring",) else ("--json",)
         return json.loads(self.run(*args, *extra).stdout)
 
     def accept(self, proposal_id: str) -> dict[str, Any]:
