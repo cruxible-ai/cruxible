@@ -1,5 +1,12 @@
 """Sequence-style authoring that lowers to the existing ProcedureInput contract.
 
+Templates are built from typed models, never hand-written tags: the proposal
+items (``ProcedureKeyedClaimProposalItem``, ``ProcedureSubjectProposalItem``,
+``ProcedureClaimRetirementItem``), their statement (``ProcedureClaimStatement``
+with ``SubjectKeyReference`` and ``LiteralClaimObject``) and the
+``workspace.file`` request (``WorkspaceFileSourceRequestV2``) each emit their
+frozen format tag, and ``Item(path)`` names the current row's field.
+
 Preview is a local structural check, never an admission or an execution. Accepted
 references are resolved by the daemon at prepare; private stand-ins below let the
 shared graph validator check topology without pretending to resolve those refs.
@@ -22,6 +29,7 @@ from cruxible_client.contracts.authoring.inputs import (
     lower_authoring_input,
 )
 from cruxible_client.contracts.canonical import normalize_canonical
+from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifact,
     procedure_owned_contract_digest,
@@ -46,6 +54,13 @@ from cruxible_client.contracts.procedures.models import (
     TransformKind,
     derived_terminal_capability,
 )
+from cruxible_client.contracts.procedures.proposal_items import (
+    ProcedureClaimRetirementItem,
+    ProcedureClaimStatement,
+    ProcedureKeyedClaimProposalItem,
+    ProcedureSubjectProposalItem,
+    SubjectKeyClaimObject,
+)
 from cruxible_client.contracts.procedures.source_program import (
     ProcedureSourceProgram,
     SourceBinding,
@@ -55,6 +70,8 @@ from cruxible_client.contracts.procedures.source_program import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from cruxible_client.contracts.records import RecordConstructor
+from cruxible_client.contracts.subject_kinds import SubjectKeyReference
+from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV2
 
 if TYPE_CHECKING:
     from cruxible_client.contracts import ProviderInterfaceEntry
@@ -94,6 +111,19 @@ class Previous:
     """The preceding output (or invocation input at the start of a sequence)."""
 
     path: str = ""
+
+
+def Item(path: str = "") -> str:  # noqa: N802 - reads as a reference, like Output and Previous
+    """The current row inside an item template (``shape_items``/``make_*``), or one of its fields.
+
+    Lowers to ``"$item.<path>"``, the reference an item transform resolves per
+    row. It is a plain string, so it fits any typed builder field below:
+    ``ProcedureKeyedClaimProposalItem(statement=ProcedureClaimStatement(
+    subject=SubjectKeyReference(subject_kind="catalog.part", key=Item("part_id")),
+    ...), rationale=Item("why"))``.
+    """
+
+    return "$item" + (f".{path}" if path else "")
 
 
 class ProviderSelectionError(ValueError):
@@ -713,11 +743,17 @@ __all__ = [
     "EmitCapture",
     "Guard",
     "Halt",
+    "Item",
+    "LiteralClaimObject",
     "Output",
     "PostInbox",
     "Previous",
+    "ProcedureClaimRetirementItem",
+    "ProcedureClaimStatement",
     "ProcedureCompositionError",
+    "ProcedureKeyedClaimProposalItem",
     "ProcedurePreview",
+    "ProcedureSubjectProposalItem",
     "Project",
     "ProposeChangeSet",
     "SettleChangeSet",
@@ -726,5 +762,8 @@ __all__ = [
     "Sequence",
     "Source",
     "StateTap",
+    "SubjectKeyClaimObject",
+    "SubjectKeyReference",
     "Transform",
+    "WorkspaceFileSourceRequestV2",
 ]

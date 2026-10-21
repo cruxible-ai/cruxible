@@ -231,3 +231,56 @@ def test_submit_no_accept_passes_the_explicit_opt_out(monkeypatch: pytest.Monkey
     assert result.exit_code == 0, result.output
     assert client.accept == "never"
     assert client.activations == []
+
+
+def _record(outcome: Any, *, members: tuple[dict[str, Any], ...] = ()) -> Any:
+    return contracts.AuthoringSubmitResultRecord(
+        intent={"intent_id": INTENT_ID},
+        status=contracts.CandidateStatusRecord(
+            state="accepted" if isinstance(outcome, contracts.AuthoringLanded) else "draft",
+            proposal_id=PROPOSAL_ID,
+            current_accepted_coordinate=COORDINATE,
+        ),
+        outcome=outcome,
+        members=members,
+    )
+
+
+def test_a_refused_submit_prints_the_brief_block_and_keeps_the_record_behind_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refused = _record(
+        contracts.AuthoringProposed(
+            reason="preflight_refused", message="preflight refused: 1 diagnostic"
+        )
+    )
+    client = _SubmitClient("draft")
+    client.submit_authoring_intent = lambda *_a, **_k: refused  # type: ignore[method-assign]
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+
+    text = CliRunner().invoke(cli, [*COMMON, "submit", "--intent-id", INTENT_ID])
+    assert text.exit_code == 0, text.output
+    assert "outcome: submitted (draft)" in text.output
+    assert "reason: preflight refused: 1 diagnostic" in text.output
+    assert "{" not in text.stdout
+    full = CliRunner().invoke(cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--json"])
+    assert json.loads(full.stdout)["outcome"]["reason"] == "preflight_refused"
+
+
+def test_a_landed_change_that_adds_a_line_names_line_enable_next(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    landed = _record(
+        contracts.AuthoringLanded(proposal_id=PROPOSAL_ID, accepted_coordinate=COORDINATE),
+        members=(
+            {"path": "lines/stock-watch.json", "disposition": "create"},
+            {"path": "procedures/stock-watch.json", "disposition": "create"},
+        ),
+    )
+    client = _SubmitClient("draft")
+    client.submit_authoring_intent = lambda *_a, **_k: landed  # type: ignore[method-assign]
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+
+    result = CliRunner().invoke(cli, [*COMMON, "submit", "--intent-id", INTENT_ID, "--brief"])
+    assert result.exit_code == 0, result.output
+    assert "next: cruxible line enable stock-watch" in result.output

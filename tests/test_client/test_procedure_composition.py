@@ -428,3 +428,55 @@ def test_a_post_inbox_step_ends_its_path_and_is_checked_like_any_step():
     assert "invalid_next" in [d.code for d in successor.preview().errors]
     over = sequence(PostInbox("inbox", max_items=INBOX_RUN_ITEM_CAP_MAX + 1))
     assert [d.code for d in over.preview().errors] == ["graph_invalid"]
+
+
+def test_typed_item_builders_emit_the_frozen_tags_and_item_references():
+    """Authoring a keyed claim item needs no hand-written internal tag."""
+
+    from cruxible_client.authoring.procedures import (
+        Item,
+        LiteralClaimObject,
+        ProcedureClaimStatement,
+        ProcedureKeyedClaimProposalItem,
+        SettleChangeSet,
+        SubjectKeyReference,
+        WorkspaceFileSourceRequestV2,
+        _template,
+    )
+
+    item = ProcedureKeyedClaimProposalItem(
+        statement=ProcedureClaimStatement(
+            subject=SubjectKeyReference(subject_kind="catalog.part", key=Item("part_id")),
+            predicate="catalog.part.in_stock",
+            object=LiteralClaimObject(value=Item("in_stock")),
+            role="observation",
+        ),
+        rationale="The stock file lists the part.",
+    )
+    lowered = _template(item, None)
+    assert lowered["tag"] == "playbill-procedure-claim-proposal-item-v3"
+    assert lowered["statement"]["tag"] == "playbill-procedure-claim-statement-v1"
+    assert lowered["statement"]["subject"]["key"] == "$item.part_id"
+    assert lowered["statement"]["object"] == {"kind": "literal", "value": "$item.in_stock"}
+    assert Item() == "$item"
+    request = _template(
+        WorkspaceFileSourceRequestV2(
+            logical_source="workspace.stock",
+            relative_path="stock.yaml",
+            coordinate_type="workspace-file-v1",
+            coordinate={},
+            selector_type="whole-file-v1",
+            selector={},
+        ),
+        None,
+    )
+    assert request["tag"] == "playbill-workspace-file-source-request-v2"
+
+    plan = sequence(
+        Source("result", capture_contract="security.http", request={"url": "https://example.org"}),
+        Project("summary", contract_out=NUMBER, fields={"count": 1}),
+        SettleChangeSet("settle", candidate_templates=(item,)),
+    ).bind(result=PROVIDER)
+    assert plan.preview().ready_for_prepare
+    (node,) = [n for n in plan.build().definition["nodes"] if n["kind"] == "settle_change_set"]
+    assert node["candidate_templates"][0]["tag"] == "playbill-procedure-claim-proposal-item-v3"

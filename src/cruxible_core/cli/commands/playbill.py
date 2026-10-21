@@ -4442,6 +4442,7 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool) -> None:
 )
 @click.option("--no-accept", is_flag=True, help="Submit a proposal without activating it.")
 @brief_option
+@json_option
 @handle_errors
 def submit_authoring_intent(
     payload: str | None,
@@ -4449,6 +4450,7 @@ def submit_authoring_intent(
     dry_run: bool,
     no_accept: bool,
     output_brief: bool,
+    output_json: bool,
 ) -> None:
     """Compile, check and submit PAYLOAD as one proposal, or submit a staged intent.
 
@@ -4462,6 +4464,8 @@ def submit_authoring_intent(
     preflight returns the unsubmitted intent with its diagnostics; a passing one
     lands immediately when policy and caller allow. Otherwise the typed result
     names why it stopped and the next step. --no-accept keeps the proposal.
+    The full record prints as JSON; a refused preflight prints the brief block
+    (outcome, ids, reason, next) instead, with the record behind --json.
     """
 
     if payload is None and intent_id is None:
@@ -4504,12 +4508,15 @@ def submit_authoring_intent(
 
     submitted = _server_call(call, command_name="cruxible authoring submit")
     outcome = submitted.outcome
-    if output_brief:
+    refused = (
+        not isinstance(outcome, contracts.AuthoringLanded) and outcome.reason == "preflight_refused"
+    )
+    if output_brief or (refused and not output_json):
         if isinstance(outcome, contracts.AuthoringLanded):
             landed = True
             coordinate = outcome.accepted_coordinate.git_oid
             reason = None
-            next_command = None
+            next_command = _landed_line_next(submitted.members)
         else:
             landed = False
             coordinate = None
@@ -4527,6 +4534,18 @@ def submit_authoring_intent(
         )
         return
     _emit_json(submitted.model_dump(mode="json"))
+
+
+def _landed_line_next(members: Sequence[Mapping[str, Any]]) -> str | None:
+    """A landed change that created Lines: enabling them is the next step. O(members)."""
+
+    names = [
+        str(member["path"]).removeprefix("lines/").removesuffix(".json")
+        for member in members
+        if str(member.get("path", "")).startswith("lines/")
+        and member.get("disposition") == "create"
+    ]
+    return " && ".join(f"cruxible line enable {shlex.quote(name)}" for name in names) or None
 
 
 def _submit_refusal_reason(submitted: Any) -> str | None:
@@ -6680,6 +6699,17 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
                         else ""
                     )
                     click.echo(f"  {child.path}{earlier}")
+        elif (
+            egress.verdict == "delivered"
+            and egress.children
+            and all(child.unchanged for child in egress.children)
+        ):
+            # Every item restates accepted state, so no proposal was needed.
+            count = len(egress.children)
+            click.echo(
+                f"Terminal {egress.node_id}: nothing changed ({count} item"
+                f"{'s' if count != 1 else ''} restate{'' if count != 1 else 's'} accepted state)"
+            )
         elif egress.verdict == "delivered":
             click.echo(f"Terminal {egress.node_id}: {egress.kind} delivered")
         elif egress.verdict == "refused_effective_authority":

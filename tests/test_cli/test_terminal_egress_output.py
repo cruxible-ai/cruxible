@@ -105,3 +105,30 @@ def test_a_proposed_item_names_how_many_earlier_refusals_it_matches(capsys) -> N
         f"  {child.path} (1 earlier refusal of this statement on this evidence; "
         "see proposal review)"
     )
+
+
+def test_a_terminal_whose_items_all_restate_accepted_state_says_nothing_changed(capsys) -> None:
+    from cruxible_client.contracts.procedures.results import ProcedureTerminalEgressChild
+
+    children = tuple(
+        ProcedureTerminalEgressChild(
+            child_index=index,
+            item_key=f"item-{index}",
+            manifest_digest="sha256:" + "d" * 64,
+            unchanged=True,
+        )
+        for index in range(3)
+    )
+    out = _echo(
+        capsys,
+        ProcedureTerminalEgress(
+            node_id="propose",
+            kind="propose_change_set",
+            verdict="delivered",
+            required_authority="propose",
+            effective_authority="propose",
+            limiting_term="procedure_terminal_capability",
+            children=children,
+        ),
+    )
+    assert out == "Terminal propose: nothing changed (3 items restate accepted state)\n"
