@@ -66,8 +66,8 @@ need two kinds of thing, with a few fields each:
 - a **release** of a PyPI package has a package name, a version, and any
   security advisories published against it.
 
-You can define a vocabulary yourself ([Modeling state](modeling-state.md)
-shows how). To get to the interesting part sooner, we'll install a ready-made
+You can define a vocabulary yourself ([Building team knowledge](building-team-knowledge.md)
+covers what to model). To get to the interesting part sooner, we'll install a ready-made
 one as a **kit**, which also carries a saved question and the PyPI check we'll
 use later:
 
@@ -513,7 +513,7 @@ In twenty minutes, you've used the core of Cruxible:
 
 ## Where to go next
 
-- [Modeling state](modeling-state.md): define a vocabulary for your own
+- [Building team knowledge](building-team-knowledge.md): model your own
   domain.
 - [Concepts](concepts.md): the model behind what you just did.
 - [For AI agents](for-ai-agents.md): connect an agent over MCP or the Python

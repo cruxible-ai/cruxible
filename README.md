@@ -102,7 +102,7 @@ credentials](docs/concepts.md#who-acts) explains both.
 
 - [Quickstart](docs/quickstart.md)
 - [Concepts](docs/concepts.md)
-- [Modeling state](docs/modeling-state.md)
+- [Building team knowledge](docs/building-team-knowledge.md)
 - [For AI agents](docs/for-ai-agents.md)
 - [Kits](docs/kits.md)
 - [CLI reference](docs/cli-reference.md)

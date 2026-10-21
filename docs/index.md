@@ -13,8 +13,8 @@ from. No LLM runs inside Cruxible.
   outside world, see a page flagged out of date, and ask what the change
   reaches and what was true before.
 - [Concepts](concepts.md): the model behind the commands.
-- [Modeling state](modeling-state.md): what to make typed state and what to
-  keep as prose, and how to shape Subjects, ClaimTypes and Procedures.
+- [Building team knowledge](building-team-knowledge.md): what to make typed state and what to
+  keep as prose, how to connect them, and modeling habits that keep state useful.
 - [For AI agents](for-ai-agents.md): operating rules and the read and write
   loops over MCP, the CLI and the Python SDK.
 - [Kits](kits.md): install, upgrade and build releases of definitions.

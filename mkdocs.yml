@@ -69,7 +69,7 @@ nav:
       - Quickstart: quickstart.md
       - Concepts: concepts.md
       - Architecture: architecture.md
-      - Modeling state: modeling-state.md
+      - Building team knowledge: building-team-knowledge.md
       - For AI agents: for-ai-agents.md
       - Kits: kits.md
   - Reference:
