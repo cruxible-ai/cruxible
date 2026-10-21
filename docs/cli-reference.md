@@ -1558,6 +1558,15 @@ cruxible claim attest CLAIM_ID --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS] [--json]
 ~~~
 
+`claim attest` prints what it recorded (stance, Claim, time and event) and
+whether it counts toward the verdict, for example `counts toward verdict: no
+(cites no Capture)`; `--json` prints the structured append result. A recorded
+attestation counts only through the ClaimType's consequence policy. With no
+policy, `next` resurfaces each principal's standing contradiction of a live
+Claim as `claim_contradicting_evidence_available` (detail `attestation_basis`
+`examined_existing`), whose repair restates, revises or retires the Claim; the
+verdict does not move.
+
 Claims are read through `cruxible query`, `cruxible get` and `cruxible orient`.
 `cruxible query KIND --select P --claims` is the status table: each
 cell names its Claims with their ID, value, verdict, resolution status and
@@ -3640,7 +3649,13 @@ printed coordinate reads back; each history row prints both (`seq N at
 <12 hex>`). An all-digit value of 11 or fewer characters is always a
 generation, never an oid prefix; twelve or more digits are a prefix. Evidence
 names each Capture by its `CAP-<12 hex>` handle, which `get` and `capture read`
-both accept. A wrong or ambiguous REF
+both accept, labels a copy by origin (`own words`, `passage of FILE`) and says
+whether the verdict reads it: `admitted`, `not admitted` (offered as evidence,
+refused by the ClaimType's rule) or `not evidence` (a copy the rule does not
+admit). It lists the Claim version's attestations, accepted ones and the
+events `claim attest` recorded, each with whether it counts toward the
+verdict and why (`--detail why` carries the same as `attestation_accounts`).
+A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result.
 

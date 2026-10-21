@@ -55,7 +55,11 @@ weak without opening it.
 Negative evidence is first-class. When you have evidence against a Claim,
 attest to it (`cruxible claim attest CLAIM_ID --contradict`) or record what
 you observed instead, rather than minting an adjacent inverse concept.
-`--support` and `--unsure` attest the other ways.
+`--support` and `--unsure` attest the other ways. An attestation is recorded
+and shown on the Claim (`get --detail evidence`), and with no consequence
+policy `next` resurfaces a standing contradiction for an agent to judge. It
+counts toward the verdict only as an accepted attestation citing a Capture
+the Claim admits, or when the ClaimType's consequence policy says so.
 
 ## Evidence
 
