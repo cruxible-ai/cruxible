@@ -693,7 +693,7 @@ def test_evidence_capture_source_renders_its_public_name(
     ("role", "origin", "status", "shown"),
     [
         ("copy", "self_source", "admitted", "own words: admitted"),
-        ("copy", "independent", "not_evidence", "passage of cruxible.page: not evidence"),
+        ("copy", "independent", "not_evidence", "passage of docs.page: not evidence"),
         ("evidence", "independent", "not_admitted", "evidence: not admitted"),
     ],
 )
@@ -706,7 +706,7 @@ def test_evidence_capture_lines_show_three_states_and_label_copies_by_origin(
         capture="CAP-0123456789ab",
         contract="CaptureContract:docs.page-v1",
         version=1,
-        source="playbill.page",
+        source="docs.page",
         observed_at=WHEN,
         role=role,
         origin=origin,  # type: ignore[arg-type]
