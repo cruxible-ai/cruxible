@@ -395,11 +395,30 @@ def test_the_cli_text_leads_each_card_with_its_claim_and_counts_spans_and_cards(
     from pathlib import PurePosixPath
 
     from cruxible_client.contracts.read_values import ClaimLine
+    from cruxible_client.contracts.semantic import SemanticAddress
     from cruxible_core.coverage.render import render_coverage_text
 
-    result = _drifted_result()
+    drifted = _drifted_result()
+    claim = "CLM-" + "a" * 32
+    address = SemanticAddress.whole_artifact(f"claims/aa/{claim}.json")
+    # The fixture's card addresses no Claim; give it one, as an accepted card has.
+    result = drifted.model_copy(
+        update={
+            "spans": tuple(
+                span.model_copy(
+                    update={
+                        "cards": tuple(
+                            item.model_copy(update={"claim_addresses": (address,)})
+                            for item in span.cards
+                        )
+                    }
+                )
+                for span in drifted.spans
+            )
+        }
+    )
     (card,) = [card for span in result.spans for card in span.cards]
-    claim = PurePosixPath(card.claim_addresses[0].artifact_path).stem
+    assert PurePosixPath(card.claim_addresses[0].artifact_path).stem == claim
     line = ClaimLine(claim=claim, subject="acme/widget", field="price", value=42)
     paths = {card.observed_source: "docs/handbook.md"}
 
@@ -420,4 +439,5 @@ def test_the_cli_text_leads_each_card_with_its_claim_and_counts_spans_and_cards(
     bare = render_coverage_text(result, paths=paths)
     assert bare[0].startswith(f"drifted  {where}  claims {claim}")
     # The hook's reference rendering keeps the whole binding, byte for byte.
-    assert render_coverage_result(result)[0] == render_card(card)
+    original = next(item for span in drifted.spans for item in span.cards)
+    assert render_coverage_result(drifted)[0] == render_card(original)

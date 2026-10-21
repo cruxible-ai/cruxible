@@ -491,7 +491,13 @@ def test_every_delta_rebuilds_the_full_floor_byte_for_byte(
     assert "ontology/contracts/cruxible.foreign-source.repo.notes.yaml" in paths
     assert not any(path.startswith("ontology/contracts/playbill.") for path in paths)
     assert b"CaptureContract:cruxible.foreign-source.repo.notes" in shown
-    assert b"playbill.foreign-source." not in shown
+    assert not [
+        (generation, path)
+        for generation, tree in fulls.items()
+        for path, content in tree.items()
+        # The change records are typed JSON and keep stored paths; text files do not.
+        if b"playbill.foreign-source." in content and not path.endswith(".json")
+    ]
     for base, target in _pairs(head):
         directory = tmp_path / f"apply-{base}-{target}"
         apply_floor_delta(directory, _delta(instance, base, None, None))

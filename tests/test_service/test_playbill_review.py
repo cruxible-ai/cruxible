@@ -130,10 +130,10 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
     # placeholder they would have to resolve: the notes are attached to the
     # projected review commit, which is what the mirror and the workspace carry.
     assert (
-        f"git notes --ref=refs/notes/playbill-eval show cruxible-ledger/proposals/{key}" in pointer
+        f"git notes --ref=refs/notes/cruxible-eval show cruxible-ledger/proposals/{key}" in pointer
     )
     assert (
-        f"git notes --ref=refs/notes/playbill-approval show cruxible-ledger/proposals/{key}"
+        f"git notes --ref=refs/notes/cruxible-approval show cruxible-ledger/proposals/{key}"
         in pointer
     )
     assert "git fetch origin '+refs/notes/*:refs/notes/*'" in pointer

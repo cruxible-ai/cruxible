@@ -162,8 +162,10 @@ def test_a_cli_permission_denial_names_the_verb_and_the_tier(
         result = CliRunner().invoke(root, ["probe", "approve"])
         assert result.exit_code == 1
         assert result.output.strip().splitlines()[0] == (
-            "Error: cruxible probe approve needs the graph_write tier; this credential is "
-            "governed_write. graph_write mode does everything governed_write does, plus "
-            "submitting approvals and activating."
+            # CRUXIBLE_MODE also sets the daemon's capability ceiling here.
+            "Error: cruxible probe approve needs the graph_write tier, but the daemon "
+            "capability ceiling is governed_write (this request: governed_write). "
+            "graph_write mode does everything governed_write does, plus submitting "
+            "approvals and activating."
         )
         assert "cruxible_proposal_approve_submit" not in result.output

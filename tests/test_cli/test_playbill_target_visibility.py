@@ -467,7 +467,9 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
 
     assert result.exit_code == 0, result.output
     assert result.stderr == ""
-    assert result.stdout.startswith("Cruxible coverage: 0 exact, 0 drifted, 0 candidates, 0 none")
+    assert result.stdout.startswith(
+        "Cruxible coverage: spans 0 exact, 0 drifted, 0 candidates, 0 none; cards 0 exact"
+    )
 
 
 def test_host_show_is_a_silent_read_and_cli_adds_transport(

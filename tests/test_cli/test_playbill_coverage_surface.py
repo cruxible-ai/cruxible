@@ -482,7 +482,7 @@ def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_sour
     assert drifted["grants_mutation_authority"] is False
 
     drift_lines = drift_human.strip().splitlines()
-    assert drift_lines[0].startswith(f"drifted  {FOREIGN_PATH}:")
+    assert drift_lines[0].startswith(f"drifted  {FOREIGN_PATH}  ")
     assert drift_lines[0].endswith("[commitment_superseded]")
     assert drift_lines[-3] == (
         "Cruxible coverage: spans 0 exact, 1 drifted, 0 candidates, 0 none; "
