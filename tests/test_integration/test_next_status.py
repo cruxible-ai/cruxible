@@ -261,7 +261,7 @@ def test_a_decommissioned_instance_blocks_in_the_status_header(tmp_path: Path) -
 def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_core.compiler.compiler import PROVIDER_BUILDS_COMPILER, TRIGGER_CAPTURE_COMPILER
+    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, TRIGGER_CAPTURE_COMPILER
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.test_ledger.test_compiler_upgrade import approve, old_instance, propose
 
@@ -271,8 +271,8 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     assert behind.compiler.repair is not None
     # The bare command targets the compiler the daemon runs, which the detail names.
     assert behind.compiler.repair.command == "cruxible compiler upgrade"
-    assert behind.compiler.detail["running_compiler_digest"] == PROVIDER_BUILDS_COMPILER.rule_digest
-    assert behind.compiler.detail["running_compiler_revision"] == "provider-builds-v1"
+    assert behind.compiler.detail["running_compiler_digest"] == CLAIM_REBIND_COMPILER.rule_digest
+    assert behind.compiler.detail["running_compiler_revision"] == "claim-rebind-v1"
     # A compiler before Trigger artifacts schedules no internal action at all.
     assert behind.triggers.state == "unscheduled"
     assert behind.triggers.repair is not None
@@ -282,7 +282,7 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
         ("triggers", behind.triggers),
     )
 
-    proposal = propose(instance, PROVIDER_BUILDS_COMPILER)
+    proposal = propose(instance, CLAIM_REBIND_COMPILER)
     approve(instance, proposal, reviewer)
     assert (
         service_activate_playbill_proposal(

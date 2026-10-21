@@ -17,8 +17,10 @@ from collections.abc import Iterable
 from typing import Any
 
 #: Approved budget for the default profile's model-visible tool catalog, in
-#: estimated tokens: every tool's input schema plus its description.
-DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS = 10_000
+#: estimated tokens: every tool's input schema plus its description. Raised from
+#: 10,000 by the first-run ruling (Q1, 2026-10-21) for re-bind and Subject
+#: retirement, new capabilities, once trims fell short.
+DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS = 10_300
 
 
 def model_visible_tokens(tool: Any) -> float:

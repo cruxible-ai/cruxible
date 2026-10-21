@@ -73,7 +73,11 @@ from cruxible_client.authoring.workspace import (
     write_workspace_floor_delta,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for, write_world_stub
-from cruxible_client.authoring.write_evidence import observe_evidence
+from cruxible_client.authoring.write_evidence import (
+    observe_changes,
+    observe_evidence,
+    rebind_evidence,
+)
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import BlockSyncResult
@@ -138,6 +142,7 @@ from cruxible_client.contracts.temporal import (
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.write import (
+    ApprovalNeeded,
     Change,
     DocOp,
     FileEvidence,
@@ -4692,10 +4697,14 @@ def _write_text(outcome: WriteOutcome) -> None:
         target = " ".join(part for part in (change.subject, change.field) if part)
         if change.op == "create":
             line = f"  create {change.subject or '(id assigned on submit)'}: {change.resolved}"
+        elif change.op == "retire" and change.field is None:
+            line = f"  retire Subject {change.subject}"
         elif change.op == "retire":
             line = f"  retire {target}: {_get_value_text(change.before)}"
         elif change.op == "add":
             line = f"  add {target}: {_get_value_text(change.after)}"
+        elif change.op == "rebind":
+            line = f"  rebind {target}: {_get_value_text(change.after)} (value unchanged)"
         elif change.before is None:
             line = f"  set {target}: {_get_value_text(change.after)}"
         else:
@@ -4720,9 +4729,7 @@ def _write_text(outcome: WriteOutcome) -> None:
     if outcome.proposal is not None and outcome.status != "accepted":
         click.echo(f"proposal: {outcome.proposal.proposal_id} ({outcome.proposal.state})")
     if outcome.approval is not None:
-        approval = outcome.approval
-        who = ", ".join(approval.eligible_approvers) or "you, with a tier that may activate"
-        click.echo(f"awaiting: {approval.reason.replace('_', ' ')}; approvers: {who}")
+        click.echo(f"awaiting: {_awaiting_text(outcome.approval)}")
     for warning in outcome.warnings:
         click.echo(f"warning {warning.code}: {warning.message}", err=True)
     if outcome.refusal is not None:
@@ -4735,6 +4742,25 @@ def _write_text(outcome: WriteOutcome) -> None:
             click.echo(f"  repair: {refusal.repair}", err=True)
     if outcome.next is not None:
         click.echo(f"next: {outcome.next}")
+
+
+def _awaiting_text(approval: ApprovalNeeded) -> str:
+    """What the write waits for, worded by why it stopped (never naming the caller as approver).
+
+    Only an independent approval has approvers; a write stopped by its caller's
+    tier or by ``accept=never`` waits on an activation, which ``next`` names.
+    """
+
+    if approval.reason == "activation_not_permitted":
+        return "activation; your tier cannot activate"
+    if approval.reason == "accept_never":
+        return "kept (accept=never)"
+    if not approval.eligible_approvers:
+        return (
+            "independent approval; no eligible approver; add one: "
+            "cruxible principal add PRINCIPAL_ID --key-dir DIR"
+        )
+    return f"independent approval; approvers: {', '.join(approval.eligible_approvers)}"
 
 
 def _finish_write(outcome: WriteOutcome, *, output_json: bool) -> None:
@@ -4997,6 +5023,11 @@ def add_value(
     help="was-rescinded: withdrawn; was-wrong: it was false; superseded: its shape is gone.",
 )
 @click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
+@click.option(
+    "--with-claims",
+    is_flag=True,
+    help="Retiring a Subject: also retire its live Claims, under --reason.",
+)
 @_write_options
 @handle_errors
 def retire(
@@ -5006,19 +5037,26 @@ def retire(
     because: str,
     reason: str,
     expect: tuple[str, ...],
+    with_claims: bool,
     dry_run: bool,
     no_accept: bool,
     at_oid: str | None,
     output_json: bool,
 ) -> None:
-    """Retire one live Claim: a Claim ID, or a Subject (kind/id), its FIELD and VALUE.
+    """Retire one live Claim, or a Subject: TARGET is a Claim ID, or kind/id.
 
-    VALUE names which value to retire; it may be left out when FIELD holds one.
-    Claims that depend on it retire with it, in the same change set.
+    With FIELD (and VALUE, when FIELD holds several), TARGET's Claim in that
+    field retires; Claims that depend on it retire with it, in the same change
+    set. TARGET alone as kind/id retires the Subject and its key Claims: its
+    other live Claims retire only with --with-claims, and Claims of other
+    Subjects whose value it is must be re-pointed or retired first (the refusal
+    lists each). To merge, alias the survivor with this Subject's id first.
     """
 
     if value is not None and field is None:
         raise click.UsageError("VALUE needs FIELD: cruxible retire SUBJECT FIELD VALUE")
+    if with_claims and field is not None:
+        raise click.UsageError("--with-claims retires a Subject: pass kind/id without FIELD")
     slot: dict[str, object] | None = None
     if field is not None:
         slot = {"subject": target, "field": field}
@@ -5031,6 +5069,7 @@ def retire(
             "because": because,
             "reason": reason,
             "expect": _expect_option_value(expect),
+            "with_claims": with_claims,
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
@@ -5040,6 +5079,92 @@ def retire(
     outcome = _server_call(
         lambda client, instance_id: client.retire(instance_id, request=request),
         command_name="cruxible retire",
+    )
+    _finish_write(outcome, output_json=output_json)
+
+
+@playbill_group.command("rebind")
+@click.argument("claim")
+@click.option("--because", required=True, help="Why the new text backs it.")
+@click.option(
+    "--file",
+    "file_anchor",
+    default=None,
+    help="FILE#ANCHOR: the text, found once in a catalogued file, the Claim rests on now.",
+)
+@click.option(
+    "--section",
+    "section_ref",
+    default=None,
+    help="FILE#Heading/Path: the section the Claim rests on now (FILE# for the preamble).",
+)
+@click.option(
+    "--citation",
+    default=None,
+    help="The citation to replace (12+ hex); default: the Claim's one citation of FILE.",
+)
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose file catalog FILE is read through.",
+)
+@_write_options
+@handle_errors
+def rebind(
+    claim: str,
+    because: str,
+    file_anchor: str | None,
+    section_ref: str | None,
+    citation: str | None,
+    workspace_root: str,
+    dry_run: bool,
+    no_accept: bool,
+    at_oid: str | None,
+    output_json: bool,
+) -> None:
+    """Re-cite CLAIM, whose cited text drifted, on the text it rests on now.
+
+    The statement stays as it is: the drifted citation is replaced by the new
+    one, recorded as one revision of the same Claim (history shows it as
+    rebound). FILE is a catalogued file's path or its catalog name. A citation
+    of other evidence, or a value that changed, is restated with set; a Claim
+    that no longer holds is retired.
+    """
+
+    try:
+        evidence = rebind_evidence(
+            file=file_anchor, section=section_ref, workspace=Path(workspace_root)
+        )
+    except ValueError as exc:
+        raise click.UsageError(f"--file / --section: {exc}") from None
+    change: dict[str, object] = {"op": "rebind", "target": claim, "evidence": evidence}
+    if citation is not None:
+        change["citation"] = citation
+    request = _write_request(
+        WriteRequest,
+        {
+            "changes": [change],
+            "because": because,
+            "dry_run": dry_run,
+            "accept": "never" if no_accept else "if_allowed",
+            "at": at_oid,
+        },
+        example=(
+            "cruxible rebind CLM-0123456789abcdef0123456789abcdef "
+            '--section docs/acme.md#Pricing --because "The price moved to its own section."'
+        ),
+    )
+    try:
+        observed = request.model_copy(
+            update={"changes": observe_changes(request.changes, workspace=Path(workspace_root))}
+        )
+    except (ValidationError, CoreError, ValueError) as exc:
+        raise click.UsageError(f"{file_anchor or section_ref}: {exc}") from None
+    outcome = _server_call(
+        lambda client, instance_id: client.write(instance_id, request=observed),
+        command_name="cruxible rebind",
     )
     _finish_write(outcome, output_json=output_json)
 
@@ -5309,9 +5434,20 @@ def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
 
 
 def _get_value_text(
-    value: object, *, width: int = GET_CLI_VALUE_WIDTH, evidence_hint: bool = True
+    value: object,
+    *,
+    width: int = GET_CLI_VALUE_WIDTH,
+    evidence_hint: bool = True,
+    claim: object = None,
 ) -> str:
-    return get_value_display(value, width=width, evidence_hint=evidence_hint).text
+    """A value as the CLI previews it; ``claim`` (one Claim ID) makes a cut name its read."""
+
+    return get_value_display(
+        value,
+        width=width,
+        evidence_hint=evidence_hint,
+        claim=claim if isinstance(claim, str) else None,
+    ).text
 
 
 _WHY_SUMMARY_MAX_ITEMS = 5
@@ -5410,7 +5546,10 @@ def _emit_get_text(result: Any) -> None:
                 rule["contracts"] = [_public_name(str(name)) for name in rule["contracts"]]
         nexts = card.pop("next", [])
         if result.kind == "claim":
-            click.echo(f"{card['subject']}  {card['predicate']} = {_get_value_text(card['value'])}")
+            click.echo(
+                f"{card['subject']}  {card['predicate']} = "
+                f"{_get_value_text(card['value'], claim=card.get('claim'))}"
+            )
             click.echo(
                 f"{card['claim']}  verdict={card['verdict']} status={card['status']} "
                 f"revision={card['revision']}"
@@ -5418,7 +5557,8 @@ def _emit_get_text(result: Any) -> None:
             )
             for contender in card.get("contenders", []):
                 click.echo(
-                    f"  contender {contender['claim']} = {_get_value_text(contender['value'])} "
+                    f"  contender {contender['claim']} = "
+                    f"{_get_value_text(contender['value'], claim=contender['claim'])} "
                     f"[{contender['verdict']}]"
                 )
         elif result.kind == "subject":
@@ -5430,7 +5570,8 @@ def _emit_get_text(result: Any) -> None:
             for row in rows:
                 flags = f"  [{', '.join(row['flags'])}]" if row["flags"] else ""
                 click.echo(
-                    f"  {row['predicate'].ljust(width)}  {_get_value_text(row['value'])}{flags}"
+                    f"  {row['predicate'].ljust(width)}  "
+                    f"{_get_value_text(row['value'], claim=row['claim'])}{flags}"
                 )
         else:
             for key, value in card.items():
@@ -5573,6 +5714,11 @@ def _echo_history(history: Any) -> None:
             elif event.change == "retired":
                 ended = "" if event.retirement is None else f" ({event.retirement})"
                 what = f"retired{ended}  {_history_value(event.value)}"
+            elif event.change == "rebound":
+                what = (
+                    f"rebound  {_history_value(event.value)}  "
+                    f"({', '.join(event.replaced) or '-'} -> {', '.join(event.by) or '-'})"
+                )
             else:
                 what = f"{event.change}  {_history_value(event.value)}"
                 if getattr(event, "contended", False):
@@ -7662,6 +7808,9 @@ def next_work(
             else ""
         )
         row = f"{change}{item.severity}  {item.reason}  {item.subject_identity}"
+        about = _next_claim_about(item)
+        if about is not None:
+            row += f"  ({about})"
         if item.repair is None:
             needs = _next_requirement_hint(item.repair_requires)
             click.echo(row + ("" if output_brief else f"  repair withheld: {needs}"))
@@ -7676,6 +7825,8 @@ def next_work(
             continue
         click.echo(f"{row}  next={item.repair.operation}")
         click.echo(f"  repair: {_next_repair_hint(item.repair)}")
+        for alternative in item.repair.alternatives:
+            click.echo(f"  or: {_next_repair_hint(alternative)}")
         for finding in item.findings:
             click.echo(f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}")
     if result.unobserved_domains and not output_brief:
@@ -7685,6 +7836,16 @@ def next_work(
             f"Showing {len(result.items)} of {result.total_items} rows. "
             f"Next: --cursor {result.next_cursor}"
         )
+
+
+def _next_claim_about(item: contracts.NextItem) -> str | None:
+    """What a Claim row is about, as ``kind/id field``: its Subject and predicate."""
+
+    predicate = item.detail.get("predicate") if isinstance(item.detail, dict) else None
+    subject = next((ref for ref in item.related_identities if ref.startswith("subjects/")), None)
+    if not isinstance(predicate, str) or subject is None:
+        return None
+    return f"{subject.removeprefix('subjects/').removesuffix('.json')} {predicate}"
 
 
 def _next_requirement_hint(requires: contracts.NextRepairRequirement | None) -> str:

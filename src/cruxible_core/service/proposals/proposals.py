@@ -1311,10 +1311,34 @@ def _close_once(
             # ... and once the close resolves, the rows are those of the record
             # that won: this one, a competing one, or none.
             instance.refusal_index().settle_close(instance, record.proposal_id)
+    _end_closed_intent(instance, record.proposal_id)
     # Release local closed-candidate roots even without a configured mirror.
     instance.advertise_workspace()
     instance.request_ledger_mirror()
     return record, False, coordinate
+
+
+def _end_closed_intent(instance: PlaybillInstance, proposal_id: str) -> None:
+    """End the authoring intent a closed proposal came from, so re-authoring is new.
+
+    The intent is read off the admission's proposal ref (one keyed read). A
+    proposal no authoring intent submitted (a Procedure's, a Line's) has none.
+    A crash before this leaves the intent pending; the next create of the same
+    content ends it then (``AuthoringIntentCoordinator.create``).
+    """
+
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.preflight import authoring_intent_id_for_proposal_ref
+
+    admission = instance.proposal_evidence().read_admission(proposal_id)
+    intent_id = authoring_intent_id_for_proposal_ref(
+        admission.target_ref, actor_id=admission.actor_id
+    )
+    if intent_id is None:
+        return
+    AuthoringIntentCoordinator.for_instance(instance).end_closed(
+        intent_id, actor_id=admission.actor_id, proposal_id=proposal_id
+    )
 
 
 def proposal_still_open(instance: PlaybillInstance, proposal_id: str) -> bool:

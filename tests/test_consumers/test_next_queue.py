@@ -1832,18 +1832,18 @@ def test_source_observations_read_only_source_citations_by_index() -> None:
         connection = sqlite3.connect(":memory:")
         connection.executescript(facts._SCHEMA)
         connection.executemany(
-            "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 (f"Claim:{i}", f"citation:{i}", "sha256:" + "a" * 64, 1, None, None)
-                + (None, None, None, None)
+                + (None, None, None, None, None)
                 for i in range(size)
             ),
         )
         connection.executemany(
-            "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 (f"Claim:s{i}", f"citation:s{i}", "sha256:" + "b" * 64, 1, "fixture.items")
-                + ("sha256:" + "c" * 64, 0, 1, None, None)
+                + ("sha256:" + "c" * 64, 0, 1, None, None, None)
                 for i in range(3)
             ),
         )

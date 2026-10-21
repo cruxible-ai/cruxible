@@ -7,7 +7,8 @@ per Subject kind, what is equal under it but distinct under the declared rules:
 
 - ``subjects``: Subjects of the kind whose ids or aliases meet under the broad
   comparison. Resolve by adding a ``semantic.alias`` to the Subject that stays
-  and retiring the other (merge in v1 is alias + retire), or by asserting
+  and retiring the other (merge in v1 is alias + retire: ``cruxible retire
+  kind/id --with-claims``, once Claims pointing at it are re-pointed), or by asserting
   ``semantic.distinct_from`` between them: no group ever holds a pair asserted
   distinct (a key's holders are taken in path order, each joining the first
   group it is asserted distinct from no member of).

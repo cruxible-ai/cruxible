@@ -518,3 +518,91 @@ def test_docs_only_hint_in_cli_text_and_json(served, tmp_path):
         else:
             assert DOCS_ONLY_HINT in result.stdout.splitlines()
             assert "warning" not in result.stdout
+
+
+# -- first-run (slice A): awaiting wording, Subject retirement, rebind --------------------
+
+
+def test_awaiting_names_approvers_only_for_an_independent_approval() -> None:
+    from cruxible_client.contracts.write import ApprovalNeeded
+    from cruxible_core.cli.commands.playbill import _awaiting_text
+
+    def needed(reason: str, approvers: tuple[str, ...] = ()) -> ApprovalNeeded:
+        return ApprovalNeeded(
+            reason=reason,  # type: ignore[arg-type]
+            minimum_approvals=1,
+            eligible_approvers=approvers,
+            activate="cruxible proposal activate p",
+        )
+
+    assert _awaiting_text(needed("activation_not_permitted")) == (
+        "activation; your tier cannot activate"
+    )
+    assert _awaiting_text(needed("accept_never")) == "kept (accept=never)"
+    assert "no eligible approver; add one: cruxible principal add" in _awaiting_text(
+        needed("independent_approval_required")
+    )
+    assert _awaiting_text(needed("independent_approval_required", ("reviewer",))) == (
+        "independent approval; approvers: reviewer"
+    )
+    assert all(
+        "you, with a tier" not in _awaiting_text(needed(reason))
+        for reason in ("activation_not_permitted", "accept_never", "independent_approval_required")
+    )
+
+
+def test_retire_with_claims_retires_a_subject(served: _ServiceClient) -> None:
+    assert _run("set", WI1, "title", "Tidy", "--because", "Named.").exit_code == 0
+    refused = _run("retire", WI1, "--because", "Merged.")
+    assert refused.exit_code == 1
+    assert "cruxible.write.subject_has_claims" in refused.output
+    assert "--with-claims" in refused.output
+    retired = _run("retire", WI1, "--with-claims", "--reason", "superseded", "--because", "Merged.")
+    assert retired.exit_code == 0, retired.output
+    assert f"retire Subject {WI1}" in retired.stdout
+    misuse = _run("retire", WI1, "title", "--with-claims", "--because", "x")
+    assert misuse.exit_code == 2 and "--with-claims retires a Subject" in misuse.output
+
+
+def test_rebind_re_cites_a_claim_on_its_new_text_by_catalog_name(
+    served: _ServiceClient, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws"
+    first = service_playbill_write(
+        served.instance,
+        request=WriteRequest.model_validate(
+            {
+                "because": "Counted.",
+                "changes": [
+                    {
+                        "op": "set",
+                        "subject": WI1,
+                        "field": "measured",
+                        "value": 5,
+                        "evidence": report_evidence(workspace, "measured five"),
+                    }
+                ],
+            }
+        ),
+        caller=caller(),
+    )
+    claim = first.changes[0].claim
+    assert claim is not None
+    (workspace / "reports.md").write_text("# Reports\n\nfive, counted again\n", encoding="utf-8")
+    result = _run(
+        "rebind",
+        claim,
+        "--file",
+        "repo.reports#five, counted again",
+        "--because",
+        "Re-counted.",
+        "--workspace-root",
+        str(workspace),
+    )
+    assert result.exit_code == 0, result.output
+    assert "rebind" in result.stdout and "(value unchanged)" in result.stdout
+    (request,) = [item for item in served.requests if isinstance(item, WriteRequest)]
+    (change,) = request.changes
+    assert change.op == "rebind" and change.evidence.observation is not None  # type: ignore[union-attr]
+    both = _run("rebind", claim, "--because", "x")
+    assert both.exit_code == 2 and "pass one of file" in both.output

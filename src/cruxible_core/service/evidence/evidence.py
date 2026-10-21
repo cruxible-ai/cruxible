@@ -61,7 +61,7 @@ from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
     ProposalIntegrityError,
 )
-from cruxible_client.contracts.laws import CLAIM_LAW_V2_REVISION_9
+from cruxible_client.contracts.laws import CLAIM_LAW_V2_REVISION_9, CLAIM_LAW_V2_REVISION_10
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.providers import ProviderV1, parse_provider
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -1095,13 +1095,16 @@ def _reproduced_claim_adjudication_rule(
     with the current rule, so a verdict-semantic change cannot be hidden by a
     later revert.
 
-    Evidence recorded under Claim law v2 revision 9 (``law_digest``) may carry
+    Evidence recorded under Claim law v2 revision 9 or 10 (``law_digest``) may carry
     the origin-supports rule of a ClaimType whose own rule does not: a key
     Claim covered by its Subject's creation. That rule reproduces from the same
     ClaimType chain; no other law's evidence can select it.
     """
 
-    creation_covered = law_digest == CLAIM_LAW_V2_REVISION_9.digest
+    creation_covered = law_digest in {
+        CLAIM_LAW_V2_REVISION_9.digest,
+        CLAIM_LAW_V2_REVISION_10.digest,
+    }
 
     def reproduces(item: ClaimType, digest: str) -> ClaimAdjudicationRuleAny | None:
         """The current rule this ClaimType version's recorded rule stands for, if any."""

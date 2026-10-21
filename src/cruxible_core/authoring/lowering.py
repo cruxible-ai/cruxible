@@ -1118,6 +1118,78 @@ def _merge_pins(*groups: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
     )
 
 
+@dataclass(frozen=True)
+class _Rebound:
+    """What a re-bind keeps of its predecessor, and what leaves with the replaced citations."""
+
+    kept: tuple[ClaimCitation, ...]
+    #: Captures only the replaced citations named.
+    captures: frozenset[str]
+    #: Their commitments no kept Capture shares: the content mappings that leave.
+    commitments: frozenset[str]
+    #: Their contract versions no kept Capture used: the provenance pins that leave.
+    contract_versions: frozenset[str]
+
+
+def _rebound_backing(
+    store: CaptureObjectStoreProtocol,
+    *,
+    payload: ClaimAuthoringPayloadV1,
+    statement: ClaimStatement,
+    predecessor: ClaimArtifactAny | None,
+    citations: tuple[ClaimCitation, ...],
+) -> _Rebound | None:
+    """The backing a re-bind keeps, or None when the payload replaces nothing.
+
+    Refuses a re-bind that changes the statement (``rebind_statement_changed``):
+    re-binding moves a Claim onto the text it rests on now, never to a new
+    value. Cost: this Claim's own citations and Captures.
+    """
+
+    replaced = frozenset(getattr(payload, "replaces_citations", ()))
+    if not replaced:
+        return None
+    if predecessor is None or statement != predecessor.statement.model_copy(
+        update={"claim_type_digest": statement.claim_type_digest}
+    ):
+        _refuse(
+            "cruxible.authoring.rebind_statement_changed",
+            "replaces_citations",
+            "A re-bind replaces citations of the statement its Claim holds; this payload "
+            "states something else.",
+            repair_kind="restate_value",
+            repair_description=(
+                "Re-bind without restating the value, or set the new value as a revision."
+            ),
+        )
+    held = {item.citation_id for item in citations}
+    if not replaced <= held:
+        _refuse(
+            "cruxible.authoring.rebind_citation_not_held",
+            "replaces_citations",
+            "A re-bind names a citation its Claim does not hold.",
+            repair_kind="read_claim",
+            repair_description="Read the Claim's citations again and name one it holds.",
+        )
+    kept = tuple(item for item in citations if item.citation_id not in replaced)
+    kept_captures = {item.capture_digest for item in kept} | (
+        set(predecessor.backing.capture_digests) - {item.capture_digest for item in citations}
+    )
+    dropped = {
+        item.capture_digest for item in citations if item.citation_id in replaced
+    } - kept_captures
+    kept_envelopes = [_read_existing_capture(store, digest) for digest in sorted(kept_captures)]
+    dropped_envelopes = [_read_existing_capture(store, digest) for digest in sorted(dropped)]
+    return _Rebound(
+        kept=kept,
+        captures=frozenset(dropped),
+        commitments=frozenset(item.commitment.digest for item in dropped_envelopes)
+        - {item.commitment.digest for item in kept_envelopes},
+        contract_versions=frozenset(item.capture_contract_digest for item in dropped_envelopes)
+        - {item.capture_contract_digest for item in kept_envelopes},
+    )
+
+
 def _merge_mappings(*groups: tuple[SourceMapping, ...]) -> tuple[SourceMapping, ...]:
     by_wire = {
         canonical_bytes(item.model_dump(mode="json")): item for group in groups for item in group
@@ -1826,6 +1898,19 @@ def _lower_claim(
         if inherited is not None and isinstance(inherited.backing, ClaimBacking)
         else ()
     )
+    # A re-bind (Claim law v2 revision 10): the same statement, with the named
+    # citations replaced by this payload's. What only they backed -- their
+    # Captures, those Captures' content mappings and contract versions -- leaves
+    # with them; everything else is inherited as for any same-statement revision.
+    rebound = _rebound_backing(
+        instance.body_store(),
+        payload=payload,
+        statement=statement,
+        predecessor=predecessor if inherited is not None else None,
+        citations=predecessor_citations,
+    )
+    if rebound is not None:
+        predecessor_citations = rebound.kept
     located = None
     located_citation = None
     located_contract = None
@@ -1890,7 +1975,15 @@ def _lower_claim(
     capture_digests = tuple(
         sorted(
             {
-                *(() if inherited is None else inherited.backing.capture_digests),
+                *(
+                    ()
+                    if inherited is None
+                    else (
+                        item
+                        for item in inherited.backing.capture_digests
+                        if rebound is None or item not in rebound.captures
+                    )
+                ),
                 capture_digest_value,
                 *(() if located is None else (located.capture_digest,)),
             },
@@ -2007,11 +2100,29 @@ def _lower_claim(
                 derivation.procedure.artifact_digest if derivation is not None else None
             ),
             source_mappings=_merge_mappings(
-                () if inherited is None else inherited.backing.source_mappings,
+                ()
+                if inherited is None
+                else tuple(
+                    item
+                    for item in inherited.backing.source_mappings
+                    if rebound is None
+                    or not any(span.content_digest in rebound.commitments for span in item.spans)
+                ),
                 (source_mapping,),
             ),
         ),
-        pins=_merge_pins(() if inherited is None else inherited.pins, tuple(pins)),
+        pins=_merge_pins(
+            ()
+            if inherited is None
+            else tuple(
+                pin
+                for pin in inherited.pins
+                if rebound is None
+                or pin.role != "capture-contract"
+                or pin.artifact_digest not in rebound.contract_versions
+            ),
+            tuple(pins),
+        ),
         lifecycle=ArtifactLifecycle(
             predecessor_digest=(
                 None if predecessor is None else claim_artifact_digest(predecessor).tagged

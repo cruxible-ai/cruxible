@@ -54,6 +54,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("set",): "active",
     ("add",): "active",
     ("retire",): "active",
+    ("rebind",): "active",
     ("write",): "active",
     ("claim", "attest"): "active",
     ("prediction", "propose"): "active",

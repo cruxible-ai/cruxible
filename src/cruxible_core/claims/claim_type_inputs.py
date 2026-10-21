@@ -60,6 +60,7 @@ from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.compiler import (
     AUTHORITY_VERBS_COMPILER,
+    CLAIM_REBIND_COMPILER,
     GOVERNED_TRIGGERS_COMPILER,
     PROVIDER_BUILDS_COMPILER,
     SUBJECT_IDENTITY_COMPILER,
@@ -522,6 +523,7 @@ def identity_rules_supported(compiler: CompilerCoordinate) -> bool:
         GOVERNED_TRIGGERS_COMPILER,
         SUBJECT_IDENTITY_COMPILER,
         PROVIDER_BUILDS_COMPILER,
+        CLAIM_REBIND_COMPILER,
     )
 
 

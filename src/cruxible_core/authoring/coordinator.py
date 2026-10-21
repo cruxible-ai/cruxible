@@ -64,7 +64,7 @@ from cruxible_core.authoring.preflight import (
     authoring_operation,
     compute_preflight,
 )
-from cruxible_core.authoring.store import AuthoringIntentStore
+from cruxible_core.authoring.store import AuthoringIntentStore, AuthoringIntentStoreError
 from cruxible_core.compiler.projection_artifacts import projected_revision
 from cruxible_core.evidence.claim_reobservations import ClaimReobservationStore
 from cruxible_core.indexes.history.history_index import detached_history_reads
@@ -219,6 +219,11 @@ class AuthoringIntentCoordinator:
         ).tagged
         self.finalize_completed()
         stored = self.store.create(intent, operation_key=operation_key)
+        if stored.intent_id != intent.intent_id and self._end_if_closed(stored):
+            # The same content was authored before and its proposal was since
+            # withdrawn or rejected (a crash between the close and its intent's
+            # end leaves this): that intent is over, so this one starts anew.
+            stored = self.store.create(intent, operation_key=operation_key)
         if reference_expectations is not None and (
             not isinstance(stored, AuthoringIntent)
             or stored.reference_expectations != reference_expectations
@@ -1333,6 +1338,49 @@ class AuthoringIntentCoordinator:
         """The intent with its candidate status reduced against accepted state."""
 
         return intent.model_copy(update={"candidate_status": self._reduce_status(intent)})
+
+    def end_closed(self, intent_id: str, *, actor_id: str, proposal_id: str) -> None:
+        """End the intent a withdrawn or rejected proposal was submitted from.
+
+        A close is terminal, so the intent behind it is too: re-authoring the
+        same content then mints a new intent and a new proposal, instead of
+        handing back the closed one. One keyed read; an intent already gone
+        (finished, pruned) or bound to another proposal is left as it is.
+        """
+
+        try:
+            intent = self.store.get(intent_id, actor_id=actor_id)
+        except AuthoringIntentStoreError:
+            return
+        status = intent.candidate_status
+        if status.proposal_id != proposal_id or status.state in {
+            "accepted",
+            "superseded",
+            "terminal",
+        }:
+            return
+        key = typed_digest(
+            Sha256Value,
+            "playbill-authoring-closed-v1",
+            {"intent_id": intent_id, "proposal_id": proposal_id},
+        ).tagged
+        self.store.complete(
+            intent_id,
+            actor_id=actor_id,
+            operation_key=key,
+            status=status.model_copy(update={"state": "terminal"}),
+        )
+
+    def _end_if_closed(self, intent: AuthoringIntentV1) -> bool:
+        """Whether ``intent``'s proposal is closed, ending the intent if so (one keyed read)."""
+
+        proposal_id = intent.candidate_status.proposal_id
+        if proposal_id is None:
+            return False
+        if self.instance.proposal_evidence().read_withdrawal(proposal_id) is None:
+            return False
+        self.end_closed(intent.intent_id, actor_id=intent.actor_id, proposal_id=proposal_id)
+        return True
 
     def finalize_completed(self) -> None:
         """Record acceptance on submitted intents whose candidate was accepted.

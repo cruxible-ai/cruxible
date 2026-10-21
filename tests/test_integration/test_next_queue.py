@@ -187,8 +187,8 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
     assert result.status.floor.state in {"missing", "not_configured"}
     drift = next(item for item in result.items if item.reason == "citation_drifted")
     assert drift.related_identities == (citation.citation_id,)
-    # The drift repair restates the value through the typed write verb.
-    assert drift.repair.operation == "cruxible.set"
+    # The drift repair re-binds the Claim to its text now (the value stays).
+    assert drift.repair.operation == "cruxible.rebind"
 
     workspace = request.workspace_observation
     assert workspace is not None
@@ -678,13 +678,22 @@ def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: P
     )
 
     conflict = next(item for item in result.items if item.reason == "claim_conflicted")
-    assert conflict.repair.required_change == "revise_claims_into_distinct_qualifiers"
-    arguments = conflict.repair.arguments
-    assert arguments["claim_ids"] == list(conflict.related_identities)
-    # One keep option per contender, retiring the others; none is picked.
-    assert {option["keep"] for option in arguments["options"]} == {
-        identity.removeprefix("Claim:") for identity in conflict.related_identities
-    }
+    # One keep option per contender, retiring the others; none is picked. The
+    # qualifier split is offered last, only where a field tells them apart.
+    assert conflict.repair.required_change == "choose_contender"
+    options = [
+        item
+        for item in (conflict.repair, *conflict.repair.alternatives)
+        if item.required_change == "choose_contender"
+    ]
+    assert {option.target for option in options} == set(conflict.related_identities)
+    split = [
+        item
+        for item in conflict.repair.alternatives
+        if item.required_change == "revise_claims_into_distinct_qualifiers"
+    ]
+    assert len(split) == int("suggested_qualifier_field" in conflict.detail)
+    assert all("dispositions" not in str(item.arguments) for item in split)
 
 
 def test_two_values_of_a_many_valued_predicate_are_not_a_conflict(tmp_path: Path) -> None:

@@ -156,7 +156,7 @@ def test_zero_occurrence_distinguishes_changed_gone_and_unobserved() -> None:
     unobserved = _repair(_observed(proof=False))
 
     assert changed is not None and changed.detail["drift_state"] == "changed"
-    assert changed.repair.required_change == "adjudicate_citation_drift"
+    assert changed.repair.required_change == "rebind_or_retire_drifted_claim"
     assert gone is not None and gone.detail["drift_state"] == "gone"
     assert unobserved is not None and unobserved.reason == "citation_source_unobserved"
 

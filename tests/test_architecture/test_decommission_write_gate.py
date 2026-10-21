@@ -56,8 +56,12 @@ STORE_WRITES = frozenset({"create", "transition", "record_program_stamp", "compl
 # purpose. Reads (get, list_pending, status) persist nothing since the
 # publication protocol that rolled expectations forward on read was cut. A name
 # is added here only for that reason -- a door that persists a new intent belongs
-# in DECLARED_WRITE_GATES instead.
-DECLARED_ROLL_FORWARD_DOORS = frozenset({f"{COORDINATOR_CLASS}.finalize_completed"})
+# in DECLARED_WRITE_GATES instead. Ending a closed proposal's intent is the same
+# kind of record: the close already happened, and the intent only stops being
+# handed back for re-authored content.
+DECLARED_ROLL_FORWARD_DOORS = frozenset(
+    {f"{COORDINATOR_CLASS}.finalize_completed", f"{COORDINATOR_CLASS}.end_closed"}
+)
 
 # module path -> the qualified names that refuse a decommissioned instance.
 DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {

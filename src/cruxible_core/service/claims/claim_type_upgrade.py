@@ -48,6 +48,7 @@ from cruxible_core.claims.claim_type_migrations import (
 )
 from cruxible_core.compiler.compiler import (
     AUTHORITY_VERBS_COMPILER,
+    CLAIM_REBIND_COMPILER,
     GOVERNED_TRIGGERS_COMPILER,
     PROVIDER_BUILDS_COMPILER,
     SUBJECT_IDENTITY_COMPILER,
@@ -134,6 +135,7 @@ def _upgrade(
         GOVERNED_TRIGGERS_COMPILER,
         SUBJECT_IDENTITY_COMPILER,
         PROVIDER_BUILDS_COMPILER,
+        CLAIM_REBIND_COMPILER,
     ):
         raise DataValidationError(
             "ClaimType v7 needs compiler revision 31 or later; upgrade it first"

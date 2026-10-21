@@ -96,7 +96,17 @@ def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dic
         (
             "cruxible_retire",
             ["target", "because"],
-            {"instance_id", "target", "because", "reason", "expect", "dry_run", "accept", "at"},
+            {
+                "instance_id",
+                "target",
+                "because",
+                "with_claims",
+                "reason",
+                "expect",
+                "dry_run",
+                "accept",
+                "at",
+            },
         ),
         (
             "cruxible_write",

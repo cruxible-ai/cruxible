@@ -161,7 +161,7 @@ def test_one_existing_scanner_handles_relocation_duplicate_and_genuine_span_drif
     assert "coverage_occurrence_ambiguous" in duplicated["source_observations"][0]["scan_notes"]
     ambiguous_row = next(item for item in ambiguous.items if item.reason == "citation_drifted")
     assert ambiguous_row.detail["drift_state"] == "ambiguous"  # type: ignore[index]
-    assert ambiguous_row.repair.required_change == "adjudicate_citation_drift"
+    assert ambiguous_row.repair.required_change == "rebind_or_retire_drifted_claim"
 
     source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, b"status: blocked\n"))
     changed, drifted = _result(instance, client, workspace)

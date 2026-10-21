@@ -574,7 +574,7 @@ def test_an_upgrade_with_no_target_targets_the_running_compiler_and_says_it_is_o
     inspection = service_propose_compiler_upgrade(instance, actor_id="owner", timestamp=TIMESTAMP)
     proposal = inspection.proposal
     assert proposal.candidate is not None, proposal.evaluation.diagnostics
-    assert proposal.admission.target_ref == "refs/proposals/owner/upgrade-to-provider-builds-v1"
+    assert proposal.admission.target_ref == "refs/proposals/owner/upgrade-to-claim-rebind-v1"
     tree = instance.proposal_tree(proposal.evaluation.evaluated_tree_oid)
     assert parse_compiler_upgrade(tree[COMPILER_UPGRADE_PATH]).target == running
     notice = inspection.compiler_upgrade
@@ -582,7 +582,7 @@ def test_an_upgrade_with_no_target_targets_the_running_compiler_and_says_it_is_o
     assert notice.source_compiler_digest == TRIGGER_CAPTURE_COMPILER.rule_digest
     assert notice.source_revision == "line-trigger-capture-input-v1"
     assert notice.target_compiler_digest == running.rule_digest
-    assert notice.target_revision == "provider-builds-v1"
+    assert notice.target_revision == "claim-rebind-v1"
     assert "can no longer serve this instance" in notice.message
 
     review = service_review_playbill_proposal(
@@ -594,3 +594,31 @@ def test_an_upgrade_with_no_target_targets_the_running_compiler_and_says_it_is_o
     summary = render_playbill_approval_summary(review)
     assert running.rule_digest in summary and notice.message in summary
     assert "Required approvals: one signature" in summary
+
+
+def test_provider_builds_upgrades_to_claim_rebind_and_its_claims_take_law_revision_10(
+    tmp_path, monkeypatch
+):
+    """Compiler revision 35 judges Claims under Claim law v2 revision 10; 34 keeps 9."""
+
+    from cruxible_client.contracts.laws import (
+        CLAIM_LAW_V2_REVISION_9,
+        CLAIM_LAW_V2_REVISION_10,
+    )
+    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, admits_claim_rebind
+    from cruxible_core.compiler.upgrades import supported_upgrade_targets, upgrade_law
+
+    assert CLAIM_REBIND_COMPILER.rule_digest in supported_upgrade_targets(PROVIDER_BUILDS_COMPILER)
+    assert upgrade_law(PROVIDER_BUILDS_COMPILER, CLAIM_REBIND_COMPILER).current is False
+    assert admits_claim_rebind(CLAIM_REBIND_COMPILER)
+    assert not admits_claim_rebind(PROVIDER_BUILDS_COMPILER)
+    assert CLAIM_LAW_V2_REVISION_10 != CLAIM_LAW_V2_REVISION_9
+
+    instance, _, reviewer = old_instance(tmp_path, monkeypatch, PROVIDER_BUILDS_COMPILER)
+    proposal = propose(instance, CLAIM_REBIND_COMPILER)
+    approve(instance, proposal, reviewer)
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    assert instance.accepted_coordinate().compiler == CLAIM_REBIND_COMPILER

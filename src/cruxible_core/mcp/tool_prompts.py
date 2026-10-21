@@ -207,13 +207,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "with the approve call. Check each change's verdict and the warnings."
     ),
     "cruxible_retire": (
-        "Use to end one live Claim: by Claim ID, or by Subject and field when it holds one "
-        "value. Its dependent Claims retire with it, in one change set."
+        "Use to end one live Claim (by Claim ID, or Subject and field) with its dependents, or "
+        "a Subject (kind/id): its key Claims go too, its others only with with_claims."
     ),
     "cruxible_write": (
-        "Write Claims and Markdown sections together. docs: append under or replace section "
-        "(heading lists; [] preamble). Cite with kind=section, file, section. "
-        "Doc ids may be cited as section refs. The client writes only after admission."
+        "Write Claims and Markdown sections together. docs: append under or replace a section "
+        "(heading lists; [] preamble); cite it as kind=section evidence or by doc id. Docs "
+        "are written after admission."
     ),
     "cruxible_get": (
         "Use when you have a reference to one thing -- a Claim id or prefix, kind/id, a "

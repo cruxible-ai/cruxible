@@ -44,6 +44,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimArtifactAny,
+    ClaimBacking,
     ClaimRetirementReason,
     ExactContentClaimObject,
     SubjectClaimObject,
@@ -82,6 +83,7 @@ from cruxible_client.contracts.get_reads import (
     GetEvidenceRule,
     GetFieldChanged,
     GetFieldEvent,
+    GetFieldRebound,
     GetFieldReobserved,
     GetFieldRetired,
     GetFieldStated,
@@ -2190,7 +2192,11 @@ class _ClaimVersions:
         return self._claims[index]
 
     def change(self, index: int) -> tuple[RevisionChange, ClaimRetirementReason | None]:
-        """What revision ``index`` did: stated, changed, reobserved, or retired (and why)."""
+        """What revision ``index`` did: stated, changed, reobserved, rebound, or retired (and why).
+
+        A re-bind is derived from its shape, which no earlier law accepts: the
+        same statement, with a citation its predecessor held left out.
+        """
 
         claim = self.claim(index)
         if claim.lifecycle.state == "retired":
@@ -2199,7 +2205,35 @@ class _ClaimVersions:
             return "stated", None
         before = self.claim(index - 1)
         same = claim_statement_digest(claim.statement) == claim_statement_digest(before.statement)
+        if same and self.rebound(index) is not None:
+            return "rebound", None
         return ("reobserved" if same else "changed"), None
+
+    def rebound(self, index: int) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+        """A re-bind's replaced and new Captures (``CAP-`` handles), or None if it is none."""
+
+        if index == 0:
+            return None
+        claim, before = self.claim(index), self.claim(index - 1)
+        if not isinstance(claim.backing, ClaimBacking) or not isinstance(
+            before.backing, ClaimBacking
+        ):
+            return None
+        current = {item.citation_id for item in claim.backing.citations}
+        previous = {item.citation_id for item in before.backing.citations}
+        if previous <= current:
+            return None
+        kept = {item.capture_digest for item in claim.backing.citations}
+        held = {item.capture_digest for item in before.backing.citations}
+        replaced = sorted(
+            {item.capture_digest for item in before.backing.citations} - kept,
+            key=lambda item: item.encode("ascii"),
+        )
+        added = sorted(kept - held, key=lambda item: item.encode("ascii"))
+        return (
+            tuple(capture_handle(item) for item in replaced),
+            tuple(capture_handle(item) for item in added),
+        )
 
     def shown(self, index: int, content: ExactContentReader) -> _Shown:
         claim = self.claim(index)
@@ -2656,6 +2690,9 @@ def _field_event(
         return GetFieldStated(**common, contended=contended)
     if change == "reobserved":
         return GetFieldReobserved(**common)
+    if change == "rebound":
+        replaced, by = versions.rebound(index) or ((), ())
+        return GetFieldRebound(**common, replaced=replaced, by=by)
     earlier = versions.claim(index - 1)
     before, _digest = _shown(earlier.statement.object, lambda: _artifact_value(earlier), content)
     before_at = history.generation(versions.locations[index - 1].sequence).git_oid

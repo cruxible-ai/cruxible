@@ -76,6 +76,7 @@ from cruxible_client.contracts.write import (
     DocOp,
     ExpectedValue,
     FileEvidence,
+    RebindChange,
     RetireChange,
     SectionEvidence,
     SelfEvidence,
@@ -184,9 +185,35 @@ class McpAddChange(AddChange):
     evidence: McpEvidence | None = Field(default=None, description=_EVIDENCE_DEFAULT)
 
 
+class McpRebindChange(RebindChange):
+    __doc__ = RebindChange.__doc__
+
+    target: str = Field(description="CLM-…")
+    citation: str | None = Field(default=None, description="Its 12+ hex; default: one of FILE.")
+    evidence: McpFileEvidence | McpSectionEvidence
+
+
 McpChange = Annotated[
-    CreateChange | McpSetChange | McpAddChange | RetireChange, Field(discriminator="op")
+    CreateChange | McpSetChange | McpAddChange | RetireChange | McpRebindChange,
+    Field(discriminator="op"),
 ]
+
+
+def _observed_rebinds(changes: list[Any]) -> list[Any]:
+    """Each re-bind's new text, read from the MCP workspace before the write leaves here."""
+
+    if not any(isinstance(item, RebindChange) for item in changes):
+        return changes
+    from cruxible_client.authoring.write_evidence import observe_evidence
+    from cruxible_core.mcp.workspace import mcp_workspace_root
+
+    root = mcp_workspace_root()
+    return [
+        item.model_copy(update={"evidence": observe_evidence(item.evidence, workspace=root)})
+        if isinstance(item, RebindChange)
+        else item
+        for item in changes
+    ]
 
 
 InstanceId = Annotated[
@@ -1151,12 +1178,15 @@ def register_tools(
             str | SlotRef,
             Field(
                 description=(
-                    'A Claim ID (CLM-…), or {"subject", "field"} for a one-value field, '
-                    '+"value" to name one of several.'
+                    'CLM-…, a Subject kind/id, or {"subject", "field"} (+"value" for one '
+                    "of several)."
                 )
             ),
         ],
         because: Annotated[str, Field(description="Why it ends.")],
+        with_claims: Annotated[
+            bool, Field(description="A Subject target: also retire its live Claims.")
+        ] = False,
         reason: Annotated[
             WriteRetireReason,
             Field(
@@ -1166,29 +1196,25 @@ def register_tools(
         expect: Annotated[
             ExpectedValue | None,
             Field(
-                description=(
-                    "Compare-and-set: the field's live value (every live value, as a list, "
-                    "for a many-valued field); refuses slot_changed if it holds another."
-                )
+                description=("Compare-and-set: the live value(s), [] for none; else slot_changed.")
             ),
         ] = None,
-        dry_run: Annotated[
-            bool, Field(description="Run every check up to the commit; write nothing.")
-        ] = False,
+        dry_run: Annotated[bool, Field(description="Check everything; write nothing.")] = False,
         accept: Annotated[
             WriteAccept,
-            Field(description="if_allowed: accept now when policy lets you; never: propose only."),
+            Field(description="if_allowed: accept when policy lets you; never: propose."),
         ] = "if_allowed",
         at: Annotated[
             str | None,
-            Field(description="The coordinate you read at; default: current head."),
+            Field(description="The coordinate you read at."),
         ] = None,
     ) -> WriteOutcome:
-        """End one live Claim, and what depends on it, in one change set."""
+        """End one live Claim, and what depends on it, or a Subject, in one change set."""
         return handlers.handle_playbill_retire(
             require_instance_id(instance_id),
             target=target,
             because=because,
+            with_claims=with_claims,
             reason=reason,
             expect=expect,
             dry_run=dry_run,
@@ -1235,7 +1261,7 @@ def register_tools(
         """Write doc sections and Claims together. Cite prose with kind=section evidence."""
         return handlers.handle_playbill_write(
             require_instance_id(instance_id),
-            changes=changes or [],
+            changes=_observed_rebinds(changes or []),
             docs=docs or [],
             because=because,
             subject=subject,

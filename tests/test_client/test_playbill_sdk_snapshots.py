@@ -108,7 +108,7 @@ def test_explicit_refs_pin_live_reads_and_refuse_a_foreign_coordinate(connection
     client.coordinate = _MOVED_COORDINATE
     pb.get(ClaimRef("CLM-old", old))
     assert client.gets[-1].at == _COORDINATE
-    with pytest.raises(ValueError, match="differs from the active orientation"):
+    with pytest.raises(ValueError, match=r"has moved to .*; re-read with cx\.world\(\)"):
         pb.at(old).get(ClaimRef("CLM-new", new))
     assert len(client.gets) == 1
 
