@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-20:ontology-reads",
-    "surface_digest": "sha256:6be551741cd7eefe1ce1d66ff693d5e88f9edb44fa2e1b37418fa46f6ce87f18"
+    "register_entry": "2026-10-21:definition-queries",
+    "surface_digest": "sha256:c74d863de7c2282ff168e1025a0ad9080219835f3c6d03e087357674959eae98"
   },
   "surface": {
     "cli_leaves": [
@@ -1894,7 +1894,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/query",
         "request_model": "cruxible_client.contracts.compact_query.QueryRequest",
-        "request_schema_digest": "sha256:b1e87648ab4c27d75cc62e789b8ac7eba3524189d70b6791fc2b466fff457b23",
+        "request_schema_digest": "sha256:e2b89292eba602345bcebe0521bbcf321d61c66f20e30735bc6d00655f3ab186",
         "response_model": "cruxible_client.contracts.compact_query.QueryResultRecord",
         "response_schema_digest": "sha256:c9f214786b609b5a90c6b9918f1d88d43cfc3b7aa8a13c0b65364ab7dd91a93a"
       },

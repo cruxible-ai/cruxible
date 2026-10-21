@@ -88573,7 +88573,7 @@
               }
             ],
             "default": null,
-            "description": "A Subject kind, ClaimType / Procedure for definitions, or Trigger / Line to list those.",
+            "description": "A Subject kind, or a definition kind to list: ClaimType, Procedure, Trigger, Line, SubjectKind, CaptureContract, ProcedureMandate or QueryDefinition.",
             "title": "Kind"
           }
         },
@@ -90785,7 +90785,7 @@
               }
             ],
             "default": null,
-            "description": "A Subject kind, ClaimType / Procedure for definitions, or Trigger / Line to list those.",
+            "description": "A Subject kind, or a definition kind to list: ClaimType, Procedure, Trigger, Line, SubjectKind, CaptureContract, ProcedureMandate or QueryDefinition.",
             "title": "Kind"
           },
           "limit": {
