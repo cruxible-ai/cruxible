@@ -834,7 +834,6 @@ def resolve_playbill_claim_group(
     )
 
 
-@positioned_read
 def _attestation_count(
     *,
     record: Literal["accepted", "event"],
@@ -982,6 +981,7 @@ def claim_attestation_accounts(
     return tuple(accounts)
 
 
+@positioned_read
 def service_explain_playbill_claim(
     instance: PlaybillInstance,
     *,

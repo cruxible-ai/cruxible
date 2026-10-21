@@ -196,6 +196,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ClaimAttestationPublishedRoot", "sequence"): "SETTLEMENT ORDER",
     ("ClaimAttestationStatementV1", "observed_at"): "ASSERTION TIME",
     ("ClaimAttestationStatementV1", "valid_until"): "VALIDITY WINDOW",
+    ("ClaimAttestationAccountV1", "attested_at"): "ASSERTION TIME",
+    ("ClaimAttestationAccountV1", "valid_until"): "VALIDITY WINDOW",
     ("ClaimAttestationStatement", "attested_at"): "ASSERTION TIME",
     ("ClaimAttestationStatement", "valid_until"): "VALIDITY WINDOW",
     ("_UnsureHold", "attested_at"): "ASSERTION TIME",
