@@ -625,7 +625,7 @@ reports it (`projection_backing_stale`, or `projection_dirty` when someone
 edited the block's text) and `block sync` shows it. A stale rendered block
 regenerates itself: `block sync` re-renders it from its query and repins it.
 An authored one needs only the staleness signal: you re-check it, and rewrite
-or repin it. See [Projection blocks](declared-blocks.md).
+or repin it. See [Documents and notes](documents-and-notes.md#pages-that-reflect-state-projection-blocks).
 
 For example, the parts table on a page about the 2019 Civic, rendered from the
 named query `catalog.parts_for_vehicle`, and the same table after `block sync`

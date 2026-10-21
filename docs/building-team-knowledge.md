@@ -92,7 +92,7 @@ repair  citation_drifted  Claim:CLM-e31c0922…  ...
 Whether the decision still holds after the edit is a judgment for a person or
 an agent, not for Cruxible. [Keeping knowledge current](keeping-knowledge-current.md)
 covers working through rows like these. More on writing documents and citing
-them is in [Evidence](concepts.md#evidence).
+them is in [Documents and notes](documents-and-notes.md).
 
 ## Modeling habits
 
@@ -279,7 +279,7 @@ the car parts example.
 
 - [Evidence and admission](evidence-and-admission.md): what counts as evidence
   for a field, and how verdicts come out.
-- [Evidence](concepts.md#evidence): writing documents and citing
+- [Documents and notes](documents-and-notes.md): writing documents and citing
   them.
 - [Asking questions](asking-questions.md): queries, edges and history.
 - [Kits](kits.md): installing and extending a vocabulary someone else built.

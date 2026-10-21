@@ -518,7 +518,7 @@ In twenty minutes, you've used the core of Cruxible:
 - [Concepts](concepts.md): the model behind what you just did.
 - [For AI agents](for-ai-agents.md): connect an agent over MCP or the Python
   SDK, and give it propose-only access.
-- [Projection blocks](declared-blocks.md): more on tying docs to state.
+- [Documents and notes](documents-and-notes.md): more on tying docs to state.
 - [Kits](kits.md): install vocabularies, queries and Lines someone else built,
   or package your own.
 - [CLI reference](cli-reference.md).

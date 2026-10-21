@@ -112,7 +112,7 @@ catalog.part/bp-2210  brakes    Ceramic front brake pads  -
 ~~~
 
 Named queries are what generated tables in documents are rendered from (see
-[Projection blocks](concepts.md#projection-blocks)), so the same saved question
+[Documents and notes](documents-and-notes.md#pages-that-reflect-state-projection-blocks)), so the same saved question
 feeds both a terminal and a page. `cruxible query QueryDefinition` lists them,
 with their parameters.
 
@@ -157,7 +157,8 @@ catalog.part/bp-2210  Ceramic front brake pads  -
 The `entry` names the kind the rows are about, `where` filters them (here
 against the `category` parameter), `projection` picks the columns, and the
 last six lines set what a row is, which values are visible, and how many rows
-a run may return. A query that follows edges adds a `traversal` and raises
+a run may return. Those six are required today even though the values above
+are the usual ones; they are expected to get defaults. A query that follows edges adds a `traversal` and raises
 `max_traversal_depth`; `cruxible authoring example query-claims-by-type`
 prints a fuller template.
 

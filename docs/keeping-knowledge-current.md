@@ -124,8 +124,8 @@ A generated table regenerates itself: `cruxible block sync --all` re-renders
 every stale rendered block from its query. A passage someone wrote is only
 flagged: re-read it against the current state, rewrite it if needed, and
 restamp it with `cruxible block repin FILE BLOCK`, which is the author's
-declaration that it's right again. See [Projection
-blocks](concepts.md#projection-blocks).
+declaration that it's right again. See [Documents and
+notes](documents-and-notes.md#pages-that-reflect-state-projection-blocks).
 
 ### Proposals waiting or stale
 

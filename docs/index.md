@@ -18,7 +18,7 @@ from. No LLM runs inside Cruxible.
 - [For AI agents](for-ai-agents.md): operating rules and the read and write
   loops over MCP, the CLI and the Python SDK.
 - [Kits](kits.md): install, upgrade and build releases of definitions.
-- [Projection blocks](declared-blocks.md): keep pages in step with state.
+- [Documents and notes](documents-and-notes.md): notes that back Claims, governed Documents, and pages kept in step with state.
 
 ## Reference
 
