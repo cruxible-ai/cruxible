@@ -140,11 +140,11 @@ Read with three verbs, cheapest first:
    captures, predictions, mandates, principals, policies, ...).
 2. **Find by name**: grep the floor. `.cruxible/floor/current/<kind>/<id>.yaml`
    holds one Subject per file, its first line names its reference, and `get`
-   reads that reference live. `.cruxible/floor/ontology/kinds/<kind>.md`
+   reads that reference live. `.cruxible/floor/ontology/kinds/<kind>.yaml`
    describes each field of a kind (a grep for `<field>:` lands on its type,
    cardinality and evidence line), and `ontology/*/INDEX` lists the
-   ClaimTypes, contracts, queries, Lines and installed kits. Without a shell, `query(contains=...)` searches
-   every Claim value.
+   ClaimTypes, contracts, queries, Lines and installed kits. Without a shell,
+   `query(contains=...)` searches every Claim value.
 3. **query** answers a question as rows of values with flags: a kind with
    `where`, `select`, `follow` and `order_by`; a named query with `name` and
    `params`; or, for what compact filters cannot say, a full query spec

@@ -483,11 +483,11 @@ def test_every_delta_rebuilds_the_full_floor_byte_for_byte(
         in fulls[max(fulls)]["sources/LEDGER"]
     )
     # The ontology moved too: a kit came and went, a Mandate settled a field.
-    assert b"owner=kit=demo edited" in shown and b"owner=kit=demo\n" in shown
-    assert b"settled by: mandate onto-mandate" in shown and b"  suspended\n" in shown
+    assert b"owner: kit=demo edited\n" in shown and b"owner: kit=demo\n" in shown
+    assert b"- mandate onto-mandate  Procedure:onto-tick" in shown and b"  suspended\n" in shown
     assert b"onto-on-generation(generation_accepted)" in shown
-    assert any(path == "ontology/kinds/project.note.md" for path in paths)
-    assert "ontology/contracts/playbill.foreign-source.repo.notes.md" in paths
+    assert "ontology/kinds/project.note.yaml" in paths
+    assert "ontology/contracts/playbill.foreign-source.repo.notes.yaml" in paths
     for base, target in _pairs(head):
         directory = tmp_path / f"apply-{base}-{target}"
         apply_floor_delta(directory, _delta(instance, base, None, None))

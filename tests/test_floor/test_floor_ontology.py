@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import yaml
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
@@ -48,7 +50,7 @@ from tests.test_floor.test_floor_index import (
 )
 
 WI1 = f"{KIND}/wi-1"
-CARD = f"ontology/kinds/{KIND}.md"
+CARD = f"ontology/kinds/{KIND}.yaml"
 NOTE_KIND = "project.note"
 KIT = "demo"
 
@@ -163,15 +165,20 @@ def test_the_kind_card_greps_to_its_field_and_the_indexes_head_their_columns(
     card = _text(render, CARD)
     first, *rest = card.splitlines()
     assert first == f"# {KIND}  ontology  owner=local  changed gen {render.files[CARD][1]}"
-    assert f"identity: keys: {KIND}.slug (unique)  # SubjectKind:{KIND}" in rest
-    # A field's signature line starts with its short name: a grep hit describes itself.
+    assert f'identity: "keys: {KIND}.slug (unique)"  # SubjectKind:{KIND}' in rest
+    # A field's key line carries its signature: a grep hit on ``status:`` describes it.
     assert any(
-        line.startswith("status: enum(blocked|done|ready)  one  role observation  evidence ")
+        line.startswith("  status:  # enum(blocked|done|ready)  one  role observation  evidence ")
         for line in rest
     )
-    assert f"## status  {KIND}.status  owner=local" in rest
-    assert "settled by: review" in rest
-    assert "## pointed at by" in rest and f"governs <- {KIND}  {KIND}.governs  many" in rest
+    # Past its header line the card is YAML, like a current/ file.
+    parsed = yaml.safe_load(card)
+    assert parsed["kind"] == KIND
+    status = parsed["fields"]["status"]
+    assert status["predicate"] == f"{KIND}.status" and status["owner"] == "local"
+    assert status["type"] == "enum(blocked|done|ready)" and status["cardinality"] == "one"
+    assert status["settled_by"] == ["review"]
+    assert parsed["pointed_at_by"] == [f"governs <- {KIND}  {KIND}.governs  many"]
     headers = {
         "ontology/INDEX": "# ontology INDEX  1 kinds  columns: kind, identity, fields, owner, "
         "description",
@@ -202,22 +209,31 @@ def test_the_kind_card_greps_to_its_field_and_the_indexes_head_their_columns(
 
 
 def test_descriptions_never_break_a_card_or_a_row(tmp_path: Any) -> None:
-    from cruxible_core.service.floor.floor_ontology import _description_lines
+    from cruxible_core.service.floor.floor_ontology import _text_entry
 
-    # A description line can never read as a section header; tabs stay prose.
-    assert _description_lines("# Not a header.\nSecond\tline with a tab.\r\n\n") == [
-        "\\# Not a header.",
-        "Second\tline with a tab.",
+    # Prose keeps its lines as a literal block; a header-like line stays text.
+    text = "# Not a header.\nSecond\tline with a tab.\n"
+    lines = _text_entry("description", text, "    ")
+    assert lines == [
+        "    description: |",
+        "      # Not a header.",
+        "      Second\tline with a tab.",
     ]
+    assert yaml.safe_load("x:\n" + "\n".join(lines) + "\n")["x"]["description"] == text
     instance, _owner = seed_write_surface(tmp_path)
     declare_note_kind(instance, "A note.\tTabbed. Second sentence.")
     render = advance_floor_index(instance)
-    note = _text(render, f"ontology/kinds/{NOTE_KIND}.md").splitlines()
-    assert note[1] == f"identity: minted  # SubjectKind:{NOTE_KIND}"
-    assert note[2] == "description: A note. Tabbed. Second sentence."
+    note = _text(render, f"ontology/kinds/{NOTE_KIND}.yaml")
+    assert note.splitlines()[2] == f"identity: minted  # SubjectKind:{NOTE_KIND}"
+    parsed = yaml.safe_load(note)
+    assert parsed["description"] == "A note.\tTabbed. Second sentence."
+    assert parsed["fields"] == {}
     rows = _text(render, "ontology/INDEX").splitlines()[1:]
     assert f"{NOTE_KIND}\tminted\t0\tlocal\tA note." in rows
     assert all(len(row.split("\t")) == 5 for row in rows)
+    for path, (content, _changed) in render.files.items():
+        if path.startswith("ontology/") and path.endswith(".yaml"):
+            assert isinstance(yaml.safe_load(content), dict), path
     assert _bytes(render) == _bytes(_cold(instance))
 
 
@@ -279,8 +295,9 @@ def test_owner_markers_follow_the_receipt_and_the_held_content(tmp_path: Any) ->
     install_receipt(instance, version="1.0.0", fields=("status", "title"), revision=1)
     installed = advance_floor_index(instance)
     card = _text(installed, CARD)
-    assert f"## status  {KIND}.status  owner=kit={KIT}" in card
-    assert f"## priority  {KIND}.priority  owner=local" in card
+    fields = yaml.safe_load(card)["fields"]
+    assert fields["status"]["owner"] == f"kit={KIT}"
+    assert fields["priority"]["owner"] == "local"
     (kit_row,) = _text(installed, "ontology/kits/INDEX").splitlines()[1:]
     receipt_gen = installed.generation
     assert kit_row.split("\t") == [
@@ -302,8 +319,9 @@ def test_owner_markers_follow_the_receipt_and_the_held_content(tmp_path: Any) ->
         literal_schema={"enum": ["blocked", "done", "ready", "waiting"], "type": "string"},
     )
     edited = advance_floor_index(instance)
-    assert f"## status  {KIND}.status  owner=kit={KIT} edited" in _text(edited, CARD)
-    assert "status: enum(blocked|done|ready|waiting)  one" in _text(edited, CARD)
+    fields = yaml.safe_load(_text(edited, CARD))["fields"]
+    assert fields["status"]["owner"] == f"kit={KIT} edited"
+    assert fields["status"]["type"] == "enum(blocked|done|ready|waiting)"
     assert f"ClaimType:{KIND}.status" in _text(edited, "ontology/kits/INDEX")
     # An upgrade that takes the held content back as installed clears it, and
     # touches only the files of the definitions the receipt ever owned.
@@ -313,8 +331,9 @@ def test_owner_markers_follow_the_receipt_and_the_held_content(tmp_path: Any) ->
     assert set(written) <= {CARD, "ontology/claim-types/INDEX", "ontology/kits/INDEX"}
     assert "ontology/kits/INDEX" in written
     card = _text(upgraded, CARD)
-    assert f"## status  {KIND}.status  owner=kit={KIT}" in card
-    assert f"## title  {KIND}.title  owner=local" in card
+    fields = yaml.safe_load(card)["fields"]
+    assert fields["status"]["owner"] == f"kit={KIT}"
+    assert fields["title"]["owner"] == "local"
     (kit_row,) = _text(upgraded, "ontology/kits/INDEX").splitlines()[1:]
     assert kit_row.split("\t")[:6] == [
         KIT,
@@ -339,7 +358,7 @@ def test_a_definition_only_generation_has_its_change_file(tmp_path: Any) -> None
     instance, _owner = seed_write_surface(tmp_path)
     declare_note_kind(instance, "A note.")
     declared = advance_floor_index(instance)
-    card = f"ontology/kinds/{NOTE_KIND}.md"
+    card = f"ontology/kinds/{NOTE_KIND}.yaml"
     stamp = declared.files[card][1]
     assert stamp == declared.generation
     change = json.loads(declared.files[change_path(stamp)][0])

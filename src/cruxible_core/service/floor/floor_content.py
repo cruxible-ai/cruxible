@@ -49,17 +49,18 @@ verbs. The floor does no matching of its own: grep is the search.
   differs from what the kit installed) or `local`.
   - `ontology/INDEX`: one tab-separated line per kind a SubjectKind or
     ClaimType names: its identity rule, field count, owner and description.
-  - `ontology/kinds/<kind>.md`: one card per kind: its identity, then one
-    `## <field>  <predicate>  owner=...` section per field whose next line
-    starts `<field>: <type>  <cardinality>  ...` (a grep hit on it describes
-    the field), who settles it (`settled by: mandate ...` or `review`), and its
-    description; `## pointed at by` lists the fields of other kinds that point
-    here.
+  - `ontology/kinds/<kind>.yaml`: one card per kind, in the `current/`
+    convention (a `#` header line, then YAML): its identity, then under
+    `fields:` one entry per field whose key line `  <field>:  # <type>
+    <cardinality>  ...` carries its signature (a grep hit on it describes the
+    field), with its predicate, owner, evidence, who settles it
+    (`settled_by:` a Mandate or `review`) and description;
+    `pointed_at_by:` lists the fields of other kinds that point here.
   - `ontology/claim-types/INDEX`, `ontology/contracts/INDEX`,
     `ontology/queries/INDEX`, `ontology/lines/INDEX`, `ontology/kits/INDEX`:
     one tab-separated line per ClaimType, CaptureContract, QueryDefinition,
     Line (its Triggers and its Procedure's Mandates) and installed kit (its
-    edited and retired definitions); `ontology/contracts/<id>.md` names the
+    edited and retired definitions); `ontology/contracts/<id>.yaml` names the
     ClaimTypes that admit and require each contract. Whether a newer kit
     release exists is not accepted state: `cruxible kit status`.
 - `changes/<seq>.json`: the accepted change that introduced a current Claim
