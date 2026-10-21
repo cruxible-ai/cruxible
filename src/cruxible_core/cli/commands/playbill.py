@@ -2913,7 +2913,12 @@ def _echo_catalog_edit(result: FileCatalogEdit, *, output_json: bool) -> None:
         click.echo(f"Removed file {result.name} from {result.catalog_path}{suffix}")
         return
     assert result.entry is not None
-    shape = "Document" if result.entry.is_document else "evidence-only"
+    # A file with no Document is still a citable source and a projection target.
+    shape = (
+        f"Document {result.entry.document_id}"
+        if result.entry.is_document
+        else "no Document: cite it, or project blocks into it"
+    )
     click.echo(
         f"{result.status.capitalize()} file {result.name} -> {result.entry.locator} "
         f"({shape}) in {result.catalog_path}"
@@ -2972,7 +2977,8 @@ def add_file(
     NAME is the stable source name evidence is cited under (`--evidence-file
     PATH#ANCHOR` resolves through it). With --document-id, --document-kind,
     --title and --scope the entry also declares the Document it compiles to
-    (files compile, files propose); without them it is evidence-only. The
+    (files compile, files propose); without them the file is still a source
+    to cite and a page to project blocks into, just not a Document. The
     whole catalog is validated before the file is rewritten: an existing NAME
     refuses unless --replace, and a partial Document or a duplicate Document
     target refuses. Writes only the catalog file; commit it with Git.
@@ -5696,7 +5702,42 @@ def _echo_block_sync(result: BlockSyncResult, *, output_json: bool) -> None:
         suffix = "" if item.reason is None else f":{item.reason}"
         click.echo(f"{target}: {item.outcome}{suffix}")
         if item.repair is not None:
-            click.echo(f"  repair: {render_served_repair(item.repair)}")
+            click.echo(f"  repair: {_block_repair_line(item.repair)}")
+
+
+def _block_repair_line(repair: Any) -> str:
+    """A block repair as the command that performs it, in the files vocabulary.
+
+    The served arguments keep their wire names (``source_id`` is the catalog
+    file name); the line is the CLI form, ``block repin FILE BLOCK_ID``.
+    """
+
+    if not isinstance(repair, RepairOperation):
+        return render_served_repair(repair)
+    values = repair.arguments
+    operation = normalize_code(repair.operation)
+    if operation == "cruxible.block.repin":
+        file, block = values.get("source_id"), values.get("block_id")
+        if not isinstance(file, str) or not isinstance(block, str):
+            return render_served_repair(repair)
+        parts = ["cruxible block repin", shlex.quote(file), shlex.quote(block)]
+        claims = values.get("claim")
+        for claim in claims if isinstance(claims, list) else ():
+            parts.extend(["--claim", shlex.quote(str(claim))])
+        if values.get("clear_claims") is True:
+            parts.append("--clear-claims")
+        candidates = values.get("backing_candidates")
+        if isinstance(candidates, list) and candidates:
+            parts.append("--backing DIGEST")
+            line = " ".join(parts)
+            return f"{line}  (DIGEST: one of {', '.join(map(str, candidates))})"
+        return " ".join(parts)
+    if operation == "cruxible.block.sync" and values.get("all") is True:
+        return "cruxible block sync --all"
+    paths = values.get("paths")
+    if operation == "cruxible.block.detach" and isinstance(paths, list) and paths:
+        return " ".join(["cruxible block detach", *(shlex.quote(str(path)) for path in paths)])
+    return render_served_repair(repair)
 
 
 def _echo_list_continuation(next_cursor: str | None) -> None:

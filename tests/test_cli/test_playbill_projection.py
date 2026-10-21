@@ -245,3 +245,42 @@ def test_cli_sync_takes_no_detach_flag_and_detach_is_its_own_command(
     (call,) = calls
     assert call["dry_run"] is True and call["at"] is None
     assert call["pages"] == ((Path.cwd() / "corpus/runbook.md").resolve(),)
+
+
+def test_block_sync_repair_lines_are_cli_commands_in_the_files_vocabulary() -> None:
+    from cruxible_client.contracts.repairs import RepairOperation
+    from cruxible_core.cli.commands.playbill import _block_repair_line
+
+    repin = RepairOperation(
+        operation="cruxible.block.repin",
+        arguments={"source_id": "corpus.runbook", "block_id": "summary", "claim": ["CLM-1"]},
+    )
+    assert _block_repair_line(repin) == (
+        "cruxible block repin corpus.runbook summary --claim CLM-1"
+    )
+    cleared = RepairOperation(
+        operation="cruxible.block.repin",
+        arguments={"source_id": "corpus.runbook", "block_id": "summary", "clear_claims": True},
+    )
+    assert _block_repair_line(cleared) == (
+        "cruxible block repin corpus.runbook summary --clear-claims"
+    )
+    ambiguous = RepairOperation(
+        operation="cruxible.block.repin",
+        arguments={
+            "source_id": "corpus.runbook",
+            "block_id": "summary",
+            "backing_candidates": ["sha256:aa", "sha256:bb"],
+        },
+    )
+    assert _block_repair_line(ambiguous) == (
+        "cruxible block repin corpus.runbook summary --backing DIGEST"
+        "  (DIGEST: one of sha256:aa, sha256:bb)"
+    )
+    assert "source_id" not in _block_repair_line(repin)
+    sweep = RepairOperation(operation="cruxible.block.sync", arguments={"all": True})
+    assert _block_repair_line(sweep) == "cruxible block sync --all"
+    detach = RepairOperation(
+        operation="cruxible.block.detach", arguments={"paths": ["corpus/runbook.md"]}
+    )
+    assert _block_repair_line(detach) == "cruxible block detach corpus/runbook.md"
