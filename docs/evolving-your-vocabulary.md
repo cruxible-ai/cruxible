@@ -187,7 +187,7 @@ catalog.supplier/acme-parts  acme parts  -
 The key is stored in its canonical form (this one folds case), and any
 spelling of it finds the same Subject: `cruxible get "catalog.supplier/ACME
 parts"` reads `catalog.supplier/acme-parts`. A kind whose things have no
-natural name, such as notes, is **minted** instead: Cruxible gives each a
+natural name, such as a remediation task, is **minted** instead: Cruxible gives each a
 generated id. To bring an existing kind under keys, see [Subject
 kinds](cli-reference.md#subject-kinds-and-creation).
 

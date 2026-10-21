@@ -155,6 +155,19 @@ usually one, `hint`), or by a minted id. A new Subject is created by naming its
 kind and key, so the same key always names the same Subject, however many
 writers mention it.
 
+The examples use four kinds, each named by something people already call it:
+
+| Kind | Named by | Why it's a kind of its own |
+|---|---|---|
+| `catalog.part` | its part number (`bp-1142`) | People look parts up, link to them and review them one at a time. |
+| `catalog.vehicle` | make, model and year (`honda-civic-2019`) | Parts point at vehicles, and "what fits this car?" starts from one. |
+| `catalog.note` | a short slug (`civic-pad-fitment-check`) | A fitment check or a report is written once and points at what it's about. |
+| `catalog.decision` | a short slug | A ruling the team made, which governs parts and can amend an earlier one. |
+
+Because a part is named by its part number, everyone who records `bp-1142`
+is talking about the same Subject. A title like "Front brake pads" would
+change, and two parts could share it.
+
 A **ClaimType** defines one field of a kind. It names the predicate
 (`catalog.part.category`, whose field name is `category`) and says:
 
@@ -164,6 +177,27 @@ A **ClaimType** defines one field of a kind. It names the predicate
 - which roles a Claim may take (`normative`, `observation`,
   `environment_binding`, `derivation`);
 - which evidence it admits, and how competing values resolve.
+
+For a part, the fields and the reasons for their shapes are:
+
+| Field | Holds | One or many | Why this shape |
+|---|---|---|---|
+| `name` | text: the part number | one | The key. Normative, because the team assigns it. |
+| `title` | text | one | What the supplier calls the part; an observation. |
+| `category` | one of `brakes`, `filters`, `lighting`, `wipers` | one | A closed list, so a typo is refused and questions can group by it. |
+| `price` | a number | one | Must cite the supplier's quote, never someone's memory, and goes stale after a set time. |
+| `fits` | a `catalog.vehicle` | many | A relationship: one part fits many cars, and you can ask from either end. |
+| `replaces` | a `catalog.part` | many | A relationship between parts, for supersessions. |
+
+The main relationships connect the kinds into one graph:
+
+```mermaid
+flowchart LR
+    note["catalog.note"] -->|about| part["catalog.part"]
+    decision["catalog.decision"] -->|governs| part
+    part -->|fits| vehicle["catalog.vehicle"]
+    part -->|replaces| older["catalog.part<br/>(an older one)"]
+```
 
 Because every field is declared, a write that puts a value where it doesn't
 belong, like a category that doesn't exist, is refused before it lands, with
