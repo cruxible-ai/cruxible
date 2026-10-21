@@ -89,15 +89,31 @@ The rest of this page builds the system up from its foundation: the ledger.
 
 ## The ledger
 
-### What it is
+Everything in Cruxible rests on one record. Each body of knowledge, an
+**instance**, is kept by a background server, the **daemon**, in a
+**ledger**: a Git repository that only the daemon writes to. That gives the
+team exactly one place where knowledge is accepted, and one way in. Every
+accepted change becomes one commit in the ledger, called a **generation**,
+numbered from 0, the instance's genesis. Everything else that shows knowledge,
+such as the daemon's search indexes, the files in your workspace, or a table in
+a document, is derived from the ledger: when they disagree, the ledger is
+right, and anything derived can be rebuilt from it. Large bodies, like the
+bytes of a web page fetched as evidence, sit beside the ledger in
+content-addressed storage, named by their digest, and the ledger refers to
+them.
 
-Each body of knowledge, an **instance**, is kept by a background server, the
-**daemon**, in a **ledger**: a Git repository that only the daemon writes to.
-Every accepted change becomes one commit in it, called a **generation**.
-Generations are numbered from 0, the instance's genesis, and an accepted
-change is the only way a new one is made. Large bodies, like the bytes of a
-web page fetched as evidence, sit beside the ledger in content-addressed
-storage, named by their digest, and the ledger refers to them.
+A change adds a generation on top of the last and never rewrites an old one,
+so nothing is ever lost: every earlier state stays readable, and every value's
+history says who changed it, when, and the reason they gave. A proposed change
+is evaluated against the generation it was made on, and only becomes the next
+generation once it's accepted:
+
+```mermaid
+flowchart LR
+    g0["0<br/>genesis"] --> g1["1<br/>vocabulary defined"] --> g2["2<br/>catalog recorded"]
+    g2 -.->|checked against 2| p["proposal:<br/>add replacement part"]
+    p -->|approved and accepted| g3["3<br/>replacement recorded"]
+```
 
 Every generation has a **coordinate** that names it exactly:
 
@@ -107,17 +123,11 @@ Every generation has a **coordinate** that names it exactly:
 - the compiler digest, which names the rules that interpreted it (see [The
   compiler](#the-compiler)).
 
-```mermaid
-flowchart LR
-    g0["0<br/>genesis"] --> g1["1<br/>vocabulary defined"] --> g2["2<br/>catalog recorded"]
-    g2 -.->|checked against 2| p["proposal:<br/>add replacement part"]
-    p -->|approved and accepted| g3["3<br/>replacement recorded"]
-```
-
-Each accepted change adds one generation on top of the last; a proposal is
-evaluated against the generation it was made on, and only becomes the next
-generation when it's accepted. A coordinate, as `cruxible whoami --json`
-reports the current one:
+Every read is answered at a coordinate: the current head, unless you ask for
+an earlier one. Because the coordinate pins both the knowledge and the rules
+that read it, the same question at the same coordinate always gets the same
+answer, and every answer can name the exact state it came from. Here is a
+coordinate, as `cruxible whoami --json` reports the current one:
 
 ~~~json
 {
@@ -128,36 +138,19 @@ reports the current one:
 }
 ~~~
 
-### What this gives you
-
-- **One authority.** There is exactly one place where the team's knowledge is
-  accepted, and one way in: an accepted change. Everything else that shows
-  knowledge, such as the daemon's search indexes, the files in your workspace,
-  or a table in a document, is derived from the ledger. When they disagree,
-  the ledger is right, and anything derived can be rebuilt from it.
-- **History that never loses anything.** A change adds a generation; it never
-  rewrites an old one. Every earlier state stays readable (`--at`), and every
-  value's history says who changed it, when, and the reason they gave.
-- **Changes you can verify.** The daemon signs every generation, and an
-  approval is a signature made with the approver's own key over the exact
-  change. You don't have to trust a log line that says something was
-  approved: the signature is in the ledger.
-- **Answers that say where they came from.** Every read is answered at a
-  coordinate: the current head, unless you ask for an earlier one. Because the
-  coordinate pins both the knowledge and the rules that read it, the same
-  question at the same coordinate always gets the same answer, and every
-  answer can name the exact state it came from.
-- **Ordinary tools.** The ledger is Git. A proposed change is a branch you can
-  diff before it's accepted, the ledger can be mirrored to a remote
-  (`cruxible ledger set-mirror`) so reviewers and auditors can fetch it, and
-  its history reads with tools you already have.
+The ledger also makes every change verifiable. The daemon signs each
+generation, and an approval is a signature made with the approver's own key
+over the exact change, so you never have to trust a log line saying something
+was approved: the signature is in the ledger. And because the ledger is Git,
+it works with tools you already have. A proposed change is a branch you can
+diff before it's accepted, and the ledger can be mirrored to a remote
+(`cruxible ledger set-mirror`) for reviewers and auditors to fetch.
 
 ## Knowledge as Claims
 
-### What it is
-
 Cruxible models your world as things, their fields, and the relations between
-them.
+them. Declaring that model is what lets people and agents describe the same
+world the same way, and lets Cruxible check every change against it.
 
 A **Subject** is a thing the instance knows about, named `kind/id`:
 `catalog.part/bp-1142` is a set of brake pads, and
@@ -165,7 +158,8 @@ A **Subject** is a thing the instance knows about, named `kind/id`:
 choose. A **SubjectKind** declares how a kind's Subjects are named: by the
 values of one or more key fields (a key that names one Subject, `unique`, or
 usually one, `hint`), or by a minted id. A new Subject is created by naming its
-kind and key, so the same key always names the same Subject.
+kind and key, so the same key always names the same Subject, however many
+writers mention it.
 
 A **ClaimType** defines one field of a kind. It names the predicate
 (`catalog.part.category`, whose field name is `category`) and says:
@@ -177,17 +171,23 @@ A **ClaimType** defines one field of a kind. It names the predicate
   `environment_binding`, `derivation`);
 - which evidence it admits, and how competing values resolve.
 
-A ClaimType whose value is another Subject is a typed relationship:
-`catalog.part.fits` points from a part to the vehicles it fits.
+Because every field is declared, a write that puts a value where it doesn't
+belong, like a category that doesn't exist, is refused before it lands, with
+the nearest valid choice. A ClaimType whose value is another Subject is a
+typed relationship: `catalog.part.fits` points from a part to the vehicles it
+fits, and refuses a part that "fits" another part. Relationships make the
+model a graph, so "which parts fit this car?" and "what replaces this part?"
+are questions with exact answers.
 
 A **Claim** is one value of one field about one Subject: the statement, its
-role, the evidence it cites, and the rationale its author gave. A Claim has an
-ID (`CLM-…`) and a history of revisions. Resolution places it in its slot as
-accepted, conflicted, overturned or refused, and retiring it ends it with a
-reason (`was-rescinded`, `was-wrong` or `superseded`).
-
-For example, the Claim that brake pads `bp-2210` fit the 2019 Civic, and what
-it rests on, a line of the supplier's catalog:
+role, the evidence it cites, and the rationale its author gave. A value
+without its reason is a rumor; a Claim says who believed it, why, and on what
+evidence, so a reader can judge it, and a later reader can find out why it was
+believed at the time. A Claim has an ID (`CLM-…`) and a history of revisions.
+Resolution places it in its slot as accepted, conflicted, overturned or
+refused, and retiring it ends it with a reason (`was-rescinded`, `was-wrong`
+or `superseded`). For example, the Claim that brake pads `bp-2210` fit the
+2019 Civic, and what it rests on, a line of the supplier's catalog:
 
 ~~~text
 $ cruxible get CLM-abbe35eeffed479c1b18674c93880802
@@ -203,7 +203,9 @@ rationale: Acme's 2026 catalog lists bp-2210 for the 2019 Civic.
 Every Claim also has a **verdict** that says how well its evidence holds up:
 `supported`, `uncovered` (no admitted evidence), `stale`, `contradicted`, or
 `unresolved`. Reads carry **flags** beside values (`stale`, `contested`,
-`contradicted`, `uncovered`, `unsure_hold`).
+`contradicted`, `uncovered`, `unsure_hold`), so weak knowledge looks weak: an
+agent can tell a catalog-backed fitment from an unsupported guess without
+opening either.
 
 Anyone can **attest** to a Claim with a signature: `cruxible claim attest
 CLAIM_ID` with `--support`, `--contradict` or `--unsure`. An attestation is
@@ -212,27 +214,11 @@ contested `next` rows until what you examined changes. When you have evidence
 against a Claim, attest to it or record what you observed instead, rather than
 minting an adjacent inverse concept ("does not fit").
 
-### What this gives you
-
-- **A shared, checked model.** Because every field is declared, a write that
-  puts a value where it doesn't belong (a category that doesn't exist, a part
-  that "fits" another part) is refused before it lands, with the nearest valid
-  choice. Agents and people describe the same world the same way.
-- **Beliefs, not bare values.** A value without its reason is a rumor. Each
-  Claim says who believed it, why, and on what evidence, so a reader can judge
-  it, and a later reader can find out why it was believed at the time.
-- **Weak knowledge looks weak.** Verdicts and flags travel with every value, so
-  an agent can tell a catalog-backed fitment from an unsupported guess without
-  opening either.
-- **Relations you can follow.** Typed relationships make the model a graph:
-  "which parts fit this car?" and "what replaces this part?" are questions with
-  exact answers.
-
 ## Evidence
 
-### What it is
-
-Every Claim rests on evidence. A Claim's evidence is one or more of:
+Every Claim rests on evidence, so any answer can be traced to the exact
+passage, file or fetched response it came from, not a paraphrase. A Claim's
+evidence is one or more of:
 
 - **its author's own words**: the `--because` text every write carries;
 - **a citation**: a passage quoted from a catalogued workspace file
@@ -244,10 +230,13 @@ Every Claim rests on evidence. A Claim's evidence is one or more of:
 
 A ClaimType's evidence rules say which of these support a value of that field.
 A Claim whose evidence the rules do not admit is still recorded, with the
-verdict `uncovered`, and `next` asks someone to bind better evidence.
+verdict `uncovered`, and `next` asks someone to bind better evidence. If a
+cited passage later changes, `next` reports the drift and asks someone to
+re-check the Claim, so a Claim never silently outlives its evidence.
 
-The commonest evidence is something someone wrote down, and a single write can
-add the prose to a Markdown file and record the Claims that cite it:
+The commonest evidence is something someone wrote down. Rather than keeping
+notes beside the knowledge, where they pile up, a single write can add the
+prose to a Markdown file and record the Claims that rest on it:
 
 ~~~yaml
 because: Acme catalog 2026, brakes page.
@@ -266,21 +255,11 @@ changes:
 ~~~
 
 The note lands in `docs/fitment.md`, where people keep reading it, and the
-fitment lands in the ledger citing it.
+fitment lands in the ledger citing it: the explanation stays readable in the
+repository, and the belief it supports becomes a typed value that queries,
+agents and other teams can use.
 
-### What this gives you
-
-- **Every answer traces to its source.** Ask any Claim what it rests on and
-  you get the exact passage, file or fetched response, not a paraphrase.
-- **Prose and knowledge stay together.** The explanation stays readable in
-  the repository; the belief it supports becomes a typed value that queries,
-  agents and other teams can use. Notes stop piling up beside the knowledge
-  and start backing it.
-- **Drift is noticed.** If a cited passage changes, or a cited file is edited,
-  `next` reports the drift and asks someone to re-check the Claim, instead of
-  the Claim silently outliving its evidence.
-
-### Details
+### Files, citations and Documents
 
 The file catalog, `.cruxible/files.yaml`, gives each workspace file a stable
 name. An entry needs only a `name` and a `locator` (its path) to be cited;
@@ -300,9 +279,11 @@ example bytes a remote agent supplies) goes through `body store` and
 occur in given file bytes: a whole file, a line range, or `grep -n` output on
 standard input.
 
-**Writing sections.** A `write` takes `docs` append and replace operations on
-heading paths the author chooses, and a change cites the section with
-`{kind: section, ref: ID}`, or an existing section with
+### Writing sections
+
+A `write` takes `docs` append and replace operations on heading paths the
+author chooses, and a change cites the section with `{kind: section, ref:
+ID}`, or an existing section with
 `{"kind":"section","file":"docs/fitment.md","section":["Fitment notes","bp-1142 front brake pads"]}`.
 The selected bytes include the heading and its own body, ending before the
 first child. Prose authored by that write counts as the author's own words: a
@@ -320,17 +301,19 @@ can rebase, while a changed target yields a repair. Check each document
 outcome's `written` flag. Editing a Document also names the `files propose`
 follow-up.
 
-**Captures a run must have produced.** A Capture under a contract the daemon
-fetches for (not one recording an author's own words or a quoted file) is
-evidence only when the journal records a run producing it: a Source read the
-run selected, or an `emit_capture` terminal. Anything else holding Capture
-bytes, such as bytes put with `body store` or a Source read its acquisition
-rule did not select, is refused when first cited
-(`capture_production_unproven`). A version-1 Capture under such a contract
-carries no producer receipt and is refused when first cited
-(`capture_v1_citation_refused`); a Claim already citing one keeps it. A
-proposal is held to this again when it is activated, so one admitted before
-the rule existed that cites such a Capture is refused
+### Captures a run must have produced
+
+A Capture under a contract the daemon fetches for (not one recording an
+author's own words or a quoted file) is evidence only when the journal records
+a run producing it: a Source read the run selected, or an `emit_capture`
+terminal. That is what makes fetched evidence trustworthy: bytes can't be
+passed off as something a run observed. Anything else holding Capture bytes,
+such as bytes put with `body store` or a Source read its acquisition rule did
+not select, is refused when first cited (`capture_production_unproven`). A
+version-1 Capture under such a contract carries no producer receipt and is
+refused when first cited (`capture_v1_citation_refused`); a Claim already
+citing one keeps it. A proposal is held to this again when it is activated, so
+one admitted before the rule existed that cites such a Capture is refused
 (`cruxible.proposal.capture_production_unproven`): readmit it to see which
 citation fails, then resubmit it citing a Capture a run produced.
 
@@ -369,12 +352,12 @@ something worth attention but not a proposal, it posts to its inbox.
 
 ## Changing knowledge
 
-### What it is
-
-Nothing changes the ledger except an accepted change, and every change is a
-**change set**: one or more changes, proposed against the generation they
-were made on, checked, and accepted or refused as a whole. Two lanes lead to
-a change set, over the same engine.
+Nothing changes the ledger except an accepted change, and every change, from a
+person, an agent or a Line, is checked against the vocabulary and the current
+state before it can be accepted. A bad change is refused with a reason and a
+repair, and leaves nothing half done. Every change is a **change set**: one or
+more changes, proposed against the generation they were made on, and accepted
+or refused as a whole. Two lanes lead to a change set, over the same engine.
 
 **Values** change with `set` (replace one field's value), `add` (one more
 value in a many-valued field), `retire` (end one Claim, by its ID or by
@@ -423,12 +406,14 @@ with its diagnostics, and `get PROPOSAL_ID` reads any proposal, its status, and
 for a refusal the code, message and repair. `proposal review` shows the
 candidate and how to diff it with plain Git.
 
-The instance's **approval policy** (`ApprovalPolicy:instance`) is either
-`self_approval_allowed`, where an author may approve and activate their own
-changes, or `independent_approval_required`, where a governed change needs an
-approval from someone other than its author. Writes, provider installs, and
-kit adds and removes all land at once when the policy requires no approval
-and the caller's tier may activate, and otherwise stop at a proposal.
+The instance's **approval policy** (`ApprovalPolicy:instance`) decides how much
+review a change needs. It is either `self_approval_allowed`, where an author
+may approve and activate their own changes, or
+`independent_approval_required`, where a governed change needs an approval
+from someone other than its author, so whatever an agent proposes waits for a
+person. Writes, provider installs, and kit adds and removes all land at once
+when the policy requires no approval and the caller's tier may activate, and
+otherwise stop at a proposal.
 
 An **approval** is a signature over the exact candidate, made with the
 approver's private key on the client; only the signature reaches the daemon.
@@ -437,17 +422,18 @@ by compare-and-set. When an approval completes what the candidate needs and the
 approver may activate, the same `proposal approve` activates it (`--hold` signs
 only, and someone runs `proposal activate` later).
 
-A proposal becomes stale when another generation is accepted after it was
-evaluated. Approving, activating or readmitting it recompiles it at the
-current head, as a fresh proposal that supersedes the old one, from the
-authoring, write or Procedure inputs it retained; normal approval policy
-applies, approvals of the old candidate don't carry over, and providers and
-state-tap reads are not repeated. If what it changes has itself moved in the
-meantime, the recompile is refused and `next` lists the proposal for
-`proposal readmit`, which rebases it as a new proposal to review. Proposals of
-other origins keep byte readmission, and this work happens only on those
-explicit operations. `proposal withdraw` retires a proposal that will never
-activate.
+Because every change records the generation it was made on, many writers can
+work at once without silently overwriting each other. A proposal becomes
+stale when another generation is accepted after it was evaluated. Approving,
+activating or readmitting it recompiles it at the current head, as a fresh
+proposal that supersedes the old one, from the authoring, write or Procedure
+inputs it retained; normal approval policy applies, approvals of the old
+candidate don't carry over, and providers and state-tap reads are not
+repeated. If what it changes has itself moved in the meantime, the recompile
+is refused and `next` lists the proposal for `proposal readmit`, which rebases
+it as a new proposal to review. Proposals of other origins keep byte
+readmission, and this work happens only on those explicit operations.
+`proposal withdraw` retires a proposal that will never activate.
 
 ```mermaid
 stateDiagram-v2
@@ -461,24 +447,11 @@ stateDiagram-v2
     Open --> Withdrawn
 ```
 
-### What this gives you
-
-- **Checked before it lands.** Every change, from a person, an agent or a
-  Line, is evaluated against the vocabulary and the current state before it
-  can be accepted. A bad change is refused with a reason and a repair, and
-  leaves nothing half done.
-- **Many writers, safely.** A change records the generation it was made on.
-  If the state it relied on moved, it's recompiled or refused rather than
-  silently overwriting someone else's work.
-- **Review where it matters.** The approval policy decides how much review a
-  change needs. A team can let its own writes land at once and still require a
-  second, signed approval for anything an agent proposes.
-
 ## Who acts
 
-### What it is
-
-Two different things answer "who is this", and they are easy to confuse:
+Every governed act in Cruxible is attributed, so history can say who, not
+only what, and every caller's power is bounded. Two different things answer
+"who is this", and they are easy to confuse:
 
 - A **principal** is a governed identity in the instance's ledger: a public
   key with a kind (owner, ordinary, or recovery). Principals attribute every
@@ -490,8 +463,10 @@ Two different things answer "who is this", and they are easy to confuse:
   reach the daemon's endpoints and caps what it may do with a tier:
   `read_only`, `governed_write` (propose and author), `graph_write` (also
   approve and activate) or `admin` (also operator acts such as credentials,
-  hosts, principal changes, compiler upgrades and provider installs).
-  Credentials are minted, rotated and revoked with `cruxible credential`.
+  hosts, principal changes, compiler upgrades and provider installs). An agent
+  with `governed_write` can propose and author but never approve or accept, so
+  its work always waits for a person. Credentials are minted, rotated and
+  revoked with `cruxible credential`.
 
 A Unix-socket daemon runs with auth off by default: every process of your OS
 user is equally trusted, there are no bearer tokens, and the principal ID a
@@ -506,19 +481,11 @@ principal add` registers another principal and writes its settings to its key
 directory; `cruxible context use --principal ID` switches which principal the
 CLI acts as; `cruxible whoami` reports who you are and whether you can author.
 
-### What this gives you
-
-- **Every act is attributed.** Each Claim, approval and attestation names the
-  principal behind it, so history can say who, not only what.
-- **Agents with bounded power.** A credential's tier caps what a caller may
-  do: an agent with `governed_write` can propose and author but never approve
-  or accept, so its work always waits for a person.
-
 ## Reading
 
-### What it is
-
-Three verbs read accepted state on every surface (CLI, MCP and SDK):
+Reads answer from accepted state, the same way every time: there is no
+ranking or sampling between the question and the answer. Three verbs read on
+every surface (CLI, MCP and SDK):
 
 - **orient** maps the instance: each Subject kind with its fields and counts,
   artifact counts, who you are, what needs attention, and the next commands.
@@ -538,10 +505,11 @@ Three verbs read accepted state on every surface (CLI, MCP and SDK):
   come first; `--detail` goes to `evidence`, `why`, `history`, `proof`, or a
   Document `body`.
 
-`orient`, `query` and `get` accept `--at` to answer as of an earlier generation, and `get
---detail history` lists each value a Subject's fields have held, with who
-changed it, when and why. `since GENERATION` lists exactly what changed after
-a generation.
+The past is a read away, too. `orient`, `query` and `get` accept `--at` to
+answer as of an earlier generation, and `get --detail history` lists each value
+a Subject's fields have held, with who changed it, when and why, so "what did
+we believe about this part last month, and why did it change?" has a direct
+answer. `since GENERATION` lists exactly what changed after a generation.
 
 In a summary read, a text value over 500 characters is shown as a truncated
 preview that says how long the value is and names the exact read of the whole
@@ -552,11 +520,9 @@ reads, each pinned where its preview was read.
 
 ### The floor
 
-The floor is a directory of plain files, `.cruxible/floor/`, with one file per
-Subject (`current/<kind>/<id>.yaml`, each line a value and its Claim ID) and
-the accepted definitions under `ontology/` (a card per kind with each field's
-type, cardinality, evidence, owner and who settles it; INDEX files of the
-ClaimTypes, CaptureContracts, queries, Lines and installed kits), for
+The floor puts the current state where agents already look: a directory of
+plain files, `.cruxible/floor/`, with one file per Subject
+(`current/<kind>/<id>.yaml`, each line a value and its Claim ID), for
 orientation and grep. It is eventually current: it follows accepted state
 shortly after each change, so read exact values after a write with `get` or
 `query`, not the floor.
@@ -568,28 +534,17 @@ accepted generation, while delivery is on (`cruxible floor delivery on|off`;
 with delivery off, pull it with `cruxible floor export` or
 `cx.refresh_workspace()`.
 
-`.cruxible/world.pyi` types the accepted vocabulary as Python types for an
-editor or a model. It depends on the vocabulary alone (Subjects are typed by
-kind), so floor delivery keeps it current by rewriting it only when the
-vocabulary changes; `cruxible stub --out PATH` writes one explicitly.
-
-### What this gives you
-
-- **Answers that are the same every time.** A query at a coordinate always
-  returns the same rows; there is no ranking or sampling between the question
-  and the answer.
-- **The past is a query away.** "What did we believe about this part last
-  month, and why did it change?" is `--at` and `--detail history`, not an
-  archaeology project.
-- **Knowledge where agents already look.** The floor puts the current state
-  in plain files an agent can grep, and the typed stub puts the vocabulary
-  where an editor can complete it.
+`.cruxible/world.pyi` does the same for the vocabulary, as Python types an
+editor or a model can complete. It depends on the vocabulary alone (Subjects
+are typed by kind), so floor delivery keeps it current by rewriting it only
+when the vocabulary changes; `cruxible stub --out PATH` writes one explicitly.
 
 ## Staying in step
 
 Knowledge goes stale in two directions: the world moves on from what the
 ledger says, and the documents people read move on from the ledger. Cruxible
-watches both and tells you.
+watches both and tells you, so nothing depends on someone remembering to
+check.
 
 ### Work queues
 
@@ -597,7 +552,8 @@ Three queues tell you what to do, each a read:
 
 - **next** is what is wrong or waiting on you, each row with the exact
   operation that repairs it: stale or drifted evidence, stale proposals, stale
-  blocks, Lines with gaps, available compiler upgrades, and more.
+  blocks, Lines with gaps, available compiler upgrades, and more. It is one
+  to-do list for people and agents alike.
 - **audit** ranks Claims worth verifying, by stake, weakness and recency.
 - **curation** (beta) lists ontology-maintenance patterns that detection found.
   Detection runs only when a `curation-detect` Trigger aimed at the
@@ -610,9 +566,10 @@ Three queues tell you what to do, each a read:
 
 ### Projection blocks
 
+A summary that no longer matches what the team knows is worse than none.
 A **projection block** is a delimited passage of a workspace page that
-reflects accepted state, with a stamp recording exactly what it reflects.
-Blocks are either:
+reflects accepted state, with a stamp recording exactly what it reflects, so
+Cruxible can tell the moment it no longer does. Blocks are either:
 
 - **rendered**: the output of a named query, written by `block repin
   --render` (a table or a list); or
@@ -654,22 +611,14 @@ passage reflects. A page can hold both projection blocks and passages that
 Claims cite, but never in the same place: a Claim can't cite a block, so a page
 never vouches for itself.
 
-### What this gives you
-
-- **No silent drift.** A summary that no longer matches what the team knows
-  is flagged, and a generated table is regenerated, before anyone acts on it.
-- **One to-do list.** `next` collects everything that needs a person or an
-  agent, each with the command that fixes it, so nothing depends on someone
-  remembering to check.
-
 ## Predictions
 
-### What it is
-
-A **prediction** is a governed test of an accepted Claim: which later
+A belief is only as good as its track record. A **prediction** turns "we
+expect this" into a governed test of an accepted Claim: which later
 observation settles it, by what mechanical rule, within which window. For
 example, that a supplier's stated delivery date for a part holds, checked
-against when the part is recorded as received. `prediction propose` proposes
+against when the part is recorded as received. Settled predictions show the
+team which sources and which agents to trust. `prediction propose` proposes
 one; `prediction settle` settles it from the accepted observation Claim;
 `prediction list CLAIM` lists the accepted predictions that test that exact
 Claim. A prediction is stored as a resolution contract, so `get
@@ -683,13 +632,11 @@ settle (`prediction_deadline_passed`); Cruxible gives an unobserved window no
 meaning of its own, so retire the contract, or record the observation you did
 make as a revised Claim and predict again.
 
-### What this gives you
-
-- **Beliefs that get checked against reality.** A prediction turns "we expect
-  this" into a test with a rule and a deadline, settled from what was actually
-  observed, so the team learns which sources and which agents to trust.
-
 ## Procedures and Lines
+
+Procedures and Lines are how Cruxible keeps knowledge in step with the world
+without someone doing it by hand: pipelines that observe, and act, under
+rules you declare.
 
 ### Procedures, Blueprints and providers
 
@@ -698,12 +645,14 @@ A **Procedure** is a governed, deterministic graph: it reads accepted state
 providers, transforms and routes values, and ends in a result or a terminal
 that retains a Capture, proposes a change set, or settles one. A Procedure
 might fetch a supplier's fitment API for every part, compare what it finds
-with the recorded fitments, and propose the differences. Every provider it
-calls is pinned to one exact implementation, so a run is reproducible from its
-record. `cruxible procedure run NAME INPUT` runs one directly; `get
-Procedure:NAME` says whether it runs directly, only as a Line (its terminals
-act only there), or not at all. A Procedure may declare measurements, which
-`procedure measure` evaluates once due and `procedure readings` reads.
+with the recorded fitments, and propose the differences, each with the
+response it fetched as evidence. Every provider it calls is pinned to one
+exact implementation, so a run is reproducible from its record, and you can
+always answer what a pipeline did and why it proposed what it did. `cruxible
+procedure run NAME INPUT` runs one directly; `get Procedure:NAME` says whether
+it runs directly, only as a Line (its terminals act only there), or not at
+all. A Procedure may declare measurements, which `procedure measure` evaluates
+once due and `procedure readings` reads.
 
 A **Blueprint** is the same definition with one or more provider slots left
 open, each naming the ProviderInterface it needs. It never runs.
@@ -713,8 +662,10 @@ Blueprint and bindings. `get Blueprint:NAME` lists each slot and the installed
 providers that fit it.
 
 A **ProviderInterface** is a typed contract (input, output, effect); a
-**Provider** is an installed package that implements interfaces. An interface
-is registered once per instance by its definition, so every package
+**Provider** is an installed package that implements interfaces. Interfaces
+are what make a Procedure's action space explicit: what it may do to the
+outside world is whatever effects its pinned providers' interfaces declare. An
+interface is registered once per instance by its definition, so every package
 implementing the same definition binds the same registration, and a slot typed
 by it takes any of them; a provider runs only the kinds of input it claims.
 Every instance starts with the built-in `workspace.file` provider. Others
@@ -746,7 +697,8 @@ flowchart LR
     out -->|approved, or settled<br/>under a mandate| state
 ```
 
-Lines are enabled, not armed:
+Autonomy is granted explicitly, and can be taken back. Lines are enabled, not
+armed:
 
 - A Trigger aimed at a Line does nothing until a principal enables the Line
   (`line enable`). Enabling needs governed write, even for a Line that only
@@ -775,19 +727,6 @@ need no enablement.
 "Arm" has one meaning: a labeled branch of a Procedure graph, such as a
 guard's true or false edge, which measurements can read at `arm` grain to
 compare experiment arms.
-
-### What this gives you
-
-- **Observation pipelines.** A Line keeps knowledge in step with the world on
-  a schedule or on an event, and everything it finds arrives with the evidence
-  it fetched, as a change someone can review.
-- **A governed action space.** What a Line may do is declared: which
-  providers it calls, what effects their interfaces allow, and whether it may
-  only propose or may settle on its own under a mandate. Autonomy is granted
-  explicitly and can be taken back.
-- **Reproducible automation.** Every provider is pinned and every run is
-  recorded, so you can always answer what a pipeline did and why it proposed
-  what it did.
 
 ## Kits
 
