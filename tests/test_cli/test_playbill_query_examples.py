@@ -24,7 +24,8 @@ def test_query_coordinator_example_is_local_and_directly_creatable(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    # stdout is the one JSON document; an example's note goes to stderr.
+    payload = json.loads(result.stdout)
     assert payload["kind"] == "query_definition"
     definition = payload["query_definition"]
     assert definition["entry"]["subject_kinds"] == ["project.work_item"]
