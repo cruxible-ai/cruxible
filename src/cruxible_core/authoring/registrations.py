@@ -220,6 +220,17 @@ def release_projection_block_declaration(
     return True
 
 
+def projection_block_registered(
+    instance: PlaybillInstance,
+    *,
+    source_id: str,
+    block_id: str,
+) -> bool:
+    """Whether this instance registers (publishes) this one block: one stat."""
+
+    return _declaration_path(_declaration_root(instance), source_id, block_id).is_file()
+
+
 def released_projection_block_declaration(
     instance: PlaybillInstance,
     *,

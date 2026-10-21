@@ -5747,10 +5747,12 @@ def detach_projection(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Strip retired blocks' markers from these pages, keeping each body as prose.
+    """Strip blocks' markers from these pages, keeping each body as prose.
 
-    Only blocks whose every backing is retired, or that belong to another
-    instance, are detached; live blocks are refused. Edits pages only, never
+    Detaches a block this instance no longer publishes (after `block
+    depublish`), one whose every backing is retired, or one that belongs to
+    another instance. A block the instance still publishes is refused with
+    `block_still_published`; depublish it first. Edits pages only, never
     governed state. ``--dry-run`` reports what would change; ``--commit --at``
     commits only if the pages still hold the bytes the preview read.
     """
@@ -5815,6 +5817,11 @@ def _block_repair_line(repair: Any) -> str:
         return " ".join(parts)
     if operation == "cruxible.block.sync" and values.get("all") is True:
         return "cruxible block sync --all"
+    if operation == "cruxible.block.depublish":
+        file, block = values.get("source_id"), values.get("block_id")
+        if isinstance(file, str) and isinstance(block, str):
+            return f"cruxible block depublish {shlex.quote(file)} {shlex.quote(block)}"
+        return render_served_repair(repair)
     paths = values.get("paths")
     if operation == "cruxible.block.detach" and isinstance(paths, list) and paths:
         return " ".join(["cruxible block detach", *(shlex.quote(str(path)) for path in paths)])

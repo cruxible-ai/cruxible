@@ -180,7 +180,9 @@ class _SyncClient:
         status: str = "current",
         refusal: str | None = None,
         moved: int = 1,
+        registered: bool | None = None,
     ) -> None:
+        self.registered = registered
         self.requests: list[BlockSyncReadRequest] = []
         self.declared: list[dict[str, object]] = []
         self.observed: list[tuple[object, ...]] = []
@@ -266,6 +268,7 @@ class _SyncClient:
                 generation=2,
                 backing=single,
                 current_backings=held,
+                registered=self.registered,
             )
         return BlockSyncReadResult(
             status="successor",
@@ -1234,3 +1237,47 @@ def test_processing_budget_is_incomplete_not_malformed_or_current(tmp_path):
     assert item.reason == "projection_processing_incomplete"
     assert item.detail["status"] == "incomplete"
     assert source.read_bytes() == before
+
+
+def test_detach_strips_a_depublished_live_block_and_refuses_a_published_one(
+    tmp_path: Path,
+) -> None:
+    """Depublish then detach is the take-down; a block still published is refused by name."""
+
+    source = _workspace(tmp_path)
+    before = source.read_bytes()
+    (block,) = parse_projection_blocks(before, source_id="corpus.runbook")
+    body = before[block.body_start : block.body_end]
+
+    kept = sync_projection_blocks(
+        _SyncClient(registered=True),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        detach_paths=(source,),
+    )
+    (item,) = kept.items
+    assert (item.outcome, item.reason) == ("refused", "block_still_published")
+    assert item.repair == RepairOperation(
+        operation="cruxible.block.depublish",
+        arguments={"source_id": "corpus.runbook", "block_id": "pub-example"},
+    )
+    assert kept.has_refusals and source.read_bytes() == before
+
+    detached = sync_projection_blocks(
+        _SyncClient(registered=False),  # type: ignore[arg-type]
+        INSTANCE_ID,
+        workspace=tmp_path,
+        detach_paths=(source,),
+    )
+    assert [item.outcome for item in detached.items] == ["detached"]
+    assert source.read_bytes() == b"PREFIX\n" + body + b"SUFFIX\n"
+
+
+def test_cli_names_depublish_as_the_repair_for_a_published_block() -> None:
+    from cruxible_core.cli.commands.playbill import _block_repair_line
+
+    repair = RepairOperation(
+        operation="cruxible.block.depublish",
+        arguments={"source_id": "corpus.runbook", "block_id": "pub-example"},
+    )
+    assert _block_repair_line(repair) == "cruxible block depublish corpus.runbook pub-example"
