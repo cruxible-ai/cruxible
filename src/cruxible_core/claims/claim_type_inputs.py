@@ -7,8 +7,8 @@ from typing import Annotated, Any, Literal, cast
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
-    Field,
     GetJsonSchemaHandler,
     ValidationError,
     field_validator,
@@ -27,6 +27,8 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.canonical_forms import CanonicalTransform
 from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CONTRACT_ID,
     capture_contract_digest,
     foreign_source_capture_contract,
     parse_capture_contract,
@@ -35,7 +37,6 @@ from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
     V7_AND_LATER_FORMATS,
     ClaimAttestationConsequencePolicy,
-    ClaimEvidenceFreshness,
     ClaimFreshnessDuration,
     ClaimType,
     EvidenceRequirement,
@@ -53,7 +54,9 @@ from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimEvidenceAdmissionPolicy,
 )
+from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.compiler import (
     AUTHORITY_VERBS_COMPILER,
@@ -65,6 +68,7 @@ from cruxible_core.compiler.compiler import (
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import ProposalInspection
+from cruxible_core.service.discovery.field_names import is_reserved_field_name
 
 
 class _StrictClaimTypeInputModel(BaseModel):
@@ -95,6 +99,64 @@ _V7_INPUT_FIELDS = (
     "canonical_form",
 )
 
+#: The structural fields an edit keeps from its predecessor when left out.
+_STRUCTURAL_INPUT_FIELDS = (
+    "allowed_subject_kinds",
+    "object_kind",
+    "literal_schema",
+    "allowed_object_subject_kinds",
+    "cardinality",
+    "permitted_roles",
+    "referent_sensitivity",
+    "evidence_admission_policy",
+    "admission_policy",
+    "resolution_policy",
+    "pins",
+    "evidence_freshness",
+    "attestation_consequence_policy",
+    "unsure_hold_for",
+)
+
+#: What a new ClaimType must state: no default says what it is about or holds.
+_REQUIRED_NEW_FIELDS = ("allowed_subject_kinds", "object_kind", "cardinality")
+
+#: Fields that always have a value: named or left out, never ``null``.
+_NEVER_NULL_FIELDS = (
+    "allowed_subject_kinds",
+    "object_kind",
+    "cardinality",
+    "permitted_roles",
+    "referent_sensitivity",
+    "evidence_admission_policy",
+    "admission_policy",
+    "resolution_policy",
+    "evidence_requirement",
+    "revision_evidence",
+)
+
+
+def _duration_input(value: object) -> object:
+    # An ISO-8601 duration (``P30D``) is the authored spelling; the stored
+    # ClaimType keeps whole microseconds, so the bytes are what they were.
+    if isinstance(value, str):
+        return {"microseconds": parse_iso_duration_microseconds(value)}
+    return value
+
+
+#: A duration as authored: an ISO-8601 string (``P30D``, ``PT12H``) or
+#: ``{microseconds: N}``; lowered to microseconds.
+ClaimDurationInput = Annotated[
+    ClaimFreshnessDuration,
+    BeforeValidator(_duration_input, json_schema_input_type=str | ClaimFreshnessDuration),
+]
+
+
+class ClaimEvidenceFreshnessInput(_StrictClaimTypeInputModel):
+    """How long a Claim's evidence stays current; ``stale_after`` takes ``P30D``."""
+
+    tag: Literal["playbill-claim-evidence-freshness-v1"] = "playbill-claim-evidence-freshness-v1"
+    stale_after: ClaimDurationInput
+
 
 class ClaimTypeMemberDescriptionInput(_StrictClaimTypeInputModel):
     """What one literal enum member means; lowering normalizes and sorts these."""
@@ -104,18 +166,40 @@ class ClaimTypeMemberDescriptionInput(_StrictClaimTypeInputModel):
 
 
 class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
-    """One complete ClaimType, as authored.
+    """One ClaimType, as authored: state what differs from the defaults.
 
-    The five ClaimType v7 fields follow JSON merge-patch (RFC 7396) against the
-    accepted predecessor: a field left out keeps the predecessor's value, so an
+    A new ClaimType states ``predicate``, ``allowed_subject_kinds``,
+    ``object_kind`` and ``cardinality`` (and ``literal_schema`` or
+    ``allowed_object_subject_kinds`` for its object); every other field takes
+    its default, written out in full in the stored ClaimType
+    (``cruxible claim-type propose --template --expanded`` prints them):
+
+    - ``permitted_roles``: ``[default_role]`` when one is stated, else
+      ``[normative]``.
+    - ``evidence_admission_policy``: with ``evidence_requirement`` ``self`` (the
+      default) or ``none``, one own-words rule (``self``, contract
+      ``cruxible.coordinator-self-source-v1``) for every permitted role but
+      ``derivation``, plus one rule per ``anticipated_source_ids`` entry; with
+      ``captured``, the source rules only.
+    - ``admission_policy``: no corroboration or freeze requirements.
+    - ``resolution_policy``: supported, current Claims; ``only_contender``
+      (one) or ``all`` (many); a conflict leaves the field unresolved.
+    - ``evidence_requirement`` ``self``, ``revision_evidence`` ``replace``.
+
+    An edit (a predicate this instance already holds) follows JSON merge-patch
+    (RFC 7396) against the accepted predecessor for every field but
+    ``predicate``: a field left out keeps the predecessor's value, so an
     unrelated edit never drops what the type means or how it is backed. An
-    explicit ``null`` clears ``description``, ``member_descriptions`` (``[]``
-    too) or ``default_role``. ``evidence_requirement`` and ``revision_evidence``
-    always have a value, so they are named or left out, never ``null``. Over a
-    ClaimType before v7 (or none), omitted descriptions start empty, the default
-    role is none, and the requirement and revision evidence are the
-    predecessor's meaning: ``self`` and ``accumulate`` (a new ClaimType takes
-    ``self`` and ``replace``).
+    explicit ``null`` clears a field that may be empty (``literal_schema``,
+    ``evidence_freshness``, ``attestation_consequence_policy``,
+    ``unsure_hold_for``, ``description``, ``member_descriptions`` (``[]`` too),
+    ``default_role``, ``canonical_form``); the others always have a value, so
+    they are named or left out, never ``null``. Over a ClaimType before v7,
+    omitted descriptions start empty, the default role is none, and the
+    requirement and revision evidence are the predecessor's meaning: ``self``
+    and ``accumulate``. Durations (``evidence_freshness.stale_after``,
+    ``unsure_hold_for``) take ISO-8601 (``P30D``) or ``{microseconds: N}``.
+    A rule names a contract by its public or stored name.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -137,31 +221,22 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
         return handler(declared(schema))
 
     predicate: str
-    allowed_subject_kinds: tuple[str, ...]
-    object_kind: Literal["literal", "subject", "exact_content"]
+    allowed_subject_kinds: tuple[str, ...] | None = None
+    object_kind: Literal["literal", "subject", "exact_content"] | None = None
     literal_schema: dict[str, object] | None = None
     allowed_object_subject_kinds: tuple[str, ...] = ()
-    cardinality: Literal["one", "many"]
-    permitted_roles: tuple[
-        Literal["normative", "observation", "environment_binding", "derivation"], ...
-    ]
+    cardinality: Literal["one", "many"] | None = None
+    permitted_roles: (
+        tuple[Literal["normative", "observation", "environment_binding", "derivation"], ...] | None
+    ) = None
     referent_sensitivity: Literal["identity", "shell"] = "identity"
-    evidence_admission_policy: dict[str, object]
-    admission_policy: dict[str, object]
-    resolution_policy: dict[str, object]
+    evidence_admission_policy: dict[str, object] | None = None
+    admission_policy: dict[str, object] | None = None
+    resolution_policy: dict[str, object] | None = None
     pins: tuple[dict[str, object], ...] = ()
-    evidence_freshness: ClaimEvidenceFreshness | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-    attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-    unsure_hold_for: ClaimFreshnessDuration | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
+    evidence_freshness: ClaimEvidenceFreshnessInput | None = None
+    attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = None
+    unsure_hold_for: ClaimDurationInput | None = None
     #: What the predicate means (ClaimType v7), NFC-normalized and trimmed.
     #: Omitted: kept from the predecessor. ``null``: cleared.
     description: str | None = None
@@ -178,7 +253,8 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     #: ClaimType takes ``replace``. Never ``null``.
     revision_evidence: RevisionEvidence | None = None
     #: The ordered transforms every literal value is stored and compared in
-    #: (ClaimType v8; ``contracts.canonical_forms``). Stating it lowers to v8.
+    #: (ClaimType v8; ``contracts.canonical_forms``). Stating it lowers to v8,
+    #: which a SubjectKind key needs (``[]`` states no transform).
     #: Omitted: kept from the predecessor (none before v8). ``null`` or ``[]``:
     #: no transform.
     canonical_form: tuple[CanonicalTransform, ...] | None = None
@@ -186,23 +262,23 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
 
     @model_validator(mode="after")
     def _stated_semantics(self) -> "ClaimTypeInputRecord":
-        for field in ("evidence_requirement", "revision_evidence"):
+        for field in _NEVER_NULL_FIELDS:
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} cannot be null: name a value or leave it out")
         return self
 
     @model_serializer(mode="wrap")
     def _merge_patch_wire(self, handler: Any) -> dict[str, object]:
-        # Absent and null mean different things for the v7 fields, so the wire
-        # keeps exactly the ones the author stated, null included.
+        # Absent and null mean different things, so the wire keeps exactly the
+        # fields the author stated, null included.
         payload = cast(dict[str, object], handler(self))
-        for field in _V7_INPUT_FIELDS:
-            if field not in self.model_fields_set:
+        for field in tuple(payload):
+            if field != "predicate" and field not in self.model_fields_set:
                 payload.pop(field, None)
         return payload
 
     def states(self, field: str) -> bool:
-        """Whether the author stated this v7 field (a ``null`` counts)."""
+        """Whether the author stated this field (a ``null`` counts)."""
 
         return field in self.model_fields_set
 
@@ -216,12 +292,184 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
         return value
 
 
+class ClaimTypeInputIncomplete(FormatError):
+    """A new ClaimType leaves out a field no default can fill."""
+
+    error_code = "cruxible.claim_type.input_incomplete"
+
+
+class ClaimTypeEvidenceRulesRequired(FormatError):
+    """A captured-only ClaimType names no source its evidence could come from."""
+
+    error_code = "cruxible.claim_type.evidence_rules_required"
+
+
+class ClaimTypeNumberSchemaIntegerOnly(FormatError):
+    """A literal schema admits non-integer numbers, which no Claim value can hold."""
+
+    error_code = "cruxible.claim_type.number_schema_integer_only"
+
+
+def _admitted_roles(roles: tuple[str, ...]) -> list[str]:
+    return sorted({role for role in roles if role != "derivation"}, key=lambda r: r.encode())
+
+
+def _default_evidence_policy(
+    roles: tuple[str, ...], requirement: str, source_ids: tuple[str, ...]
+) -> dict[str, object]:
+    """The rules a new ClaimType takes when it states none (names in public spelling)."""
+
+    claim_roles = _admitted_roles(roles)
+    rules: list[dict[str, object]] = []
+    if requirement != "captured" and claim_roles:
+        rules.append(
+            {
+                "rule_id": "self",
+                "claim_roles": claim_roles,
+                "capture_contracts": [public_name(COORDINATOR_SELF_SOURCE_CONTRACT_ID)],
+                "evidence_kinds": ["self_asserted"],
+                "admission": "direct",
+                "subject_binding": "exact_claim_subject",
+            }
+        )
+    if claim_roles:
+        for source_id in source_ids:
+            contract = foreign_source_capture_contract(source_id)
+            rules.append(
+                {
+                    "rule_id": f"source-{source_id}",
+                    "claim_roles": claim_roles,
+                    "capture_contracts": [public_name(contract.identity.name)],
+                    "evidence_kinds": ["self_asserted"],
+                    "admission": "direct",
+                    "subject_binding": "exact_claim_subject",
+                }
+            )
+    if requirement == "captured" and not rules:
+        raise ClaimTypeEvidenceRulesRequired(
+            f"{ClaimTypeEvidenceRulesRequired.error_code}: evidence_requirement captured "
+            "admits only captured evidence, and this ClaimType names no source: list the "
+            "sources in anticipated_source_ids, or state evidence_admission_policy"
+        )
+    rules.sort(key=lambda rule: str(rule["rule_id"]).encode("utf-8"))
+    return {"rules": rules}
+
+
+def _inherited_policy(policy: dict[str, object]) -> dict[str, object]:
+    """A predecessor's rules as input: an exact-digest rule's empty reducer list
+    has no identity-rule spelling, so it is dropped; lowering then maps each
+    digest to its contract's identity, as for authored digest rules."""
+
+    rules = policy.get("rules")
+    if not isinstance(rules, list):
+        return policy
+    return {
+        **policy,
+        "rules": [
+            {
+                key: value
+                for key, value in rule.items()
+                if not (key == "allowed_reducer_digests" and not value)
+            }
+            if isinstance(rule, dict)
+            else rule
+            for rule in rules
+        ],
+    }
+
+
+def claim_type_input_defaults(
+    value: ClaimTypeInputRecord, predecessor: ClaimType | None
+) -> ClaimTypeInputRecord:
+    """The same input with every structural field stated.
+
+    Over a predecessor, a field left out takes the predecessor's value
+    (merge-patch); over none, it takes its default, and a field no default can
+    fill refuses ``cruxible.claim_type.input_incomplete``. A minimal input and
+    its spelled-out equivalent therefore lower to one ClaimType and one digest.
+    The ClaimType v7 and v8 fields are merged later, by lowering, exactly as
+    before; a new ClaimType states its evidence requirement and revision
+    evidence here so the expanded form shows them.
+    """
+
+    data = value.model_dump(mode="json")
+    stated = value.model_fields_set
+    if predecessor is not None:
+        prior = predecessor.model_dump(mode="json")
+        for field in _STRUCTURAL_INPUT_FIELDS:
+            if field not in stated and field in prior:
+                data[field] = prior[field]
+        if "evidence_admission_policy" not in stated:
+            data["evidence_admission_policy"] = _inherited_policy(
+                cast(dict[str, object], data["evidence_admission_policy"])
+            )
+        return ClaimTypeInputRecord.model_validate(data)
+    missing = [field for field in _REQUIRED_NEW_FIELDS if field not in stated]
+    if missing:
+        raise ClaimTypeInputIncomplete(
+            f"{ClaimTypeInputIncomplete.error_code}: a new ClaimType states "
+            f"{', '.join(missing)}; every other field has a default "
+            "(`cruxible claim-type propose --template --expanded` shows them)"
+        )
+    if "permitted_roles" not in stated:
+        data["permitted_roles"] = [value.default_role or "normative"]
+    requirement = value.evidence_requirement or "self"
+    if "evidence_requirement" not in stated:
+        data["evidence_requirement"] = requirement
+    if "revision_evidence" not in stated:
+        data["revision_evidence"] = "replace"
+    if "evidence_admission_policy" not in stated:
+        data["evidence_admission_policy"] = _default_evidence_policy(
+            tuple(data["permitted_roles"]),
+            requirement,
+            value.anticipated_source_ids,
+        )
+    if "admission_policy" not in stated:
+        data["admission_policy"] = {"corroboration_requirements": [], "freeze_requirements": []}
+    if "resolution_policy" not in stated:
+        many = value.cardinality == "many"
+        data["resolution_policy"] = {
+            "cardinality": value.cardinality,
+            "eligible_verdicts": ["supported"],
+            "required_basis_kinds": [],
+            "require_current": True,
+            "selector": "all" if many else "only_contender",
+            "conflict_result": "unresolved",
+        }
+    return ClaimTypeInputRecord.model_validate(data)
+
+
+def _admits_fraction(schema: object) -> bool:
+    if isinstance(schema, dict):
+        declared = schema.get("type")
+        if declared == "number" or (isinstance(declared, list) and "number" in declared):
+            return True
+        return any(_admits_fraction(item) for item in schema.values())
+    if isinstance(schema, list):
+        return any(_admits_fraction(item) for item in schema)
+    return False
+
+
+def _refuse_number_schema(value: ClaimTypeInputRecord) -> None:
+    """A stated ``type: number`` admits fractions no canonical value can encode."""
+
+    if value.states("literal_schema") and _admits_fraction(value.literal_schema):
+        raise ClaimTypeNumberSchemaIntegerOnly(
+            f"{ClaimTypeNumberSchemaIntegerOnly.error_code}: literal_schema admits "
+            "`type: number`, but Claim values are integers or text (canonical JSON holds no "
+            "fractions). Repair: state `type: integer` in a scaled unit (cents, basis points), "
+            "or `type: string` with a pattern for a decimal"
+        )
+
+
 class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
     code: Annotated[
         Literal[
             "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
             "cruxible.claim_type.anticipated_source_contract_omitted",
             "cruxible.claim_type.attestation_threshold_disabled",
+            "cruxible.claim_type.permitted_role_unadmitted",
+            "cruxible.claim_type.field_name_reserved",
         ],
         CurrentCode,
     ]
@@ -246,44 +494,24 @@ class ClaimTypeInputProposalResultV1(_StrictClaimTypeInputModel):
     lint: ClaimTypeProposalLintV1
 
 
-def claim_type_input_template() -> ClaimTypeInputRecord:
-    """Return the complete literal ClaimType input shown by the CLI template surface."""
+def claim_type_input_template(*, expanded: bool = False) -> ClaimTypeInputRecord:
+    """The ClaimType input the CLI template surface prints.
 
-    source_id = "repo.replace-me"
-    contract = foreign_source_capture_contract(source_id)
-    return ClaimTypeInputRecord(
+    The minimal form states only what no default can fill, plus
+    ``canonical_form: []`` so the literal one-valued field can key a SubjectKind
+    (a key needs ClaimType v8). ``expanded`` states every default the minimal
+    form takes, from the same function lowering applies.
+    """
+
+    minimal = ClaimTypeInputRecord(
         predicate="project.work_item.status",
         allowed_subject_kinds=("project.work_item",),
         object_kind="literal",
         literal_schema={"type": "string"},
         cardinality="one",
-        permitted_roles=("normative", "observation"),
-        evidence_admission_policy={
-            "rules": [
-                {
-                    "rule_id": f"source-{source_id}",
-                    "claim_roles": ["normative", "observation"],
-                    "capture_contracts": [contract.identity.qualified],
-                    "evidence_kinds": ["self_asserted"],
-                    "admission": "direct",
-                    "subject_binding": "exact_claim_subject",
-                }
-            ]
-        },
-        admission_policy={
-            "corroboration_requirements": [],
-            "freeze_requirements": [],
-        },
-        resolution_policy={
-            "cardinality": "one",
-            "eligible_verdicts": ["supported"],
-            "required_basis_kinds": [],
-            "require_current": True,
-            "selector": "only_contender",
-            "conflict_result": "unresolved",
-        },
-        anticipated_source_ids=(source_id,),
+        canonical_form=(),
     )
+    return claim_type_input_defaults(minimal, None) if expanded else minimal
 
 
 def identity_rules_supported(compiler: CompilerCoordinate) -> bool:
@@ -312,10 +540,17 @@ def _contract_identities(tree: Mapping[str, bytes], source_ids: tuple[str, ...])
 
 
 def _contract_ref(value: object) -> ArtifactRef:
+    # A rule names a contract by its public name or its stored identity; both
+    # map to the stored identity, which is what evidence is captured under.
     if isinstance(value, dict):
-        return ArtifactRef.model_validate(value)
+        ref = ArtifactRef.model_validate(value)
+        name = stored_contract_name(ref.target.name)
+        if name == ref.target.name:
+            return ref
+        return ref.model_copy(update={"target": ArtifactIdentity(kind=ref.target.kind, name=name)})
     if not isinstance(value, str):
         raise ClaimTypeInputReferenceError("a capture_contracts entry must be a contract name")
+    value = stored_contract_name(value)
     identity = (
         parse_artifact_identity(value)
         if value.partition(":")[0] == "CaptureContract" and ":" in value
@@ -443,12 +678,11 @@ def _v7_fields(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> di
         default_role = value.default_role
     else:
         default_role = None if v7 is None else v7.default_role
-    if default_role is not None and (
-        default_role == "derivation" or default_role not in value.permitted_roles
-    ):
+    permitted = value.permitted_roles or ()
+    if default_role is not None and (default_role == "derivation" or default_role not in permitted):
         raise ClaimTypeDefaultRoleNotPermitted(
             f"{ClaimTypeDefaultRoleNotPermitted.error_code}: default_role {default_role!r} "
-            f"must be one of the permitted roles ({', '.join(value.permitted_roles)}) and "
+            f"must be one of the permitted roles ({', '.join(permitted)}) and "
             "cannot be derivation; name another, or pass default_role: null to clear it"
         )
     return {
@@ -500,6 +734,8 @@ def lower_claim_type_input(
     predecessor = None
     if path in tree:
         predecessor = parse_claim_type(tree[path], path=path)
+    _refuse_number_schema(value)
+    value = claim_type_input_defaults(value, predecessor)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
     for field in _V7_INPUT_FIELDS:
@@ -512,12 +748,13 @@ def lower_claim_type_input(
     # Every rule names its contracts by identity. A rule naming an exact digest
     # no accepted contract version carries has no identity to follow, so it is
     # refused rather than authored as a v5 exact-digest rule.
-    raw_rules = value.evidence_admission_policy.get("rules", ())
+    policy = value.evidence_admission_policy or {}
+    raw_rules = policy.get("rules", ())
     needs_digest_lookup = isinstance(raw_rules, list | tuple) and any(
         isinstance(rule, dict) and bool(rule.get("capture_contract_digests")) for rule in raw_rules
     )
     identity_policy = _identity_evidence_policy(
-        value.evidence_admission_policy,
+        policy,
         identities=(
             _contract_identities(tree, value.anticipated_source_ids) if needs_digest_lookup else {}
         ),
@@ -552,25 +789,44 @@ def lint_claim_type_input(
     source_ids = set(anticipated_source_ids)
     if isinstance(value, ClaimTypeInputRecord):
         source_ids.update(value.anticipated_source_ids)
-    # Flow-A binding derives this exact deterministic contract and carries it in
-    # the governed Claim candidate. The dormant direct-self-asserted constant has
-    # no production producer or acceptor, so it is intentionally not resolvable.
-    resolvable_contracts: dict[str, str] = {}
+    # The first own-words write installs the coordinator self-source contract
+    # (Flow-A binding derives these exact deterministic bytes), so a rule naming
+    # it resolves on a fresh instance too. The dormant direct-self-asserted
+    # constant has no production producer or acceptor, so it is not resolvable.
+    resolvable_contracts: dict[str, str] = {
+        capture_contract_digest(
+            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+        ).tagged: COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.qualified
+    }
     for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
         contract = foreign_source_capture_contract(source_id)
         resolvable_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
+    effective = value
     with instance.bind_accepted_projection(coordinate) as projection:
         accepted_contracts.update(
             (row.artifact_digest, row.identity)
             for row in projection.typed.envelopes(kind="capture-contract")
         )
+        if isinstance(value, ClaimTypeInputRecord):
+            # Lint what lowering writes: the defaults, or the predecessor's
+            # values an edit keeps. One read: this predicate's accepted type.
+            prior = projection.typed.source(f"ClaimType:{value.predicate}")
+            try:
+                effective = claim_type_input_defaults(
+                    value, prior if isinstance(prior, ClaimType) else None
+                )
+            except (FormatError, ValidationError):
+                effective = value
     resolvable_contracts.update(accepted_contracts)
 
-    policy = (
-        value.evidence_admission_policy
-        if isinstance(value, ClaimTypeInputRecord)
-        else value.evidence_admission_policy.model_dump(mode="json")
-    )
+    if isinstance(effective, ClaimTypeInputRecord):
+        policy = effective.evidence_admission_policy or {}
+        roles: tuple[str, ...] = effective.permitted_roles or ()
+        subject_kinds: tuple[str, ...] = effective.allowed_subject_kinds or ()
+    else:
+        policy = effective.evidence_admission_policy.model_dump(mode="json")
+        roles = effective.permitted_roles
+        subject_kinds = effective.allowed_subject_kinds
     raw_rules = policy.get("rules", [])
     rules = raw_rules if isinstance(raw_rules, list | tuple) else []
     warnings: list[ClaimTypeLintWarningV1] = []
@@ -650,11 +906,40 @@ def lint_claim_type_input(
                 replacement_rule_fragment={"capture_contract_digests": [contract_digest]},
             )
         )
-    consequence = (
-        value.attestation_consequence_policy
-        if isinstance(value, ClaimTypeInputRecord)
-        else value.attestation_consequence_policy
-    )
+    rule_roles = {
+        role
+        for raw_rule in rules
+        if isinstance(raw_rule, dict)
+        for role in (raw_rule.get("claim_roles") or ())
+        if isinstance(role, str)
+    }
+    for index, role in enumerate(roles):
+        # A write in a permitted role no rule admits lands uncovered. A policy
+        # with no rules at all is a deliberate shape (a key ClaimType's Claims
+        # are covered by their creation), so only a role/rule mismatch warns.
+        if rule_roles and role not in rule_roles:
+            warnings.append(
+                ClaimTypeLintWarningV1(
+                    code="cruxible.claim_type.permitted_role_unadmitted",
+                    field_path=f"$.permitted_roles[{index}]",
+                    replacement_rule_fragment={
+                        "claim_roles": sorted(rule_roles | {role}, key=lambda r: r.encode())
+                    },
+                )
+            )
+    for kind in subject_kinds:
+        short = value.predicate.removeprefix(f"{kind}.")
+        if short != value.predicate and is_reserved_field_name(short):
+            # The read verbs reserve this name, so the field always reads under
+            # its full predicate.
+            warnings.append(
+                ClaimTypeLintWarningV1(
+                    code="cruxible.claim_type.field_name_reserved",
+                    field_path="$.predicate",
+                    replacement_rule_fragment={"reserved_field_name": short},
+                )
+            )
+    consequence = effective.attestation_consequence_policy
     for index, rule in enumerate(() if consequence is None else consequence.rules):
         # A threshold of zero escalates nothing: `next` treats the rule as disabled.
         if rule.minimum_independent_control_components == 0:
@@ -673,7 +958,12 @@ def lint_claim_type_input(
 
 
 __all__ = [
+    "ClaimDurationInput",
+    "ClaimEvidenceFreshnessInput",
+    "ClaimTypeEvidenceRulesRequired",
+    "ClaimTypeInputIncomplete",
     "ClaimTypeInputProposalResultV1",
+    "ClaimTypeNumberSchemaIntegerOnly",
     "ClaimTypeInputValidationError",
     "ClaimTypeDefaultRoleNotPermitted",
     "ClaimTypeInputRecord",
@@ -681,6 +971,7 @@ __all__ = [
     "ClaimTypeMemberDescriptionsStale",
     "ClaimTypeLintWarningV1",
     "ClaimTypeProposalLintV1",
+    "claim_type_input_defaults",
     "claim_type_input_template",
     "identity_rules_supported",
     "lint_claim_type_input",

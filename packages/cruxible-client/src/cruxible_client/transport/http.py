@@ -710,11 +710,17 @@ class CruxibleClient:
         base: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
         dry_run: bool | None = None,
         at: str | None = None,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.ProposalInspection:
+        """Propose one Document; it lands when policy and the caller allow it.
+
+        ``accept="never"`` keeps the proposal; ``outcome`` says which happened.
+        """
         payload: dict[str, Any] = {
             "shell": dict(shell),
             "proposal_name": proposal_name,
             "source_compilation_digest": source_compilation_digest,
+            "accept": accept,
             **_change_control(dry_run, at),
         }
         if base is not None:
@@ -1029,13 +1035,19 @@ class CruxibleClient:
         proposal_name: str,
         dry_run: bool | None = None,
         at: str | None = None,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.ProposalInspection:
+        """Propose one catalogued file's change; it lands when policy and caller allow.
+
+        ``accept="never"`` keeps the proposal; ``outcome`` says which happened.
+        """
         response = self._client.post(
             f"/api/v1/{instance_id}/files/proposals",
             json={
                 "bundle": dict(bundle),
                 "file": file,
                 "proposal_name": proposal_name,
+                "accept": accept,
                 **_change_control(dry_run, at),
             },
         )
@@ -1071,12 +1083,15 @@ class CruxibleClient:
         base: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
         dry_run: bool | None = None,
         at: str | None = None,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.ClaimTypeInputProposalResult:
+        """Adopt a built-in this instance does not hold yet; lands when allowed."""
         response = self._client.post(
             f"/api/v1/{instance_id}/claim-types/proposals",
             json={
                 "tag": "cruxible-builtin-claim-type-propose-request-v1",
                 "builtin": builtin,
+                "accept": accept,
                 **self._proposal_payload(proposal_name=proposal_name, base=base),
                 **_change_control(dry_run, at),
             },
@@ -1092,12 +1107,18 @@ class CruxibleClient:
         base: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
         dry_run: bool | None = None,
         at: str | None = None,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.ClaimTypeInputProposalResult:
+        """Propose one ClaimType (state what differs from the defaults); lands when allowed.
+
+        ``accept="never"`` keeps the proposal; ``proposal.outcome`` says which.
+        """
         response = self._client.post(
             f"/api/v1/{instance_id}/claim-types/proposals",
             json={
                 "tag": "playbill-claim-type-input-propose-request-v1",
                 "input": dict(input),
+                "accept": accept,
                 **self._proposal_payload(proposal_name=proposal_name, base=base),
                 **_change_control(dry_run, at),
             },

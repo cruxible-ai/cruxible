@@ -388,8 +388,9 @@ def register_tools(
         source_compilation_digest: str | None = None,
         dry_run: DryRun = None,
         at: PreviewAt = None,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.ProposalInspection:
-        """Propose a governed Document create or supersession."""
+        """Propose a governed Document create or supersession; lands when allowed."""
         return handlers.handle_playbill_propose_document(
             require_instance_id(instance_id),
             shell.model_dump(mode="json"),
@@ -397,6 +398,7 @@ def register_tools(
             source_compilation_digest,
             dry_run=dry_run,
             at=at,
+            accept=accept,
         )
 
     @_tool
@@ -639,8 +641,9 @@ def register_tools(
         root_aliases: list[McpRootAlias] | None = None,
         dry_run: DryRun = None,
         at: PreviewAt = None,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.ProposalInspection:
-        """Propose one catalogued file as its Document; the adapter reads the file."""
+        """Propose one catalogued file as its Document; lands when allowed."""
         return handlers.handle_playbill_files_propose(
             require_instance_id(instance_id),
             file=file,
@@ -651,6 +654,7 @@ def register_tools(
             root_aliases=_root_aliases(root_aliases),
             dry_run=dry_run,
             at=at,
+            accept=accept,
         )
 
     @_tool
@@ -708,8 +712,9 @@ def register_tools(
         proposal_name: str,
         dry_run: DryRun = None,
         at: PreviewAt = None,
+        accept: AuthoringAccept = "if_allowed",
     ) -> contracts.ClaimTypeInputProposalResult:
-        """Propose one governed ClaimType interface, or adopt a builtin by name."""
+        """Propose one governed ClaimType, or adopt a builtin by name; lands when allowed."""
         if (input is None) == (builtin is None):
             raise ValueError("pass exactly one of input or builtin")
         if builtin is not None:
@@ -719,6 +724,7 @@ def register_tools(
                 proposal_name,
                 dry_run=dry_run,
                 at=at,
+                accept=accept,
             )
         assert input is not None
         return handlers.handle_playbill_propose_claim_type(
@@ -727,6 +733,7 @@ def register_tools(
             proposal_name,
             dry_run=dry_run,
             at=at,
+            accept=accept,
         )
 
     @_tool

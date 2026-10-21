@@ -177,7 +177,8 @@ _TYPE_CHECKS: Mapping[str, tuple[type, ...]] = {
     "boolean": (bool,),
     "integer": (int,),
     "null": (type(None),),
-    "number": (int, float),
+    # Claim values are canonical JSON, which holds no fractions: a number is an integer.
+    "number": (int,),
     "object": (dict,),
     "string": (str,),
 }

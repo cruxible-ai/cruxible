@@ -266,7 +266,11 @@ def key_claim_type_problem(
             "change or an earlier one"
         )
     if shape.artifact_format != "playbill-claim-type-v8":
-        return f"key ClaimType {predicate!r} must be a ClaimType v8 (it declares a canonical form)"
+        return (
+            f"key ClaimType {predicate!r} must be a ClaimType v8 (it declares a canonical form); "
+            "repair: state canonical_form ([] for none) in its `cruxible claim-type propose "
+            "--input` record, as `cruxible authoring example subject-kind` shows"
+        )
     if shape.object_kind != "literal":
         return f"key ClaimType {predicate!r} must take a literal value"
     if shape.cardinality != "one":

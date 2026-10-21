@@ -28,6 +28,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
+from cruxible_client.contracts.public_names import stored_contract_name
 
 ClaimTypeProfileId = Literal[
     "ordinary-project-fact-v1",
@@ -226,7 +227,9 @@ def _contract_ref(parameters: dict[str, object], key: str) -> ArtifactRef:
     value = parameters[key]
     if not isinstance(value, str) or not value:
         raise AuthoringProfileError(f"profile parameter {key!r} must name a CaptureContract")
-    name = value.removeprefix("CaptureContract:")
+    # Public (``cruxible.``) and stored spellings of a reserved contract name
+    # the same stored identity.
+    name = stored_contract_name(value.removeprefix("CaptureContract:"))
     try:
         target = ArtifactIdentity(kind="CaptureContract", name=name)
     except ValueError as exc:

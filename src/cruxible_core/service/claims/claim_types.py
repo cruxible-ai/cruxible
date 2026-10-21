@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import difflib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -15,7 +15,7 @@ from cruxible_client.contracts.claim_types import (
     claim_type_path,
     render_claim_type,
 )
-from cruxible_client.contracts.errors import ClaimNotFoundError
+from cruxible_client.contracts.errors import ClaimNotFoundError, FormatError
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputProposalResultV1,
@@ -23,6 +23,11 @@ from cruxible_core.claims.claim_type_inputs import (
     identity_rules_supported,
     lint_claim_type_input,
     lower_claim_type_input,
+)
+from cruxible_core.claims.claim_type_migrations import (
+    ClaimTypeDependentDisposition,
+    build_claim_type_migration_candidate,
+    claim_type_migration_inventory,
 )
 from cruxible_core.governance.actor_context import TransportCapability
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -135,6 +140,13 @@ def service_propose_playbill_builtin_claim_type(
 
     claim_type = builtin_claim_type(builtin)
     coordinate = _resolve_coordinate(instance, base)
+    held = instance.immutable_tree_at(coordinate.git_oid).get(claim_type_path(builtin))
+    if held is not None:
+        raise (
+            BuiltinClaimTypeAlreadyAdopted(builtin)
+            if held == render_claim_type(claim_type)
+            else BuiltinClaimTypeSuperseded(builtin)
+        )
     inspection = service_propose_playbill_claim_type(
         instance,
         claim_type=claim_type,
@@ -170,8 +182,30 @@ def service_propose_playbill_claim_type_input(
     claim_type = lower_claim_type_input(
         input, tree=tree, identity_rules=identity_rules_supported(coordinate.compiler)
     )
-    candidate_tree = tree.fork()
-    candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
+    path = claim_type_path(claim_type.predicate)
+    inventory = (
+        claim_type_migration_inventory(tree, root=claim_type.identity) if path in tree else ()
+    )
+    candidate_tree: Mapping[str, bytes]
+    if inventory:
+        # An edit of a ClaimType with live Claims is a succession: every
+        # dependent is carried to the successor as it stands (carry_all), the
+        # same candidate `claim-type migrate` builds. Work grows with this
+        # ClaimType's closure only.
+        candidate_tree, _dispositions, _warnings = build_claim_type_migration_candidate(
+            tree=tree,
+            type_path=path,
+            successor=claim_type,
+            inventory=inventory,
+            dispositions=tuple(
+                ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
+                for item in inventory
+            ),
+        )
+    else:
+        forked = tree.fork()
+        forked[path] = render_claim_type(claim_type)
+        candidate_tree = forked
     ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type input")
     inspection = admit_proposal(
         instance,
@@ -193,6 +227,38 @@ def service_propose_playbill_claim_type_input(
         proposal=inspection,
         lint=lint_claim_type_input(instance, input, coordinate=coordinate),
     )
+
+
+class BuiltinClaimTypeAlreadyAdopted(FormatError):
+    """The instance already holds this built-in ClaimType, byte for byte."""
+
+    error_code = "cruxible.claim_type.builtin_already_adopted"
+
+    def __init__(self, builtin: str) -> None:
+        self.repair = RepairOperation(
+            operation="cruxible.get", arguments={"ref": f"ClaimType:{builtin}"}
+        )
+        super().__init__(
+            f"{self.error_code}: this instance already holds the built-in ClaimType "
+            f"{builtin}; nothing to adopt. Read it: `cruxible get ClaimType:{builtin}`"
+        )
+
+
+class BuiltinClaimTypeSuperseded(FormatError):
+    """The instance holds its own version of a built-in ClaimType's predicate."""
+
+    error_code = "cruxible.claim_type.builtin_superseded"
+
+    def __init__(self, builtin: str) -> None:
+        self.repair = RepairOperation(
+            operation="cruxible.get", arguments={"ref": f"ClaimType:{builtin}"}
+        )
+        super().__init__(
+            f"{self.error_code}: this instance holds a ClaimType {builtin} that differs from "
+            "the built-in (an edit or an earlier version), so adopting would replace it; "
+            f"read it with `cruxible get ClaimType:{builtin}` and change it with "
+            "`cruxible claim-type propose --input`"
+        )
 
 
 def service_get_playbill_claim_type(
@@ -244,6 +310,8 @@ class ClaimTypeNotFoundError(ClaimNotFoundError):
 
 
 __all__ = [
+    "BuiltinClaimTypeAlreadyAdopted",
+    "BuiltinClaimTypeSuperseded",
     "ClaimTypeNotFoundError",
     "PlaybillClaimTypeView",
     "service_get_playbill_claim_type",

@@ -127,7 +127,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_files_propose": (
         "Use when a catalogued workspace file should become its Document's next revision: "
-        "name the catalog file; this adapter reads and compiles the file and proposes it."
+        "name the catalog file; this adapter reads and compiles the file and proposes it, "
+        "landing it when policy and your tier allow (accept=never proposes only)."
     ),
     "cruxible_compiler_upgrade": (
         "Use to propose a compiler upgrade (default: the daemon's compiler, at the head). "
@@ -138,9 +139,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_claim_type_propose": (
         "Use when you need a governed ClaimType before any Claim can state that predicate; "
-        "pass a complete ClaimTypeInputRecord whose evidence rules match its capture contracts. "
-        "Generate a lawful starting payload with "
-        "`cruxible claim-type propose --template`."
+        "pass a ClaimTypeInputRecord: a new one states its subject kinds, object and "
+        "cardinality, and every other field "
+        "has a default (`cruxible claim-type propose --template --expanded`); an edit states "
+        "only what changes. Lands when policy and your tier allow; accept=never proposes only."
     ),
     "cruxible_claim_type_migrate": (
         "Use when a ClaimType and all of its dependent Claim dispositions must change atomically."

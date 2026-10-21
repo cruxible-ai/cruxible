@@ -847,6 +847,8 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
             lifecycle=DocumentLifecycle(revision=1),
         ),
         proposal_name="review-candidate",
+        # The open proposal is what the workspace advertises; keep it open.
+        accept="never",
     )
     proposal_id = proposed.proposal["admission"]["proposal_id"]
     proposal_key = proposal_id.removeprefix("sha256:")

@@ -27,7 +27,6 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
-    foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicy,
@@ -382,10 +381,11 @@ def test_claim_type_template_proposes_without_policy_lint_in_a_fresh_world(
 
     assert result.proposal.proposal.candidate is not None
     assert result.lint.warnings == ()
-    template = claim_type_input_template()
-    source_id = template.anticipated_source_ids[0]
-    assert template.evidence_admission_policy["rules"][0]["capture_contracts"] == [
-        foreign_source_capture_contract(source_id).identity.qualified
+    # The minimal template takes the default own-words rule, named publicly.
+    expanded = claim_type_input_template(expanded=True)
+    assert expanded.evidence_admission_policy is not None
+    assert expanded.evidence_admission_policy["rules"][0]["capture_contracts"] == [
+        "cruxible.coordinator-self-source-v1"
     ]
 
 
@@ -427,7 +427,13 @@ def test_fresh_template_claim_reaches_supported_through_flow_a(
     tmp_path: Path,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
-    template = claim_type_input_template()
+    # A named source adds its default rule beside the own-words one.
+    template = claim_type_input_template().model_copy(
+        update={
+            "anticipated_source_ids": ("repo.replace-me",),
+            "permitted_roles": ("normative", "observation"),
+        }
+    )
     claim_type_proposal = service_propose_playbill_claim_type_input(
         instance,
         input=template,

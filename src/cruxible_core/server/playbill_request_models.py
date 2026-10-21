@@ -118,6 +118,9 @@ class ProposeDocumentRequest(_StrictPlaybillRequest):
     base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
+    #: if_allowed: land the change when policy and the caller allow it;
+    #: never: keep the proposal.
+    accept: AuthoringAccept = "if_allowed"
 
 
 class CompilerUpgradeRequest(_StrictPlaybillRequest):
@@ -167,6 +170,9 @@ class FileProposeRequest(FileBundleRequest):
     proposal_name: str
     dry_run: DryRun = None
     at: PreviewAt = None
+    #: if_allowed: land the change when policy and the caller allow it;
+    #: never: keep the proposal.
+    accept: AuthoringAccept = "if_allowed"
 
 
 class ProposeBuiltinClaimTypeRequest(_StrictPlaybillRequest):
@@ -178,6 +184,9 @@ class ProposeBuiltinClaimTypeRequest(_StrictPlaybillRequest):
     base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
+    #: if_allowed: land the change when policy and the caller allow it;
+    #: never: keep the proposal.
+    accept: AuthoringAccept = "if_allowed"
 
 
 class ProposeClaimTypeInputRequest(_StrictPlaybillRequest):
@@ -189,6 +198,9 @@ class ProposeClaimTypeInputRequest(_StrictPlaybillRequest):
     base: AcceptedCoordinate | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
+    #: if_allowed: land the change when policy and the caller allow it;
+    #: never: keep the proposal.
+    accept: AuthoringAccept = "if_allowed"
 
 
 class AuthoringInputCompileRequest(_StrictPlaybillRequest):

@@ -403,6 +403,7 @@ def handle_playbill_propose_document(
     *,
     dry_run: bool | None = None,
     at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.ProposalInspection:
     document = DocumentShell.model_validate(shell)
     return _daemon_call(
@@ -413,6 +414,7 @@ def handle_playbill_propose_document(
             source_compilation_digest=source_compilation_digest,
             dry_run=dry_run,
             at=at,
+            accept=accept,
         ),
         operation_name="cruxible_document_propose",
     )
@@ -705,6 +707,7 @@ def handle_playbill_files_propose(
     root_aliases: Mapping[str, str] | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.ProposalInspection:
     """Compile the workspace catalog here and propose one file as its Document.
 
@@ -732,6 +735,7 @@ def handle_playbill_files_propose(
             proposal_name=proposal_name,
             dry_run=dry_run,
             at=at,
+            accept=accept,
         ),
         operation_name="cruxible_files_propose",
     )
@@ -798,6 +802,7 @@ def handle_playbill_propose_claim_type(
     *,
     dry_run: bool | None = None,
     at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.ClaimTypeInputProposalResult:
     request = ClaimTypeInputRecord.model_validate(input)
     return _daemon_call(
@@ -807,6 +812,7 @@ def handle_playbill_propose_claim_type(
             proposal_name=proposal_name,
             dry_run=dry_run,
             at=at,
+            accept=accept,
         ),
         operation_name="cruxible_claim_type_propose",
     )
@@ -819,6 +825,7 @@ def handle_playbill_adopt_builtin_claim_type(
     *,
     dry_run: bool | None = None,
     at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.ClaimTypeInputProposalResult:
     """Propose a builtin ClaimType's exact envelope on an instance that lacks it."""
 
@@ -829,6 +836,7 @@ def handle_playbill_adopt_builtin_claim_type(
             proposal_name=proposal_name,
             dry_run=dry_run,
             at=at,
+            accept=accept,
         ),
         operation_name="cruxible_claim_type_propose",
     )

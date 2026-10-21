@@ -64,6 +64,7 @@ entries:
             proposal_name: str,
             dry_run: bool | None = None,
             at: str | None = None,
+            accept: str = "if_allowed",
         ) -> contracts.ProposalInspection:
             assert instance_id == "inst_cli"
             assert file == "playbill-design"

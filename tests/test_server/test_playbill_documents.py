@@ -52,7 +52,12 @@ def test_http_document_lifecycle_and_explanation(
     )
     proposed = client.post(
         f"/api/v1/{instance_id}/documents/proposals",
-        json={"shell": shell.model_dump(mode="json"), "proposal_name": "design"},
+        json={
+            "shell": shell.model_dump(mode="json"),
+            "proposal_name": "design",
+            # This test walks the explicit review, approve and activate lifecycle.
+            "accept": "never",
+        },
     )
     assert proposed.status_code == 200, proposed.text
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
@@ -324,7 +329,12 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
     )
     proposed = client.post(
         f"/api/v1/{instance_id}/documents/proposals",
-        json={"shell": shell.model_dump(mode="json"), "proposal_name": "tiered"},
+        json={
+            "shell": shell.model_dump(mode="json"),
+            "proposal_name": "tiered",
+            # This test walks the explicit review, approve and activate lifecycle.
+            "accept": "never",
+        },
     )
     assert proposed.status_code == 200, proposed.text
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
@@ -407,7 +417,12 @@ def test_sdk_get_reads_one_proposal_by_id_without_paging_the_list(
     )
     proposed = client.post(
         f"/api/v1/{instance_id}/documents/proposals",
-        json={"shell": shell.model_dump(mode="json"), "proposal_name": "status"},
+        json={
+            "shell": shell.model_dump(mode="json"),
+            "proposal_name": "status",
+            # This test walks the explicit review, approve and activate lifecycle.
+            "accept": "never",
+        },
     )
     assert proposed.status_code == 200, proposed.text
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
@@ -453,7 +468,12 @@ def test_http_held_approval_signs_only_and_activate_settles_it(
     )
     proposed = client.post(
         f"/api/v1/{instance_id}/documents/proposals",
-        json={"shell": shell.model_dump(mode="json"), "proposal_name": "held"},
+        json={
+            "shell": shell.model_dump(mode="json"),
+            "proposal_name": "held",
+            # This test walks the explicit review, approve and activate lifecycle.
+            "accept": "never",
+        },
     )
     assert proposed.status_code == 200, proposed.text
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]

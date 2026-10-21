@@ -1,4 +1,4 @@
-"""Land a submitted authoring intent when its policy and the caller allow it."""
+"""Land an authored change when its policy and the caller allow it."""
 
 from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import AuthoringSubmitResult
@@ -9,9 +9,14 @@ from cruxible_client.contracts.authoring_landing import (
     AuthoringProposed,
 )
 from cruxible_client.contracts.candidates import CandidateMemberEvidence, CandidateMemberLawEvidence
-from cruxible_client.contracts.proposal_models import AuthenticatedActor
+from cruxible_client.contracts.proposal_models import AuthenticatedActor, ProposalResult
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import (
+    ActivationReceipt,
+    ProposalInspection,
+    service_activate_playbill_proposal,
+)
 
 
 def service_land_authoring_submit(
@@ -52,8 +57,8 @@ def service_land_authoring_submit(
     elif not may_activate:
         outcome = _stopped(proposal_id, reason="activation_not_permitted")
     else:
-        receipt = service_activate_playbill_proposal(
-            coordinator.instance, proposal_id=proposal_id, activated_by=actor.actor_id
+        receipt, outcome = land_proposal(
+            coordinator.instance, proposal_id=proposal_id, actor_id=actor.actor_id
         )
         if receipt.proposal_id != proposal_id:
             # Recompilation updated this intent's candidate association. Return
@@ -62,7 +67,6 @@ def service_land_authoring_submit(
             submitted = _recompiled_submission(coordinator, actor=actor, submitted=submitted)
             status = submitted.status
         if isinstance(receipt, contracts.ProposalRecompiled):
-            outcome = _stopped(receipt.proposal_id, reason="independent_approval_required")
             status = status.model_copy(
                 update={
                     "state": "awaiting_external_approval",
@@ -71,10 +75,7 @@ def service_land_authoring_submit(
                     "current_accepted_coordinate": receipt.accepted_coordinate,
                 }
             )
-        elif receipt.status == "accepted" and receipt.accepted_coordinate is not None:
-            outcome = AuthoringLanded(
-                proposal_id=receipt.proposal_id, accepted_coordinate=receipt.accepted_coordinate
-            )
+        elif isinstance(outcome, AuthoringLanded):
             status = status.model_copy(
                 update={
                     "state": "accepted",
@@ -84,18 +85,81 @@ def service_land_authoring_submit(
                     "path_to_acceptance": (),
                 }
             )
-        else:
-            outcome = AuthoringProposed(
-                proposal_id=receipt.proposal_id,
-                reason="head_moved",
-                message="not activated: accepted state moved after this proposal was checked",
-                next=f"cruxible proposal readmit {receipt.proposal_id}",
-            )
     data = submitted.model_dump(mode="json")
     data["outcome"] = outcome.model_dump(mode="json")
     data["status"] = status.model_dump(mode="json")
     data["intent"]["candidate_status"] = data["status"]
     return contracts.AuthoringSubmitResultRecord.model_validate(data)
+
+
+def land_proposal(
+    instance: PlaybillInstance, *, proposal_id: str, actor_id: str
+) -> tuple[ActivationReceipt | contracts.ProposalRecompiled, AuthoringLanding]:
+    """Activate one ready proposal for its caller, and say how that ended.
+
+    The one landing step every authoring door shares: an authoring submit, and a
+    direct ``claim-type``, ``files`` or ``document`` propose. Reads and writes
+    only this proposal.
+    """
+
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal_id, activated_by=actor_id
+    )
+    if isinstance(receipt, contracts.ProposalRecompiled):
+        return receipt, _stopped(receipt.proposal_id, reason="independent_approval_required")
+    if receipt.status == "accepted" and receipt.accepted_coordinate is not None:
+        return receipt, AuthoringLanded(
+            proposal_id=receipt.proposal_id, accepted_coordinate=receipt.accepted_coordinate
+        )
+    return receipt, AuthoringProposed(
+        proposal_id=receipt.proposal_id,
+        reason="head_moved",
+        message="not activated: accepted state moved after this proposal was checked",
+        next=f"cruxible proposal readmit {receipt.proposal_id}",
+    )
+
+
+def land_direct_proposal(
+    instance: PlaybillInstance,
+    inspection: ProposalInspection,
+    *,
+    actor_id: str,
+    accept: AuthoringAccept,
+    may_activate: bool,
+) -> ProposalInspection:
+    """Land a directly proposed change when its policy and the caller allow it.
+
+    One rule with the authoring submit: an admitted candidate that needs no
+    other approver activates now unless the caller asked ``accept="never"`` or
+    cannot activate; ``outcome`` says which. A preview is returned unchanged.
+    """
+
+    proposal = inspection.proposal
+    if inspection.status != "admitted" or not isinstance(proposal, ProposalResult):
+        return inspection
+    proposal_id = proposal.admission.proposal_id
+    outcome: AuthoringLanding
+    accepted = inspection.accepted_coordinate
+    if proposal.evaluation.verdict != "candidate" or proposal.candidate is None:
+        outcome = AuthoringProposed(
+            proposal_id=proposal_id,
+            reason="not_ready_to_activate",
+            message="not activated: the proposal was refused; its diagnostics say why",
+            next=f"cruxible get {proposal_id}",
+        )
+    elif getattr(proposal.candidate, "approval_requirements", ()):
+        outcome = _stopped(proposal_id, reason="independent_approval_required")
+    elif accept == "never":
+        outcome = _stopped(proposal_id, reason="accept_never")
+        if not may_activate:
+            outcome = outcome.model_copy(update={"next": f"someone who can runs {outcome.next}"})
+    elif not may_activate:
+        outcome = _stopped(proposal_id, reason="activation_not_permitted")
+    else:
+        receipt, outcome = land_proposal(instance, proposal_id=proposal_id, actor_id=actor_id)
+        if receipt.accepted_coordinate is not None:
+            accepted = receipt.accepted_coordinate
+    return inspection.model_copy(update={"outcome": outcome, "accepted_coordinate": accepted})
 
 
 def _recompiled_submission(

@@ -273,6 +273,7 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
             proposal_name: str,
             dry_run: bool | None = None,
             at: str | None = None,
+            accept: str = "if_allowed",
         ) -> contracts.ClaimTypeInputProposalResult:
             assert (instance_id, proposal_name) == (
                 "inst_authoring",
@@ -336,10 +337,30 @@ def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypat
     assert result.exit_code == 0, result.output
     rendered = ClaimTypeInputRecord.model_validate(json.loads(result.stdout))
     assert rendered == claim_type_input_template()
+    # Minimal: what no default fills, plus canonical_form so the field can key a kind.
+    assert set(json.loads(result.stdout)) == {
+        "predicate",
+        "allowed_subject_kinds",
+        "object_kind",
+        "literal_schema",
+        "cardinality",
+        "canonical_form",
+    }
     lowered = lower_claim_type_input(rendered, tree={}, identity_rules=True)
     assert lowered.identity.qualified == "ClaimType:project.work_item.status"
-    assert lowered.evidence_admission_policy.rules[0].rule_id == "source-repo.replace-me"
-    assert rendered.anticipated_source_ids == ("repo.replace-me",)
+    assert lowered.artifact_format == "playbill-claim-type-v8"
+    assert lowered.evidence_admission_policy.rules[0].rule_id == "self"
+    expanded = CliRunner().invoke(cli, ["claim-type", "propose", "--template", "--expanded"])
+    assert expanded.exit_code == 0, expanded.output
+    assert "playbill." not in expanded.stdout
+    assert ClaimTypeInputRecord.model_validate(json.loads(expanded.stdout)) == (
+        claim_type_input_template(expanded=True)
+    )
+    misplaced = CliRunner().invoke(
+        cli, ["claim-type", "propose", "--expanded", "--builtin", "semantic.alias"]
+    )
+    assert misplaced.exit_code == 2
+    assert "--expanded applies only to --template" in misplaced.output
 
 
 def test_cli_examples_are_supported_and_schema_discoverable() -> None:
@@ -764,10 +785,10 @@ def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
     claim_type = runner.invoke(cli, ["claim-type", "propose", "--help"])
 
     assert document.exit_code == 0
-    assert "sanctioned command-local Document proposal path" in document.output
+    assert "Propose one Document; it lands when policy and your tier allow" in document.output
     assert "Deprecated" not in document.output
     assert claim_type.exit_code == 0
-    assert "sanctioned typed-input ClaimType proposal path" in claim_type.output
+    assert "Propose one ClaimType; it lands when policy and your tier allow" in claim_type.output
     assert "Deprecated" not in claim_type.output
     removed = runner.invoke(cli, ["subject", "propose"])
     assert removed.exit_code != 0

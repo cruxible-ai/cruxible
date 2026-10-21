@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 ISO_8601_FORMAT_HINT = "expected ISO 8601 datetime or date, e.g. 2026-08-05T14:30:00Z or 2026-08-05"
@@ -80,12 +81,53 @@ def is_effective(
     return True
 
 
+_ISO_8601_DURATION = re.compile(
+    r"P(?:(?P<weeks>[0-9]+)W|(?:(?P<days>[0-9]+)D)?"
+    r"(?:T(?:(?P<hours>[0-9]+)H)?(?:(?P<minutes>[0-9]+)M)?"
+    r"(?:(?P<seconds>[0-9]+)(?:\.(?P<fraction>[0-9]{1,6}))?S)?)?)"
+)
+
+ISO_8601_DURATION_HINT = (
+    "use a nonnegative ISO-8601 duration with weeks, days, hours, minutes or seconds "
+    "(for example P30D, P7D or PT12H)"
+)
+
+
+def parse_iso_duration_microseconds(value: str) -> int:
+    """An ISO-8601 duration (``P30D``, ``PT12H``, ``P1W``) in whole microseconds.
+
+    Weeks, days, hours, minutes and seconds (with up to six fractional digits)
+    only: months and years have no fixed length. Raises ``ValueError`` naming
+    the accepted shape.
+    """
+
+    match = _ISO_8601_DURATION.fullmatch(value)
+    time_parts = ("hours", "minutes", "seconds")
+    if match is None or not any(
+        match.group(key) is not None for key in ("weeks", "days", *time_parts)
+    ):
+        raise ValueError(ISO_8601_DURATION_HINT)
+    if "T" in value and not any(match.group(key) is not None for key in time_parts):
+        raise ValueError("the ISO-8601 time section must contain a duration component")
+    fraction = match.group("fraction") or ""
+    return (
+        int(match.group("weeks") or 0) * 604_800_000_000
+        + int(match.group("days") or 0) * 86_400_000_000
+        + int(match.group("hours") or 0) * 3_600_000_000
+        + int(match.group("minutes") or 0) * 60_000_000
+        + int(match.group("seconds") or 0) * 1_000_000
+        + int(fraction.ljust(6, "0") or 0)
+    )
+
+
 __all__ = [
+    "ISO_8601_DURATION_HINT",
     "ISO_8601_FORMAT_HINT",
     "ensure_utc",
     "format_datetime",
     "is_effective",
     "is_expired",
     "parse_datetime",
+    "parse_iso_duration_microseconds",
     "utc_now",
 ]
