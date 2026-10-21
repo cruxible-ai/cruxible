@@ -436,7 +436,7 @@ def test_advertisement_fetches_the_daemons_note_refs_for_the_reviewer(
 
     workspace, ledger = _repositories(tmp_path, "sha1")
     head = _git(ledger, "rev-parse", f"refs/heads/proposals/{PROPOSAL_KEY}")
-    _git(ledger, "notes", "--ref=refs/notes/playbill-eval", "add", "-m", "EVALUATION", head)
+    _git(ledger, "notes", "--ref=refs/notes/cruxible-eval", "add", "-m", "EVALUATION", head)
 
     result = advertise_workspace_refs(
         workspace_root=workspace,
@@ -445,7 +445,27 @@ def test_advertisement_fetches_the_daemons_note_refs_for_the_reviewer(
     )
 
     assert result.status == "updated"
-    assert _git(workspace, "notes", "--ref=refs/notes/playbill-eval", "show", head) == "EVALUATION"
+    assert _git(workspace, "notes", "--ref=refs/notes/cruxible-eval", "show", head) == "EVALUATION"
+
+
+def test_advertisement_removes_the_pre_rename_note_refs(tmp_path: Path) -> None:
+    """A workspace advertised before the note ref rename loses the old names once."""
+
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    head = _git(ledger, "rev-parse", f"refs/heads/proposals/{PROPOSAL_KEY}")
+    _git(ledger, "notes", "--ref=refs/notes/cruxible-eval", "add", "-m", "EVALUATION", head)
+    _git(workspace, "update-ref", "refs/notes/playbill-eval", _git(workspace, "rev-parse", "HEAD"))
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "updated"
+    notes = _git(workspace, "for-each-ref", "--format=%(refname)", "refs/notes").splitlines()
+    assert "refs/notes/playbill-eval" not in notes
+    assert "refs/notes/cruxible-eval" in notes
 
 
 def test_advertisement_succeeds_on_a_ledger_that_carries_no_notes_yet(
@@ -471,7 +491,7 @@ def test_advertisement_never_prunes_the_authors_own_notes(tmp_path: Path) -> Non
     workspace, ledger = _repositories(tmp_path, "sha1")
     head = _git(workspace, "rev-parse", "HEAD")
     _git(workspace, "notes", "--ref=refs/notes/commits", "add", "-m", "mine", head)
-    _git(ledger, "notes", "--ref=refs/notes/playbill-eval", "add", "-m", "EVALUATION", head)
+    _git(ledger, "notes", "--ref=refs/notes/cruxible-eval", "add", "-m", "EVALUATION", head)
 
     advertise_workspace_refs(
         workspace_root=workspace,

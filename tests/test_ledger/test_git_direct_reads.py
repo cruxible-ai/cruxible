@@ -88,7 +88,7 @@ def test_resident_notes_match_git_notes_show_across_fanout(tmp_path: Path) -> No
     repository, commit = _repository(tmp_path)
     ledger = git_module.GitLedger.__new__(git_module.GitLedger)
     ledger.path = repository
-    ref = "refs/notes/playbill-eval"
+    ref = "refs/notes/cruxible-eval"
     ledger._note_ref = lambda kind: ref  # type: ignore[method-assign]
     ledger._object_format_cache = None
     assert ledger._resident_note("evaluation", commit) is None

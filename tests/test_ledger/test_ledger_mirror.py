@@ -13,8 +13,12 @@ from cruxible_client.contracts.ledger_mirror import (
     validate_mirror_url,
 )
 from cruxible_core.ledger import git as git_module
-from cruxible_core.ledger.git import NOTE_REFS
-from cruxible_core.ledger.ledger_mirror import MIRROR_STATE_FILE
+from cruxible_core.ledger.git import LEGACY_NOTE_REFS, NOTE_REFS
+from cruxible_core.ledger.ledger_mirror import (
+    MIRROR_STATE_FILE,
+    read_mirror_state,
+    write_mirror_state,
+)
 from cruxible_core.proposals.proposal_notes import proposal_approval_note, proposal_evaluation_note
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
@@ -139,6 +143,57 @@ def test_an_approval_reaches_the_mirror_as_its_own_note_ref(tmp_path: Path) -> N
     instance.publish_ledger_mirror()  # Remote inspection waits for publication explicitly.
 
     assert NOTE_REFS["approval"] in _remote_refs(remote)
+
+
+def _git_dir(path: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", f"--git-dir={path}", *args], capture_output=True, check=True
+    ).stdout.decode()
+
+
+def test_reopen_moves_pre_rename_note_refs_in_the_ledger_and_its_mirror(tmp_path: Path) -> None:
+    """An instance and mirror from before the note ref rename: reopening renames both, once."""
+
+    instance, remote = _mirrored(tmp_path)
+    _submit(instance)
+    instance.publish_ledger_mirror()
+    ledger = instance._ledger.path
+    renamed = {current: legacy for legacy, current in LEGACY_NOTE_REFS.items()}
+    present = {ref: oid for ref, oid in instance._ledger.mirror_refs().items() if ref in renamed}
+    assert NOTE_REFS["evaluation"] in present
+    # Rewrite the fixture back to the old names: ledger, remote and recorded mirror state.
+    for repository in (ledger, remote):
+        for current, oid in present.items():
+            _git_dir(repository, "update-ref", renamed[current], oid)
+            _git_dir(repository, "update-ref", "-d", current)
+    state = read_mirror_state(instance.root)
+    assert state is not None
+    write_mirror_state(
+        instance.root,
+        state.model_copy(
+            update={
+                "published_refs": {renamed.get(r, r): o for r, o in state.published_refs.items()},
+                "attempted_refs": {renamed.get(r, r): o for r, o in state.attempted_refs.items()},
+            }
+        ),
+    )
+
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    published = reopened.publish_ledger_mirror()
+
+    assert published is not None and published.status == "current", published
+    local_notes = _git_dir(
+        ledger, "for-each-ref", "--format=%(refname) %(objectname)", "refs/notes"
+    )
+    assert sorted(local_notes.split()) == sorted(
+        part for ref, oid in present.items() for part in (ref, oid)
+    )
+    remote_refs = _remote_refs(remote)
+    assert all(ref in remote_refs for ref in present)
+    assert not any(ref in remote_refs for ref in LEGACY_NOTE_REFS)
+    assert set(published.published_refs).isdisjoint(LEGACY_NOTE_REFS)
+    # Idempotent: a second open finds nothing to move.
+    assert reopened._ledger.migrate_legacy_note_refs() == ()
 
 
 def test_activation_moves_main_and_removes_the_closed_branch(

@@ -64,9 +64,19 @@ _MIRROR_PREFIXES: Final = ("refs/heads/proposals/",)
 # evidence store that reach Git through exactly the same write, so a note a
 # reviewer reads is never a second mechanism with its own persistence rules.
 NOTE_REFS: Final[Mapping[str, str]] = {
-    "generation": "refs/notes/playbill-gen",
-    "evaluation": "refs/notes/playbill-eval",
-    "approval": "refs/notes/playbill-approval",
+    "generation": "refs/notes/cruxible-gen",
+    "evaluation": "refs/notes/cruxible-eval",
+    "approval": "refs/notes/cruxible-approval",
+}
+# The names these refs carried before the public rename, each mapped to its
+# current name. They are read only by the one-time move at instance open
+# (`GitLedger.migrate_legacy_note_refs`) and by mirror publication, which
+# accepts them in a recorded snapshot or a remote advertisement so the next
+# push deletes them under lease. No note is ever read or written under them.
+LEGACY_NOTE_REFS: Final[Mapping[str, str]] = {
+    "refs/notes/playbill-gen": NOTE_REFS["generation"],
+    "refs/notes/playbill-eval": NOTE_REFS["evaluation"],
+    "refs/notes/playbill-approval": NOTE_REFS["approval"],
 }
 _PASSTHROUGH_ENVIRONMENT = ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
 _COMMAND_ENVIRONMENT = frozenset(
@@ -969,8 +979,14 @@ class GitLedger:
         )
 
     def _validate_mirror_snapshot(
-        self, refs: Mapping[str, str], *, require_main: bool = True
+        self, refs: Mapping[str, str], *, require_main: bool = True, legacy: bool = False
     ) -> dict[str, str]:
+        """Validate a snapshot of owned refs.
+
+        ``legacy`` admits the pre-rename note ref names, for a snapshot this
+        ledger recorded or a remote advertised before the rename: publication
+        then deletes them under lease. A desired snapshot never carries them.
+        """
         if len(refs) > _MIRROR_MAX_REFS:
             raise GitError("mirror snapshot exceeds the ref count limit")
         result = dict(refs)
@@ -981,6 +997,7 @@ class GitLedger:
                     "bind a new mirror URL to start a fresh publication snapshot"
                 )
             valid = ref in (_MIRROR_MAIN, PROPOSAL_ARCHIVE_REF) or ref in NOTE_REFS.values()
+            valid = valid or (legacy and ref in LEGACY_NOTE_REFS)
             valid = valid or bool(_PROPOSAL_REVIEW_REF_RE.fullmatch(ref))
             if not valid:
                 raise GitError("mirror snapshot contains an unowned or malformed ref")
@@ -1040,10 +1057,14 @@ class GitLedger:
                 self.mirror_refs() if snapshot is None else snapshot
             )
             expected = self._validate_mirror_snapshot(
-                {} if expected_remote is None else expected_remote, require_main=False
+                {} if expected_remote is None else expected_remote,
+                require_main=False,
+                legacy=True,
             )
             attempted = self._validate_mirror_snapshot(
-                {} if previous_attempt is None else previous_attempt, require_main=False
+                {} if previous_attempt is None else previous_attempt,
+                require_main=False,
+                legacy=True,
             )
             if PROPOSAL_ARCHIVE_REF not in desired and (
                 PROPOSAL_ARCHIVE_REF in expected or PROPOSAL_ARCHIVE_REF in attempted
@@ -1069,6 +1090,7 @@ class GitLedger:
                         url,
                         _MIRROR_MAIN,
                         *NOTE_REFS.values(),
+                        *LEGACY_NOTE_REFS,
                         "refs/settled/*",
                         *(prefix + "*" for prefix in _MIRROR_PREFIXES),
                     ],
@@ -1086,12 +1108,33 @@ class GitLedger:
                             "remote mirror still has per-proposal archive refs; "
                             "bind a new mirror URL or explicitly migrate/reset this remote"
                         )
-                    if not separator or not self._mirror_owned_ref(ref) or ref in remote:
+                    if (
+                        not separator
+                        or not (self._mirror_owned_ref(ref) or ref in LEGACY_NOTE_REFS)
+                        or ref in remote
+                    ):
                         raise GitError("remote mirror advertisement is malformed")
                     remote[ref] = oid
-                remote = self._validate_mirror_snapshot(remote, require_main=False)
+                remote = self._validate_mirror_snapshot(remote, require_main=False, legacy=True)
                 for ref in set(remote) | owned:
                     actual = remote.get(ref)
+                    renamed = LEGACY_NOTE_REFS.get(ref)
+                    if renamed is not None:
+                        # A pre-rename note ref is deleted, never published:
+                        # under lease when this ledger recorded it, else only
+                        # when its history is already under the renamed ref.
+                        if actual is not None and actual not in (
+                            expected.get(ref),
+                            attempted.get(ref),
+                        ):
+                            target = desired.get(renamed)
+                            if target is None or not self.is_ancestor(actual, target):
+                                raise GitError(f"remote mirror ref diverged: {ref}")
+                        if actual is None:
+                            owned.discard(ref)
+                        else:
+                            owned.add(ref)
+                        continue
                     # An empty/recreated remote has no conflicting history.
                     if actual is None or actual in (
                         desired.get(ref),
@@ -1988,6 +2031,45 @@ class GitLedger:
                 self._validate_oid(fields[2])
                 commits.append(fields[2])
         return tuple(sorted(set(commits)))
+
+    def migrate_legacy_note_refs(self) -> tuple[str, ...]:
+        """Move each pre-rename note ref to its current name, once; return the moved names.
+
+        Runs at instance open. Each move is one atomic ref transaction that
+        creates the current ref (leased absent) at the legacy ref's commit and
+        deletes the legacy ref (leased at that commit), so a concurrent opener
+        that already moved it simply loses the lease and the move is not
+        repeated. A legacy ref whose current ref already names the same commit
+        is a finished move and is deleted; one whose current ref differs is
+        left alone. Cost is a constant number of ref reads.
+        """
+        if all(self._resolve_ref(legacy) is None for legacy in LEGACY_NOTE_REFS):
+            # The common case once moved: three ref reads, no lock, no write.
+            return ()
+        moved: list[str] = []
+        with self._note_lock():
+            for legacy, current in LEGACY_NOTE_REFS.items():
+                old = self._resolve_ref(legacy)
+                if old is None:
+                    continue
+                new = self._resolve_ref(current)
+                if new is None:
+                    commands = [
+                        f"update {current} {old} {'0' * len(old)}",
+                        f"delete {legacy} {old}",
+                    ]
+                elif new == old:
+                    commands = [f"delete {legacy} {old}"]
+                else:
+                    continue
+                try:
+                    self._update_refs(commands)
+                except GitError:
+                    if self._resolve_ref(legacy) == old:
+                        raise
+                    continue
+                moved.append(legacy)
+        return tuple(moved)
 
     def _note_ref(self, kind: str) -> str:
         ref = NOTE_REFS.get(kind)
@@ -3931,4 +4013,11 @@ def _bounded_command(
         return subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
 
 
-__all__ = ["MIRROR_PUSH_TIMEOUT_SECONDS", "NOTE_REFS", "GitLedger", "GitTreeChange", "GitTreeEntry"]
+__all__ = [
+    "LEGACY_NOTE_REFS",
+    "MIRROR_PUSH_TIMEOUT_SECONDS",
+    "NOTE_REFS",
+    "GitLedger",
+    "GitTreeChange",
+    "GitTreeEntry",
+]

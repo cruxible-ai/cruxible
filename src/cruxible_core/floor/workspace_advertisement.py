@@ -17,6 +17,7 @@ from cruxible_client.contracts.workspace_advertisement import (
 )
 from cruxible_core.ledger.git import (
     _ASK_GIT,
+    LEGACY_NOTE_REFS,
     NOTE_REFS,
     GitLedger,
     _batch_reader,
@@ -334,6 +335,13 @@ def _advertise_workspace_refs(
             if destination._resolve_ref(ref) != oid
         ]
         commands.extend(f"delete {ref}" for ref in existing if ref not in desired)
+        # The pre-rename note refs leave the workspace with the first
+        # advertisement after the ledger renamed them.
+        commands.extend(
+            f"delete {ref}"
+            for ref in sorted(LEGACY_NOTE_REFS)
+            if destination._resolve_ref(ref) is not None
+        )
         # Reuse the files-backend lease protocol, with no advisory fsyncs.
         with destination.request_pack():
             if commands:

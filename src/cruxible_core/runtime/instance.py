@@ -778,6 +778,9 @@ class PlaybillInstance:
                 "ledger object format differs from descriptor; object-format changes require "
                 "an explicit fork/import"
             )
+        if not is_previewing():
+            # One-time, idempotent move of the pre-rename note refs; O(1) once done.
+            ledger.migrate_legacy_note_refs()
         verified = verify_genesis(
             ledger,
             descriptor.genesis.git_oid,
