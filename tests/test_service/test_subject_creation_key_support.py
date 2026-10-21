@@ -217,24 +217,36 @@ def _judged_verdicts(
     return found
 
 
-def test_only_revision_9_covers_a_key_claim_by_its_subjects_creation(
+def test_only_revisions_9_and_10_cover_a_key_claim_by_its_subjects_creation(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Differential over identical inputs: revision 8 keeps its meaning (uncovered).
 
-    Revision 9 is the current Claim law v2 on compiler revision 33 only; an
-    instance on an earlier compiler judges a new Claim by revision 8.
+    Revision 10 (re-bind, compiler revision 35) is the current Claim law v2 and
+    keeps revision 9's creation coverage; an instance on compiler 33 or 34 judges
+    a new Claim by revision 9, and one on an earlier compiler by revision 8.
     """
 
+    import cruxible_core.compiler.compiler as compiler_module
     import cruxible_core.proposals.proposals as proposals_module
-    from cruxible_client.contracts.laws import CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V2_REVISION_9
+    from cruxible_client.contracts.laws import (
+        CLAIM_LAW_V2_REVISION_8,
+        CLAIM_LAW_V2_REVISION_9,
+        CLAIM_LAW_V2_REVISION_10,
+    )
 
     trees = _creation_candidate(instance)
 
     (current,) = _judged_verdicts(instance, trees, None).values()
-    assert current == (CLAIM_LAW_V2_REVISION_9.digest, "supported")
+    assert current == (CLAIM_LAW_V2_REVISION_10.digest, "supported")
+    (nine,) = _judged_verdicts(instance, trees, CLAIM_LAW_V2_REVISION_9).values()
+    assert nine == (CLAIM_LAW_V2_REVISION_9.digest, "supported")
     (eight,) = _judged_verdicts(instance, trees, CLAIM_LAW_V2_REVISION_8).values()
     assert eight == (CLAIM_LAW_V2_REVISION_8.digest, "uncovered")
+
+    monkeypatch.setattr(compiler_module, "admits_claim_rebind", lambda _compiler: False)
+    (before_rebind,) = _judged_verdicts(instance, trees, None).values()
+    assert before_rebind == (CLAIM_LAW_V2_REVISION_9.digest, "supported")
 
     monkeypatch.setattr(proposals_module, "admits_subject_kinds", lambda _compiler: False)
     (earlier,) = _judged_verdicts(instance, trees, None).values()

@@ -484,8 +484,10 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
         "citation-v2-drop",
         "2026-08-20T12:02:00.000000Z",
     )
+    # Claim law v2 revision 10: on an unchanged statement a citation leaves only
+    # by a re-bind that replaces it, so an unmatched drop refuses as such.
     assert {item.code for item in refused.evaluation.diagnostics} == {
-        "cruxible.claim.legacy_capture_set_changed"
+        "cruxible.claim.rebind_unmatched"
     }
 
 
