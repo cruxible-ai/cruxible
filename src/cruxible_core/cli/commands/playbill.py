@@ -2913,7 +2913,12 @@ def _echo_catalog_edit(result: FileCatalogEdit, *, output_json: bool) -> None:
         click.echo(f"Removed file {result.name} from {result.catalog_path}{suffix}")
         return
     assert result.entry is not None
-    shape = "Document" if result.entry.is_document else "evidence-only"
+    # A file with no Document is still a citable source and a projection target.
+    shape = (
+        f"Document {result.entry.document_id}"
+        if result.entry.is_document
+        else "no Document: cite it, or project blocks into it"
+    )
     click.echo(
         f"{result.status.capitalize()} file {result.name} -> {result.entry.locator} "
         f"({shape}) in {result.catalog_path}"
@@ -2972,7 +2977,8 @@ def add_file(
     NAME is the stable source name evidence is cited under (`--evidence-file
     PATH#ANCHOR` resolves through it). With --document-id, --document-kind,
     --title and --scope the entry also declares the Document it compiles to
-    (files compile, files propose); without them it is evidence-only. The
+    (files compile, files propose); without them the file is still a source
+    to cite and a page to project blocks into, just not a Document. The
     whole catalog is validated before the file is rewritten: an existing NAME
     refuses unless --replace, and a partial Document or a duplicate Document
     target refuses. Writes only the catalog file; commit it with Git.
@@ -3994,6 +4000,7 @@ def run_action(
         "evidence otherwise lapses after the ClaimType's unsure_hold_for (default 30 days)."
     ),
 )
+@json_option
 @handle_errors
 def attest_claim(
     claim_id: str,
@@ -4002,11 +4009,16 @@ def attest_claim(
     unsure: bool,
     note: str | None,
     valid_until: str | None,
+    output_json: bool,
 ) -> None:
     """Sign that this caller examined the current exact Claim.
 
-    --unsure holds the Claim's contested `next` rows until what you examined
-    changes, instead of forcing a judgment you are not confident in.
+    The attestation is recorded and shown on the Claim (get --detail
+    evidence). It counts toward the verdict only through the ClaimType's
+    consequence policy; with none, a standing --contradict is resurfaced in
+    `next` for an agent to judge. --unsure holds the Claim's contested `next` rows until
+    what you examined changes, instead of forcing a judgment you are not
+    confident in. --json prints the structured append result.
     """
 
     selected = tuple(
@@ -4021,6 +4033,8 @@ def attest_claim(
     if len(selected) != 1:
         raise click.UsageError("choose exactly one of --support, --contradict, or --unsure")
     stance = selected[0]
+    claim = claim_id.removeprefix("Claim:")
+    attested_at = datetime.now(UTC)
 
     def call(client: CruxibleClient, instance_id: str):  # type: ignore[no-untyped-def]
         signer = local_attestation_signer_from_environment(
@@ -4028,14 +4042,14 @@ def attest_claim(
             instance_id,
             workspace_root=_custody_workspace_root(),
         )
-        return append_prepared_claim_attestation(
+        appended = append_prepared_claim_attestation(
             client,
             instance_id,
             prepared=PreparedClaimAttestationRequest(
-                claim_id=claim_id.removeprefix("Claim:"),
+                claim_id=claim,
                 attestation_basis="examined_existing",
                 stance=cast(ClaimStance, stance),
-                attested_at=datetime.now(UTC),
+                attested_at=attested_at,
                 valid_until=(
                     None
                     if valid_until is None
@@ -4045,9 +4059,49 @@ def attest_claim(
             ),
             signer=signer,
         )
+        if output_json:
+            return appended, None
+        return appended, _attestation_shown(client, instance_id, claim, appended, attested_at)
 
-    result = _server_call(call, command_name="cruxible claim attest")
-    _emit_json(result.model_dump(mode="json"))
+    result, shown = _server_call(call, command_name="cruxible claim attest")
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(
+        f"Recorded {stance} on {claim} at {result.recorded_at.isoformat()} "
+        f"(event {result.event_digest})"
+    )
+    if isinstance(shown, str):
+        click.echo(f"counts toward verdict: unknown ({shown})")
+    else:
+        click.echo(f"counts toward verdict: {_attestation_counts_text(shown)}")
+
+
+def _attestation_shown(
+    client: Any, instance_id: str, claim: str, appended: Any, attested_at: datetime
+) -> Any:
+    """The Claim's own account of the event just recorded, or why it could not be read."""
+
+    from cruxible_client.contracts.get_reads import GetRequest
+
+    try:
+        read = client.get(
+            instance_id,
+            request=GetRequest(
+                ref=claim,
+                detail="evidence",
+                surface="cli",
+                # Read at the later of the two clocks, so the new word is current.
+                evaluation_time=max(attested_at, appended.recorded_at),
+            ),
+        )
+    except CoreError as exc:
+        return printable(str(exc))
+    evidence = getattr(read, "evidence", None)
+    for item in () if evidence is None else evidence.attestations:
+        if item.event == appended.event_digest:
+            return item
+    return "the Claim's evidence does not list the event"
 
 
 @playbill_group.group("authoring")
@@ -5207,6 +5261,32 @@ def _why_summary_lines(value: Any, *, key: str | None = None, depth: int = 0) ->
     return [f"{indent}{key}: {text}" if key is not None else f"{indent}{text}"]
 
 
+_ATTESTATION_COUNT_WORDS = {
+    "cites_admitted_capture": "yes (cites Captures this Claim admits)",
+    "consequence_policy": "yes (consequence policy rule {rule})",
+    "cites_no_capture": "no (cites no Capture)",
+    "capture_not_admitted": "no (cites a Capture this Claim does not admit)",
+    "not_accepted": "no (recorded, not accepted: the verdict reads accepted attestations)",
+    "not_current": "no (not current)",
+}
+
+
+def _attestation_counts_text(attestation: Any) -> str:
+    """Whether one attestation counts toward the Claim's verdict, and why, in words."""
+
+    return _ATTESTATION_COUNT_WORDS[attestation.counts_reason].format(rule=attestation.rule)
+
+
+def _citation_label(capture: Any) -> str:
+    """What a cited Capture is, in words: the Claim's own words, a passage, or evidence."""
+
+    if capture.origin == "self_source":
+        return "own words"
+    if capture.role == "copy":
+        return f"passage of {_public_name(capture.source)}"
+    return str(capture.role)
+
+
 def _emit_get_text(result: Any) -> None:
     """Values first, per kind; ``--json`` carries the whole structured result."""
 
@@ -5277,14 +5357,16 @@ def _emit_get_text(result: Any) -> None:
         for capture in result.evidence.captures:
             click.echo(
                 f"capture {capture.capture}  {_public_name(capture.contract)} "
-                f"v{capture.version}  source={capture.source}  "
+                f"v{capture.version}  source={_public_name(capture.source)}  "
                 f"observed={capture.observed_at.isoformat()}  "
-                f"{capture.role}{' admitted' if capture.admitted else ' not admitted'}"
+                f"{_citation_label(capture)}: {capture.status.replace('_', ' ')}"
             )
         for attestation in result.evidence.attestations:
             click.echo(
                 f"attestation {attestation.stance} by {attestation.principal} "
-                f"at {attestation.at.isoformat()}{'' if attestation.current else ' (not current)'}"
+                f"at {attestation.at.isoformat()}  "
+                f"{'accepted' if attestation.record == 'accepted' else 'recorded'}  "
+                f"counts toward verdict: {_attestation_counts_text(attestation)}"
             )
         if result.evidence.rationale:
             click.echo(f"rationale: {printable(result.evidence.rationale)}")
@@ -5696,7 +5778,42 @@ def _echo_block_sync(result: BlockSyncResult, *, output_json: bool) -> None:
         suffix = "" if item.reason is None else f":{item.reason}"
         click.echo(f"{target}: {item.outcome}{suffix}")
         if item.repair is not None:
-            click.echo(f"  repair: {render_served_repair(item.repair)}")
+            click.echo(f"  repair: {_block_repair_line(item.repair)}")
+
+
+def _block_repair_line(repair: Any) -> str:
+    """A block repair as the command that performs it, in the files vocabulary.
+
+    The served arguments keep their wire names (``source_id`` is the catalog
+    file name); the line is the CLI form, ``block repin FILE BLOCK_ID``.
+    """
+
+    if not isinstance(repair, RepairOperation):
+        return render_served_repair(repair)
+    values = repair.arguments
+    operation = normalize_code(repair.operation)
+    if operation == "cruxible.block.repin":
+        file, block = values.get("source_id"), values.get("block_id")
+        if not isinstance(file, str) or not isinstance(block, str):
+            return render_served_repair(repair)
+        parts = ["cruxible block repin", shlex.quote(file), shlex.quote(block)]
+        claims = values.get("claim")
+        for claim in claims if isinstance(claims, list) else ():
+            parts.extend(["--claim", shlex.quote(str(claim))])
+        if values.get("clear_claims") is True:
+            parts.append("--clear-claims")
+        candidates = values.get("backing_candidates")
+        if isinstance(candidates, list) and candidates:
+            parts.append("--backing DIGEST")
+            line = " ".join(parts)
+            return f"{line}  (DIGEST: one of {', '.join(map(str, candidates))})"
+        return " ".join(parts)
+    if operation == "cruxible.block.sync" and values.get("all") is True:
+        return "cruxible block sync --all"
+    paths = values.get("paths")
+    if operation == "cruxible.block.detach" and isinstance(paths, list) and paths:
+        return " ".join(["cruxible block detach", *(shlex.quote(str(path)) for path in paths)])
+    return render_served_repair(repair)
 
 
 def _echo_list_continuation(next_cursor: str | None) -> None:

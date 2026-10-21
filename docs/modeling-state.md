@@ -103,7 +103,10 @@ place.
   somewhere; own words are right for decisions and judgments.
 - Record contradiction as evidence against a Claim (`claim attest
   --contradict`, or a Claim of what you observed) instead of minting an
-  inverse field.
+  inverse field. The attestation is recorded and shown on the Claim, and
+  `next` resurfaces it for review; it counts toward the verdict only when
+  accepted citing a Capture the Claim admits, or when a consequence policy
+  says so.
 - A projection block is never evidence: cite the Claim it reflects, or text
   outside every block.
 

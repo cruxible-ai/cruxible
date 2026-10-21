@@ -2058,17 +2058,25 @@ def _claim_evidence(
                 source=str(source or "unknown"),
                 observed_at=envelope.observed_at,
                 role=account.citation_role,
-                admitted=account.status == "admitted",
+                origin=account.citation_origin,
+                status=account.status,
             )
         )
+    # Accepted attestations and the door's recorded events of this exact version.
     attestations = tuple(
         GetAttestationEvidence(
-            stance=item.statement.stance,
-            principal=item.statement.provider_or_principal.name,
-            at=item.statement.observed_at,
+            stance=item.stance,
+            principal=item.principal,
+            at=item.attested_at,
             current=item.current,
+            record=item.record,
+            basis=item.basis,
+            counts=item.counts,
+            counts_reason=item.counts_reason,
+            event=item.event_digest,
+            rule=item.rule_id,
         )
-        for item in explanation.exact_attestations
+        for item in explanation.attestation_accounts
     )
     with instance.bind_accepted_projection(coordinate) as projection:
         claim = cast(ClaimArtifactAny, projection.typed.source(resolved.identity))

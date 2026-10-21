@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -813,13 +813,24 @@ def _assert_successor_resolves_attestation_membership(
         instance.refresh()
 
     assert len(rows()) == 1
+    # This ClaimType's rule names the Capture's contract, so the verdict reads a
+    # copy of it as evidence (one eligibility gate): the copy successor admits
+    # it, and nothing is left to adjudicate.
     cite("copy", "2026-08-28T15:01:00.000000Z")
-    assert len(rows()) == 1
+    from cruxible_core.service.claims.claims import service_get_playbill_claim
+
+    accounts = service_get_playbill_claim(instance, identity=claim_id).admission_accounts
+    assert [
+        (item.citation_role, item.status)
+        for item in accounts
+        if item.capture_digest == capture.capture_digest
+    ] == [("copy", "admitted")]
+    assert rows() == ()
     cite("evidence", "2026-08-28T15:02:00.000000Z")
     assert rows() == ()
 
 
-def test_copy_successor_keeps_membership_and_evidence_successor_resolves_it(
+def test_copy_successor_the_rule_admits_resolves_membership_as_evidence_does(
     tmp_path: Path,
 ) -> None:
     _assert_successor_resolves_attestation_membership(
@@ -881,3 +892,154 @@ def test_new_evidence_rows_count_only_attestations_current_at_the_evaluation_tim
     # Not yet attested, and past valid_until: neither asks for adjudication.
     assert rows(RECORDED_AT - timedelta(minutes=1)) == ()
     assert rows(RECORDED_AT + timedelta(hours=2)) == ()
+
+
+def test_get_evidence_and_why_list_this_versions_recorded_attestations_and_whether_they_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.claims.claims import service_explain_playbill_claim
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    contradict = _request(instance, owner, claim_id, tmp_path, stance="contradict")
+    recorded = service_append_claim_attestation(
+        instance, request=contradict, actor_id="owner", recorded_at=RECORDED_AT
+    )
+    store = instance.claim_attestation_evidence_store()
+    partitions: list[str | None] = []
+    events = store.events
+
+    def partition_read(**kwargs):  # type: ignore[no-untyped-def]
+        partitions.append(kwargs.get("partition_digest"))
+        return events(**kwargs)
+
+    monkeypatch.setattr(store, "events", partition_read)
+    evaluation_time = RECORDED_AT + timedelta(minutes=1)
+    access = BodyAccessContext(principal_id="owner", can_read_body=False)
+
+    def evidence():  # type: ignore[no-untyped-def]
+        result = service_playbill_get(
+            instance,
+            request=GetRequest(
+                ref=f"Claim:{claim_id}", detail="evidence", evaluation_time=evaluation_time
+            ),
+            access=access,
+        )
+        assert result.evidence is not None
+        return result.evidence.attestations
+
+    (shown,) = evidence()
+    cited = contradict.attestation.statement.cited_capture_digests
+    assert (shown.record, shown.stance, shown.principal) == ("event", "contradict", "owner")
+    assert shown.event == recorded.event_digest
+    assert shown.current is True
+    # Recorded, not accepted: the verdict never reads it, and no policy names it.
+    assert shown.counts is False
+    assert shown.counts_reason == ("not_accepted" if cited else "cites_no_capture")
+    # One read of this Claim version's own partition, never the whole door.
+    assert partitions and all(item == recorded.partition_digest for item in partitions)
+
+    support = _request(
+        instance,
+        owner,
+        claim_id,
+        tmp_path,
+        stance="support",
+        attested_at=RECORDED_AT + timedelta(seconds=1),
+    )
+    service_append_claim_attestation(
+        instance,
+        request=support,
+        actor_id="owner",
+        recorded_at=RECORDED_AT + timedelta(seconds=1),
+    )
+    superseded, latest = evidence()
+    assert (superseded.stance, superseded.current, superseded.counts_reason) == (
+        "contradict",
+        False,
+        "not_current",
+    )
+    assert (latest.stance, latest.current) == ("support", True)
+
+    why = service_explain_playbill_claim(
+        instance, identity=f"Claim:{claim_id}", evaluation_time=evaluation_time
+    )
+    assert [(item.record, item.stance, item.counts) for item in why.attestation_accounts] == [
+        ("event", "contradict", False),
+        ("event", "support", False),
+    ]
+
+
+def test_a_current_contradiction_with_no_policy_is_resurfaced_neutrally_in_next(
+    tmp_path: Path,
+) -> None:
+    """Core resurfaces, agents judge: one row per principal's standing contradiction.
+
+    The ClaimType has no consequence policy, so the verdict does not move; the
+    row reuses the contradicting-evidence adjudication and leaves with the word.
+    """
+
+    from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
+
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    access = CoverageAccessProfile(
+        profile_id="attestation-door-test",
+        permitted_access_classes=("instance", "public"),
+    )
+    evaluation_time = RECORDED_AT + timedelta(minutes=5)
+
+    def verdict():  # type: ignore[no-untyped-def]
+        return service_evaluate_playbill_claim_verdict(
+            instance, claim_identity=f"Claim:{claim_id}", evaluation_time=evaluation_time
+        ).verdict
+
+    def rows(at: datetime = evaluation_time) -> tuple:  # type: ignore[type-arg]
+        result = unfolded_next(
+            instance, request=NextRequest(evaluation_time=at, access_profile=access)
+        )
+        return tuple(
+            item for item in result.items if item.reason == "claim_contradicting_evidence_available"
+        )
+
+    before = verdict()
+    assert rows() == ()
+    contradict = _request(
+        instance,
+        owner,
+        claim_id,
+        tmp_path,
+        stance="contradict",
+        valid_until=RECORDED_AT + timedelta(hours=1),
+    )
+    recorded = service_append_claim_attestation(
+        instance, request=contradict, actor_id="owner", recorded_at=RECORDED_AT
+    )
+
+    (row,) = rows()
+    assert row.subject_identity == f"Claim:{claim_id}"
+    assert row.related_identities == ("Principal:owner",)
+    assert row.detail["attestation_basis"] == "examined_existing"
+    assert row.detail["attestation_event_digest"] == recorded.event_digest
+    assert row.repair is not None
+    assert row.repair.required_change == "adjudicate_contradicting_evidence"
+    assert verdict() == before
+    # Not yet attested, and past valid_until: nothing asks for adjudication.
+    assert rows(RECORDED_AT - timedelta(minutes=1)) == ()
+    assert rows(RECORDED_AT + timedelta(hours=2)) == ()
+
+    # The same principal's later word stands instead: the row leaves with it.
+    service_append_claim_attestation(
+        instance,
+        request=_request(
+            instance,
+            owner,
+            claim_id,
+            tmp_path,
+            stance="support",
+            attested_at=RECORDED_AT + timedelta(minutes=1),
+        ),
+        actor_id="owner",
+        recorded_at=RECORDED_AT + timedelta(minutes=1),
+    )
+    assert rows() == ()

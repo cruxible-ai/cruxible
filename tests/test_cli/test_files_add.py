@@ -30,7 +30,10 @@ def _add(root: Path, *args: str) -> Result:
 def test_add_creates_the_catalog_and_the_workspace_reads_it(workspace: Path) -> None:
     result = _add(workspace, "standup", str(workspace / "notes" / "standup.md"))
     assert result.exit_code == 0, result.output
-    assert "Added file standup -> notes/standup.md (evidence-only)" in result.output
+    assert (
+        "Added file standup -> notes/standup.md (no Document: cite it, or project blocks "
+        "into it)" in result.output
+    )
     catalog = workspace / ".cruxible" / "files.yaml"
     assert yaml.safe_load(catalog.read_text()) == {
         "catalog_kind": "portable",
@@ -230,3 +233,21 @@ def test_depublish_help_names_the_stored_file_identity() -> None:
         "the stored projection file identity; the file and catalog entry need not still exist"
         in " ".join(result.output.split())
     )
+
+
+def test_add_text_names_the_document_an_entry_declares(workspace: Path) -> None:
+    result = _add(
+        workspace,
+        "status-page",
+        str(workspace / "notes" / "status.md"),
+        "--document-id",
+        "status",
+        "--document-kind",
+        "page",
+        "--title",
+        "Status",
+        "--scope",
+        "team",
+    )
+    assert result.exit_code == 0, result.output
+    assert "Added file status-page -> notes/status.md (Document status)" in result.output

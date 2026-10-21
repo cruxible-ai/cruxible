@@ -2301,6 +2301,14 @@ def _claim_attestation_threshold_items(
     accepted = _resolve_coordinate(instance, coordinate)
     tree = ClaimVerdictReadContext(instance, accepted).tree
     claim_types: dict[str, ClaimType] = {}
+    # Each Claim reads only its own events: one pass over the door, not one per Claim.
+    door_by_claim: dict[str, list[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]]] = (
+        defaultdict(list)
+    )
+    for event, payload in door_events:
+        door_by_claim[payload.attestation.statement.claim_identity.qualified].append(
+            (event, payload)
+        )
     items: list[PlaybillNextItemV1] = []
     for claim in sorted(claims, key=lambda item: item.identity.qualified.encode("utf-8")):
         items.extend(
@@ -2312,7 +2320,7 @@ def _claim_attestation_threshold_items(
                 law_evidence=law_evidence,
                 claim_types=claim_types,
                 evaluation_time=evaluation_time,
-                door_events=door_events,
+                door_events=door_by_claim.get(claim.identity.qualified, ()),
                 time_boundaries=None,
             )
         )
@@ -2344,18 +2352,6 @@ def _claim_threshold_rows(
         claim_type = parse_claim_type(tree[path], path=path)
         claim_types[predicate] = claim_type
     policy = claim_type.attestation_consequence_policy
-    if policy is None:
-        return []
-    evidence = law_evidence.get(claim_path(claim.identity.name))
-    if evidence is None:
-        raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
-    current = accepted_claim_attestations(
-        instance,
-        coordinate=accepted,
-        tree=tree,
-        claim=claim,
-        historical=evidence.verified_attestations,
-    )
     exact_door = tuple(
         (event, payload)
         for event, payload in door_events
@@ -2372,6 +2368,24 @@ def _claim_threshold_rows(
         previous = latest_door_by_principal.get(principal_id)
         if previous is None or event.sequence > previous[0].sequence:
             latest_door_by_principal[principal_id] = (event, payload)
+    if policy is None:
+        return _contradicting_attestation_rows(
+            claim,
+            claim_type,
+            latest=latest_door_by_principal,
+            evaluation_time=evaluation_time,
+            time_boundaries=time_boundaries,
+        )
+    evidence = law_evidence.get(claim_path(claim.identity.name))
+    if evidence is None:
+        raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
+    current = accepted_claim_attestations(
+        instance,
+        coordinate=accepted,
+        tree=tree,
+        claim=claim,
+        historical=evidence.verified_attestations,
+    )
     if time_boundaries is not None:
         for item in current:
             time_boundaries.add(item.statement.observed_at)
@@ -2480,6 +2494,75 @@ def _claim_threshold_rows(
                         },
                         set_arguments=_claim_set_arguments(claim, claim_type),
                     )
+                ),
+            )
+        )
+    return items
+
+
+def _contradicting_attestation_rows(
+    claim: ClaimArtifactAny,
+    claim_type: ClaimType,
+    *,
+    latest: Mapping[str, tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]],
+    evaluation_time: datetime,
+    time_boundaries: set[datetime] | None,
+) -> list[PlaybillNextItemV1]:
+    """A live Claim's current contradicting examined attestations, with no policy to weigh them.
+
+    Maintainer ruling (2026-10-21): core resurfaces, agents judge. Each
+    principal's latest word on this exact version that contradicts it, current
+    at the evaluation time, raises one neutral row reusing the contradicting-
+    evidence adjudication; the verdict does not move. ``latest`` is this
+    version's own events, so the row costs what the Claim's partition holds.
+    """
+
+    reason, severity, required_change = _DOOR_REASONS["contradict"]
+    set_arguments = _claim_set_arguments(claim, claim_type)
+    items: list[PlaybillNextItemV1] = []
+    for principal_id in sorted(latest, key=lambda item: item.encode("utf-8")):
+        event, payload = latest[principal_id]
+        statement = payload.attestation.statement
+        if statement.stance != "contradict" or not payload.current_at_append:
+            continue
+        if time_boundaries is not None:
+            time_boundaries.add(statement.attested_at)
+            if statement.valid_until is not None:
+                time_boundaries.add(statement.valid_until)
+        if statement.attested_at > evaluation_time or (
+            statement.valid_until is not None and evaluation_time >= statement.valid_until
+        ):
+            continue
+        items.append(
+            _item(
+                severity=severity,
+                reason=reason,
+                subject_identity=claim.identity.qualified,
+                related_identities=(f"Principal:{principal_id}",),
+                detail={
+                    "claim_id": claim.identity.name,
+                    "claim_artifact_digest": statement.claim_artifact_digest,
+                    "attestation_event_digest": event.event_digest,
+                    "attestation_envelope_digest": payload.envelope_digest,
+                    "attestation_basis": statement.attestation_basis,
+                    "stance": statement.stance,
+                    "attesting_principal": principal_id,
+                    "attested_at": format_datetime(statement.attested_at),
+                    "current_at_append": payload.current_at_append,
+                    **({"note": payload.note} if payload.note is not None else {}),
+                },
+                # Restate it if it stands, else state what holds or retire it:
+                # no Capture to cite, so the authoring door is a plain revision.
+                repair=_restating_repair(
+                    "cruxible.authoring.example",
+                    target=claim.identity.qualified,
+                    required_change=required_change,
+                    arguments=(
+                        {"claim_id": claim.identity.name}
+                        if set_arguments is not None
+                        else {"claim_id": claim.identity.name, "example": "claim-revision"}
+                    ),
+                    set_arguments=set_arguments,
                 ),
             )
         )

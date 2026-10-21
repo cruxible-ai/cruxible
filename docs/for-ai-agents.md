@@ -118,6 +118,10 @@ instead: the principal ID is a claim, not a boundary.
    Claim before minting an adjacent one.
 3. Record contradiction as evidence against a Claim (`claim attest
    --contradict`, or the value you observed) rather than an inverse concept.
+   It is recorded and shown on the Claim (`get --detail evidence`), and
+   `next` resurfaces it for review; it counts toward the verdict only when
+   accepted citing a Capture the Claim admits, or when a consequence policy
+   says so.
 4. Cite where a value came from. Your own words are the default evidence; a
    catalogued file passage or a Capture is checkable.
 5. Review the exact candidate before you ask anyone to sign it.

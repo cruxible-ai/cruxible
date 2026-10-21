@@ -596,6 +596,35 @@ def _append_attestation(world: World) -> object:
     return _worlds.append_attestation(world, world.prepared)
 
 
+def _contradict(subject: int) -> Callable[[World], None]:
+    """next's facts current, then one contradicting examined attestation of one Claim."""
+
+    def prepare(world: World) -> None:
+        _worlds.tick(world, "facts")
+        world.prepared = world.claims[f"{world.subject(subject)}#status"]
+        _worlds.append_attestation(
+            world,
+            _worlds.attestation_request(
+                world, world.subject(subject), basis="examined_existing", stance="contradict"
+            ),
+        )
+
+    return prepare
+
+
+def _contradiction_resurfaced(world: World, units: Any) -> None:
+    """The tick folded the event: next serves its neutral row, and only for that Claim."""
+
+    assert units, f"facts tick on {world.shape.name} found the contradiction not due"
+    rows = [
+        item
+        for item in _next()(world).items  # type: ignore[attr-defined]
+        if item.reason == "claim_contradicting_evidence_available"
+        and item.detail.get("attestation_basis") == "examined_existing"
+    ]
+    assert [item.subject_identity for item in rows] == [f"Claim:{world.prepared}"], rows
+
+
 def _attestation_member(world: World) -> object:
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -837,6 +866,13 @@ def _routes() -> list[Route]:
             _attestation_member,
             prepare=_attestation("examined_existing", 10),
         ),
+        Route(
+            "tick.after_contradict.facts",
+            _tick("facts"),
+            prepare=_contradict(11),
+            verify=_contradiction_resurfaced,
+        ),
+        Route("read.next.after_contradict", _next()),
         Route("authoring.trigger_member", _authoring_trigger),
         Route("write.stale_base", _stale_base_write, prepare=_hold_coordinate),
         Route("write.create.typed", _write(_typed_creates)),

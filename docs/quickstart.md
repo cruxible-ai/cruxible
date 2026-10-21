@@ -469,7 +469,7 @@ cruxible get CLAIM_ID --detail evidence
 
 ~~~text
 value: GHSA-gc5v-m9x4-r6x2
-capture CAP-1fec8823b8ae  ...  observed=2026-10-15T14:27:35Z  evidence admitted
+capture CAP-1fec8823b8ae  ...  observed=2026-10-15T14:27:35Z  evidence: admitted
 rationale: PyPI lists GHSA-gc5v-m9x4-r6x2 against requests 2.32.4 (fixed in 2.33.0).
 ~~~
 

@@ -871,6 +871,44 @@ def test_a_copy_of_a_page_covers_only_when_the_claim_type_names_its_contract(tmp
     assert uncovered.evidence_basis == ("origin_only",)
 
 
+def test_a_copy_the_rule_admits_reads_admitted_in_the_claims_accounts(tmp_path) -> None:
+    """The accounts ask the verdict's own eligibility gate, not the citation's role.
+
+    A page copy whose ClaimType names its contract covers the Claim; its account
+    must say admitted beside that verdict. Unnamed, it is not evidence at all.
+    """
+
+    from types import SimpleNamespace
+
+    from cruxible_core.service.claims.claims import _claim_admission_accounts
+
+    instance, _owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    contract = foreign_source_capture_contract(PAGE_SOURCE_IDENTITY)
+    capture = _page_capture(instance, base)
+    law = SimpleNamespace(verified_attestations=())
+    statuses = {}
+    for name, claim_type in (("named", _type_naming(contract)), ("unnamed", _claim_type())):
+        claim = _claim_citing(capture, contract=contract, claim_type=claim_type, role="copy")
+        tree = {
+            "claim-types/project.work_item/status.json": render_claim_type(claim_type),
+            capture_contract_path(contract.identity.name): render_capture_contract(contract),
+        }
+        (account,) = _claim_admission_accounts(
+            instance,
+            claim=claim,
+            tree=tree,
+            law=law,  # type: ignore[arg-type]
+        )
+        assert account.citation_role == "copy"
+        assert account.citation_origin == "independent"
+        statuses[name] = (account.status, tuple(item.rule_id for item in account.decisions))
+
+    assert statuses["named"][0] == "admitted"
+    assert "page-copy" in statuses["named"][1]
+    assert statuses["unnamed"] == ("not_evidence", ())
+
+
 def test_a_copy_of_the_compilers_own_self_assertion_never_reaches_a_verdict(tmp_path) -> None:
     """A domain type names the direct contract already; the gate still holds.
 

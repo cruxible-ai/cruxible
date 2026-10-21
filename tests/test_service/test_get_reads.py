@@ -212,7 +212,7 @@ def test_evidence_names_each_capture_by_contract_identity_and_version(
     assert capture.contract == _CONTRACT_NAME
     assert capture.version == 1
     assert capture.source == "fixture.work-items"
-    assert capture.admitted is True
+    assert capture.status == "admitted"
     # The CAP- handle a card prints; get and read_capture both accept it.
     assert capture.capture.startswith("CAP-") and len(capture.capture) == len("CAP-") + 12
     digest = capture_contract_digest(_CONTRACT).tagged

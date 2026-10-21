@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -611,14 +611,56 @@ class GetCaptureEvidence(_StrictGetModel):
     source: str
     observed_at: datetime
     role: str
-    admitted: bool
+    origin: Literal["independent", "self_source", "legacy"] = Field(
+        description="Whose bytes the citation reads: an independent source's, the Claim's "
+        "own authored words (self_source), or a legacy backing's."
+    )
+    status: Literal["admitted", "not_admitted", "not_evidence"] = Field(
+        description="admitted: the ClaimType's rule admits it and the verdict reads it; "
+        "not_admitted: offered as evidence, refused by the rule; not_evidence: a copy "
+        "the rule does not admit, which the verdict never reads."
+    )
+
+
+#: Why an attestation does or does not count toward the Claim's verdict.
+AttestationCountReason: TypeAlias = Literal[
+    "cites_admitted_capture",
+    "consequence_policy",
+    "cites_no_capture",
+    "capture_not_admitted",
+    "not_accepted",
+    "not_current",
+]
 
 
 class GetAttestationEvidence(_StrictGetModel):
+    """One attestation of this exact Claim version, and whether it counts.
+
+    An accepted attestation artifact, or an event ``claim attest`` recorded.
+    The verdict reads accepted ones: a current one counts when it cites
+    Captures the Claim admits. Either counts when the ClaimType's consequence
+    policy has a rule for its stance. A recorded event is otherwise shown and
+    resurfaced in ``next``, never read by the verdict (``not_accepted``).
+    """
+
     stance: str
     principal: str
     at: datetime
     current: bool
+    record: Literal["accepted", "event"]
+    basis: Literal["examined_existing", "new_capture", "legacy"]
+    counts: bool
+    counts_reason: AttestationCountReason
+    event: str | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="The attestation door event's digest, for a recorded event.",
+    )
+    rule: str | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="The consequence-policy rule it counts under.",
+    )
 
 
 class GetEvidence(_StrictGetModel):
@@ -878,6 +920,7 @@ __all__ = [
     "GET_HISTORY_DEFAULT_LIMIT",
     "GET_HISTORY_MAX_LIMIT",
     "GET_PAGED_DETAILS",
+    "AttestationCountReason",
     "ByteRange",
     "GetAcquisitionInput",
     "GetApprovalPolicyCard",

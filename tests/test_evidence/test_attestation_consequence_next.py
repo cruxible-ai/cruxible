@@ -463,3 +463,35 @@ def test_threshold_fold_refuses_missing_law_evidence_as_typed_integrity(
         match="accepted Claim has no reproducible Claim law evidence",
     ):
         _rows(instance)
+
+
+def test_a_consequence_policy_weighs_contradictions_itself_with_no_neutral_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, owner, claim = threshold_world(tmp_path, monkeypatch)
+    service_append_claim_attestation(
+        instance,
+        request=_request(
+            instance,
+            owner,
+            claim.identity.name,
+            tmp_path,
+            stance="contradict",
+            attested_at=EVALUATION_TIME - timedelta(minutes=4),
+        ),
+        actor_id="owner",
+        recorded_at=EVALUATION_TIME - timedelta(minutes=3),
+    )
+
+    rows = service_playbill_next(
+        instance,
+        request=NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access()),
+    ).items
+    assert not [
+        item
+        for item in rows
+        if item.reason == "claim_contradicting_evidence_available"
+        and isinstance(item.detail, dict)
+        and item.detail.get("attestation_basis") == "examined_existing"
+    ]
