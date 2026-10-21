@@ -39,6 +39,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claims import ClaimArtifactAny
 from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
+from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.source_references import (
     CasSourceReference,
     ExternalSourceReference,
@@ -197,7 +198,8 @@ class SourceLine:
         maintained, not read off the citing Claims.
         """
 
-        contracts = sorted({label for label, _locator in self.pairs}, key=str.encode)
+        # Contract labels are kept as stored; the line shows their public names.
+        contracts = sorted({public_name(label) for label, _locator in self.pairs}, key=str.encode)
         located = sorted(
             {locator for _label, locator in self.pairs if locator != "-"}, key=str.encode
         )

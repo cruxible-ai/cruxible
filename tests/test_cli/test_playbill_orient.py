@@ -203,6 +203,54 @@ def test_orient_maps_stored_playbill_contract_names_to_cruxible_for_display() ->
     assert "evidence=cruxible.coordinator-self-source-v1,feed-a" in text
 
 
+def test_orient_capture_sections_print_contracts_by_their_public_names() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+    from cruxible_core.service.discovery.operational import schedule_summary
+
+    header = {
+        "instance": "inst",
+        "generation": 3,
+        "coordinate": {"git_oid": "a" * 64},
+        "accepted_at": "2026-09-29T00:00:00Z",
+    }
+    text = _render_orient(
+        {
+            **header,
+            "section": "capture_contracts",
+            "capture_contracts": [
+                {
+                    "contract": "CaptureContract:playbill.foreign-source.repo.notes",
+                    "version": 1,
+                    "lifecycle": "live",
+                    "grade": "self-asserted",
+                    "admitted_by": 2,
+                }
+            ],
+        }
+    )
+    assert "CaptureContract:cruxible.foreign-source.repo.notes  1  live" in text
+    assert "playbill." not in text
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.triggers import CaptureLandingSchedule
+
+    schedule = CaptureLandingSchedule.model_construct(
+        kind="capture_landed",
+        event=type(
+            "Event",
+            (),
+            {
+                "capture_contract_identity": ArtifactIdentity(
+                    kind="CaptureContract", name="playbill.foreign-source.repo.notes"
+                )
+            },
+        )(),
+    )
+    assert schedule_summary(schedule) == (
+        "when CaptureContract:cruxible.foreign-source.repo.notes lands"
+    )
+
+
 def test_a_stale_floor_prints_how_far_behind_it_is_and_how_to_refresh() -> None:
     from cruxible_core.cli.commands.playbill import _render_orient
 

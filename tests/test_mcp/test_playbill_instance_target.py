@@ -211,6 +211,10 @@ def test_server_info_keeps_daemon_fields_for_a_daemon_scope_caller(
     assert result.adapter_version == result.daemon_version == __version__
     assert result.daemon is not None
     assert result.host is None and result.identity is None
+    # The reserved-name display table rides along, served from the one mapping.
+    from cruxible_client.contracts.public_names import public_name_map
+
+    assert result.daemon.public_names == public_name_map()
 
 
 def test_client_decodes_the_daemon_scope_refusal_with_its_scope() -> None:

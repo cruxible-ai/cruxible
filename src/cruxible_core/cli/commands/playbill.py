@@ -8280,7 +8280,13 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         "predictions",
     }:
         for row in result[section]:
-            lines.append("  ".join(str(value) for value in row.values()))
+            # Cells read stored names (a contract, a source) by their public names.
+            lines.append(
+                "  ".join(
+                    _public_name(value) if isinstance(value, str) else str(value)
+                    for value in row.values()
+                )
+            )
     if section == "pins":
         for row in result["pins"]:
             stale = "" if row.get("current", True) else "  (not the current version)"

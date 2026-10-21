@@ -657,6 +657,7 @@ def server_info() -> contracts.ServerInfoResult:
         for record in get_registry().list_governed_instances()
     )
     current = current_compiler_coordinate()
+    from cruxible_client.contracts.public_names import public_name_map
     from cruxible_core.consumers.runner import consumer_statuses
 
     return contracts.ServerInfoResult(
@@ -678,6 +679,8 @@ def server_info() -> contracts.ServerInfoResult:
         compiler_revision=COMPILER_REVISION_LABELS[current],
         hosts=hosts,
         consumers=consumer_statuses(get_playbill_manager()),
+        # The display-name table, served once so clients apply it, never copy it.
+        public_names=public_name_map(),
     )
 
 

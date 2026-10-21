@@ -487,7 +487,11 @@ def test_every_delta_rebuilds_the_full_floor_byte_for_byte(
     assert b"- mandate onto-mandate  Procedure:onto-tick" in shown and b"  suspended\n" in shown
     assert b"onto-on-generation(generation_accepted)" in shown
     assert "ontology/kinds/project.note.yaml" in paths
-    assert "ontology/contracts/playbill.foreign-source.repo.notes.yaml" in paths
+    # Contract cards are named and labelled by the public name the CLI shows.
+    assert "ontology/contracts/cruxible.foreign-source.repo.notes.yaml" in paths
+    assert not any(path.startswith("ontology/contracts/playbill.") for path in paths)
+    assert b"CaptureContract:cruxible.foreign-source.repo.notes" in shown
+    assert b"playbill.foreign-source." not in shown
     for base, target in _pairs(head):
         directory = tmp_path / f"apply-{base}-{target}"
         apply_floor_delta(directory, _delta(instance, base, None, None))
