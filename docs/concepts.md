@@ -221,7 +221,7 @@ CLM-abbe35eeffed479c1b18674c93880802  verdict=supported status=accepted revision
 
 $ cruxible get CLM-abbe35eeffed479c1b18674c93880802 --detail evidence
 value: catalog.vehicle/honda-civic-2019
-capture CAP-a0a989ec8fe7  CaptureContract:cruxible.foreign-source.catalog v1  source=catalog  ...  evidence admitted
+capture CAP-a0a989ec8fe7  CaptureContract:cruxible.foreign-source.catalog v1  source=catalog  ...  evidence: admitted
 rationale: Acme's 2026 catalog lists bp-2210 for the 2019 Civic.
 ~~~
 
