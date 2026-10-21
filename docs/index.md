@@ -1,24 +1,43 @@
 # Cruxible documentation
 
-Cruxible is hard state for AI agents: typed, governed, durable state that
-humans and agents share. Values are Claims about Subjects under ClaimTypes
-that say what a value may be and what evidence backs it. Changes are proposed,
-checked deterministically, accepted under an approval policy, and recorded in
-a signed Git ledger, so every answer names the accepted coordinate it came
-from. No LLM runs inside Cruxible.
+Cruxible keeps what a team of people and AI agents knows about its world:
+each fact structured, stored with the reason and the evidence behind it,
+changed only through checked and reviewed changes, and kept with its full
+history. Agents read what the team currently believes directly, instead of
+re-reading every document, and can tell a checked fact from a guess.
+
+No language model runs inside Cruxible. People and agents supply the
+judgment; Cruxible checks it, records it and serves it back.
 
 ## Start here
 
-- [Quickstart](quickstart.md): record typed state, review a change from the
-  outside world, see a page flagged out of date, and ask what the change
-  reaches and what was true before.
-- [Concepts](concepts.md): the model behind the commands.
-- [Building team knowledge](building-team-knowledge.md): what to make typed state and what to
-  keep as prose, how to connect them, and modeling habits that keep state useful.
-- [For AI agents](for-ai-agents.md): operating rules and the read and write
-  loops over MCP, the CLI and the Python SDK.
-- [Kits](kits.md): install, upgrade and build releases of definitions.
-- [Documents and notes](documents-and-notes.md): notes that back Claims, governed Documents, and pages kept in step with state.
+- [Quickstart](quickstart.md): set up a first project, record what the team
+  knows, review a change that comes in from outside, see a page flagged when
+  it falls out of date, and ask what a change affects.
+- [Concepts](concepts.md): the ideas behind Cruxible, and the words the rest
+  of these docs use.
+
+## Guides
+
+- [Building team knowledge](building-team-knowledge.md): what to record as
+  structured facts, what to leave as prose, and habits that keep it useful.
+- [Evidence and admission](evidence-and-admission.md): what a fact can rest
+  on, and how to tell a checked fact from a guess.
+- [Keeping knowledge current](keeping-knowledge-current.md): finding what went
+  stale or changed underneath you, and dealing with it.
+- [Asking questions](asking-questions.md): searching, saved questions, and
+  what was true in the past.
+- [Documents and notes](documents-and-notes.md): writing notes together with
+  the facts they support, and pages that stay in step.
+- [Lines and automation](lines-and-automation.md): recurring checks that run
+  on a schedule and propose what they find.
+- [Review and governance](review-and-governance.md): who can change what, and
+  how changes get reviewed.
+- [Evolving your vocabulary](evolving-your-vocabulary.md): changing what you
+  record without losing what you already know.
+- [For AI agents](for-ai-agents.md): connecting an agent, and the loop it
+  runs.
+- [Kits](kits.md): installing shared vocabularies built by others.
 
 ## Reference
 
