@@ -10,11 +10,15 @@ from typing import TYPE_CHECKING, Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts import ClaimViewRecord as ClientClaimViewV2
-from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
+from cruxible_client.contracts.accepted_attestations import (
+    AcceptedClaimAttestationEvidence,
+    ClaimAttestationEvidence,
+)
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
 )
 from cruxible_client.contracts.claim_types import (
+    ClaimType,
     claim_type_path,
     parse_claim_type,
 )
@@ -48,6 +52,7 @@ from cruxible_client.contracts.errors import (
     ProjectionIntegrityError,
     ProposalIntegrityError,
 )
+from cruxible_client.contracts.get_reads import AttestationCountReason
 from cruxible_client.contracts.policies import (
     ClaimVerdict,
     ResolutionContender,
@@ -121,6 +126,32 @@ class CaptureAdmissionAccountV1(_StrictClaimServiceModel):
     decisions: tuple[CaptureEvidenceKindAdmissionV1, ...] = ()
 
 
+class ClaimAttestationAccountV1(_StrictClaimServiceModel):
+    """One attestation of this exact Claim version, and whether it counts.
+
+    ``record`` says where it lives: an accepted attestation artifact the verdict
+    reads, or an event the attestation door recorded (``claim attest``). An
+    accepted one counts when it is current and cites Captures this Claim
+    admits; either counts when the ClaimType's consequence policy has a rule
+    for its stance. ``counts_reason`` says which, or why not.
+    """
+
+    tag: Literal["cruxible-claim-attestation-account-v1"] = "cruxible-claim-attestation-account-v1"
+    record: Literal["accepted", "event"]
+    attestation_digest: str
+    event_digest: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    basis: Literal["examined_existing", "new_capture", "legacy"]
+    stance: Literal["support", "contradict", "unsure"]
+    principal: str
+    attested_at: datetime
+    valid_until: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    cited_capture_digests: tuple[str, ...] = ()
+    current: bool
+    counts: bool
+    counts_reason: AttestationCountReason
+    rule_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
 class ClaimViewRecord(_StrictClaimServiceModel):
     tag: Literal["playbill-claim-read-v2"] = "playbill-claim-read-v2"
     coordinate_kind: Literal["canonical"] = "canonical"
@@ -179,6 +210,11 @@ class PlaybillClaimExplanationV2(_StrictClaimServiceModel):
     coverage: CoverageDescriptor
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
+    # Every attestation of this exact version, accepted or door-recorded, and
+    # whether it counts. Absent when there is none, so the bytes do not change.
+    attestation_accounts: tuple[ClaimAttestationAccountV1, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
     # Review context, not work: what this Claim shares with retired Claims.
     # Absent when it shares nothing, so the explanation's bytes do not change.
     retirement_context: ClaimRetirementContextV1 | None = Field(
@@ -226,6 +262,9 @@ class PlaybillClaimExplanationV3(_StrictClaimServiceModel):
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
     freshness: tuple[ClaimEvidenceFreshnessLineV1, ...]
+    attestation_accounts: tuple[ClaimAttestationAccountV1, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
     retirement_context: ClaimRetirementContextV1 | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -796,6 +835,153 @@ def resolve_playbill_claim_group(
 
 
 @positioned_read
+def _attestation_count(
+    *,
+    record: Literal["accepted", "event"],
+    stance: str,
+    basis: str,
+    cited: tuple[str, ...],
+    current: bool,
+    admitted: frozenset[str],
+    policy_rules: Mapping[str, str],
+) -> tuple[bool, AttestationCountReason, str | None]:
+    """The verdict law's reading of one attestation, with the reason in one word.
+
+    The verdict reads accepted attestations only, and of those a current one
+    whose cited Captures this Claim all admits. A consequence policy reads a
+    current examined attestation, accepted or recorded, of a stance it has a
+    rule for. Nothing else counts: a recorded event is resurfaced, not read.
+    """
+
+    if not current:
+        return False, "not_current", None
+    if record == "accepted" and cited and admitted.issuperset(cited):
+        return True, "cites_admitted_capture", None
+    rule_id = policy_rules.get(stance) if basis == "examined_existing" else None
+    if rule_id is not None:
+        return True, "consequence_policy", rule_id
+    if not cited:
+        return False, "cites_no_capture", None
+    return False, ("capture_not_admitted" if record == "accepted" else "not_accepted"), None
+
+
+def claim_attestation_accounts(
+    instance: PlaybillInstance,
+    *,
+    claim: ClaimArtifactAny,
+    claim_type: ClaimType,
+    exact_attestations: tuple[ClaimAttestationEvidence, ...],
+    admission_accounts: tuple[CaptureAdmissionAccountV1, ...],
+    evaluation_time: datetime,
+) -> tuple[ClaimAttestationAccountV1, ...]:
+    """Account for every attestation of this exact Claim version: accepted, then recorded.
+
+    The recorded ones are the attestation door's events of this version's own
+    partition (read from that partition, never by walking the door): each
+    principal's latest word stands, as the threshold and the holds read it.
+    """
+
+    from cruxible_client.contracts.claim_attestation_store import (
+        claim_attestation_partition_digest,
+    )
+    from cruxible_client.contracts.claims import claim_artifact_digest
+
+    admitted = frozenset(
+        item.capture_digest for item in admission_accounts if item.status == "admitted"
+    )
+    policy = claim_type.attestation_consequence_policy
+    policy_rules: dict[str, str] = {}
+    for rule in () if policy is None else policy.rules:
+        if rule.minimum_independent_control_components > 0:
+            policy_rules.setdefault(rule.stance, rule.rule_id)
+
+    def in_window(at: datetime, until: datetime | None) -> bool:
+        return at <= evaluation_time and (until is None or evaluation_time < until)
+
+    accounts: list[ClaimAttestationAccountV1] = []
+    for item in exact_attestations:
+        statement = item.statement
+        if isinstance(item, AcceptedClaimAttestationEvidence):
+            basis: Literal["examined_existing", "new_capture", "legacy"] = (
+                item.envelope.statement.attestation_basis
+            )
+        else:
+            basis = "legacy"
+        cited = tuple(statement.capture_digests)
+        current = item.current and in_window(statement.observed_at, statement.valid_until)
+        counts, reason, rule_id = _attestation_count(
+            record="accepted",
+            stance=statement.stance,
+            basis=basis,
+            cited=cited,
+            current=current,
+            admitted=admitted,
+            policy_rules=policy_rules,
+        )
+        accounts.append(
+            ClaimAttestationAccountV1(
+                record="accepted",
+                attestation_digest=item.attestation_digest,
+                basis=basis,
+                stance=statement.stance,
+                principal=statement.provider_or_principal.name,
+                attested_at=statement.observed_at,
+                valid_until=statement.valid_until,
+                cited_capture_digests=cited,
+                current=current,
+                counts=counts,
+                counts_reason=reason,
+                rule_id=rule_id,
+            )
+        )
+    events = instance.claim_attestation_evidence_store().events(
+        partition_digest=claim_attestation_partition_digest(
+            instance_id=instance.descriptor.instance_id,
+            claim_identity=claim.identity,
+            claim_artifact_digest=claim_artifact_digest(claim).tagged,
+        )
+    )
+    latest: dict[str, int] = {}
+    for event, payload in events:
+        principal = payload.attesting_principal_id
+        latest[principal] = max(latest.get(principal, 0), event.sequence)
+    for event, payload in events:
+        signed = payload.attestation.statement
+        cited = tuple(signed.cited_capture_digests)
+        current = (
+            payload.current_at_append
+            and latest[payload.attesting_principal_id] == event.sequence
+            and in_window(signed.attested_at, signed.valid_until)
+        )
+        counts, reason, rule_id = _attestation_count(
+            record="event",
+            stance=signed.stance,
+            basis=signed.attestation_basis,
+            cited=cited,
+            current=current,
+            admitted=admitted,
+            policy_rules=policy_rules,
+        )
+        accounts.append(
+            ClaimAttestationAccountV1(
+                record="event",
+                attestation_digest=payload.envelope_digest,
+                event_digest=event.event_digest,
+                basis=signed.attestation_basis,
+                stance=signed.stance,
+                principal=payload.attesting_principal_id,
+                attested_at=signed.attested_at,
+                valid_until=signed.valid_until,
+                cited_capture_digests=cited,
+                current=current,
+                counts=counts,
+                counts_reason=reason,
+                rule_id=rule_id,
+            )
+        )
+    return tuple(accounts)
+
+
 def service_explain_playbill_claim(
     instance: PlaybillInstance,
     *,
@@ -900,6 +1086,23 @@ def service_explain_playbill_claim(
         requested_facets=("governance", "provenance", "sources"),
         available_facets=("governance", "provenance", "sources"),
     )
+    claim_tree = ClaimVerdictReadContext(instance, coordinate).tree
+    exact_attestations = accepted_claim_attestations(
+        instance,
+        coordinate=coordinate,
+        tree=claim_tree,
+        claim=claim,
+        historical=law.verified_attestations,
+    )
+    type_path = claim_type_path(claim.statement.predicate)
+    attestation_accounts = claim_attestation_accounts(
+        instance,
+        claim=claim,
+        claim_type=parse_claim_type(claim_tree[type_path], path=type_path),
+        exact_attestations=exact_attestations,
+        admission_accounts=read.admission_accounts,
+        evaluation_time=evaluated_at,
+    )
     if isinstance(verdict.verdict, ClaimVerdictResult):
         freshness: list[ClaimEvidenceFreshnessLineV1] = []
         for expiration in verdict.verdict.freshness_expirations:
@@ -931,13 +1134,7 @@ def service_explain_playbill_claim(
             claim=view,
             law_evidence=law,
             verdict=verdict.verdict,
-            exact_attestations=accepted_claim_attestations(
-                instance,
-                coordinate=coordinate,
-                tree=ClaimVerdictReadContext(instance, coordinate).tree,
-                claim=claim,
-                historical=law.verified_attestations,
-            ),
+            exact_attestations=exact_attestations,
             source_handles=tuple(handles),
             coverage=coverage,
             admission_evaluation_time=evaluated_at,
@@ -945,6 +1142,7 @@ def service_explain_playbill_claim(
             freshness=tuple(
                 sorted(freshness, key=lambda item: item.capture_digest.encode("ascii"))
             ),
+            attestation_accounts=attestation_accounts,
             retirement_context=retirement_context,
         )
     if not isinstance(law, ClaimLawEvidenceV1):
@@ -957,17 +1155,12 @@ def service_explain_playbill_claim(
         claim=view,
         law_evidence=law,
         verdict=verdict.verdict,
-        exact_attestations=accepted_claim_attestations(
-            instance,
-            coordinate=coordinate,
-            tree=ClaimVerdictReadContext(instance, coordinate).tree,
-            claim=claim,
-            historical=law.verified_attestations,
-        ),
+        exact_attestations=exact_attestations,
         source_handles=tuple(handles),
         coverage=coverage,
         admission_evaluation_time=evaluated_at,
         admission_accounts=read.admission_accounts,
+        attestation_accounts=attestation_accounts,
         retirement_context=retirement_context,
     )
 
@@ -1043,6 +1236,7 @@ def service_open_playbill_source(
 __all__ = [
     "CaptureAdmissionAccountV1",
     "CaptureEvidenceKindAdmissionV1",
+    "ClaimAttestationAccountV1",
     "ClaimEvidenceFreshnessLineV1",
     "PlaybillClaimExplanationV2",
     "PlaybillClaimExplanationV3",
@@ -1050,6 +1244,7 @@ __all__ = [
     "PlaybillClaimList",
     "PlaybillClaimView",
     "ClaimViewRecord",
+    "claim_attestation_accounts",
     "resolve_playbill_claim_group",
     "service_explain_playbill_claim",
     "service_get_playbill_claim",

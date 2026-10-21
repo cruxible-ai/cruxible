@@ -725,3 +725,52 @@ def test_evidence_capture_lines_show_three_states_and_label_copies_by_origin(
     assert result.exit_code == 0, result.output
     (line,) = [item for item in result.output.splitlines() if item.startswith("capture ")]
     assert line.endswith(f"  {shown}")
+
+
+def test_evidence_attestation_lines_say_where_each_lives_and_whether_it_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.get_reads import GetAttestationEvidence, GetEvidence
+
+    attestations = (
+        GetAttestationEvidence(
+            stance="contradict",
+            principal="owner",
+            at=WHEN,
+            current=True,
+            record="event",
+            basis="examined_existing",
+            counts=False,
+            counts_reason="cites_no_capture",
+            event="sha256:" + "e" * 64,
+        ),
+        GetAttestationEvidence(
+            stance="unsure",
+            principal="reviewer",
+            at=WHEN,
+            current=True,
+            record="event",
+            basis="examined_existing",
+            counts=True,
+            counts_reason="consequence_policy",
+            rule="two-unsure",
+        ),
+    )
+    _stub(
+        monkeypatch,
+        _result(
+            "claim",
+            detail="evidence",
+            evidence=GetEvidence(value="Affirmed.", captures=(), attestations=attestations),
+        ),
+    )
+    result = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "evidence"])
+
+    assert result.exit_code == 0, result.output
+    lines = [item for item in result.output.splitlines() if item.startswith("attestation ")]
+    assert lines == [
+        f"attestation contradict by owner at {WHEN.isoformat()}  recorded  "
+        "counts toward verdict: no (cites no Capture)",
+        f"attestation unsure by reviewer at {WHEN.isoformat()}  recorded  "
+        "counts toward verdict: yes (consequence policy rule two-unsure)",
+    ]

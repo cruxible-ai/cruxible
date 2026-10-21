@@ -5213,6 +5213,22 @@ def _why_summary_lines(value: Any, *, key: str | None = None, depth: int = 0) ->
     return [f"{indent}{key}: {text}" if key is not None else f"{indent}{text}"]
 
 
+_ATTESTATION_COUNT_WORDS = {
+    "cites_admitted_capture": "yes (cites Captures this Claim admits)",
+    "consequence_policy": "yes (consequence policy rule {rule})",
+    "cites_no_capture": "no (cites no Capture)",
+    "capture_not_admitted": "no (cites a Capture this Claim does not admit)",
+    "not_accepted": "no (recorded, not accepted: the verdict reads accepted attestations)",
+    "not_current": "no (not current)",
+}
+
+
+def _attestation_counts_text(attestation: Any) -> str:
+    """Whether one attestation counts toward the Claim's verdict, and why, in words."""
+
+    return _ATTESTATION_COUNT_WORDS[attestation.counts_reason].format(rule=attestation.rule)
+
+
 def _citation_label(capture: Any) -> str:
     """What a cited Capture is, in words: the Claim's own words, a passage, or evidence."""
 
@@ -5300,7 +5316,9 @@ def _emit_get_text(result: Any) -> None:
         for attestation in result.evidence.attestations:
             click.echo(
                 f"attestation {attestation.stance} by {attestation.principal} "
-                f"at {attestation.at.isoformat()}{'' if attestation.current else ' (not current)'}"
+                f"at {attestation.at.isoformat()}  "
+                f"{'accepted' if attestation.record == 'accepted' else 'recorded'}  "
+                f"counts toward verdict: {_attestation_counts_text(attestation)}"
             )
         if result.evidence.rationale:
             click.echo(f"rationale: {printable(result.evidence.rationale)}")
