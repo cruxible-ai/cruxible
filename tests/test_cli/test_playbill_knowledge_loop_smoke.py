@@ -537,7 +537,8 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         "--name",
         "seed-claim-type",
     )
-    cruxible.accept(_proposal_id(proposed))
+    # The propose lands it: policy and this caller allow it (one landing rule).
+    assert proposed["proposal"]["outcome"]["status"] == "landed", proposed
 
     # 3. Seed one Subject through the durable authoring coordinator.
     _author_and_accept(

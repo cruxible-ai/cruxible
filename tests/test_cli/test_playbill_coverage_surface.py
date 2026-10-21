@@ -104,7 +104,8 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
         "--name",
         "seed-claim-type",
     )
-    cruxible.accept(_proposal_id(proposed))
+    # The propose lands it: policy and this caller allow it (one landing rule).
+    assert proposed["proposal"]["outcome"]["status"] == "landed", proposed
 
     _author_and_accept(
         cruxible,
@@ -183,7 +184,8 @@ def _govern_a_foreign_span(
         "--name",
         "seed-claim-type",
     )
-    cruxible.accept(_proposal_id(proposed))
+    # The propose lands it: policy and this caller allow it (one landing rule).
+    assert proposed["proposal"]["outcome"]["status"] == "landed", proposed
 
     _author_and_accept(
         cruxible,
