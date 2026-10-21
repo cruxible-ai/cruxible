@@ -7,9 +7,10 @@ operation.
 
 ## What Cruxible is for
 
-Teams of people and agents act on shared knowledge every day: which parts fit
-which vehicles, which part replaces one that's discontinued, whether a
-supplier's catalog still says so. Most of that knowledge lives in documents, tickets, chat threads and
+Teams of people and agents act on shared knowledge every day: which of your
+systems a new vulnerability actually reaches, why a design decision was made
+and whether it still holds, which leads an investigation has already ruled
+out, what an agent has checked and what it only assumed. Most of that knowledge lives in documents, tickets, chat threads and
 agents' context windows, and it fails in familiar ways:
 
 - it drifts out of date, and nobody notices;
@@ -28,8 +29,7 @@ approved changes, with a complete record of what was believed, when, and why.
 ## The approach
 
 - **A symbolic model of your world.** You declare the kinds of thing your team
-  cares about, the fields each can have, and the relations between them: parts
-  and vehicles, a part's category, which vehicles a part fits.
+  cares about, the fields each can have, and the relations between them.
   Cruxible holds the current state of that model, and checks every change
   against it.
 - **Beliefs, with their reasons.** Every value is a Claim: something the team
@@ -110,9 +110,9 @@ generation once it's accepted:
 
 ```mermaid
 flowchart LR
-    g0["0<br/>genesis"] --> g1["1<br/>vocabulary defined"] --> g2["2<br/>catalog recorded"]
-    g2 -.->|checked against 2| p["proposal:<br/>add replacement part"]
-    p -->|approved and accepted| g3["3<br/>replacement recorded"]
+    g0["0<br/>genesis"] --> g1["1<br/>vocabulary defined"] --> g2["2<br/>first knowledge recorded"]
+    g2 -.->|checked against 2| p["proposal:<br/>a change"]
+    p -->|approved and accepted| g3["3<br/>change recorded"]
 ```
 
 Every generation has a **coordinate** that names it exactly:
@@ -151,6 +151,12 @@ diff before it's accepted, and the ledger can be mirrored to a remote
 Cruxible models your world as things, their fields, and the relations between
 them. Declaring that model is what lets people and agents describe the same
 world the same way, and lets Cruxible check every change against it.
+
+To make these ideas concrete, the rest of this page uses a domain whose
+relationships everyone already knows: car parts and the vehicles they fit. A
+parts catalog is a solved problem in practice; it's here because nobody has to
+learn it first. The same model applies to whatever your team actually works
+on.
 
 A **Subject** is a thing the instance knows about, named `kind/id`:
 `catalog.part/bp-1142` is a set of brake pads, and
