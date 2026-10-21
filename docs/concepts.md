@@ -10,13 +10,18 @@ operation.
 Teams of people and agents act on shared knowledge every day: which of your
 systems a new vulnerability actually reaches, why a design decision was made
 and whether it still holds, which leads an investigation has already ruled
-out, what an agent has checked and what it only assumed. Most of that knowledge lives in documents, tickets, chat threads and
-agents' context windows, and it fails in familiar ways:
+out, what an agent has checked and what it only assumed. Most of that
+knowledge lives in documents, tickets, chat threads and agents' context
+windows, and it fails in familiar ways:
 
 - it drifts out of date, and nobody notices;
 - it piles up instead of settling: notes and Markdown files grow by
   appending, and what the team actually believes now is buried somewhere in
   them;
+- it gets re-read and re-interpreted every time: each agent session starts by
+  re-ingesting the same documents to work out what the team believes, paying
+  for it in tokens and time, and two agents reading the same pages can come
+  away believing different things;
 - it gets overwritten, especially when several agents work at once, and the
   earlier version and the reason for the change are lost;
 - two copies disagree, and nobody can say which one is right;
@@ -43,7 +48,9 @@ approved changes, with a complete record of what was believed, when, and why.
   section to a Markdown document and, in the same change, record the Claim
   that rests on it: the explanation stays readable in the repository, and the
   belief it supports becomes a typed, shareable value instead of one more
-  paragraph.
+  paragraph. Once a belief is hardened into a Claim, agents read it directly,
+  with its evidence attached, instead of re-reading and re-interpreting every
+  document it came from, and every agent reads the same answer.
 - **Many writers, nothing overwritten.** A write based on a value someone else
   has since changed is refused rather than silently winning. A disagreement
   can stand as a competing value that stays visible until it's resolved. And
