@@ -813,13 +813,24 @@ def _assert_successor_resolves_attestation_membership(
         instance.refresh()
 
     assert len(rows()) == 1
+    # This ClaimType's rule names the Capture's contract, so the verdict reads a
+    # copy of it as evidence (one eligibility gate): the copy successor admits
+    # it, and nothing is left to adjudicate.
     cite("copy", "2026-08-28T15:01:00.000000Z")
-    assert len(rows()) == 1
+    from cruxible_core.service.claims.claims import service_get_playbill_claim
+
+    accounts = service_get_playbill_claim(instance, identity=claim_id).admission_accounts
+    assert [
+        (item.citation_role, item.status)
+        for item in accounts
+        if item.capture_digest == capture.capture_digest
+    ] == [("copy", "admitted")]
+    assert rows() == ()
     cite("evidence", "2026-08-28T15:02:00.000000Z")
     assert rows() == ()
 
 
-def test_copy_successor_keeps_membership_and_evidence_successor_resolves_it(
+def test_copy_successor_the_rule_admits_resolves_membership_as_evidence_does(
     tmp_path: Path,
 ) -> None:
     _assert_successor_resolves_attestation_membership(
@@ -938,7 +949,10 @@ def test_get_evidence_and_why_list_this_versions_recorded_attestations_and_wheth
         attested_at=RECORDED_AT + timedelta(seconds=1),
     )
     service_append_claim_attestation(
-        instance, request=support, actor_id="owner", recorded_at=RECORDED_AT
+        instance,
+        request=support,
+        actor_id="owner",
+        recorded_at=RECORDED_AT + timedelta(seconds=1),
     )
     superseded, latest = evidence()
     assert (superseded.stance, superseded.current, superseded.counts_reason) == (
