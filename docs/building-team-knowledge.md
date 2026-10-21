@@ -217,7 +217,7 @@ accepted (generation 20, d931f626644f)
 warning cruxible.write.verdict_not_supported: catalog.part/bp-1142 supplier was written, but its verdict is uncovered: no admitted evidence backs it.
 ~~~
 
-[Evidence](concepts.md#evidence) explains roles, rules and
+[Evidence and admission](evidence-and-admission.md) explains roles, rules and
 verdicts in full.
 
 ### Avoid reserved field names
@@ -277,7 +277,7 @@ the car parts example.
 
 ## Where to go next
 
-- [Evidence](concepts.md#evidence): what counts as evidence
+- [Evidence and admission](evidence-and-admission.md): what counts as evidence
   for a field, and how verdicts come out.
 - [Evidence](concepts.md#evidence): writing documents and citing
   them.

@@ -234,10 +234,17 @@ opening either.
 
 Anyone can **attest** to a Claim with a signature: `cruxible claim attest
 CLAIM_ID` with `--support`, `--contradict` or `--unsure`. An attestation is
-recorded beside the Claim and never changes it; `--unsure` holds the Claim's
-contested `next` rows until what you examined changes. When you have evidence
-against a Claim, attest to it or record what you observed instead, rather than
-minting an adjacent inverse concept ("does not fit").
+recorded and shown on the Claim (`get --detail evidence`) and never changes it
+by itself. With no consequence policy, `next` brings a standing contradiction
+back for an agent or person to judge; `--unsure` holds the Claim's contested
+`next` rows until what you examined changes. An attestation counts toward the
+verdict only when it is accepted citing a Capture the Claim admits, or when the
+ClaimType's consequence policy says so. When you have evidence against a
+Claim, attest to it or record what you observed instead, rather than minting
+an adjacent inverse concept ("does not fit").
+
+[Building team knowledge](building-team-knowledge.md) covers deciding what to
+model and how to shape it.
 
 ## Evidence
 
@@ -283,6 +290,9 @@ The note lands in `docs/fitment.md`, where people keep reading it, and the
 fitment lands in the ledger citing it: the explanation stays readable in the
 repository, and the belief it supports becomes a typed value that queries,
 agents and other teams can use.
+
+[Evidence and admission](evidence-and-admission.md) covers how fields admit
+evidence, verdicts, freshness and attestations in full.
 
 ### Files, citations and Documents
 
