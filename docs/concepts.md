@@ -686,7 +686,8 @@ make as a revised Claim and predict again.
 
 Procedures and Lines are how Cruxible keeps knowledge in step with the world
 without someone doing it by hand: pipelines that observe, and act, under
-rules you declare.
+rules you declare. [Lines and automation](lines-and-automation.md) walks
+through one from its first run to settling on its own.
 
 ### Procedures, Blueprints and providers
 

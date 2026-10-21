@@ -156,8 +156,8 @@ accepted (generation 15, 65a4644294d3)
   set catalog.part/bp-1142 price: 42 -> 42  [CLM-…; verdict supported]
 ~~~
 
-A Line can do the re-checking on a schedule; see [Procedures and
-Lines](concepts.md#procedures-and-lines).
+A Line can do the re-checking on a schedule; see [Lines and
+automation](lines-and-automation.md).
 
 ## Citation or Document
 

@@ -195,8 +195,8 @@ keep quoting it. Give a measured value a field of its own, resting on the
 evidence it was measured from, which carries the date: the latest value is
 then the one everybody reads, and its history keeps the earlier ones. When a
 Procedure measures something about its own runs, that measurement belongs in
-the Procedure's readings (see [Procedures and
-Lines](concepts.md#procedures-and-lines)).
+the Procedure's readings (see [Lines and
+automation](lines-and-automation.md#earning-settle)).
 
 ### Use the normative role for what you state yourself
 

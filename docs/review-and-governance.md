@@ -83,7 +83,8 @@ readmit` rebases it as a new proposal to review.
 
 A reviewer who decides a change shouldn't land rejects it, saying why
 (`proposal reject ID --reason "…"`); an author drops their own proposal with
-`proposal withdraw ID --reason "…"`.
+`proposal withdraw ID --reason "…"`. Submitting exactly the same change again
+afterwards doesn't make a new proposal; change its `because` text.
 
 ## The approval policy
 
@@ -169,8 +170,8 @@ Lines can act on their own only as far as you allow. A Line's ceiling is
   like anyone's;
 - a **settle** mandate lets it land changes without approval, within what
   the mandate names: which fields, which kinds of change (create, revise,
-  retire), optionally which Subjects and which kinds of new Subject, and
-  optionally a condition, a saved query that must say each target qualifies.
+  retire), optionally which Subjects and which kinds of new Subject, and a
+  condition, a saved query that must say each target qualifies.
   A change to a field the mandate doesn't name goes to review as a proposal; a
   condition that doesn't hold proposes or refuses, as the mandate declares;
   anything else outside it is refused.
@@ -186,8 +187,9 @@ supplier's price list can earn a settle mandate for prices; whether a part
 fits a car stays with a person. The security kit's example automation follows
 the same rule: Lines that copy a vulnerability's published listings can
 graduate to settling, while whether a vulnerability affects you never enters a
-mandate, so every such finding is reviewed. See [Procedures and
-Lines](concepts.md#procedures-and-lines).
+mandate, so every such finding is reviewed. [Lines and
+automation](lines-and-automation.md#earning-settle) walks through a
+graduation.
 
 ## Reviewing with Git
 

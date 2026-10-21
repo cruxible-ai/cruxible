@@ -148,8 +148,8 @@ governance](review-and-governance.md) covers reviewing and approving in full.
 ### Automation and upgrades
 
 Rows from Lines (an unread inbox, missed scheduled work, a Line disabled after
-its definition changed) are explained in [Procedures and
-Lines](concepts.md#procedures-and-lines). A compiler upgrade is covered in
+its definition changed) are explained in [Lines and
+automation](lines-and-automation.md). A compiler upgrade is covered in
 [Upgrading](upgrading.md). Adding a newer release of a kit proposes its changes,
 which you review like any change ([Kits](kits.md)).
 
@@ -203,8 +203,7 @@ it, by hand or with a Line, and record what you find with its evidence.
   `audit`.
 - **Lines, continuously**: the checks that are the same every time, such as
   re-fetching expiring quotes or re-reading a supplier's catalog. See
-  [Procedures and Lines](concepts.md#procedures-and-lines) for what to hand to
-  Lines first.
+  [Lines and automation](lines-and-automation.md) for setting one up.
 - **A person, on review**: approve proposals, decide disagreements and
   contradictions, and rewrite the summaries people rely on.
 
