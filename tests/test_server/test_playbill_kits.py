@@ -2066,3 +2066,62 @@ def test_orient_and_get_name_the_kit_that_owns_each_claim_type_and_subject_kind(
         )
     )
     assert card(f"ClaimType:{SEATS}").kit is None
+
+
+def test_a_pin_that_followed_a_local_succession_is_not_an_edit(
+    worlds: tuple[_World, _World],
+) -> None:
+    """Only the edited member diverges; a kit query re-pinned onto it does not."""
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    _author_query(publisher, _query("acme.accounts", (SEATS,)))
+    consumer.add(publisher.build("1.0.0"))
+    query_path = "query-definitions/acme.accounts.json"
+    consumer.succeed(
+        SEATS,
+        {"type": "integer", "minimum": 1},
+        dependents=(
+            ClaimTypeSuccessionDependent(
+                identity=ArtifactIdentity(kind="QueryDefinition", name="acme.accounts"),
+                disposition="successor",
+            ),
+        ),
+    )
+    query = parse_query_definition(consumer.tree()[query_path], path=query_path)
+    assert {pin.artifact_digest for pin in query.pins} == {
+        claim_type_digest(consumer.claim_type(SEATS)).tagged
+    }
+    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == (_path(SEATS),)
+    from cruxible_core.service.floor.floor import service_export_playbill_floor
+
+    floor = service_export_playbill_floor(get_playbill_manager().get(consumer.instance_id))
+    (query_row,) = [
+        line
+        for line in floor["ontology/queries/INDEX"].decode().splitlines()
+        if line.startswith("acme.accounts")
+    ]
+    assert "kit=acme" in query_row and "kit=acme edited" not in query_row
+    (seats_row,) = [
+        line
+        for line in floor["ontology/claim-types/INDEX"].decode().splitlines()
+        if line.startswith(SEATS + "\t")
+    ]
+    assert "kit=acme edited" in seats_row
+
+    publisher.succeed(PLAN, {"type": "string", "minLength": 1})
+    release = publisher.build("1.1.0")
+    preview = playbill_api.playbill_kit_add(
+        consumer.instance_id,
+        KitAddRequest(bundle=release, source="test", dry_run=True, keep=(f"ClaimType:{SEATS}",)),
+    )
+    plan = {item.path: (item.action, item.consequence) for item in preview.plan}
+    assert plan[_path(SEATS)] == ("keep", "overwrites_your_edit")
+    assert plan[query_path] == ("unchanged", None)
+    assert plan[_path(PLAN)] == ("replace", None)
+    taken = playbill_api.playbill_kit_add(
+        consumer.instance_id, KitAddRequest(bundle=release, source="test", dry_run=True)
+    )
+    taking = {item.path: (item.action, item.consequence) for item in taken.plan}
+    assert taking[_path(SEATS)] == ("replace", "overwrites_your_edit")
+    assert taking[query_path][1] is None

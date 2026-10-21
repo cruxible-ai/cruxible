@@ -443,6 +443,8 @@ class _Owners:
     def __init__(self, state: OntologyState) -> None:
         self._state = state
         self._content: dict[int, str | None] = {}
+        self._backs: dict[int, dict[str, str]] = {}
+        self._receipts: dict[str, KitReceipt] = {}
 
     def entry(self, path: str) -> tuple[str, KitInstalledArtifact] | None:
         for annotator in _byte_sorted(self._state.index.annotators.get(path, ())):
@@ -451,8 +453,27 @@ class _Owners:
                 continue
             for entry in receipt.artifacts:
                 if entry.path == path:
+                    self._receipts[path] = receipt
                     return receipt.kit_id, entry
         return None
+
+    def _back(self, receipt: KitReceipt) -> dict[str, str]:
+        """The receipt's back-remap, once per receipt per render: O(kit members)."""
+
+        key = id(receipt)
+        if key not in self._backs:
+            from cruxible_core.claims.closure import parse_dependency_artifact
+            from cruxible_core.service.kits import kit_back_remap
+
+            def current(path: str) -> str | None:
+                chain = self._state.chain(path)
+                if chain is None or chain.raw is None:
+                    return None
+                state = parse_dependency_artifact(path, chain.raw)
+                return None if state is None else state.artifact_digest
+
+            self._backs[key] = kit_back_remap((*receipt.artifacts, *receipt.carried), current)
+        return self._backs[key]
 
     def _held_content(self, chain: DefinitionRevision) -> str | None:
         key = id(chain)
@@ -476,7 +497,15 @@ class _Owners:
             if state is None or state.artifact_digest != entry.installed_digest:
                 return True
             return False
-        return installed != held
+        if installed == held:
+            return False
+        receipt = self._receipts.get(path)
+        if receipt is None:
+            return True
+        # A pin that followed another kit member's succession is not an edit.
+        from cruxible_core.service.kits import kit_content_matches
+
+        return not kit_content_matches(path, json.loads(chain.raw), installed, self._back(receipt))
 
     def label(self, path: str) -> str:
         found = self.entry(path)

@@ -1872,6 +1872,21 @@ _KIT_CONSEQUENCE_TEXT = {
     "replaces_carried_definition": "replaces a definition the kit depends on",
     "release_dropped": "the release dropped it",
 }
+#: A divergence this instance keeps, said from the kept side: on a `keep` plan
+#: line, then as `kit status` lists it afterwards.
+_KIT_KEEP_TEXT = {
+    "overwrites_your_edit": ("keeps your edit", "your edit"),
+    "re_adds_retired": ("keeps it retired", "you retired it"),
+    "takes_over_outside_definition": (
+        "keeps your definition from outside the kit",
+        "your definition from outside the kit",
+    ),
+    "replaces_carried_definition": (
+        "keeps your version of a definition the kit depends on",
+        "your version of a definition the kit depends on",
+    ),
+    "release_dropped": ("keeps it; the release dropped it", "the release dropped it"),
+}
 
 
 def _echo_kit_change(result: KitChangeResult) -> None:
@@ -1903,10 +1918,14 @@ def _echo_kit_change(result: KitChangeResult) -> None:
         if item.action == "unchanged":
             continue
         kind = (item.identity or item.path).partition(":")[0]
-        line = f"  {item.action}: {item.identity or item.path}"
+        line = f"  {item.action}: {_public_name(item.identity) if item.identity else item.path}"
         notes = []
         if item.consequence is not None:
-            notes.append(_KIT_CONSEQUENCE_TEXT[item.consequence])
+            notes.append(
+                _KIT_KEEP_TEXT[item.consequence][0]
+                if item.action == "keep"
+                else _KIT_CONSEQUENCE_TEXT[item.consequence]
+            )
         if item.dependent_count:
             notes.append(f"{item.dependent_count} dependent(s)")
         if item.detail is not None:
@@ -2222,7 +2241,9 @@ def kit_status(offline: bool, output_json: bool) -> None:
         for path in kit.drifted:
             click.echo(f"  edited locally: {path}")
         for kept in kit.kept:
-            click.echo(f"  kept: {kept.identity} ({_KIT_CONSEQUENCE_TEXT[kept.consequence]})")
+            click.echo(
+                f"  kept: {_public_name(kept.identity)} ({_KIT_KEEP_TEXT[kept.consequence][1]})"
+            )
 
 
 @kit_group.command("remove")
