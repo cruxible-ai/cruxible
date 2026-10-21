@@ -83,9 +83,10 @@ it was accepted under.
    findings are complete again once it has caught up. Enabled Lines stay
    enabled and watch forward from the restart; time the daemon was down needs an
    explicit `cruxible line evaluate ... --dispatch`, which `cruxible next` names per gap (see
-   [line](cli-reference.md#line)).
+   [Recovering missed work](lines-and-automation.md#recovering-missed-work)).
 
-If the `compiler` facet reads `current`, the upgrade is done.
+If `next` prints nothing about the compiler (in `--json`, `status.compiler.state`
+is `current`), the upgrade is done.
 
 ## Adopt a new compiler revision
 

@@ -96,13 +96,13 @@ principal (`cruxible principal`) is a governed signing key that attributes
 acts and signs approvals, and its private key never leaves the client. On an
 auth-off socket daemon the principal ID a process sends is a claim of
 identity, not authentication. [Principals and
-credentials](docs/concepts.md#principals-and-credentials) explains both.
+credentials](docs/concepts.md#who-acts) explains both.
 
 ## Documentation
 
 - [Quickstart](docs/quickstart.md)
 - [Concepts](docs/concepts.md)
-- [Modeling state](docs/modeling-state.md)
+- [Building team knowledge](docs/building-team-knowledge.md)
 - [For AI agents](docs/for-ai-agents.md)
 - [Kits](docs/kits.md)
 - [CLI reference](docs/cli-reference.md)

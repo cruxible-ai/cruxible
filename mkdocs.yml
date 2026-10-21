@@ -69,14 +69,20 @@ nav:
       - Quickstart: quickstart.md
       - Concepts: concepts.md
       - Architecture: architecture.md
-      - Modeling state: modeling-state.md
+      - Building team knowledge: building-team-knowledge.md
+      - Evidence and admission: evidence-and-admission.md
+      - Keeping knowledge current: keeping-knowledge-current.md
+      - Asking questions: asking-questions.md
+      - Documents and notes: documents-and-notes.md
+      - Lines and automation: lines-and-automation.md
+      - Review and governance: review-and-governance.md
+      - Evolving your vocabulary: evolving-your-vocabulary.md
       - For AI agents: for-ai-agents.md
       - Kits: kits.md
   - Reference:
       - Procedure source authoring: procedure-source.md
       - CLI reference: cli-reference.md
       - MCP tools: mcp-tools.md
-      - Projection blocks: declared-blocks.md
   - Operations:
       - Upgrading: upgrading.md
       - Isolated deployment: isolated-deployment.md

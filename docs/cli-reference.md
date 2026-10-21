@@ -184,7 +184,7 @@ steps, with the coordinate it evaluated at.
 
 A credential is a daemon bearer token; a principal is a governed signing key
 in the instance's ledger. [Principals and
-credentials](concepts.md#principals-and-credentials) explains the difference.
+credentials](concepts.md#who-acts) explains the difference.
 With auth on, each credential is bound to one principal; revoking a principal
 revokes its credentials, and rotating a credential never changes the
 principal.
