@@ -62,6 +62,22 @@ approved changes, with a complete record of what was believed, when, and why.
 - **Questions over the whole graph.** Queries follow relations between things
   and answer the same way every time, at a named point in history.
 
+Put together, knowledge flows in from people, agents and the outside world,
+is checked and accepted into one ledger, and flows back out as answers and as
+the documents people read:
+
+```mermaid
+flowchart LR
+    world["Files, APIs,<br/>databases"] -->|Lines observe| change
+    actors["People and agents"] -->|writes| change["Checked change<br/>(proposal)"]
+    change -->|accepted, approved<br/>where policy requires| ledger[("Ledger")]
+    ledger --> answers["Queries, history,<br/>evidence"]
+    ledger --> docs["Projection blocks<br/>in your docs"]
+    answers --> actors
+    docs --> actors
+    change -.->|Lines act<br/>through providers| world
+```
+
 Cruxible doesn't replace your databases, APIs or files. They stay the
 authority for their own records; Cruxible records what your team knows about
 them and where that knowledge came from. And no language model runs inside
@@ -89,6 +105,27 @@ Every generation has a **coordinate** that names it exactly:
 - the generation root, a digest of the generation itself;
 - the compiler digest, which names the rules that interpreted it (see [The
   compiler](#the-compiler)).
+
+```mermaid
+flowchart LR
+    g0["0<br/>genesis"] --> g1["1<br/>vocabulary installed"] --> g2["2<br/>pins recorded"]
+    g2 -.->|checked against 2| p["proposal:<br/>add advisory"]
+    p -->|approved and accepted| g3["3<br/>advisory accepted"]
+```
+
+Each accepted change adds one generation on top of the last; a proposal is
+evaluated against the generation it was made on, and only becomes the next
+generation when it's accepted. A coordinate, as `cruxible whoami --json`
+reports the current one:
+
+~~~json
+{
+  "git_oid": "e9eca0c2d82feb1aa1d747e366680afd1c1b08ed",
+  "semantic_root": "sha256:adcbb2c5b80ba504293d688f3d13ee1f709ed9b677bc946d36b515cf81ff5041",
+  "generation_root": "sha256:51cbafc9b8100c1a46414eea6f0aedefabdbda6334c599afb14a0279aff70430",
+  "compiler_digest": "sha256:8b1fc4c429fbbdc9eee3915dc3c22af64fdbdba3465795ceb270b01371f899bd"
+}
+~~~
 
 ### What it gives you
 
@@ -137,6 +174,20 @@ ID (`CLM-…`) and a history of revisions. Resolution places it in its slot as
 accepted, conflicted, overturned or refused, and retiring it ends it with a
 reason (`was-rescinded`, `was-wrong` or `superseded`).
 
+For example, the Claim that an advisory affects `requests 2.32.4`, and what it
+rests on:
+
+~~~text
+$ cruxible get CLM-9fee654bd6ad28d8806f4748d0b7a0ce
+pypi.release/requests-2.32.4  advisories = GHSA-gc5v-m9x4-r6x2
+CLM-9fee654bd6ad28d8806f4748d0b7a0ce  verdict=supported status=accepted revision=1
+
+$ cruxible get CLM-9fee654bd6ad28d8806f4748d0b7a0ce --detail evidence
+value: GHSA-gc5v-m9x4-r6x2
+capture CAP-c8725ea94588  CaptureContract:cruxible.foreign-source.pypi v1  source=pypi  ...  evidence admitted
+rationale: PyPI lists GHSA-gc5v-m9x4-r6x2 against requests 2.32.4 (fixed in 2.33.0).
+~~~
+
 Every Claim also has a verdict that says how well its evidence holds up:
 `supported`, `uncovered` (no admitted evidence), `stale`, `contradicted`, or
 `unresolved`. Reads carry flags beside values (`stale`, `contested`,
@@ -153,6 +204,30 @@ counts toward the verdict only as an accepted attestation citing a Capture
 the Claim admits, or when the ClaimType's consequence policy says so.
 
 ## Evidence
+
+Every Claim rests on evidence, and the commonest is something someone wrote
+down. A single write can add the prose to a Markdown file and record the
+Claims that cite it:
+
+~~~yaml
+because: Pins from each service's requirements.txt.
+docs:
+  - op: append
+    id: pins
+    file: docs/dependencies.md
+    under: [Dependencies]
+    text: |
+      ## Pinned releases
+
+      - payments: requests 2.32.4
+changes:
+  - {op: add, subject: app.service/payments, field: depends_on,
+     value: pypi.release/requests-2.32.4, evidence: {kind: section, ref: pins}}
+~~~
+
+The section lands in `docs/dependencies.md`, where people keep reading it,
+and the pin lands in the ledger citing it. If the section is later edited, the
+Claim's citation drifts and `next` asks someone to re-check it.
 
 Markdown prose and the Claims it supports can land in one `write`. The agent
 chooses the file and ATX heading path, supplies `docs` append/replace operations,
@@ -309,11 +384,30 @@ and the caller's tier may activate, and otherwise stop at a proposal.
 
 An **approval** is a signature over the exact candidate, made with the
 approver's private key on the client; only the signature reaches the daemon.
-An approval does not activate anything. **Activation** checks the approvals
-and the policy and advances accepted state by compare-and-set: if another
-generation was accepted first, the proposal is stale and must be re-admitted
-(`proposal readmit`) at the new head before it can activate. `proposal
-withdraw` retires a proposal that will never activate.
+**Activation** checks the approvals and the policy and advances accepted state
+by compare-and-set. When an approval completes what the candidate needs and the
+approver may activate, the same `proposal approve` activates it (`--hold` signs
+only, and someone runs `proposal activate` later).
+
+If another generation was accepted after the proposal was evaluated, approving
+or activating recompiles it at the current head, as a fresh proposal that
+supersedes the old one; approvals of the old candidate don't carry over. If
+what it changes has itself moved in the meantime, the recompile is refused and
+`next` lists the proposal for `proposal readmit`, which rebases it as a new
+proposal to review. `proposal withdraw` retires a proposal that will never
+activate.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Accepted: write, and policy allows it at once
+    [*] --> Open: needs approval
+    Open --> Accepted: approval completes it
+    Open --> Recompiled: state moved since it was checked
+    Recompiled --> Accepted: still applies, approved
+    Recompiled --> Readmit: what it changes moved
+    Readmit --> Open: rebased as a new proposal
+    Open --> Withdrawn
+```
 
 ## Principals and credentials
 
@@ -440,6 +534,27 @@ An authored one needs only the staleness signal: you re-check it, and rewrite
 or repin it. See [Projection
 blocks](declared-blocks.md).
 
+For example, a table of affected services, rendered from a named query before
+any advisory was known, and after `block sync` once one was accepted:
+
+~~~markdown
+<!-- cruxible:block:exposed:ref:06b6a6dcecc2 -->
+_No rows._
+<!-- /cruxible:block:exposed -->
+~~~
+
+~~~markdown
+<!-- cruxible:block:exposed:ref:a16953dd2dbd -->
+| subject | advisories | owner | release |
+|---|---|---|---|
+| app.service/billing | GHSA-gc5v-m9x4-r6x2 | grace | requests-2.32.4 |
+| app.service/payments | GHSA-gc5v-m9x4-r6x2 | ada | requests-2.32.4 |
+<!-- /cruxible:block:exposed -->
+~~~
+
+The stamp in the opening marker (`ref:…`) is how Cruxible knows which state the
+passage reflects.
+
 ## Predictions
 
 A prediction is a governed test of an accepted Claim: which later observation
@@ -497,6 +612,17 @@ and acquisition policy, and records each run on the Line's history. A
 **Trigger** says when: on a cadence, a cron schedule (UTC), when a Capture
 lands under a CaptureContract, when a window closes, or when a generation is
 accepted.
+
+```mermaid
+flowchart LR
+    trig["Trigger<br/>(schedule, event)"] --> line["Line runs<br/>its Procedure"]
+    line -->|reads| state[("Accepted state")]
+    line -->|fetches| world["Outside world"]
+    world -->|response kept| cap["Capture<br/>(evidence)"]
+    line -.->|acts through providers| world
+    cap --> out["Proposed change<br/>with its evidence"]
+    out -->|approved, or settled<br/>under a mandate| state
+```
 
 Lines are enabled, not armed:
 
