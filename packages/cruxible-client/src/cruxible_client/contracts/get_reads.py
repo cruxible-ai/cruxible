@@ -611,7 +611,15 @@ class GetCaptureEvidence(_StrictGetModel):
     source: str
     observed_at: datetime
     role: str
-    admitted: bool
+    origin: Literal["independent", "self_source", "legacy"] = Field(
+        description="Whose bytes the citation reads: an independent source's, the Claim's "
+        "own authored words (self_source), or a legacy backing's."
+    )
+    status: Literal["admitted", "not_admitted", "not_evidence"] = Field(
+        description="admitted: the ClaimType's rule admits it and the verdict reads it; "
+        "not_admitted: offered as evidence, refused by the rule; not_evidence: a copy "
+        "the rule does not admit, which the verdict never reads."
+    )
 
 
 class GetAttestationEvidence(_StrictGetModel):

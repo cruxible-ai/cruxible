@@ -671,7 +671,8 @@ def test_evidence_capture_source_renders_its_public_name(
         source="playbill.coordinator-authoring",
         observed_at=WHEN,
         role="copy",
-        admitted=True,
+        origin="self_source",
+        status="admitted",
     )
     _stub(
         monkeypatch,
@@ -686,3 +687,41 @@ def test_evidence_capture_source_renders_its_public_name(
     assert result.exit_code == 0, result.output
     assert "source=cruxible.coordinator-authoring" in result.output
     assert "playbill." not in result.output
+
+
+@pytest.mark.parametrize(
+    ("role", "origin", "status", "shown"),
+    [
+        ("copy", "self_source", "admitted", "own words: admitted"),
+        ("copy", "independent", "not_evidence", "passage of cruxible.page: not evidence"),
+        ("evidence", "independent", "not_admitted", "evidence: not admitted"),
+    ],
+)
+def test_evidence_capture_lines_show_three_states_and_label_copies_by_origin(
+    monkeypatch: pytest.MonkeyPatch, role: str, origin: str, status: str, shown: str
+) -> None:
+    from cruxible_client.contracts.get_reads import GetCaptureEvidence, GetEvidence
+
+    capture = GetCaptureEvidence(
+        capture="CAP-0123456789ab",
+        contract="CaptureContract:docs.page-v1",
+        version=1,
+        source="playbill.page",
+        observed_at=WHEN,
+        role=role,
+        origin=origin,  # type: ignore[arg-type]
+        status=status,  # type: ignore[arg-type]
+    )
+    _stub(
+        monkeypatch,
+        _result(
+            "claim",
+            detail="evidence",
+            evidence=GetEvidence(value="Affirmed.", captures=(capture,), attestations=()),
+        ),
+    )
+    result = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "evidence"])
+
+    assert result.exit_code == 0, result.output
+    (line,) = [item for item in result.output.splitlines() if item.startswith("capture ")]
+    assert line.endswith(f"  {shown}")

@@ -1514,6 +1514,38 @@ def _copy_capture_admitted_by_rule(
     )
 
 
+def capture_citation_eligible(
+    claim: ClaimArtifactAny,
+    *,
+    claim_type: ClaimType,
+    capture_contract: AcceptedCaptureContract,
+    capture_digest: str,
+) -> bool:
+    """Whether the verdict law reads this cited Capture as evidence at all.
+
+    The one eligibility gate: an independent evidence citation (or legacy
+    backing), a coordinator self-source citation its ClaimType's rule names,
+    or a page copy its rule names. The verdict and every account of a Claim's
+    citations ask this, so a citation the law admits never reads otherwise.
+    """
+
+    return (
+        _capture_is_explicitly_eligible(claim, capture_digest=capture_digest)
+        or _self_source_capture_admitted_by_rule(
+            claim,
+            claim_type=claim_type,
+            capture_contract=capture_contract,
+            capture_digest=capture_digest,
+        )
+        or _copy_capture_admitted_by_rule(
+            claim,
+            claim_type=claim_type,
+            capture_contract=capture_contract,
+            capture_digest=capture_digest,
+        )
+    )
+
+
 @dataclass(frozen=True)
 class CaptureEvidenceKindEvaluation:
     evidence_kind: str
@@ -2606,23 +2638,11 @@ def evaluate_claim_law(
                     "A Procedure-produced Capture requires its exact accepted Procedure pin.",
                     path=path,
                 )
-        eligible = (
-            _capture_is_explicitly_eligible(
-                claim,
-                capture_digest=capture_digest_value,
-            )
-            or _self_source_capture_admitted_by_rule(
-                claim,
-                claim_type=contract,
-                capture_contract=resolved_contract,
-                capture_digest=capture_digest_value,
-            )
-            or _copy_capture_admitted_by_rule(
-                claim,
-                claim_type=contract,
-                capture_contract=resolved_contract,
-                capture_digest=capture_digest_value,
-            )
+        eligible = capture_citation_eligible(
+            claim,
+            claim_type=contract,
+            capture_contract=resolved_contract,
+            capture_digest=capture_digest_value,
         )
         # Under `none` the Claim's own origin supports it, so a Capture the rules
         # do not admit still enters the verdict as origin-only evidence.
@@ -2870,6 +2890,7 @@ __all__ = [
     "SubjectClaimObject",
     "claim_artifact_digest",
     "build_claim_citation",
+    "capture_citation_eligible",
     "claim_citation_id",
     "claim_citation_references",
     "claim_preserves_derivation",

@@ -2058,7 +2058,8 @@ def _claim_evidence(
                 source=str(source or "unknown"),
                 observed_at=envelope.observed_at,
                 role=account.citation_role,
-                admitted=account.status == "admitted",
+                origin=account.citation_origin,
+                status=account.status,
             )
         )
     attestations = tuple(

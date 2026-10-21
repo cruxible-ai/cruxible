@@ -5213,6 +5213,16 @@ def _why_summary_lines(value: Any, *, key: str | None = None, depth: int = 0) ->
     return [f"{indent}{key}: {text}" if key is not None else f"{indent}{text}"]
 
 
+def _citation_label(capture: Any) -> str:
+    """What a cited Capture is, in words: the Claim's own words, a passage, or evidence."""
+
+    if capture.origin == "self_source":
+        return "own words"
+    if capture.role == "copy":
+        return f"passage of {_public_name(capture.source)}"
+    return str(capture.role)
+
+
 def _emit_get_text(result: Any) -> None:
     """Values first, per kind; ``--json`` carries the whole structured result."""
 
@@ -5285,7 +5295,7 @@ def _emit_get_text(result: Any) -> None:
                 f"capture {capture.capture}  {_public_name(capture.contract)} "
                 f"v{capture.version}  source={_public_name(capture.source)}  "
                 f"observed={capture.observed_at.isoformat()}  "
-                f"{capture.role}{' admitted' if capture.admitted else ' not admitted'}"
+                f"{_citation_label(capture)}: {capture.status.replace('_', ' ')}"
             )
         for attestation in result.evidence.attestations:
             click.echo(

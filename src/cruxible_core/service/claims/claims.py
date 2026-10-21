@@ -33,6 +33,7 @@ from cruxible_client.contracts.claims import (
     ClaimLawEvidenceV1,
     ClaimStatementCard,
     ClaimUnsupportedFormatError,
+    capture_citation_eligible,
     claim_citation_references,
     claim_path,
     claim_statement_address,
@@ -633,7 +634,14 @@ def _claim_admission_accounts(
         )
         if contract is None:
             raise ProposalIntegrityError("accepted Claim CaptureContract no longer resolves")
-        if isinstance(citation, ClaimCitation) and citation.role == "copy":
+        # The verdict's own gate: a copy its rule admits is evidence like any other.
+        eligible = capture_citation_eligible(
+            claim,
+            claim_type=claim_type,
+            capture_contract=contract,
+            capture_digest=citation.capture_digest,
+        )
+        if isinstance(citation, ClaimCitation) and citation.role == "copy" and not eligible:
             accounts.append(
                 CaptureAdmissionAccountV1(
                     citation_id=citation.citation_id,
@@ -677,7 +685,7 @@ def _claim_admission_accounts(
                 capture_contract_digest=contract.artifact_digest,
                 status=(
                     "admitted"
-                    if any(item.status == "admitted" for item in decisions)
+                    if eligible and any(item.status == "admitted" for item in decisions)
                     else "not_admitted"
                 ),
                 decisions=decisions,
