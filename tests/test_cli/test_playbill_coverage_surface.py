@@ -344,7 +344,9 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     lines = human.strip().splitlines()
     # A card line names the working path and the Claim; digests stay in --json.
     assert lines[0].startswith(f"candidate  {WORKING_PATH}:")
-    assert Path(card["claim_addresses"][0]["artifact_path"]).stem in lines[0]
+    claim = Path(card["claim_addresses"][0]["artifact_path"]).stem
+    # The served Claim line leads: subject, field and value, then the short id.
+    assert f"[{claim[:16]}]" in lines[0] and " = " in lines[0]
     assert lines[0].endswith("[foreign_occurrence]")
     assert "sha256:" not in lines[0] and ".json" not in lines[0]
     assert lines[-3] == (

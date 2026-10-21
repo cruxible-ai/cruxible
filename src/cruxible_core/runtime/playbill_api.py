@@ -213,6 +213,7 @@ from cruxible_core.service.discovery.audit import (
 from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.coverage import (
     coverage_access_profile,
+    coverage_claim_lines,
     service_resolve_playbill_coverage,
 )
 from cruxible_core.service.discovery.curation import (
@@ -2785,8 +2786,9 @@ def playbill_resolve_coverage(
     """
 
     check_permission("cruxible_read", instance_id=instance_id)
+    instance = get_playbill_manager().get(instance_id)
     result = service_resolve_playbill_coverage(
-        get_playbill_manager().get(instance_id),
+        instance,
         instance_id=instance_id,
         observations=observations,
         at=at,
@@ -2808,6 +2810,7 @@ def playbill_resolve_coverage(
     return contracts.CoverageResult(
         coordinate=contracts.AcceptedCoordinate.model_validate(result.at.model_dump(mode="json")),
         result=result.model_dump(mode="json"),
+        claims=coverage_claim_lines(instance, result),
     )
 
 
