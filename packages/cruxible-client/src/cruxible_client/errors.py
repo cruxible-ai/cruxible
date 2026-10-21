@@ -172,7 +172,24 @@ def permission_denied_message(
     current_mode: str,
     required_mode: str,
     ceiling_mode: str | None,
+    *,
+    label: str | None = None,
 ) -> str:
+    """Say which tier an operation needs and which one the caller has.
+
+    ``label`` names the operation as the caller invoked it (the CLI passes
+    ``cruxible proposal approve``); without it the message names the MCP tool.
+    """
+    if label is not None:
+        required, current = required_mode.lower(), current_mode.lower()
+        if ceiling_mode is not None:
+            denial = (
+                f"{label} needs the {required} tier, but the daemon capability ceiling is "
+                f"{ceiling_mode.lower()} (this request: {current})"
+            )
+        else:
+            denial = f"{label} needs the {required} tier; this credential is {current}"
+        return f"{denial}. {permission_tier_summary(required)}."
     if ceiling_mode is not None:
         denial = (
             f"Operation '{tool_name}' requires {required_mode} mode, but the daemon "

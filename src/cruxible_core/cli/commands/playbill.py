@@ -7546,6 +7546,11 @@ def _next_requirement_hint(requires: contracts.NextRepairRequirement | None) -> 
 
     if requires is None:
         return "this caller cannot run it"
+    from cruxible_core.service.discovery.next import _REPAIR_COMMAND_PATHS
+
+    path = _REPAIR_COMMAND_PATHS.get(requires.operation)
+    # Name the verb a CLI caller runs; the MCP tool name only when no verb maps.
+    label = requires.tool if path is None else f"cruxible {path}"
     needs = []
     if "tier" in requires.because:
         needs.append(f"the {requires.tier} tier")
@@ -7555,7 +7560,7 @@ def _next_requirement_hint(requires: contracts.NextRepairRequirement | None) -> 
     if "authoring" in requires.because and refusal is not None:
         # The identity repair comes first: no tier helps a caller that cannot author.
         needs.insert(0, f"a caller that can author ({refusal.code}: {refusal.detail})")
-    return f"{requires.tool} needs " + " and ".join(needs)
+    return f"{label} needs " + " and ".join(needs)
 
 
 def _next_repair_hint(repair: contracts.NextRepair) -> str:

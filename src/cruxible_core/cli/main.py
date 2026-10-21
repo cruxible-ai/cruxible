@@ -161,6 +161,13 @@ def long_running_command(f: Any) -> Any:
     return f
 
 
+def _is_permission_denied(exc: BaseException) -> bool:
+    from cruxible_client.errors import PermissionDeniedError as ClientPermissionDenied
+    from cruxible_core.errors import PermissionDeniedError as CorePermissionDenied
+
+    return isinstance(exc, (ClientPermissionDenied, CorePermissionDenied))
+
+
 def handle_errors(f: Any) -> Any:
     """Decorator that catches any Cruxible error and prints a friendly message.
 
@@ -193,6 +200,7 @@ def handle_errors(f: Any) -> Any:
             from cruxible_client.errors import (
                 AuthenticationError,
                 ServerUnreachableError,
+                permission_denied_message,
             )
             from cruxible_client.errors import CoreError as ClientCoreError
 
@@ -213,6 +221,24 @@ def handle_errors(f: Any) -> Any:
                 if str(exc) == MISSING_BEARER_CREDENTIAL_MESSAGE:
                     click.secho(f"Error: {exc}", fg="red", err=True)
                     sys.exit(1)
+            if isinstance(exc, ClientCoreError) and _is_permission_denied(exc):
+                # Name the verb the caller ran, not the MCP tool behind it.
+                ctx = click.get_current_context(silent=True)
+                path = _command_path(ctx) if ctx is not None else ()
+                label = " ".join(("cruxible", *path)) if path else None
+                click.secho(
+                    "Error: "
+                    + permission_denied_message(
+                        getattr(exc, "tool_name", "unknown"),
+                        getattr(exc, "current_mode", "unknown"),
+                        getattr(exc, "required_mode", "unknown"),
+                        getattr(exc, "ceiling_mode", None),
+                        label=label,
+                    ),
+                    fg="red",
+                    err=True,
+                )
+                sys.exit(1)
             if isinstance(exc, ClientCoreError):
                 # A refusal rebuilt from the wire is the bare base class; its code
                 # leads its message already, so the class name would be noise.
