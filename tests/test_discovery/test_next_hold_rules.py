@@ -158,19 +158,20 @@ def test_a_held_member_leaves_its_conflict_row_valid_and_rebuilt() -> None:
         _with_findings,
     )
 
-    def row(reason: str, subject: str, **arguments: object):  # type: ignore[no-untyped-def]
+    def row(reason: str, subject: str, related: tuple[str, ...] = ()) -> PlaybillNextItemV1:
         return _item(
             severity="blocking" if reason == "claim_conflicted" else "warning",
             reason=reason,  # type: ignore[arg-type]
             subject_identity=subject,
+            related_identities=related,
             detail={},
-            repair=PlaybillNextRepairV1(
-                operation="hand_edit", target=subject, required_change="x", arguments=arguments
-            ),
+            repair=PlaybillNextRepairV1(operation="hand_edit", target=subject, required_change="x"),
         )
 
+    # A contest row names its contenders as its related identities (its typed
+    # alternatives replace the loose repair arguments).
     conflict = _with_findings(
-        row("claim_conflicted", "subjects/wi.json", claim_ids=["Claim:CLM-a", "Claim:CLM-b"]),
+        row("claim_conflicted", "subjects/wi.json", ("Claim:CLM-a", "Claim:CLM-b")),
         [row("claim_uncovered", "Claim:CLM-a")],
     )
     current = {"Claim:CLM-a": "sha256:" + "a" * 64, "Claim:CLM-b": "sha256:" + "b" * 64}

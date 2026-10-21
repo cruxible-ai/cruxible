@@ -342,8 +342,13 @@ def test_kqueue_exit_observation_does_not_reap_the_child(
         while not runtime_module._process_exited_without_reaping(process.pid):
             assert time.monotonic() < deadline, "exit was never observed"
             time.sleep(0.01)
-        # Still unreaped: the parent can collect the exit status itself.
-        reaped_pid, status = os.waitpid(process.pid, os.WNOHANG)
+        # Still unreaped: the parent can collect the exit status itself. macOS can
+        # post NOTE_EXIT a moment before the zombie is waitable, so a no-hang wait
+        # may first see no state change; it never sees the pid already gone.
+        while (reaped := os.waitpid(process.pid, os.WNOHANG))[0] == 0:
+            assert time.monotonic() < deadline, "the exited child never became waitable"
+            time.sleep(0.01)
+        reaped_pid, status = reaped
         assert reaped_pid == process.pid
         assert os.waitstatus_to_exitcode(status) == 0
         process.returncode = 0

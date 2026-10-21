@@ -191,6 +191,37 @@ def read_live_values(
     return values
 
 
+def claim_values_by_path(projection: Any, paths: Iterable[str]) -> dict[str, LiveValue]:
+    """The indexed value of each Claim at ``paths`` in a bound projection, by path.
+
+    One keyed read per chunk of paths, whatever the Claim's lifecycle; a path the
+    projection does not hold is absent from the result.
+    """
+
+    connection = projection.typed.connection
+    found: dict[str, LiveValue] = {}
+    for chunk in _chunks(sorted(set(paths))):
+        marks = ",".join("?" for _ in chunk)
+        for row in connection.execute(
+            f"SELECT {_VALUE_COLUMNS}, c.path, c.lifecycle FROM claims c "
+            "LEFT JOIN subjects s ON s.path = c.object_path "
+            f"WHERE c.path IN ({marks})",
+            tuple(chunk),
+        ):
+            found[str(row[16])] = LiveValue(
+                identity=str(row[0]),
+                subject_path=str(row[1]),
+                predicate=str(row[2]),
+                value=_value_of(row[:16], projection.typed.source),
+                artifact_digest=str(row[11]),
+                exact=row[3] == "exact_content",
+                role=str(row[14]),
+                qualifier=None if row[15] is None else str(row[15]),
+                lifecycle=str(row[17]),
+            )
+    return found
+
+
 def distinct(values: Iterable[object]) -> list[object]:
     """Distinct values in canonical byte order."""
 

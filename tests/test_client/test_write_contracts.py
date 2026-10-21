@@ -69,7 +69,10 @@ def test_malformed_changes_refuse_at_the_schema(change: dict[str, object]) -> No
 def test_scalar_values_keep_their_types() -> None:
     assert SetChange(subject="a/b", field="f", value=True).value is True
     assert type(SetChange(subject="a/b", field="f", value=1).value) is int
-    assert type(SetChange(subject="a/b", field="f", value=1.5).value) is float
+    # Claim values hold integers only (canonical JSON has no fractions; Q7 refuses
+    # decimals in v1), so a fractional number refuses at the schema.
+    with pytest.raises(ValidationError):
+        SetChange(subject="a/b", field="f", value=1.5)
 
 
 def test_set_and_retire_are_batches_of_one() -> None:

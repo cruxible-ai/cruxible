@@ -251,6 +251,12 @@ def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
         "cruxible_core.service.authoring.projection_sync.ProjectionCheckContext._claim_status",
         lambda *a: "accepted",
     )
+    # The read also reports whether the block is still registered (one stat of
+    # the declaration file, which this mocked instance has no root for).
+    monkeypatch.setattr(
+        "cruxible_core.service.authoring.projection_sync.projection_block_registered",
+        lambda *a, **k: True,
+    )
 
     at = at.model_copy(
         update={"semantic_root": "sha256:" + at.git_oid, "generation_root": "sha256:" + at.git_oid}

@@ -198,5 +198,8 @@ def test_a_networked_owner_adds_a_propose_only_agent_in_one_command(
     # Propose-only: the credential's tier refuses activation outright.
     refused = _run("proposal", "activate", pending_id)
     assert refused.exit_code != 0
-    assert "PermissionDeniedError" in refused.output
-    assert "GRAPH_WRITE" in refused.output
+    # The refusal names the command the caller ran and both tiers (row 15).
+    assert (
+        "cruxible proposal activate needs the graph_write tier; this credential is "
+        "governed_write" in refused.output
+    )
