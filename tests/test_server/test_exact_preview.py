@@ -119,6 +119,7 @@ def _move_head(client: TestClient, instance_id: str, reviewer_key: Path) -> None
             json={
                 "shell": _document(client, instance_id, "head-mover"),
                 "proposal_name": "head-mover",
+                "accept": "never",
             },
         )
     )
@@ -307,7 +308,11 @@ def test_a_cold_preview_opens_without_writing_or_refuses_a_repair_by_name(
     proposed = _ok(
         client.post(
             _api(instance_id, "/documents/proposals"),
-            json={"shell": _document(client, instance_id, "stale"), "proposal_name": "stale"},
+            json={
+                "shell": _document(client, instance_id, "stale"),
+                "proposal_name": "stale",
+                "accept": "never",
+            },
         )
     )
     withdraw = _api(instance_id, f"/proposals/{proposed['proposal']['admission']['proposal_id']}")
@@ -359,7 +364,11 @@ def test_withdrawing_and_readmitting_a_proposal_preview_and_write_nothing(
     proposed = _ok(
         client.post(
             _api(instance_id, "/documents/proposals"),
-            json={"shell": _document(client, instance_id, "beta"), "proposal_name": "beta"},
+            json={
+                "shell": _document(client, instance_id, "beta"),
+                "proposal_name": "beta",
+                "accept": "never",
+            },
         )
     )
     proposal_id = proposed["proposal"]["admission"]["proposal_id"]
@@ -407,7 +416,11 @@ def test_a_head_accepted_before_the_record_refuses_a_pinned_withdrawal(
     proposed = _ok(
         client.post(
             _api(instance_id, "/documents/proposals"),
-            json={"shell": _document(client, instance_id, "gamma"), "proposal_name": "gamma"},
+            json={
+                "shell": _document(client, instance_id, "gamma"),
+                "proposal_name": "gamma",
+                "accept": "never",
+            },
         )
     )
     base = _api(instance_id, f"/proposals/{proposed['proposal']['admission']['proposal_id']}")

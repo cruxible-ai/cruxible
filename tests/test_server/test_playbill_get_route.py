@@ -32,7 +32,12 @@ def _accept_document(client: TestClient, instance_id: str, key: Path) -> None:
     )
     proposed = client.post(
         f"/api/v1/{instance_id}/documents/proposals",
-        json={"shell": shell.model_dump(mode="json"), "proposal_name": "design"},
+        json={
+            "shell": shell.model_dump(mode="json"),
+            "proposal_name": "design",
+            # This test walks the explicit approve and activate lifecycle.
+            "accept": "never",
+        },
     )
     assert proposed.status_code == 200, proposed.text
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
