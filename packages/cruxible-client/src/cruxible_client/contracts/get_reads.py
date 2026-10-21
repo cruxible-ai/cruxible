@@ -33,6 +33,7 @@ from cruxible_client.contracts.operational_reads import (
     RunRow,
 )
 from cruxible_client.contracts.procedures.dispositions import ProcedureMeasurementReview
+from cruxible_client.contracts.read_values import ClaimLine as ClaimLine
 from cruxible_client.contracts.read_values import ShownValue
 from cruxible_client.contracts.repairs import ServedRepair
 
@@ -713,9 +714,10 @@ GetRevisionReason = Annotated[GetChangeSetReason | GetProposedReason, Field(disc
 """Why one accepted revision was proposed: its Procedure item's reason, else its change set's."""
 
 
-RevisionChange = Literal["stated", "changed", "reobserved", "retired"]
+RevisionChange = Literal["stated", "changed", "reobserved", "rebound", "retired"]
 """What one Claim revision did: the first of its lineage, a new value, the same
-value on new backing, or its retirement."""
+value on new backing, the same statement with a drifted citation replaced by
+the text it rests on now (``rebound``), or its retirement."""
 
 
 class GetRevision(_StrictGetModel):
@@ -803,6 +805,19 @@ class GetFieldReobserved(_GetFieldEvent):
     change: Literal["reobserved"] = "reobserved"
 
 
+class GetFieldRebound(_GetFieldEvent):
+    """A re-bind: the same statement, with drifted citations replaced by new ones.
+
+    ``replaced`` are the Captures (``CAP-<12 hex>`` handles) whose citations the
+    revision dropped; ``by`` the Captures it cited in their place. The Claim ID
+    and lineage stay; ``reason`` is the write's ``because``.
+    """
+
+    change: Literal["rebound"] = "rebound"
+    replaced: tuple[str, ...]
+    by: tuple[str, ...]
+
+
 class GetFieldRetired(_GetFieldEvent):
     """The Claim's retirement: the field no longer holds ``value``."""
 
@@ -811,7 +826,7 @@ class GetFieldRetired(_GetFieldEvent):
 
 
 GetFieldEvent = Annotated[
-    GetFieldStated | GetFieldChanged | GetFieldReobserved | GetFieldRetired,
+    GetFieldStated | GetFieldChanged | GetFieldReobserved | GetFieldRebound | GetFieldRetired,
     Field(discriminator="change"),
 ]
 
@@ -922,6 +937,7 @@ __all__ = [
     "GET_PAGED_DETAILS",
     "AttestationCountReason",
     "ByteRange",
+    "ClaimLine",
     "GetAcquisitionInput",
     "GetApprovalPolicyCard",
     "GetAttestationEvidence",
@@ -946,6 +962,7 @@ __all__ = [
     "GetEvidence",
     "GetFieldChanged",
     "GetFieldEvent",
+    "GetFieldRebound",
     "GetFieldReobserved",
     "GetFieldRetired",
     "GetFieldStated",

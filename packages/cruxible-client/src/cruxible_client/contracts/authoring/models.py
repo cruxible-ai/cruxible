@@ -116,7 +116,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:df591b2f6059c35d33a0a1d31981b24747e4cda2207d7b1ec4b1af897ebede53"
+    "sha256:e18241b5930464d0b0a8b8db43cb9de3ce85647f9d10c9f54f3bc9059e8a82ae"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -703,9 +703,33 @@ class ClaimDependencyDrafts(_StrictAuthoringModel):
     claim_type: ClaimType | None = None
 
 
+def _replaced_citations(value: tuple[str, ...]) -> tuple[str, ...]:
+    for item in value:
+        Sha256Value.from_tagged(item)
+    if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+        raise ValueError("replaced citations must be sorted and unique")
+    return value
+
+
+def _rebind_revises(payload: ClaimAuthoringPayloadV1, replaces: tuple[str, ...]) -> None:
+    if replaces and payload.revises is None:
+        raise ValueError("replacing citations re-binds a live Claim, so it names what it revises")
+
+
 class ClaimAuthoringPayloadV2(ClaimAuthoringPayloadV1):
     tag: Literal["playbill-claim-authoring-payload-v2"] = "playbill-claim-authoring-payload-v2"  # type: ignore[assignment]
     dependency_drafts: ClaimDependencyDrafts
+    #: A re-bind: the citation ids (of the Claim ``revises`` names) this
+    #: revision drops, each replaced by the new source's citation; the statement
+    #: is unchanged. Absent unless set, so every other payload's digest holds.
+    replaces_citations: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+    _replaces = field_validator("replaces_citations")(_replaced_citations)
+
+    @model_validator(mode="after")
+    def _rebind_shape(self) -> "ClaimAuthoringPayloadV2":
+        _rebind_revises(self, self.replaces_citations)
+        return self
 
 
 class ClaimDerivationBinding(_StrictAuthoringModel):
@@ -732,6 +756,15 @@ class ClaimAuthoringPayload(ClaimAuthoringPayloadV1):
     derivation: ClaimDerivationBinding | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    #: As on the v2 payload: the citations a re-bind replaces.
+    replaces_citations: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+    _replaces = field_validator("replaces_citations")(_replaced_citations)
+
+    @model_validator(mode="after")
+    def _rebind_shape(self) -> "ClaimAuthoringPayload":
+        _rebind_revises(self, self.replaces_citations)
+        return self
 
 
 class AuthoringArtifactReference(_StrictAuthoringModel):
@@ -2274,6 +2307,10 @@ class BlockSyncReadResult(_StrictAuthoringModel):
     successor_candidates: tuple[BlockSyncSuccessorCandidate, ...] = ()
     reason: BlockSyncReadReason | None = None
     detail: str | None = None
+    #: Whether the instance still registers (publishes) this block; ``None``
+    #: when the read did not look. A depublished block is no longer registered,
+    #: so detach may strip it.
+    registered: bool | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("original_artifact_digest", "artifact_digest")
     @classmethod
@@ -2360,6 +2397,8 @@ BlockSyncReason: TypeAlias = Literal[
     "block_sync_failed",
     "projection_processing_incomplete",
     "block_query_unchecked",
+    # Detach keeps a block the instance still publishes; depublish it first.
+    "block_still_published",
 ]
 
 

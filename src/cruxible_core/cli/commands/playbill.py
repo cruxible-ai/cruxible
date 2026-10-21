@@ -127,6 +127,7 @@ from cruxible_client.contracts.provider_installation import (
     ProviderMoveRequest,
     ProviderRetireRequest,
 )
+from cruxible_client.contracts.public_names import public_name as _public_name
 from cruxible_client.contracts.read_values import shown_plain
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
@@ -5185,22 +5186,6 @@ def _get_value_text(
     value: object, *, width: int = GET_CLI_VALUE_WIDTH, evidence_hint: bool = True
 ) -> str:
     return get_value_display(value, width=width, evidence_hint=evidence_hint).text
-
-
-def _public_name(name: str) -> str:
-    """A stored ``playbill``-prefixed identity, mapped to its Cruxible display name.
-
-    Stored and served names keep their ``playbill-*-vN`` spelling: digests and
-    signatures cover them (AGENTS.md "Frozen format tags"). Public text output
-    says Cruxible instead -- at render time only, never by renaming the stored
-    value.
-    """
-    qualifier = "CaptureContract:"
-    if name.startswith(qualifier):
-        return qualifier + _public_name(name[len(qualifier) :])
-    if name.startswith("playbill."):
-        return "cruxible." + name[len("playbill.") :]
-    return name
 
 
 _WHY_SUMMARY_MAX_ITEMS = 5

@@ -496,6 +496,20 @@ class PlaybillNextRepairV1(_StrictNextModel):
     # deterministic inside the item_id and result_digest preimages. Hand edits
     # instead carry a target and required change and never claim a command.
     command: str | None = None
+    # Other repairs for the same row when the agent judges which applies; absent
+    # (and out of the item_id preimage) on a row with one repair.
+    alternatives: tuple[PlaybillNextRepairV1, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+
+    @field_validator("alternatives")
+    @classmethod
+    def _flat_alternatives(
+        cls, value: tuple[PlaybillNextRepairV1, ...]
+    ) -> tuple[PlaybillNextRepairV1, ...]:
+        if any(item.alternatives for item in value):
+            raise ValueError("a repair alternative carries no alternatives of its own")
+        return value
 
     @field_validator("arguments", mode="before")
     @classmethod
@@ -811,6 +825,8 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "cruxible.authoring.submit": "authoring submit",
     "cruxible.authoring.bind": "authoring bind",
     "cruxible.claim.retire": "retire",
+    "cruxible.rebind": "rebind",
+    "cruxible.get": "get",
     "cruxible.set": "set",
     "cruxible.write": "write",
     "cruxible.floor.export": "floor export",
@@ -900,6 +916,9 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "cruxible.authoring.submit": "cruxible_authoring_submit",
     "cruxible.authoring.bind": "cruxible_authoring_bind",
     "cruxible.claim.retire": "cruxible_retire",
+    # A re-bind is one change kind of the typed write; it has no tool of its own.
+    "cruxible.rebind": "cruxible_write",
+    "cruxible.get": "cruxible_get",
     "cruxible.set": "cruxible_set",
     "cruxible.write": "cruxible_write",
     "cruxible.floor.export": "cruxible_floor_export",
@@ -923,7 +942,9 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
 _GOVERNED_WRITE_RUNG = 1
 #: Repairs whose served door writes nothing and so never meets the principal
 #: boundary; every other served repair is refused to a caller that cannot author.
-_AUTHORING_FREE_REPAIRS = frozenset({"cruxible.floor.export", "cruxible.inbox.list"})
+_AUTHORING_FREE_REPAIRS = frozenset(
+    {"cruxible.floor.export", "cruxible.get", "cruxible.inbox.list"}
+)
 
 
 def _tool_rung(tool: str) -> int:

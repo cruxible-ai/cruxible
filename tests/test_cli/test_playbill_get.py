@@ -429,7 +429,9 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     as_json = CliRunner().invoke(cli, [*PREFIX, "get", "dev.roadmap_item/x", "--json"])
 
     assert summary.exit_code == 0, summary.output
-    assert "(900 chars; --detail evidence for all)" in summary.output
+    # A Subject card takes no --detail evidence: the cut names its Claim's read.
+    assert "(900 chars; cruxible get CLM-3 --detail evidence)" in summary.output
+    assert "--detail evidence for all" not in summary.output
     payload = json.loads(as_json.output)
     assert payload["card"]["claims"][0]["value"] == {
         "truncated": True,
@@ -693,7 +695,7 @@ def test_evidence_capture_source_renders_its_public_name(
     ("role", "origin", "status", "shown"),
     [
         ("copy", "self_source", "admitted", "own words: admitted"),
-        ("copy", "independent", "not_evidence", "passage of cruxible.page: not evidence"),
+        ("copy", "independent", "not_evidence", "passage of docs.page: not evidence"),
         ("evidence", "independent", "not_admitted", "evidence: not admitted"),
     ],
 )
@@ -706,7 +708,7 @@ def test_evidence_capture_lines_show_three_states_and_label_copies_by_origin(
         capture="CAP-0123456789ab",
         contract="CaptureContract:docs.page-v1",
         version=1,
-        source="playbill.page",
+        source="docs.page",
         observed_at=WHEN,
         role=role,
         origin=origin,  # type: ignore[arg-type]

@@ -328,6 +328,9 @@ from cruxible_client.contracts.provider_installation import (
 from cruxible_client.contracts.provider_installation import (
     StoppedAutomationV1 as StoppedAutomationV1,
 )
+from cruxible_client.contracts.public_names import NamePair as NamePair
+from cruxible_client.contracts.public_names import PublicNameMap as PublicNameMap
+from cruxible_client.contracts.read_values import ClaimLine as ClaimLine
 from cruxible_client.contracts.read_values import TruncatedText as TruncatedText
 from cruxible_client.contracts.read_values import WholeValueRead as WholeValueRead
 from cruxible_client.contracts.recompilation import ProposalRecompiled as ProposalRecompiled
@@ -458,6 +461,8 @@ NextRepairOperation: TypeAlias = Literal[
     "cruxible.authoring.submit",
     "cruxible.authoring.bind",
     "cruxible.claim.retire",
+    "cruxible.rebind",
+    "cruxible.get",
     "cruxible.set",
     "cruxible.write",
     "cruxible.floor.export",
@@ -709,6 +714,9 @@ class ServerInfoResult(BaseModel):
     compiler_revision: str | None = None
     hosts: tuple[HostInspection, ...] = ()
     consumers: tuple[ConsumerStatus, ...] = ()
+    #: The stored-to-public display names for core's reserved identities, so a
+    #: client applies served data instead of copying the rule.
+    public_names: PublicNameMap | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ServerRestartResult(BaseModel):
@@ -790,6 +798,12 @@ class ProposalInspection(BaseModel):
     )
     #: A compiler upgrade's one-way notice: what activating it means.
     compiler_upgrade: CompilerUpgradeNotice | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    #: Whether the call landed the change (policy and caller allowed it) or
+    #: stopped at the proposal, and why; absent where the call never tries.
+    outcome: AuthoringLanding | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
@@ -1193,6 +1207,10 @@ ClaimTypeLintCode: TypeAlias = Literal[
     "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
     "cruxible.claim_type.anticipated_source_contract_omitted",
     "cruxible.claim_type.attestation_threshold_disabled",
+    # A permitted role no evidence rule admits: a write in that role lands uncovered.
+    "cruxible.claim_type.permitted_role_unadmitted",
+    # The field's short name is reserved, so it always reads by its full predicate.
+    "cruxible.claim_type.field_name_reserved",
 ]
 
 
@@ -1570,6 +1588,18 @@ class NextRepair(BaseModel):
     # Composed by the daemon from the fields beside it; absent on a hand edit
     # and on an operation whose arguments do not name every operand.
     command: str | None = None
+    #: Other repairs for the same row when the agent judges which applies (retire
+    #: the losing contender, re-bind or retire a drifted citation). Each is
+    #: composed for this caller like the primary; one it cannot run is left out.
+    #: Absent on a row with one repair, so its bytes and ``item_id`` hold.
+    alternatives: tuple[NextRepair, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+    @field_validator("alternatives")
+    @classmethod
+    def _flat_alternatives(cls, value: tuple[NextRepair, ...]) -> tuple[NextRepair, ...]:
+        if any(item.alternatives for item in value):
+            raise ValueError("a repair alternative carries no alternatives of its own")
+        return value
 
 
 class NextRepairRequirement(BaseModel):
@@ -1868,6 +1898,8 @@ class AuditRow(BaseModel):
     factors: AuditFactors
     rank_score: int = Field(ge=1)
     evidence_refs: list[AuditEvidenceRef]
+    #: The audited Claim as a text line shows it (subject, field, value).
+    statement: ClaimLine | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class AuditScope(BaseModel):
@@ -2024,6 +2056,10 @@ class SinceRow(BaseModel):
     ]
     artifact_digest: str | None
     predecessor_artifact_digest: str | None
+    #: A Claim member's statement as that generation recorded it, read from the
+    #: row's own artifact; absent for other kinds and from a producer that
+    #: reads none, so the result digest of such a page is unchanged.
+    statement: ClaimLine | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("artifact_digest", "predecessor_artifact_digest")
     @classmethod
@@ -2104,6 +2140,9 @@ class CoverageResult(BaseModel):
     tag: Literal["playbill-coverage-result-v1"] = "playbill-coverage-result-v1"
     coordinate: AcceptedCoordinate
     result: dict[str, Any]
+    #: The Claims the answer's cards address, as text lines show them; outside
+    #: the frozen ``result`` grammar, so its digests are unaffected.
+    claims: tuple[ClaimLine, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class FloorFile(BaseModel):

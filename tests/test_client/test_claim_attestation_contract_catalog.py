@@ -54,6 +54,6 @@ def test_claim_attestation_wire_catalog_is_current_and_exhaustive() -> None:
 
 def test_authoring_wire_catalog_cross_check_tracks_the_current_successor() -> None:
     assert AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST == (
-        "sha256:070821768bac314b43fd199bc198473cfb0b6c7b9ea9f6f3ad587503f298fd9d"
+        "sha256:93072c96703062b8eff71c7a609ba10fda10ef5d3faebe1e8ec208f27bf6b296"
     )
     assert authoring_wire_contract_catalog_digest() == AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST

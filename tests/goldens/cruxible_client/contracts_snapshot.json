@@ -55,7 +55,9 @@
       "values": [
         "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
         "cruxible.claim_type.anticipated_source_contract_omitted",
-        "cruxible.claim_type.attestation_threshold_disabled"
+        "cruxible.claim_type.attestation_threshold_disabled",
+        "cruxible.claim_type.permitted_role_unadmitted",
+        "cruxible.claim_type.field_name_reserved"
       ]
     },
     "FloorExportPart": {
@@ -178,6 +180,8 @@
         "cruxible.authoring.submit",
         "cruxible.authoring.bind",
         "cruxible.claim.retire",
+        "cruxible.rebind",
+        "cruxible.get",
         "cruxible.set",
         "cruxible.write",
         "cruxible.floor.export",
@@ -3556,6 +3560,17 @@
                 "title": "Rank Score",
                 "type": "integer"
               },
+              "statement": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimLine"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "subject_identity": {
                 "additionalProperties": true,
                 "title": "Subject Identity",
@@ -3613,6 +3628,200 @@
               }
             },
             "title": "AuditScope",
+            "type": "object"
+          },
+          "ClaimLine": {
+            "additionalProperties": false,
+            "description": "One Claim as a text line shows it: the Subject, the field, the value, the Claim.\n\nEvery surface that prints a line about a Claim (``since``, ``coverage\nresolve``, ``audit``, refusals) carries this and renders it through\n``get_display.render_claim_line``, so the line reads the same everywhere:\n``subject  field[qualifier] = value  [CLM-<12 hex>]``. ``subject`` is\n``kind/id``; ``field`` is the short field name ``get`` and ``orient`` show;\n``value`` is the summary value (a long string is a ``TruncatedText``\npreview). Digests and artifact paths stay in the typed record beside it.",
+            "properties": {
+              "claim": {
+                "pattern": "^CLM-[0-9a-f]{32}$",
+                "title": "Claim",
+                "type": "string"
+              },
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "subject": {
+                "title": "Subject",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/ShownValue"
+              }
+            },
+            "required": [
+              "claim",
+              "subject",
+              "field",
+              "value"
+            ],
+            "title": "ClaimLine",
+            "type": "object"
+          },
+          "ExactContentRef": {
+            "additionalProperties": false,
+            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "exact_content": {
+                "enum": [
+                  "binary",
+                  "unavailable"
+                ],
+                "title": "Exact Content",
+                "type": "string"
+              },
+              "length": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Length"
+              }
+            },
+            "required": [
+              "exact_content",
+              "content_digest"
+            ],
+            "title": "ExactContentRef",
+            "type": "object"
+          },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "truncated": {
+                "const": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "truncated",
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
             "type": "object"
           }
         },
@@ -3799,6 +4008,25 @@
             "type": "integer"
           }
         },
+        "statement": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "statement",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ClaimLine"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "subject_identity": {
           "has_default": false,
           "has_default_factory": false,
@@ -3971,6 +4199,200 @@
             ],
             "title": "AuditFactors",
             "type": "object"
+          },
+          "ClaimLine": {
+            "additionalProperties": false,
+            "description": "One Claim as a text line shows it: the Subject, the field, the value, the Claim.\n\nEvery surface that prints a line about a Claim (``since``, ``coverage\nresolve``, ``audit``, refusals) carries this and renders it through\n``get_display.render_claim_line``, so the line reads the same everywhere:\n``subject  field[qualifier] = value  [CLM-<12 hex>]``. ``subject`` is\n``kind/id``; ``field`` is the short field name ``get`` and ``orient`` show;\n``value`` is the summary value (a long string is a ``TruncatedText``\npreview). Digests and artifact paths stay in the typed record beside it.",
+            "properties": {
+              "claim": {
+                "pattern": "^CLM-[0-9a-f]{32}$",
+                "title": "Claim",
+                "type": "string"
+              },
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "subject": {
+                "title": "Subject",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/ShownValue"
+              }
+            },
+            "required": [
+              "claim",
+              "subject",
+              "field",
+              "value"
+            ],
+            "title": "ClaimLine",
+            "type": "object"
+          },
+          "ExactContentRef": {
+            "additionalProperties": false,
+            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "exact_content": {
+                "enum": [
+                  "binary",
+                  "unavailable"
+                ],
+                "title": "Exact Content",
+                "type": "string"
+              },
+              "length": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Length"
+              }
+            },
+            "required": [
+              "exact_content",
+              "content_digest"
+            ],
+            "title": "ExactContentRef",
+            "type": "object"
+          },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "truncated": {
+                "const": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "truncated",
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -4015,6 +4437,17 @@
             "minimum": 1,
             "title": "Rank Score",
             "type": "integer"
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ClaimLine"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "subject_identity": {
             "additionalProperties": true,
@@ -10017,7 +10450,9 @@
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                   "cruxible.claim_type.anticipated_source_contract_omitted",
-                  "cruxible.claim_type.attestation_threshold_disabled"
+                  "cruxible.claim_type.attestation_threshold_disabled",
+                  "cruxible.claim_type.permitted_role_unadmitted",
+                  "cruxible.claim_type.field_name_reserved"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -11349,7 +11784,9 @@
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                   "cruxible.claim_type.anticipated_source_contract_omitted",
-                  "cruxible.claim_type.attestation_threshold_disabled"
+                  "cruxible.claim_type.attestation_threshold_disabled",
+                  "cruxible.claim_type.permitted_role_unadmitted",
+                  "cruxible.claim_type.field_name_reserved"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -12489,7 +12926,8 @@
                   "block_frame_invalid",
                   "block_sync_failed",
                   "projection_processing_incomplete",
-                  "block_query_unchecked"
+                  "block_query_unchecked",
+                  "block_still_published"
                 ],
                 "type": "string"
               },
@@ -12685,7 +13123,8 @@
                   "block_frame_invalid",
                   "block_sync_failed",
                   "projection_processing_incomplete",
-                  "block_query_unchecked"
+                  "block_query_unchecked",
+                  "block_still_published"
                 ],
                 "type": "string"
               },
@@ -13524,6 +13963,26 @@
             "title": "Reason"
           }
         },
+        "registered": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "registered",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Registered"
+          }
+        },
         "status": {
           "has_default": false,
           "has_default_factory": false,
@@ -14017,6 +14476,18 @@
             "default": null,
             "title": "Reason"
           },
+          "registered": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Registered"
+          },
           "status": {
             "enum": [
               "current",
@@ -14186,7 +14657,8 @@
                       "block_frame_invalid",
                       "block_sync_failed",
                       "projection_processing_incomplete",
-                      "block_query_unchecked"
+                      "block_query_unchecked",
+                      "block_still_published"
                     ],
                     "type": "string"
                   },
@@ -15468,6 +15940,272 @@
         "redacted"
       ]
     },
+    "ClaimLine": {
+      "fields": {
+        "claim": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim",
+          "required": true,
+          "schema": {
+            "pattern": "^CLM-[0-9a-f]{32}$",
+            "title": "Claim",
+            "type": "string"
+          }
+        },
+        "field": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "field",
+          "required": true,
+          "schema": {
+            "title": "Field",
+            "type": "string"
+          }
+        },
+        "qualifier": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "qualifier",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Qualifier"
+          }
+        },
+        "subject": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": true,
+          "schema": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "value": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "value",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ShownValue"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ExactContentRef": {
+            "additionalProperties": false,
+            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "exact_content": {
+                "enum": [
+                  "binary",
+                  "unavailable"
+                ],
+                "title": "Exact Content",
+                "type": "string"
+              },
+              "length": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Length"
+              }
+            },
+            "required": [
+              "exact_content",
+              "content_digest"
+            ],
+            "title": "ExactContentRef",
+            "type": "object"
+          },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "truncated": {
+                "const": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "truncated",
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One Claim as a text line shows it: the Subject, the field, the value, the Claim.\n\nEvery surface that prints a line about a Claim (``since``, ``coverage\nresolve``, ``audit``, refusals) carries this and renders it through\n``get_display.render_claim_line``, so the line reads the same everywhere:\n``subject  field[qualifier] = value  [CLM-<12 hex>]``. ``subject`` is\n``kind/id``; ``field`` is the short field name ``get`` and ``orient`` show;\n``value`` is the summary value (a long string is a ``TruncatedText``\npreview). Digests and artifact paths stay in the typed record beside it.",
+        "properties": {
+          "claim": {
+            "pattern": "^CLM-[0-9a-f]{32}$",
+            "title": "Claim",
+            "type": "string"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "qualifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Qualifier"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/ShownValue"
+          }
+        },
+        "required": [
+          "claim",
+          "subject",
+          "field",
+          "value"
+        ],
+        "title": "ClaimLine",
+        "type": "object"
+      },
+      "required_fields": [
+        "claim",
+        "field",
+        "subject",
+        "value"
+      ]
+    },
     "ClaimStatementCard": {
       "fields": {
         "lifecycle": {
@@ -15921,6 +16659,95 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "AuthoringLanded": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "status": {
+                "const": "landed",
+                "default": "landed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted_coordinate"
+            ],
+            "title": "AuthoringLanded",
+            "type": "object"
+          },
+          "AuthoringProposed": {
+            "additionalProperties": false,
+            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "reason": {
+                "enum": [
+                  "independent_approval_required",
+                  "activation_not_permitted",
+                  "accept_never",
+                  "preflight_refused",
+                  "not_ready_to_activate",
+                  "head_moved"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "proposed",
+                "default": "proposed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "message"
+            ],
+            "title": "AuthoringProposed",
+            "type": "object"
+          },
           "ClaimTypeLintWarning": {
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
@@ -15929,7 +16756,9 @@
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                   "cruxible.claim_type.anticipated_source_contract_omitted",
-                  "cruxible.claim_type.attestation_threshold_disabled"
+                  "cruxible.claim_type.attestation_threshold_disabled",
+                  "cruxible.claim_type.permitted_role_unadmitted",
+                  "cruxible.claim_type.field_name_reserved"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -16103,6 +16932,32 @@
                 ],
                 "default": null
               },
+              "outcome": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "landed": "#/$defs/AuthoringLanded",
+                        "proposed": "#/$defs/AuthoringProposed"
+                      },
+                      "propertyName": "status"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/AuthoringLanded"
+                      },
+                      {
+                        "$ref": "#/$defs/AuthoringProposed"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Outcome"
+              },
               "proposal": {
                 "additionalProperties": true,
                 "title": "Proposal",
@@ -16256,7 +17111,9 @@
             "enum": [
               "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
               "cruxible.claim_type.anticipated_source_contract_omitted",
-              "cruxible.claim_type.attestation_threshold_disabled"
+              "cruxible.claim_type.attestation_threshold_disabled",
+              "cruxible.claim_type.permitted_role_unadmitted",
+              "cruxible.claim_type.field_name_reserved"
             ],
             "title": "Code",
             "type": "string"
@@ -16352,7 +17209,9 @@
             "enum": [
               "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
               "cruxible.claim_type.anticipated_source_contract_omitted",
-              "cruxible.claim_type.attestation_threshold_disabled"
+              "cruxible.claim_type.attestation_threshold_disabled",
+              "cruxible.claim_type.permitted_role_unadmitted",
+              "cruxible.claim_type.field_name_reserved"
             ],
             "title": "Code",
             "type": "string"
@@ -16562,7 +17421,9 @@
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                   "cruxible.claim_type.anticipated_source_contract_omitted",
-                  "cruxible.claim_type.attestation_threshold_disabled"
+                  "cruxible.claim_type.attestation_threshold_disabled",
+                  "cruxible.claim_type.permitted_role_unadmitted",
+                  "cruxible.claim_type.field_name_reserved"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -16899,6 +17760,95 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "AuthoringLanded": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "status": {
+                "const": "landed",
+                "default": "landed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted_coordinate"
+            ],
+            "title": "AuthoringLanded",
+            "type": "object"
+          },
+          "AuthoringProposed": {
+            "additionalProperties": false,
+            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "reason": {
+                "enum": [
+                  "independent_approval_required",
+                  "activation_not_permitted",
+                  "accept_never",
+                  "preflight_refused",
+                  "not_ready_to_activate",
+                  "head_moved"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "proposed",
+                "default": "proposed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "message"
+            ],
+            "title": "AuthoringProposed",
+            "type": "object"
+          },
           "ClaimTypeLintWarning": {
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
@@ -16907,7 +17857,9 @@
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                   "cruxible.claim_type.anticipated_source_contract_omitted",
-                  "cruxible.claim_type.attestation_threshold_disabled"
+                  "cruxible.claim_type.attestation_threshold_disabled",
+                  "cruxible.claim_type.permitted_role_unadmitted",
+                  "cruxible.claim_type.field_name_reserved"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -17080,6 +18032,32 @@
                   }
                 ],
                 "default": null
+              },
+              "outcome": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "landed": "#/$defs/AuthoringLanded",
+                        "proposed": "#/$defs/AuthoringProposed"
+                      },
+                      "propertyName": "status"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/AuthoringLanded"
+                      },
+                      {
+                        "$ref": "#/$defs/AuthoringProposed"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Outcome"
               },
               "proposal": {
                 "additionalProperties": true,
@@ -17450,6 +18428,95 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "AuthoringLanded": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "status": {
+                "const": "landed",
+                "default": "landed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted_coordinate"
+            ],
+            "title": "AuthoringLanded",
+            "type": "object"
+          },
+          "AuthoringProposed": {
+            "additionalProperties": false,
+            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "reason": {
+                "enum": [
+                  "independent_approval_required",
+                  "activation_not_permitted",
+                  "accept_never",
+                  "preflight_refused",
+                  "not_ready_to_activate",
+                  "head_moved"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "proposed",
+                "default": "proposed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "message"
+            ],
+            "title": "AuthoringProposed",
+            "type": "object"
+          },
           "ClaimTypeLintWarning": {
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
@@ -17458,7 +18525,9 @@
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                   "cruxible.claim_type.anticipated_source_contract_omitted",
-                  "cruxible.claim_type.attestation_threshold_disabled"
+                  "cruxible.claim_type.attestation_threshold_disabled",
+                  "cruxible.claim_type.permitted_role_unadmitted",
+                  "cruxible.claim_type.field_name_reserved"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -17631,6 +18700,32 @@
                   }
                 ],
                 "default": null
+              },
+              "outcome": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "landed": "#/$defs/AuthoringLanded",
+                        "proposed": "#/$defs/AuthoringProposed"
+                      },
+                      "propertyName": "status"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/AuthoringLanded"
+                      },
+                      {
+                        "$ref": "#/$defs/AuthoringProposed"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Outcome"
               },
               "proposal": {
                 "additionalProperties": true,
@@ -18001,6 +19096,95 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "AuthoringLanded": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "status": {
+                "const": "landed",
+                "default": "landed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted_coordinate"
+            ],
+            "title": "AuthoringLanded",
+            "type": "object"
+          },
+          "AuthoringProposed": {
+            "additionalProperties": false,
+            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "reason": {
+                "enum": [
+                  "independent_approval_required",
+                  "activation_not_permitted",
+                  "accept_never",
+                  "preflight_refused",
+                  "not_ready_to_activate",
+                  "head_moved"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "proposed",
+                "default": "proposed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "message"
+            ],
+            "title": "AuthoringProposed",
+            "type": "object"
+          },
           "ClaimTypeLintWarning": {
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
@@ -18009,7 +19193,9 @@
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                   "cruxible.claim_type.anticipated_source_contract_omitted",
-                  "cruxible.claim_type.attestation_threshold_disabled"
+                  "cruxible.claim_type.attestation_threshold_disabled",
+                  "cruxible.claim_type.permitted_role_unadmitted",
+                  "cruxible.claim_type.field_name_reserved"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -18182,6 +19368,32 @@
                   }
                 ],
                 "default": null
+              },
+              "outcome": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "landed": "#/$defs/AuthoringLanded",
+                        "proposed": "#/$defs/AuthoringProposed"
+                      },
+                      "propertyName": "status"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/AuthoringLanded"
+                      },
+                      {
+                        "$ref": "#/$defs/AuthoringProposed"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Outcome"
               },
               "proposal": {
                 "additionalProperties": true,
@@ -18455,7 +19667,9 @@
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                   "cruxible.claim_type.anticipated_source_contract_omitted",
-                  "cruxible.claim_type.attestation_threshold_disabled"
+                  "cruxible.claim_type.attestation_threshold_disabled",
+                  "cruxible.claim_type.permitted_role_unadmitted",
+                  "cruxible.claim_type.field_name_reserved"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -19568,6 +20782,22 @@
     },
     "CoverageResult": {
       "fields": {
+        "claims": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claims",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ClaimLine"
+            },
+            "title": "Claims",
+            "type": "array"
+          }
+        },
         "coordinate": {
           "has_default": false,
           "has_default_factory": false,
@@ -19640,11 +20870,213 @@
             ],
             "title": "AcceptedCoordinate",
             "type": "object"
+          },
+          "ClaimLine": {
+            "additionalProperties": false,
+            "description": "One Claim as a text line shows it: the Subject, the field, the value, the Claim.\n\nEvery surface that prints a line about a Claim (``since``, ``coverage\nresolve``, ``audit``, refusals) carries this and renders it through\n``get_display.render_claim_line``, so the line reads the same everywhere:\n``subject  field[qualifier] = value  [CLM-<12 hex>]``. ``subject`` is\n``kind/id``; ``field`` is the short field name ``get`` and ``orient`` show;\n``value`` is the summary value (a long string is a ``TruncatedText``\npreview). Digests and artifact paths stay in the typed record beside it.",
+            "properties": {
+              "claim": {
+                "pattern": "^CLM-[0-9a-f]{32}$",
+                "title": "Claim",
+                "type": "string"
+              },
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "subject": {
+                "title": "Subject",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/ShownValue"
+              }
+            },
+            "required": [
+              "claim",
+              "subject",
+              "field",
+              "value"
+            ],
+            "title": "ClaimLine",
+            "type": "object"
+          },
+          "ExactContentRef": {
+            "additionalProperties": false,
+            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "exact_content": {
+                "enum": [
+                  "binary",
+                  "unavailable"
+                ],
+                "title": "Exact Content",
+                "type": "string"
+              },
+              "length": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Length"
+              }
+            },
+            "required": [
+              "exact_content",
+              "content_digest"
+            ],
+            "title": "ExactContentRef",
+            "type": "object"
+          },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "truncated": {
+                "const": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "truncated",
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
+            "type": "object"
           }
         },
         "additionalProperties": false,
         "description": "One resolved coverage answer: the whole `playbill-coverage-result-v1`.\n\n``result`` carries the frozen coverage grammar verbatim -- span results,\ncards, the one batch summary, coverage health, accepted coordinate, scope,\nmanifest epoch, and the index/overlay/manifest digests the answer was\nresolved against. Coverage remains reproducible from those three digests;\na successful outer read may additionally append a local consumption touch,\nwhich enters neither this answer nor accepted state.",
         "properties": {
+          "claims": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ClaimLine"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
           "coordinate": {
             "$ref": "#/$defs/AcceptedCoordinate"
           },
@@ -31900,6 +33332,54 @@
         "trigger"
       ]
     },
+    "NamePair": {
+      "fields": {
+        "public": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "public",
+          "required": true,
+          "schema": {
+            "title": "Public",
+            "type": "string"
+          }
+        },
+        "stored": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "stored",
+          "required": true,
+          "schema": {
+            "title": "Stored",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One stored identity (or prefix) and the name a reader sees for it.",
+        "properties": {
+          "public": {
+            "title": "Public",
+            "type": "string"
+          },
+          "stored": {
+            "title": "Stored",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stored",
+          "public"
+        ],
+        "title": "NamePair",
+        "type": "object"
+      },
+      "required_fields": [
+        "public",
+        "stored"
+      ]
+    },
     "NextFinding": {
       "fields": {
         "detail": {
@@ -32123,6 +33603,14 @@
           "NextRepair": {
             "additionalProperties": false,
             "properties": {
+              "alternatives": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/NextRepair"
+                },
+                "title": "Alternatives",
+                "type": "array"
+              },
               "arguments": {
                 "title": "Arguments"
               },
@@ -32144,6 +33632,8 @@
                   "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
                   "cruxible.set",
                   "cruxible.write",
                   "cruxible.floor.export",
@@ -32217,6 +33707,8 @@
                   "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
                   "cruxible.set",
                   "cruxible.write",
                   "cruxible.floor.export",
@@ -32579,6 +34071,14 @@
           "NextRepair": {
             "additionalProperties": false,
             "properties": {
+              "alternatives": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/NextRepair"
+                },
+                "title": "Alternatives",
+                "type": "array"
+              },
               "arguments": {
                 "title": "Arguments"
               },
@@ -32600,6 +34100,8 @@
                   "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
                   "cruxible.set",
                   "cruxible.write",
                   "cruxible.floor.export",
@@ -32673,6 +34175,8 @@
                   "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
                   "cruxible.set",
                   "cruxible.write",
                   "cruxible.floor.export",
@@ -33163,6 +34667,14 @@
           "NextRepair": {
             "additionalProperties": false,
             "properties": {
+              "alternatives": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/NextRepair"
+                },
+                "title": "Alternatives",
+                "type": "array"
+              },
               "arguments": {
                 "title": "Arguments"
               },
@@ -33184,6 +34696,8 @@
                   "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
                   "cruxible.set",
                   "cruxible.write",
                   "cruxible.floor.export",
@@ -33257,6 +34771,8 @@
                   "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
                   "cruxible.set",
                   "cruxible.write",
                   "cruxible.floor.export",
@@ -33635,14 +35151,21 @@
     },
     "NextRepair": {
       "fields": {
+        "alternatives": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "alternatives",
+          "required": false,
+          "schema": {}
+        },
         "arguments": {
           "has_default": false,
           "has_default_factory": true,
           "json_name": "arguments",
           "required": false,
-          "schema": {
-            "title": "Arguments"
-          }
+          "schema": {}
         },
         "command": {
           "default": null,
@@ -33651,138 +35174,108 @@
           "has_default_factory": false,
           "json_name": "command",
           "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Command"
-          }
+          "schema": {}
         },
         "operation": {
           "has_default": false,
           "has_default_factory": false,
           "json_name": "operation",
           "required": true,
-          "schema": {
-            "enum": [
-              "cruxible.authoring.example",
-              "cruxible.authoring.submit",
-              "cruxible.authoring.bind",
-              "cruxible.claim.retire",
-              "cruxible.set",
-              "cruxible.write",
-              "cruxible.floor.export",
-              "cruxible.block.depublish",
-              "cruxible.block.detach",
-              "cruxible.block.repin",
-              "cruxible.block.sync",
-              "cruxible.files.propose",
-              "cruxible.proposal.readmit",
-              "cruxible.proposal.approve",
-              "cruxible.proposal.activate",
-              "cruxible.compiler.upgrade",
-              "cruxible.line.enable",
-              "cruxible.line.evaluate",
-              "cruxible.line.dispatch",
-              "cruxible.inbox.list",
-              "cruxible.prediction.settle",
-              "cruxible.kit.add",
-              "hand_edit"
-            ],
-            "title": "Operation",
-            "type": "string"
-          }
+          "schema": {}
         },
         "required_change": {
           "has_default": false,
           "has_default_factory": false,
           "json_name": "required_change",
           "required": true,
-          "schema": {
-            "title": "Required Change",
-            "type": "string"
-          }
+          "schema": {}
         },
         "target": {
           "has_default": false,
           "has_default_factory": false,
           "json_name": "target",
           "required": true,
-          "schema": {
-            "title": "Target",
-            "type": "string"
-          }
+          "schema": {}
         }
       },
       "json_schema": {
-        "additionalProperties": false,
-        "properties": {
-          "arguments": {
-            "title": "Arguments"
-          },
-          "command": {
-            "anyOf": [
-              {
+        "$defs": {
+          "NextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "alternatives": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/NextRepair"
+                },
+                "title": "Alternatives",
+                "type": "array"
+              },
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "cruxible.authoring.example",
+                  "cruxible.authoring.submit",
+                  "cruxible.authoring.bind",
+                  "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
+                  "cruxible.set",
+                  "cruxible.write",
+                  "cruxible.floor.export",
+                  "cruxible.block.depublish",
+                  "cruxible.block.detach",
+                  "cruxible.block.repin",
+                  "cruxible.block.sync",
+                  "cruxible.files.propose",
+                  "cruxible.proposal.readmit",
+                  "cruxible.proposal.approve",
+                  "cruxible.proposal.activate",
+                  "cruxible.compiler.upgrade",
+                  "cruxible.line.enable",
+                  "cruxible.line.evaluate",
+                  "cruxible.line.dispatch",
+                  "cruxible.inbox.list",
+                  "cruxible.prediction.settle",
+                  "cruxible.kit.add",
+                  "hand_edit"
+                ],
+                "title": "Operation",
                 "type": "string"
               },
-              {
-                "type": "null"
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
               }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
             ],
-            "default": null,
-            "title": "Command"
-          },
-          "operation": {
-            "enum": [
-              "cruxible.authoring.example",
-              "cruxible.authoring.submit",
-              "cruxible.authoring.bind",
-              "cruxible.claim.retire",
-              "cruxible.set",
-              "cruxible.write",
-              "cruxible.floor.export",
-              "cruxible.block.depublish",
-              "cruxible.block.detach",
-              "cruxible.block.repin",
-              "cruxible.block.sync",
-              "cruxible.files.propose",
-              "cruxible.proposal.readmit",
-              "cruxible.proposal.approve",
-              "cruxible.proposal.activate",
-              "cruxible.compiler.upgrade",
-              "cruxible.line.enable",
-              "cruxible.line.evaluate",
-              "cruxible.line.dispatch",
-              "cruxible.inbox.list",
-              "cruxible.prediction.settle",
-              "cruxible.kit.add",
-              "hand_edit"
-            ],
-            "title": "Operation",
-            "type": "string"
-          },
-          "required_change": {
-            "title": "Required Change",
-            "type": "string"
-          },
-          "target": {
-            "title": "Target",
-            "type": "string"
+            "title": "NextRepair",
+            "type": "object"
           }
         },
-        "required": [
-          "operation",
-          "target",
-          "required_change"
-        ],
-        "title": "NextRepair",
-        "type": "object"
+        "$ref": "#/$defs/NextRepair"
       },
       "required_fields": [
         "operation",
@@ -33840,6 +35333,8 @@
               "cruxible.authoring.submit",
               "cruxible.authoring.bind",
               "cruxible.claim.retire",
+              "cruxible.rebind",
+              "cruxible.get",
               "cruxible.set",
               "cruxible.write",
               "cruxible.floor.export",
@@ -34055,6 +35550,8 @@
               "cruxible.authoring.submit",
               "cruxible.authoring.bind",
               "cruxible.claim.retire",
+              "cruxible.rebind",
+              "cruxible.get",
               "cruxible.set",
               "cruxible.write",
               "cruxible.floor.export",
@@ -34691,6 +36188,14 @@
           "NextRepair": {
             "additionalProperties": false,
             "properties": {
+              "alternatives": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/NextRepair"
+                },
+                "title": "Alternatives",
+                "type": "array"
+              },
               "arguments": {
                 "title": "Arguments"
               },
@@ -34712,6 +36217,8 @@
                   "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
                   "cruxible.set",
                   "cruxible.write",
                   "cruxible.floor.export",
@@ -34785,6 +36292,8 @@
                   "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
                   "cruxible.set",
                   "cruxible.write",
                   "cruxible.floor.export",
@@ -35367,6 +36876,14 @@
           "NextRepair": {
             "additionalProperties": false,
             "properties": {
+              "alternatives": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/NextRepair"
+                },
+                "title": "Alternatives",
+                "type": "array"
+              },
               "arguments": {
                 "title": "Arguments"
               },
@@ -35388,6 +36905,8 @@
                   "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
                   "cruxible.set",
                   "cruxible.write",
                   "cruxible.floor.export",
@@ -35461,6 +36980,8 @@
                   "cruxible.authoring.submit",
                   "cruxible.authoring.bind",
                   "cruxible.claim.retire",
+                  "cruxible.rebind",
+                  "cruxible.get",
                   "cruxible.set",
                   "cruxible.write",
                   "cruxible.floor.export",
@@ -72609,6 +74130,18 @@
                 "default": null,
                 "title": "Reason"
               },
+              "registered": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Registered"
+              },
               "status": {
                 "enum": [
                   "current",
@@ -73115,6 +74648,40 @@
             "default": null
           }
         },
+        "outcome": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "outcome",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "landed": "#/$defs/AuthoringLanded",
+                    "proposed": "#/$defs/AuthoringProposed"
+                  },
+                  "propertyName": "status"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/AuthoringLanded"
+                  },
+                  {
+                    "$ref": "#/$defs/AuthoringProposed"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outcome"
+          }
+        },
         "proposal": {
           "has_default": false,
           "has_default_factory": false,
@@ -73215,6 +74782,95 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "AuthoringLanded": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "status": {
+                "const": "landed",
+                "default": "landed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted_coordinate"
+            ],
+            "title": "AuthoringLanded",
+            "type": "object"
+          },
+          "AuthoringProposed": {
+            "additionalProperties": false,
+            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "reason": {
+                "enum": [
+                  "independent_approval_required",
+                  "activation_not_permitted",
+                  "accept_never",
+                  "preflight_refused",
+                  "not_ready_to_activate",
+                  "head_moved"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "proposed",
+                "default": "proposed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "message"
+            ],
+            "title": "AuthoringProposed",
+            "type": "object"
+          },
           "ClaimTypeLintWarning": {
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
@@ -73223,7 +74879,9 @@
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                   "cruxible.claim_type.anticipated_source_contract_omitted",
-                  "cruxible.claim_type.attestation_threshold_disabled"
+                  "cruxible.claim_type.attestation_threshold_disabled",
+                  "cruxible.claim_type.permitted_role_unadmitted",
+                  "cruxible.claim_type.field_name_reserved"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -73470,6 +75128,32 @@
               }
             ],
             "default": null
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "landed": "#/$defs/AuthoringLanded",
+                    "proposed": "#/$defs/AuthoringProposed"
+                  },
+                  "propertyName": "status"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/AuthoringLanded"
+                  },
+                  {
+                    "$ref": "#/$defs/AuthoringProposed"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outcome"
           },
           "proposal": {
             "additionalProperties": true,
@@ -74452,6 +76136,95 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "AuthoringLanded": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "status": {
+                "const": "landed",
+                "default": "landed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted_coordinate"
+            ],
+            "title": "AuthoringLanded",
+            "type": "object"
+          },
+          "AuthoringProposed": {
+            "additionalProperties": false,
+            "description": "Why submit stopped; a refused preflight has no proposal yet.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "reason": {
+                "enum": [
+                  "independent_approval_required",
+                  "activation_not_permitted",
+                  "accept_never",
+                  "preflight_refused",
+                  "not_ready_to_activate",
+                  "head_moved"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "status": {
+                "const": "proposed",
+                "default": "proposed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "message"
+            ],
+            "title": "AuthoringProposed",
+            "type": "object"
+          },
           "ClaimTypeLintWarning": {
             "additionalProperties": false,
             "description": "One advisory finding about a ClaimType's evidence policy, with its fix.",
@@ -74460,7 +76233,9 @@
                 "enum": [
                   "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                   "cruxible.claim_type.anticipated_source_contract_omitted",
-                  "cruxible.claim_type.attestation_threshold_disabled"
+                  "cruxible.claim_type.attestation_threshold_disabled",
+                  "cruxible.claim_type.permitted_role_unadmitted",
+                  "cruxible.claim_type.field_name_reserved"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -74633,6 +76408,32 @@
                   }
                 ],
                 "default": null
+              },
+              "outcome": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "landed": "#/$defs/AuthoringLanded",
+                        "proposed": "#/$defs/AuthoringProposed"
+                      },
+                      "propertyName": "status"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/AuthoringLanded"
+                      },
+                      {
+                        "$ref": "#/$defs/AuthoringProposed"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Outcome"
               },
               "proposal": {
                 "additionalProperties": true,
@@ -80318,6 +82119,88 @@
       "required_fields": [
         "digest",
         "filename"
+      ]
+    },
+    "PublicNameMap": {
+      "fields": {
+        "exact": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "exact",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/NamePair"
+            },
+            "title": "Exact",
+            "type": "array"
+          }
+        },
+        "prefixes": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "prefixes",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/NamePair"
+            },
+            "title": "Prefixes",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "NamePair": {
+            "additionalProperties": false,
+            "description": "One stored identity (or prefix) and the name a reader sees for it.",
+            "properties": {
+              "public": {
+                "title": "Public",
+                "type": "string"
+              },
+              "stored": {
+                "title": "Stored",
+                "type": "string"
+              }
+            },
+            "required": [
+              "stored",
+              "public"
+            ],
+            "title": "NamePair",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The reserved-name display table as data.\n\nA client maps a stored name the way :func:`public_name` does: keep a leading\n``Kind:`` qualifier, then an ``exact`` match, else the longest matching\n``prefixes`` entry (replacing that prefix); any other name is shown as is.\nRead models keep stored names, and input accepts either spelling.",
+        "properties": {
+          "exact": {
+            "items": {
+              "$ref": "#/$defs/NamePair"
+            },
+            "title": "Exact",
+            "type": "array"
+          },
+          "prefixes": {
+            "items": {
+              "$ref": "#/$defs/NamePair"
+            },
+            "title": "Prefixes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "exact",
+          "prefixes"
+        ],
+        "title": "PublicNameMap",
+        "type": "object"
+      },
+      "required_fields": [
+        "exact",
+        "prefixes"
       ]
     },
     "QueryClaimValue": {
@@ -101990,6 +103873,25 @@
             "$ref": "#/$defs/ProviderLaneStatus"
           }
         },
+        "public_names": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "public_names",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PublicNameMap"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "server_required": {
           "has_default": false,
           "has_default_factory": false,
@@ -102209,6 +104111,26 @@
             "title": "HostInspection",
             "type": "object"
           },
+          "NamePair": {
+            "additionalProperties": false,
+            "description": "One stored identity (or prefix) and the name a reader sees for it.",
+            "properties": {
+              "public": {
+                "title": "Public",
+                "type": "string"
+              },
+              "stored": {
+                "title": "Stored",
+                "type": "string"
+              }
+            },
+            "required": [
+              "stored",
+              "public"
+            ],
+            "title": "NamePair",
+            "type": "object"
+          },
           "ProviderLaneStatus": {
             "additionalProperties": false,
             "properties": {
@@ -102273,6 +104195,32 @@
             ],
             "title": "ProviderLaneStatus",
             "type": "object"
+          },
+          "PublicNameMap": {
+            "additionalProperties": false,
+            "description": "The reserved-name display table as data.\n\nA client maps a stored name the way :func:`public_name` does: keep a leading\n``Kind:`` qualifier, then an ``exact`` match, else the longest matching\n``prefixes`` entry (replacing that prefix); any other name is shown as is.\nRead models keep stored names, and input accepts either spelling.",
+            "properties": {
+              "exact": {
+                "items": {
+                  "$ref": "#/$defs/NamePair"
+                },
+                "title": "Exact",
+                "type": "array"
+              },
+              "prefixes": {
+                "items": {
+                  "$ref": "#/$defs/NamePair"
+                },
+                "title": "Prefixes",
+                "type": "array"
+              }
+            },
+            "required": [
+              "exact",
+              "prefixes"
+            ],
+            "title": "PublicNameMap",
+            "type": "object"
           }
         },
         "properties": {
@@ -102331,6 +104279,17 @@
           },
           "provider_lane": {
             "$ref": "#/$defs/ProviderLaneStatus"
+          },
+          "public_names": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PublicNameMap"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "server_required": {
             "title": "Server Required",
@@ -103701,6 +105660,135 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ClaimLine": {
+            "additionalProperties": false,
+            "description": "One Claim as a text line shows it: the Subject, the field, the value, the Claim.\n\nEvery surface that prints a line about a Claim (``since``, ``coverage\nresolve``, ``audit``, refusals) carries this and renders it through\n``get_display.render_claim_line``, so the line reads the same everywhere:\n``subject  field[qualifier] = value  [CLM-<12 hex>]``. ``subject`` is\n``kind/id``; ``field`` is the short field name ``get`` and ``orient`` show;\n``value`` is the summary value (a long string is a ``TruncatedText``\npreview). Digests and artifact paths stay in the typed record beside it.",
+            "properties": {
+              "claim": {
+                "pattern": "^CLM-[0-9a-f]{32}$",
+                "title": "Claim",
+                "type": "string"
+              },
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "subject": {
+                "title": "Subject",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/ShownValue"
+              }
+            },
+            "required": [
+              "claim",
+              "subject",
+              "field",
+              "value"
+            ],
+            "title": "ClaimLine",
+            "type": "object"
+          },
+          "ExactContentRef": {
+            "additionalProperties": false,
+            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "exact_content": {
+                "enum": [
+                  "binary",
+                  "unavailable"
+                ],
+                "title": "Exact Content",
+                "type": "string"
+              },
+              "length": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Length"
+              }
+            },
+            "required": [
+              "exact_content",
+              "content_digest"
+            ],
+            "title": "ExactContentRef",
+            "type": "object"
+          },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "SinceCursor": {
             "additionalProperties": false,
             "properties": {
@@ -103830,6 +105918,17 @@
                 ],
                 "title": "Predecessor Artifact Digest"
               },
+              "statement": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimLine"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "tag": {
                 "const": "playbill-since-row-v1",
                 "default": "playbill-since-row-v1",
@@ -103848,6 +105947,71 @@
               "predecessor_artifact_digest"
             ],
             "title": "SinceRow",
+            "type": "object"
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "truncated": {
+                "const": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "truncated",
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
             "type": "object"
           }
         },
@@ -104022,6 +106186,25 @@
             "title": "Predecessor Artifact Digest"
           }
         },
+        "statement": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "statement",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ClaimLine"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "tag": {
           "default": "playbill-since-row-v1",
           "default_json_serializable": true,
@@ -104038,6 +106221,202 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "ClaimLine": {
+            "additionalProperties": false,
+            "description": "One Claim as a text line shows it: the Subject, the field, the value, the Claim.\n\nEvery surface that prints a line about a Claim (``since``, ``coverage\nresolve``, ``audit``, refusals) carries this and renders it through\n``get_display.render_claim_line``, so the line reads the same everywhere:\n``subject  field[qualifier] = value  [CLM-<12 hex>]``. ``subject`` is\n``kind/id``; ``field`` is the short field name ``get`` and ``orient`` show;\n``value`` is the summary value (a long string is a ``TruncatedText``\npreview). Digests and artifact paths stay in the typed record beside it.",
+            "properties": {
+              "claim": {
+                "pattern": "^CLM-[0-9a-f]{32}$",
+                "title": "Claim",
+                "type": "string"
+              },
+              "field": {
+                "title": "Field",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "subject": {
+                "title": "Subject",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/ShownValue"
+              }
+            },
+            "required": [
+              "claim",
+              "subject",
+              "field",
+              "value"
+            ],
+            "title": "ClaimLine",
+            "type": "object"
+          },
+          "ExactContentRef": {
+            "additionalProperties": false,
+            "description": "An exact-content Claim value shown by digest, because it cannot be shown as text.\n\nAn exact-content value reads as its UTF-8 text wherever a value is shown.\nThis marker stands in for the text when there is none to show: the bytes are\nnot UTF-8 text (``binary``), or the store no longer holds them\n(``unavailable``). It never raises. Every caller who may read a Claim reads\nits exact-content value; nothing is withheld by permission.",
+            "properties": {
+              "content_digest": {
+                "title": "Content Digest",
+                "type": "string"
+              },
+              "exact_content": {
+                "enum": [
+                  "binary",
+                  "unavailable"
+                ],
+                "title": "Exact Content",
+                "type": "string"
+              },
+              "length": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Length"
+              }
+            },
+            "required": [
+              "exact_content",
+              "content_digest"
+            ],
+            "title": "ExactContentRef",
+            "type": "object"
+          },
+          "ShownObject": {
+            "additionalProperties": false,
+            "description": "An object value, shown whole: ``object`` is the value itself, never cut.\n\nThe wrapper is what keeps an object value from reading as a marker: an\nobject Claim holding ``{\"preview\": \"cover\", \"length\": 600}`` is shown as\n``{\"object\": {\"preview\": \"cover\", \"length\": 600}}`` and reads back as that\nobject. Nothing inside ``object`` is interpreted.",
+            "properties": {
+              "object": {
+                "additionalProperties": true,
+                "title": "Object",
+                "type": "object"
+              }
+            },
+            "required": [
+              "object"
+            ],
+            "title": "ShownObject",
+            "type": "object"
+          },
+          "ShownValue": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TruncatedText"
+              },
+              {
+                "$ref": "#/$defs/ExactContentRef"
+              },
+              {
+                "$ref": "#/$defs/ShownObject"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "$ref": "#/$defs/ShownValue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "TruncatedText": {
+            "additionalProperties": false,
+            "description": "A preview of a string value too long to show whole -- never the value itself.\n\n``preview`` is the value's first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters\nand ``length`` its whole length. ``read_whole`` is the exact read of the\nwhole value when one Claim at one generation backs the preview (get cards,\nhistory, query Claim cells and ``World.values``, a write's ``before``). A\nplain query row cell has none: ask the query with ``claims=True`` and use\neach Claim's preview; a write's ``after`` is the value the write sent.",
+            "properties": {
+              "length": {
+                "exclusiveMinimum": 500,
+                "title": "Length",
+                "type": "integer"
+              },
+              "preview": {
+                "title": "Preview",
+                "type": "string"
+              },
+              "read_whole": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WholeValueRead"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "truncated": {
+                "const": true,
+                "title": "Truncated",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "truncated",
+              "preview",
+              "length"
+            ],
+            "title": "TruncatedText",
+            "type": "object"
+          },
+          "WholeValueRead": {
+            "additionalProperties": false,
+            "description": "The exact read that returns a preview's whole value.\n\n``get(ref, detail=\"evidence\", at=at)``: the Claim the preview came from, at\nthe accepted generation (``at``, its git oid) it was read at, so an older\nrevision or a value since replaced reads back as exactly what was previewed.\nIts ``evidence.value`` is the whole value; the SDK's ``cx.read_whole(preview)``\nmakes this read.",
+            "properties": {
+              "at": {
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "const": "evidence",
+                "default": "evidence",
+                "title": "Detail",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "at"
+            ],
+            "title": "WholeValueRead",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "artifact_digest": {
@@ -104098,6 +106477,17 @@
               }
             ],
             "title": "Predecessor Artifact Digest"
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ClaimLine"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "tag": {
             "const": "playbill-since-row-v1",
