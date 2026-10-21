@@ -955,3 +955,77 @@ def test_get_evidence_and_why_list_this_versions_recorded_attestations_and_wheth
         ("event", "contradict", False),
         ("event", "support", False),
     ]
+
+
+def test_a_current_contradiction_with_no_policy_is_resurfaced_neutrally_in_next(
+    tmp_path: Path,
+) -> None:
+    """Core resurfaces, agents judge: one row per principal's standing contradiction.
+
+    The ClaimType has no consequence policy, so the verdict does not move; the
+    row reuses the contradicting-evidence adjudication and leaves with the word.
+    """
+
+    from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
+
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    access = CoverageAccessProfile(
+        profile_id="attestation-door-test",
+        permitted_access_classes=("instance", "public"),
+    )
+    evaluation_time = RECORDED_AT + timedelta(minutes=5)
+
+    def verdict():  # type: ignore[no-untyped-def]
+        return service_evaluate_playbill_claim_verdict(
+            instance, claim_identity=f"Claim:{claim_id}", evaluation_time=evaluation_time
+        ).verdict
+
+    def rows(at: datetime = evaluation_time) -> tuple:  # type: ignore[type-arg]
+        result = unfolded_next(
+            instance, request=NextRequest(evaluation_time=at, access_profile=access)
+        )
+        return tuple(
+            item for item in result.items if item.reason == "claim_contradicting_evidence_available"
+        )
+
+    before = verdict()
+    assert rows() == ()
+    contradict = _request(
+        instance,
+        owner,
+        claim_id,
+        tmp_path,
+        stance="contradict",
+        valid_until=RECORDED_AT + timedelta(hours=1),
+    )
+    recorded = service_append_claim_attestation(
+        instance, request=contradict, actor_id="owner", recorded_at=RECORDED_AT
+    )
+
+    (row,) = rows()
+    assert row.subject_identity == f"Claim:{claim_id}"
+    assert row.related_identities == ("Principal:owner",)
+    assert row.detail["attestation_basis"] == "examined_existing"
+    assert row.detail["attestation_event_digest"] == recorded.event_digest
+    assert row.repair is not None
+    assert row.repair.required_change == "adjudicate_contradicting_evidence"
+    assert verdict() == before
+    # Not yet attested, and past valid_until: nothing asks for adjudication.
+    assert rows(RECORDED_AT - timedelta(minutes=1)) == ()
+    assert rows(RECORDED_AT + timedelta(hours=2)) == ()
+
+    # The same principal's later word stands instead: the row leaves with it.
+    service_append_claim_attestation(
+        instance,
+        request=_request(
+            instance,
+            owner,
+            claim_id,
+            tmp_path,
+            stance="support",
+            attested_at=RECORDED_AT + timedelta(minutes=1),
+        ),
+        actor_id="owner",
+        recorded_at=RECORDED_AT + timedelta(minutes=1),
+    )
+    assert rows() == ()

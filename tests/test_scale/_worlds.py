@@ -566,7 +566,9 @@ def timestamp() -> str:
 # -- attestations -------------------------------------------------------------------------
 
 
-def attestation_request(world: World, subject: str, *, basis: str) -> ClaimAttestationAppendRequest:
+def attestation_request(
+    world: World, subject: str, *, basis: str, stance: str = "support"
+) -> ClaimAttestationAppendRequest:
     """The operator's signed attestation of ``subject``'s status Claim, built client-side.
 
     ``new_capture`` first stores a fresh coordinator self-source Capture, as a
@@ -615,7 +617,7 @@ def attestation_request(world: World, subject: str, *, basis: str) -> ClaimAttes
         attesting_principal_id=OPERATOR,
         signing_key_digest=world.owner.principal.public_key_digest,
         attestation_basis=basis,  # type: ignore[arg-type]
-        stance="support",
+        stance=stance,  # type: ignore[arg-type]
         cited_capture_digests=cited,
         attested_at=now,
         valid_until=None,

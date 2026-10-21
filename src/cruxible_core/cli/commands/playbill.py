@@ -4015,7 +4015,8 @@ def attest_claim(
 
     The attestation is recorded and shown on the Claim (get --detail
     evidence). It counts toward the verdict only through the ClaimType's
-    consequence policy. --unsure holds the Claim's contested `next` rows until
+    consequence policy; with none, a standing --contradict is resurfaced in
+    `next` for an agent to judge. --unsure holds the Claim's contested `next` rows until
     what you examined changes, instead of forcing a judgment you are not
     confident in. --json prints the structured append result.
     """
