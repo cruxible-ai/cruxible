@@ -494,6 +494,7 @@ def test_cli_display_cuts_offer_runnable_evidence_even_below_the_summary_limit(
     import shlex
 
     from cruxible_client._error_base import printable
+    from cruxible_client.contracts.read_values import CLAIM_LINE_ID_CHARS
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
     from tests.core_support._exact_content_support import seed_exact_content
@@ -517,10 +518,14 @@ def test_cli_display_cuts_offer_runnable_evidence_even_below_the_summary_limit(
     ):
         result = CliRunner().invoke(cli, [*PREFIX, "get", ref, "--detail", detail])
         assert result.exit_code == 0, result.output
-        assert (
-            f"{printable(value)[: width - 1]}… ({len(value)} chars; --detail evidence for all)"
-            in result.output
+        # A summary card's cut names its Claim's read (a Subject card takes no
+        # --detail evidence); a history row is on the Claim's own card.
+        hint = (
+            f"cruxible get {claim.claim_id[:CLAIM_LINE_ID_CHARS]} --detail evidence"
+            if detail == "summary"
+            else "--detail evidence for all"
         )
+        assert f"{printable(value)[: width - 1]}… ({len(value)} chars; {hint})" in result.output
         step = next(
             line.removeprefix("next: ")
             for line in result.output.splitlines()
