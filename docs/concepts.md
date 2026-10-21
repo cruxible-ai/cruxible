@@ -553,6 +553,9 @@ value never passes for a short one. `cx.read_whole(preview)` makes that read in
 the SDK; `cx.read_whole_many(previews)` reads many of them in a few batched
 reads, each pinned where its preview was read.
 
+[Asking questions](asking-questions.md) covers queries, following edges,
+named queries, history and the floor in full.
+
 ### The floor
 
 The floor puts the current state where agents already look: a directory of

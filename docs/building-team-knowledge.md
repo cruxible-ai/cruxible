@@ -162,7 +162,7 @@ subject               title             note.title                              
 catalog.part/bp-1142  Front brake pads  Fitment check of bp-1142 on a 2019 Civic  -
 ~~~
 
-See [Reading](concepts.md#reading) for following edges and
+See [Asking questions](asking-questions.md) for following edges and
 everything else `query` does.
 
 ### Keep one current field; put history in notes
@@ -281,5 +281,5 @@ the car parts example.
   for a field, and how verdicts come out.
 - [Evidence](concepts.md#evidence): writing documents and citing
   them.
-- [Reading](concepts.md#reading): queries, edges and history.
+- [Asking questions](asking-questions.md): queries, edges and history.
 - [Kits](kits.md): installing and extending a vocabulary someone else built.
