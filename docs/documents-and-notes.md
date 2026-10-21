@@ -55,14 +55,9 @@ heading paths to find sections:
   appends at the end of the file). Its text must start with a heading.
 - **`replace`** replaces the section at the heading path in `section`,
   including its heading. Add `expect` with the section's current digest (each
-  write prints the digest it wrote) to refuse if someone changed it since you
-  read it:
-
-~~~text
-$ cruxible write correction.yaml
-Error: WriteRefusalError: cruxible.doc.section_changed: Section ('Fitment notes', 'Wiper blades') now has digest sha256:33d8e341…
-~~~
-
+  write prints the digest it wrote): if someone changed the section since you
+  read it, the write is refused with `cruxible.doc.section_changed` and the
+  section's new digest, and nothing is written.
 - **`id`** names the section so changes can cite it as `{kind: section, ref:
   ID}`.
 
@@ -189,9 +184,11 @@ if there is one, read the Claims behind it with `get`.
 ### Currency policy
 
 By default (`--currency-policy warn`) a stale block is a warning, and `block
-sync` exits zero. Stamped with `--currency-policy require_current`, it is a
-blocking row in `next` and makes `block sync` fail, which suits pages that
-gate a release. Neither ever blocks accepting the state underneath.
+sync` exits zero. Stamped with `--currency-policy require_current`, a block
+whose backing moved is a blocking row in `next` and makes `block sync` fail,
+which suits pages that gate a release. A hand edit to the block's text is only
+reported either way, since it's the author's prose that moved, not the state.
+Neither ever blocks accepting the state underneath.
 
 ### Blocks are not evidence
 
