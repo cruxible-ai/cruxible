@@ -326,7 +326,7 @@ its README shows how to graduate the ones that copy verbatim facts.
 Upgrading a kit that changes a Procedure brings its Lines back disabled
 (`line_disabled_by_upgrade` in `next`) and its settle mandates back to
 propose, so you consent to the new version and re-grant settling.
-See [Kits](kits.md).
+See [Kits](kits.md#automation-that-comes-with-a-kit).
 
 ## Pitfalls
 

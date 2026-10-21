@@ -2,12 +2,62 @@
 
 A kit is a release of definitions that one instance exports and another
 installs: vocabulary, named queries, Procedures and Blueprints, plus the
-provider packages those Procedures need. Installing or upgrading a kit is one
-change set, previewed first and accepted under the instance's approval policy
-like any other change.
+provider packages those Procedures need. A kit is how a vocabulary gets
+shared. Every garage that installs a car parts kit describes parts, vehicles
+and fitments the same way, so the same questions and the same automation work
+everywhere. Installing or upgrading a kit is one change set, previewed first
+and accepted under the instance's approval policy like any other change, and
+your own edits to a kit's definitions are kept or replaced only as you choose.
 
-This page covers using kits and building them. Command details are in the
-[CLI reference](cli-reference.md#kit).
+This page covers using kits, the automation a kit suggests, and building and
+documenting kits. Command details are in the [CLI reference](cli-reference.md#kit).
+
+## A worked example: installing car parts
+
+`kit add` previews first and writes nothing:
+
+~~~text
+$ cruxible kit add ./car-parts-1.0.0
+car-parts 1.0.0: would_propose (install)
+Built by YOUR_ID on inst_b3c4baf396a64672 at 995fe2441208 (claimed)
+...
+ClaimType:
+  add: ClaimType:catalog.decision.amends
+  ...
+  add: ClaimType:catalog.part.title
+  ...
+QueryDefinition:
+  add: QueryDefinition:catalog.parts_for_vehicle
+SubjectKind:
+  add: SubjectKind:catalog.decision
+  add: SubjectKind:catalog.note
+  add: SubjectKind:catalog.part
+  add: SubjectKind:catalog.vehicle
+Preview at 23e34db895e5; nothing was written.
+Commit it: rerun the same command with --commit --at 23e34db895e5
+~~~
+
+Committing at the previewed coordinate lands exactly what you saw, or refuses
+if the instance moved in between:
+
+~~~text
+$ cruxible kit add ./car-parts-1.0.0 --commit --at 23e34db895e5
+car-parts 1.0.0: accepted (install)
+...
+
+$ cruxible kit status
+car-parts 1.0.0 sha256:c41ec19f…; update check local source
+  source: car-parts-1.0.0
+  built by YOUR_ID on inst_b3c4baf396a64672 at 995fe2441208 (claimed)
+~~~
+
+Reads say who owns each definition: `orient --section claim_types` ends each
+row the kit owns with `kit=car-parts`. From here the vocabulary is yours to
+use and to extend: write Claims with it, add your own fields and queries
+beside it, and edit its definitions if you need to. A newer release arrives
+the same way, and [Evolving your
+vocabulary](evolving-your-vocabulary.md#upgrading-a-kit-youve-edited) shows an
+upgrade over a local edit.
 
 ## What a kit carries
 
@@ -98,11 +148,11 @@ activate. Installing grants no permission to run anything.
 ### Find and inspect
 
 A kit comes from a registry reference, a kit directory, or an OCI image
-layout. A bare name resolves under `ghcr.io/cruxible-ai/kits`, so `acme:1.0.0`
-means `ghcr.io/cruxible-ai/kits/acme:1.0.0`.
+layout. A bare name resolves under `ghcr.io/cruxible-ai/kits`, so `car-parts:1.0.0`
+means `ghcr.io/cruxible-ai/kits/car-parts:1.0.0`.
 
 ~~~bash
-cruxible kit pull acme:1.0.0 --out ./acme-1.0.0     # fetch and verify, install nothing
+cruxible kit pull car-parts:1.0.0 --out ./car-parts-1.0.0     # fetch and verify, install nothing
 ~~~
 
 `kit pull` prints the digest-pinned reference it fetched. Installing by that
@@ -113,7 +163,7 @@ digest reference installs exactly those bytes even if the tag later moves.
 `kit add` previews by default and writes nothing:
 
 ~~~bash
-cruxible kit add ghcr.io/cruxible-ai/kits/acme@sha256:<digest>
+cruxible kit add ghcr.io/cruxible-ai/kits/car-parts@sha256:<digest>
 ~~~
 
 The preview lists the plan grouped by kind (what each definition does and
@@ -125,7 +175,7 @@ record is claimed by the builder, not proven. The preview ends with the
 command that commits exactly what you saw:
 
 ~~~bash
-cruxible kit add ghcr.io/cruxible-ai/kits/acme@sha256:<digest> --commit --at <oid>
+cruxible kit add ghcr.io/cruxible-ai/kits/car-parts@sha256:<digest> --commit --at <oid>
 ~~~
 
 The result is one of:
@@ -178,7 +228,7 @@ and add the kit again.
 providers that fit it:
 
 ~~~bash
-cruxible get Blueprint:acme.triage
+cruxible get Blueprint:catalog.price-check
 ~~~
 
 When nothing fits a slot, install a provider that implements its interface.
@@ -188,9 +238,9 @@ Then bind one provider per slot:
 cruxible authoring example blueprint-instance      # a template to edit
 cruxible authoring submit - --dry-run <<'EOF'
 {"kind": "blueprint_instance",
- "name": "acme.triage-with-web",
- "blueprint": "acme.triage",
- "bindings": {"search": "cruxible-provider-web"}}
+ "name": "catalog.price-check-web",
+ "blueprint": "catalog.price-check",
+ "bindings": {"fetch": "cruxible-provider-web"}}
 EOF
 ~~~
 
@@ -224,7 +274,7 @@ preview names what each replacement does:
 - it replaces a definition the kit carried in as a dependency.
 
 To keep your version instead, name it with `--keep` (repeatable, by identity
-such as `--keep ClaimType:acme.account.seats`), or keep every definition you
+such as `--keep ClaimType:catalog.part.title`), or keep every definition you
 edited since install with `--keep-local-edits`. The kit's record notes what
 you kept on purpose, so later upgrades do not ask again while the release's
 version is unchanged.
@@ -285,8 +335,8 @@ downgrade or reinstall).
 ### Remove
 
 ~~~bash
-cruxible kit remove acme                 # preview
-cruxible kit remove acme --commit --at <oid>
+cruxible kit remove car-parts                 # preview
+cruxible kit remove car-parts --commit --at <oid>
 ~~~
 
 Removing retires the definitions the kit owns. It does not retire what the kit
@@ -296,6 +346,27 @@ refused while live Claims or other definitions still depend on what it would
 retire. Like `kit add`, it lands at once when the approval policy requires no
 approval and otherwise stops at a proposal.
 
+## Automation that comes with a kit
+
+A kit never carries Lines, Triggers or mandates: what runs on your instance,
+when, and with how much authority is yours to decide. By convention, a kit
+that has automation to suggest ships it as an inert example change set,
+`examples/automation.json`, beside a README that explains each choice.
+Installing the kit doesn't submit it. To adopt it:
+
+1. Copy it into your workspace, and change the Line names, the sources each
+   Line reads, the cron times (UTC), and each mandate's expiry to yours.
+2. Submit it (`cruxible authoring submit automation.json`), review the
+   proposal, and accept it under your approval policy.
+3. Enable each Line you want running (`cruxible line enable NAME`).
+
+Example automation starts at `propose`, so everything it finds is reviewed
+until you decide otherwise. The kit's README says which Lines can earn
+`settle` and how ([Lines and automation](lines-and-automation.md#earning-settle)).
+The security kit is the model: its example adopts nine Blueprint instances,
+fifteen Lines, seventeen Triggers and seven propose-only mandates in one
+reviewed change.
+
 ## Build a kit
 
 A kit is exported from an instance where its definitions are accepted. You
@@ -304,11 +375,11 @@ the seven families above, is exported together with everything those
 definitions pin.
 
 ~~~bash
-cruxible kit build --id acme --version 1.0.0 --owns acme. --out ./acme-1.0.0
+cruxible kit build --id car-parts --version 1.0.0 --owns catalog. --out ./car-parts-1.0.0
 ~~~
 
-- `--owns` is repeatable and each prefix ends in a dot (`acme.`,
-  `acme.billing.`). Two installed kits may not own overlapping prefixes.
+- `--owns` is repeatable and each prefix ends in a dot (`catalog.`,
+  `catalog.pricing.`). Two installed kits may not own overlapping prefixes.
 - `--version` is `MAJOR.MINOR.PATCH`. A new release needs a higher version.
 - The release is a snapshot: each definition is exported without its local
   history, so the consumer's instance gets its own.
@@ -325,11 +396,11 @@ bundle it. Bundling takes the provider's package directory, which holds its
 for each dependency the lock names by path:
 
 ~~~bash
-cruxible provider install ./acme-parser/dist/acme_parser-1.0.0-py3-none-any.whl \
-  --lock ./acme-parser/uv.lock
+cruxible provider install ./catalog-parser/dist/catalog_parser-1.0.0-py3-none-any.whl \
+  --lock ./catalog-parser/uv.lock
 # author and accept the Procedures that pin it, then:
-cruxible kit build --id acme --version 1.0.0 --owns acme. \
-  --provider ./acme-parser --out ./acme-1.0.0
+cruxible kit build --id car-parts --version 1.0.0 --owns catalog. \
+  --provider ./catalog-parser --out ./car-parts-1.0.0
 ~~~
 
 The build checks that what you bundle is exactly what this instance
@@ -352,8 +423,8 @@ Install that same build here, and name it:
 
 ~~~bash
 cruxible provider install cruxible-provider-web
-cruxible kit build --id acme --version 1.1.0 --owns acme. \
-  --default-provider ./cruxible-provider-web --out ./acme-1.1.0
+cruxible kit build --id car-parts --version 1.1.0 --owns catalog. \
+  --default-provider ./cruxible-provider-web --out ./car-parts-1.1.0
 ~~~
 
 The manifest records the package, its exact version and the wheel and lock
@@ -363,6 +434,29 @@ Provider a carried Procedure pins must be named by `--provider` or
 pins the default always gets it installed on `kit add`; a Blueprint slot typed
 by its interface takes whatever implementation the consumer already has.
 
+### Document it
+
+A kit's users read its README first, so the README carries what someone needs
+to decide whether to install it and to get a first answer. By convention it
+covers, in order:
+
+- **What it is**: what the kit models, in a paragraph.
+- **What it answers**: the questions it can answer, each with the saved query
+  that answers it (`cruxible query --name NAME`).
+- **How it models your world**: its kinds and how they relate, ideally as a
+  diagram, with which values are observed and which are judged.
+- **Install and first answers**: the commands from `kit add` to a first
+  answer, and what stays the user's job.
+- **Automation**: the example change set, and how its Lines graduate.
+- **Upgrading**: what each release changes, and what an upgrade asks of the
+  user (Lines to re-enable, grants to re-author).
+- **Operating notes**: the network hosts it reaches, how stale a source may
+  get, and how much it retains.
+
+Beside it, a `reference.md` lists every kind, field, saved query and
+Procedure the kit defines. Generate it from the definitions, as the security
+kit does, so it can't drift from what the kit installs.
+
 ### Share it
 
 The kit directory holds `cruxible-kit.json` (the manifest), `artifacts/`
@@ -371,6 +465,18 @@ files). Share it
 as a directory, or as an OCI image layout. There is no public `kit push`:
 official kits are published by Cruxible's release tooling, and a version tag
 there never moves to different content.
+
+## Pitfalls
+
+- **Expecting a kit to start anything.** It installs definitions only; adopt
+  its example automation deliberately.
+- **Upgrading without reading the preview.** A release replaces your edits
+  unless you keep them.
+- **Building a kit over another kit's prefix.** Two installed kits can't own
+  overlapping prefixes, so give a kit you build a prefix of its own.
+- **Forgetting the Lines after an upgrade.** An upgrade that changes a
+  Procedure brings its Lines back disabled and its settle mandates back to
+  propose; `next` lists each one.
 
 ## On MCP
 
