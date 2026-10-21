@@ -1,8 +1,8 @@
 """``query`` answers every definition kind agents ask the ontology about.
 
-``query kind=SubjectKind``, ``kind=CaptureContract`` and
-``kind=ProcedureMandate`` list those definitions with the same compact grammar
-as the other definition kinds (``where``, ``select``, ``order_by``,
+``query kind=SubjectKind``, ``kind=CaptureContract``, ``kind=ProcedureMandate``
+and ``kind=QueryDefinition`` list those definitions with the same compact
+grammar as the other definition kinds (``where``, ``select``, ``order_by``,
 ``contains``, paging): each row reads its own artifact and what the ontology
 holds about it, never a scan over Claims, Subjects or Captures.
 """
@@ -264,3 +264,44 @@ def test_mandates_filter_on_grant_scope_and_expiry(settling: Any) -> None:
     with pytest.raises(ReadRefusalError) as wrong:
         names(where=[{"field": "expires_at", "contains": "2027"}])
     assert wrong.value.error_code == "cruxible.query.operator_not_applicable"
+
+
+# -- QueryDefinition -----------------------------------------------------------------
+
+
+def test_query_definitions_list_their_parameters_and_result_shape(settling: Any) -> None:
+    result = _query(settling, kind="QueryDefinition")
+
+    assert [column.name for column in result.columns] == [
+        "name",
+        "parameters",
+        "description",
+        "result_shape",
+        "lifecycle",
+    ]
+    (row,) = (item for item in result.rows if item["name"] == "project.settle-condition")
+    assert row == {
+        "name": "project.settle-condition",
+        "parameters": ["item_id: string"],
+        "description": None,
+        "result_shape": "subject",
+        "lifecycle": "live",
+    }
+    named = _query(
+        settling,
+        kind="QueryDefinition",
+        where=[{"field": "name", "in": ["project.settle-condition"]}],
+        select=["parameters", "version"],
+    )
+    assert named.rows == (
+        {"name": "project.settle-condition", "parameters": ["item_id: string"], "version": 1},
+    )
+    assert _query(
+        settling, kind="QueryDefinition", where=[{"field": "parameters", "contains": "item_id"}]
+    ).rows
+    assert not _query(
+        settling, kind="QueryDefinition", where=[{"field": "result_shape", "eq": "path"}]
+    ).rows
+    with pytest.raises(ReadRefusalError) as refused:
+        _query(settling, kind="QueryDefinition", where=[{"field": "result_shape", "eq": "rows"}])
+    assert refused.value.error_code == "cruxible.query.value_type_mismatch"

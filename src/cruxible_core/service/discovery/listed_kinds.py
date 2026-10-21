@@ -45,6 +45,7 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
 from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.subject_kinds import SubjectKind, SubjectKindKeys
 from cruxible_client.contracts.triggers import (
     CadenceSchedule,
@@ -67,13 +68,16 @@ from cruxible_core.service.discovery.query_vocabulary import (
 )
 from cruxible_core.service.read_refusals import nearest
 
-ListedKind = Literal["Trigger", "Line", "SubjectKind", "CaptureContract", "ProcedureMandate"]
+ListedKind = Literal[
+    "Trigger", "Line", "SubjectKind", "CaptureContract", "ProcedureMandate", "QueryDefinition"
+]
 LISTED_KINDS: tuple[ListedKind, ...] = (
     "Trigger",
     "Line",
     "SubjectKind",
     "CaptureContract",
     "ProcedureMandate",
+    "QueryDefinition",
 )
 assert set(LISTED_KINDS) <= set(QUERYABLE_DEFINITION_KINDS)
 #: The most rows one Trigger or Line listing answers; past it the answer is capped.
@@ -243,6 +247,23 @@ _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
         ListedField(QueryColumn(name="expires_at", type="timestamp")),
         ListedField(QueryColumn(name="version", type="integer"), filterable=False, default=False),
     ),
+    "QueryDefinition": (
+        ListedField(QueryColumn(name="name", type="string"), index_column="identity"),
+        ListedField(QueryColumn(name="parameters", type="string", cardinality="many")),
+        ListedField(QueryColumn(name="description", type="string")),
+        ListedField(
+            QueryColumn(
+                name="result_shape",
+                type="enum",
+                members=("artifact_definition", "path", "relation_claim", "subject"),
+            )
+        ),
+        ListedField(
+            QueryColumn(name="lifecycle", type="enum", members=_LIFECYCLES),
+            index_column="lifecycle",
+        ),
+        ListedField(QueryColumn(name="version", type="integer"), filterable=False, default=False),
+    ),
 }
 _SPECS: Mapping[ListedKind, _KindSpec] = {
     "Trigger": _KindSpec("triggers"),
@@ -250,6 +271,7 @@ _SPECS: Mapping[ListedKind, _KindSpec] = {
     "SubjectKind": _KindSpec("subject_kinds", key="kind"),
     "CaptureContract": _KindSpec("capture_contracts"),
     "ProcedureMandate": _KindSpec("procedure_mandates"),
+    "QueryDefinition": _KindSpec("query_definitions"),
 }
 assert set(_FIELDS) == set(_SPECS) == set(LISTED_KINDS)
 
@@ -748,10 +770,35 @@ def _mandate_row(context: _RowContext) -> Callable[[Any], dict[str, Any]]:
     return row
 
 
+def _query_definition_row(context: _RowContext) -> Callable[[Any], dict[str, Any]]:
+    """A QueryDefinition row: what a named run takes and what it answers.
+
+    ``parameters`` read ``name: type``, with ``?`` after an optional one's
+    name, as orient's queries rows show them.
+    """
+
+    del context
+
+    def row(source: Any) -> dict[str, Any]:
+        query = cast(QueryDefinition, source)
+        return {
+            "name": query.identity.name,
+            "parameters": [
+                f"{item.name}{'' if item.required else '?'}: {item.value_type}"
+                for item in query.parameters
+            ],
+            "description": query.description,
+            "result_shape": query.result_shape,
+        }
+
+    return row
+
+
 _ROWS: Mapping[str, Callable[[_RowContext], Callable[[Any], dict[str, Any]]]] = {
     "SubjectKind": _subject_kind_row,
     "CaptureContract": _capture_contract_row,
     "ProcedureMandate": _mandate_row,
+    "QueryDefinition": _query_definition_row,
 }
 
 

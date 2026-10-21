@@ -803,6 +803,7 @@ def _routes() -> list[Route]:
         Route("read.query.subject_kinds", _query_definitions("SubjectKind")),
         Route("read.query.capture_contracts", _query_definitions("CaptureContract")),
         Route("read.query.mandates", _query_definitions("ProcedureMandate")),
+        Route("read.query.query_definitions", _query_definitions("QueryDefinition")),
         Route("read.next.stored_queue", _next()),
         Route("read.next.workspace_sources", _next(sources=True)),
         Route("read.coverage.workspace_sources", _coverage, prepare=_observe_reports),
@@ -1093,6 +1094,7 @@ _ONTOLOGY_READS: dict[str, Callable[[World], object]] = {
     "query.subject_kinds": _query_definitions("SubjectKind"),
     "query.capture_contracts": _query_definitions("CaptureContract"),
     "query.mandates": _query_definitions("ProcedureMandate"),
+    "query.query_definitions": _query_definitions("QueryDefinition"),
 }
 
 
