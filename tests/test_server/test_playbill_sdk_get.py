@@ -219,7 +219,7 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
         )
         read = CliRunner().invoke(cli, [*prefix, *shlex.split(step)[1:], "--json"])
         assert read.exit_code == 0, read.output
-        assert json.loads(read.output)["evidence"]["value"] == whole
+        assert json.loads(read.stdout)["evidence"]["value"] == whole, read.stderr
 
         # SDK Claim summaries are already whole typed ClaimViews; Subject and
         # history cards use the service's suggestions.
