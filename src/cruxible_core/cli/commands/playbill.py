@@ -6226,10 +6226,11 @@ def query_group(
     """Query accepted state: cruxible query [KIND] [--where 'f=v']...
 
     This answers one query and prints its values as a table with flags, then
-    the next command when the page is truncated. KIND is a Subject kind,
-    ClaimType / Procedure for definitions, or Trigger / Line (Triggers by name,
-    schedule, target_kind, target and lifecycle; Lines by enabled; --select
-    adds a Trigger's cron, cadence, capture_contract or version); --name runs
+    the next command when the page is truncated. KIND is a Subject kind or a
+    definition kind: ClaimType, Procedure, Trigger, Line, SubjectKind,
+    CaptureContract, ProcedureMandate or QueryDefinition (each lists its
+    definitions with typed columns; --select adds the rest, such as a
+    ClaimType's role, stale_after or kit, or a Trigger's cron); --name runs
     an accepted named query (orient --section queries lists them), --spec a
     full definition. A page holds at most 500 rows: --limit above that, or
     --all, follows the cursor and prints the pages as one table.

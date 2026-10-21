@@ -4096,6 +4096,14 @@ class Cruxible:
         ``select``, ``follow`` and ``order_by``), a ``spec``, or a query ``name``
         with ``params``. ``next_page()`` continues a truncated answer.
 
+        ``kind`` is a Subject kind or a definition kind, which lists the
+        accepted definitions with typed columns: ``ClaimType``, ``Procedure``,
+        ``Trigger``, ``Line``, ``SubjectKind`` (identity rule, live Subjects,
+        kit), ``CaptureContract`` (sources, grade, the ClaimTypes admitting or
+        requiring it), ``ProcedureMandate`` (grant, scope, condition, state,
+        expiry) or ``QueryDefinition`` (parameters, result shape), e.g.
+        ``cx.query("SubjectKind", where=[{"field": "subjects", "gt": 0}])``.
+
         A follow is ``(field, alias)`` forward along the kind's own predicate, or
         ``(field, alias, "reverse")`` backwards along another kind's predicate
         that points at this kind, e.g. ``("dev.batch.delivers", "batch",

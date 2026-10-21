@@ -370,10 +370,25 @@ authority plane beside accepted state.
 `cruxible_query` takes exactly one mode: compact or a query `name`
 (a full spec runs through `cruxible_query_spec`, in the `full`
 profile, so the default tool stays small). Compact mode names a Subject
-`kind` (or `ClaimType` / `Procedure` for definitions, or `Trigger` / `Line`
-to list Triggers by name, schedule, target and lifecycle and Lines by
-enabled) and/or free text
-`contains`. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
+`kind` or a definition kind, and/or free text `contains`. The definition
+kinds list every accepted definition of the ontology, live unless a
+`lifecycle` filter is given, each read at the ontology's size (never a scan
+over Claims or Captures): `ClaimType` (`predicate`, `subject_kinds`, `object`,
+`cardinality`, `members`, `description`, `evidence`; `select` adds `role`,
+`roles`, `stale_after`, `selector`, `on_conflict`, `captured_required` and
+`kit`), `Procedure` (`name`, `runnable`), `Trigger` (`name`, `schedule`,
+`target_kind`, `target`, `lifecycle`), `Line` (`name`, `procedure`,
+`authority`, `lifecycle`, `enabled`, `triggers`, `triggers_total`),
+`SubjectKind` (`kind`, `rule`, `keys`, `uniqueness`, `description`, `subjects`
+-- its live Subjects -- `kit`, `lifecycle`), `CaptureContract` (`name`,
+`version`, `lifecycle`, `sources`, `source_kinds`, `evidence_kinds`, `grade`,
+`admitted_by`, `required_by`: the live ClaimTypes admitting it, and those of
+them that require a Capture), `ProcedureMandate` (`name`, `procedure`,
+`grant`, `state`, `scope`, `change_kinds`, `condition`, `suspended`,
+`lifecycle`, `expires_at`) and `QueryDefinition` (`name`, `parameters`,
+`description`, `result_shape`, `lifecycle`); `select` adds `version` to
+Triggers, Lines, SubjectKinds, mandates and QueryDefinitions. Their columns filter by type (integers
+and `expires_at` also compare with `lt` .. `gte`) and order typed, nulls last. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
 `ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
 `contains` (case-insensitive text); filters combine as all-of. A field is a
 predicate's full name, its name after the `KIND.` prefix (`adoption_state`),
@@ -402,7 +417,7 @@ read, traversal paths, bound parameters, verdict) and its execution receipt.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`, `status`, `claims`) or a query `name` with `params` (`budgets`, `receipt`); rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
+| `cruxible_query` | Answer any question over accepted state in one call: compact (`kind` -- a Subject kind or a definition kind: `ClaimType`, `Procedure`, `Trigger`, `Line`, `SubjectKind`, `CaptureContract`, `ProcedureMandate`, `QueryDefinition` -- and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`, `status`, `claims`) or a query `name` with `params` (`budgets`, `receipt`); rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
 | `cruxible_query_spec` | Run one full `QueryDefinitionSpec` inline (`spec`, `limit`, `cursor`, `at`, `evaluation_time`) with the same evaluation, rows, flags and paging as `cruxible_query`; `full` profile only | `READ_ONLY` |
 | `cruxible_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue (with `enablements`: the instance's Line enablements by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `subject_kinds` (each live SubjectKind's `rule`, `keys` and `uniqueness`: how a new Subject of the kind is named), `queries`, `interfaces` (each with its interface digest, operation contract and implementing Providers' implementation digests), `principals`, `policies` (every live standalone or embedded governed policy), `generations` (the ledger timeline: accepted generations newest first, each `{sequence, git_oid, accepted_at, changeset_digest, proposal, proposer, approvals, because, members}`, paged by sequence), `graph` (the Subject graph: `graph.nodes` `{subject, kind}` for each live Subject, then `graph.edges` `{claim, source, predicate, qualifier, target}` for each live Subject-valued Claim, keyset-paged at one coordinate, with `graph.totals.subjects`), `pins` (each live definition's required pins `{source, role, target, target_digest, current}`, keyset-paged: read by target, who uses a contract, ClaimType or Procedure), or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
 | `cruxible_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |

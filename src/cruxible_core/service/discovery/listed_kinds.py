@@ -1,28 +1,34 @@
 """Triggers, Lines and the other definition kinds as compact ``query`` kinds.
 
-``query kind=Trigger``, ``kind=Line``, ``kind=SubjectKind`` and
-``kind=CaptureContract`` list those accepted definitions with the same grammar
-every compact query uses (``where``, ``contains``, ``select``, ``order_by``,
-paging), on CLI, MCP and SDK alike. They are read from the typed-state index at the coordinate, not
-through the query engine: none is a Subject kind nor a definition kind of the
-query grammar. A row reads its own artifact and what the ontology says about
-it (a SubjectKind's live Subject count from the maintained
-``query_subject_counts``, the kit that owns it from the installed kits'
-receipts, a CaptureContract's admitting ClaimTypes from the live ClaimTypes
-the query's vocabulary already parsed); nothing a listing reads grows with the
-Claims or Captures.
+``query kind=Trigger``, ``Line``, ``SubjectKind``, ``CaptureContract``,
+``ProcedureMandate`` and ``QueryDefinition`` list those accepted definitions
+with the same grammar every compact query uses (``where``, ``contains``,
+``select``, ``order_by``, paging), on CLI, MCP and SDK alike. They are read
+from the typed-state index at the coordinate, not through the query engine:
+none is a Subject kind nor a definition kind of the query grammar (ClaimType
+and Procedure are, and go through its artifact entry).
 
-The index selects what it can (lifecycle, name, schedule, target and target
-kind; a Line's procedure and authority), in identity order, and the answer
-stops at ``LISTING_MAX_RESULTS`` matching rows: past it the answer is
-``capped`` and says so, as a compact query that hits its server cap does. A
-Trigger's schedule detail (cron expression, cadence, capture contract) is read
-from its artifact only when the request selects, searches or orders by it. A
-Line row lists at most ``LINE_TRIGGER_NAMES_MAX`` of its Triggers beside their
-total. Without a ``lifecycle`` filter only live rows are listed. ``order_by``
-sorts by each column's type, nulls last in either direction, ties by identity.
-A Line's ``triggers`` filters and a search read every live Trigger aimed at it,
-not only the names its row shows.
+A row reads its own artifact and what the ontology says about it: a
+SubjectKind's live Subject count from the maintained ``query_subject_counts``
+and its owning kit from the installed kits' receipts, a CaptureContract's
+admitting ClaimTypes from the live ClaimTypes the query's vocabulary already
+parsed, a mandate's state from the evaluation time. Every listing costs the
+ontology's size; nothing it reads grows with the Claims, Subjects or Captures.
+
+The index selects what it can (lifecycle and name on every kind; a Trigger's
+schedule, target and target kind; a Line's procedure and authority; a
+SubjectKind's rule and uniqueness; a CaptureContract's grade; a mandate's
+procedure and grant), in identity order, and the answer stops at
+``LISTING_MAX_RESULTS`` matching rows: past it the answer is ``capped`` and
+says so, as a compact query that hits its server cap does. A Trigger's
+schedule detail (cron expression, cadence, capture contract) is read from its
+artifact only when the request selects, searches or orders by it. A Line row
+lists at most ``LINE_TRIGGER_NAMES_MAX`` of its Triggers beside their total.
+Without a ``lifecycle`` filter only live rows are listed. Integer columns
+compare (``lt`` .. ``gte``), timestamps compare and order as instants.
+``order_by`` sorts by each column's type, nulls last in either direction, ties
+by identity. A Line's ``triggers`` filters and a search read every live
+Trigger aimed at it, not only the names its row shows.
 """
 
 from __future__ import annotations

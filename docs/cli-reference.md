@@ -1957,19 +1957,56 @@ cruxible query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'
 
 `query` has no subcommands: it answers any question over accepted state in one
 call, the same read as MCP `cruxible_query` and SDK `cx.query`. KIND is
-a Subject kind, `ClaimType` / `Procedure` for definitions, or `Trigger` / `Line`;
-`--contains` alone searches every live Claim value across kinds. `query Trigger`
-lists Triggers by `name`, `schedule` (`cadence`, `cron`, `capture_landing`,
-`window_close`, `generation_accepted`), `target_kind` (`line` or `action`),
-`target` and `lifecycle`; `--select` adds `cron`, `cadence`, `capture_contract`
-and `version`. `query Line` lists Lines with their `procedure`, `authority`,
-`lifecycle`, `enabled` (whether the Line's automation is admitting work), its
-first 25 live `triggers` and `triggers_total` (a `triggers` filter or a
-`--contains` search reads every live Trigger aimed at the Line, not only the
-names shown). Both filter on those fields,
-list only live rows unless a `lifecycle` filter is given, and page like any
-compact query; an answer past 2000 rows is `capped` and says so. `--order-by`
-sorts by each column's type (numbers as numbers), nulls last, ties by name. `--where` filters combine as
+a Subject kind or a definition kind: `ClaimType`, `Procedure`, `Trigger`,
+`Line`, `SubjectKind`, `CaptureContract`, `ProcedureMandate` or
+`QueryDefinition`; `--contains` alone searches every live Claim value across
+kinds. A definition kind lists the accepted definitions of the ontology, and
+costs the ontology's size: it never reads the Claims, Subjects or Captures.
+
+- `query ClaimType` lists `predicate`, `subject_kinds`, `object`,
+  `cardinality`, `members`, `description` and `evidence` (the CaptureContracts
+  its rules admit); `--select` adds `role` (the role a write takes when it
+  names none), `roles`, `stale_after` (its evidence freshness horizon, `30d`),
+  `selector` and `on_conflict` (how rival Claims of a slot settle),
+  `captured_required` and `kit` (the installed kit that owns it). It filters on
+  `namespace`, `name`, `subject_kind`, `role`, `selector`, `on_conflict`,
+  `captured_required` and `kit`; `query Procedure` on `namespace` and `name`.
+- `query Trigger` lists Triggers by `name`, `schedule` (`cadence`, `cron`,
+  `capture_landing`, `window_close`, `generation_accepted`), `target_kind`
+  (`line` or `action`), `target` and `lifecycle`; `--select` adds `cron`,
+  `cadence`, `capture_contract` and `version`.
+- `query Line` lists Lines with their `procedure`, `authority`, `lifecycle`,
+  `enabled` (whether the Line's automation is admitting work), its first 25
+  live `triggers` and `triggers_total` (a `triggers` filter or a `--contains`
+  search reads every live Trigger aimed at the Line, not only the names shown).
+- `query SubjectKind` lists `kind`, `rule` (`keys` or `minted`), `keys` (its
+  key ClaimTypes in key order), `uniqueness` (`unique` or `hint`),
+  `description`, `subjects` (the kind's live Subjects, from the counts Subject
+  writes keep), `kit` and `lifecycle`:
+  `cruxible query SubjectKind --where 'subjects>0' --order-by -subjects`.
+- `query CaptureContract` lists `name`, `version`, `lifecycle`, `sources`,
+  `source_kinds` (`ledger`, `cas` or `external`), `evidence_kinds`, `grade`
+  (`observed`, `derived` or `predicted`), `admitted_by` (the live ClaimTypes
+  whose evidence rules admit it) and `required_by` (those of them that require
+  a Capture): `cruxible query CaptureContract --where 'required_by>=1'`.
+- `query ProcedureMandate` lists `name`, `procedure`, `grant` (`propose` or
+  `settle`), `state` at the evaluation time (`active`, `expiring`, `expired`,
+  `not_yet_valid`, `suspended`, `retired`), `scope` (the ClaimTypes a settle
+  grant covers), `change_kinds`, `condition` (its condition QueryDefinition),
+  `suspended`, `lifecycle` and `expires_at`:
+  `cruxible query ProcedureMandate --where 'expires_at<2027-01-01T00:00:00Z'`.
+- `query QueryDefinition` lists `name`, `parameters` (`name: type`, `?` after
+  an optional one), `description`, `result_shape` and `lifecycle`; run one
+  with `--name`.
+
+`--select` adds `version` to SubjectKind, ProcedureMandate and QueryDefinition
+rows (CaptureContract rows show it). The kinds from Trigger on filter on
+their columns (not `version`, `triggers_total` or a Trigger's schedule detail;
+integers and `expires_at` also compare with `<`, `<=`, `>`, `>=`, and a
+many-valued column matches any of its values), list only live rows unless a
+`lifecycle` filter is given, and page like any compact query; an answer past 2000 rows is
+`capped` and says so. `--order-by` sorts by each column's type (numbers as
+numbers, instants as instants), nulls last, ties by name. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
 `subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
 `--follow field:alias` hops forward along one of KIND's Subject-valued predicates;

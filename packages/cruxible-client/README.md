@@ -843,7 +843,7 @@ adds `receipt.replay`: `definition_path`, `result` (`ClaimQueryResult`) and
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `kind` | `None` | A Subject kind, `ClaimType` / `Procedure` for definitions, or `Trigger` / `Line` to list those (Triggers by name, schedule, target_kind, target, lifecycle; Lines by enabled). |
+| `kind` | `None` | A Subject kind, or a definition kind to list with typed columns: `ClaimType`, `Procedure`, `Trigger`, `Line`, `SubjectKind` (rule, keys, live `subjects`, `kit`), `CaptureContract` (sources, grade, `admitted_by`, `required_by`), `ProcedureMandate` (grant, scope, condition, state, `expires_at`) or `QueryDefinition` (parameters, result shape). |
 | `where` | `None` | Typed filters or plain mappings, all-of. |
 | `contains` | `None` | Case-insensitive text in any live Claim value; alone, across kinds. |
 | `select` | `None` | Column fields; without it a kind shows up to 12 predicates. |

@@ -278,8 +278,8 @@ class QueryRequest(BaseModel):
         default=None,
         max_length=256,
         description=(
-            "A Subject kind, ClaimType / Procedure for definitions, or Trigger / Line to "
-            "list those."
+            "A Subject kind, or a definition kind to list: ClaimType, Procedure, Trigger, "
+            "Line, SubjectKind, CaptureContract, ProcedureMandate or QueryDefinition."
         ),
     )
     where: tuple[QueryFilter, ...] = Field(default=(), max_length=QUERY_MAX_FILTERS)
