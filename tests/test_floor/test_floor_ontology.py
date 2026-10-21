@@ -325,3 +325,28 @@ def test_owner_markers_follow_the_receipt_and_the_held_content(tmp_path: Any) ->
         "1",
     ]
     assert _bytes(upgraded) == _bytes(_cold(instance))
+
+
+def test_a_definition_only_generation_has_its_change_file(tmp_path: Any) -> None:
+    from cruxible_core.service.floor.floor_content import change_path, member_ref
+
+    assert member_ref(subject_kind_path(NOTE_KIND)) == f"SubjectKind:{NOTE_KIND}"
+    assert member_ref("capture-contracts/repo.notes.json") == "CaptureContract:repo.notes"
+    assert member_ref("procedure-mandates/m.json") == "ProcedureMandate:m"
+    assert member_ref("lines/l.json") == "Line:l"
+    assert member_ref("triggers/t.json") == "Trigger:t"
+    assert member_ref("query-definitions/q.json") == "query:q"
+    instance, _owner = seed_write_surface(tmp_path)
+    declare_note_kind(instance, "A note.")
+    declared = advance_floor_index(instance)
+    card = f"ontology/kinds/{NOTE_KIND}.md"
+    stamp = declared.files[card][1]
+    assert stamp == declared.generation
+    change = json.loads(declared.files[change_path(stamp)][0])
+    assert change["changed"] == [f"SubjectKind:{NOTE_KIND}"]
+    # Its successor's change replaces it: the floor shows the current revisions'.
+    declare_note_kind(instance, "A note, revised.")
+    revised = advance_floor_index(instance)
+    assert change_path(stamp) not in revised.files
+    assert change_path(revised.generation) in revised.files
+    assert _bytes(revised) == _bytes(_cold(instance))

@@ -126,7 +126,21 @@ def member_ref(path: str) -> str:
         return "ClaimType:" + path.removeprefix("claim-types/").removesuffix(".json").replace(
             "/", "."
         )
+    for prefix, kind in _DEFINITION_REFS:
+        if path.startswith(prefix) and path.endswith(".json") and "/" not in path[len(prefix) :]:
+            return kind + path[len(prefix) : -len(".json")]
     return path
+
+
+# Definition families named by a flat ``<prefix><name>.json`` path, and the ref ``get`` resolves.
+_DEFINITION_REFS = (
+    ("subject-kinds/", "SubjectKind:"),
+    ("capture-contracts/", "CaptureContract:"),
+    ("procedure-mandates/", "ProcedureMandate:"),
+    ("lines/", "Line:"),
+    ("triggers/", "Trigger:"),
+    ("query-definitions/", "query:"),
+)
 
 
 def change_rationales(

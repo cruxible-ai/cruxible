@@ -87,6 +87,7 @@ from cruxible_core.service.floor.floor_definitions import (
     CURRENT_VIEW,
     DefinitionRevision,
     definition_histories,
+    definition_live,
     is_tracked,
     view_changed_at,
 )
@@ -229,8 +230,8 @@ class FloorRender:
     rationales: PMap[int, tuple[str, ...]] = field(default_factory=PMap)
     # Each file's (content digest, byte length), taken once when it was rendered.
     digests: PMap[str, tuple[str, int]] = field(default_factory=PMap)
-    # Kind -> its Subjects; live Claim sequence -> how many live Claims it
-    # stamps (the changes the floor shows).
+    # Kind -> its Subjects; live sequence -> how many live Claims and live
+    # definitions it stamps (the changes the floor shows).
     kinds: PMap[str, PSet[str]] = field(default_factory=PMap)
     live_sequences: PMap[int, int] = field(default_factory=PMap)
     source_state: SourcesLedgerState | None = None
@@ -1146,6 +1147,27 @@ def _all_live_sequences(inputs: FloorInputs) -> dict[int, int]:
     return counts
 
 
+def _definition_sequence(inputs: FloorInputs, path: str) -> int | None:
+    """The sequence a live definition's current revision stamps the changes with.
+
+    Genesis carries no change record, so a definition held since genesis
+    introduces no change file.
+    """
+
+    chain = inputs.definitions.get(path)
+    if chain is None or chain.sequence == 0 or not definition_live(chain.value):
+        return None
+    sequence: int = chain.sequence
+    return sequence
+
+
+def _all_definition_sequences(inputs: FloorInputs, counts: dict[int, int]) -> None:
+    for path in inputs.definitions:
+        sequence = _definition_sequence(inputs, path)
+        if sequence is not None:
+            counts[sequence] = counts.get(sequence, 0) + 1
+
+
 # -- rendering ------------------------------------------------------------------
 
 
@@ -1354,10 +1376,12 @@ def render_floor(
         render_ontology(
             ontology, files.files.get, ontology_files, fresh=files.fresh, drop=files.drop
         )
-    # The changes that introduced each current Claim revision of a Subject.
+    # The changes that introduced each current Claim revision of a Subject,
+    # and each current live definition revision (the ontology's ``changed gen``).
     held_before: Mapping[int, int] = PMap() if previous is None else previous.live_sequences
     if changed is None or old is None:
         counts = _all_live_sequences(inputs)
+        _all_definition_sequences(inputs, counts)
         live_sequences = PMap(counts)
         moved_sequences: set[int] = {*counts, *held_before}
     else:
@@ -1369,9 +1393,16 @@ def render_floor(
                 # Only a live Claim has a live sequence: a retired one is not reached.
                 reached.update(old.live_by_subject.get(path, ()))
                 reached.update(inputs.live_by_subject.get(path, ()))
-        for claim_file in reached:
-            before = _live_sequence(old, claim_file)
-            after = _live_sequence(inputs, claim_file)
+        moved = [
+            (_live_sequence(old, claim_file), _live_sequence(inputs, claim_file))
+            for claim_file in reached
+        ]
+        moved.extend(
+            (_definition_sequence(old, path), _definition_sequence(inputs, path))
+            for path in changed
+            if is_tracked(path)
+        )
+        for before, after in moved:
             if before == after:
                 continue
             if before is not None:
