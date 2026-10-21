@@ -9,7 +9,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
@@ -73,6 +80,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import SubjectKeyPart, SubjectKeyReference
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.triggers import InternalActionName
+from cruxible_client.contracts.validation_messages import validation_summary
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.records import RecordConstructor
@@ -978,9 +986,13 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
     if isinstance(member, ClaimTypeInput):
         return ClaimTypeAuthoringPayload(claim_type=member.claim_type)
     if isinstance(member, ClaimTypeSuccessionInput):
+        # Dependent order carries no meaning, so the author's order is sorted
+        # here; only a duplicate still refuses.
         return ClaimTypeSuccessionMember(
             successor=member.successor,
-            dependents=member.dependents,
+            dependents=tuple(
+                sorted(member.dependents, key=lambda item: item.identity.qualified.encode("utf-8"))
+            ),
             carry_all=member.carry_all,
         )
     if isinstance(member, ClaimRetirementInput):
@@ -988,7 +1000,12 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
             retires=member.retires,
             reason=member.reason,
             effective_until=member.effective_until,
-            dependents=member.dependents,
+            dependents=tuple(
+                sorted(
+                    member.dependents,
+                    key=lambda item: item.artifact_identity.qualified.encode("utf-8"),
+                )
+            ),
         )
     if isinstance(member, ProcedureInput):
         return _procedure_payload(member)
@@ -1019,8 +1036,38 @@ def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChange
     return _mandate_payload(member)
 
 
+def _input_invalid(exc: ValidationError, field_path: str) -> AuthoringInputError:
+    return AuthoringInputError(
+        "cruxible.authoring.input_invalid",
+        field_path,
+        validation_summary(exc) + ".",
+        "Correct the named field and submit again.",
+    )
+
+
 def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
-    """Lower typed input; accepted-state references are checked during preflight."""
+    """Lower typed input; accepted-state references are checked during preflight.
+
+    Lowering builds the stored payload models, whose validators are the last word
+    on shape. Their refusal is the author's input error, typed and located (the
+    change-set member it came from), never an unhandled validation failure.
+    """
+    try:
+        return _lower_authoring_input(value)
+    except ValidationError as exc:
+        raise _input_invalid(exc, "input") from exc
+
+
+def _lower_change_set_member(
+    index: int, member: AuthoringChangeSetMemberInput
+) -> AuthoringChangeSetMember:
+    try:
+        return _change_set_member(member)
+    except ValidationError as exc:
+        raise _input_invalid(exc, f"input.members[{index}]") from exc
+
+
+def _lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
     if isinstance(value, ClaimInput):
         return _claim_payload(value)
     if isinstance(value, ProcedureInput):
@@ -1070,7 +1117,9 @@ def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
             "Wrap the value in its matching *Input type (its `kind` literal names it), or "
             f"pass a ChangeSetInput with members=(...).{wrapper_hint}",
         )
-    members = tuple(_change_set_member(member) for member in value.members)
+    members = tuple(
+        _lower_change_set_member(index, member) for index, member in enumerate(value.members)
+    )
     identities = tuple(authoring_member_identity(member) for member in members)
     if len(set(identities)) != len(identities):
         raise AuthoringInputError(
