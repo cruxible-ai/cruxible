@@ -272,6 +272,9 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
         operation="cruxible.block.sync", arguments={"all": True}
     ),
     "block_successor_ambiguous": RepairOperation(operation="cruxible.block.repin"),
+    # Detach strips only a block the instance no longer publishes. The producer
+    # names `block depublish FILE BLOCK` with the source and block it knows.
+    "block_still_published": RepairOperation(operation="cruxible.block.depublish"),
     "block_sync_failed": RepairOperation(operation="cruxible.block.sync", arguments={"all": True}),
     "projection_backing_stale": RepairOperation(
         operation="cruxible.block.sync", arguments={"all": True}
