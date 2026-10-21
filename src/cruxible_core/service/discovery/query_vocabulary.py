@@ -56,6 +56,16 @@ ValueType = Literal[
 """How a predicate's values compare. ``json`` is a literal with no scalar schema type."""
 
 SUBJECT_ID_FIELD = "subject_id"
+#: The definition kinds ``query`` lists beside the Subject kinds: ClaimType and
+#: Procedure through the query engine's artifact entry, the rest from the
+#: typed-state index (``listed_kinds``).
+QUERYABLE_DEFINITION_KINDS = (
+    "ClaimType",
+    "Procedure",
+    "Trigger",
+    "Line",
+    "SubjectKind",
+)
 _ORDERED = frozenset({"string", "integer", "decimal", "timestamp", "date"})
 _COMPARISONS = frozenset({"lt", "lte", "gt", "gte"})
 _OPERATORS: dict[str, frozenset[str]] = {
@@ -220,7 +230,7 @@ class QueryVocabulary:
         raise query_refusal(
             "cruxible.query.unknown_kind",
             f"no accepted Subject kind is named {kind!r}",
-            nearest=nearest(kind, (*self.kinds, "ClaimType", "Procedure", "Trigger", "Line")),
+            nearest=nearest(kind, (*self.kinds, *QUERYABLE_DEFINITION_KINDS)),
             repair="use one of the listed kinds; orient names every kind",
             field_path=field_path,
         )
@@ -575,6 +585,7 @@ def claim_type_row(info: PredicateInfo, contracts: CaptureContractNames) -> dict
 __all__ = [
     "ORDERABLE_TYPES",
     "PredicateInfo",
+    "QUERYABLE_DEFINITION_KINDS",
     "QueryVocabulary",
     "SUBJECT_ID_FIELD",
     "ValueType",

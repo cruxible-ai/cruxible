@@ -1,10 +1,14 @@
-"""Triggers and Lines as compact ``query`` kinds.
+"""Triggers, Lines and the other definition kinds as compact ``query`` kinds.
 
-``query kind=Trigger`` and ``query kind=Line`` list the accepted Triggers and
-Lines with the same grammar every compact query uses (``where``, ``contains``,
-``select``, ``order_by``, paging), on CLI, MCP and SDK alike. They are read
-from the typed-state index at the coordinate, not through the query engine:
-neither is a Subject kind nor a definition kind of the query grammar.
+``query kind=Trigger``, ``kind=Line`` and ``kind=SubjectKind`` list those
+accepted definitions with the same grammar every compact query uses
+(``where``, ``contains``, ``select``, ``order_by``, paging), on CLI, MCP and
+SDK alike. They are read from the typed-state index at the coordinate, not
+through the query engine: none is a Subject kind nor a definition kind of the
+query grammar. A row reads its own artifact and what the ontology says about
+it (a SubjectKind's live Subject count from the maintained
+``query_subject_counts``, the kit that owns it from the installed kits'
+receipts); nothing a listing reads grows with the Claims or Captures.
 
 The index selects what it can (lifecycle, name, schedule, target and target
 kind; a Line's procedure and authority), in identity order, and the answer
@@ -23,7 +27,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal, cast
 
@@ -31,6 +35,7 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.compact_query import QueryColumn, QueryRequest
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
 from cruxible_client.contracts.procedures.windows import CaptureEventWindow
+from cruxible_client.contracts.subject_kinds import SubjectKind, SubjectKindKeys
 from cruxible_client.contracts.triggers import (
     CadenceSchedule,
     CaptureLandingSchedule,
@@ -39,12 +44,20 @@ from cruxible_client.contracts.triggers import (
     WindowCloseSchedule,
 )
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNTS_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.discovery.query_vocabulary import query_refusal
+from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
+from cruxible_core.service.discovery.query_vocabulary import (
+    QUERYABLE_DEFINITION_KINDS,
+    coerce_text_spelling,
+    query_refusal,
+    render_instant,
+)
 from cruxible_core.service.read_refusals import nearest
 
-ListedKind = Literal["Trigger", "Line"]
-LISTED_KINDS: tuple[ListedKind, ...] = ("Trigger", "Line")
+ListedKind = Literal["Trigger", "Line", "SubjectKind"]
+LISTED_KINDS: tuple[ListedKind, ...] = ("Trigger", "Line", "SubjectKind")
+assert set(LISTED_KINDS) <= set(QUERYABLE_DEFINITION_KINDS)
 #: The most rows one Trigger or Line listing answers; past it the answer is capped.
 LISTING_MAX_RESULTS = 2000
 #: The most Trigger names one Line row lists; ``triggers_total`` counts them all.
@@ -75,6 +88,16 @@ class ListedField:
     default: bool = True
     index_column: str | None = None
     detail: bool = False
+    #: How a filter value is stored in ``index_column`` when it is not the value itself.
+    index_map: Mapping[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class _KindSpec:
+    """A listed kind's typed-state table and the column that names its rows."""
+
+    table: str
+    key: str = "name"
 
 
 _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
@@ -128,7 +151,33 @@ _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
         ListedField(QueryColumn(name="triggers_total", type="integer"), filterable=False),
         ListedField(QueryColumn(name="version", type="integer"), filterable=False, default=False),
     ),
+    "SubjectKind": (
+        ListedField(QueryColumn(name="kind", type="string"), index_column="identity"),
+        ListedField(
+            QueryColumn(name="rule", type="enum", members=("keys", "minted")),
+            index_column="rule",
+        ),
+        ListedField(QueryColumn(name="keys", type="string", cardinality="many")),
+        ListedField(
+            QueryColumn(name="uniqueness", type="enum", members=("hint", "unique")),
+            index_column="uniqueness",
+        ),
+        ListedField(QueryColumn(name="description", type="string")),
+        ListedField(QueryColumn(name="subjects", type="integer")),
+        ListedField(QueryColumn(name="kit", type="string")),
+        ListedField(
+            QueryColumn(name="lifecycle", type="enum", members=_LIFECYCLES),
+            index_column="lifecycle",
+        ),
+        ListedField(QueryColumn(name="version", type="integer"), filterable=False, default=False),
+    ),
 }
+_SPECS: Mapping[ListedKind, _KindSpec] = {
+    "Trigger": _KindSpec("triggers"),
+    "Line": _KindSpec("lines"),
+    "SubjectKind": _KindSpec("subject_kinds", key="kind"),
+}
+assert set(_FIELDS) == set(_SPECS) == set(LISTED_KINDS)
 
 
 @dataclass(frozen=True)
@@ -148,14 +197,60 @@ class _Check:
     field: str
     operator: str
     value: object
+    type: str = "string"
+
+
+#: The operators each column type answers; ``in`` and ``contains`` take strings.
+_OPERATORS: Mapping[str, frozenset[str]] = {
+    "boolean": frozenset({"eq", "ne"}),
+    "integer": frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "in"}),
+    "timestamp": frozenset({"eq", "ne", "lt", "lte", "gt", "gte"}),
+}
+_TEXT_OPERATORS = frozenset({"eq", "ne", "in", "contains"})
+_COMPARISONS = frozenset({"lt", "lte", "gt", "gte"})
 
 
 # -- filters ------------------------------------------------------------------------
 
 
-def _filter_value(kind: ListedKind, field: ListedField, value: object, path: str) -> str | bool:
-    """A filter value as the column holds it: a string, or a boolean for ``enabled``."""
+def _instant(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None and parsed.utcoffset() is not None else None
 
+
+def _filter_value(
+    kind: ListedKind, field: ListedField, value: object, path: str
+) -> str | bool | int:
+    """A filter value as the column holds it: a string, a boolean or an integer.
+
+    The CLI spells every value as text, so an integer or boolean column reads
+    its one canonical spelling (``3``, ``true``); a timestamp is any ISO-8601
+    instant, compared as an instant.
+    """
+
+    if field.column.type == "integer":
+        value = coerce_text_spelling(value, "integer")
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise query_refusal(
+                "cruxible.query.value_type_mismatch",
+                f"{kind} {field.column.name} values are integers",
+                repair=f"pass an integer, for example {field.column.name}>0",
+                field_path=path,
+            )
+        return value
+    if field.column.type == "timestamp":
+        instant = _instant(value) if isinstance(value, str) else None
+        if instant is None:
+            raise query_refusal(
+                "cruxible.query.value_type_mismatch",
+                f"{kind} {field.column.name} values are ISO-8601 instants",
+                repair='pass an instant such as "2026-12-31T00:00:00Z"',
+                field_path=path,
+            )
+        return render_instant(instant)
     if field.column.type == "boolean":
         if isinstance(value, bool):
             return value
@@ -200,9 +295,7 @@ def _checks(kind: ListedKind, request: QueryRequest) -> list[_Check]:
                 repair=f"filter {kind} on {', '.join(fields)}",
                 field_path=f"{path}.field",
             )
-        allowed = (
-            {"eq", "ne"} if listed.column.type == "boolean" else {"eq", "ne", "in", "contains"}
-        )
+        allowed = _OPERATORS.get(listed.column.type, _TEXT_OPERATORS)
         if item.operator not in allowed:
             raise query_refusal(
                 "cruxible.query.operator_not_applicable",
@@ -221,17 +314,19 @@ def _checks(kind: ListedKind, request: QueryRequest) -> list[_Check]:
             value = str(item.value)
         else:
             value = _filter_value(kind, listed, item.value, f"{path}.{item.operator}")
-        checks.append(_Check(item.field, item.operator, value))
+        checks.append(_Check(item.field, item.operator, value, listed.column.type))
     return checks
 
 
-def _index_value(kind: ListedKind, field: str, value: object) -> object:
+def _index_value(kind: ListedKind, field: ListedField, value: object) -> object:
     """A filter value as the typed-state index stores it."""
 
-    if field == "name":
+    if field.index_column == "identity":
         return f"{kind}:{value}"
-    if field == "authority":
+    if field.column.name == "authority":
         return _RUNG_OF[str(value)]
+    if field.index_map is not None:
+        return field.index_map[str(value)]
     return value
 
 
@@ -257,7 +352,7 @@ def _index_selection(
             continue
         values = cast(tuple[object, ...], check.value) if check.operator == "in" else (check.value,)
         clauses.append(f"{column} IN ({','.join('?' * len(values))})")
-        parameters.extend(_index_value(kind, check.field, value) for value in values)
+        parameters.extend(_index_value(kind, fields[check.field], value) for value in values)
     if not any(check.field == "lifecycle" for check in checks):
         clauses.append("lifecycle='live'")
     # Residual filters alone leave nothing for the index to select on.
@@ -290,13 +385,44 @@ def _cell_values(row: Mapping[str, Any], name: str) -> list[object]:
     return list(cell) if isinstance(cell, list) else [cell]
 
 
+def _compared(check: _Check, entry: object) -> bool:
+    """Whether one cell value stands in a comparison's order to the filter value."""
+
+    if check.type == "timestamp":
+        left, right = _instant(str(entry)), _instant(str(check.value))
+        if left is None or right is None:
+            return False
+        ordered: tuple[Any, Any] = (left, right)
+    elif isinstance(entry, int) and not isinstance(entry, bool):
+        ordered = (entry, check.value)
+    else:
+        return False
+    first, second = ordered
+    if check.operator == "lt":
+        return bool(first < second)
+    if check.operator == "lte":
+        return bool(first <= second)
+    if check.operator == "gt":
+        return bool(first > second)
+    return bool(first >= second)
+
+
 def _matcher(checks: Sequence[_Check], contains: str | None) -> Callable[[Mapping[str, Any]], bool]:
     needle = None if contains is None else contains.casefold()
 
     def matches(row: Mapping[str, Any]) -> bool:
         for check in checks:
             cell = _cell_values(row, check.field)
-            if check.operator == "eq":
+            if check.operator in _COMPARISONS:
+                matched = any(_compared(check, entry) for entry in cell)
+            elif check.type == "timestamp" and check.operator in {"eq", "ne"}:
+                found = any(
+                    _compared(replace(check, operator="gte"), entry)
+                    and _compared(replace(check, operator="lte"), entry)
+                    for entry in cell
+                )
+                matched = found if check.operator == "eq" else not found
+            elif check.operator == "eq":
                 matched = check.value in cell
             elif check.operator == "ne":
                 matched = check.value not in cell
@@ -416,6 +542,63 @@ def _line_rows(
             )
 
 
+def _definition_rows(
+    projection: Any,
+    kind: ListedKind,
+    where: str,
+    parameters: Sequence[object],
+    row: Callable[[Any], dict[str, Any]],
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Each selected definition's row, in identity order: its artifact read once."""
+
+    cursor = projection.typed.connection.execute(
+        f"SELECT identity, revision, lifecycle FROM {_SPECS[kind].table} "
+        f"WHERE {where} ORDER BY identity",
+        tuple(parameters),
+    )
+    while chunk := cursor.fetchmany(_CHUNK):
+        for identity, revision, lifecycle in chunk:
+            yield (
+                str(identity),
+                {
+                    **row(projection.typed.source(str(identity))),
+                    "lifecycle": str(lifecycle),
+                    "version": int(revision),
+                },
+            )
+
+
+def _subject_kind_row(
+    instance: PlaybillInstance, projection: Any
+) -> Callable[[Any], dict[str, Any]]:
+    """A SubjectKind row: its identity rule, the kind's live Subjects and its owning kit.
+
+    The count is the maintained ``query_subject_counts`` row and the kit the
+    installed kits' receipts: one read of each per listing, vocabulary-sized.
+    """
+
+    connection = projection.typed.connection
+    counts = {
+        str(kind): int(amount) for kind, amount in connection.execute(LIVE_SUBJECT_COUNTS_SQL)
+    }
+    owners = kit_owners(instance, connection)
+
+    def row(source: Any) -> dict[str, Any]:
+        declared = cast(SubjectKind, source)
+        rule = declared.identity_rule
+        return {
+            "kind": declared.subject_kind,
+            "rule": rule.rule,
+            "keys": list(declared.keys),
+            "uniqueness": rule.uniqueness if isinstance(rule, SubjectKindKeys) else None,
+            "description": declared.description,
+            "subjects": counts.get(declared.subject_kind, 0),
+            "kit": owned_by(owners, "SubjectKind", declared.subject_kind),
+        }
+
+    return row
+
+
 # -- shape --------------------------------------------------------------------------
 
 
@@ -456,20 +639,27 @@ def _order_names(kind: ListedKind, order_by: Sequence[str]) -> list[tuple[str, b
     return ordered
 
 
-def _sort_key(value: object) -> Any:
-    """A comparable key in the column's own type: numbers as numbers, lists element-wise."""
+def _sort_key(value: object, column_type: str | None = None) -> Any:
+    """A comparable key in the column's own type: numbers as numbers, lists element-wise,
+    timestamps as instants."""
 
     if isinstance(value, list):
         return tuple(str(entry) for entry in value)
     if isinstance(value, bool):
         return int(value)
+    if column_type == "timestamp" and isinstance(value, str):
+        return _instant(value) or value
     return value
 
 
 def ordered_rows(
-    rows: Sequence[tuple[str, Mapping[str, Any]]], order: Sequence[tuple[str, bool]]
+    rows: Sequence[tuple[str, Mapping[str, Any]]],
+    order: Sequence[tuple[str, bool]],
+    types: Mapping[str, str] | None = None,
 ) -> list[tuple[str, Mapping[str, Any]]]:
     """Rows sorted by each (column, descending) in turn: typed, nulls last, ties by identity."""
+
+    column_types = types or {}
 
     def compare(left: tuple[str, Mapping[str, Any]], right: tuple[str, Mapping[str, Any]]) -> int:
         for name, descending in order:
@@ -478,7 +668,8 @@ def ordered_rows(
                 if first is None and second is None:
                     continue
                 return 1 if first is None else -1
-            a, b = _sort_key(first), _sort_key(second)
+            a = _sort_key(first, column_types.get(name))
+            b = _sort_key(second, column_types.get(name))
             if a != b:
                 result = -1 if a < b else 1
                 return -result if descending else result
@@ -495,7 +686,7 @@ def listed_kind_answer(
     evaluation_time: datetime,
     max_results: int | None = None,
 ) -> ListedAnswer:
-    """The Triggers or Lines the request selects, at the coordinate, as compact rows."""
+    """The listed definitions the request selects, at the coordinate, as compact rows."""
 
     if max_results is None:
         max_results = LISTING_MAX_RESULTS
@@ -520,10 +711,11 @@ def listed_kind_answer(
     kept: list[tuple[str, Mapping[str, Any]]] = []
     capped = False
     with instance.bind_accepted_projection(coordinate) as projection:
-        rows = (
-            _trigger_rows(projection, where, parameters, detail=detail)
-            if kind == "Trigger"
-            else _line_rows(
+        rows: Iterator[tuple[str, dict[str, Any]]]
+        if kind == "Trigger":
+            rows = _trigger_rows(projection, where, parameters, detail=detail)
+        elif kind == "Line":
+            rows = _line_rows(
                 instance,
                 projection,
                 where,
@@ -531,7 +723,10 @@ def listed_kind_answer(
                 evaluation_time=evaluation_time,
                 contains=request.contains,
             )
-        )
+        else:
+            rows = _definition_rows(
+                projection, kind, where, parameters, _subject_kind_row(instance, projection)
+            )
         for identity, row in rows:
             if not matches(row):
                 continue
@@ -540,8 +735,10 @@ def listed_kind_answer(
                 break
             kept.append((identity, row))
     if order:
-        kept = ordered_rows(kept, order)
-    shown = {column.name for column in columns} | {"name"}
+        kept = ordered_rows(
+            kept, order, {item.column.name: item.column.type for item in _FIELDS[kind]}
+        )
+    shown = {column.name for column in columns} | {_SPECS[kind].key}
     spec_digest = typed_digest(
         Sha256Value,
         _LISTING_DIGEST_DOMAIN,
