@@ -142,12 +142,14 @@ RepairCase = Callable[[Path, pytest.MonkeyPatch], None]
 ClosedLoopKey = tuple[str, str | None]
 
 EXPECTED_OPERATIONS = {
-    # A contest is resolved by retiring all but one contender in one write.
-    "claim_conflicted": "cruxible.write",
+    # A contest offers one option per contender: retire the other (two
+    # contenders), or all the others in one write; a qualifier split comes last.
+    "claim_conflicted": "cruxible.claim.retire",
     # Stating a Claim again on new evidence is the default-profile set verb.
     "claim_uncovered": "cruxible.set",
     "claim_stale_evidence": "cruxible.set",
-    "citation_drifted": "cruxible.set",
+    # Re-bind the Claim to the text it rests on now, or (alternative) retire it.
+    "citation_drifted": "cruxible.rebind",
     "citation_source_unobserved": "cruxible.set",
     "evidence_expiring": "cruxible.set",
     "floor_invalid": "cruxible.floor.export",
@@ -199,8 +201,6 @@ EXPECTED_OPERATIONS = {
 
 
 def _expected_operation(key: ClosedLoopKey) -> str:
-    if key == ("citation_drifted", "gone"):
-        return "cruxible.claim.retire"
     if key == ("projection_marker_invalid", "registered_marker_missing"):
         return "cruxible.block.depublish"
     if key[0] == "projection_marker_invalid":
@@ -716,7 +716,8 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     key = ("citation_drifted", "changed")
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
-    assert row.repair.required_change == "adjudicate_citation_drift"
+    assert row.repair.required_change == "rebind_or_retire_drifted_claim"
+    assert [item.operation for item in row.repair.alternatives] == ["cruxible.claim.retire"]
 
     activate(instance, owner, successor)
     _assert_key_gone(
@@ -860,9 +861,8 @@ def _citation_drifted_v4(
     )
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
-    assert row.repair.required_change == (
-        "retire_claim_with_attribution" if drift_state == "gone" else "adjudicate_citation_drift"
-    )
+    assert row.repair.required_change == "rebind_or_retire_drifted_claim"
+    assert [item.operation for item in row.repair.alternatives] == ["cruxible.claim.retire"]
 
     if drift_state == "gone":
         from tests.core_support._retirement_support import retire_claim

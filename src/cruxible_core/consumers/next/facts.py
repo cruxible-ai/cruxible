@@ -99,7 +99,7 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 11  # A live Claim's current contradicting attestation with no policy raises a row.
+FORMAT = 12  # Repair alternatives (re-bind or retire, a contest's options); citation sections.
 #: The one deadline next arms: the earliest instant a stored fact or row stops holding.
 NEXT_EXPIRE = "next.expire"
 #: The daily evidence sweep: each fire compares every consulted body's file identity,
@@ -178,7 +178,7 @@ CREATE INDEX door_events_by_claim ON door_events(claim_identity,chain_pos);
 CREATE TABLE citation_commitments (
  claim_id TEXT NOT NULL, citation_id TEXT NOT NULL, commitment_digest TEXT NOT NULL,
  byte_length INTEGER NOT NULL, source_id TEXT, source_digest TEXT, original_start INTEGER,
- original_end INTEGER, lineage_note TEXT, set_arguments TEXT,
+ original_end INTEGER, lineage_note TEXT, set_arguments TEXT, section TEXT,
  PRIMARY KEY(claim_id,citation_id)
 ) STRICT;
 CREATE INDEX citation_commitments_by_source ON citation_commitments(source_id,claim_id)
@@ -495,6 +495,7 @@ def _citation_row(claim_id: str, commitment: Any) -> tuple[Any, ...]:
         None
         if commitment.set_arguments is None
         else _json([list(item) for item in commitment.set_arguments]),
+        None if commitment.section is None else _json(list(commitment.section)),
     )
 
 
@@ -1533,7 +1534,7 @@ def _apply_facts(connection: sqlite3.Connection, delta: _Delta) -> set[str]:
             "INSERT INTO fact_reads VALUES (?,?)", ((key, identity) for key in sorted(facts.reads))
         )
         connection.executemany(
-            "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?)", facts.citations
+            "INSERT INTO citation_commitments VALUES (?,?,?,?,?,?,?,?,?,?,?)", facts.citations
         )
         connection.executemany(
             "INSERT INTO citation_unavailable VALUES (?,?,?)",
@@ -2599,7 +2600,7 @@ def _served_citations(
     error = connection.execute(_CITATION_ERROR).fetchone() is not None
     columns = (
         "claim_id,citation_id,commitment_digest,byte_length,source_id,source_digest,"
-        "original_start,original_end,lineage_note,set_arguments"
+        "original_start,original_end,lineage_note,set_arguments,section"
     )
     found = (
         connection.execute(
@@ -2616,7 +2617,7 @@ def _served_citations(
     commitments: dict[str, Any] = {}
     for row in sorted(found, key=lambda item: (str(item[0]), str(item[1]))):
         (claim_id, citation_id, digest, length, source_id, source_digest) = row[:6]
-        start, end, note, arguments = row[6:]
+        start, end, note, arguments, section = row[6:]
         commitments[str(citation_id)] = _CitationCommitment(
             citation_id=str(citation_id),
             commitment_digest=str(digest),
@@ -2632,6 +2633,7 @@ def _served_citations(
                 if arguments is None
                 else tuple((str(key), value) for key, value in json.loads(arguments))
             ),
+            section=None if section is None else tuple(str(item) for item in json.loads(section)),
         )
     unavailable_found = (
         connection.execute(
@@ -2708,15 +2710,13 @@ def _recomposed(
 def _named_in(items: Iterable[PlaybillNextItemV1]) -> set[str]:
     """The Claims a hold over these rows decides by: each row's subject and its contenders."""
 
-    from cruxible_core.service.discovery.next import _hold_members, _repair_arguments
+    from cruxible_core.service.discovery.next import _contenders, _hold_members
 
     named: set[str] = set()
     for item in items:
         for row in _hold_members(item):
             named.add(row.subject_identity)
-            contenders = _repair_arguments(row).get("claim_ids")
-            if isinstance(contenders, list):
-                named.update(str(contender) for contender in contenders)
+            named.update(_contenders(row))
     return named
 
 

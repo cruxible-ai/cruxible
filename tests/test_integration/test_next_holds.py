@@ -112,7 +112,7 @@ def test_a_conflict_is_held_only_once_every_contender_was_examined(tmp_path: Pat
     first, second = (
         claim
         for claim in _all_claims(instance)
-        if claim.identity.qualified in conflict.repair.arguments["claim_ids"]
+        if claim.identity.qualified in conflict.related_identities
     )
 
     _attest(instance, owner, first, tmp_path, at=EVALUATION_TIME - timedelta(minutes=2))

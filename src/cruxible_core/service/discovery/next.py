@@ -6,7 +6,7 @@ import base64
 import json
 import shlex
 from collections import Counter, OrderedDict, defaultdict
-from collections.abc import Callable, Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
@@ -37,6 +37,8 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CONTRACT_ID,
+    DIRECT_SELF_ASSERTED_CONTRACT_ID,
     FOREIGN_SOURCE_COORDINATE_TYPE,
     CanonicalDuration,
     observed_content,
@@ -54,6 +56,7 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     claim_type_path,
+    effective_evidence_requirement,
     parse_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import (
@@ -86,6 +89,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityError
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate, ProcedureMandateV1
@@ -94,6 +98,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
     parse_line_spec,
 )
+from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.refusal_receipts import PriorRefusalCoverage
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReference
@@ -859,7 +864,6 @@ _REPAIR_COMMAND_PLACEHOLDERS: Mapping[str, str] = {
     "PAYLOAD_FILE": "payload_file",
 }
 _ATTESTATION_REPAIR_EXAMPLES: Mapping[str, str] = {
-    "adjudicate_contradicting_evidence": "claim-adjudicate-contradicting-evidence",
     "cite_supporting_evidence": "claim-cite-supporting-evidence",
     "adjudicate_unreviewed_evidence": "claim-adjudicate-unreviewed-evidence",
 }
@@ -972,8 +976,11 @@ def _restated_set(values: Mapping[str, object]) -> dict[str, object] | None:
     if isinstance(role, str):
         restated["role"] = role
     capture = values.get("capture_digest")
+    contract = values.get("evidence_contract")
     if isinstance(capture, str):
         restated["evidence"] = {"kind": "capture", "capture": capture}
+    elif isinstance(contract, str):
+        restated["evidence"] = {"kind": "contract", "contract": contract}
     return restated
 
 
@@ -1005,6 +1012,33 @@ _SDK_LINE_KEYWORDS: tuple[tuple[str, str, object], ...] = (
     ("occurrence_epoch", "occurrence_epoch", 1),
     ("retire", "retire", False),
 )
+
+
+def _rebind_section(values: Mapping[str, object]) -> str | None:
+    """A section citation's ``FILE#Heading/Path``, when the repair names it."""
+
+    file, section = values.get("section_file"), values.get("section")
+    if not isinstance(file, str) or not file or not isinstance(section, list | tuple):
+        return None
+    if not all(isinstance(item, str) for item in section):
+        return None
+    return f"{file}#{'/'.join(section)}"
+
+
+def _rebind_change(values: Mapping[str, object]) -> dict[str, object] | None:
+    """The typed ``rebind`` change a re-bind repair names, as far as the row knows it."""
+
+    claim_id = values.get("claim_id")
+    if not isinstance(claim_id, str) or not claim_id:
+        return None
+    change: dict[str, object] = {"op": "rebind", "target": claim_id}
+    citation = values.get("citation")
+    if isinstance(citation, str) and citation:
+        change["citation"] = citation
+    file, section = values.get("section_file"), values.get("section")
+    if isinstance(file, str) and isinstance(section, list | tuple):
+        change["evidence"] = {"kind": "section", "file": file, "section": list(section)}
+    return change
 
 
 def _cli_scalar(value: object) -> str:
@@ -1099,6 +1133,136 @@ def _restating_repair(
     )
 
 
+#: The contracts a Claim's own authoring produces; they never back a `captured` field.
+_OWN_WORDS_CONTRACTS = frozenset(
+    {DIRECT_SELF_ASSERTED_CONTRACT_ID, COORDINATOR_SELF_SOURCE_CONTRACT_ID}
+)
+
+
+def _role_contracts(claim_type: ClaimType, role: str) -> tuple[str, ...]:
+    """The CaptureContracts (public names) the rules admitting ``role`` name, in byte order.
+
+    Read off the ClaimType alone (rules that name contracts by identity), so a
+    row built from it depends only on that Claim's own definition.
+    """
+
+    names = {
+        item.target.name
+        for rule in claim_type.evidence_admission_policy.rules
+        if isinstance(rule, ClaimEvidenceAdmissionRule) and role in rule.claim_roles
+        for item in rule.capture_contracts
+    }
+    return tuple(
+        sorted(
+            (public_name(name) for name in names if name not in _OWN_WORDS_CONTRACTS),
+            key=lambda item: item.encode("utf-8"),
+        )
+    )
+
+
+def _role_unadmitted(claim_type: ClaimType | None, role: str) -> tuple[str, ...] | None:
+    """The roles a ClaimType's evidence rules admit, when none of them is ``role``."""
+
+    if claim_type is None:
+        return None
+    roles: list[str] = []
+    for rule in claim_type.evidence_admission_policy.rules:
+        roles.extend(item for item in rule.claim_roles if item not in roles)
+    return tuple(roles) if roles and role not in roles else None
+
+
+def _retire_alternative(target: str, claim_id: str) -> PlaybillNextRepairV1:
+    """Retiring the Claim, offered beside a repair that keeps it: the agent judges."""
+
+    return PlaybillNextRepairV1(
+        operation="cruxible.claim.retire",
+        target=target,
+        required_change="retire_claim_with_attribution",
+        arguments={"claim_id": claim_id},
+    )
+
+
+def _evidence_repair(
+    fallback: NextRepairOperation,
+    *,
+    target: str,
+    required_change: str,
+    claim_id: str,
+    claim_type: ClaimType | None,
+    set_arguments: Mapping[str, object] | None,
+) -> PlaybillNextRepairV1:
+    """A repair that restates a Claim on evidence its field admits, or retires it.
+
+    A field that requires captured evidence refuses a restatement in the
+    writer's own words, so the restating ``set`` cites a Capture: one per
+    contract the Claim's role admits (``--evidence-contract``), with retire as
+    the last alternative. Any other field keeps the restating ``set`` (or the
+    authoring door), with retire beside it.
+    """
+
+    retire = _retire_alternative(target, claim_id)
+    if (
+        set_arguments is not None
+        and claim_type is not None
+        and effective_evidence_requirement(claim_type) == "captured"
+    ):
+        role = str(set_arguments.get("role", ""))
+        options = [
+            PlaybillNextRepairV1(
+                operation="cruxible.set",
+                target=target,
+                required_change=required_change,
+                arguments={"claim_id": claim_id, **set_arguments, "evidence_contract": contract},
+            )
+            for contract in _role_contracts(claim_type, role)
+        ]
+        if options:
+            return options[0].model_copy(update={"alternatives": (*options[1:], retire)})
+        set_arguments = None
+    primary = _restating_repair(
+        fallback,
+        target=target,
+        required_change=required_change,
+        arguments={"claim_id": claim_id},
+        set_arguments=set_arguments,
+    )
+    return primary.model_copy(update={"alternatives": (retire,)})
+
+
+def _contradicting_capture_repair(
+    target: str,
+    *,
+    claim_id: str,
+    capture_digest: str,
+    required_change: str,
+    set_arguments: Mapping[str, object] | None,
+) -> PlaybillNextRepairV1:
+    """Read the contradicting Capture; then restate the Claim on its own evidence, or retire it.
+
+    The restatement never cites the contradicting Capture: citing it would back
+    the Claim with the evidence that contradicts it.
+    """
+
+    alternatives: list[PlaybillNextRepairV1] = []
+    if set_arguments is not None:
+        alternatives.append(
+            PlaybillNextRepairV1(
+                operation="cruxible.set",
+                target=target,
+                required_change="restate_claim",
+                arguments={"claim_id": claim_id, **set_arguments},
+            )
+        )
+    alternatives.append(_retire_alternative(target, claim_id))
+    return PlaybillNextRepairV1(
+        operation="cruxible.get",
+        target=target,
+        required_change=required_change,
+        arguments={"claim_id": claim_id, "ref": f"Capture:{capture_digest}"},
+        alternatives=tuple(alternatives),
+    )
+
+
 def _mcp_call(tool: str, **arguments: object) -> str:
     rendered = ", ".join(f"{key}={json.dumps(value)}" for key, value in arguments.items())
     return f"{tool}({rendered})"
@@ -1179,6 +1343,12 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _mcp_call("cruxible_set", **restated)
     if operation == "cruxible.write" and (changes := _write_changes(values)):
         return _mcp_call("cruxible_write", changes=changes)
+    if operation == "cruxible.get" and text("ref"):
+        return _mcp_call("cruxible_get", ref=text("ref"))
+    if operation == "cruxible.rebind" and (change := _rebind_change(values)) is not None:
+        # A re-bind is one change of the typed write; `because` (and a file
+        # citation's new text) is the caller's to add.
+        return _mcp_call("cruxible_write", changes=[change])
     return None
 
 
@@ -1276,6 +1446,15 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         if len(changes) == 1 and changes[0].get("op") == "retire":
             return _sdk_call("cx.retire", changes[0]["target"])
         return None
+    if operation == "cruxible.get" and (ref := text("ref")):
+        return _sdk_call("cx.get", ref)
+    if operation == "cruxible.rebind" and (claim := text("claim_id")):
+        options: dict[str, object] = {}
+        if citation := text("citation"):
+            options["citation"] = citation
+        if (section := _rebind_section(values)) is not None:
+            options["section"] = section
+        return _sdk_call("cx.rebind", claim, **options)
     if operation == "cruxible.block.repin" and (source := text("source_id")):
         block = text("block_id")
         if block is None:
@@ -1435,11 +1614,35 @@ def _repair_command(
         evidence = restated.get("evidence")
         if isinstance(evidence, Mapping) and isinstance(evidence.get("capture"), str):
             parts.extend(["--capture", shlex.quote(str(evidence["capture"]))])
+        elif isinstance(evidence, Mapping) and isinstance(evidence.get("contract"), str):
+            parts.extend(["--evidence-contract", shlex.quote(str(evidence["contract"]))])
     elif operation == "cruxible.write":
         changes = _write_changes(values)
-        if len(changes) != 1 or changes[0].get("op") != "retire":
+        if not changes or any(item.get("op") != "retire" for item in changes):
             return None
-        return f"cruxible retire {shlex.quote(str(changes[0]['target']))}"
+        if len(changes) == 1:
+            return f"cruxible retire {shlex.quote(str(changes[0]['target']))}"
+        # Several retirements are one change set; `--because` is the operand left.
+        return "cruxible write - <<< " + shlex.quote(canonical_json({"changes": changes}))
+    elif operation == "cruxible.get":
+        ref = values.get("ref")
+        if not isinstance(ref, str) or not ref:
+            return None
+        parts.append(shlex.quote(ref))
+    elif operation == "cruxible.rebind":
+        # The new text is the re-binder's to choose: a file citation leaves
+        # `--file FILE#ANCHOR` to add (as retire leaves `--because`); a section
+        # citation names its section, which locates the text on its own.
+        claim_id = values.get("claim_id")
+        if not isinstance(claim_id, str) or not claim_id:
+            return None
+        parts.append(shlex.quote(claim_id))
+        citation = values.get("citation")
+        if isinstance(citation, str) and citation:
+            parts.extend(["--citation", shlex.quote(citation)])
+        section = _rebind_section(values)
+        if section is not None:
+            parts.extend(["--section", shlex.quote(section)])
     elif operation == "cruxible.files.propose":
         # Without a named file the operator adds --file and --name.
         source = values.get("source_id")
@@ -1518,7 +1721,24 @@ def _item(
                     shlex.quote(capture_digest),
                 )
             )
-    repair = repair.model_copy(update={"command": command})
+    repair = repair.model_copy(
+        update={
+            "command": command,
+            # Each alternative is composed for this surface like the primary.
+            "alternatives": tuple(
+                alternative.model_copy(
+                    update={
+                        "command": _repair_command(
+                            alternative.operation,
+                            arguments=alternative.arguments,
+                            surface=surface,
+                        )
+                    }
+                )
+                for alternative in repair.alternatives
+            ),
+        }
+    )
     values = {
         "severity": severity,
         "reason": reason,
@@ -1926,8 +2146,8 @@ class _Holds:
     def covers(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> bool:
         detail = row.detail if isinstance(row.detail, Mapping) else {}
         if row.reason == "claim_conflicted":
-            contenders = _repair_arguments(row).get("claim_ids")
-            if not isinstance(contenders, list) or not contenders:
+            contenders = list(_contenders(row))
+            if not contenders:
                 return False
             versions = self._versions(contenders)
             # Every contender examined, each by someone who saw all of them.
@@ -1970,7 +2190,7 @@ class _Holds:
             return any(self._saw(hold, versions) for hold in holds)
         return False
 
-    def _versions(self, identities: list[object]) -> tuple[tuple[str, str], ...] | None:
+    def _versions(self, identities: Sequence[object]) -> tuple[tuple[str, str], ...] | None:
         versions = []
         for identity in identities:
             digest = self._current.get(identity) if isinstance(identity, str) else None
@@ -2030,12 +2250,15 @@ def _held_claims(
                 continue
             # The Claims ``covers`` decided over: a conflict's contenders, else the
             # row's subject. A stale dependency's upstream Claims are not held.
-            named = {row.subject_identity}
-            contenders = _repair_arguments(row).get("claim_ids")
-            if isinstance(contenders, list):
-                named.update(str(contender) for contender in contenders)
+            named = {row.subject_identity, *_contenders(row)}
             held.update(named & identities)
     return frozenset(held)
+
+
+def _contenders(row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> tuple[str, ...]:
+    """A contest row's contenders: the Claims it names, whichever option its repair offers."""
+
+    return tuple(row.related_identities) if row.reason == "claim_conflicted" else ()
 
 
 def _apply_holds(
@@ -2252,13 +2475,6 @@ def _row_of(finding: PlaybillNextFindingV1) -> PlaybillNextItemV1:
         repair=finding.repair,
         repair_requires=finding.repair_requires,
     )
-
-
-def _repair_arguments(row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> Mapping[str, object]:
-    repair = row.repair
-    if repair is None or not isinstance(repair.arguments, Mapping):
-        return {}
-    return repair.arguments
 
 
 def _item_sort_key(item: PlaybillNextItemV1) -> tuple[int, bytes, bytes, bytes]:
@@ -2584,6 +2800,12 @@ def _contradicting_attestation_rows(
                         else {"claim_id": claim.identity.name, "example": "claim-revision"}
                     ),
                     set_arguments=set_arguments,
+                ).model_copy(
+                    update={
+                        "alternatives": (
+                            _retire_alternative(claim.identity.qualified, claim.identity.name),
+                        )
+                    }
                 ),
             )
         )
@@ -2711,29 +2933,13 @@ def _claim_slot_rows(
             related_identities=identities,
             detail=detail,
             # No contender is picked here: that decision is the caller's. The
-            # row offers one runnable option per contender -- keep it, retire
-            # the others, as one write -- and leaves `because` to the caller.
-            # A contest wider than the row's bound keeps the authoring door.
+            # row offers one runnable option per contender -- keep it by
+            # retiring the others -- and leaves `because` (and the retirement's
+            # reason) to the caller. Splitting the slot by a qualifier is the
+            # last option, where a field tells the contenders apart. A contest
+            # wider than the row's bound keeps the authoring door.
             repair=(
-                PlaybillNextRepairV1(
-                    operation="cruxible.write",
-                    target=subject,
-                    required_change="revise_claims_into_distinct_qualifiers",
-                    arguments={
-                        **arguments,
-                        "options": [
-                            {
-                                "keep": keep.removeprefix("Claim:"),
-                                "changes": [
-                                    {"op": "retire", "target": other.removeprefix("Claim:")}
-                                    for other in identities
-                                    if other != keep
-                                ],
-                            }
-                            for keep in identities
-                        ],
-                    },
-                )
+                _contest_repair(subject, identities, arguments)
                 if len(identities) <= _MAX_CONTEST_OPTIONS
                 else PlaybillNextRepairV1(
                     operation="cruxible.authoring.example",
@@ -2749,6 +2955,9 @@ def _claim_slot_rows(
     # inside the conflict row rather than hidden behind it.
     member_rows: list[PlaybillNextItemV1] = []
     for claim in group:
+        claim_type = _claim_type_at(
+            instance, internal.git_oid, claim.statement.predicate, claim_types
+        )
         verdict = (
             None
             if verdicts_by_identity is None
@@ -2790,20 +2999,13 @@ def _claim_slot_rows(
                         "predicate": claim.statement.predicate,
                         "verdict": verdict.verdict,
                     },
-                    repair=_restating_repair(
+                    repair=_evidence_repair(
                         "cruxible.authoring.bind",
                         target=claim.identity.qualified,
                         required_change="recapture_expired_evidence",
-                        arguments={"claim_id": claim.identity.name},
-                        set_arguments=_claim_set_arguments(
-                            claim,
-                            _claim_type_at(
-                                instance,
-                                internal.git_oid,
-                                claim.statement.predicate,
-                                claim_types,
-                            ),
-                        ),
+                        claim_id=claim.identity.name,
+                        claim_type=claim_type,
+                        set_arguments=_claim_set_arguments(claim, claim_type),
                     ),
                 )
             )
@@ -2838,20 +3040,13 @@ def _claim_slot_rows(
                             "expirations": [item.model_dump(mode="json") for item in expiring],
                             "predicate": claim.statement.predicate,
                         },
-                        repair=_restating_repair(
+                        repair=_evidence_repair(
                             "cruxible.authoring.bind",
                             target=claim.identity.qualified,
                             required_change="recapture_expiring_evidence",
-                            arguments={"claim_id": claim.identity.name},
-                            set_arguments=_claim_set_arguments(
-                                claim,
-                                _claim_type_at(
-                                    instance,
-                                    internal.git_oid,
-                                    claim.statement.predicate,
-                                    claim_types,
-                                ),
-                            ),
+                            claim_id=claim.identity.name,
+                            claim_type=claim_type,
+                            set_arguments=_claim_set_arguments(claim, claim_type),
                         ),
                     )
                 )
@@ -2859,6 +3054,7 @@ def _claim_slot_rows(
         # when its interval begins, not before.
         if verdict.verdict != "uncovered" or verdict.currency == "not_applicable":
             continue
+        admitted_roles = _role_unadmitted(claim_type, claim.statement.role)
         member_rows.append(
             _item(
                 severity="repair",
@@ -2872,19 +3068,34 @@ def _claim_slot_rows(
                     "policy_hint": (
                         "Review the ClaimType evidence_admission_policy; empty or "
                         "mismatched rules commonly leave a Claim uncovered."
+                        if admitted_roles is None
+                        else f"This is a {claim.statement.role} Claim, and the "
+                        "ClaimType's evidence rules admit only "
+                        f"{', '.join(admitted_roles)}: no evidence covers it in this role. "
+                        "Restate it in an admitted role, or change the evidence rules."
                     ),
                 },
-                repair=_restating_repair(
-                    "cruxible.authoring.bind",
-                    target=claim.identity.qualified,
-                    required_change="add_admissible_evidence",
-                    arguments={"claim_id": claim.identity.name},
-                    set_arguments=_claim_set_arguments(
-                        claim,
-                        _claim_type_at(
-                            instance, internal.git_oid, claim.statement.predicate, claim_types
+                # A role no rule admits stays uncovered whatever it cites, so
+                # the repair reads the ClaimType's rules instead of restating it.
+                repair=(
+                    _evidence_repair(
+                        "cruxible.authoring.bind",
+                        target=claim.identity.qualified,
+                        required_change="add_admissible_evidence",
+                        claim_id=claim.identity.name,
+                        claim_type=claim_type,
+                        set_arguments=_claim_set_arguments(claim, claim_type),
+                    )
+                    if admitted_roles is None
+                    else PlaybillNextRepairV1(
+                        operation="cruxible.get",
+                        target=claim.identity.qualified,
+                        required_change="admit_claim_role_or_restate",
+                        arguments={"ref": f"ClaimType:{claim.statement.predicate}"},
+                        alternatives=(
+                            _retire_alternative(claim.identity.qualified, claim.identity.name),
                         ),
-                    ),
+                    )
                 ),
             )
         )
@@ -2893,6 +3104,46 @@ def _claim_slot_rows(
     else:
         items.append(_with_findings(conflict_row, member_rows) if member_rows else conflict_row)
     return items
+
+
+def _contest_repair(
+    subject: str, identities: tuple[str, ...], arguments: Mapping[str, object]
+) -> PlaybillNextRepairV1:
+    """One option per contender: keep it by retiring the others; then the qualifier split.
+
+    Two contenders retire one Claim (`retire`); more retire all but one in a
+    single write. The primary is the first contender's option only by order:
+    the row's ``required_change`` (``choose_contender``) says it is a choice.
+    """
+
+    options: list[PlaybillNextRepairV1] = []
+    for keep in identities:
+        others = [other.removeprefix("Claim:") for other in identities if other != keep]
+        options.append(
+            PlaybillNextRepairV1(
+                operation="cruxible.claim.retire",
+                target=keep,
+                required_change="choose_contender",
+                arguments={"claim_id": others[0]},
+            )
+            if len(others) == 1
+            else PlaybillNextRepairV1(
+                operation="cruxible.write",
+                target=keep,
+                required_change="choose_contender",
+                arguments={"changes": [{"op": "retire", "target": other} for other in others]},
+            )
+        )
+    if "qualifier_field" in arguments:
+        options.append(
+            PlaybillNextRepairV1(
+                operation="cruxible.authoring.example",
+                target=subject,
+                required_change="revise_claims_into_distinct_qualifiers",
+                arguments=dict(arguments),
+            )
+        )
+    return options[0].model_copy(update={"alternatives": tuple(options[1:])})
 
 
 def _qualifier_discriminator(claims: list[ClaimArtifactAny]) -> str | None:
@@ -2932,6 +3183,8 @@ class _CitationCommitment:
     lineage_note: CitationLineageNote | None = None
     # The `set` that restates the citing Claim, as sorted items, when it can.
     set_arguments: tuple[tuple[str, object], ...] | None = None
+    # The heading path a section citation was taken at, so a re-bind names it.
+    section: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -3120,19 +3373,18 @@ def claim_citation_commitments(
                 )
             )
             continue
-        if citation.capture_digest not in effective_captures:
-            selector = (
-                envelope.source.selector
-                if isinstance(envelope.source, ExternalSourceReference)
-                else None
-            )
-            window = (
-                selector.get("working_selection", selector)
-                if isinstance(selector, Mapping)
-                else None
-            )
-            if not isinstance(window, Mapping) or not isinstance(window.get("section"), Mapping):
-                continue
+        selector = (
+            envelope.source.selector
+            if isinstance(envelope.source, ExternalSourceReference)
+            else None
+        )
+        window = (
+            selector.get("working_selection", selector) if isinstance(selector, Mapping) else None
+        )
+        label = window.get("section") if isinstance(window, Mapping) else None
+        if citation.capture_digest not in effective_captures and not isinstance(label, Mapping):
+            continue
+        heading_path = label.get("path") if isinstance(label, Mapping) else None
         source_id: str | None = None
         source_digest: str | None = None
         if (
@@ -3161,6 +3413,11 @@ def claim_citation_commitments(
                 original_start=None if selection_span is None else selection_span[0],
                 original_end=None if selection_span is None else selection_span[1],
                 lineage_note=lineage_note,
+                section=(
+                    tuple(str(item) for item in heading_path)
+                    if isinstance(heading_path, list | tuple)
+                    else None
+                ),
                 set_arguments=(
                     None
                     if (
@@ -3632,19 +3889,39 @@ class _DoorFold:
                             else {}
                         ),
                     },
-                    # Each door example revises the Claim citing this Capture as
-                    # evidence: the `set` of its field with capture evidence.
-                    repair=_restating_repair(
-                        "cruxible.authoring.example",
-                        target=statement.claim_identity.qualified,
-                        required_change=required_change,
-                        arguments={
-                            "claim_id": claim_id,
-                            "capture_digest": capture_digest,
-                        },
-                        set_arguments=_live_claim_set_arguments(
-                            self._instance, self._coordinate.git_oid, claim_id, self._claim_types
-                        ),
+                    # A supporting (or unsure) Capture is cited by restating the
+                    # Claim on it. A contradicting one is read first: the agent
+                    # judges whether the Claim stands (restated on its own
+                    # evidence) or ends (retired).
+                    repair=(
+                        _contradicting_capture_repair(
+                            statement.claim_identity.qualified,
+                            claim_id=claim_id,
+                            capture_digest=capture_digest,
+                            required_change=required_change,
+                            set_arguments=_live_claim_set_arguments(
+                                self._instance,
+                                self._coordinate.git_oid,
+                                claim_id,
+                                self._claim_types,
+                            ),
+                        )
+                        if statement.stance == "contradict"
+                        else _restating_repair(
+                            "cruxible.authoring.example",
+                            target=statement.claim_identity.qualified,
+                            required_change=required_change,
+                            arguments={
+                                "claim_id": claim_id,
+                                "capture_digest": capture_digest,
+                            },
+                            set_arguments=_live_claim_set_arguments(
+                                self._instance,
+                                self._coordinate.git_oid,
+                                claim_id,
+                                self._claim_types,
+                            ),
+                        )
                     ),
                 )
             )
@@ -3994,37 +4271,41 @@ def _citation_drift_item(
         detail["observed_window_digest"] = observed_window_digest
     if commitment.lineage_note is not None:
         detail["lineage_note"] = commitment.lineage_note
-    gone = drift_state == "gone"
+    claim_id = commitment.claim_identity.removeprefix("Claim:")
+    rebind: dict[str, object] = {
+        "claim_id": claim_id,
+        "citation": commitment.citation_id.partition(":")[2][:12],
+        **({} if source_id is None else {"source_id": source_id}),
+    }
+    if commitment.section is not None and source_id is not None:
+        # A section citation names its heading, which locates the new text on
+        # its own; a file citation's new anchor is the re-binder's to choose.
+        rebind.update({"section_file": source_id, "section": list(commitment.section)})
+    # Core resurfaces, the agent judges: re-bind the Claim to the text it rests
+    # on now (the statement stays), or retire it -- whether the text changed,
+    # moved or is gone.
     return _item(
         severity="repair",
         reason="citation_drifted",
         subject_identity=commitment.claim_identity,
         related_identities=(commitment.citation_id,),
         detail=detail,
-        repair=(
-            PlaybillNextRepairV1(
-                operation="cruxible.claim.retire",
-                target=commitment.claim_identity,
-                required_change="retire_claim_with_attribution",
-                arguments={
-                    "claim_id": commitment.claim_identity.removeprefix("Claim:"),
-                    "expected_coordinate": coordinate.model_dump(mode="json"),
-                },
-            )
-            if gone
-            else _restating_repair(
-                "cruxible.authoring.bind",
-                target=commitment.claim_identity,
-                required_change="adjudicate_citation_drift",
-                arguments={
-                    "claim_id": commitment.claim_identity.removeprefix("Claim:"),
-                    "citation_id": commitment.citation_id,
-                    **({} if source_id is None else {"source_id": source_id}),
-                },
-                set_arguments=(
-                    None if commitment.set_arguments is None else dict(commitment.set_arguments)
+        repair=PlaybillNextRepairV1(
+            operation="cruxible.rebind",
+            target=commitment.claim_identity,
+            required_change="rebind_or_retire_drifted_claim",
+            arguments=rebind,
+            alternatives=(
+                PlaybillNextRepairV1(
+                    operation="cruxible.claim.retire",
+                    target=commitment.claim_identity,
+                    required_change="retire_claim_with_attribution",
+                    arguments={
+                        "claim_id": claim_id,
+                        "expected_coordinate": coordinate.model_dump(mode="json"),
+                    },
                 ),
-            )
+            ),
         ),
     )
 
@@ -5748,6 +6029,20 @@ def _projection_items(
                                 "source_id": source.source_id,
                                 "block_id": marker.stamp.block_id,
                             },
+                            # A block taken down by depublish is detached: its
+                            # markers come off and its body stays as prose. The
+                            # page path is the client's, so detach names it.
+                            alternatives=(
+                                PlaybillNextRepairV1(
+                                    operation="cruxible.block.detach",
+                                    target=target,
+                                    required_change="detach_projection_block",
+                                    arguments={
+                                        "source_id": source.source_id,
+                                        "block_id": marker.stamp.block_id,
+                                    },
+                                ),
+                            ),
                         ),
                     )
                 )
@@ -6020,7 +6315,10 @@ class _CallerView:
                 detail=row.detail,
                 repair_requires=requires,
             )
-        if self.surface in {None, "cli"}:
+        # An alternative this caller cannot run is left out; the primary's
+        # requirement already speaks for the row.
+        runnable = tuple(item for item in row.repair.alternatives if self.can_run(item))
+        if self.surface in {None, "cli"} and len(runnable) == len(row.repair.alternatives):
             return row if isinstance(row, PlaybillNextItemV1) else _row_of(row)
         return _item(
             severity=row.severity,
@@ -6028,14 +6326,21 @@ class _CallerView:
             subject_identity=row.subject_identity,
             related_identities=row.related_identities,
             detail=row.detail,
-            repair=row.repair.model_copy(update={"command": None}),
+            repair=row.repair.model_copy(
+                update={
+                    "command": None if self.surface not in {None, "cli"} else row.repair.command,
+                    "alternatives": runnable,
+                }
+            ),
             surface=self.surface,
         )
 
     def _changes(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> bool:
         if self.surface not in {None, "cli"}:
             return True
-        return row.repair is not None and self.requirement(row.repair) is not None
+        return row.repair is not None and any(
+            self.requirement(item) is not None for item in (row.repair, *row.repair.alternatives)
+        )
 
     def render(self, items: Iterable[PlaybillNextItemV1]) -> tuple[PlaybillNextItemV1, ...]:
         """Render each row's repair, and each nested finding's, for this caller.
