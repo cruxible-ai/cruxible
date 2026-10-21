@@ -3,89 +3,65 @@
 Use this reference whenever a change stops at a proposal, when an instance's
 governance needs setting up (who may approve, which agents act), and for the
 final hand-off of `create-state`, `adopt-kit` and `automate-with-procedures`.
+[Review and governance](https://docs.cruxible.ai/review-and-governance/) is the
+source; this is the checklist.
 
-## How a change becomes accepted state
+## When a change stops at a proposal
 
-Every change is a change set proposed against the accepted state it was read
-at:
+Every change is checked first, and lands in the same call only when the
+approval policy needs nobody else's approval and the caller's tier may
+activate. Otherwise the result says why it stopped and what to run next.
 
-1. **Propose.** A write (`set`, `add`, `retire`, `write`), an authoring submit,
-   a ClaimType proposal, a kit add or remove, or a provider install creates a
-   proposal: a frozen candidate evaluated against its base. A refused proposal
-   is kept with its diagnostics. A proposal is not accepted state.
-2. **Review.** `cruxible get PROPOSAL_ID` reads its status, changes and, for a
-   refusal, the code, message and repair. `cruxible proposal review
-   PROPOSAL_ID` prints how to diff the candidate against accepted state with
-   plain Git (`git diff cruxible-ledger/accepted...cruxible-ledger/proposals/…`)
-   and where the daemon's evaluation and approval records are.
-3. **Approve**, when the policy requires it. `cruxible proposal approve
-   PROPOSAL_ID` signs the exact candidate with the approver's private key on
-   the client and sends only the signature. The approval that completes the
-   candidate activates it unless held. On MCP, `cruxible_proposal_approve` signs with a key from the
-   server's `CRUXIBLE_MCP_KEY_DIR`; pass the reviewed `candidate_digest`.
-4. **Activate.** `cruxible proposal activate PROPOSAL_ID` checks approvals and
-   the policy and advances accepted state by compare-and-set.
+```bash
+cruxible proposal list --status open
+cruxible proposal review PROPOSAL_ID     # what it changes, why, and the git diff command
+cruxible proposal approve PROPOSAL_ID    # signs; the approval that completes it activates it
+```
 
-Writes, authoring submits, kit adds and removes, and provider installs do all of this in one call
-when the approval policy requires no approval and the caller's tier may
-activate; otherwise they stop at the proposal and name the reason and next step.
-Authoring's `--no-accept` / `accept="never"` explicitly keeps the proposal.
+- `--hold` signs without activating; someone runs `cruxible proposal activate`
+  later.
+- A stale proposal (`proposal_stale` in `next`) is recompiled at the current
+  head when approved; approvals of the old one don't carry over. If what it
+  changes has moved, `cruxible proposal readmit` rebases it for review.
+- `cruxible proposal withdraw ID --reason "…"` drops your own proposal (an
+  identical change submitted again afterwards needs a different `because`);
+  a reviewer turns one down with `cruxible proposal reject ID --reason "…"`.
+- On MCP, `cruxible_proposal_approve` signs with a key from the server's
+  `CRUXIBLE_MCP_KEY_DIR`; pass the reviewed `candidate_digest`.
 
-## Stale and unwanted proposals
-
-A proposal made before another change was activated is stale: it can never
-activate as it is. `cruxible next` lists it (`proposal_stale`) for its author.
-
-- `cruxible proposal readmit PROPOSAL_ID` checks the same change again at the
-  current head and returns a fresh proposal, which needs its own review.
-- `cruxible proposal withdraw PROPOSAL_ID --reason "..."` retires a proposal
-  that will never be wanted.
-
-To avoid staleness while setting up, submit and land one change at a time,
-or put related changes in one change set (`write` for values, a `change_set`
-authoring input or `cx.changes(rationale=...)` for definitions).
+To avoid staleness while setting up, land one change at a time, or put
+related changes in one change set.
 
 ## Set up governance
 
 Decide with the user, early:
 
-- **The approval policy** (`cruxible get ApprovalPolicy:instance`).
-  `self_approval_allowed`, the default, needs no approval for ordinary changes;
-  submit lands them when the caller may activate. `independent_approval_required` needs an approval from
-  someone other than the author for every governed change (`cruxible init
-  --require-independent-approval` sets it at creation; afterwards it changes
-  through an `approval_policy` authoring input, `cruxible authoring example
-  approval-policy`).
-- **Agent principals.** Each agent gets its own principal, so its acts are
-  attributed to it: `cruxible principal add NAME --key-dir DIR` registers it
-  and writes its settings to `DIR/cruxible.env` for the agent to load. On a
-  daemon with auth, the agent's credential tier decides what it may do:
-  `governed_write` proposes and authors but cannot approve or activate,
-  `graph_write` can. With auth off, the principal ID is a claim, not a
-  boundary.
-- **Mandates** for Lines that propose or settle (see
-  `automate-with-procedures`): the narrowest grant, scope and condition that
-  does the job.
+- **The approval policy.** `self_approval_allowed` (the default) or
+  `independent_approval_required` (`cruxible init
+  --require-independent-approval`), under which nobody approves their own
+  change. Independence is what lets a team trust each other's findings.
+- **Agent principals.** Each agent gets its own principal (`cruxible principal
+  add NAME --key-dir DIR`), so its acts are attributed to it. On a daemon with
+  auth, a `governed_write` credential proposes but can't approve; with auth
+  off, a principal ID is a claim, not a boundary.
+- **Mandates** for Lines that propose or settle: the narrowest grant that does
+  the job, settling only facts copied verbatim from a source.
 
 ## Final checks and hand-off
 
-Before handing off:
-
 ```bash
-cruxible next                        # nothing unexpected; every row explained
-cruxible proposal list --status open # nothing left half-done
-cruxible block sync --all            # pages match their backings
-cruxible files check               # catalogued Documents match their files
-cruxible kit status                  # when kits are installed
+cruxible next                          # nothing unexpected; every row explained
+cruxible proposal list --status open   # nothing left half-done
+cruxible kit status                    # when kits are installed
 ```
 
 Then tell the user, briefly:
 
-- the vocabulary (kinds and fields) and where each field's evidence comes from;
-- the named queries and the pages that render them;
+- the vocabulary (kinds and fields) and what evidence backs each field;
+- the saved queries and the pages that render them;
 - the approval policy, the principals and what each may do;
-- any enabled Lines, their schedules and mandates;
+- any enabled Lines, their schedules, and their mandates and expiry;
 - which `next` rows to expect over time (drifted citations when files change,
-  stale blocks when state moves, coverage gaps after a restart) and their
+  stale pages when state moves, gaps after a restart, inbox items) and their
   repairs;
 - anything left open, and why.

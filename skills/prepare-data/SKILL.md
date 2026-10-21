@@ -55,10 +55,10 @@ For files that list things:
 - whitespace, prefix garbage or sentinel values in identifiers;
 - whether the grain really is one row per thing.
 
-Cruxible addresses a Subject as `kind/id`, so the identifier must be stable for
-the real thing across reloads. Prefer a source system's durable identifier; do
-not use a mutable name or title. If there is no good identifier, stop and design
-one.
+Cruxible names a Subject by its kind's key (a part number, a slug), so the
+identifier must be stable for the real thing across reloads. Prefer a source
+system's durable identifier; don't use a mutable name or title. If there is no
+good identifier, stop and design one.
 
 For files that link things:
 
@@ -84,19 +84,21 @@ Keep preparation scoped to what reliable loading needs. Do not over-clean.
 
 ## Phase 5: Map onto Subjects and fields
 
-Summarize what the files imply, as a draft for `create-state` to confirm:
+Summarize what the files imply, as a draft for `create-state` to confirm,
+using the rubric in [Building team
+knowledge](https://docs.cruxible.ai/building-team-knowledge/):
 
-- likely Subject kinds and their identifier columns;
+- likely Subject kinds and the column that names each thing stably;
 - likely fields per kind, with value type (text, enum, number, date, a link to
   another kind), and whether a Subject holds one value or many;
-- which files or columns are prose to keep in files and cite (`--evidence-file`)
-  rather than store as values;
+- which files or columns stay prose in a file, cited by the values drawn from
+  them, rather than stored as values;
 - where each value's evidence will come from: the loader's own statement, a
-  catalogued file, or a retained capture;
+  passage of a catalogued file, or a Capture a Line retains;
 - ambiguities that need the user.
 
-If vocabulary already exists in the instance (`cruxible orient`, `cruxible
-orient --kind KIND`), compare against it and note mismatches.
+If vocabulary already exists (`cruxible orient`, `cruxible orient --kind
+KIND`), compare against it and note mismatches.
 
 ## Output
 
