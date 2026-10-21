@@ -219,9 +219,16 @@ def test_a_new_claim_type_restamps_no_subject_that_does_not_show_it(tmp_path: An
     add_lead_field(instance)
     after = advance_floor_index(instance)
     assert after.generation == before.generation + 1
+    # The ontology files show the new ClaimType; no current/ file does.
     assert {
-        path: item for path, item in after.files.items() if not path.startswith("changes/")
-    } == {path: item for path, item in before.files.items() if not path.startswith("changes/")}
+        path: item
+        for path, item in after.files.items()
+        if not path.startswith(("changes/", "ontology/"))
+    } == {
+        path: item
+        for path, item in before.files.items()
+        if not path.startswith(("changes/", "ontology/"))
+    }
     assert _bytes(after) == _bytes(_cold(instance))
 
 

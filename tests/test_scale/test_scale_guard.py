@@ -1125,6 +1125,102 @@ def test_ontology_reads_never_count_their_population(session: Session) -> None:
             )
 
 
+def _accept_type(world: World, field: str, **update: Any) -> None:
+    """Accept a ClaimType of the work items no Claim states yet, or its successor."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.claim_types import (
+        claim_type_digest,
+        claim_type_path,
+        parse_claim_type,
+        render_claim_type,
+    )
+    from tests.core_support._write_support import _claim_type
+
+    path = claim_type_path(f"{KIND}.{field}")
+    instance = world.instance
+    held = instance.immutable_tree_at(instance.accepted_coordinate().git_oid).get(path)
+    if held is None:
+        claim_type = _claim_type(field, literal_schema={"type": "string"})
+    else:
+        current = parse_claim_type(held, path=path)
+        claim_type = current.model_copy(
+            update={
+                **update,
+                "lifecycle": ArtifactLifecycle(
+                    predecessor_digest=claim_type_digest(current).tagged
+                ),
+            }
+        )
+    _worlds.accept_members(
+        world, {path: render_claim_type(claim_type)}, name=f"onto-{field}-{world.generation}"
+    )
+
+
+def test_the_ontology_moves_only_with_its_definitions(session: Session) -> None:
+    """The ontology files cost the definitions that changed, never the instance.
+
+    In SMALL and in LARGE (ten times the work items and Claims): a ten-Claim
+    write delivers no ``ontology/`` file and renders none, and a description
+    edit of one ClaimType delivers only the kind card it shows on and
+    ``ontology/claim-types/INDEX`` (no ``current/`` file: a description shows
+    a Subject nothing), with the advance's work flat across the two worlds.
+    """
+
+    from cruxible_core.service.floor import floor_ontology
+    from cruxible_core.service.floor.floor_delta import service_playbill_floor_delta
+    from cruxible_core.service.floor.floor_index import FloorRender, advance_floor_index
+
+    def delivered(world: World, base: FloorRender, head: FloorRender) -> list[str]:
+        delta = service_playbill_floor_delta(
+            world.instance,
+            head=head.inputs.coordinate,
+            base_generation=base.generation,
+            base_renderer=base.renderer,
+        )
+        assert delta.kind == "delta", world.shape.name
+        return sorted(item.path for item in delta.files)
+
+    rendered: list[str] = []
+    render = floor_ontology._Renderer.render
+
+    def counted(self: Any, path: str, changed_at: int) -> Any:
+        rendered.append(path)
+        return render(self, path, changed_at)
+
+    measured: dict[str, dict[str, int]] = {}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(floor_ontology._Renderer, "render", counted)
+        for world in (session.small, session.large):
+            _accept_type(world, "onto_note")
+            base = advance_floor_index(world.instance)
+            _worlds.write(world, _creates(world, f"onto-{world.shape.name}"))
+            rendered.clear()
+            written = advance_floor_index(world.instance)
+            assert rendered == [], world.shape.name
+            assert not [
+                path for path in delivered(world, base, written) if path.startswith("ontology/")
+            ], world.shape.name
+            _accept_type(world, "onto_note", description=f"A note ({world.shape.name}).")
+            rendered.clear()
+            with counting(world.root) as window:
+                head = advance_floor_index(world.instance)
+            assert not window.unexplained, window.unexplained[:5]
+            measured[world.shape.name] = {counter: window.counts[counter] for counter in COUNTERS}
+            files = delivered(world, written, head)
+            assert not [path for path in files if path.startswith("current/")], files
+            assert [path for path in files if path.startswith("ontology/")] == [
+                "ontology/claim-types/INDEX",
+                f"ontology/kinds/{KIND}.md",
+            ], files
+            assert sorted(rendered) == [path for path in files if path.startswith("ontology/")]
+    for counter in COUNTERS:
+        small, large = measured["small"][counter], measured["large"][counter]
+        assert large <= small * RATIO + SLACK[counter], (
+            f"ontology description edit {counter}: SMALL {small}, LARGE {large}"
+        )
+
+
 def _top_statements(measured: dict[str, dict[str, Any]], shown: int = 5) -> str:
     """The heaviest statements in LARGE, with their steps in SMALL, where they ran from,
     their tables and how each cursor moved."""

@@ -20,22 +20,75 @@ added.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
-from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
-from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
+from cruxible_client.contracts.captures import parse_capture_contract
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    effective_evidence_requirement,
+    parse_claim_type,
+)
+from cruxible_client.contracts.documents import parse_document
+from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
+from cruxible_client.contracts.kits import KIT_RECEIPT_DOCUMENT_KIND, KitReceipt
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate_any
+from cruxible_client.contracts.procedures.line_specs import parse_line_spec
+from cruxible_client.contracts.query.definitions import parse_query_definition
+from cruxible_client.contracts.subject_kinds import SUBJECT_KIND_PREFIX, parse_subject_kind
+from cruxible_client.contracts.triggers import parse_trigger
+from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.derived.persistent import PMap
 from cruxible_core.indexes.history.history_index import HistoryReader
 from cruxible_core.runtime.instance import PlaybillInstance
 
 CLAIM_TYPES_PREFIX = "claim-types/"
+SUBJECT_KINDS_PREFIX = SUBJECT_KIND_PREFIX
+CAPTURE_CONTRACTS_PREFIX = "capture-contracts/"
+MANDATES_PREFIX = "procedure-mandates/"
+LINES_PREFIX = "lines/"
+TRIGGERS_PREFIX = "triggers/"
+QUERIES_PREFIX = "query-definitions/"
+#: Kit receipts are Documents named ``kit-<kit_id>``.
+RECEIPTS_PREFIX = "documents/kit-"
 
 #: The definition families whose histories the floor keeps.
-TRACKED_PREFIXES: tuple[str, ...] = (CLAIM_TYPES_PREFIX,)
+TRACKED_PREFIXES: tuple[str, ...] = (
+    CLAIM_TYPES_PREFIX,
+    SUBJECT_KINDS_PREFIX,
+    CAPTURE_CONTRACTS_PREFIX,
+    MANDATES_PREFIX,
+    LINES_PREFIX,
+    TRIGGERS_PREFIX,
+    QUERIES_PREFIX,
+    RECEIPTS_PREFIX,
+)
 
-#: View indexes of a ClaimType node: what ``current/`` files show of it.
+#: View indexes of a ClaimType node. ``CURRENT_VIEW``: what ``current/``
+#: files show of it (cardinality, liveness). ``KINDS_VIEW``: the kinds it
+#: names while live (``ontology/INDEX``). ``CONTRACTS_VIEW``: the contracts it
+#: admits while live, and whether it requires a Capture (``ontology/contracts/``).
 CURRENT_VIEW = 0
+KINDS_VIEW = 1
+CONTRACTS_VIEW = 2
+
+_PARSERS: dict[str, Callable[..., Any]] = {
+    CLAIM_TYPES_PREFIX: parse_claim_type,
+    SUBJECT_KINDS_PREFIX: parse_subject_kind,
+    CAPTURE_CONTRACTS_PREFIX: parse_capture_contract,
+    MANDATES_PREFIX: parse_procedure_mandate_any,
+    LINES_PREFIX: parse_line_spec,
+    TRIGGERS_PREFIX: parse_trigger,
+    QUERIES_PREFIX: parse_query_definition,
+}
+_RECEIPT_ACCESS = BodyAccessContext(principal_id="kit-receipt", can_read_body=True)
+#: Receipts by body digest: immutable bytes, so read and parsed once per process.
+_RECEIPTS: OrderedDict[str, KitReceipt] = OrderedDict()
+_RECEIPTS_CAPACITY = 1024
 
 
 def is_tracked(path: str) -> bool:
@@ -44,27 +97,87 @@ def is_tracked(path: str) -> bool:
     return path.endswith(".json") and path.startswith(TRACKED_PREFIXES)
 
 
+def definition_live(value: Any) -> bool:
+    """Whether a definition is live: live lifecycle, or a receipt that owns definitions."""
+
+    if isinstance(value, KitReceipt):
+        return bool(value.artifacts)
+    lifecycle = getattr(value, "lifecycle", None)
+    return getattr(lifecycle, "state", None) == "live"
+
+
+def _receipt(instance: PlaybillInstance, path: str, content: bytes) -> KitReceipt | None:
+    """The kit receipt a ``documents/kit-*`` path holds, or None for an ordinary Document.
+
+    Accepted Document bodies are retained (no code path erases a body store
+    object), so a superseded receipt's body is read back like the current
+    one's; one that is nevertheless lost refuses the render as an integrity
+    failure, never a floor published differently for the same history.
+    """
+
+    try:
+        shell = parse_document(content, path=path)
+    except CruxibleError:
+        return None
+    if shell.document_kind != KIT_RECEIPT_DOCUMENT_KIND:
+        return None
+    found = memo_get(_RECEIPTS, shell.body_digest)
+    if isinstance(found, KitReceipt):
+        return found
+    try:
+        body = instance.body_store().read(shell.body_digest, access=_RECEIPT_ACCESS)
+        receipt = KitReceipt.model_validate_json(body)
+    except (CruxibleError, OSError, ValueError) as exc:
+        raise ProjectionIntegrityError(
+            f"floor cannot render {path}: its accepted kit receipt body "
+            f"{shell.body_digest} is not retained or does not parse"
+        ) from exc
+    memo_put(_RECEIPTS, shell.body_digest, receipt, capacity=_RECEIPTS_CAPACITY)
+    return receipt
+
+
 def parse_definition(instance: PlaybillInstance, path: str, content: bytes | None) -> Any:
     """The parsed definition at ``path``, or None when absent or not that family's artifact."""
 
     if content is None:
         return None
-    try:
-        if path.startswith(CLAIM_TYPES_PREFIX):
-            return parse_claim_type(content, path=path)
-    except CruxibleError:
-        return None
+    if path.startswith(RECEIPTS_PREFIX):
+        return _receipt(instance, path, content)
+    for prefix, parse in _PARSERS.items():
+        if path.startswith(prefix):
+            try:
+                return parse(content, path=path)
+            except CruxibleError:
+                return None
     return None
+
+
+def _contract_names(claim_type: ClaimType) -> tuple[str, ...]:
+    """What a ClaimType's evidence rules name: contract identities, or version digests."""
+
+    names: set[str] = set()
+    for rule in claim_type.evidence_admission_policy.rules:
+        if isinstance(rule, ClaimEvidenceAdmissionRule):
+            names.update(item.target.name for item in rule.capture_contracts)
+        else:
+            names.update(rule.capture_contract_digests)
+    return tuple(sorted(names))
 
 
 def _claim_type_views(value: Any) -> tuple[Any, ...]:
     claim_type = value if isinstance(value, ClaimType) else None
-    current = (
-        None
-        if claim_type is None
-        else (claim_type.cardinality, claim_type.lifecycle.state == "live")
+    if claim_type is None:
+        return (None, None, None)
+    live = claim_type.lifecycle.state == "live"
+    return (
+        (claim_type.cardinality, live),
+        concrete_subject_kinds(claim_type.allowed_subject_kinds) if live else None,
+        (
+            (_contract_names(claim_type), effective_evidence_requirement(claim_type) == "captured")
+            if live
+            else None
+        ),
     )
-    return (current,)
 
 
 def definition_views(path: str, value: Any) -> tuple[Any, ...]:
@@ -303,9 +416,19 @@ def definition_histories(
 
 
 __all__ = [
+    "CAPTURE_CONTRACTS_PREFIX",
     "CLAIM_TYPES_PREFIX",
+    "CONTRACTS_VIEW",
     "CURRENT_VIEW",
+    "KINDS_VIEW",
+    "LINES_PREFIX",
+    "MANDATES_PREFIX",
+    "QUERIES_PREFIX",
+    "RECEIPTS_PREFIX",
+    "SUBJECT_KINDS_PREFIX",
     "TRACKED_PREFIXES",
+    "TRIGGERS_PREFIX",
+    "definition_live",
     "DefinitionRevision",
     "definition_histories",
     "definition_views",
