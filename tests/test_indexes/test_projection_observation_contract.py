@@ -169,4 +169,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "cruxible.kit.add",
         "hand_edit",
         "cruxible.line.evaluate",
+        # A drifted citation on an unchanged statement: re-bind beside retire.
+        "cruxible.rebind",
+        # A read the agent runs before it judges (first-run batch alternatives).
+        "cruxible.get",
     }
