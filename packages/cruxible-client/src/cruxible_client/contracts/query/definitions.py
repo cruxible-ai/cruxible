@@ -379,12 +379,85 @@ class QueryDefinition(_StrictQueryDefinitionModel):
                 raise ValueError("QueryDefinition contract pins must target Contract identities")
 
 
+#: Spec fields an author may leave out; the defaults are stated in the stored definition.
+SPEC_DEFAULTED_FIELDS = (
+    "result_shape",
+    "result_cardinality",
+    "dedupe",
+    "evaluation_policy",
+    "default_budgets",
+    "maximum_budgets",
+)
+
+_ARTIFACTS_ENTRY_TAG = "playbill-query-artifacts-entry-v2"
+
+
+def _spec_schema(schema: dict[str, Any]) -> None:
+    required = schema.get("required")
+    if isinstance(required, list):
+        schema["required"] = [name for name in required if name not in SPEC_DEFAULTED_FIELDS]
+
+
+def query_spec_defaults(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The spec with each omitted defaulted field stated.
+
+    - ``result_shape``: ``subject`` for a Subject entry, ``artifact_definition``
+      for an artifacts entry (which also takes ``artifact_format`` v2).
+    - ``result_cardinality``: ``many``.
+    - ``dedupe``: ``subject`` or ``artifact``, following the shape; a ``path`` or
+      ``relation_claim`` query states it.
+    - ``evaluation_policy``: supported, current Claims; conflicts surfaced.
+    - budgets: 100 results by default, 1000 at most, the traversal's own depth.
+
+    A minimal spec and its spelled-out equivalent are one definition, one digest.
+    """
+
+    stated = dict(data)
+    entry = stated.get("entry")
+    artifacts = isinstance(entry, QueryArtifactsEntry) or (
+        isinstance(entry, Mapping) and entry.get("tag") == _ARTIFACTS_ENTRY_TAG
+    )
+    if artifacts:
+        stated.setdefault("artifact_format", "playbill-query-definition-v2")
+    shape = stated.setdefault("result_shape", "artifact_definition" if artifacts else "subject")
+    stated.setdefault("result_cardinality", "many")
+    if shape in ("subject", "artifact_definition"):
+        stated.setdefault("dedupe", "artifact" if shape == "artifact_definition" else "subject")
+    stated.setdefault(
+        "evaluation_policy",
+        {
+            "visible_verdicts": ["supported"],
+            "visible_currency": ["current"],
+            "conflict_behavior": "surface_conflicts",
+        },
+    )
+    traversal = stated.get("traversal")
+    depth = len(traversal) if isinstance(traversal, list | tuple) else 0
+    stated.setdefault("default_budgets", {"max_results": 100, "max_traversal_depth": depth})
+    stated.setdefault("maximum_budgets", {"max_results": 1000, "max_traversal_depth": depth})
+    return stated
+
+
 class QueryDefinitionSpec(QueryDefinition):
     """Authoring grammar: omitted ClaimType pins resolve at the intent base.
 
     Explicit pins remain assertions, never silently rebound. Accepted artifacts
-    always pass the stricter QueryDefinition validation after lowering.
+    always pass the stricter QueryDefinition validation after lowering. The
+    shape, cardinality, dedupe, evaluation policy and budgets may be left out
+    (``query_spec_defaults``); the stored definition states them.
     """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        json_schema_mode_override="validation",
+        json_schema_extra=_spec_schema,
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _defaults(cls, data: Any) -> Any:
+        return query_spec_defaults(data) if isinstance(data, Mapping) else data
 
     def _validate_pins(self) -> None:
         referenced = set(self.referenced_predicates)
@@ -588,6 +661,8 @@ __all__ = [
     "QueryDefinitionLawResult",
     "QueryDefinition",
     "QueryDefinitionSpec",
+    "SPEC_DEFAULTED_FIELDS",
+    "query_spec_defaults",
     "QueryEvaluationPolicy",
     "QueryResultCardinality",
     "QueryResultShape",

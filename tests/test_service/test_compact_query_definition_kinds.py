@@ -380,3 +380,32 @@ def test_claim_types_filter_on_the_new_columns(instance: Any) -> None:
     with pytest.raises(ReadRefusalError) as wrong:
         predicates({"field": "captured_required", "in": ["true"]})
     assert wrong.value.error_code == "cruxible.query.operator_not_applicable"
+
+
+def test_a_selected_definition_row_keeps_its_key_and_takes_the_where_names(
+    instance: Any,
+) -> None:
+    from cruxible_client.authoring.compact_query import render_query_table
+
+    selected = _query(
+        instance,
+        kind="ClaimType",
+        where=[{"field": "name", "eq": f"{KIND}.priority"}],
+        select=["name", "roles"],
+        order_by=["name"],
+    )
+    # `name` filters ClaimTypes, so it selects and orders their predicate column,
+    # and the predicate leads even when select leaves it out.
+    assert [column.name for column in selected.columns] == ["predicate", "roles"]
+    assert [row["predicate"] for row in selected.rows] == [f"{KIND}.priority"]
+    unnamed = _query(instance, kind="ClaimType", select=["roles"])
+    assert [column.name for column in unnamed.columns] == ["predicate", "roles"]
+    contracts = _query(instance, kind="CaptureContract", select=["grade"])
+    assert [column.name for column in contracts.columns] == ["name", "grade"]
+    # A table names reserved contracts by their public names; typed rows keep them.
+    stored = REPORTS.identity.name
+    assert stored.startswith("playbill.foreign-source.")
+    assert stored in {row["name"] for row in contracts.rows}
+    table = render_query_table(contracts)
+    assert "cruxible.foreign-source.repo.reports" in table
+    assert stored not in table

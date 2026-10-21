@@ -827,8 +827,11 @@ def _columns(kind: ListedKind, request: QueryRequest) -> tuple[QueryColumn, ...]
                 repair=f"select from {', '.join(names)}",
                 field_path=f"select[{index}]",
             )
-        chosen.append(match)
-    return tuple(chosen)
+        if match not in chosen:
+            chosen.append(match)
+    # The key column always leads, so a selected row still says what it is.
+    key = next((item.column for item in fields if item.column.name == _SPECS[kind].key), None)
+    return tuple(chosen) if key is None or key in chosen else (key, *chosen)
 
 
 def _order_names(kind: ListedKind, order_by: Sequence[str]) -> list[tuple[str, bool]]:

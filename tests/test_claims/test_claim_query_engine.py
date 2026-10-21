@@ -1267,3 +1267,65 @@ def test_the_state_tap_value_is_identical_whether_or_not_rows_were_hidden() -> N
 
     assert state_tap_value(hidden) == state_tap_value(without)
     assert "verdict_visibility" not in state_tap_value(hidden)
+
+
+def _many_status_facts() -> ClaimQueryFactsV1:
+    return facts(
+        tuple(
+            item.model_copy(update={"cardinality": "many"})
+            for item in (
+                status_claim(1, "wi-1", "ready"),
+                status_claim(2, "wi-1", "blocked"),
+                status_claim(3, "wi-2", "done"),
+            )
+        )
+    )
+
+
+def _status_filter(operator: str, value: str) -> QueryComparisonFilter:
+    return QueryComparisonFilter(
+        left=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
+        operator=operator,  # type: ignore[arg-type]
+        right=QueryLiteralRef(value=value),
+        value_type="string",
+    )
+
+
+@pytest.mark.parametrize(
+    ("where", "expected"),
+    [
+        # Any value satisfies a comparison: a Subject holding two values matches
+        # either, as the compact --where reads the same field.
+        (_status_filter("eq", "ready"), ["wi-1"]),
+        (_status_filter("eq", "blocked"), ["wi-1"]),
+        # ne holds when no value equals the operand; an absent field never matches.
+        (_status_filter("ne", "ready"), ["wi-2"]),
+        (
+            QueryMembershipFilter(
+                left=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
+                values=(QueryLiteralRef(value="blocked"),),
+                value_type="string",
+            ),
+            ["wi-1"],
+        ),
+        # not in holds when no value is in the set; an absent field is not in it.
+        (
+            QueryMembershipFilter(
+                left=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
+                values=(QueryLiteralRef(value="ready"),),
+                value_type="string",
+                negated=True,
+            ),
+            ["wi-2", "wi-3"],
+        ),
+    ],
+)
+def test_a_filter_on_a_many_valued_field_matches_when_any_value_does(
+    where: object, expected: list[str]
+) -> None:
+    query = typed_item_query(STATUS_PREDICATE, name="project.many_status", where=where)
+
+    result = run(query, _many_status_facts())
+
+    assert result.verdict == "completed"
+    assert [row.fields[0].value for row in result.rows] == expected

@@ -1553,6 +1553,11 @@ _ARTIFACT_FIELDS: dict[str, tuple[str, ...]] = {
     ),
     "Procedure": ("namespace", "name"),
 }
+#: A definition filter's name where its column is named otherwise, so ``select``
+#: and ``order_by`` take the names ``where`` does.
+_ARTIFACT_FIELD_COLUMNS: dict[str, dict[str, str]] = {
+    "ClaimType": {"name": "predicate", "subject_kind": "subject_kinds"},
+}
 #: Definition filters whose values are true or false.
 _ARTIFACT_BOOLEAN_FIELDS = frozenset({"captured_required"})
 _ROLES = ("derivation", "environment_binding", "normative", "observation")
@@ -1791,8 +1796,10 @@ def _shape_artifact_rows(
             kept_ids.append(identity)
     columns = _ARTIFACT_COLUMNS[kind]
     names = [column.name for column in columns]
+    aliases = _ARTIFACT_FIELD_COLUMNS.get(kind, {})
     for index, raw in enumerate(request.order_by):
-        name = raw.removeprefix("-").removeprefix("+")
+        bare = raw.removeprefix("-").removeprefix("+")
+        name = aliases.get(bare, bare)
         if name not in names:
             raise query_refusal(
                 "cruxible.query.unknown_field",
@@ -1803,6 +1810,7 @@ def _shape_artifact_rows(
             )
     for raw in reversed(request.order_by):
         name = raw.removeprefix("-").removeprefix("+")
+        name = aliases.get(name, name)
         order = sorted(
             range(len(kept_rows)),
             key=lambda position: str(kept_rows[position].get(name, "")),
@@ -1814,6 +1822,7 @@ def _shape_artifact_rows(
     if request.select:
         chosen = []
         for index, name in enumerate(request.select):
+            name = aliases.get(name, name)
             match = next((column for column in columns if column.name == name), None)
             if match is None:
                 raise query_refusal(
@@ -1823,9 +1832,15 @@ def _shape_artifact_rows(
                     repair=f"select from {', '.join(names)}",
                     field_path=f"select[{index}]",
                 )
-            chosen.append(match)
+            if match not in chosen:
+                chosen.append(match)
     key = "predicate" if kind == "ClaimType" else "name"
-    selected = {column.name for column in chosen} | {key}
+    # The key column always leads, so a selected row still says what it is.
+    chosen = [
+        *(column for column in columns if column.name == key and column not in chosen),
+        *chosen,
+    ]
+    selected = {column.name for column in chosen}
     kept_rows = [
         {name: value for name, value in row.items() if name in selected} for row in kept_rows
     ]

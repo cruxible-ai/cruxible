@@ -1100,3 +1100,34 @@ def test_discriminator_refusal_names_sequence_and_optional_union_positions() -> 
             }
         )
     assert (raised.value.model, raised.value.field_path) == ("QueryTraversalStep", "where")
+
+
+def test_a_minimal_query_spec_takes_the_defaults_a_spelled_out_one_states() -> None:
+    from cruxible_client.authoring.examples import (
+        query_claims_by_type_example,
+        query_ontology_example,
+    )
+    from cruxible_client.contracts.query.definitions import (
+        SPEC_DEFAULTED_FIELDS,
+        QueryDefinitionSpec,
+    )
+
+    for full in (
+        query_claims_by_type_example().query_definition,
+        query_ontology_example().query_definition,
+    ):
+        dumped = full.model_dump(mode="json")
+        minimal = {
+            key: value
+            for key, value in dumped.items()
+            if key not in (*SPEC_DEFAULTED_FIELDS, "artifact_format")
+        }
+        assert QueryDefinitionSpec.model_validate(minimal) == full
+    # The served schema says so: only what no default fills is required.
+    assert QueryDefinitionSpec.model_json_schema()["required"] == [
+        "identity",
+        "entry",
+        "result_binding",
+    ]
+    # An accepted definition stays strict: every field is stated.
+    assert set(SPEC_DEFAULTED_FIELDS) <= set(QueryDefinition.model_json_schema()["required"])
