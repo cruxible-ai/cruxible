@@ -3857,7 +3857,14 @@ audit path.
 | `current/<kind>/<id>.yaml` | One file per Subject, values first (below). |
 | `current/<kind>/<id>.<field>.txt` | A text value too long to inline (over 2 KiB or 40 lines), whole; never truncated. |
 | `current/<kind>/INDEX` | One tab-separated line per Subject of the kind: ref, a title-like value, `field=value` for each state-like field. |
-| `changes/<seq>.json` | The accepted change that introduced a current Claim revision: time, actor, the rationale of the admission that accepted it (the one `get` shows), and the refs it changed. |
+| `ontology/INDEX` | One tab-separated line per kind a live SubjectKind or ClaimType names: kind, identity rule, field count, owner, the description's first sentence. |
+| `ontology/kinds/<kind>.md` | One card per kind (below): identity, then a section per live field, and the fields of other kinds pointing here. |
+| `ontology/claim-types/INDEX` | One line per live ClaimType: predicate, subject kinds, value type, cardinality, default role, evidence (contracts and requirement), `stale_after`, contention, owner. |
+| `ontology/contracts/INDEX`, `ontology/contracts/<id>.md` | One line per live CaptureContract (grade, source kinds, logical sources, evidence kinds, how many live ClaimTypes admit and require it, owner), and a card naming those ClaimTypes. |
+| `ontology/queries/INDEX` | One line per live QueryDefinition: name, parameters (`name:type`, `?` optional), result shape and cardinality, description, owner. |
+| `ontology/lines/INDEX` | One line per live Line: Procedure, `max_authority`, the trigger input and event it accepts, the live Triggers aimed at it, and the live Mandates on its Procedure (grant, validity window, `suspended`). Enablement is operational: `orient --section lines`. |
+| `ontology/kits/INDEX` | One line per installed kit, from its receipt: version, owned prefixes, the generation it was installed and last changed, live owned definitions, kept divergences, definitions edited locally (`(retired)`, `(missing)` marked), owned definitions retired, bundled providers. Whether a newer release exists is not accepted state: `cruxible kit status`. |
+| `changes/<seq>.json` | The accepted change that introduced a current Claim revision or a current live definition revision: time, actor, the rationale of the admission that accepted it (the one `get` shows), and the refs it changed. |
 | `sources/INDEX` | Written by the client from `sources/LEDGER` and its own file catalog, outside the daemon manifest: one tab-separated line per evidence source (self-source Captures excluded; a Document is a source, cited or not, on the line of its name): source, CaptureContract(s), where it lives (the workspace path the catalog binds it to, `(missing)` when that file is gone; otherwise the ledger locator), citing-Claim count, the generation it last changed. |
 | `sources/LEDGER` | The same lines from accepted state alone, which holds no workspace paths: the locator is the Document of the source's name (`Document:<id>`); otherwise every distinct `coordinate/selector` type pair its Captures were taken at, sorted and comma-separated (a foreign source has none); or `-`. |
 | `projections/INDEX` | Written by the client from its own workspace bindings, outside the daemon manifest: one line per workspace file bound to accepted state (Document body, evidence source, rendered block), its role, bound ref and the generation that ref last changed. A bound file that does not exist is a `workspace_binding_missing` row in `next`, not a line here. |
@@ -3901,12 +3908,40 @@ incoming:
   publishing a different floor. Bytes that are not UTF-8 text show as
   `{exact_content: binary, bytes: N}`.
 
+An `ontology/` file shows live definitions only, with no Subject or Claim
+counts (they move with every write; `orient` has them). Each file's first line
+names it, its owner and `changed gen <n>`. `owner=` is `kit=<id>` (an
+installed kit's receipt owns the definition), `kit=<id> edited` (and the held
+definition's content differs from what the kit installed), or `local` (no
+receipt owns it; a kit's carried definitions are pinned, not owned). A kind
+card:
+
+~~~
+# vulnerability  ontology  owner=kit=security  changed gen 812
+identity: keys: security.vulnerability.cve_id (unique)  # SubjectKind:vulnerability
+description: A publicly disclosed software weakness tracked by CVE id.
+
+## kev_listed  security.vulnerability.kev_listed  owner=kit=security edited
+kev_listed: boolean  one  roles decision|observation (default observation)  evidence cisa.kev (captured)  contention only_contender/unresolved
+settled by: mandate kev-auto  Procedure:kev-sync  settle create|revise  condition query:kev-confirmed  valid 2026-10-01T00:00:00Z..2027-01-01T00:00:00Z
+Listed in CISA's Known Exploited Vulnerabilities catalog.
+
+## pointed at by
+affected_by <- package  security.package.affected_by  many
+~~~
+
+The signature line starts with the field's short name, so a grep hit on it
+describes itself. `settled by:` lists each live settle Mandate whose scope
+pins the ClaimType, or `review`.
+
 ### Freshness and deltas
 
 Every file is stamped with `changed_at`, the latest accepted generation that
 touched any of its inputs (for a `current/` file: the Subject, its Claims of
-any lifecycle, the Claims pointing at it, and the ClaimTypes naming its
-fields). A file's bytes differ between two generations exactly when its stamp
+any lifecycle, the Claims pointing at it, and what the ClaimTypes naming its
+fields show of them, their cardinality and liveness; for an `ontology/` file:
+every definition that ever showed on it, and the kit receipts and Mandates
+annotating those). A file's bytes differ between two generations exactly when its stamp
 moved, so a floor at generation B lacks exactly the files stamped after B plus
 the paths dropped since. `orient` reports `floor: {at, generations_behind}`
 from the manifest alone.

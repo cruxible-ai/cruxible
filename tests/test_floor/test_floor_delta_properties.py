@@ -150,6 +150,170 @@ def _shadow_and_cardinality(instance: PlaybillInstance) -> None:
     assert receipt.status == "accepted"
 
 
+def _mandate(
+    name: str, procedure: Any, fields: tuple[str, ...], *, previous: Any = None, **update: Any
+) -> Any:
+    """A settle Mandate on ``procedure`` scoped to the seeded ClaimTypes ``fields``."""
+
+    from cruxible_client.contracts.artifacts import ArtifactPin
+    from cruxible_client.contracts.procedure_mandates import (
+        MandateClaimScope,
+        MandateCondition,
+        ProcedureMandate,
+        procedure_mandate_digest,
+    )
+    from cruxible_client.contracts.query.definitions import query_definition_digest
+    from tests.test_scale import _worlds
+
+    condition = _worlds._condition()
+    mandate = ProcedureMandate(
+        identity=ArtifactIdentity(kind="ProcedureMandate", name=name),
+        procedure=_worlds._pin(procedure),
+        grants="settle",
+        resource_ceiling=procedure.procedure.definition.hard_caps,
+        namespace=("claims",),
+        valid_from=_worlds._FAR_PAST,
+        expires_at=_worlds._FAR_FUTURE,
+        scope=tuple(
+            sorted(
+                (
+                    MandateClaimScope(
+                        claim_type=_worlds._claim_type_pin(field), change_kinds=("create",)
+                    )
+                    for field in fields
+                ),
+                key=lambda item: item.claim_type.target.qualified.encode(),
+            )
+        ),
+        condition=MandateCondition(
+            query=ArtifactPin(
+                role="condition-query",
+                target=condition.identity,
+                artifact_digest=query_definition_digest(condition).tagged,
+            ),
+            binding_parameter="item_id",
+            required_fields=("id",),
+            fallback="propose",
+        ),
+        **(
+            {}
+            if previous is None
+            else {
+                "lifecycle": ArtifactLifecycle(
+                    predecessor_digest=procedure_mandate_digest(previous).tagged
+                )
+            }
+        ),
+        **update,
+    )
+    return mandate
+
+
+def _ontology_history(instance: PlaybillInstance) -> None:
+    """Definitions moving under the ontology files: kinds, kits, a contract, a Mandate, a Line.
+
+    A SubjectKind declared then revised; a kit installed over two fields, one
+    edited locally then reverted, then upgraded to own one field and finally
+    removed; a ClaimType added, moved to another kind and retired; a new
+    contract; a Line with a Trigger aimed at it, and a settle Mandate on its
+    Procedure whose scope narrows from two fields to one, then is suspended.
+    """
+
+    from cruxible_client.contracts.captures import (
+        capture_contract_path,
+        render_capture_contract,
+    )
+    from cruxible_client.contracts.procedure_mandates import (
+        procedure_mandate_path,
+        render_procedure_mandate,
+    )
+    from cruxible_client.contracts.procedures.artifacts import render_procedure
+    from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
+    from cruxible_client.contracts.query.definitions import (
+        query_definition_path,
+        render_query_definition,
+    )
+    from cruxible_client.contracts.triggers import GenerationAcceptedSchedule
+    from tests.core_support._write_support import foreign_source_capture_contract
+    from tests.support.lines import line_trigger, trigger_members
+    from tests.test_floor.test_floor_ontology import (
+        NOTE_KIND,
+        declare_note_kind,
+        install_receipt,
+        remove_receipt,
+        revise_claim_type,
+    )
+    from tests.test_scale import _worlds
+
+    declare_note_kind(instance, "A note.")
+    install_receipt(instance, version="1.0.0", fields=("priority", "status"), revision=1)
+    revise_claim_type(instance, "priority", literal_schema={"type": "string", "minLength": 1})
+    tag = _claim_type("tag", literal_schema={"type": "string"}, captured_only=True)
+    accept_edit(instance, "onto-tag", {claim_type_path(tag.predicate): render_claim_type(tag)})
+    moved = tag.model_copy(
+        update={
+            "allowed_subject_kinds": (NOTE_KIND,),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(tag).tagged),
+        }
+    )
+    accept_edit(
+        instance, "onto-tag-moved", {claim_type_path(tag.predicate): render_claim_type(moved)}
+    )
+    notes = foreign_source_capture_contract("repo.notes")
+    accept_edit(
+        instance,
+        "onto-contract",
+        {capture_contract_path(notes.identity.name): render_capture_contract(notes)},
+    )
+    revise_claim_type(instance, "priority", literal_schema={"type": "string"})
+    procedure = _worlds._procedure("onto-tick", terminal=None, capability=3)
+    line = _worlds._line("onto-tick-line", procedure, authority="observe")
+    condition = _worlds._condition()
+    first = _mandate("onto-mandate", procedure, ("labels", "status"))
+    accept_edit(
+        instance,
+        "onto-line",
+        {
+            procedure.path: render_procedure(procedure.procedure),
+            line_spec_path(line.identity.name): render_line_spec(line),
+            query_definition_path(condition.identity.name): render_query_definition(condition),
+            procedure_mandate_path(first.identity.name): render_procedure_mandate(first),
+            **trigger_members(
+                line_trigger(
+                    "onto-on-generation",
+                    line=line.identity.name,
+                    schedule=GenerationAcceptedSchedule(),
+                )
+            ),
+        },
+    )
+    install_receipt(instance, version="1.1.0", fields=("status",), revision=2)
+    narrowed = _mandate("onto-mandate", procedure, ("status",), previous=first)
+    accept_edit(
+        instance,
+        "onto-mandate-narrowed",
+        {procedure_mandate_path(narrowed.identity.name): render_procedure_mandate(narrowed)},
+    )
+    retired = moved.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=claim_type_digest(moved).tagged
+            )
+        }
+    )
+    accept_edit(
+        instance, "onto-tag-retired", {claim_type_path(tag.predicate): render_claim_type(retired)}
+    )
+    suspended = _mandate("onto-mandate", procedure, ("status",), previous=narrowed, suspended=True)
+    accept_edit(
+        instance,
+        "onto-mandate-suspended",
+        {procedure_mandate_path(suspended.identity.name): render_procedure_mandate(suspended)},
+    )
+    declare_note_kind(instance, "A note, revised.")
+    remove_receipt(instance, revision=3)
+
+
 # Claim ID -> the external coordinate/selector types its Capture is described at.
 _EXTERNAL_LOCATORS: dict[str, str] = {}
 
@@ -228,6 +392,7 @@ def _build_world(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     _shadow_and_cardinality(instance)
     _write(instance, {"op": "add", "subject": WI2, "field": "title", "value": "Two, again"})
     _write(instance, {"op": "retire", "target": {"subject": WI3, "field": "ruling"}})
+    _ontology_history(instance)
     _two_locators(instance, workspace)
     head = len(instance.accepted_history()) - 1
     # Every generation's floor as a client installed it before the notes moved.
@@ -315,8 +480,14 @@ def test_every_delta_rebuilds_the_full_floor_byte_for_byte(
     assert b"Later review text." not in shown
     assert (
         b"http-response-v1/whole-response-v1,postgres-lsn-v1/relation-primary-key-v1"
-        in fulls[head]["sources/LEDGER"]
+        in fulls[max(fulls)]["sources/LEDGER"]
     )
+    # The ontology moved too: a kit came and went, a Mandate settled a field.
+    assert b"owner=kit=demo edited" in shown and b"owner=kit=demo\n" in shown
+    assert b"settled by: mandate onto-mandate" in shown and b"  suspended\n" in shown
+    assert b"onto-on-generation(generation_accepted)" in shown
+    assert any(path == "ontology/kinds/project.note.md" for path in paths)
+    assert "ontology/contracts/playbill.foreign-source.repo.notes.md" in paths
     for base, target in _pairs(head):
         directory = tmp_path / f"apply-{base}-{target}"
         apply_floor_delta(directory, _delta(instance, base, None, None))

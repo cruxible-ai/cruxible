@@ -4,9 +4,12 @@ Every floor file is stamped with ``changed_at``, the latest accepted generation
 that touched any of its inputs. For a Subject's ``current/`` file those are
 the Subject itself, its Claims of any lifecycle, every Claim that ever pointed
 at it (so a moved edge restamps its old target and its new one), and the
-ClaimTypes (and the short-name shadows) of the fields it shows. The stamp is read from the
-history index, so a full render and an incremental one give the same bytes,
-and a file's bytes differ between two generations exactly when its stamp does.
+ClaimTypes (and the short-name shadows) of the fields it shows, for what a
+Subject file shows of them: a ClaimType's cardinality and liveness, read as
+the sequence that last changed them (``floor_definitions``), so a description
+edit restamps no Subject. The stamp is read from the history index, so a
+full render and an incremental one give the same bytes, and a file's bytes
+differ between two generations exactly when its stamp does.
 
 The index is rebuildable and instance-internal. It holds the parsed inputs
 (Subjects, Claims, ClaimTypes, the latest sequence of every ledger path), the
@@ -35,6 +38,7 @@ hashed again: every file's digest is taken once, when it is rendered.
 from __future__ import annotations
 
 import threading
+from collections import OrderedDict
 from collections.abc import Collection, Iterable, Iterator, Mapping, Set
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -78,6 +82,26 @@ from cruxible_core.service.floor.floor_current import (
     render_subject,
     stamped,
     subject_ref,
+)
+from cruxible_core.service.floor.floor_definitions import (
+    CURRENT_VIEW,
+    DefinitionRevision,
+    definition_histories,
+    definition_live,
+    is_tracked,
+    view_changed_at,
+)
+from cruxible_core.service.floor.floor_ontology import (
+    ONTOLOGY_PREFIX,
+    ContractNamer,
+    OntologyIndex,
+    OntologyState,
+    all_files,
+    build_ontology_index,
+    ontology_reach,
+    patch_ontology_index,
+    reached_files,
+    render_ontology,
 )
 from cruxible_core.service.floor.floor_sources import (
     DOCUMENTS_PREFIX,
@@ -159,6 +183,11 @@ class FloorInputs:
     contracts_by_digest: PMap[str, CaptureContract] = field(default_factory=PMap)
     contract_digests: PMap[str, str] = field(default_factory=PMap)
     source_latest: PCounts = EMPTY_PCOUNTS
+    # Definition path -> its revisions to this generation (``floor_definitions``):
+    # what each revision showed, and when each view of it last changed.
+    definitions: PMap[str, DefinitionRevision] = field(default_factory=PMap)
+    # The reverse indexes the ontology files are traced through (``floor_ontology``).
+    ontology: OntologyIndex = field(default_factory=OntologyIndex)
 
     @property
     def sources_changed(self) -> int:
@@ -201,8 +230,8 @@ class FloorRender:
     rationales: PMap[int, tuple[str, ...]] = field(default_factory=PMap)
     # Each file's (content digest, byte length), taken once when it was rendered.
     digests: PMap[str, tuple[str, int]] = field(default_factory=PMap)
-    # Kind -> its Subjects; live Claim sequence -> how many live Claims it
-    # stamps (the changes the floor shows).
+    # Kind -> its Subjects; live sequence -> how many live Claims and live
+    # definitions it stamps (the changes the floor shows).
     kinds: PMap[str, PSet[str]] = field(default_factory=PMap)
     live_sequences: PMap[int, int] = field(default_factory=PMap)
     source_state: SourcesLedgerState | None = None
@@ -560,6 +589,52 @@ def _count(index: Any, key: Any, delta: int) -> None:
         index.discard(key)
 
 
+# The definition kinds whose accepted bytes a cold build reads (receipts are Documents).
+_DEFINITION_KINDS = (
+    "claim-type",
+    "capture-contract",
+    "subject-kind",
+    "procedure-mandate",
+    "line",
+    "trigger",
+    "query-definition",
+)
+# CaptureContract digest -> the identity it is a version of: fixed once accepted.
+_CONTRACT_NAMES: OrderedDict[str, str] = OrderedDict()
+_CONTRACT_NAMES_CAPACITY = 4096
+
+
+def _contract_namer(
+    instance: PlaybillInstance,
+    coordinate: AcceptedCoordinate,
+    by_digest: Mapping[str, CaptureContract],
+) -> ContractNamer:
+    """Resolve a contract version digest to its identity: held versions first, then history."""
+
+    def name(digest: str) -> str | None:
+        held = by_digest.get(digest)
+        if held is not None:
+            return held.identity.name
+        known = memo_get(_CONTRACT_NAMES, digest)
+        if known is not None:
+            return known
+        try:
+            found = instance.accepted_capture_contract_version(coordinate, digest)
+        except CruxibleError:
+            return None
+        if found is None:
+            return None
+        memo_put(
+            _CONTRACT_NAMES,
+            digest,
+            found.contract.identity.name,
+            capacity=_CONTRACT_NAMES_CAPACITY,
+        )
+        return found.contract.identity.name
+
+    return name
+
+
 def build_floor_inputs(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -572,12 +647,15 @@ def build_floor_inputs(
     """
 
     with instance.bind_accepted_projection(coordinate) as projection:
-        paths = tuple(
-            row.path
-            for kind in ("subject", "claim", "claim-type", "capture-contract")
-            for row in projection.typed.envelopes(kind=kind)
-        )
         document_paths = [row.path for row in projection.typed.envelopes(kind="document")]
+        paths = (
+            *(
+                row.path
+                for kind in ("subject", "claim", *_DEFINITION_KINDS)
+                for row in projection.typed.envelopes(kind=kind)
+            ),
+            *(path for path in document_paths if is_tracked(path)),
+        )
         projection.typed.prefetch_members(paths)
         raw = {path: projection.typed.member_bytes(path) for path in paths}
     held: dict[str, dict[str, Any]] = {
@@ -622,9 +700,26 @@ def build_floor_inputs(
         path: capture_contract_digest(contract).tagged
         for path, contract in held["contract"].items()
     }
+    contracts_by_digest = PMap(
+        (contract_digests[path], contract) for path, contract in held["contract"].items()
+    )
+    served = AcceptedCoordinate.from_internal(coordinate)
+    tracked = sorted(
+        {path for path in (*raw, *latest) if is_tracked(path)}, key=lambda item: item.encode()
+    )
+    held_blobs = {path: blob for path in tracked if (blob := raw.get(path)) is not None}
+    histories = definition_histories(
+        instance,
+        history,
+        tracked,
+        at_most=location.sequence,
+        target_blobs=held_blobs,
+        reach=ontology_reach(_contract_namer(instance, served, contracts_by_digest)),
+    )
+    definitions = {path: chain for path, chain in histories.items() if chain is not None}
     return FloorInputs(
         generation=location.sequence,
-        coordinate=AcceptedCoordinate.from_internal(coordinate),
+        coordinate=served,
         latest=PMap(latest),
         subjects=PMap(held["subject"]),
         claims=PMap(claims),
@@ -642,11 +737,11 @@ def build_floor_inputs(
         live_predicates=PSet(
             predicate for predicate, item in types.items() if item.lifecycle.state == "live"
         ),
-        contracts_by_digest=PMap(
-            (contract_digests[path], contract) for path, contract in held["contract"].items()
-        ),
+        contracts_by_digest=contracts_by_digest,
         contract_digests=PMap(contract_digests),
         source_latest=source_latest,
+        definitions=PMap(definitions),
+        ontology=build_ontology_index(definitions),
     )
 
 
@@ -684,7 +779,7 @@ def _patch_floor_inputs(
         if now is not None:
             source_latest = source_latest.add(now)
     latest_now = latest.persistent()
-    wanted = [path for path in changed if path.startswith(_INPUT_PREFIXES)]
+    wanted = [path for path in changed if path.startswith(_INPUT_PREFIXES) or is_tracked(path)]
     blobs = instance.blobs_at(target.git_oid, wanted) if wanted else {}
     subjects = inputs.subjects.evolver()
     claims = inputs.claims.evolver()
@@ -807,6 +902,27 @@ def _patch_floor_inputs(
             pointer_moves.move(item, now, present=True)
     pointed_latest = inputs.pointed_latest.evolver()
     pointer_moves.apply(pointed_latest)
+    coordinate = instance.coordinate_for_oid(target.git_oid)
+    served = AcceptedCoordinate.from_internal(coordinate)
+    contracts_now = contracts_by_digest.persistent()
+    tracked = [path for path in changed if is_tracked(path)]
+    definitions = inputs.definitions.evolver()
+    moves = []
+    for path, chain in definition_histories(
+        instance,
+        history,
+        tracked,
+        at_most=target.sequence,
+        target_blobs=blobs,
+        reach=ontology_reach(_contract_namer(instance, served, contracts_now)),
+        known=inputs.definitions,
+        since=inputs.generation,
+    ).items():
+        moves.append((path, inputs.definitions.get(path), chain))
+        if chain is None:
+            definitions.discard(path)
+        else:
+            definitions[path] = chain
     types_now = types.persistent()
     live = inputs.live_predicates
     if live_added or live_removed:
@@ -821,11 +937,10 @@ def _patch_floor_inputs(
                 or types_now[predicate].lifecycle.state != "live"
             ],
         )
-    coordinate = instance.coordinate_for_oid(target.git_oid)
     return (
         FloorInputs(
             generation=target.sequence,
-            coordinate=AcceptedCoordinate.from_internal(coordinate),
+            coordinate=served,
             latest=latest_now,
             subjects=subjects.persistent(),
             claims=claims_now,
@@ -841,9 +956,11 @@ def _patch_floor_inputs(
             pointed_latest=pointed_latest.persistent(),
             types=types_now,
             live_predicates=live,
-            contracts_by_digest=contracts_by_digest.persistent(),
+            contracts_by_digest=contracts_now,
             contract_digests=contract_digests.persistent(),
             source_latest=source_latest,
+            definitions=definitions.persistent(),
+            ontology=patch_ontology_index(inputs.ontology, moves) if moves else inputs.ontology,
         ),
         touched,
     )
@@ -879,21 +996,30 @@ class _Stamps:
     def _latest(self, path: str | None) -> int:
         return 0 if path is None else self._inputs.latest.get(path, 0)
 
-    def name(self, predicate: str, kind: str) -> int:
-        """When the field ``predicate`` of ``kind`` last changed its type or short name.
+    def _shown(self, type_path: str | None) -> int:
+        """When a ClaimType last changed what a Subject file shows of it."""
 
-        The short name drops the ``kind.`` prefix unless the short string is
-        itself an accepted predicate, so it moves with that one ClaimType too.
+        if type_path is None:
+            return 0
+        return view_changed_at(self._inputs.definitions.get(type_path), CURRENT_VIEW)
+
+    def name(self, predicate: str, kind: str) -> int:
+        """When the field ``predicate`` of ``kind`` last changed its shown type or short name.
+
+        A field reads its ClaimType's cardinality and its short name, which
+        drops the ``kind.`` prefix unless the short string is itself a live
+        predicate, so it moves with that one ClaimType's liveness too. A
+        revision that changes neither (a description edit) moves no field.
         """
 
         key = (predicate, kind)
         known = self._names.get(key)
         if known is not None:
             return known
-        best = self._latest(_type_path(predicate))
+        best = self._shown(_type_path(predicate))
         prefix = f"{kind}."
         if predicate.startswith(prefix):
-            best = max(best, self._latest(_type_path(predicate[len(prefix) :])))
+            best = max(best, self._shown(_type_path(predicate[len(prefix) :])))
         self._names[key] = best
         return best
 
@@ -945,7 +1071,8 @@ def _affected_subjects(old: FloorInputs, new: FloorInputs, changed: Collection[s
     outside this set reads none of the changed paths, so its stamp and bytes
     hold. A changed Subject reaches the targets of its live edges only (a
     retired Claim shows no edge), and a changed ClaimType the live Claims of
-    its predicate and shadow only: the work is what the change can render.
+    its predicate and shadow only, and only when it changed what they show
+    (its cardinality or liveness): the work is what the change can render.
     """
 
     affected: set[str] = set()
@@ -969,6 +1096,12 @@ def _affected_subjects(old: FloorInputs, new: FloorInputs, changed: Collection[s
                     # Every Subject it ever pointed at stamps with it: affected output.
                     affected.update(revisions.targets)
         elif path.startswith(CLAIM_TYPES_PREFIX):
+            if view_changed_at(old.definitions.get(path), CURRENT_VIEW) == view_changed_at(
+                new.definitions.get(path), CURRENT_VIEW
+            ):
+                # The revisions between show a Subject nothing new (a description
+                # edit): no field's stamp or bytes read them.
+                continue
             type_predicates.add(_predicate_of_type_path(path))
             for inputs in sides:
                 claim_type = inputs.claim_types.get(path)
@@ -1012,6 +1145,27 @@ def _all_live_sequences(inputs: FloorInputs) -> dict[int, int]:
             if sequence is not None:
                 counts[sequence] = counts.get(sequence, 0) + 1
     return counts
+
+
+def _definition_sequence(inputs: FloorInputs, path: str) -> int | None:
+    """The sequence a live definition's current revision stamps the changes with.
+
+    Genesis carries no change record, so a definition held since genesis
+    introduces no change file.
+    """
+
+    chain = inputs.definitions.get(path)
+    if chain is None or chain.sequence == 0 or not definition_live(chain.value):
+        return None
+    sequence: int = chain.sequence
+    return sequence
+
+
+def _all_definition_sequences(inputs: FloorInputs, counts: dict[int, int]) -> None:
+    for path in inputs.definitions:
+        sequence = _definition_sequence(inputs, path)
+        if sequence is not None:
+            counts[sequence] = counts.get(sequence, 0) + 1
 
 
 # -- rendering ------------------------------------------------------------------
@@ -1188,10 +1342,46 @@ def render_floor(
         )
         indexes[kind] = (index_changed, content)
         files.fresh(index_path(kind), content, index_changed)
-    # The changes that introduced each current Claim revision of a Subject.
+    # The ontology files: only those a changed definition (or its annotators) reached.
+    ontology = OntologyState(
+        inputs.definitions,
+        inputs.ontology,
+        _contract_namer(instance, inputs.coordinate, inputs.contracts_by_digest),
+    )
+    if changed is None or old is None:
+        ontology_files: Collection[str] = {
+            *all_files(ontology),
+            *(
+                path
+                for path in (() if previous is None else previous.files)
+                if path.startswith(ONTOLOGY_PREFIX)
+            ),
+        }
+    else:
+        touched_definitions = [path for path in changed if is_tracked(path)]
+        ontology_files = (
+            reached_files(
+                OntologyState(
+                    old.definitions,
+                    old.ontology,
+                    _contract_namer(instance, old.coordinate, old.contracts_by_digest),
+                ),
+                ontology,
+                touched_definitions,
+            )
+            if touched_definitions
+            else ()
+        )
+    if ontology_files:
+        render_ontology(
+            ontology, files.files.get, ontology_files, fresh=files.fresh, drop=files.drop
+        )
+    # The changes that introduced each current Claim revision of a Subject,
+    # and each current live definition revision (the ontology's ``changed gen``).
     held_before: Mapping[int, int] = PMap() if previous is None else previous.live_sequences
     if changed is None or old is None:
         counts = _all_live_sequences(inputs)
+        _all_definition_sequences(inputs, counts)
         live_sequences = PMap(counts)
         moved_sequences: set[int] = {*counts, *held_before}
     else:
@@ -1203,9 +1393,16 @@ def render_floor(
                 # Only a live Claim has a live sequence: a retired one is not reached.
                 reached.update(old.live_by_subject.get(path, ()))
                 reached.update(inputs.live_by_subject.get(path, ()))
-        for claim_file in reached:
-            before = _live_sequence(old, claim_file)
-            after = _live_sequence(inputs, claim_file)
+        moved = [
+            (_live_sequence(old, claim_file), _live_sequence(inputs, claim_file))
+            for claim_file in reached
+        ]
+        moved.extend(
+            (_definition_sequence(old, path), _definition_sequence(inputs, path))
+            for path in changed
+            if is_tracked(path)
+        )
+        for before, after in moved:
             if before == after:
                 continue
             if before is not None:

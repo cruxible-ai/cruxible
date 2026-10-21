@@ -61,6 +61,63 @@ def accept_edit(instance: PlaybillInstance, name: str, edits: dict[str, bytes]) 
     assert receipt.status == "accepted"
 
 
+def migrate_claim_type(instance: PlaybillInstance, predicate: str, **update: Any) -> None:
+    """Accept a successor of one ClaimType, carrying every Claim of it to the successor."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
+    from cruxible_core.claims.claim_type_migrations import (
+        ClaimTypeDependentDispositionV1,
+        ClaimTypeMigrationRequestV1,
+        service_migrate_claim_type,
+    )
+
+    path = claim_type_path(predicate)
+    current = parse_claim_type(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
+    state = update.pop("state", "live")
+    successor = current.model_copy(
+        update={
+            **update,
+            "lifecycle": ArtifactLifecycle(
+                state=state, predecessor_digest=claim_type_digest(current).tagged
+            ),
+        }
+    )
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        claims = sorted(
+            str(row[0]).removeprefix("Claim:")
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM claims WHERE predicate=?", (predicate,)
+            )
+        )
+    if not claims:
+        accept_edit(
+            instance,
+            f"type-{predicate.replace('.', '-')}-{len(instance.accepted_history())}",
+            {path: render_claim_type(successor)},
+        )
+        return
+    migration = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV1(
+            successor=successor,
+            dependents=tuple(
+                ClaimTypeDependentDispositionV1(claim_id=claim, disposition="successor")
+                for claim in claims
+            ),
+        ),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    proposal = migration.proposal.proposal
+    assert proposal.candidate is not None, proposal.evaluation
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+
+
 LEAD = _claim_type("lead", object_kind="subject", roles=("normative",), object_kinds=(KIND,))
 
 
@@ -162,23 +219,42 @@ def test_a_new_claim_type_restamps_no_subject_that_does_not_show_it(tmp_path: An
     add_lead_field(instance)
     after = advance_floor_index(instance)
     assert after.generation == before.generation + 1
+    # The ontology files show the new ClaimType; no current/ file does.
     assert {
-        path: item for path, item in after.files.items() if not path.startswith("changes/")
-    } == {path: item for path, item in before.files.items() if not path.startswith("changes/")}
+        path: item
+        for path, item in after.files.items()
+        if not path.startswith(("changes/", "ontology/"))
+    } == {
+        path: item
+        for path, item in before.files.items()
+        if not path.startswith(("changes/", "ontology/"))
+    }
     assert _bytes(after) == _bytes(_cold(instance))
+
+
+def _shown_chain(path: str, sequence: int, cardinality: str = "one") -> Any:
+    """A one-revision ClaimType history whose shown view (cardinality, live) changed at it."""
+
+    from cruxible_core.service.floor.floor_definitions import DefinitionRevision
+
+    return DefinitionRevision(
+        sequence, None, None, None, reach=frozenset(), views=((cardinality, True),)
+    )
 
 
 def test_a_field_stamp_follows_its_claim_type_and_its_short_name_shadow() -> None:
     from types import SimpleNamespace
 
+    from cruxible_core.derived.persistent import PMap
     from cruxible_core.service.floor.floor_index import _Stamps
 
+    paths = {
+        "claim-types/project.work_item/a.json": 3,
+        "claim-types/a/b.json": 7,
+        "claim-types/project.work_item/c.json": 2,
+    }
     inputs: Any = SimpleNamespace(
-        latest={
-            "claim-types/project.work_item/a.json": 3,
-            "claim-types/a/b.json": 7,
-            "claim-types/project.work_item/c.json": 2,
-        }
+        definitions=PMap((path, _shown_chain(path, at)) for path, at in paths.items())
     )
     stamps = _Stamps(inputs, frozenset())
     # project.work_item.a.b shows as "a.b" unless the predicate a.b is live: both move it.
@@ -186,6 +262,65 @@ def test_a_field_stamp_follows_its_claim_type_and_its_short_name_shadow() -> Non
     assert stamps.name("project.work_item.c", "project.work_item") == 2
     # A field of another kind keeps its full name and only its own type moves it.
     assert stamps.name("project.work_item.c", "other.kind") == 2
+
+
+def test_a_claim_type_revision_restamps_subjects_only_when_it_changes_what_they_show(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """A shadow ClaimType revision that shows nothing new moves no field; retiring it renames one.
+
+    ``project.work_item.ext.note`` shows as its full name while the predicate
+    ``ext.note`` is live. A revision of that shadow rewrites none of the
+    field's Claims (they pin their own ClaimType), so only what the revision
+    shows -- cardinality and liveness -- may restamp the Subject.
+    """
+
+    from cruxible_core.service.floor import floor_index
+
+    instance, _owner = seed_write_surface(tmp_path)
+    note = _claim_type("ext.note", literal_schema={"type": "string"})
+    accept_edit(instance, "ext-note", {claim_type_path(note.predicate): render_claim_type(note)})
+    _write(instance, _set(WI1, "ext.note", "Hello"), _set(WI2, "title", "Two"))
+    shadow = note.model_copy(
+        update={
+            "predicate": "ext.note",
+            "identity": note.identity.model_copy(update={"name": "ext.note"}),
+        }
+    )
+    accept_edit(instance, "shadow", {claim_type_path("ext.note"): render_claim_type(shadow)})
+    before = advance_floor_index(instance)
+    assert f"{KIND}.ext.note: Hello" in before.files[f"current/{WI1}.yaml"][0].decode()
+    rendered: list[str] = []
+    render_subject = floor_index.render_subject
+
+    def counting(**kwargs: Any) -> Any:
+        rendered.append(kwargs["path"])
+        return render_subject(**kwargs)
+
+    monkeypatch.setattr(floor_index, "render_subject", counting)
+    # A revision that leaves cardinality and liveness as they were (a v1
+    # ClaimType carries no description, so this one changes only its
+    # lineage) shows a Subject file nothing new: none is rendered, restamped
+    # or delivered.
+    migrate_claim_type(instance, "ext.note", description="A shadowing predicate.")
+    described = advance_floor_index(instance)
+    assert rendered == []
+    assert not {path for path in described.steps[-1].written if path.startswith("current/")}
+    for name in (f"current/{WI1}.yaml", f"current/{WI2}.yaml", f"current/{KIND}/INDEX"):
+        assert described.files[name] is before.files[name], name
+    # Retiring the shadow renames the field: that Subject alone restamps.
+    migrate_claim_type(instance, "ext.note", state="retired")
+    retired = advance_floor_index(instance)
+    assert rendered == [f"subjects/{WI1}.json"]
+    wi1 = retired.files[f"current/{WI1}.yaml"]
+    assert "\next.note: Hello" in wi1[0].decode() and wi1[1] == retired.generation
+    monkeypatch.setattr(floor_index, "render_subject", render_subject)
+    assert _bytes(retired) == _bytes(_cold(instance))
+    # Patching back across both revisions gives the floors they had.
+    back = floor_render_from(instance, retired, before.generation)
+    assert {key: value for key, value in back.files.items() if key.startswith("current/")} == {
+        key: value for key, value in before.files.items() if key.startswith("current/")
+    }
 
 
 def test_an_advance_renders_only_the_subjects_its_change_reaches(
@@ -376,10 +511,21 @@ def test_a_claim_type_change_reaches_only_the_claims_showing_it() -> None:
             "a.b": PSet(["claims/3.json"]),
         },
         by_shadow={"a.b": PSet(["claims/1.json"])},
+        definitions=PMap(),
     )
     # The ClaimType a.b moves its own Claims and the field it shadows on
-    # project.work_item, never the same predicate on a Subject of another kind.
-    assert _affected_subjects(inputs, inputs, ["claim-types/a/b.json"]) == {
+    # project.work_item, never the same predicate on a Subject of another kind,
+    # when its shown view moved between the two generations.
+    old = SimpleNamespace(**{**vars(inputs), "definitions": PMap()})
+    new = SimpleNamespace(
+        **{
+            **vars(inputs),
+            "definitions": PMap({"claim-types/a/b.json": _shown_chain("claim-types/a/b.json", 4)}),
+        }
+    )
+    # A revision that leaves the view where it was reaches no Subject.
+    assert _affected_subjects(new, new, ["claim-types/a/b.json"]) == set()
+    assert _affected_subjects(old, new, ["claim-types/a/b.json"]) == {
         "subjects/project.work_item/wi-1.json",
         "subjects/other.kind/y.json",
     }
@@ -444,6 +590,7 @@ def test_a_subject_change_reads_the_same_whatever_its_retired_claims() -> None:
             # Every lifecycle counts toward the stamps, as maintained maxima.
             claims_latest=PMap({path: PCounts([1] * (retired + 1))}),
             pointed_latest=PMap({path: PCounts([3] * retired)}),
+            definitions=PMap(),
         )
         # The shell change reaches no former target of a retired edge.
         assert _affected_subjects(inputs, inputs, [path]) == {path}

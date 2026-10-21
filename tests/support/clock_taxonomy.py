@@ -83,6 +83,12 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("SettledCandidateLocator", "sequence"): "SETTLEMENT ORDER",
     # The accepted generation of one revision in a floor Claim's history.
     ("_Revisions", "sequence"): "SETTLEMENT ORDER",
+    # The accepted generation of one revision in a floor definition's history,
+    # and the generations at which each of its views last changed.
+    ("DefinitionRevision", "sequence"): "SETTLEMENT ORDER",
+    ("DefinitionRevision", "view_at"): "SETTLEMENT ORDER",
+    # The generations at which each ClaimType's kinds last changed.
+    ("OntologyIndex", "kinds_at"): "SETTLEMENT ORDER",
     ("LineTriggerBinding", "generation"): "SETTLEMENT ORDER",
     # The accepted generation a dispatched Trigger occurrence fires on.
     ("TriggerFire", "generation"): "SETTLEMENT ORDER",
