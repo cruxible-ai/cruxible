@@ -4,7 +4,9 @@
 and ``kind=QueryDefinition`` list those definitions with the same compact
 grammar as the other definition kinds (``where``, ``select``, ``order_by``,
 ``contains``, paging): each row reads its own artifact and what the ontology
-holds about it, never a scan over Claims, Subjects or Captures.
+holds about it, never a scan over Claims, Subjects or Captures. ``kind=ClaimType``
+rows gain the role a write takes, freshness, contention, whether a Capture is
+required and the owning kit under ``select``.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.claim_types import ClaimEvidenceFreshness, ClaimFreshnessDuration
 from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -32,6 +35,15 @@ def instance(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance:
     seeded = seed_write_surface(Path(tmp_path_factory.mktemp("definition-kinds")))[0]
     # measured admits only repo.reports and now requires a Capture under it.
     _move_to_v7(seeded, "measured", evidence_requirement="captured")
+    # priority permits two roles; v7 names normative as the default and a horizon.
+    _move_to_v7(
+        seeded,
+        "priority",
+        default_role="normative",
+        evidence_freshness=ClaimEvidenceFreshness(
+            stale_after=ClaimFreshnessDuration(microseconds=30 * 86_400_000_000)
+        ),
+    )
     return seeded
 
 
@@ -305,3 +317,66 @@ def test_query_definitions_list_their_parameters_and_result_shape(settling: Any)
     with pytest.raises(ReadRefusalError) as refused:
         _query(settling, kind="QueryDefinition", where=[{"field": "result_shape", "eq": "rows"}])
     assert refused.value.error_code == "cruxible.query.value_type_mismatch"
+
+
+# -- ClaimType columns ---------------------------------------------------------------
+
+_DETAIL = ["role", "roles", "stale_after", "selector", "on_conflict", "captured_required", "kit"]
+
+
+def test_claim_type_rows_select_role_freshness_contention_capture_and_kit(instance: Any) -> None:
+    plain = _query(instance, kind="ClaimType", where=[{"field": "namespace", "eq": KIND}])
+    # The default columns are unchanged; the new ones come by select.
+    assert [column.name for column in plain.columns] == [
+        "predicate",
+        "subject_kinds",
+        "object",
+        "cardinality",
+        "members",
+        "description",
+        "evidence",
+    ]
+    assert not set(_DETAIL) & {name for row in plain.rows for name in row}
+
+    result = _query(
+        instance,
+        kind="ClaimType",
+        where=[{"field": "namespace", "eq": KIND}],
+        select=["predicate", *_DETAIL],
+    )
+    assert [column.name for column in result.columns] == ["predicate", *_DETAIL]
+    rows = {row["predicate"]: row for row in result.rows}
+    priority = rows[f"{KIND}.priority"]
+    assert priority["role"] == "normative"
+    assert priority["roles"] == ["normative", "observation"]
+    assert priority["stale_after"] == "30d"
+    assert (priority["selector"], priority["on_conflict"]) == ("only_contender", "unresolved")
+    assert priority["captured_required"] is False
+    # A sole permitted role is the implied one; no kit owns the seeded vocabulary.
+    assert rows[f"{KIND}.title"]["role"] == "observation"
+    assert "stale_after" not in rows[f"{KIND}.title"] and "kit" not in priority
+    assert rows[f"{KIND}.measured"]["captured_required"] is True
+    assert rows[f"{KIND}.labels"]["selector"] == "all"
+
+
+def test_claim_types_filter_on_the_new_columns(instance: Any) -> None:
+    def predicates(*where: dict[str, Any]) -> set[str]:
+        rows = _query(
+            instance,
+            kind="ClaimType",
+            where=[{"field": "namespace", "eq": KIND}, *where],
+            select=["predicate"],
+        ).rows
+        return {row["predicate"] for row in rows}
+
+    assert predicates({"field": "captured_required", "eq": "true"}) == {f"{KIND}.measured"}
+    assert f"{KIND}.measured" not in predicates({"field": "captured_required", "eq": False})
+    assert f"{KIND}.priority" in predicates({"field": "role", "eq": "normative"})
+    assert f"{KIND}.labels" in predicates({"field": "selector", "eq": "all"})
+    assert predicates({"field": "kit", "eq": "acme"}) == set()
+    with pytest.raises(ReadRefusalError) as refused:
+        predicates({"field": "captured_required", "eq": "yes"})
+    assert refused.value.error_code == "cruxible.query.value_type_mismatch"
+    with pytest.raises(ReadRefusalError) as wrong:
+        predicates({"field": "captured_required", "in": ["true"]})
+    assert wrong.value.error_code == "cruxible.query.operator_not_applicable"

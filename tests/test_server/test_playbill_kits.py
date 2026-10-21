@@ -2037,6 +2037,20 @@ def test_orient_and_get_name_the_kit_that_owns_each_claim_type_and_subject_kind(
     assert "kit" not in unowned.model_dump(mode="json")
     kinds = playbill_api.playbill_orient(consumer.instance_id, section="subject_kinds")
     assert {row.kind: row.kit for row in kinds.subject_kinds or ()}["acme.account"] == "acme"
+    # query names the same owners: ClaimType rows under select, SubjectKind rows always.
+    from cruxible_client.contracts.compact_query import QueryRequest
+
+    def listed(kind: str, **fields: typing.Any) -> dict[str, typing.Any]:
+        rows = playbill_api.playbill_query(
+            consumer.instance_id, request=QueryRequest(kind=kind, **fields)
+        ).rows
+        return {str(row.get("predicate", row.get("kind"))): row.get("kit") for row in rows}
+
+    queried = listed("ClaimType", select=("predicate", "kit"))
+    assert (queried[SEATS], queried[UNOWNED]) == ("acme", None)
+    assert listed("SubjectKind")["acme.account"] == "acme"
+    owned = listed("ClaimType", where=({"field": "kit", "eq": "acme"},), select=("predicate",))
+    assert SEATS in owned and UNOWNED not in owned
 
     def card(ref: str) -> typing.Any:
         return playbill_api.playbill_get(consumer.instance_id, request=GetRequest(ref=ref)).card

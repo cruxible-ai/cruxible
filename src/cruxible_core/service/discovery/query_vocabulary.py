@@ -29,6 +29,7 @@ from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
     canonicalize_literal,
 )
+from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType, effective_canonical_form
 from cruxible_client.contracts.compact_query import QueryFilterOperator
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -567,6 +568,26 @@ def object_label(info: PredicateInfo) -> str:
     return info.value_type
 
 
+def render_duration(microseconds: int) -> str:
+    """A duration in its largest whole unit: ``30d``, ``12h``, ``5m``, ``90s`` or ``µs``."""
+
+    for unit, size in (("d", 86_400_000_000), ("h", 3_600_000_000), ("m", 60_000_000)):
+        if microseconds and microseconds % size == 0:
+            return f"{microseconds // size}{unit}"
+    if microseconds % 1_000_000 == 0:
+        return f"{microseconds // 1_000_000}s"
+    return f"{microseconds}us"
+
+
+def implied_role(claim_type: ClaimType) -> ClaimRole | None:
+    """The role a write takes when it names none: the default, or the only authorable one."""
+
+    if claim_type.default_role is not None:
+        return claim_type.default_role
+    authorable = tuple(role for role in claim_type.permitted_roles if role != "derivation")
+    return authorable[0] if len(authorable) == 1 else None
+
+
 def claim_type_row(info: PredicateInfo, contracts: CaptureContractNames) -> dict[str, Any]:
     """One ClaimType as a compact definition row: values, never digests."""
 
@@ -587,6 +608,8 @@ def claim_type_row(info: PredicateInfo, contracts: CaptureContractNames) -> dict
 
 __all__ = [
     "ORDERABLE_TYPES",
+    "implied_role",
+    "render_duration",
     "PredicateInfo",
     "QUERYABLE_DEFINITION_KINDS",
     "QueryVocabulary",
