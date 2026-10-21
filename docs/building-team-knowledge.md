@@ -256,7 +256,7 @@ cruxible.write.slot_changed (change 0): catalog.part/bp-1142 title changed after
 
 You can install a vocabulary someone else built as a [kit](kits.md), extend or
 revise it like anything you authored yourself, or define your own fields with
-`cruxible claim-type propose`. [Changing knowledge](concepts.md#changing-knowledge)
+`cruxible claim-type propose`. [Evolving your vocabulary](evolving-your-vocabulary.md)
 covers defining and changing fields safely. Either way, start from the
 questions your team needs answered, and add fields as those questions arrive.
 

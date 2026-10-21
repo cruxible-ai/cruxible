@@ -106,7 +106,7 @@ catalog.part.title     observation  -            false
 ~~~
 
 Defining a field's evidence rules is part of defining the field; see
-[Changing knowledge](concepts.md#changing-knowledge).
+[Evolving your vocabulary](evolving-your-vocabulary.md#add-a-field).
 
 ## Verdicts and flags
 

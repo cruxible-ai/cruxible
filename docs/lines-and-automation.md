@@ -332,8 +332,10 @@ See [Kits](kits.md).
 
 - **A list naming something you don't have.** An item for a Subject the
   instance doesn't hold refuses the run's whole change
-  (`proposal_lowering_refused`). Keep the source and the catalog in step, or
-  filter what the Procedure proposes.
+  (`proposal_lowering_refused`, `cruxible.subject.key_missing`). Filter out
+  rows you don't carry, or have the Procedure create the Subject with a
+  Subject item (a settle mandate then needs `subject_creation` for that
+  kind).
 - **Expecting it to run after a change.** Changing a Line or any Trigger aimed
   at it stops it until you enable it again.
 - **Expecting it to catch up.** Missed ticks wait for `line evaluate`; nothing

@@ -423,7 +423,8 @@ or revises a ClaimType, `migrate` succeeds one and decides, in the same change
 set, what happens to every Claim that depends on it (carry it to the new
 version, retire it, or say it again under the new vocabulary), and `upgrade`
 moves older ClaimTypes to the current format. Changing vocabulary disposes
-dependent Claims, so it is never a side effect of another write. With floor
+dependent Claims, so it is never a side effect of another write ([Evolving
+your vocabulary](evolving-your-vocabulary.md) walks through one). With floor
 delivery on, the daemon rewrites the workspace's typed stub
 (`.cruxible/world.pyi`) when an activation changes vocabulary; with it off,
 rerun `cruxible stub`.
