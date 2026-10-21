@@ -5277,7 +5277,7 @@ def _emit_get_text(result: Any) -> None:
         for capture in result.evidence.captures:
             click.echo(
                 f"capture {capture.capture}  {_public_name(capture.contract)} "
-                f"v{capture.version}  source={capture.source}  "
+                f"v{capture.version}  source={_public_name(capture.source)}  "
                 f"observed={capture.observed_at.isoformat()}  "
                 f"{capture.role}{' admitted' if capture.admitted else ' not admitted'}"
             )

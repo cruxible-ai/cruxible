@@ -657,3 +657,32 @@ def test_incoming_prints_each_pointing_edge_and_the_next_page_command(
         "next: cruxible get project.work_item/wi-1 --detail incoming --cursor CURSOR"
         in paged.output
     )
+
+
+def test_evidence_capture_source_renders_its_public_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.get_reads import GetCaptureEvidence, GetEvidence
+
+    capture = GetCaptureEvidence(
+        capture="CAP-0123456789ab",
+        contract="CaptureContract:playbill.coordinator-self-source-v1",
+        version=1,
+        source="playbill.coordinator-authoring",
+        observed_at=WHEN,
+        role="copy",
+        admitted=True,
+    )
+    _stub(
+        monkeypatch,
+        _result(
+            "claim",
+            detail="evidence",
+            evidence=GetEvidence(value="Affirmed.", captures=(capture,), attestations=()),
+        ),
+    )
+    result = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "evidence"])
+
+    assert result.exit_code == 0, result.output
+    assert "source=cruxible.coordinator-authoring" in result.output
+    assert "playbill." not in result.output
