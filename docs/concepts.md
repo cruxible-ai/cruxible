@@ -13,8 +13,11 @@ ship. Most of that knowledge lives in documents, tickets, chat threads and
 agents' context windows, and it fails in familiar ways:
 
 - it drifts out of date, and nobody notices;
-- it gets overwritten, and the earlier version and the reason for the change
-  are lost;
+- it piles up instead of settling: notes and Markdown files grow by
+  appending, and what the team actually believes now is buried somewhere in
+  them;
+- it gets overwritten, especially when several agents work at once, and the
+  earlier version and the reason for the change are lost;
 - two copies disagree, and nobody can say which one is right;
 - an agent acts on it without being able to tell a checked fact from a guess.
 
@@ -22,11 +25,48 @@ Cruxible keeps that knowledge as **hard state**: typed values, each stored
 with the reason and the evidence behind it, changed only through checked and
 approved changes, with a complete record of what was believed, when, and why.
 
-It doesn't replace your databases, APIs or files. They stay the authority for
-their own records; Cruxible records what your team knows about them and where
-that knowledge came from. And no language model runs inside Cruxible: people
-and agents supply the judgment, and Cruxible checks it, records it and serves
-it back, deterministically.
+## The approach
+
+- **A symbolic model of your world.** You declare the kinds of thing your team
+  cares about, the fields each can have, and the relations between them.
+  Cruxible holds the current state of that model, and checks every change
+  against it.
+- **Beliefs, with their reasons.** Every value is a Claim: something the team
+  or an agent believes, stated with its rationale and the evidence it rests
+  on, so any answer can be traced back to where it came from. Each Claim
+  carries a verdict on how well its evidence holds up, so an agent reading the
+  team's current beliefs can tell solid ones from weak ones without digging.
+  Anyone can attest to a Claim, signing their support, contradiction or
+  uncertainty, without changing it.
+- **Knowledge that hardens.** Teams still think in prose. A write can add a
+  section to a Markdown document and, in the same change, record the Claim
+  that rests on it: the explanation stays readable in the repository, and the
+  belief it supports becomes a typed, shareable value instead of one more
+  paragraph.
+- **Many writers, nothing overwritten.** A write based on a value someone else
+  has since changed is refused rather than silently winning. A disagreement
+  can stand as a competing value that stays visible until it's resolved. And
+  nothing is ever erased: every earlier value stays in the history.
+- **Knowledge as code.** The vocabulary is declared and versioned. Changes are
+  proposed, checked and reviewed before they land, like code, and can require
+  someone else's signed approval. The record of it all is a Git repository.
+  Vocabularies, queries and pipelines ship as kits that other teams install.
+- **Connected to the world.** Cruxible points at your files, APIs and
+  databases rather than copying them. A Claim cites the passage or the
+  fetched response it rests on, and passages of your documents can be
+  projections of the state, flagged when what they summarize changes. Lines
+  are pipelines that observe the outside world and act on it through
+  providers. What they find lands as proposed changes with their evidence
+  attached, which are approved like any other change, or settled on their own
+  only where a mandate allows it.
+- **Questions over the whole graph.** Queries follow relations between things
+  and answer the same way every time, at a named point in history.
+
+Cruxible doesn't replace your databases, APIs or files. They stay the
+authority for their own records; Cruxible records what your team knows about
+them and where that knowledge came from. And no language model runs inside
+Cruxible: people and agents supply the judgment, and Cruxible checks it,
+records it and serves it back, deterministically.
 
 The rest of this page builds the system up from its foundation: the ledger.
 
