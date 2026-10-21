@@ -35,10 +35,14 @@ def section_digest(content: bytes) -> str:
 class DocSectionError(ValueError):
     """A repairable section refusal, including locations for ambiguous labels."""
 
-    def __init__(self, code: str, message: str, *, lines: tuple[int, ...] = ()) -> None:
+    def __init__(
+        self, code: str, message: str, *, lines: tuple[int, ...] = (), repair: str | None = None
+    ) -> None:
         super().__init__(message)
         self.code = "cruxible.doc." + code
         self.lines = lines
+        #: The one fix for this refusal, when the raise site knows it.
+        self.repair = repair
 
 
 @dataclass(frozen=True)
@@ -289,7 +293,9 @@ def replace_section(
         return SectionEdit(content, target, current.digest, current.digest, False)
     if expect is not None and expect != current.digest:
         raise DocSectionError(
-            "section_changed", f"Section {section!r} now has digest {current.digest}."
+            "section_changed",
+            f"Section {section!r} now has digest {current.digest}",
+            repair=f"re-read the section, then retry with expect: {current.digest}",
         )
     result = content[: current.start] + raw + content[current.end :]
     after = parse_sections(result, file=file)

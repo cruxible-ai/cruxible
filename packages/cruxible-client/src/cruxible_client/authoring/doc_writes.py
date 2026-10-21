@@ -98,14 +98,22 @@ def _apply(content: bytes | None, op: DocOp) -> tuple[SectionEdit, int, int]:
         )
         target = document.section(op.section if result.changed else result.section)
         start, end = target.start, target.end
-    if declares_projection_block(op.text.encode()) or any(
-        (start < w.end_byte and end > w.start_byte)
-        or (start == end and w.start_byte <= start < w.end_byte)
+    overlapping = [
+        w
         for w in stamped_projection_windows(content or b"")
-    ):
+        if (start < w.end_byte and end > w.start_byte)
+        or (start == end and w.start_byte <= start < w.end_byte)
+    ]
+    if declares_projection_block(op.text.encode()) or overlapping:
         raise DocSectionError(
             "projection_edit",
-            "Choose prose outside projection blocks; update blocks with block repin.",
+            "A doc write edits prose only; a projection block changes through its backing",
+            repair=(
+                "cruxible block repin "
+                f"{shlex.quote(op.file)} {shlex.quote(overlapping[0].block_id)}"
+                if overlapping
+                else "write the section without block markers; declare blocks with cruxible block"
+            ),
         )
     return result, start, end
 
@@ -272,13 +280,12 @@ def write_workspace(
                 change = change.model_copy(update={"evidence": evidence})
             changes.append(change)
     except (ValueError, OSError) as exc:
+        # Each code carries its own repair; a refusal whose message already says
+        # what to do (a protected path, an invalid section) carries none.
         raise WriteRefusalError(
             exc.code if isinstance(exc, DocSectionError) else "cruxible.doc.file_unavailable",
-            str(exc),
-            repair_line=(
-                "Re-read the section and retry with its current digest as expect; "
-                "choose an unprotected Markdown path"
-            ),
+            str(exc).rstrip("."),
+            repair_line=exc.repair if isinstance(exc, DocSectionError) else None,
         ) from exc
 
     observed = request.model_copy(

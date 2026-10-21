@@ -101,7 +101,37 @@ def test_stale_explicit_section_cas_refuses_before_submit(tmp_path: Path) -> Non
             submit=lambda _: pytest.fail("must not submit a stale edit"),
         )
     assert caught.value.error_code == "cruxible.doc.section_changed"
-    assert caught.value.repair_line
+    current = parse_sections(path.read_bytes()).section(("A",)).digest
+    assert caught.value.repair_line == (f"re-read the section, then retry with expect: {current}")
+    assert ".." not in str(caught.value)
+
+
+def test_each_doc_refusal_carries_its_own_repair(tmp_path: Path) -> None:
+    def refused(op) -> WriteRefusalError:
+        with pytest.raises(WriteRefusalError) as caught:
+            write_workspace(
+                WriteRequest(because="Prose", docs=(op,)),
+                workspace=tmp_path,
+                submit=lambda _: pytest.fail("must refuse locally"),
+            )
+        assert ".." not in str(caught.value)
+        return caught.value
+
+    protected = refused(AppendSection(file=".git/notes.md", text="# A"))
+    assert protected.error_code == "cruxible.doc.protected_path"
+    assert protected.repair_line is None and "outside .cruxible and .git" in protected.detail
+    (tmp_path / "notes.md").write_text(
+        "# Decision\n<!-- cruxible:block:summary:ref:aaaaaaaaaaaa -->\n"
+        "## Protected\nbody\n<!-- /cruxible:block:summary -->\n"
+    )
+    projection = refused(
+        ReplaceSection(file="notes.md", section=("Decision", "Protected"), text="## Protected\nx")
+    )
+    assert projection.error_code == "cruxible.doc.projection_edit"
+    assert projection.repair_line == "cruxible block repin notes.md summary"
+    invalid = refused(AppendSection(file="new.md", text="no heading"))
+    assert invalid.error_code == "cruxible.doc.section_invalid"
+    assert invalid.repair_line is None
 
 
 @pytest.mark.parametrize(
@@ -225,3 +255,35 @@ def test_ref_to_preamble_is_citable(tmp_path):
         workspace=tmp_path,
         submit=submit,
     )
+
+
+def test_cli_prints_a_local_doc_refusal_as_not_submitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.main import cli
+
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: pytest.fail("a local refusal never reaches the daemon"),
+    )
+    payload = {"because": "Prose", "docs": [{"op": "append", "file": ".git/x.md", "text": "# A"}]}
+    result = CliRunner().invoke(
+        cli,
+        [
+            *("--server-url", "http://server", "--instance-id", "inst_doc"),
+            *("write", "-", "--workspace-root", str(tmp_path)),
+        ],
+        input=json.dumps(payload),
+    )
+    assert result.exit_code == 1
+    lines = [line for line in result.stderr.splitlines() if not line.startswith("target:")]
+    assert lines == [
+        "refused (not submitted)",
+        "cruxible.doc.protected_path: Choose a workspace Markdown path outside .cruxible and .git",
+    ]
+    assert "WriteRefusalError" not in result.output

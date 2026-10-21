@@ -5006,14 +5006,34 @@ def write_changes(
         },
         example="cruxible write changes.yaml",
     )
-    outcome = write_workspace(
-        request,
-        workspace=Path(workspace_root),
-        submit=lambda observed: _server_call(
+    from cruxible_client.contracts.errors import WriteRefusalError
+    from cruxible_core.cli.commands._common import _echo_refusal
+
+    submitted = False
+
+    def submit(observed: WriteRequest) -> WriteOutcome:
+        nonlocal submitted
+        submitted = True
+        return _server_call(
             lambda client, instance_id: client.write(instance_id, request=observed),
             command_name="cruxible write",
-        ),
-    )
+        )
+
+    try:
+        outcome = write_workspace(request, workspace=Path(workspace_root), submit=submit)
+    except WriteRefusalError as exc:
+        # A doc write refused while observing files never reached the daemon.
+        if submitted or output_json:
+            raise
+        _echo_refusal(
+            "not submitted",
+            code=exc.error_code,
+            message=exc.detail,
+            change=exc.change,
+            candidates=exc.candidates,
+            repair=exc.repair_line,
+        )
+        raise SystemExit(1) from None
     _finish_write(outcome, output_json=output_json)
 
 

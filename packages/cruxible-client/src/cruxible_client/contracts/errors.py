@@ -544,7 +544,7 @@ class ReadRefusalError(CoreError):
         if self.candidates:
             text += f"; nearest: {', '.join(self.candidates)}"
         if repair_line is not None:
-            text += f". {repair_line}"
+            text += f" {repair_line}" if text.endswith(".") else f". {repair_line}"
         super().__init__(text)
 
     @property
@@ -622,7 +622,7 @@ class WriteRefusalError(CoreError):
         if self.candidates:
             text += f"; nearest: {', '.join(self.candidates)}"
         if repair_line is not None:
-            text += f". {repair_line}"
+            text += f" {repair_line}" if text.endswith(".") else f". {repair_line}"
         super().__init__(text)
 
 
