@@ -2516,7 +2516,13 @@ def service_playbill_query(
             request=request,
         )
     elif request.kind in LISTED_KINDS:
-        listed = listed_kind_answer(instance, coordinate, request, evaluation_time=evaluation_time)
+        listed = listed_kind_answer(
+            instance,
+            coordinate,
+            request,
+            vocabulary=vocabulary,
+            evaluation_time=evaluation_time,
+        )
         answer = _Answer(
             mode="inline",
             kind=request.kind,

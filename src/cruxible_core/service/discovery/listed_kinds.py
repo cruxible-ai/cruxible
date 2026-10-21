@@ -1,14 +1,16 @@
 """Triggers, Lines and the other definition kinds as compact ``query`` kinds.
 
-``query kind=Trigger``, ``kind=Line`` and ``kind=SubjectKind`` list those
-accepted definitions with the same grammar every compact query uses
-(``where``, ``contains``, ``select``, ``order_by``, paging), on CLI, MCP and
-SDK alike. They are read from the typed-state index at the coordinate, not
+``query kind=Trigger``, ``kind=Line``, ``kind=SubjectKind`` and
+``kind=CaptureContract`` list those accepted definitions with the same grammar
+every compact query uses (``where``, ``contains``, ``select``, ``order_by``,
+paging), on CLI, MCP and SDK alike. They are read from the typed-state index at the coordinate, not
 through the query engine: none is a Subject kind nor a definition kind of the
 query grammar. A row reads its own artifact and what the ontology says about
 it (a SubjectKind's live Subject count from the maintained
 ``query_subject_counts``, the kit that owns it from the installed kits'
-receipts); nothing a listing reads grows with the Claims or Captures.
+receipts, a CaptureContract's admitting ClaimTypes from the live ClaimTypes
+the query's vocabulary already parsed); nothing a listing reads grows with the
+Claims or Captures.
 
 The index selects what it can (lifecycle, name, schedule, target and target
 kind; a Line's procedure and authority), in identity order, and the answer
@@ -32,6 +34,8 @@ from datetime import datetime
 from typing import Any, Literal, cast
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.captures import CaptureContract
+from cruxible_client.contracts.claim_types import effective_evidence_requirement
 from cruxible_client.contracts.compact_query import QueryColumn, QueryRequest
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
 from cruxible_client.contracts.procedures.windows import CaptureEventWindow
@@ -46,17 +50,19 @@ from cruxible_client.contracts.triggers import (
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNTS_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
 from cruxible_core.service.discovery.query_vocabulary import (
     QUERYABLE_DEFINITION_KINDS,
+    QueryVocabulary,
     coerce_text_spelling,
     query_refusal,
     render_instant,
 )
 from cruxible_core.service.read_refusals import nearest
 
-ListedKind = Literal["Trigger", "Line", "SubjectKind"]
-LISTED_KINDS: tuple[ListedKind, ...] = ("Trigger", "Line", "SubjectKind")
+ListedKind = Literal["Trigger", "Line", "SubjectKind", "CaptureContract"]
+LISTED_KINDS: tuple[ListedKind, ...] = ("Trigger", "Line", "SubjectKind", "CaptureContract")
 assert set(LISTED_KINDS) <= set(QUERYABLE_DEFINITION_KINDS)
 #: The most rows one Trigger or Line listing answers; past it the answer is capped.
 LISTING_MAX_RESULTS = 2000
@@ -171,11 +177,36 @@ _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
         ),
         ListedField(QueryColumn(name="version", type="integer"), filterable=False, default=False),
     ),
+    "CaptureContract": (
+        ListedField(QueryColumn(name="name", type="string"), index_column="identity"),
+        ListedField(QueryColumn(name="version", type="integer"), filterable=False),
+        ListedField(
+            QueryColumn(name="lifecycle", type="enum", members=_LIFECYCLES),
+            index_column="lifecycle",
+        ),
+        ListedField(QueryColumn(name="sources", type="string", cardinality="many")),
+        ListedField(
+            QueryColumn(
+                name="source_kinds",
+                type="enum",
+                members=("cas", "external", "ledger"),
+                cardinality="many",
+            )
+        ),
+        ListedField(QueryColumn(name="evidence_kinds", type="string", cardinality="many")),
+        ListedField(
+            QueryColumn(name="grade", type="enum", members=("derived", "observed", "predicted")),
+            index_column="epistemic_grade",
+        ),
+        ListedField(QueryColumn(name="admitted_by", type="integer")),
+        ListedField(QueryColumn(name="required_by", type="integer")),
+    ),
 }
 _SPECS: Mapping[ListedKind, _KindSpec] = {
     "Trigger": _KindSpec("triggers"),
     "Line": _KindSpec("lines"),
     "SubjectKind": _KindSpec("subject_kinds", key="kind"),
+    "CaptureContract": _KindSpec("capture_contracts"),
 }
 assert set(_FIELDS) == set(_SPECS) == set(LISTED_KINDS)
 
@@ -568,20 +599,29 @@ def _definition_rows(
             )
 
 
-def _subject_kind_row(
-    instance: PlaybillInstance, projection: Any
-) -> Callable[[Any], dict[str, Any]]:
+@dataclass(frozen=True)
+class _RowContext:
+    """What a definition row may read beside its own artifact, once per listing."""
+
+    instance: PlaybillInstance
+    coordinate: AcceptedProjectionCoordinate
+    projection: Any
+    vocabulary: QueryVocabulary
+    evaluation_time: datetime
+
+
+def _subject_kind_row(context: _RowContext) -> Callable[[Any], dict[str, Any]]:
     """A SubjectKind row: its identity rule, the kind's live Subjects and its owning kit.
 
     The count is the maintained ``query_subject_counts`` row and the kit the
     installed kits' receipts: one read of each per listing, vocabulary-sized.
     """
 
-    connection = projection.typed.connection
+    connection = context.projection.typed.connection
     counts = {
         str(kind): int(amount) for kind, amount in connection.execute(LIVE_SUBJECT_COUNTS_SQL)
     }
-    owners = kit_owners(instance, connection)
+    owners = kit_owners(context.instance, connection)
 
     def row(source: Any) -> dict[str, Any]:
         declared = cast(SubjectKind, source)
@@ -597,6 +637,48 @@ def _subject_kind_row(
         }
 
     return row
+
+
+def _capture_contract_row(context: _RowContext) -> Callable[[Any], dict[str, Any]]:
+    """A CaptureContract row: what it captures, and the live ClaimTypes that rely on it.
+
+    ``admitted_by`` counts the live ClaimTypes whose evidence rules admit the
+    contract; ``required_by`` those of them that require a Capture
+    (``evidence_requirement: captured``). Both read the ClaimTypes the query's
+    vocabulary already parsed: ontology-sized, never a Claim or a Capture.
+    """
+
+    names = CaptureContractNames(
+        context.instance, context.coordinate, connection=context.projection.typed.connection
+    )
+    admitted: dict[str, int] = {}
+    required: dict[str, int] = {}
+    for info in context.vocabulary.predicates.values():
+        captured = effective_evidence_requirement(info.claim_type) == "captured"
+        for name in names.admitted(info.claim_type, qualified=True):
+            admitted[name] = admitted.get(name, 0) + 1
+            required[name] = required.get(name, 0) + int(captured)
+
+    def row(source: Any) -> dict[str, Any]:
+        contract = cast(CaptureContract, source)
+        identity = contract.identity.qualified
+        return {
+            "name": contract.identity.name,
+            "sources": list(contract.logical_source_identities),
+            "source_kinds": list(contract.allowed_source_kinds),
+            "evidence_kinds": list(contract.evidence_kinds),
+            "grade": contract.epistemic_grade,
+            "admitted_by": admitted.get(identity, 0),
+            "required_by": required.get(identity, 0),
+        }
+
+    return row
+
+
+_ROWS: Mapping[str, Callable[[_RowContext], Callable[[Any], dict[str, Any]]]] = {
+    "SubjectKind": _subject_kind_row,
+    "CaptureContract": _capture_contract_row,
+}
 
 
 # -- shape --------------------------------------------------------------------------
@@ -683,6 +765,7 @@ def listed_kind_answer(
     coordinate: AcceptedProjectionCoordinate,
     request: QueryRequest,
     *,
+    vocabulary: QueryVocabulary,
     evaluation_time: datetime,
     max_results: int | None = None,
 ) -> ListedAnswer:
@@ -724,9 +807,8 @@ def listed_kind_answer(
                 contains=request.contains,
             )
         else:
-            rows = _definition_rows(
-                projection, kind, where, parameters, _subject_kind_row(instance, projection)
-            )
+            context = _RowContext(instance, coordinate, projection, vocabulary, evaluation_time)
+            rows = _definition_rows(projection, kind, where, parameters, _ROWS[kind](context))
         for identity, row in rows:
             if not matches(row):
                 continue
@@ -739,6 +821,7 @@ def listed_kind_answer(
             kept, order, {item.column.name: item.column.type for item in _FIELDS[kind]}
         )
     shown = {column.name for column in columns} | {_SPECS[kind].key}
+    order_of = [item.column.name for item in _FIELDS[kind]]
     spec_digest = typed_digest(
         Sha256Value,
         _LISTING_DIGEST_DOMAIN,
@@ -761,7 +844,11 @@ def listed_kind_answer(
     return ListedAnswer(
         spec_digest=spec_digest,
         columns=columns,
-        rows=[{name: value for name, value in row.items() if name in shown} for _, row in kept],
+        # Cells in column order, whatever order a row was built in.
+        rows=[
+            {name: row[name] for name in order_of if name in shown and name in row}
+            for _, row in kept
+        ],
         keys=[(identity,) for identity, _ in kept],
         capped=cap,
         notes=notes,

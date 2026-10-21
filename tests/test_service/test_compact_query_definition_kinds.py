@@ -1,9 +1,10 @@
 """``query`` answers every definition kind agents ask the ontology about.
 
-``query kind=SubjectKind`` lists the declared kinds with the same compact
-grammar as the other definition kinds (``where``, ``select``, ``order_by``,
-``contains``, paging): each row reads its own artifact and what the ontology
-holds about it, never a scan over Claims, Subjects or Captures.
+``query kind=SubjectKind`` and ``kind=CaptureContract`` list those
+definitions with the same compact grammar as the other definition kinds
+(``where``, ``select``, ``order_by``, ``contains``, paging): each row reads its
+own artifact and what the ontology holds about it, never a scan over Claims,
+Subjects or Captures.
 """
 
 from __future__ import annotations
@@ -17,13 +18,18 @@ from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.compact_query import service_playbill_query
+from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.read_refusals import ReadRefusalError
-from tests.core_support._write_support import KIND, seed_write_surface
+from tests.core_support._write_support import KIND, REPORTS, seed_write_surface
+from tests.test_service.test_write_verbs import _move_to_v7
 
 
 @pytest.fixture(scope="module")
 def instance(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance:
-    return seed_write_surface(Path(tmp_path_factory.mktemp("definition-kinds")))[0]
+    seeded = seed_write_surface(Path(tmp_path_factory.mktemp("definition-kinds")))[0]
+    # measured admits only repo.reports and now requires a Capture under it.
+    _move_to_v7(seeded, "measured", evidence_requirement="captured")
+    return seeded
 
 
 def _query(instance: Any, **fields: Any) -> Any:
@@ -118,3 +124,71 @@ def test_a_misspelled_definition_kind_suggests_it(instance: Any) -> None:
         _query(instance, kind="SubjectKnd")
     assert refused.value.error_code == "cruxible.query.unknown_kind"
     assert "SubjectKind" in refused.value.candidates
+
+
+# -- CaptureContract -----------------------------------------------------------------
+
+
+def test_capture_contracts_list_what_they_capture_and_who_relies_on_them(instance: Any) -> None:
+    result = _query(instance, kind="CaptureContract")
+
+    assert [column.name for column in result.columns] == [
+        "name",
+        "version",
+        "lifecycle",
+        "sources",
+        "source_kinds",
+        "evidence_kinds",
+        "grade",
+        "admitted_by",
+        "required_by",
+    ]
+    by_name = {row["name"]: row for row in result.rows}
+    reports = by_name[REPORTS.identity.name]
+    assert reports["sources"] == list(REPORTS.logical_source_identities)
+    assert reports["source_kinds"] == list(REPORTS.allowed_source_kinds)
+    assert reports["evidence_kinds"] == list(REPORTS.evidence_kinds)
+    assert reports["grade"] == REPORTS.epistemic_grade
+    # labels and measured admit it; only measured (v7, captured) requires a Capture.
+    assert reports["admitted_by"] == 2 and reports["required_by"] == 1
+    # The same counts and version orient's capture_contracts section serves.
+    orient = service_playbill_orient(instance, section="capture_contracts")
+    served = {
+        row.contract.removeprefix("CaptureContract:"): row
+        for row in orient.capture_contracts or ()
+        if row.lifecycle == "live"
+    }
+    assert set(served) == set(by_name)
+    for name, row in by_name.items():
+        assert (row["admitted_by"], row["version"]) == (
+            served[name].admitted_by,
+            served[name].version,
+        ), name
+
+
+def test_capture_contracts_filter_on_grade_reliance_and_source_kinds(instance: Any) -> None:
+    every = _query(instance, kind="CaptureContract").rows
+
+    required = _query(instance, kind="CaptureContract", where=[{"field": "required_by", "gte": 1}])
+    assert [row["name"] for row in required.rows] == [REPORTS.identity.name]
+    grade = REPORTS.epistemic_grade
+    graded = _query(instance, kind="CaptureContract", where=[{"field": "grade", "eq": grade}])
+    assert {row["name"] for row in graded.rows} == {
+        row["name"] for row in every if row["grade"] == grade
+    }
+    (kind,) = REPORTS.allowed_source_kinds[:1]
+    sourced = _query(
+        instance,
+        kind="CaptureContract",
+        where=[{"field": "source_kinds", "eq": kind}],
+        select=["source_kinds"],
+    )
+    assert sourced.rows and all(kind in row["source_kinds"] for row in sourced.rows)
+    assert set(sourced.rows[0]) == {"name", "source_kinds"}
+    ordered = _query(instance, kind="CaptureContract", order_by=["-admitted_by", "name"]).rows
+    assert [row["admitted_by"] for row in ordered] == sorted(
+        (row["admitted_by"] for row in every), reverse=True
+    )
+    with pytest.raises(ReadRefusalError) as refused:
+        _query(instance, kind="CaptureContract", where=[{"field": "grade", "eq": "measured"}])
+    assert refused.value.error_code == "cruxible.query.value_type_mismatch"
