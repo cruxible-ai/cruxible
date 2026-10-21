@@ -468,7 +468,10 @@ repeated. If what it changes has itself moved in the meantime, the recompile
 is refused and `next` lists the proposal for `proposal readmit`, which rebases
 it as a new proposal to review. Proposals of other origins keep byte
 readmission, and this work happens only on those explicit operations.
-`proposal withdraw` retires a proposal that will never activate.
+`proposal withdraw` retires a proposal that will never activate, and a
+reviewer turns one down with `proposal reject`. [Review and
+governance](review-and-governance.md) walks through reviewing, approving and
+choosing a policy.
 
 ```mermaid
 stateDiagram-v2
@@ -479,7 +482,8 @@ stateDiagram-v2
     Recompiled --> Accepted: still applies, approved
     Recompiled --> Readmit: what it changes moved
     Readmit --> Open: rebased as a new proposal
-    Open --> Withdrawn
+    Open --> Withdrawn: its author drops it
+    Open --> Rejected: a reviewer turns it down
 ```
 
 ## Who acts
@@ -515,6 +519,8 @@ user.
 principal add` registers another principal and writes its settings to its key
 directory; `cruxible context use --principal ID` switches which principal the
 CLI acts as; `cruxible whoami` reports who you are and whether you can author.
+[Review and governance](review-and-governance.md#a-propose-only-agent) sets up
+an agent whose every change waits for a person.
 
 ## Reading
 

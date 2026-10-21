@@ -142,7 +142,8 @@ accepted (978e04dc4f9c) by YOUR_ID
 ~~~
 
 If what it changes has itself moved, approval is refused, and `cruxible
-proposal readmit` rebases it as a new proposal to review.
+proposal readmit` rebases it as a new proposal to review. [Review and
+governance](review-and-governance.md) covers reviewing and approving in full.
 
 ### Automation and upgrades
 
