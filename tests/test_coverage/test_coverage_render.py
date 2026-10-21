@@ -387,3 +387,37 @@ def test_the_manifest_rendering_states_epoch_health_completeness_and_scope() -> 
     assert "scope 2 source(s):" in lines
     assert f"  {HANDBOOK.plane}:{HANDBOOK.identity}" in lines
     assert f"  {SCRATCH.plane}:{SCRATCH.identity}" in lines
+
+
+def test_the_cli_text_leads_each_card_with_its_claim_and_counts_spans_and_cards() -> None:
+    """Design §3: `state  path:lines  subject  field = value  [CLM-…]`; digests stay out."""
+
+    from pathlib import PurePosixPath
+
+    from cruxible_client.contracts.read_values import ClaimLine
+    from cruxible_core.coverage.render import render_coverage_text
+
+    result = _drifted_result()
+    (card,) = [card for span in result.spans for card in span.cards]
+    claim = PurePosixPath(card.claim_addresses[0].artifact_path).stem
+    line = ClaimLine(claim=claim, subject="acme/widget", field="price", value=42)
+    paths = {card.observed_source: "docs/handbook.md"}
+
+    text = render_coverage_text(result, (line,), paths=paths)
+
+    where = "docs/handbook.md" + (
+        ""
+        if card.line_overlay is None
+        else f":{card.line_overlay.start_line}-{card.line_overlay.end_line}"
+    )
+    assert text[0].startswith(f"drifted  {where}  acme/widget  price = 42  [{claim[:16]}")
+    assert "sha256:" not in text[0]
+    assert text[-3] == (
+        f"{BATCH_SUMMARY_PREFIX} spans 0 exact, 1 drifted, 0 candidates, 1 none; "
+        "cards 0 exact, 1 drifted, 0 candidates"
+    )
+    # Without served statements the card still names its Claim, by id.
+    bare = render_coverage_text(result, paths=paths)
+    assert bare[0].startswith(f"drifted  {where}  claims {claim}")
+    # The hook's reference rendering keeps the whole binding, byte for byte.
+    assert render_coverage_result(result)[0] == render_card(card)

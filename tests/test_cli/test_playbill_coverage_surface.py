@@ -340,10 +340,15 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     assert list(card["reason_codes"]) == ["foreign_occurrence"]
 
     lines = human.strip().splitlines()
-    assert lines[0].startswith("candidate  external:workspace.handbook  ")
-    assert card["claim_addresses"][0]["artifact_path"] in lines[0]
-    assert "basis content_equivalent" in lines[0]
-    assert lines[-3] == "Cruxible coverage: 0 exact, 0 drifted, 1 candidates, 0 none"
+    # A card line names the working path and the Claim; digests stay in --json.
+    assert lines[0].startswith(f"candidate  {WORKING_PATH}:")
+    assert Path(card["claim_addresses"][0]["artifact_path"]).stem in lines[0]
+    assert lines[0].endswith("[foreign_occurrence]")
+    assert "sha256:" not in lines[0] and ".json" not in lines[0]
+    assert lines[-3] == (
+        "Cruxible coverage: spans 0 exact, 0 drifted, 1 candidates, 0 none; "
+        "cards 0 exact, 0 drifted, 1 candidates"
+    )
     assert lines[-2].startswith("coverage complete for 1 returned spans at generation ")
     assert lines[-1] == "omitted cards: 0, truncated spans: 0"
 
@@ -365,7 +370,10 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     # An ungoverned span is summarized once and never annotated per line.
     edited_lines = edited_human.strip().splitlines()
     assert len(edited_lines) == 3
-    assert edited_lines[0] == "Cruxible coverage: 0 exact, 0 drifted, 0 candidates, 1 none"
+    assert edited_lines[0] == (
+        "Cruxible coverage: spans 0 exact, 0 drifted, 0 candidates, 1 none; "
+        "cards 0 exact, 0 drifted, 0 candidates"
+    )
     assert not any("none" in line for line in edited_lines[1:])
     assert WORKING_SOURCE not in edited_human
 
@@ -424,7 +432,7 @@ def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_sour
     assert exact["at"] == payload["at"]
     # The overlay is where the bytes currently sit: line 3 of the original file.
     assert exact["line_overlay"]["start_line"] == 3
-    assert human.strip().splitlines()[0].startswith(f"exact  {FOREIGN_SOURCE}  lines 3-3  ")
+    assert human.strip().splitlines()[0].startswith(f"exact  {FOREIGN_PATH}:3-3  ")
 
     # 2. Relocate the same bytes inside the same file. Identity is
     #    (source, observed commitment, ordinal) and none of those moved, so the
@@ -440,7 +448,7 @@ def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_sour
     assert relocated["expected_commitment_digest"] == exact["expected_commitment_digest"]
     assert relocated["line_overlay"]["start_line"] == 1
     assert relocated["line_overlay"] != exact["line_overlay"]
-    assert moved_human.strip().splitlines()[0].startswith(f"exact  {FOREIGN_SOURCE}  lines 1-1  ")
+    assert moved_human.strip().splitlines()[0].startswith(f"exact  {FOREIGN_PATH}:1-1  ")
 
     # 3. Edit the governed span itself. That is drift, and drift is its own
     #    state and its own card.
@@ -474,11 +482,40 @@ def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_sour
     assert drifted["grants_mutation_authority"] is False
 
     drift_lines = drift_human.strip().splitlines()
-    assert drift_lines[0].startswith(f"drifted  {FOREIGN_SOURCE}  ")
-    assert f"expected {drifted['expected_commitment_digest']}" in drift_lines[0]
-    assert f"observed {drifted['observed_commitment_digest']}" in drift_lines[0]
-    assert "dependents 1" in drift_lines[0]
-    assert drift_lines[-3] == "Cruxible coverage: 0 exact, 1 drifted, 0 candidates, 0 none"
+    assert drift_lines[0].startswith(f"drifted  {FOREIGN_PATH}:")
+    assert drift_lines[0].endswith("[commitment_superseded]")
+    assert drift_lines[-3] == (
+        "Cruxible coverage: spans 0 exact, 1 drifted, 0 candidates, 0 none; "
+        "cards 0 exact, 1 drifted, 0 candidates"
+    )
+    # The whole binding moved to the manifest view (and --json).
+    manifest = cruxible.run(
+        "coverage",
+        "resolve",
+        "--root",
+        str(workspace),
+        "--bind",
+        f"{FOREIGN_PATH}={FOREIGN_SOURCE}",
+        "--file",
+        FOREIGN_PATH,
+        "--view",
+        "manifest",
+    ).stdout
+    binding = next(line for line in manifest.splitlines() if line.startswith("drifted  "))
+    assert f"expected {drifted['expected_commitment_digest']}" in binding
+    assert f"observed {drifted['observed_commitment_digest']}" in binding
+    assert "dependents 1" in binding
+    # The statement a card line leads with, read from the card's Claim address.
+    from cruxible_core.coverage.contracts import CoverageResultV3
+    from cruxible_core.runtime.playbill_manager import get_playbill_manager
+    from cruxible_core.service.discovery.coverage import coverage_claim_lines
+
+    (line,) = coverage_claim_lines(
+        get_playbill_manager().get(drifted_payload["instance_id"]),
+        CoverageResultV3.model_validate(drifted_payload),
+    )
+    assert claim_identity.endswith(line.claim)
+    assert line.subject.startswith(f"{SUBJECT_KIND}/") and line.value is not None
 
     # 4. Nothing about accepted state moved across the whole transcript.
     assert drifted_payload["at"] == payload["at"] == moved["at"]

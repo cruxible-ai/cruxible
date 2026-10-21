@@ -200,7 +200,6 @@ from cruxible_core.coverage.adapter import (
 from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageResultV3
 from cruxible_core.coverage.render import (
     render_coverage_manifest,
-    render_coverage_result,
 )
 from cruxible_core.coverage.workspace import bindings_from_mapping, observe_workspace
 from cruxible_core.curation.curation_calibration import (
@@ -8673,6 +8672,16 @@ def _resolved_coverage(
     *,
     command_name: str,
 ) -> CoverageResultV3:
+    return _resolved_coverage_answer(observations, command_name=command_name)[0]
+
+
+def _resolved_coverage_answer(
+    observations: tuple[WorkingSourceObservation, ...],
+    *,
+    command_name: str,
+) -> tuple[CoverageResultV3, tuple[contracts.ClaimLine, ...]]:
+    """The frozen answer and, beside it, the Claim lines its cards address."""
+
     result = _server_call(
         lambda client, instance_id: client.resolve_coverage(
             instance_id,
@@ -8680,7 +8689,7 @@ def _resolved_coverage(
         ),
         command_name=command_name,
     )
-    return CoverageResultV3.model_validate(result.result)
+    return CoverageResultV3.model_validate(result.result), tuple(result.claims)
 
 
 @coverage_group.command("resolve")
@@ -8701,8 +8710,8 @@ def _resolved_coverage(
     default="cards",
     show_default=True,
     help=(
-        "cards: the governed spans and a summary; manifest: the coverage manifest "
-        "(epoch, health, completeness, scope)."
+        "cards: each governed span's Claims and a summary; manifest: the coverage "
+        "manifest (epoch, health, completeness, scope) and each card's full binding."
     ),
 )
 @brief_option
@@ -8745,7 +8754,9 @@ def resolve_coverage(
         grep_path=grep_path,
         whole_working_set=whole_working_set,
     )
-    result = _resolved_coverage(observations, command_name="cruxible coverage resolve")
+    result, claims = _resolved_coverage_answer(
+        observations, command_name="cruxible coverage resolve"
+    )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
@@ -8762,8 +8773,20 @@ def resolve_coverage(
             ),
         )
         return
+    from cruxible_core.coverage.render import render_card, render_coverage_text
+
     rendered = (
-        render_coverage_manifest(result) if view == "manifest" else render_coverage_result(result)
+        (
+            *render_coverage_manifest(result),
+            # Each card's whole binding: commitments, captures, handle, dependents.
+            *(render_card(card) for span in result.spans for card in span.cards),
+        )
+        if view == "manifest"
+        else render_coverage_text(
+            result,
+            claims,
+            paths={item.source: item.path for item in bindings.bindings},
+        )
     )
     for line in rendered:
         click.echo(line)
