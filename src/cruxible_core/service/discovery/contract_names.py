@@ -89,11 +89,20 @@ class CaptureContractNames:
             return unresolved_name(digest)
         return _QUALIFIER + found if qualified else found
 
-    def admitted(self, claim_type: ClaimType, *, qualified: bool = False) -> tuple[str, ...]:
-        """The contract names a ClaimType's evidence rules admit, in byte order."""
+    def admitted(
+        self, claim_type: ClaimType, *, qualified: bool = False, role: str | None = None
+    ) -> tuple[str, ...]:
+        """The contract names a ClaimType's evidence rules admit, in byte order.
+
+        With ``role``, only the rules that admit a Claim in that role
+        (``claim_roles``): a contract a rule admits for another role cannot
+        cover this Claim, so a repair that names it would land uncovered again.
+        """
 
         names: set[str] = set()
         for rule in claim_type.evidence_admission_policy.rules:
+            if role is not None and role not in rule.claim_roles:
+                continue
             if isinstance(rule, ClaimEvidenceAdmissionRule):
                 names.update(
                     item.target.qualified if qualified else item.target.name

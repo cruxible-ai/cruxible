@@ -18,6 +18,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
 from cruxible_client.contracts.claims import LiteralClaimObject
+from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_client.contracts.write import WriteOutcome, WriteRequest
@@ -444,7 +445,9 @@ def test_self_evidence_a_field_does_not_admit_lands_uncovered_and_says_so(
     assert warning.admitted_contracts == (REPORTS.identity.name,)
     assert warning.used_contract == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name
     assert "evidence not admitted" in warning.message
-    assert REPORTS.identity.name in warning.message
+    # Typed fields keep the stored id; the prose names it as a reader sees it.
+    assert public_name(REPORTS.identity.name) in warning.message
+    assert "playbill." not in warning.message
     assert warning.repair is not None and "--capture" in warning.repair
     assert outcome.next == warning.repair
     assert _values(instance, WI1, "measured") == ["3"]
@@ -582,7 +585,7 @@ def test_every_sdk_evidence_repair_runs_against_the_real_builders(
     assert [item.change for item in outcome.warnings] == [0, 1]
     for warning in outcome.warnings:
         assert warning.repair is not None
-        placeholder = f"<CAP- handle of a Capture under {REPORTS.identity.name}>"
+        placeholder = f"<CAP- handle of a Capture under {public_name(REPORTS.identity.name)}>"
         assert placeholder in warning.repair
         pb = Cruxible(
             client=_Recorder(),  # type: ignore[arg-type]
@@ -687,7 +690,10 @@ def test_a_captured_claim_type_refuses_own_words_naming_its_contracts(
     _move_to_v7(instance, "measured", evidence_requirement="captured")
     refusal = _refusal(_write(instance, _set(WI1, "measured", 3)))
     assert refusal.code == "cruxible.write.evidence_required"
-    assert refusal.candidates == (REPORTS.identity.name,)
+    # Prose and candidates name the contract as a reader sees it (public name).
+    assert refusal.candidates == (public_name(REPORTS.identity.name),)
+    assert "cruxible.foreign-source.repo.reports" in refusal.message
+    assert "playbill." not in refusal.message + (refusal.repair or "")
     assert "evidence_requirement 'captured'" in refusal.message
     captured = _write(
         instance,
@@ -2056,17 +2062,348 @@ def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
 
     (row,) = conflict_rows()
     repair = row.repair
-    assert repair.operation == "cruxible.write"
-    assert repair.command is None  # no single command: the choice is the caller's
-    assert "changes" not in repair.arguments
-    options = {item["keep"]: item["changes"] for item in repair.arguments["options"]}
-    assert options == {
-        first: [{"op": "retire", "target": second}],
-        second: [{"op": "retire", "target": first}],
+    # One typed option per contender, the first as the primary only by order:
+    # each keeps one contender by retiring the other, and none is chosen.
+    options = (repair, *repair.alternatives)
+    assert {item.required_change for item in options} == {"choose_contender"}
+    assert {item.target.removeprefix("Claim:"): item.arguments["claim_id"] for item in options} == {
+        first: second,
+        second: first,
+    }
+    assert {item.command for item in options} == {
+        f"cruxible retire {first}",
+        f"cruxible retire {second}",
     }
 
-    # Each option is a runnable write; running one resolves the contest.
-    outcome = _write(instance, *options[second], because="The later reading is right.")
+    # Each option is a runnable retirement; running one resolves the contest.
+    outcome = _write(
+        instance,
+        {"op": "retire", "target": first},
+        because="The later reading is right.",
+    )
     assert outcome.status == "accepted", outcome
     assert conflict_rows() == []
     assert _values(instance, WI1, "status") == ["blocked"]
+
+
+# -- first-run: wording, keyed creates, Subject retirement, re-bind (slice A) ----------
+
+
+def test_a_set_of_the_key_a_creation_writes_is_the_create(instance: PlaybillInstance) -> None:
+    """A key-only Subject is created by setting its key to the text that names it."""
+
+    outcome = _write(instance, _set(f"{KIND}/wi-new", "slug", "wi-new"))
+    assert outcome.status == "accepted", outcome
+    (change,) = outcome.changes
+    assert (change.op, change.subject, change.resolved) == ("create", f"{KIND}/wi-new", "created")
+    assert outcome.subjects_added == (f"{KIND}/wi-new",)
+    assert _values(instance, f"{KIND}/wi-new", "slug") == ["wi-new"]
+
+
+def test_a_set_of_another_key_than_the_creation_writes_names_no_placeholder(
+    instance: PlaybillInstance,
+) -> None:
+    refusal = _refusal(_write(instance, _set(f"{KIND}/wi-new", "slug", "wi-other")))
+    assert refusal.code == "cruxible.write.key_set_by_creation"
+    assert f"{KIND}/wi-new" in refusal.message
+    assert "<implicit" not in refusal.message + (refusal.repair or "")
+    assert refusal.repair is not None and '"op": "create"' in refusal.repair
+
+
+def test_decimal_text_for_a_number_field_names_the_integer_rule(
+    instance: PlaybillInstance,
+) -> None:
+    _move_to_v7(instance, "measured", evidence_requirement="self")
+    refusal = _refusal(_write(instance, _set(WI1, "measured", "42.5")))
+    assert refusal.code == "cruxible.write.value_type_mismatch"
+    assert "not an integer" in refusal.message and "scaled unit" in (refusal.repair or "")
+
+
+def test_contract_evidence_accepts_the_public_spelling_of_a_reserved_contract(
+    instance: PlaybillInstance,
+) -> None:
+    unknown = _refusal(
+        _write(
+            instance,
+            _set(WI1, "measured", 3, evidence={"kind": "contract", "contract": "repo.nowhere"}),
+        )
+    )
+    assert unknown.code == "cruxible.write.unknown_contract"
+    assert all(not item.startswith("playbill.") for item in unknown.candidates)
+    public = public_name(REPORTS.identity.name)
+    named = _write(
+        instance, _set(WI1, "measured", 3, evidence={"kind": "contract", "contract": public})
+    )
+    # The public name resolves to the stored contract: no unknown_contract refusal.
+    assert named.refusal is None or named.refusal.code != "cruxible.write.unknown_contract"
+
+
+def test_an_uncovered_write_in_a_role_no_rule_admits_names_the_mismatch(
+    instance: PlaybillInstance,
+) -> None:
+    """Rules that admit only another role cover nothing in this one: no capture repair."""
+
+    _move_to_v7(instance, "priority", evidence_requirement="self")
+    _narrow_rule_roles(instance, "priority", ("normative",))
+    outcome = _write(instance, _set(WI1, "priority", "high", role="observation"))
+    assert outcome.status == "accepted", outcome
+    (warning,) = outcome.warnings
+    assert "admit only normative" in warning.message
+    assert warning.repair is None
+
+
+def _narrow_rule_roles(instance: PlaybillInstance, field: str, roles: tuple[str, ...]) -> None:
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.claim_types import (
+        claim_type_digest,
+        claim_type_path,
+        parse_claim_type,
+        render_claim_type,
+    )
+    from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+
+    path = claim_type_path(f"{KIND}.{field}")
+    head = instance.accepted_coordinate()
+    tree = instance.tree_at(head.git_oid)
+    current = parse_claim_type(tree[path], path=path)
+    (rule,) = current.evidence_admission_policy.rules
+    successor = current.model_copy(
+        update={
+            "evidence_admission_policy": current.evidence_admission_policy.model_copy(
+                update={"rules": (rule.model_copy(update={"claim_roles": roles}),)}
+            ),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(current).tagged),
+        }
+    )
+    tree[path] = render_claim_type(successor)
+    proposed = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/narrow-{field}", proposed_base_oid=head.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp="2026-09-29T12:30:00.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+
+
+def test_re_authoring_a_withdrawn_write_makes_a_new_proposal(tmp_path: Path) -> None:
+    from cruxible_core.service.proposals.proposals import service_withdraw_playbill_proposal
+
+    instance, _owner = seed_write_surface(tmp_path, self_approval=False)
+    first = _write(instance, _set(WI1, "title", "Tidy"))
+    assert first.status == "awaiting_approval" and first.proposal is not None
+    service_withdraw_playbill_proposal(
+        instance,
+        proposal_id=first.proposal.proposal_id,
+        actor_id="owner",
+        reason="Not yet.",
+        withdrawn_at="2026-09-29T12:40:00.000000Z",
+    )
+    again = _write(instance, _set(WI1, "title", "Tidy"))
+    assert again.status == "awaiting_approval" and again.proposal is not None
+    assert again.proposal.proposal_id != first.proposal.proposal_id
+    assert again.proposal.state == "awaiting_external_approval"
+
+
+def test_a_subject_with_claims_retires_only_when_asked(instance: PlaybillInstance) -> None:
+    title = _write(instance, _set(WI1, "title", "Tidy")).changes[0].claim
+    refused = _refusal(_write(instance, {"op": "retire", "target": WI1}))
+    assert refused.code == "cruxible.write.subject_has_claims"
+    assert f"title = 'Tidy' [{title}]" in refused.message
+    assert refused.candidates == (title,)
+    assert refused.repair is not None and "with_claims=true" in refused.repair
+
+    outcome = _write(instance, {"op": "retire", "target": WI1, "with_claims": True})
+    assert outcome.status == "accepted", outcome
+    (change,) = outcome.changes
+    assert change.op == "retire" and change.subject == WI1 and title in change.retired
+    assert _values(instance, WI1, "title") == []
+    shell = instance.blob_at(instance.accepted_coordinate().git_oid, subject_path(KIND, "wi-1"))
+    assert shell is not None and b'"retired"' in shell
+
+
+def test_a_subject_other_claims_point_at_is_never_retired_by_the_verb(
+    instance: PlaybillInstance,
+) -> None:
+    edge = _write(instance, _add(WI2, "governs", WI1)).changes[0].claim
+    refused = _refusal(_write(instance, {"op": "retire", "target": WI1, "with_claims": True}))
+    assert refused.code == "cruxible.write.subject_referenced"
+    assert refused.candidates == (edge,)
+    assert f"{WI2} governs = {WI1} [{edge}]" in refused.message
+    assert refused.repair is not None and edge in refused.repair
+    # Once the reference is retired (its own write, as the refusal says), the Subject goes.
+    assert _write(instance, {"op": "retire", "target": edge}).status == "accepted"
+    outcome = _write(instance, {"op": "retire", "target": WI1})
+    assert outcome.status == "accepted", outcome
+
+
+def test_a_retired_subjects_id_reached_through_an_alias_refuses_to_retire_the_survivor(
+    instance: PlaybillInstance,
+) -> None:
+    refused = _refusal(_write(instance, {"op": "retire", "target": f"{KIND}/nowhere"}))
+    assert refused.code == "cruxible.write.subject_not_found"
+    assert _write(instance, {"op": "retire", "target": WI3}).status == "accepted"
+    again = _refusal(_write(instance, {"op": "retire", "target": WI3}))
+    assert again.code == "cruxible.write.subject_not_live"
+
+
+def test_with_claims_names_a_subject_target() -> None:
+    with pytest.raises(ValueError, match="with_claims"):
+        WriteRequest.model_validate(
+            {
+                "because": "x",
+                "changes": [
+                    {
+                        "op": "retire",
+                        "target": "CLM-" + "0" * 32,
+                        "with_claims": True,
+                    }
+                ],
+            }
+        )
+
+
+def _claim_citations(instance: PlaybillInstance, claim: str) -> tuple[Any, ...]:
+    from cruxible_client.contracts.claims import claim_path, parse_claim
+
+    path = claim_path(claim)
+    content = instance.blob_at(instance.accepted_coordinate().git_oid, path)
+    assert content is not None
+    return tuple(parse_claim(content, path=path).backing.citations)  # type: ignore[union-attr]
+
+
+def test_rebind_replaces_a_file_citation_and_keeps_the_claim_and_value(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    workspace = tmp_path / "ws"
+    first = _write(
+        instance, _set(WI1, "measured", 5, evidence=report_evidence(workspace, "measured five"))
+    )
+    claim = first.changes[0].claim
+    assert claim is not None
+    (before,) = _claim_citations(instance, claim)
+
+    outcome = _write(
+        instance,
+        {
+            "op": "rebind",
+            "target": claim,
+            "evidence": report_evidence(workspace, "five, measured again"),
+        },
+        because="The report moved the reading.",
+    )
+    assert outcome.status == "accepted", outcome
+    (change,) = outcome.changes
+    assert (change.op, change.claim, change.revises) == ("rebind", claim, claim)
+    assert change.before == change.after == 5
+    (after,) = _claim_citations(instance, claim)
+    assert after.citation_id != before.citation_id
+    assert (after.role, after.origin) == (before.role, before.origin)
+    assert _values(instance, WI1, "measured") == ["5"]
+
+    history = service_playbill_get(
+        instance,
+        request=GetRequest(ref=claim, detail="history"),
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    ).history
+    assert history is not None
+    assert [item.change for item in history.revisions][:2] == ["rebound", "stated"]
+
+
+def test_rebind_names_the_citation_when_none_of_that_file_is_held(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    claim = _write(instance, _set(WI1, "title", "Tidy")).changes[0].claim
+    refusal = _refusal(
+        _write(
+            instance,
+            {"op": "rebind", "target": claim, "evidence": report_evidence(tmp_path, "Tidy")},
+        )
+    )
+    assert refusal.code == "cruxible.write.citation_not_held"
+    assert len(refusal.candidates) == 1 and len(refusal.candidates[0]) == 12
+
+
+def test_rebind_needs_the_claim_rebind_compiler(
+    legacy_record_instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    claim = _write(legacy_record_instance, _set(WI1, "title", "Tidy")).changes[0].claim
+    refusal = _refusal(
+        _write(
+            legacy_record_instance,
+            {"op": "rebind", "target": claim, "evidence": report_evidence(tmp_path, "Tidy")},
+        )
+    )
+    assert refusal.code == "cruxible.write.rebind_requires_compiler_upgrade"
+    assert "cruxible compiler upgrade" in (refusal.repair or "")
+
+
+_TWO_FILES_CATALOG = """\
+tag: playbill-source-catalog-v1
+catalog_kind: portable
+entries:
+  - name: repo.reports
+    locator: reports.md
+    document_id: reports
+    document_kind: note
+    title: Reports
+    media_type: text/markdown
+    compiler_profile: document-v1
+    required_tier: governed_write
+    governance_scope: [Document:reports]
+  - name: repo.notes
+    locator: notes.md
+    document_id: notes
+    document_kind: note
+    title: Notes
+    media_type: text/markdown
+    compiler_profile: document-v1
+    required_tier: governed_write
+    governance_scope: [Document:notes]
+"""
+
+
+def test_claim_law_revision_10_refuses_a_drop_replaced_under_another_contract(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    """A re-bind replaces a citation by one of the same file's contract, never another's."""
+
+    from cruxible_client.authoring.write_evidence import observe_evidence
+    from cruxible_client.contracts.write import FileEvidence
+
+    workspace = tmp_path / "ws"
+    claim = (
+        _write(
+            instance,
+            _set(WI1, "measured", 5, evidence=report_evidence(workspace, "measured five")),
+        )
+        .changes[0]
+        .claim
+    )
+    (workspace / ".cruxible" / "files.yaml").write_text(_TWO_FILES_CATALOG, encoding="utf-8")
+    (workspace / "notes.md").write_text("# Notes\n\nfive, in the notes\n", encoding="utf-8")
+    elsewhere = observe_evidence(
+        FileEvidence(file="notes.md#five, in the notes"), workspace=workspace
+    )
+    assert elsewhere is not None
+    (held,) = _claim_citations(instance, claim)  # type: ignore[arg-type]
+    outcome = _write(
+        instance,
+        {
+            "op": "rebind",
+            "target": claim,
+            "citation": held.citation_id.partition(":")[2][:12],
+            "evidence": elsewhere.model_dump(mode="json"),
+        },
+    )
+    assert _refusal(outcome).code == "cruxible.claim.rebind_unmatched"

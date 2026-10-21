@@ -205,7 +205,13 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
 
         result = CliRunner().invoke(cli, [*prefix, "get", ref, "--detail", detail])
         assert result.exit_code == 0, result.output
-        assert f"({len(whole)} chars; --detail evidence for all)" in result.output
+        # A card names the read of the whole value by its Claim, which runs on a
+        # Subject card too; a history line keeps the flag on the Claim's own read.
+        assert (
+            f"({len(whole)} chars; cruxible get {seeded.claim_id[:16]} --detail evidence)"
+            in result.output
+            or f"({len(whole)} chars; --detail evidence for all)" in result.output
+        )
         step = next(
             line.removeprefix("next: ")
             for line in result.output.splitlines()

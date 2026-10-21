@@ -92,7 +92,7 @@ from cruxible_client.authoring.workspace import (
     refresh_workspace_floor,
     workspace_floor_freshness,
 )
-from cruxible_client.authoring.write_evidence import observe_changes
+from cruxible_client.authoring.write_evidence import observe_changes, rebind_evidence
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicy,
 )
@@ -261,6 +261,7 @@ from cruxible_client.contracts.write import (
     DocOp,
     Evidence,
     ExpectedValue,
+    RebindChange,
     ReplaceSection,
     RetireChange,
     RetireRequest,
@@ -1606,9 +1607,11 @@ def _write_expect(expect: WriteExpect | None) -> ExpectedValue | None:
     return tuple(_write_value(item) for item in expect)
 
 
-def _write_target(target: str | ClaimRef | SlotRef) -> str | SlotRef:
+def _write_target(target: str | ClaimRef | SubjectRef | SlotRef) -> str | SlotRef:
     if isinstance(target, ClaimRef):
         return target.address
+    if isinstance(target, SubjectRef):
+        return _write_subject(target)
     return target
 
 
@@ -1821,15 +1824,19 @@ class WriteBatch:
 
     def retire(
         self,
-        target: str | ClaimRef | SlotRef,
+        target: str | ClaimRef | SubjectRef | SlotRef,
         *,
         because: str | None = None,
         reason: WriteRetireReason = "was-rescinded",
         expect: WriteExpect | None = None,
+        with_claims: bool = False,
     ) -> WriteBatch:
-        """End one live Claim, named by ID or ``SlotRef(subject=..., field=...)``.
+        """End one live Claim (by ID or ``SlotRef(subject=..., field=...)``) or a Subject.
 
-        Its dependents retire with it. Next: more changes, then ``.write()``.
+        A Claim's dependents retire with it. A Subject (``kind/id``) retires
+        with its key Claims; its other live Claims only with ``with_claims=True``,
+        and Claims of other Subjects whose value it is refuse the write. Next:
+        more changes, then ``.write()``.
         """
 
         self.changes.append(
@@ -1838,6 +1845,7 @@ class WriteBatch:
                 because=because,
                 reason=reason,
                 expect=_write_expect(expect),
+                with_claims=with_claims,
             )
         )
         return self
@@ -1875,8 +1883,8 @@ class WriteBatch:
 
     def __repr__(self) -> str:
         spelled = ", ".join(
-            f"retire {item.target}"
-            if isinstance(item, RetireChange)
+            f"{item.op} {item.target}"
+            if isinstance(item, RetireChange | RebindChange)
             else f"create {item.subject_kind} as {item.label}"
             if isinstance(item, CreateChange)
             else f"{item.op} {item.subject or self.subject or ''} {item.field}".replace("  ", " ")
@@ -3396,22 +3404,122 @@ class Cruxible:
             request = request.model_copy(update={"evidence": cast(SetChange, change).evidence})
         return self._written(self._client.set(self._instance_id, request=request))
 
-    def retire(
+    def add(
         self,
-        target: str | ClaimRef | SlotRef,
+        subject: str | SubjectRef,
+        field: str | ClaimTypeRef,
+        value: ClaimValue | SubjectRef | LiteralValue,
         *,
         because: str,
-        reason: WriteRetireReason = "was-rescinded",
-        expect: WriteExpect | None = None,
+        evidence: Evidence | AuthoredSection | None = None,
+        role: WriteRole | None = None,
+        expect_absent: bool = False,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
     ) -> WriteOutcome:
-        """End one live Claim, named by ID or ``SlotRef(subject=..., field=...)``.
+        """Add one value to a many-valued field of one Subject, beside the values there.
+
+        As ``set`` for the rest: a missing Subject of a known kind is added, it
+        accepts in the same call when policy lets you, and ``dry_run`` writes
+        nothing. A value already there is answered as done (``expect_absent=True``
+        refuses instead). A refusal raises ``WriteRefusalError``.
+
+        Next: ``outcome.next`` names what is still needed; ``cx.get(f"{subject}")`` reads
+        the values back.
+        """
+
+        docs: tuple[DocOp, ...] = ()
+        if isinstance(evidence, AuthoredSection):
+            docs, evidence = (evidence.operation,), evidence.citation
+        # The workspace write observes file and section evidence on this side.
+        request = WriteRequest(
+            because=because,
+            changes=(
+                AddChange(
+                    subject=_write_subject(subject),
+                    field=_write_field(field),
+                    value=_write_value(value),
+                    evidence=evidence,
+                    role=role,
+                    expect_absent=expect_absent,
+                ),
+            ),
+            dry_run=dry_run,
+            accept=accept,
+            at=self._write_at(at),
+            surface="sdk",
+            full_coordinate=True,
+        )
+        if docs:
+            request = request.model_copy(update={"docs": docs})
+        return self._write(request)
+
+    def rebind(
+        self,
+        claim: str | ClaimRef,
+        *,
+        because: str,
+        file: str | None = None,
+        section: str | None = None,
+        citation: str | None = None,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """Re-cite a Claim whose cited text drifted on the text it rests on now.
+
+        Name the new text as ``file="FILE#ANCHOR"`` or ``section="FILE#Heading/Path"``
+        (FILE is a catalogued file's path or catalog name); ``citation`` (12+ hex)
+        picks which citation is replaced when the Claim cites that file more than
+        once. The statement is not restated: the Claim keeps its value and ID, and
+        its history shows one ``rebound`` revision. A refusal raises
+        ``WriteRefusalError``.
+
+        Next: ``outcome.next``; ``cx.get(claim, detail="history")`` shows the re-bind.
+        """
+
+        change = RebindChange(
+            target=claim.address if isinstance(claim, ClaimRef) else claim,
+            citation=citation,
+            evidence=rebind_evidence(file=file, section=section, workspace=self._workspace_root),
+        )
+        (observed,) = observe_changes((change,), workspace=self._workspace_root)
+        return self._written(
+            self._client.write(
+                self._instance_id,
+                request=WriteRequest(
+                    because=because,
+                    changes=(observed,),
+                    dry_run=dry_run,
+                    accept=accept,
+                    at=self._write_at(at),
+                    surface="sdk",
+                    full_coordinate=True,
+                ),
+            )
+        )
+
+    def retire(
+        self,
+        target: str | ClaimRef | SubjectRef | SlotRef,
+        *,
+        because: str,
+        reason: WriteRetireReason = "was-rescinded",
+        expect: WriteExpect | None = None,
+        with_claims: bool = False,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """End one live Claim (by ID or ``SlotRef(subject=..., field=...)``) or a Subject.
 
         Claims that depend on it retire with it, in one change set. ``expect``
         refuses unless its field holds that value now (every live value, as a
-        list, for a many-valued field).
+        list, for a many-valued field). A Subject (``kind/id``) retires with its
+        key Claims; its other live Claims only with ``with_claims=True``; Claims of
+        other Subjects whose value it is refuse the write until re-pointed or
+        retired.
 
         Next: ``outcome.next`` names what is still needed; ``cx.get(ref, detail="history")``
         shows the retirement.
@@ -3422,6 +3530,7 @@ class Cruxible:
             because=because,
             reason=reason,
             expect=_write_expect(expect),
+            with_claims=with_claims,
             dry_run=dry_run,
             accept=accept,
             at=self._write_at(at),
@@ -4976,8 +5085,9 @@ class Cruxible:
     def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:
         if coordinate != self.coordinate:
             raise ValueError(
-                "typed reference coordinate differs from the active orientation; refresh or "
-                "use the reference in authoring so the daemon can report its successor"
+                f"this reference was read at {coordinate.git_oid[:12]}, but accepted state "
+                f"has moved to {self.coordinate.git_oid[:12]} (a write accepted since); "
+                "re-read with cx.world() and use its references"
             )
 
     def _evaluation_time(self) -> str:

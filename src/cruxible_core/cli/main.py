@@ -71,6 +71,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("set",): "active",
     ("add",): "active",
     ("retire",): "active",
+    ("rebind",): "active",
     ("write",): "active",
     ("claim", "attest"): "active",
     ("action", "run"): "active",
@@ -784,10 +785,15 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         "playbill", "add_value", "Add one value to a many-valued field of one Subject."
     ),
     "retire": _command(
-        "playbill", "retire", "Retire one live Claim, by ID or by Subject and field."
+        "playbill", "retire", "Retire one live Claim (by ID or Subject and field), or a Subject."
+    ),
+    "rebind": _command(
+        "playbill", "rebind", "Re-cite a drifted Claim on the text it rests on now."
     ),
     "write": _command(
-        "playbill", "write_changes", "Apply create, set, add and retire changes as one change set."
+        "playbill",
+        "write_changes",
+        "Apply create, set, add, retire and rebind changes as one change set.",
     ),
     "since": _command("playbill", "since", "Read accepted ChangeSet history."),
     "orient": _command(

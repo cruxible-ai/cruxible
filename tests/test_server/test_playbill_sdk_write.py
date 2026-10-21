@@ -292,3 +292,16 @@ def test_incoming_reads_the_edges_pointing_at_a_subject_over_http_and_the_sdk(
     assert isinstance(whole, GetIncoming)
     assert sorted(row.subject for row in whole.claims) == [WI1, f"{KIND}/wi-3"]
     assert {row.predicate for row in whole.claims} == {f"{KIND}.governs"}
+
+
+def test_cx_add_adds_one_value_beside_the_others_like_set(pb: Cruxible) -> None:
+    first = pb.add(WI1, "governs", f"{KIND}/wi-2", because="Linked.")
+    assert first.status == "accepted", first
+    assert [item.op for item in first.changes] == ["add"]
+    second = pb.add(WI1, "governs", f"{KIND}/wi-3", because="Linked too.")
+    assert second.status == "accepted"
+    again = pb.add(WI1, "governs", f"{KIND}/wi-2", because="Linked.")
+    assert again.changes[0].already_live, again
+    with pytest.raises(WriteRefusalError) as caught:
+        pb.add(WI1, "governs", f"{KIND}/wi-2", because="x", expect_absent=True)
+    assert caught.value.error_code == "cruxible.write.value_already_present"

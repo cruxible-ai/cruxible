@@ -3432,7 +3432,7 @@ Audit reads do not create qualifying consumption touches or change governed
 state. Follow `next_cursor` only while its accepted coordinate, evaluation time,
 scope, and operational input head remain unchanged.
 
-## set, add, retire and write
+## set, add, retire, rebind and write
 
 ~~~text
 cruxible set SUBJECT FIELD VALUE --because TEXT
@@ -3444,8 +3444,10 @@ cruxible add SUBJECT FIELD VALUE --because TEXT
   [--role ROLE] [--expect-absent]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible retire TARGET [FIELD [VALUE]] --because TEXT
-  [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--dry-run] [--no-accept]
-  [--at GIT_OID] [--json]
+  [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--with-claims]
+  [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible rebind CLAIM (--file FILE#ANCHOR | --section FILE#Heading/Path) --because TEXT
+  [--citation HEX] [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
   [--at GIT_OID] [--json]
 cruxible write --schema
@@ -3541,11 +3543,19 @@ SUBJECT FIELD VALUE for one of several (`cruxible retire app.service/payments
 depends_on pypi.release/requests-2.32.4`; in a `write` file, a target
 `{"subject", "field", "value"}`); the
 Claims that depend on it retire with it; `--expect` compares the field's values
-as on `set`. `write` applies a
+as on `set`. TARGET alone as `kind/id` retires the Subject itself, with its key
+Claims: its other live Claims retire only with `--with-claims` (otherwise it
+refuses `cruxible.write.subject_has_claims`, listing them), and a Claim of
+another Subject whose value it is refuses `cruxible.write.subject_referenced`
+until that Claim is re-pointed or retired. `rebind` re-cites CLAIM, whose cited
+text drifted, on the text it rests on now (FILE is a catalogued file's path or
+catalog name): the statement stays, the drifted citation is replaced, and
+history shows one `rebound` revision of the same Claim (compiler revision 35).
+`write` applies a
 FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
 [...]}`, or a bare list with `--because`, each change
 `{"op": "set" | "add", "subject", "field", "value"}`,
-`{"op": "retire", "target"}` or
+`{"op": "retire", "target"}`, `{"op": "rebind", "target", "evidence"}` or
 `{"op": "create", "label", "subject_kind", "key"}`. `add` puts one more value in
 a many-valued field; two adds on one field land in one change set. A `create`
 makes a Subject of any declared kind: `key` is a one-key kind's value, every

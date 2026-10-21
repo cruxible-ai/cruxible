@@ -17,6 +17,7 @@ from cruxible_client.contracts.write import (
     Change,
     Evidence,
     FileEvidence,
+    RebindChange,
     SectionEvidence,
     SetChange,
 )
@@ -45,7 +46,7 @@ def observe_changes(changes: Sequence[Change], *, workspace: Path) -> tuple[Chan
 
     observed: list[Change] = []
     for change in changes:
-        if isinstance(change, SetChange | AddChange) and isinstance(
+        if isinstance(change, SetChange | AddChange | RebindChange) and isinstance(
             change.evidence, FileEvidence | SectionEvidence
         ):
             change = change.model_copy(
@@ -55,4 +56,42 @@ def observe_changes(changes: Sequence[Change], *, workspace: Path) -> tuple[Chan
     return tuple(observed)
 
 
-__all__ = ["observe_changes", "observe_evidence"]
+def _catalogued_path(workspace: Path, file: str) -> str:
+    """A workspace file by its path, or by its file-catalog name (as ``next`` names it)."""
+
+    if Path(file).is_absolute() or (workspace / file).exists():
+        return file
+    try:
+        return str(workspace_files(workspace).path_for_file(file))
+    except (ValueError, OSError):
+        return file
+
+
+def rebind_evidence(
+    *, file: str | None = None, section: str | None = None, workspace: Path
+) -> FileEvidence | SectionEvidence:
+    """The new text a re-bind cites: ``FILE#ANCHOR`` (file) or ``FILE#Heading/Path`` (section).
+
+    FILE is a catalogued file's path or its catalog name; ``FILE#`` names a
+    file's preamble. A heading that itself holds ``/`` is cited through a
+    ``write`` change instead, whose section is a heading list.
+    """
+
+    if (file is None) == (section is None):
+        raise ValueError("pass one of file (FILE#ANCHOR) or section (FILE#Heading/Path)")
+    spec = file if file is not None else section
+    assert spec is not None
+    path, mark, rest = spec.partition("#")
+    if not path or not mark or (file is not None and not rest):
+        raise ValueError(
+            "file takes FILE#ANCHOR"
+            if file is not None
+            else "section takes FILE#Heading/Path (FILE# for the preamble)"
+        )
+    located = _catalogued_path(workspace, path)
+    if file is not None:
+        return FileEvidence(file=f"{located}#{rest}")
+    return SectionEvidence(file=located, section=tuple(item for item in rest.split("/") if item))
+
+
+__all__ = ["observe_changes", "observe_evidence", "rebind_evidence"]

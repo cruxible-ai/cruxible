@@ -1,14 +1,17 @@
-"""The write verbs: ``set``, ``retire`` and ``write``.
+"""The write verbs: ``set``, ``retire``, ``rebind`` and ``write``.
 
-Three verbs change accepted state, identically on MCP, the CLI, HTTP and the SDK:
+These verbs change accepted state, identically on MCP, the CLI, HTTP and the SDK:
 
 - ``set`` puts one value in one field of one Subject. On a single-value field it
   replaces the live value (the Claim it revises is inferred);
-- ``retire`` ends one live Claim, named by ID or by its Subject and field;
-- ``write`` applies a batch of ``create``, ``set``, ``add`` and ``retire``
-  changes as one change set. A ``create`` names a new Subject by its kind and
-  key under a label; the write's other changes name it ``{"created": label}``,
-  as their subject or as a Subject value, in any order.
+- ``retire`` ends one live Claim, named by ID or by its Subject and field, or a
+  Subject itself (``kind/id``; its own Claims only with ``with_claims``);
+- ``rebind`` re-cites a live Claim whose cited text drifted on the text it
+  rests on now: the same statement, a new revision of the same Claim;
+- ``write`` applies a batch of ``create``, ``set``, ``add``, ``retire`` and
+  ``rebind`` changes as one change set. A ``create`` names a new Subject by its
+  kind and key under a label; the write's other changes name it
+  ``{"created": label}``, as their subject or as a Subject value, in any order.
 
 Every write lowers to the ordinary authoring change set and goes through the
 same coordinator, preflight, submit, review and activation as any other
@@ -62,6 +65,7 @@ CAPTURE_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
 CAPTURE_HANDLE_PATTERN = r"^CAP-[0-9a-f]{12,64}$"
 CAPTURE_REF_PATTERN = r"^(?:sha256:[0-9a-f]{64}|CAP-[0-9a-f]{12,64})$"
 FILE_ANCHOR_PATTERN = r"^[^#]+#.+$"
+CITATION_REF_PATTERN = r"^(?:sha256:)?[0-9a-f]{12,64}$"
 _GIT_OID = re.compile(r"^[0-9a-f]{1,64}$")
 
 _SUBJECT_REF = re.compile(SUBJECT_REF_PATTERN)
@@ -85,33 +89,32 @@ SubjectRef = Annotated[
     BeforeValidator(subject_reference),
     Field(
         pattern=SUBJECT_REF_PATTERN,
-        description="kind/id, kind/alias or kind/key; optional '@' prefix.",
+        description="kind/id (or kind/alias, kind/key; '@' optional).",
     ),
 ]
 ClaimId = Annotated[
     str,
-    Field(pattern=CLAIM_ID_PATTERN, description="A Claim ID: CLM-… or Claim:CLM-…."),
+    Field(pattern=CLAIM_ID_PATTERN, description="CLM-… (or Claim:CLM-…)."),
 ]
 FieldName = Annotated[
     str,
     Field(
         min_length=1,
         max_length=512,
-        description=("A field from orient, or its full predicate."),
+        description="A field as orient names it, or its predicate.",
     ),
 ]
-ClaimValue = bool | int | float | str
+ClaimValue = bool | int | str
 """A scalar value. A Subject-valued field takes the Subject as kind/id (or
-``@kind/id``); an exact-content field takes the text itself."""
+``@kind/id``); an exact-content field takes the text itself. Accepted values
+hold integers only (canonical JSON has no fractions): a number field counts in
+a scaled unit, or takes a decimal as text when its schema is a string."""
 
 ExpectedValue = ClaimValue | tuple[ClaimValue, ...]
 """What a field must hold for a write to go ahead: one value, or every live
 value of the field as a list (``[]`` when it must hold none)."""
 
-_EXPECT_DESCRIPTION = (
-    "Compare-and-set: value read, list of all live values for many-valued fields, "
-    "[] for none; mismatch: slot_changed."
-)
+_EXPECT_DESCRIPTION = "Compare-and-set: the value(s) you read, [] for none; else slot_changed."
 
 WriteRole = Literal["normative", "observation", "environment_binding"]
 WriteAccept = Literal["if_allowed", "never"]
@@ -124,7 +127,7 @@ WriteStatus = Literal[
     "would_await_approval",
     "would_refuse",
 ]
-WriteOp = Literal["create", "set", "add", "retire"]
+WriteOp = Literal["create", "set", "add", "retire", "rebind"]
 ApprovalReason = Literal[
     "independent_approval_required", "activation_not_permitted", "accept_never"
 ]
@@ -146,7 +149,7 @@ def _omit_empty(value: object) -> bool:
 
 
 class SelfEvidence(_StrictWriteModel):
-    """Self evidence; defaults to because, or the value itself for exact content."""
+    """Own words; default: because (exact content: the value itself)."""
 
     kind: Literal["self"] = "self"
     self: str = Field(min_length=1, description="The text that backs the value.")
@@ -164,18 +167,18 @@ class CaptureEvidence(_StrictWriteModel):
     kind: Literal["capture"] = "capture"
     capture: str = Field(
         pattern=CAPTURE_REF_PATTERN,
-        description="sha256:<64 hex> or unique CAP-<12+ hex> handle.",
+        description="sha256 digest or unique CAP-<12+ hex>.",
     )
 
 
 class ContractEvidence(_StrictWriteModel):
-    """Use this contract's newest verified exact-bytes Capture about the Subject."""
+    """This contract's newest verified exact-bytes Capture about the Subject."""
 
     kind: Literal["contract"] = "contract"
     contract: str = Field(
         min_length=1,
         max_length=512,
-        description="CaptureContract name from admitted_contracts.",
+        description="A name from admitted_contracts.",
     )
 
 
@@ -185,7 +188,7 @@ class FileEvidence(_StrictWriteModel):
     kind: Literal["file"] = "file"
     file: str = Field(
         pattern=FILE_ANCHOR_PATTERN,
-        description="PATH#ANCHOR: a catalogued workspace file and text found once in it.",
+        description="PATH#ANCHOR: a catalogued file and text found once in it.",
     )
     observation: WorkingSelectionObservation | None = Field(
         default=None,
@@ -250,20 +253,18 @@ Evidence = Annotated[
 
 
 class AppendSection(_StrictWriteModel):
-    """Append a child subtree, creating a missing file with exactly the agent's text."""
+    """Append a child subtree; a missing file is created with exactly this text."""
 
     op: Literal["append"] = "append"
     id: str | None = Field(default=None, min_length=1, exclude_if=_omit_none)
     file: str = Field(min_length=1)
     under: SectionPath = ()
     text: str = Field(min_length=1)
-    name: str | None = Field(
-        default=None, min_length=1, description="Catalog name, used only when creating a file."
-    )
+    name: str | None = Field(default=None, min_length=1, description="Catalog name for a new file.")
 
 
 class ReplaceSection(_StrictWriteModel):
-    """Replace a whole subtree, or the preamble at the empty heading path."""
+    """Replace a whole subtree, or the preamble at section []."""
 
     op: Literal["replace"] = "replace"
     id: str | None = Field(default=None, min_length=1, exclude_if=_omit_none)
@@ -337,13 +338,13 @@ NewSubjectLabel = Annotated[
     str,
     Field(
         pattern=NEW_SUBJECT_LABEL_PATTERN,
-        description="Unique label within this write.",
+        description="Unique in this write.",
     ),
 ]
 
 
 class CreatedSubject(_StrictWriteModel):
-    """Refer to a create change in this write by label, in any order."""
+    """A create change of this write, by its label, in any order."""
 
     created: NewSubjectLabel
 
@@ -353,7 +354,7 @@ SubjectTarget: TypeAlias = SubjectRef | CreatedSubject
 
 
 class CreateChange(_StrictWriteModel):
-    """Create or reuse the key's sole live holder; ambiguity refuses. Core assigns the id."""
+    """Create a Subject by kind and key, or land on its one live holder; core assigns ids."""
 
     op: Literal["create"] = "create"
     label: NewSubjectLabel
@@ -362,9 +363,7 @@ class CreateChange(_StrictWriteModel):
     )
     key: SubjectKeyValue | tuple[SubjectKeyPart, ...] | None = Field(
         default=None,
-        description=(
-            'Single key value or composite parts {"predicate", "value"}; none for minted kinds.'
-        ),
+        description=('One key value, or parts {"predicate", "value"}; none for a minted kind.'),
     )
     create_new: bool = Field(
         default=False,
@@ -372,12 +371,12 @@ class CreateChange(_StrictWriteModel):
     )
     expect_new: bool = Field(
         default=False,
-        description="Refuse cruxible.write.subject_exists if the key has a live holder.",
+        description="Refuse subject_exists if the key has a live holder.",
     )
 
 
 class SlotRef(_StrictWriteModel):
-    """A Subject's field; include value to select one of several live values."""
+    """A Subject's field; value picks one of several live values."""
 
     subject: SubjectRef | None = Field(
         default=None,
@@ -388,7 +387,7 @@ class SlotRef(_StrictWriteModel):
 
 
 class SetChange(_StrictWriteModel):
-    """Replace a single-value field; contend=true states a competing Claim instead."""
+    """Replace a single-value field; contend=true contests it instead."""
 
     op: Literal["set"] = "set"
     subject: SubjectTarget | None = Field(
@@ -427,33 +426,59 @@ class AddChange(_StrictWriteModel):
     )
     expect_absent: bool = Field(
         default=False,
-        description=(
-            "Refuse value_already_present instead of treating a live value as already done."
-        ),
+        description="Refuse value_already_present if the value is live.",
     )
+
+
+def _with_claims_target(target: object, with_claims: bool) -> None:
+    if with_claims and not (isinstance(target, str) and _SUBJECT_REF.fullmatch(target)):
+        raise ValueError("with_claims retires a Subject's Claims, so the target is kind/id")
 
 
 class RetireChange(_StrictWriteModel):
-    """End a live Claim by ID or slot; include value for a many-valued field."""
+    """End a live Claim (by ID or slot) or a Subject (kind/id)."""
 
     op: Literal["retire"] = "retire"
-    target: ClaimId | SlotRef
+    target: ClaimId | SubjectRef | SlotRef
     because: str | None = Field(
         default=None,
         min_length=1,
-        description="Override the write's because for this retirement.",
+        description="Overrides the write's because here.",
     )
     reason: WriteRetireReason = Field(
         default="was-rescinded",
-        description=(
-            "was-rescinded: author withdrew it; was-wrong: false; "
-            "superseded: valid then, obsolete form now."
-        ),
+        description="was-rescinded: withdrawn; was-wrong: false; superseded: obsolete form.",
     )
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
+    with_claims: bool = Field(
+        default=False,
+        exclude_if=lambda value: not value,
+        description="Subject target: also retire its live Claims.",
+    )
+
+    @model_validator(mode="after")
+    def _subject_claims(self) -> RetireChange:
+        _with_claims_target(self.target, self.with_claims)
+        return self
 
 
-Change = Annotated[CreateChange | SetChange | AddChange | RetireChange, Field(discriminator="op")]
+class RebindChange(_StrictWriteModel):
+    """Re-cite a drifted Claim on its text now; the value stays."""
+
+    op: Literal["rebind"] = "rebind"
+    target: ClaimId
+    citation: str | None = Field(
+        default=None,
+        pattern=CITATION_REF_PATTERN,
+        description="Citation to replace (12+ hex); default: the Claim's one of that file.",
+    )
+    evidence: Annotated[FileEvidence | SectionEvidence, Field(discriminator="kind")]
+
+
+Change = Annotated[
+    CreateChange | SetChange | AddChange | RetireChange | RebindChange,
+    Field(discriminator="op"),
+]
 
 
 # -- requests -------------------------------------------------------------------
@@ -511,12 +536,23 @@ class SetRequest(_WriteRequestBase):
 
 class RetireRequest(_WriteRequestBase):
     tag: Literal["playbill-retire-request-v1"] = "playbill-retire-request-v1"
-    target: ClaimId | SlotRef
+    target: ClaimId | SubjectRef | SlotRef
     reason: WriteRetireReason = "was-rescinded"
     expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
+    with_claims: bool = Field(default=False, exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def _subject_claims(self) -> RetireRequest:
+        _with_claims_target(self.target, self.with_claims)
+        return self
 
     def change(self) -> RetireChange:
-        return RetireChange(target=self.target, reason=self.reason, expect=self.expect)
+        return RetireChange(
+            target=self.target,
+            reason=self.reason,
+            expect=self.expect,
+            with_claims=self.with_claims,
+        )
 
 
 class WriteRequest(_WriteRequestBase):
@@ -788,6 +824,7 @@ __all__ = [
     "RetireRequest",
     "SetRequest",
     "WriteRequest",
+    "RebindChange",
     "RetireChange",
     "SelfEvidence",
     "SetChange",
