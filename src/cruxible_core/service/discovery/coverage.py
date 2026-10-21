@@ -30,7 +30,9 @@ from collections.abc import Mapping, Sequence
 from cruxible_client.contracts.captures import (
     CaptureEnvelopeAny,
 )
-from cruxible_client.contracts.errors import CasError, ProposalIntegrityError
+from cruxible_client.contracts.claims import parse_claim
+from cruxible_client.contracts.errors import CasError, CruxibleError, ProposalIntegrityError
+from cruxible_client.contracts.read_values import ClaimLine
 from cruxible_client.contracts.source_references import (
     ExternalSourceReference,
     LedgerSourceReference,
@@ -70,6 +72,7 @@ from cruxible_core.coverage.resolver import (
 from cruxible_core.indexes.evidence.citation_coverage import coverage_rows
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import AcceptedCoordinate
+from cruxible_core.service.discovery.claim_lines import claim_line, live_predicates
 from cruxible_core.storage.capture_metadata import capture_envelope
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.read_positions import PositionedBodies, positioned_read, read_body
@@ -458,8 +461,47 @@ def service_resolve_playbill_coverage(
     )
 
 
+def coverage_claim_lines(
+    instance: PlaybillInstance, result: CoverageResultV3
+) -> tuple[ClaimLine, ...]:
+    """The Claims an answer's cards address, as text lines show them.
+
+    Read from each card's Claim address at the answer's own coordinate, once
+    per distinct Claim: O(cards returned). They ride beside the frozen result
+    grammar, so the answer's digests are unaffected.
+    """
+
+    paths = sorted(
+        {
+            address.artifact_path
+            for span in result.spans
+            for card in span.cards
+            for address in card.claim_addresses
+        },
+        key=str.encode,
+    )
+    if not paths:
+        return ()
+    coordinate = instance.coordinate_for_oid(result.at.git_oid)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        accepted = live_predicates(projection)
+    blobs = instance.blobs_at(result.at.git_oid, paths)
+    lines: list[ClaimLine] = []
+    for path in paths:
+        content = blobs.get(path)
+        if content is None:
+            continue
+        try:
+            claim = parse_claim(content, path=path)
+        except (CruxibleError, ValueError):
+            continue
+        lines.append(claim_line(claim, accepted_predicates=accepted))
+    return tuple(lines)
+
+
 __all__ = [
     "COVERAGE_ACCESS_PROFILE_ID",
+    "coverage_claim_lines",
     "accepted_evidence_sources",
     "build_accepted_evidence_index_v2",
     "coverage_access_profile",

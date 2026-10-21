@@ -43,6 +43,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicy
 from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
 from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_core.authoring.registrations import projection_block_registered
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
@@ -637,10 +638,15 @@ class ProjectionCheckContext:
         token = _LINEAGES.set((self.instance, self.lineages))
         nodes = _NODES.set((self.instance, self._nodes))
         try:
-            return self._read(request)
+            result = self._read(request)
         finally:
             _NODES.reset(nodes)
             _LINEAGES.reset(token)
+        # Detach strips a block the instance no longer publishes; one stat per read.
+        registered = projection_block_registered(
+            self.instance, source_id=request.stamp.source_id, block_id=request.stamp.block_id
+        )
+        return result.model_copy(update={"registered": registered})
 
     def _read(self, request: BlockSyncReadRequest) -> BlockSyncReadResult:
         stamp = request.stamp

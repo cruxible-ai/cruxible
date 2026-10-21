@@ -130,10 +130,10 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
     # placeholder they would have to resolve: the notes are attached to the
     # projected review commit, which is what the mirror and the workspace carry.
     assert (
-        f"git notes --ref=refs/notes/playbill-eval show cruxible-ledger/proposals/{key}" in pointer
+        f"git notes --ref=refs/notes/cruxible-eval show cruxible-ledger/proposals/{key}" in pointer
     )
     assert (
-        f"git notes --ref=refs/notes/playbill-approval show cruxible-ledger/proposals/{key}"
+        f"git notes --ref=refs/notes/cruxible-approval show cruxible-ledger/proposals/{key}"
         in pointer
     )
     assert "git fetch origin '+refs/notes/*:refs/notes/*'" in pointer
@@ -472,6 +472,7 @@ def test_change_lines_print_claims_as_the_write_verbs_do() -> None:
             member(None, claim("ada")),
             member(claim("ada"), claim("grace")),
             member(claim("grace"), claim("grace", state="retired")),
+            member(claim(True), claim(True)),
             member(None, claim("app.library/libfoo", kind="subject")),
             member(
                 None,
@@ -486,10 +487,12 @@ def test_change_lines_print_claims_as_the_write_verbs_do() -> None:
     assert proposal_change_lines(review) == [  # type: ignore[arg-type]
         "Why:",
         "  Reassigned.",
-        "Changes (5):",
+        "Changes (6):",
         "  set app.service/payments owner: ada  [CLM-1]",
         "  set app.service/payments owner: ada -> grace  [CLM-1]",
         "  retire app.service/payments owner: grace  [CLM-1]",
+        # A settle fallback re-citing a re-read file: the value did not move.
+        "  refresh evidence app.service/payments owner: true (value unchanged)  [CLM-1]",
         "  set app.service/payments owner: app.library/libfoo  [CLM-1]",
         "  add subject subjects/app.service/x.json  (generated successor)",
     ]

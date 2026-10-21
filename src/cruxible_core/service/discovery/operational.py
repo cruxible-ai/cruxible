@@ -67,6 +67,7 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
 from cruxible_client.contracts.procedures.windows import CaptureEventWindow, FixedWindow
+from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.read_values import summary_value, whole_value_read
 from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
@@ -297,7 +298,7 @@ def schedule_summary(schedule: TriggerSchedule) -> str:
     if isinstance(schedule, CronSchedule):
         return f"on cron {schedule.expression} (UTC)"
     if isinstance(schedule, CaptureLandingSchedule):
-        return f"when {schedule.event.capture_contract_identity.qualified} lands"
+        return f"when {public_name(schedule.event.capture_contract_identity.qualified)} lands"
     if isinstance(schedule, WindowCloseSchedule):
         return "when " + window_summary(schedule.window) + " closes"
     if isinstance(schedule, GenerationAcceptedSchedule):
@@ -314,7 +315,7 @@ def window_summary(window: object) -> str:
     if isinstance(window, CaptureEventWindow):
         return (
             f"the {window.duration_seconds}s window after each "
-            f"{window.event.capture_contract_identity.qualified} Capture"
+            f"{public_name(window.event.capture_contract_identity.qualified)} Capture"
         )
     return "its window"
 

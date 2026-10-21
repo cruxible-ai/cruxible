@@ -95,6 +95,66 @@ def test_kit_add_sends_the_upgrade_decisions_and_groups_the_plan_by_kind(
     )
 
 
+def test_kit_lines_say_what_a_kept_divergence_keeps_and_use_public_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.kits import KitKeptDivergence
+
+    kept = KitKeptDivergence(
+        path="claim-types/acme.account/title.json",
+        identity="ClaimType:acme.account.title",
+        consequence="overwrites_your_edit",
+        release_digest="sha256:" + "3" * 64,
+    )
+
+    class StubClient:
+        def add_kit(self, instance_id: str, request: KitAddRequest) -> KitChangeResult:
+            return KitChangeResult(
+                kit_id="acme",
+                version="1.1.0",
+                status="would_propose",
+                plan=(
+                    KitPathPlan(
+                        path=kept.path,
+                        action="keep",
+                        identity=kept.identity,
+                        consequence="overwrites_your_edit",
+                    ),
+                    KitPathPlan(
+                        path="capture-contracts/playbill.coordinator-self-source-v1.json",
+                        action="add",
+                        identity="CaptureContract:playbill.coordinator-self-source-v1",
+                    ),
+                ),
+            )
+
+        def kit_status(self, instance_id: str) -> KitStatus:
+            return KitStatus(
+                kits=(
+                    InstalledKit(
+                        kit_id="acme",
+                        version="1.1.0",
+                        content_digest="sha256:" + "1" * 64,
+                        kept=(kept,),
+                    ),
+                )
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.resolve_kit", lambda _kit: (_bundle(), "acme-1.1.0")
+    )
+
+    added = CliRunner().invoke(cli, [*BASE, "add", "acme-1.1.0"])
+    assert added.exit_code == 0, added.output
+    assert "  keep: ClaimType:acme.account.title (keeps your edit)" in added.output
+    assert "  add: CaptureContract:cruxible.coordinator-self-source-v1" in added.output
+    assert "overwrites your edit" not in added.output and "playbill." not in added.output
+    status = CliRunner().invoke(cli, [*BASE, "status", "--offline"])
+    assert status.exit_code == 0, status.output
+    assert "  kept: ClaimType:acme.account.title (your edit)" in status.output
+
+
 def test_kit_status_offline_skips_the_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     class StubClient:
         def kit_status(self, instance_id: str) -> KitStatus:

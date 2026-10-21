@@ -190,6 +190,27 @@ def test_pagination_commits_actual_coverage_and_cursor_rejects_operational_drift
     first = service_playbill_audit(instance, request=first_request, actor_context=_actor())
 
     assert len(first.rows) == 2
+    # Each returned row names its Claim as a line: subject, short field, value.
+    from cruxible_client import contracts as public
+    from cruxible_client.contracts.get_display import render_claim_line
+
+    for row in first.rows:
+        assert row.statement is not None
+        assert row.statement.claim == row.claim_identity.name
+        assert row.statement.subject.startswith("project.work_item/wi-")
+        assert (row.statement.field, row.statement.value) == ("status", "ready")
+        assert render_claim_line(row.statement, lead="7").startswith(
+            f"7  {row.statement.subject}  status = ready  [CLM-"
+        )
+        served = public.AuditRow.model_validate(row.model_dump(mode="json"))
+        assert served.statement == row.statement
+    # The line is display only: the result digest is the one without it.
+    bare = first.model_copy(
+        update={"rows": tuple(row.model_copy(update={"statement": None}) for row in first.rows)}
+    )
+    from cruxible_core.curation.audit import audit_result_digest
+
+    assert audit_result_digest(bare) == first.result_digest
     assert first.coverage.candidate_claim_count == 3
     assert first.coverage.returned_claim_count == 2
     assert first.coverage.omitted_claim_count == 1

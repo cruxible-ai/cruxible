@@ -25476,7 +25476,7 @@
           },
           "InboxItemEnvelope": {
             "additionalProperties": false,
-            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item is ``unread`` again, and\n``recurred_since_disposition`` counts the sightings after that decision.",
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item keeps its status, and\n``recurred_since_disposition`` counts the sightings after that decision.",
             "properties": {
               "dedupe_key": {
                 "title": "Dedupe Key",
@@ -25914,7 +25914,7 @@
           },
           "InboxItemEnvelope": {
             "additionalProperties": false,
-            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item is ``unread`` again, and\n``recurred_since_disposition`` counts the sightings after that decision.",
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item keeps its status, and\n``recurred_since_disposition`` counts the sightings after that decision.",
             "properties": {
               "dedupe_key": {
                 "title": "Dedupe Key",
@@ -26656,7 +26656,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item is ``unread`` again, and\n``recurred_since_disposition`` counts the sightings after that decision.",
+        "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item keeps its status, and\n``recurred_since_disposition`` counts the sightings after that decision.",
         "properties": {
           "dedupe_key": {
             "title": "Dedupe Key",
@@ -27440,7 +27440,7 @@
           },
           "InboxItemEnvelope": {
             "additionalProperties": false,
-            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item is ``unread`` again, and\n``recurred_since_disposition`` counts the sightings after that decision.",
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item keeps its status, and\n``recurred_since_disposition`` counts the sightings after that decision.",
             "properties": {
               "dedupe_key": {
                 "title": "Dedupe Key",
@@ -28064,7 +28064,7 @@
           },
           "InboxItemEnvelope": {
             "additionalProperties": false,
-            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item is ``unread`` again, and\n``recurred_since_disposition`` counts the sightings after that decision.",
+            "description": "The core envelope of one inbox item: everything about it except its payload.\n\n``occurrences`` counts every run that posted the item. ``first_sighting`` is\nthe earliest of them and ``recent_sightings`` the latest\n(``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures\nits posting stood on. ``disposition`` is the agent's latest decision, kept\nwhen the item recurs: a recurring item keeps its status, and\n``recurred_since_disposition`` counts the sightings after that decision.",
             "properties": {
               "dedupe_key": {
                 "title": "Dedupe Key",

@@ -187,6 +187,26 @@ def _emit_brief(
     click.echo(f"next: {next_command}" if next_command else "next: nothing to run")
 
 
+def _echo_refusal(
+    where: str,
+    *,
+    code: str,
+    message: str,
+    change: int | None = None,
+    candidates: tuple[str, ...] = (),
+    repair: str | None = None,
+) -> None:
+    """Render one refusal as value writes do: where, code and message, nearest, repair."""
+
+    click.echo(f"refused ({where})", err=True)
+    at = "" if change is None else f" (change {change})"
+    click.echo(f"{code}{at}: {message}", err=True)
+    if candidates:
+        click.echo(f"  nearest: {', '.join(candidates)}", err=True)
+    if repair:
+        click.echo(f"  repair: {repair}", err=True)
+
+
 def _root_ctx_obj() -> dict[str, Any]:
     ctx = click.get_current_context(silent=True)
     if ctx is None:

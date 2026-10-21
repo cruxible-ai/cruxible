@@ -124,3 +124,48 @@ def test_a_permission_denial_names_what_the_required_tier_allows(
     status, body = error_to_response(caught.value)
     client_error = response_to_error(status, ErrorResponse.model_validate(body.model_dump()))
     assert str(client_error) == message
+
+
+def test_a_cli_permission_denial_names_the_verb_and_the_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import click
+    from click.testing import CliRunner
+
+    from cruxible_client.errors import ErrorResponse, response_to_error
+    from cruxible_core.cli.main import handle_errors
+    from cruxible_core.server.errors import error_to_response
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+    reset_permissions()
+    with pytest.raises(PermissionDeniedError) as caught:
+        check_permission("cruxible_proposal_approve_submit")
+    status, body = error_to_response(caught.value)
+    remote = response_to_error(status, ErrorResponse.model_validate(body.model_dump()))
+
+    for error in (caught.value, remote):
+
+        @click.group()
+        def root() -> None:
+            pass
+
+        # A path outside MUTATING_COMMAND_TARGETS keeps the write-target echo out.
+        @root.group()
+        def probe() -> None:
+            pass
+
+        @probe.command()
+        @handle_errors
+        def approve() -> None:
+            raise error
+
+        result = CliRunner().invoke(root, ["probe", "approve"])
+        assert result.exit_code == 1
+        assert result.output.strip().splitlines()[0] == (
+            # CRUXIBLE_MODE also sets the daemon's capability ceiling here.
+            "Error: cruxible probe approve needs the graph_write tier, but the daemon "
+            "capability ceiling is governed_write (this request: governed_write). "
+            "graph_write mode does everything governed_write does, plus submitting "
+            "approvals and activating."
+        )
+        assert "cruxible_proposal_approve_submit" not in result.output

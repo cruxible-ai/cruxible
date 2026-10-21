@@ -77,7 +77,7 @@ def test_all_write_plumbing_runs_without_spawning_git(ledger):
         ledger.replace_proposal_review_refs({})
     assert work.counts["git_spawns"] == 0
     assert (
-        ledger._git(["notes", "--ref=refs/notes/playbill-eval", "show", proposal])
+        ledger._git(["notes", "--ref=refs/notes/cruxible-eval", "show", proposal])
         == b"evaluation\n"
     )
     ledger._git(["fsck", "--strict", "--no-dangling"])

@@ -372,3 +372,42 @@ def test_non_changeset_accepted_source_is_rejected() -> None:
             )
         )
     assert getattr(raised.value, "code") == "cruxible.since.accepted_state_invalid"
+
+
+def test_a_claim_row_carries_its_statement_from_its_own_generation(tmp_path: Path) -> None:
+    """since says what changed: each Claim row names subject, field and value."""
+
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.main import cli
+    from tests.core_support._knowledge_loop_support import seed_claims
+
+    instance, _owner = seed_claims(tmp_path)
+    result = service_playbill_since(instance, request=_request())
+    claims = [row for row in result.rows if row.artifact_kind == "claim"]
+    assert claims and all(row.statement is not None for row in claims)
+    assert all(row.statement is None for row in result.rows if row.artifact_kind != "claim")
+    values = {(row.statement.subject, row.statement.value) for row in claims if row.statement}
+    assert ("project.work_item/wi-42", "ready") in values
+    assert all(row.statement.claim in row.member_path for row in claims if row.statement)
+
+    class Served:
+        def since(self, _instance_id: str, **_values: object) -> contracts.SinceResult:
+            return result
+
+    import pytest as _pytest
+
+    with _pytest.MonkeyPatch.context() as patch:
+        patch.setattr("cruxible_core.cli.commands._common._get_client", lambda: Served())
+        printed = CliRunner().invoke(
+            cli, ["--server-url", "https://since.test", "--instance-id", "inst", "since", "0"]
+        )
+    assert printed.exit_code == 0, printed.output
+    lines = printed.stdout.splitlines()
+    assert any(
+        line.startswith(f"{claims[0].generation}  {claims[0].disposition}  project.work_item/")
+        and " = " in line
+        and "[CLM-" in line
+        for line in lines
+    )
+    assert not any(".json" in line for line in lines if "[CLM-" in line)

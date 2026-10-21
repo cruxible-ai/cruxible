@@ -183,7 +183,7 @@ def test_an_hourly_reread_of_identical_rows_is_one_item_per_row_seen_each_hour(
     assert LineInboxStore(instance).unread_by_line() == ((line.identity.qualified, len(ROWS)),)
 
 
-def test_the_same_item_again_resurfaces_with_its_prior_disposition(tmp_path: Path) -> None:
+def test_the_same_item_again_keeps_its_disposition(tmp_path: Path) -> None:
     """An item no Capture backs, posted by two runs: one item, seen twice, decided once."""
 
     from cruxible_client.contracts.line_inbox import InboxDismissed
@@ -210,7 +210,7 @@ def test_the_same_item_again_resurfaces_with_its_prior_disposition(tmp_path: Pat
     (entry,) = _entries(instance)
     envelope = entry.envelope
     assert (envelope.status, envelope.occurrences, envelope.recurred_since_disposition) == (
-        "unread",
+        "dismissed",
         2,
         1,
     )

@@ -789,6 +789,14 @@ def _claim_change_line(member: ReviewedMember) -> str | None:
     base_statement = base.get("statement") if base is not None else None
     if retired:
         line = f"retire {subject} {field}: {_claim_object_text(statement)}"
+    elif isinstance(base_statement, Mapping) and base_statement.get("object") == statement.get(
+        "object"
+    ):
+        # Same value on new evidence (a re-read file is new content): say so,
+        # rather than print `true -> true` as if the value moved.
+        line = (
+            f"refresh evidence {subject} {field}: {_claim_object_text(statement)} (value unchanged)"
+        )
     elif isinstance(base_statement, Mapping):
         line = (
             f"set {subject} {field}: {_claim_object_text(base_statement)} -> "

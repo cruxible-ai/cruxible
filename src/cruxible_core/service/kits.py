@@ -16,7 +16,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any, Literal, Protocol
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -96,6 +96,7 @@ from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.claims.artifact_references import (
     ProviderBuildMove,
     ProviderBuildMoveRefused,
+    movable_references,
     move_references,
     referenced_digests,
     referenced_identities,
@@ -653,6 +654,54 @@ class _Diff:
         self.semantic_counts: dict[str, int] = {}
 
 
+def kit_back_remap(
+    entries: Iterable[KitInstalledArtifact], current_digest: Callable[[str], str | None]
+) -> dict[str, str]:
+    """{this instance's digest of a kit member: the digest the receipt installed}.
+
+    Only members whose held digest moved (a local succession) appear. Applied
+    to a member's references, it undoes pins that merely followed another
+    member's succession, so such a pin is not counted as an edit. Built once
+    per receipt: O(kit members).
+    """
+
+    remap: dict[str, str] = {}
+    for entry in entries:
+        digest = current_digest(entry.path)
+        if digest is not None and digest != entry.installed_digest:
+            remap[digest] = entry.installed_digest
+    return remap
+
+
+def kit_content_matches(
+    path: str, payload: Mapping[str, Any], recorded: str | None, back: Mapping[str, str]
+) -> bool:
+    """Whether a held kit member is its installed content, modulo pins that followed a member."""
+
+    if recorded is None:
+        return False
+    if kit_content_digest(dict(payload)) == recorded:
+        return True
+    if not back or not movable_references(path):
+        return False
+    return kit_content_digest(move_references(path, payload, back)) == recorded
+
+
+def _tree_back_remap(
+    receipt_entries: Iterable[KitInstalledArtifact], tree: Mapping[str, bytes]
+) -> dict[str, str]:
+    def current(path: str) -> str | None:
+        raw = tree.get(path)
+        if raw is None:
+            return None
+        try:
+            return _artifact_state(path, raw).artifact_digest
+        except DataValidationError:
+            return None
+
+    return kit_back_remap(receipt_entries, current)
+
+
 def _installed_content(entry: KitInstalledArtifact, tree: Mapping[str, bytes]) -> str | None:
     """The content digest a receipt recorded; receipts from before it use the bytes held."""
 
@@ -688,6 +737,8 @@ def _diff_release(
     states = {path: _artifact_state(path, content) for path, content in contents.items()}
     payloads = {path: json.loads(content) for path, content in contents.items()}
     owned = {path for path, state in states.items() if _owned(state, owns)}
+    # A pin that followed a kit member's local succession is not an edit.
+    back = _tree_back_remap(installed.values(), tree)
     diff = _Diff()
     # Digests the release pins outside itself, already moved to this instance's
     # (a bundled provider's Provider).
@@ -736,7 +787,9 @@ def _diff_release(
             consequence = "replaces_carried_definition"
         elif path not in installed:
             consequence = "takes_over_outside_definition"
-        elif _installed_content(installed[path], tree) == kit_content_digest(current_payload):
+        elif kit_content_matches(
+            path, current_payload, _installed_content(installed[path], tree), back
+        ):
             consequence = None
         else:
             consequence = "overwrites_your_edit"
@@ -751,7 +804,6 @@ def _diff_release(
                     action="keep",
                     identity=identity,
                     consequence=consequence,
-                    detail="this instance's version is kept",
                 )
             )
             diff.installed[release_digest] = current_state.artifact_digest
@@ -2167,6 +2219,7 @@ def _remove_kit(
     shell, receipt = found
     diff = _Diff()
     edited = []
+    back = _tree_back_remap((*receipt.artifacts, *receipt.carried), tree)
     for entry in receipt.artifacts:
         current = tree.get(entry.path)
         if current is None:
@@ -2174,7 +2227,9 @@ def _remove_kit(
         state = _artifact_state(entry.path, current)
         if state.lifecycle.state != "live":
             continue
-        if _installed_content(entry, tree) != kit_content_digest(json.loads(current)):
+        if not kit_content_matches(
+            entry.path, json.loads(current), _installed_content(entry, tree), back
+        ):
             edited.append(entry.path)
             continue
         diff.plan.append(
@@ -2228,11 +2283,14 @@ def service_kit_status(instance: PlaybillInstance) -> KitStatus:
 def _installed_kit(connection: Any, tree: Mapping[str, bytes], receipt: KitReceipt) -> InstalledKit:
     """One installed kit's status: drifted paths and each provider build here."""
 
+    back = _tree_back_remap((*receipt.artifacts, *receipt.carried), tree)
     drifted = tuple(
         entry.path
         for entry in receipt.artifacts
         if entry.path not in tree
-        or _installed_content(entry, tree) != kit_content_digest(json.loads(tree[entry.path]))
+        or not kit_content_matches(
+            entry.path, json.loads(tree[entry.path]), _installed_content(entry, tree), back
+        )
     )
     providers = []
     held = {

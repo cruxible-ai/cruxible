@@ -57,11 +57,13 @@ from cruxible_client.contracts.kits import KitInstalledArtifact, KitReceipt, kit
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_client.contracts.procedures.line_specs import LineSpec
+from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.subject_kinds import SubjectKind, SubjectKindKeys
 from cruxible_client.contracts.triggers import LineTarget, Trigger
 from cruxible_core.derived.persistent import EMPTY_PCOUNTS, EMPTY_PSET, PCounts, PMap, PSet
 from cruxible_core.service.discovery.field_names import short_field_name
+from cruxible_core.service.discovery.query_vocabulary import render_duration
 from cruxible_core.service.floor.floor_content import member_ref
 from cruxible_core.service.floor.floor_current import literal_block, stamp_text, yaml_scalar
 from cruxible_core.service.floor.floor_definitions import (
@@ -107,7 +109,9 @@ def kind_card_path(kind: str) -> str:
 
 
 def contract_card_path(contract_id: str) -> str:
-    return f"{CONTRACTS_DIRECTORY}{contract_id}{CARD_SUFFIX}"
+    """A contract's card, named by its public name: grep for what the CLI displays finds it."""
+
+    return f"{CONTRACTS_DIRECTORY}{public_name(contract_id)}{CARD_SUFFIX}"
 
 
 def _is_file(target: str) -> bool:
@@ -423,15 +427,6 @@ def _cell(text: str) -> str:
     return _one_line(text) or "-"
 
 
-def _duration(microseconds: int) -> str:
-    for unit, size in (("d", 86_400_000_000), ("h", 3_600_000_000), ("m", 60_000_000)):
-        if microseconds and microseconds % size == 0:
-            return f"{microseconds // size}{unit}"
-    if microseconds % 1_000_000 == 0:
-        return f"{microseconds // 1_000_000}s"
-    return f"{microseconds}us"
-
-
 def _time(value: Any) -> str:
     return str(value.strftime("%Y-%m-%dT%H:%M:%SZ"))
 
@@ -448,6 +443,8 @@ class _Owners:
     def __init__(self, state: OntologyState) -> None:
         self._state = state
         self._content: dict[int, str | None] = {}
+        self._backs: dict[int, dict[str, str]] = {}
+        self._receipts: dict[str, KitReceipt] = {}
 
     def entry(self, path: str) -> tuple[str, KitInstalledArtifact] | None:
         for annotator in _byte_sorted(self._state.index.annotators.get(path, ())):
@@ -456,8 +453,27 @@ class _Owners:
                 continue
             for entry in receipt.artifacts:
                 if entry.path == path:
+                    self._receipts[path] = receipt
                     return receipt.kit_id, entry
         return None
+
+    def _back(self, receipt: KitReceipt) -> dict[str, str]:
+        """The receipt's back-remap, once per receipt per render: O(kit members)."""
+
+        key = id(receipt)
+        if key not in self._backs:
+            from cruxible_core.claims.closure import parse_dependency_artifact
+            from cruxible_core.service.kits import kit_back_remap
+
+            def current(path: str) -> str | None:
+                chain = self._state.chain(path)
+                if chain is None or chain.raw is None:
+                    return None
+                state = parse_dependency_artifact(path, chain.raw)
+                return None if state is None else state.artifact_digest
+
+            self._backs[key] = kit_back_remap((*receipt.artifacts, *receipt.carried), current)
+        return self._backs[key]
 
     def _held_content(self, chain: DefinitionRevision) -> str | None:
         key = id(chain)
@@ -481,7 +497,15 @@ class _Owners:
             if state is None or state.artifact_digest != entry.installed_digest:
                 return True
             return False
-        return installed != held
+        if installed == held:
+            return False
+        receipt = self._receipts.get(path)
+        if receipt is None:
+            return True
+        # A pin that followed another kit member's succession is not an edit.
+        from cruxible_core.service.kits import kit_content_matches
+
+        return not kit_content_matches(path, json.loads(chain.raw), installed, self._back(receipt))
 
     def label(self, path: str) -> str:
         found = self.entry(path)
@@ -538,7 +562,7 @@ def _roles(claim_type: ClaimType) -> str:
 def _evidence(claim_type: ClaimType, names: ContractNamer) -> str:
     contracts = admitted_contracts(claim_type, names)
     requirement = effective_evidence_requirement(claim_type)
-    shown = ", ".join(contracts) if contracts else "-"
+    shown = ", ".join(map(public_name, contracts)) if contracts else "-"
     return shown if requirement == "self" else f"{shown} ({requirement})"
 
 
@@ -554,7 +578,7 @@ def _contention(claim_type: ClaimType) -> str:
 
 def _stale_after(claim_type: ClaimType) -> str | None:
     freshness = claim_type.evidence_freshness
-    return None if freshness is None else _duration(freshness.stale_after.microseconds)
+    return None if freshness is None else render_duration(freshness.stale_after.microseconds)
 
 
 def _settlers(state: OntologyState, path: str, predicate: str) -> list[str]:
@@ -649,7 +673,7 @@ def _field_section(
             if claim_type.default_role is None
             else (f"    default_role: {yaml_scalar(claim_type.default_role)}",)
         ),
-        *_list_entry("evidence", contracts, "    "),
+        *_list_entry("evidence", [public_name(item) for item in contracts], "    "),
         f"    evidence_requirement: {yaml_scalar(requirement)}",
         *(() if stale is None else (f"    stale_after: {yaml_scalar(stale)}",)),
         f"    contention: {yaml_scalar(_contention(claim_type))}",
@@ -951,19 +975,24 @@ class _Renderer:
         return (path, value) if isinstance(value, CaptureContract) and _live(value) else None
 
     def _contract_card(self, card: str, changed_at: int) -> bytes | None:
-        contract_id = card.removeprefix(CONTRACTS_DIRECTORY).removesuffix(CARD_SUFFIX)
+        # The card file carries the public name; the stored identity reads the contract.
+        contract_id = stored_contract_name(
+            card.removeprefix(CONTRACTS_DIRECTORY).removesuffix(CARD_SUFFIX)
+        )
         found = self._contract(contract_id)
         if found is None:
             return None
         path, contract = found
         admitted, required = self._admitters(contract_id)
         lines = [
-            f"# CaptureContract:{contract_id}  ontology  owner={self.owners.label(path)}  "
-            f"{stamp_text(changed_at)}",
-            f"contract: {yaml_scalar(contract_id)}",
+            f"# CaptureContract:{public_name(contract_id)}  ontology  "
+            f"owner={self.owners.label(path)}  {stamp_text(changed_at)}",
+            f"contract: {yaml_scalar(public_name(contract_id))}",
             f"grade: {yaml_scalar(contract.epistemic_grade)}",
             *_list_entry("source_kinds", contract.allowed_source_kinds, ""),
-            *_list_entry("logical_sources", contract.logical_source_identities, ""),
+            *_list_entry(
+                "logical_sources", map(public_name, contract.logical_source_identities), ""
+            ),
             *_list_entry("materialization", contract.allowed_materialization_modes, ""),
             *_list_entry("evidence_kinds", contract.evidence_kinds, ""),
             *_list_entry("admitted_by", admitted, ""),
@@ -986,10 +1015,10 @@ class _Renderer:
             rows.append(
                 "\t".join(
                     (
-                        contract.identity.name,
+                        public_name(contract.identity.name),
                         contract.epistemic_grade,
                         ",".join(contract.allowed_source_kinds) or "-",
-                        ",".join(contract.logical_source_identities) or "-",
+                        ",".join(map(public_name, contract.logical_source_identities)) or "-",
                         ",".join(contract.evidence_kinds) or "-",
                         str(len(admitted)),
                         str(len(required)),

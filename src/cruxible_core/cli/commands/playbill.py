@@ -203,7 +203,6 @@ from cruxible_core.coverage.adapter import (
 from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageResultV3
 from cruxible_core.coverage.render import (
     render_coverage_manifest,
-    render_coverage_result,
 )
 from cruxible_core.coverage.workspace import bindings_from_mapping, observe_workspace
 from cruxible_core.curation.curation_calibration import (
@@ -1186,6 +1185,14 @@ def init_playbill(
         marker.unlink()
     _activate_server_instance(result.instance_id)
     owner_token = _mint_owner_credential(owner, principal_id=principal_id)
+    # The reviewer gets what `principal add` gives a principal: a settings file
+    # and, with auth on, its own graph_write credential, so `context use
+    # --principal reviewer` works without --signer-id or a hand-set identity.
+    reviewer_token = (
+        None
+        if reviewer is None
+        else _mint_owner_credential(reviewer, principal_id="reviewer", mode="graph_write")
+    )
     settings = write_principal_settings(
         owner_key_dir,
         ctx_obj=_root_ctx_obj(),
@@ -1196,10 +1203,34 @@ def init_playbill(
         written_by="cruxible init",
     )
     _remember_principal_settings(result.instance_id, principal_id, settings, activate=True)
+    reviewer_settings = None
+    if reviewer is not None and reviewer_key_dir is not None:
+        reviewer_settings = write_principal_settings(
+            Path(reviewer_key_dir).expanduser(),
+            ctx_obj=_root_ctx_obj(),
+            instance_id=result.instance_id,
+            principal_id="reviewer",
+            private_key_path=reviewer.private_key_path,
+            token=reviewer_token,
+            written_by="cruxible init",
+        )
+        _remember_principal_settings(
+            result.instance_id, "reviewer", reviewer_settings, activate=False
+        )
     if git_workspace is not None:
         _write_world_stub(git_workspace, result.instance_id)
     if output_json:
-        _emit_json({**_json_receipt(result), "owner_settings_path": str(settings)})
+        _emit_json(
+            {
+                **_json_receipt(result),
+                "owner_settings_path": str(settings),
+                **(
+                    {}
+                    if reviewer_settings is None
+                    else {"reviewer_settings_path": str(reviewer_settings)}
+                ),
+            }
+        )
         return
     click.echo(f"Cruxible initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
@@ -1224,6 +1255,8 @@ def init_playbill(
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
         click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
+        click.echo(f"Reviewer settings: {reviewer_settings}")
+        click.echo("Act as the reviewer with: cruxible context use --principal reviewer")
 
 
 def _os_principal_id() -> str:
@@ -1348,12 +1381,15 @@ def _refuse_custody_inside(
     return resolved
 
 
-def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) -> str | None:
-    """With daemon auth on, mint the new owner's own admin credential; return its token.
+def _mint_owner_credential(
+    owner: GeneratedKeyMaterial, *, principal_id: str, mode: str = "admin"
+) -> str | None:
+    """With daemon auth on, mint an init principal its own credential; return its token.
 
     The operator credential that ran init acts as no principal, so the owner
-    needs one that acts as it. The owner's fresh key signs its consent. With auth
-    off nothing is minted: the configured principal ID is the identity.
+    (admin) and the reviewer (graph_write) each need one that acts as them. The
+    principal's fresh key signs its consent. With auth off nothing is minted:
+    the configured principal ID is the identity.
     """
 
     if get_runtime_bearer_token() is None:
@@ -1369,11 +1405,11 @@ def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) ->
         lambda client, instance_id: client.create_runtime_credential(
             instance_id,
             principal_id=principal_id,
-            permission_mode="admin",
+            permission_mode=cast(Any, mode),
             principal_proof=sign_runtime_credential_mint(
                 instance_id=instance_id,
                 principal_id=principal_id,
-                permission_mode="admin",
+                permission_mode=cast(Any, mode),
                 label=principal_id,
                 private_key_path=owner.private_key_path,
                 forbidden_roots=_custody_forbidden_roots(),
@@ -1805,6 +1841,21 @@ _KIT_CONSEQUENCE_TEXT = {
     "replaces_carried_definition": "replaces a definition the kit depends on",
     "release_dropped": "the release dropped it",
 }
+#: A divergence this instance keeps, said from the kept side: on a `keep` plan
+#: line, then as `kit status` lists it afterwards.
+_KIT_KEEP_TEXT = {
+    "overwrites_your_edit": ("keeps your edit", "your edit"),
+    "re_adds_retired": ("keeps it retired", "you retired it"),
+    "takes_over_outside_definition": (
+        "keeps your definition from outside the kit",
+        "your definition from outside the kit",
+    ),
+    "replaces_carried_definition": (
+        "keeps your version of a definition the kit depends on",
+        "your version of a definition the kit depends on",
+    ),
+    "release_dropped": ("keeps it; the release dropped it", "the release dropped it"),
+}
 
 
 def _echo_kit_change(result: KitChangeResult) -> None:
@@ -1836,10 +1887,14 @@ def _echo_kit_change(result: KitChangeResult) -> None:
         if item.action == "unchanged":
             continue
         kind = (item.identity or item.path).partition(":")[0]
-        line = f"  {item.action}: {item.identity or item.path}"
+        line = f"  {item.action}: {_public_name(item.identity) if item.identity else item.path}"
         notes = []
         if item.consequence is not None:
-            notes.append(_KIT_CONSEQUENCE_TEXT[item.consequence])
+            notes.append(
+                _KIT_KEEP_TEXT[item.consequence][0]
+                if item.action == "keep"
+                else _KIT_CONSEQUENCE_TEXT[item.consequence]
+            )
         if item.dependent_count:
             notes.append(f"{item.dependent_count} dependent(s)")
         if item.detail is not None:
@@ -2155,7 +2210,9 @@ def kit_status(offline: bool, output_json: bool) -> None:
         for path in kit.drifted:
             click.echo(f"  edited locally: {path}")
         for kept in kit.kept:
-            click.echo(f"  kept: {kept.identity} ({_KIT_CONSEQUENCE_TEXT[kept.consequence]})")
+            click.echo(
+                f"  kept: {_public_name(kept.identity)} ({_KIT_KEEP_TEXT[kept.consequence][1]})"
+            )
 
 
 @kit_group.command("remove")
@@ -4415,6 +4472,7 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool) -> None:
 )
 @click.option("--no-accept", is_flag=True, help="Submit a proposal without activating it.")
 @brief_option
+@json_option
 @handle_errors
 def submit_authoring_intent(
     payload: str | None,
@@ -4422,6 +4480,7 @@ def submit_authoring_intent(
     dry_run: bool,
     no_accept: bool,
     output_brief: bool,
+    output_json: bool,
 ) -> None:
     """Compile, check and submit PAYLOAD as one proposal, or submit a staged intent.
 
@@ -4435,6 +4494,8 @@ def submit_authoring_intent(
     preflight returns the unsubmitted intent with its diagnostics; a passing one
     lands immediately when policy and caller allow. Otherwise the typed result
     names why it stopped and the next step. --no-accept keeps the proposal.
+    The full record prints as JSON; a refused preflight prints the brief block
+    (outcome, ids, reason, next) instead, with the record behind --json.
     """
 
     if payload is None and intent_id is None:
@@ -4477,12 +4538,15 @@ def submit_authoring_intent(
 
     submitted = _server_call(call, command_name="cruxible authoring submit")
     outcome = submitted.outcome
-    if output_brief:
+    refused = (
+        not isinstance(outcome, contracts.AuthoringLanded) and outcome.reason == "preflight_refused"
+    )
+    if output_brief or (refused and not output_json):
         if isinstance(outcome, contracts.AuthoringLanded):
             landed = True
             coordinate = outcome.accepted_coordinate.git_oid
             reason = None
-            next_command = None
+            next_command = _landed_line_next(submitted.members)
         else:
             landed = False
             coordinate = None
@@ -4500,6 +4564,18 @@ def submit_authoring_intent(
         )
         return
     _emit_json(submitted.model_dump(mode="json"))
+
+
+def _landed_line_next(members: Sequence[Mapping[str, Any]]) -> str | None:
+    """A landed change that created Lines: enabling them is the next step. O(members)."""
+
+    names = [
+        str(member["path"]).removeprefix("lines/").removesuffix(".json")
+        for member in members
+        if str(member.get("path", "")).startswith("lines/")
+        and member.get("disposition") == "create"
+    ]
+    return " && ".join(f"cruxible line enable {shlex.quote(name)}" for name in names) or None
 
 
 def _submit_refusal_reason(submitted: Any) -> str | None:
@@ -5036,14 +5112,34 @@ def write_changes(
         },
         example="cruxible write changes.yaml",
     )
-    outcome = write_workspace(
-        request,
-        workspace=Path(workspace_root),
-        submit=lambda observed: _server_call(
+    from cruxible_client.contracts.errors import WriteRefusalError
+    from cruxible_core.cli.commands._common import _echo_refusal
+
+    submitted = False
+
+    def submit(observed: WriteRequest) -> WriteOutcome:
+        nonlocal submitted
+        submitted = True
+        return _server_call(
             lambda client, instance_id: client.write(instance_id, request=observed),
             command_name="cruxible write",
-        ),
-    )
+        )
+
+    try:
+        outcome = write_workspace(request, workspace=Path(workspace_root), submit=submit)
+    except WriteRefusalError as exc:
+        # A doc write refused while observing files never reached the daemon.
+        if submitted or output_json:
+            raise
+        _echo_refusal(
+            "not submitted",
+            code=exc.error_code,
+            message=exc.detail,
+            change=exc.change,
+            candidates=exc.candidates,
+            repair=exc.repair_line,
+        )
+        raise SystemExit(1) from None
     _finish_write(outcome, output_json=output_json)
 
 
@@ -5757,10 +5853,12 @@ def detach_projection(
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Strip retired blocks' markers from these pages, keeping each body as prose.
+    """Strip blocks' markers from these pages, keeping each body as prose.
 
-    Only blocks whose every backing is retired, or that belong to another
-    instance, are detached; live blocks are refused. Edits pages only, never
+    Detaches a block this instance no longer publishes (after `block
+    depublish`), one whose every backing is retired, or one that belongs to
+    another instance. A block the instance still publishes is refused with
+    `block_still_published`; depublish it first. Edits pages only, never
     governed state. ``--dry-run`` reports what would change; ``--commit --at``
     commits only if the pages still hold the bytes the preview read.
     """
@@ -5825,6 +5923,11 @@ def _block_repair_line(repair: Any) -> str:
         return " ".join(parts)
     if operation == "cruxible.block.sync" and values.get("all") is True:
         return "cruxible block sync --all"
+    if operation == "cruxible.block.depublish":
+        file, block = values.get("source_id"), values.get("block_id")
+        if isinstance(file, str) and isinstance(block, str):
+            return f"cruxible block depublish {shlex.quote(file)} {shlex.quote(block)}"
+        return render_served_repair(repair)
     paths = values.get("paths")
     if operation == "cruxible.block.detach" and isinstance(paths, list) and paths:
         return " ".join(["cruxible block detach", *(shlex.quote(str(path)) for path in paths)])
@@ -6626,6 +6729,17 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
                         else ""
                     )
                     click.echo(f"  {child.path}{earlier}")
+        elif (
+            egress.verdict == "delivered"
+            and egress.children
+            and all(child.unchanged for child in egress.children)
+        ):
+            # Every item restates accepted state, so no proposal was needed.
+            count = len(egress.children)
+            click.echo(
+                f"Terminal {egress.node_id}: nothing changed ({count} item"
+                f"{'s' if count != 1 else ''} restate{'' if count != 1 else 's'} accepted state)"
+            )
         elif egress.verdict == "delivered":
             click.echo(f"Terminal {egress.node_id}: {egress.kind} delivered")
         elif egress.verdict == "refused_effective_authority":
@@ -6900,16 +7014,18 @@ def inbox_group() -> None:
     A Line's post_inbox terminal posts items it could not decide, as they are,
     with the Captures behind each. Posting never changes accepted state. Read
     them with list and get, then ack, dismiss (with a reason) or link each to
-    the proposal or Subject that records your judgment. An item that recurs is
-    unread again, its prior disposition still shown.
+    the proposal or Subject that records your judgment. An item that recurs
+    with the same payload is counted and keeps its decision (`linked (+N
+    since)`); a changed payload is a new item.
     """
 
 
 def _inbox_row(envelope: Any) -> str:
     seen = f"x{envelope.occurrences}" if envelope.occurrences > 1 else "-"
+    # A decided item that recurred keeps its decision; say how often it was seen since.
     prior = (
-        f" (was {envelope.disposition.disposition})"
-        if envelope.status == "unread" and envelope.disposition is not None
+        f" (+{envelope.recurred_since_disposition} since)"
+        if envelope.status != "unread" and envelope.recurred_since_disposition
         else ""
     )
     return (
@@ -7576,6 +7692,11 @@ def _next_requirement_hint(requires: contracts.NextRepairRequirement | None) -> 
 
     if requires is None:
         return "this caller cannot run it"
+    from cruxible_core.service.discovery.next import _REPAIR_COMMAND_PATHS
+
+    path = _REPAIR_COMMAND_PATHS.get(requires.operation)
+    # Name the verb a CLI caller runs; the MCP tool name only when no verb maps.
+    label = requires.tool if path is None else f"cruxible {path}"
     needs = []
     if "tier" in requires.because:
         needs.append(f"the {requires.tier} tier")
@@ -7585,7 +7706,7 @@ def _next_requirement_hint(requires: contracts.NextRepairRequirement | None) -> 
     if "authoring" in requires.because and refusal is not None:
         # The identity repair comes first: no tier helps a caller that cannot author.
         needs.insert(0, f"a caller that can author ({refusal.code}: {refusal.detail})")
-    return f"{requires.tool} needs " + " and ".join(needs)
+    return f"{label} needs " + " and ".join(needs)
 
 
 def _next_repair_hint(repair: contracts.NextRepair) -> str:
@@ -8060,12 +8181,18 @@ def audit(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
+    from cruxible_client.contracts.get_display import render_claim_line
+
     for row in result.rows:
-        click.echo(
-            f"{row.rank_score}  {row.claim_identity['kind']}:{row.claim_identity['name']}  "
+        scores = (
             f"stake={row.factors.stake} weakness={row.factors.weakness} "
             f"staleness={row.factors.staleness}"
         )
+        if row.statement is not None:
+            click.echo(f"{render_claim_line(row.statement, lead=str(row.rank_score))}  {scores}")
+        else:
+            claim = f"{row.claim_identity['kind']}:{row.claim_identity['name']}"
+            click.echo(f"{row.rank_score}  {claim}  {scores}")
     if not result.rows:
         click.echo("No Claims in the visible audit scope.")
     if result.next_cursor is not None:
@@ -8123,8 +8250,16 @@ def since(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
+    from cruxible_client.contracts.get_display import render_claim_line
+
     for row in result.rows:
-        click.echo(f"{row.generation}  {row.disposition}  {row.artifact_kind}  {row.member_path}")
+        lead = f"{row.generation}  {row.disposition}"
+        if row.statement is not None:
+            # What changed, not where it is stored: `--json` keeps paths and digests.
+            click.echo(render_claim_line(row.statement, lead=lead))
+            continue
+        name = row.member_path.split("/", 1)[-1].removesuffix(".json")
+        click.echo(f"{lead}  {row.artifact_kind} {_public_name(name)}")
     if result.next_cursor is not None:
         click.echo(f"More: {result.next_cursor.cursor_digest}")
 
@@ -8228,7 +8363,13 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         "predictions",
     }:
         for row in result[section]:
-            lines.append("  ".join(str(value) for value in row.values()))
+            # Cells read stored names (a contract, a source) by their public names.
+            lines.append(
+                "  ".join(
+                    _public_name(value) if isinstance(value, str) else str(value)
+                    for value in row.values()
+                )
+            )
     if section == "pins":
         for row in result["pins"]:
             stale = "" if row.get("current", True) else "  (not the current version)"
@@ -8620,6 +8761,16 @@ def _resolved_coverage(
     *,
     command_name: str,
 ) -> CoverageResultV3:
+    return _resolved_coverage_answer(observations, command_name=command_name)[0]
+
+
+def _resolved_coverage_answer(
+    observations: tuple[WorkingSourceObservation, ...],
+    *,
+    command_name: str,
+) -> tuple[CoverageResultV3, tuple[contracts.ClaimLine, ...]]:
+    """The frozen answer and, beside it, the Claim lines its cards address."""
+
     result = _server_call(
         lambda client, instance_id: client.resolve_coverage(
             instance_id,
@@ -8627,7 +8778,7 @@ def _resolved_coverage(
         ),
         command_name=command_name,
     )
-    return CoverageResultV3.model_validate(result.result)
+    return CoverageResultV3.model_validate(result.result), tuple(result.claims)
 
 
 @coverage_group.command("resolve")
@@ -8648,8 +8799,8 @@ def _resolved_coverage(
     default="cards",
     show_default=True,
     help=(
-        "cards: the governed spans and a summary; manifest: the coverage manifest "
-        "(epoch, health, completeness, scope)."
+        "cards: each governed span's Claims and a summary; manifest: the coverage "
+        "manifest (epoch, health, completeness, scope) and each card's full binding."
     ),
 )
 @brief_option
@@ -8692,7 +8843,9 @@ def resolve_coverage(
         grep_path=grep_path,
         whole_working_set=whole_working_set,
     )
-    result = _resolved_coverage(observations, command_name="cruxible coverage resolve")
+    result, claims = _resolved_coverage_answer(
+        observations, command_name="cruxible coverage resolve"
+    )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
@@ -8709,8 +8862,20 @@ def resolve_coverage(
             ),
         )
         return
+    from cruxible_core.coverage.render import render_card, render_coverage_text
+
     rendered = (
-        render_coverage_manifest(result) if view == "manifest" else render_coverage_result(result)
+        (
+            *render_coverage_manifest(result),
+            # Each card's whole binding: commitments, captures, handle, dependents.
+            *(render_card(card) for span in result.spans for card in span.cards),
+        )
+        if view == "manifest"
+        else render_coverage_text(
+            result,
+            claims,
+            paths={item.source: item.path for item in bindings.bindings},
+        )
     )
     for line in rendered:
         click.echo(line)

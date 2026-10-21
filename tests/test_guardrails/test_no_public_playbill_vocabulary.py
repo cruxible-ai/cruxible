@@ -11,7 +11,8 @@ format, not by habit, and is allowlisted by pattern:
 - versioned dotted identifiers (law ids, capture contract and component pins,
   curation detector ids) and the persisted unversioned capture identities and
   taint labels;
-- ledger Git names (``refs/notes/playbill-*``, mirror pins, lock files) and the
+- ledger Git names (the pre-rename ``refs/notes/playbill-*`` names the
+  one-time note ref move reads, mirror pins, lock files) and the
   legacy-detection file names (the ledger's committer is ``cruxible-daemon``);
 - the ConsumptionOperation literals inside hash-chained consumption receipts.
 

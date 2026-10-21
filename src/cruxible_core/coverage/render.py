@@ -45,8 +45,11 @@ stronger law that it emits nothing this module did not produce.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from typing import Literal
 
+from cruxible_client.contracts.get_display import render_claim_line
+from cruxible_client.contracts.read_values import ClaimLine
 from cruxible_core.coverage.contracts import (
     CoverageCardV1,
     CoverageCardV2,
@@ -178,6 +181,81 @@ def render_coverage_result(result: CoverageResultV3) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def _card_where(
+    card: CoverageCardV1 | CoverageCardV2, paths: Mapping[LogicalSourceIdentity, str]
+) -> str:
+    where = paths.get(card.observed_source) or source_label(card.observed_source)
+    if card.line_overlay is not None:
+        where += f":{card.line_overlay.start_line}-{card.line_overlay.end_line}"
+    return where
+
+
+def _claim_id(path: str) -> str:
+    return path.rsplit("/", 1)[-1].removesuffix(".json")
+
+
+def render_coverage_text(
+    result: CoverageResultV3,
+    claims: Iterable[ClaimLine] = (),
+    *,
+    paths: Mapping[LogicalSourceIdentity, str] | None = None,
+) -> tuple[str, ...]:
+    """The CLI's reading of a coverage answer: what each card says about which Claim.
+
+    A card line leads with its Claim (design §3): ``state  file:lines  subject
+    field = value  [CLM-…]``, one line per Claim the card addresses. The binding
+    (commitments, captures, handle) stays in ``--json`` and ``--view
+    manifest``; :func:`render_coverage_result` keeps the full binding for the
+    coverage hook, whose bytes do not move. The summary counts spans and cards
+    apart, since one span rolls up to drifted when any of its cards drifted.
+    ``paths`` names each bound source by its working path, as the caller typed it.
+    """
+
+    where_of = {} if paths is None else paths
+    shown = {line.claim: line for line in claims}
+    lines: list[str] = []
+    cards = {"exact": 0, "drifted": 0, "candidate": 0}
+    for span in result.spans:
+        label = source_label(span.request.source)
+        for card in span.cards:
+            cards[card.match_state] += 1
+            lead = f"{card.match_state}  {_card_where(card, where_of)}"
+            claim_lines = [
+                shown[_claim_id(item.artifact_path)]
+                for item in card.claim_addresses
+                if _claim_id(item.artifact_path) in shown
+            ]
+            reasons = _reasons(card.reason_codes)
+            if claim_lines:
+                lines.extend(render_claim_line(item, lead=lead) + reasons for item in claim_lines)
+            else:
+                # No statement served beside the answer: name the Claims by id.
+                ids = " ".join(_claim_id(item.artifact_path) for item in card.claim_addresses)
+                lines.append(f"{lead}  claims {ids or '(none)'}" + reasons)
+        if span.health != "complete":
+            lines.append(f"{span.health}  {label}" + _reasons(span.coverage.reason_codes))
+        if span.ambiguous_occurrence_count:
+            lines.append(
+                f"ambiguous  {label}  "
+                f"{span.ambiguous_occurrence_count} indistinguishable occurrence(s), none bound"
+            )
+        if span.omitted_card_count:
+            lines.append(f"omitted  {label}  {span.omitted_card_count} card(s) clipped by budget")
+    summary = result.summary
+    truncated = sum(1 for span in result.spans if span.coverage.truncated_facets)
+    lines.extend(
+        (
+            f"{BATCH_SUMMARY_PREFIX} spans {summary.exact} exact, {summary.drifted} drifted, "
+            f"{summary.candidate} candidates, {summary.none} none; cards {cards['exact']} "
+            f"exact, {cards['drifted']} drifted, {cards['candidate']} candidates",
+            f"coverage {result.health} for {summary.returned_spans} returned spans "
+            f"at generation {result.at.generation_root}",
+            f"omitted cards: {summary.omitted_card_count}, truncated spans: {truncated}",
+        )
+    )
+    return tuple(lines)
+
+
 def render_coverage_manifest(result: CoverageResultV3) -> tuple[str, ...]:
     """Render the manifest a coverage answer was resolved against.
 
@@ -228,6 +306,7 @@ __all__ = [
     "render_card",
     "render_coverage_manifest",
     "render_coverage_result",
+    "render_coverage_text",
     "render_span",
     "render_unavailable_note",
     "source_label",

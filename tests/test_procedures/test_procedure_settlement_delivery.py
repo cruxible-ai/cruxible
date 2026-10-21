@@ -2146,3 +2146,20 @@ def test_recovery_follows_a_recompiled_settle_accepted_before_its_receipt(
     )
     assert set(recovered.values()) == {"delivered"}
     assert len(instance.accepted_history()) == before + 1
+
+
+def test_a_settle_rerun_whose_items_restate_accepted_state_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    """All-unchanged settle: the second run proposes and accepts nothing (design row 22)."""
+
+    instance, root, line = settle_world(tmp_path)
+    first = _egress(run_settle(instance, root, line))
+    assert first.settle_outcome == "settled"
+    head = instance.accepted_coordinate()
+
+    again = run_settle(instance, root, line, now=fixtures.NOW + timedelta(minutes=5))
+    egress = _egress(again)
+    assert egress.proposal_id is None and egress.accepted_git_oid is None
+    assert egress.children and all(child.unchanged for child in egress.children)
+    assert instance.accepted_coordinate() == head

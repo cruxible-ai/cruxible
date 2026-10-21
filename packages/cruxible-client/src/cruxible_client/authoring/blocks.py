@@ -1124,7 +1124,10 @@ def sync_projection_blocks(
                     )
                 )
             read = next(results)
-            if read.status not in {"current", "successor"}:
+            # A block the instance no longer registers (depublished) is detached
+            # whatever its backings say: depublish then detach is the take-down.
+            unregistered = detach and getattr(read, "registered", None) is False
+            if read.status not in {"current", "successor"} or unregistered:
                 # A foreign block is the case --detach exists for. Stripping a
                 # marker pair and keeping the body between them is a purely
                 # local text edit: it claims no authority over the block, reads
@@ -1135,15 +1138,20 @@ def sync_projection_blocks(
                 # to the host that published the markers -- which is the exact
                 # opposite of what they were doing, and one hand-written
                 # stripper as the only way through.
-                detachable = detach and (
-                    read.reason == "block_workspace_instance_mismatch"
-                    or (
-                        read.reason == "block_backing_retired"
-                        and (
-                            not read.issues
-                            or (
-                                len(read.issues) == len(stamp.backing)
-                                and all(i.reason == "block_backing_retired" for i in read.issues)
+                detachable = unregistered or (
+                    detach
+                    and (
+                        read.reason == "block_workspace_instance_mismatch"
+                        or (
+                            read.reason == "block_backing_retired"
+                            and (
+                                not read.issues
+                                or (
+                                    len(read.issues) == len(stamp.backing)
+                                    and all(
+                                        i.reason == "block_backing_retired" for i in read.issues
+                                    )
+                                )
                             )
                         )
                     )
@@ -1185,13 +1193,24 @@ def sync_projection_blocks(
                     )
                 continue
             if detach:
+                # A live block the instance still publishes: detaching it would
+                # leave a registration `next` reads as a removed marker.
                 items.append(
                     BlockSyncItem(
                         path=relative,
                         source_id=source_id,
                         block_id=block.block_id,
-                        outcome="unchanged",
-                        detail={"message": "live blocks are not detached"},
+                        outcome="refused",
+                        reason="block_still_published",
+                        repair=RepairOperation(
+                            operation="cruxible.block.depublish",
+                            arguments={"source_id": source_id, "block_id": block.block_id},
+                        ),
+                        detail={
+                            "message": (
+                                "the instance still publishes this block; depublish it, then detach"
+                            )
+                        },
                     )
                 )
                 continue

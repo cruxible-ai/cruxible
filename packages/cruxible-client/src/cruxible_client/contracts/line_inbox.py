@@ -14,8 +14,9 @@ The dedupe key is the payload digest, the Line and the posting node: the same
 payload from the same terminal of the same Line is one item however often it is
 seen, whatever evidence each sighting stood on. Posting it again creates nothing
 new: the item counts the sighting and keeps its evidence (the first sighting
-and the most recent ones, bounded), and an item an agent already decided returns
-to ``unread`` with that prior disposition still shown. Core does not interpret it.
+and the most recent ones, bounded), and keeps its status and the agent's
+decision. Only a new dedupe key -- a changed payload -- is new work, so a Line
+re-reading the same file re-opens nothing. Core does not interpret it.
 
 Dispositions are an agent's, never automatic: ``acknowledged``, ``dismissed``
 (with a reason) or ``linked`` (to a proposal or a Subject).
@@ -190,7 +191,7 @@ class InboxItemEnvelope(_StrictInboxModel):
     the earliest of them and ``recent_sightings`` the latest
     (``INBOX_RECENT_SIGHTINGS`` at most, newest first), each with the Captures
     its posting stood on. ``disposition`` is the agent's latest decision, kept
-    when the item recurs: a recurring item is ``unread`` again, and
+    when the item recurs: a recurring item keeps its status, and
     ``recurred_since_disposition`` counts the sightings after that decision.
     """
 

@@ -1434,6 +1434,28 @@ def _accepted_authoring_trio(tmp_path):
     return coordinator, actor, owner, payload, procedure, line, mandate
 
 
+def test_a_propose_mandate_with_settle_fields_refuses_typed_by_field(tmp_path):
+    """A propose grant naming a settle-only field refuses by name, never as a model dump."""
+
+    coordinator, actor, _, _payload, _procedure, _line, mandate = _accepted_authoring_trio(tmp_path)
+    instance = coordinator.instance
+    revised = mandate.model_copy(update={"subject_creation": ("acme.item",)})
+    intent = coordinator.create(
+        actor=actor, payload=revised, canonical_timestamp="2026-08-21T12:03:00.000000Z"
+    ).intent
+    computed = compute_preflight(instance, intent=intent, actor=actor)
+
+    assert computed.result.verdict != "passed"
+    (diagnostic,) = [
+        item
+        for item in computed.result.frontier.diagnostics
+        if item.code == "cruxible.authoring.procedure_mandate_propose_scope"
+    ]
+    assert diagnostic.offending_element == "subject_creation"
+    assert "validation error" not in diagnostic.message
+    assert "grants: settle" in diagnostic.repairs[0].description
+
+
 def test_unchanged_procedure_line_mandate_submit_reuses_accepted_state(tmp_path):
     coordinator, actor, _, payload, procedure, line, mandate = _accepted_authoring_trio(tmp_path)
     instance = coordinator.instance

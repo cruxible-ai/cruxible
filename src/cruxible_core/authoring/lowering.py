@@ -3618,6 +3618,31 @@ def _render_procedure_mandate_member(
     tree: Mapping[str, bytes],
     resolve: Callable[[str, str], str] | None = None,
 ) -> tuple[str, bytes, str]:
+    if payload.grants == "propose":
+        # A propose grant lets a run propose; review decides. Settle-only
+        # fields are refused by name here rather than as a raw model dump.
+        settle_only = [
+            name
+            for name, present in (
+                ("scope", bool(payload.scope)),
+                ("condition", payload.condition is not None),
+                ("subject_scope", payload.subject_scope is not None),
+                ("subject_creation", bool(payload.subject_creation)),
+            )
+            if present
+        ]
+        if settle_only:
+            _refuse(
+                "cruxible.authoring.procedure_mandate_propose_scope",
+                settle_only[0],
+                "A propose grant carries no settle scope, condition, subject scope or subject "
+                f"creation; this one sets {', '.join(settle_only)}.",
+                repair_kind="remove_settle_fields",
+                repair_description=(
+                    f"Remove {', '.join(settle_only)}, or grant settle (grants: settle) to "
+                    "let the run settle within that scope."
+                ),
+            )
     target_path = procedure_path(payload.procedure_name)
     target_content = tree.get(target_path)
     if target_content is None:
@@ -3695,46 +3720,56 @@ def _render_procedure_mandate_member(
             required_fields=tuple(sorted(set(payload.condition.required_fields))),
             fallback=payload.condition.fallback,
         )
-    mandate = ProcedureMandate(
-        identity=ArtifactIdentity(kind="ProcedureMandate", name=payload.name),
-        procedure=ArtifactPin(
-            role="procedure",
-            target=procedure.identity,
-            artifact_digest=procedure_artifact_digest(procedure).tagged,
-        ),
-        grants=payload.grants,
-        resource_ceiling=payload.resource_ceiling,
-        namespace=payload.namespace,
-        valid_from=payload.valid_from,
-        expires_at=payload.expires_at,
-        scope=tuple(sorted(scope, key=lambda item: item.claim_type.target.qualified.encode())),
-        subject_scope=(
-            None
-            if payload.subject_scope is None
-            else tuple(
-                sorted(
-                    {
-                        address
-                        if resolve is None or address.selector.scheme != "artifact-v1"
-                        else SemanticAddress.whole_artifact(
-                            resolve(address.artifact_path, f"subject_scope[{index}]")
-                        )
-                        for index, address in enumerate(payload.subject_scope)
-                    },
-                    key=lambda item: item.artifact_path,
+    try:
+        mandate = ProcedureMandate(
+            identity=ArtifactIdentity(kind="ProcedureMandate", name=payload.name),
+            procedure=ArtifactPin(
+                role="procedure",
+                target=procedure.identity,
+                artifact_digest=procedure_artifact_digest(procedure).tagged,
+            ),
+            grants=payload.grants,
+            resource_ceiling=payload.resource_ceiling,
+            namespace=payload.namespace,
+            valid_from=payload.valid_from,
+            expires_at=payload.expires_at,
+            scope=tuple(sorted(scope, key=lambda item: item.claim_type.target.qualified.encode())),
+            subject_scope=(
+                None
+                if payload.subject_scope is None
+                else tuple(
+                    sorted(
+                        {
+                            address
+                            if resolve is None or address.selector.scheme != "artifact-v1"
+                            else SemanticAddress.whole_artifact(
+                                resolve(address.artifact_path, f"subject_scope[{index}]")
+                            )
+                            for index, address in enumerate(payload.subject_scope)
+                        },
+                        key=lambda item: item.artifact_path,
+                    )
                 )
-            )
-        ),
-        condition=condition,
-        subject_creation=tuple(
-            sorted(set(payload.subject_creation), key=lambda item: item.encode("utf-8"))
-        ),
-        suspended=payload.suspended,
-        lifecycle=ArtifactLifecycle(
-            state="retired" if payload.retire else "live",
-            predecessor_digest=predecessor_digest,
-        ),
-    )
+            ),
+            condition=condition,
+            subject_creation=tuple(
+                sorted(set(payload.subject_creation), key=lambda item: item.encode("utf-8"))
+            ),
+            suspended=payload.suspended,
+            lifecycle=ArtifactLifecycle(
+                state="retired" if payload.retire else "live",
+                predecessor_digest=predecessor_digest,
+            ),
+        )
+    except ValidationError as exc:
+        _refuse(
+            "cruxible.authoring.procedure_mandate_invalid",
+            "procedure_mandate",
+            "The ProcedureMandate is invalid: "
+            + " | ".join(_validation_error_lines(exc, root="procedure_mandate")),
+            repair_kind="revise_procedure_mandate",
+            repair_description="Revise the field the message names and compile again.",
+        )
     if (
         previous_content is not None
         and previous is not None
