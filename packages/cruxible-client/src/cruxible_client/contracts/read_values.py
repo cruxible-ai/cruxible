@@ -106,6 +106,34 @@ ShownValue = TypeAliasType(
 )
 
 
+#: A Claim ID as a text line shows it: ``CLM-`` and the first 12 hex digits.
+CLAIM_LINE_ID_CHARS = len("CLM-") + 12
+
+
+class ClaimLine(_StrictReadValueModel):
+    """One Claim as a text line shows it: the Subject, the field, the value, the Claim.
+
+    Every surface that prints a line about a Claim (``since``, ``coverage
+    resolve``, ``audit``, refusals) carries this and renders it through
+    ``get_display.render_claim_line``, so the line reads the same everywhere:
+    ``subject  field[qualifier] = value  [CLM-<12 hex>]``. ``subject`` is
+    ``kind/id``; ``field`` is the short field name ``get`` and ``orient`` show;
+    ``value`` is the summary value (a long string is a ``TruncatedText``
+    preview). Digests and artifact paths stay in the typed record beside it.
+    """
+
+    claim: str = Field(pattern=r"^CLM-[0-9a-f]{32}$")
+    subject: str
+    field: str
+    qualifier: str | None = Field(default=None, exclude_if=_omit_none)
+    value: ShownValue
+
+    def __str__(self) -> str:
+        from cruxible_client.contracts.get_display import render_claim_line
+
+        return render_claim_line(self)
+
+
 def summary_value(value: Any, *, read_whole: WholeValueRead | None = None) -> ShownValue:
     """A value as a summary read shows it: long strings cut, objects wrapped, lists element-wise.
 
@@ -150,7 +178,9 @@ def whole_value_read(claim: str, git_oid: str) -> WholeValueRead:
 
 
 __all__ = [
+    "CLAIM_LINE_ID_CHARS",
     "GET_SUMMARY_TEXT_MAX_CHARS",
+    "ClaimLine",
     "ExactContentRef",
     "ShownObject",
     "ShownValue",
