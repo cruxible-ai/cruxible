@@ -19,6 +19,7 @@ from cruxible_client.contracts.errors import (
     ProposalReadmitAlreadyAccepted,
     ProposalReadmitNotStale,
     ProposalReadmitRequiresResubmission,
+    ProposalStale,
 )
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV2,
@@ -497,7 +498,6 @@ def test_nonlowering_origins_still_refuse_stale_activation_and_readmit_exact_byt
     tmp_path: Path, target: str
 ) -> None:
     from cruxible_client.contracts.documents import document_path, render_document
-    from cruxible_client.contracts.errors import ProposalStale
     from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 
     instance, owner = initialize_local(tmp_path)
@@ -537,3 +537,32 @@ def test_nonlowering_origins_still_refuse_stale_activation_and_readmit_exact_byt
         readmitted.proposal.proposal.admission.candidate_tree_oid, document_path(shell.document_id)
     ) == render_document(shell)
     assert instance.proposal_evidence().read_withdrawal(source.admission.proposal_id) is None
+
+
+@pytest.mark.parametrize(
+    ("reason", "detail", "why"),
+    [
+        (None, None, ""),
+        ("head_moved", None, " (head_moved)"),
+        (
+            "evaluation_refused",
+            "The predecessor moved.",
+            " (evaluation_refused: The predecessor moved)",
+        ),
+    ],
+)
+def test_stale_message_is_plain_words_with_one_period_and_the_code_structured(
+    reason: str | None, detail: str | None, why: str
+) -> None:
+    error = ProposalStale("prop-1", reason=reason, detail=detail)
+
+    assert error.error_code == "cruxible.proposal.stale"
+    message = str(error)
+    assert message == (
+        f"Proposal prop-1 is stale: accepted state moved since it was evaluated{why}, so it "
+        "cannot be activated as it stands. Run `cruxible proposal readmit prop-1` to rebase "
+        "it onto the current head as a new proposal to review, or `cruxible proposal "
+        "withdraw prop-1`."
+    )
+    assert ".." not in message
+    assert "cruxible.proposal.stale" not in message

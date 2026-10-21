@@ -425,12 +425,16 @@ class ProposalStale(ProposalAdmissionError):
         self.proposal_id = proposal_id
         self.reason = reason
         self.detail = detail
+        # The code travels in the structured ``error_code``; the message is plain words.
+        why = ""
+        if reason:
+            said = (detail or "").strip().rstrip(".").strip()
+            why = f" ({reason}: {said})" if said and said != reason else f" ({reason})"
         super().__init__(
-            (f"Recompilation refused ({reason}): {detail or reason}. " if reason else "")
-            + f"{self.error_code}: proposal {proposal_id} is stale: accepted state moved "
-            "since it was evaluated, so it cannot be activated where it stands; repair: "
-            f"`cruxible proposal readmit {proposal_id}` rebases it onto the current head as "
-            f"a new proposal to review (or `cruxible proposal withdraw {proposal_id}`)"
+            f"Proposal {proposal_id} is stale: accepted state moved since it was evaluated"
+            f"{why}, so it cannot be activated as it stands. Run `cruxible proposal readmit "
+            f"{proposal_id}` to rebase it onto the current head as a new proposal to review, "
+            f"or `cruxible proposal withdraw {proposal_id}`."
         )
 
 
