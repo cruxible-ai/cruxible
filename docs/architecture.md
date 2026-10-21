@@ -90,7 +90,7 @@ with a tier. Cruxible principals represent governance authority. Their Ed25519
 private keys stay with the client; the ledger stores public keys and key
 history. A separate daemon key signs ledger mechanics. Recovery authority can
 repair principal state but cannot approve ordinary content. See [Principals and
-credentials](concepts.md#principals-and-credentials).
+credentials](concepts.md#who-acts).
 
 ## Integrity and isolation
 
