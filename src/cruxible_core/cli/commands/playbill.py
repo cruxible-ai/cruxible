@@ -8099,12 +8099,18 @@ def audit(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
+    from cruxible_client.contracts.get_display import render_claim_line
+
     for row in result.rows:
-        click.echo(
-            f"{row.rank_score}  {row.claim_identity['kind']}:{row.claim_identity['name']}  "
+        scores = (
             f"stake={row.factors.stake} weakness={row.factors.weakness} "
             f"staleness={row.factors.staleness}"
         )
+        if row.statement is not None:
+            click.echo(f"{render_claim_line(row.statement, lead=str(row.rank_score))}  {scores}")
+        else:
+            claim = f"{row.claim_identity['kind']}:{row.claim_identity['name']}"
+            click.echo(f"{row.rank_score}  {claim}  {scores}")
     if not result.rows:
         click.echo("No Claims in the visible audit scope.")
     if result.next_cursor is not None:
@@ -8162,8 +8168,16 @@ def since(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
+    from cruxible_client.contracts.get_display import render_claim_line
+
     for row in result.rows:
-        click.echo(f"{row.generation}  {row.disposition}  {row.artifact_kind}  {row.member_path}")
+        lead = f"{row.generation}  {row.disposition}"
+        if row.statement is not None:
+            # What changed, not where it is stored: `--json` keeps paths and digests.
+            click.echo(render_claim_line(row.statement, lead=lead))
+            continue
+        name = row.member_path.split("/", 1)[-1].removesuffix(".json")
+        click.echo(f"{lead}  {row.artifact_kind} {_public_name(name)}")
     if result.next_cursor is not None:
         click.echo(f"More: {result.next_cursor.cursor_digest}")
 

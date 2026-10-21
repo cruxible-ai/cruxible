@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.read_values import ClaimLine
 from cruxible_core.claims.closure import dependency_artifacts
 from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_BYTES,
@@ -207,6 +208,9 @@ class AuditClaimRowV1(_StrictAuditModel):
         )
     )
     evidence_refs: tuple[AuditEvidenceRefV1, ...]
+    #: The audited Claim as a text line shows it. Display only: it is filled
+    #: for the returned page after ranking and stays out of the result digest.
+    statement: ClaimLine | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("claim_artifact_digest", "claim_statement_digest")
     @classmethod
@@ -365,6 +369,9 @@ def audit_result_digest(result: BaseModel) -> str:
     payload = result.model_dump(mode="json")
     payload.pop("tag", None)
     payload.pop("result_digest", None)
+    for row in payload.get("rows", ()):
+        # The display line is read from the row's own Claim; it adds no fact.
+        row.pop("statement", None)
     return typed_digest(Sha256Value, AUDIT_RESULT_DIGEST_DOMAIN, payload).tagged
 
 

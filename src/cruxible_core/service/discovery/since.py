@@ -13,8 +13,11 @@ from cruxible_client.contracts.candidates import (
     CandidateMemberLawEvidence,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.claims import parse_claim
 from cruxible_client.contracts.errors import CruxibleError, SinceRequestInvalid
+from cruxible_client.contracts.read_values import ClaimLine
 from cruxible_core.coverage.contracts import CoverageAccessProfile
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.proposals.settlement import (
     ChangeSetRecord,
     ChangeSetRecordV2,
@@ -22,6 +25,7 @@ from cruxible_core.proposals.settlement import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import AcceptedCoordinate
+from cruxible_core.service.discovery.claim_lines import claim_line, live_predicates
 
 
 class SinceError(CruxibleError):
@@ -188,6 +192,44 @@ def _normalized_member_row(
     )
 
 
+def _with_statements(
+    instance: PlaybillInstance,
+    rows: list[contracts.SinceRow],
+    *,
+    head: AcceptedProjectionCoordinate,
+) -> list[contracts.SinceRow]:
+    """Each Claim row's statement, read from its own artifact at its generation.
+
+    One batched blob read per generation the rows touch, so the cost is the
+    rows taken (a page and one more), never the generations' whole membership.
+    """
+
+    claim_paths: dict[int, list[str]] = {}
+    for row in rows:
+        if row.artifact_kind == "claim" and row.artifact_digest is not None:
+            claim_paths.setdefault(row.generation, []).append(row.member_path)
+    if not claim_paths:
+        return rows
+    history = instance.accepted_history()
+    lines: dict[tuple[int, str], ClaimLine] = {}
+    with instance.bind_accepted_projection(head) as projection:
+        accepted = live_predicates(projection)
+    for generation, paths in claim_paths.items():
+        blobs = instance.blobs_at(history[generation].oid, paths)
+        for path, content in blobs.items():
+            try:
+                claim = parse_claim(content, path=path)
+            except (CruxibleError, ValueError):
+                continue
+            lines[(generation, path)] = claim_line(claim, accepted_predicates=accepted)
+    return [
+        row
+        if (line := lines.get((row.generation, row.member_path))) is None
+        else row.model_copy(update={"statement": line})
+        for row in rows
+    ]
+
+
 def service_playbill_since(
     instance: PlaybillInstance,
     *,
@@ -246,13 +288,17 @@ def service_playbill_since(
             )
         after = (cursor.last_generation, cursor.last_member_path)
     # One page and one row more, which says whether another page follows.
-    rows = list(
-        islice(
-            _normalized_rows(
-                instance, after=after, head_generation=head_generation, access_profile=profile
-            ),
-            request.max_rows + 1,
-        )
+    rows = _with_statements(
+        instance,
+        list(
+            islice(
+                _normalized_rows(
+                    instance, after=after, head_generation=head_generation, access_profile=profile
+                ),
+                request.max_rows + 1,
+            )
+        ),
+        head=accepted_head,
     )
 
     page: list[contracts.SinceRow] = []

@@ -78,6 +78,7 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import ClaimFactRowV1, claim_row_visibility
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.claim_lines import claim_line, live_predicates
 from cruxible_core.service.discovery.query import build_accepted_query_facts
 
 _ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdictV1, ...] = (
@@ -786,6 +787,20 @@ def _service_playbill_audit(
         kept = kept[:-1]
         reasons.add("byte_budget_exceeded")
     next_offset = offset + len(kept)
+    # Each returned row's text line, read from its own Claim: O(rows on the page).
+    with instance.bind_accepted_projection(internal) as projection:
+        accepted_predicates = live_predicates(projection)
+    kept = tuple(
+        item.model_copy(
+            update={
+                "statement": claim_line(
+                    visible[item.claim_path].accepted.claim,
+                    accepted_predicates=accepted_predicates,
+                )
+            }
+        )
+        for item in kept
+    )
     next_cursor = (
         build_audit_cursor(
             coordinate=coordinate,
