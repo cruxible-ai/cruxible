@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, TypeAlias, cast
@@ -1892,6 +1892,58 @@ def _named_capture_contract(store: CaptureObjectStoreProtocol, digest: str) -> s
         return None
 
 
+def _citation_contract(
+    capture_digest: str,
+    *,
+    store: CaptureObjectStoreProtocol,
+    capture_contracts: Mapping[str, AcceptedCaptureContract],
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None,
+) -> str | None:
+    """The CaptureContract identity a Capture was taken under, live or historical."""
+
+    named = _named_capture_contract(store, capture_digest)
+    if named is None:
+        return None
+    for candidate in capture_contracts.values():
+        if capture_contract_digest(candidate.contract).tagged == named:
+            return candidate.contract.identity.qualified
+    found = None if historical_capture_contract is None else historical_capture_contract(named)
+    return None if found is None else found.contract.identity.qualified
+
+
+def _rebind_replaces(
+    dropped: Sequence[ClaimCitation],
+    current: Sequence[ClaimCitation],
+    previous: Sequence[ClaimCitation],
+    *,
+    store: CaptureObjectStoreProtocol,
+    capture_contracts: Mapping[str, AcceptedCaptureContract],
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None,
+) -> bool:
+    """Whether each dropped citation has a new one of its role, origin and contract.
+
+    Reads the envelopes of the dropped and the newly added citations only: the
+    cost is this Claim's change, never its whole history.
+    """
+
+    inherited = {item.citation_id for item in previous}
+    added = [item for item in current if item.citation_id not in inherited]
+
+    def contract(item: ClaimCitation) -> str | None:
+        return _citation_contract(
+            item.capture_digest,
+            store=store,
+            capture_contracts=capture_contracts,
+            historical_capture_contract=historical_capture_contract,
+        )
+
+    offered = {(item.role, item.origin, contract(item)) for item in added}
+    return all(
+        (identity := contract(item)) is not None and (item.role, item.origin, identity) in offered
+        for item in dropped
+    )
+
+
 def evaluate_claim_law(
     claim: ClaimArtifactAny,
     *,
@@ -1918,8 +1970,17 @@ def evaluate_claim_law(
     subject_lifecycle_retirement: bool = False,
     accepted_subject_version: Callable[[str, str], bool] | None = None,
     subject_creation_key: bool = False,
+    claim_rebind: bool = False,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
+
+    With `claim_rebind` (Claim law v2 revision 10, with compiler revision 35) a
+    revision that keeps its statement may drop a citation by replacing it: the
+    same revision adds a new, non-inherited citation of the same role and
+    origin under the same CaptureContract identity. Such a re-bind drops the
+    Captures only the replaced citations named, and, as under `replace`, every
+    capture-contract pin must name the version of a Capture it cites. Every
+    other check is revision 9's.
 
     With `historical_capture_contract` (the revision-9 law), a backing Capture
     verifies against the exact contract version it names even after that
@@ -1984,6 +2045,47 @@ def evaluate_claim_law(
             update={"claim_type_digest": claim.statement.claim_type_digest}
         )
     )
+    # A re-bind: the same statement, some inherited citations replaced (rev 10).
+    rebound_captures: frozenset[str] = frozenset()
+    rebinding = False
+    if (
+        claim_rebind
+        and predecessor is not None
+        and not carry
+        and not replacing
+        and isinstance(claim.backing, ClaimBacking)
+        and isinstance(predecessor.claim.backing, ClaimBacking)
+        and claim.statement
+        == predecessor.claim.statement.model_copy(
+            update={"claim_type_digest": claim.statement.claim_type_digest}
+        )
+    ):
+        current_ids = {item.citation_id for item in claim.backing.citations}
+        dropped = [
+            item
+            for item in predecessor.claim.backing.citations
+            if item.citation_id not in current_ids
+        ]
+        if dropped:
+            if not _rebind_replaces(
+                dropped,
+                claim.backing.citations,
+                predecessor.claim.backing.citations,
+                store=capture_store,
+                capture_contracts=capture_contracts,
+                historical_capture_contract=historical_capture_contract,
+            ):
+                return _diagnostic(
+                    "cruxible.claim.rebind_unmatched",
+                    "A re-bind drops a citation only by replacing it: the same revision cites "
+                    "new text in the same role and origin under the same CaptureContract.",
+                    path=path,
+                )
+            rebinding = True
+            kept = {item.capture_digest for item in claim.backing.citations}
+            rebound_captures = frozenset(
+                item.capture_digest for item in dropped if item.capture_digest not in kept
+            )
     descriptor = statement.predicate in {
         "semantic.alias",
         "semantic.distinct_from",
@@ -2380,7 +2482,7 @@ def evaluate_claim_law(
             )
         old = predecessor.claim.backing
         if not replacing and not (
-            set(old.capture_digests).issubset(claim.backing.capture_digests)
+            (set(old.capture_digests) - rebound_captures).issubset(claim.backing.capture_digests)
             and set(old.attestation_digests).issubset(claim.backing.attestation_digests)
             and set(old.input_claim_digests).issubset(claim.backing.input_claim_digests)
         ):
@@ -2428,7 +2530,7 @@ def evaluate_claim_law(
                 predecessor_citation_ids = {
                     item.citation_id for item in predecessor.claim.backing.citations
                 }
-                if not replacing and not predecessor_citation_ids.issubset(
+                if not (replacing or rebinding) and not predecessor_citation_ids.issubset(
                     item.citation_id for item in claim.backing.citations
                 ):
                     return _diagnostic(
@@ -2711,7 +2813,9 @@ def evaluate_claim_law(
                 ),
             )
         )
-    if replacing and not capture_contract_pin_digests.issubset(cited_contract_versions):
+    if (replacing or rebinding) and not capture_contract_pin_digests.issubset(
+        cited_contract_versions
+    ):
         return _diagnostic(
             "cruxible.claim.capture_contract_pin_unbacked",
             "Under revision_evidence 'replace', a revision that changes its statement "

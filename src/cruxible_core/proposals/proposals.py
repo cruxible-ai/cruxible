@@ -143,6 +143,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V2_REVISION_7,
     CLAIM_LAW_V2_REVISION_8,
     CLAIM_LAW_V2_REVISION_9,
+    CLAIM_LAW_V2_REVISION_10,
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
     CLAIM_LAW_V3_REVISION_10,
@@ -1892,6 +1893,17 @@ def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanc
                 identifier=CLAIM_LAW_V2_REVISION_8.identifier,
                 digest=CLAIM_LAW_V2_REVISION_8.digest,
             )
+        from cruxible_core.compiler.compiler import admits_claim_rebind
+
+        if artifact_tag == "playbill-claim-v2" and not admits_claim_rebind(
+            context.current.compiler
+        ):
+            # Claim law v2 revision 10 (re-bind) is adopted with compiler
+            # revision 35; revisions 33 and 34 keep revision 9.
+            return context.acceptance_laws.require_historical(
+                identifier=CLAIM_LAW_V2_REVISION_9.identifier,
+                digest=CLAIM_LAW_V2_REVISION_9.digest,
+            )
         return context.acceptance_laws.resolve_member(artifact_tag=artifact_tag)
     identifier, digest = context.historical_law_coordinate
     installed = context.acceptance_laws.require_historical(
@@ -2665,10 +2677,10 @@ def _sibling_control_domains(
 
 def _provider_member(context: _MemberContext) -> _MemberVerdict:
     provider = parse_provider(context.content, path=context.path)
-    from cruxible_core.compiler.compiler import PROVIDER_BUILDS_COMPILER
+    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, PROVIDER_BUILDS_COMPILER
 
     if (
-        context.current.compiler == PROVIDER_BUILDS_COMPILER
+        context.current.compiler in {PROVIDER_BUILDS_COMPILER, CLAIM_REBIND_COMPILER}
         and context.parent_content is None
         and "/" not in provider.identity.name
         and provider.identity.name != "cruxible-builtin"
@@ -3374,6 +3386,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
                 CLAIM_LAW_V2_REVISION_7,
                 CLAIM_LAW_V2_REVISION_8,
                 CLAIM_LAW_V2_REVISION_9,
+                CLAIM_LAW_V2_REVISION_10,
                 CLAIM_LAW_V3_REVISION_9,
                 CLAIM_LAW_V3_REVISION_10,
                 CLAIM_LAW_V3_REVISION_11,
@@ -3385,6 +3398,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             in {
                 CLAIM_LAW_V2_REVISION_8,
                 CLAIM_LAW_V2_REVISION_9,
+                CLAIM_LAW_V2_REVISION_10,
                 CLAIM_LAW_V3_REVISION_10,
                 CLAIM_LAW_V3_REVISION_11,
             }
@@ -3402,10 +3416,10 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             if installed.coordinate == CLAIM_LAW_V3_REVISION_11
             else None
         ),
-        # Claim law v2 revision 9 alone: a key Claim written with its Subject's
+        # Claim law v2 revisions 9 and 10: a key Claim written with its Subject's
         # creation is covered by the creation (no evidence rule must admit it).
         subject_creation_key=(
-            installed.coordinate == CLAIM_LAW_V2_REVISION_9
+            installed.coordinate in {CLAIM_LAW_V2_REVISION_9, CLAIM_LAW_V2_REVISION_10}
             and is_subject_creation_key_claim(
                 context.current_tree,
                 context.candidate_tree,
@@ -3418,6 +3432,9 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         # an earlier law is not an accepted citation. Only recovery of a
         # generation main already holds re-derives it without the proof.
         require_new_citation_proof=not context.replaying_accepted,
+        # Claim law v2 revision 10 alone: a same-statement revision may replace
+        # a citation with one of the text it rests on now.
+        claim_rebind=installed.coordinate == CLAIM_LAW_V2_REVISION_10,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -3494,6 +3511,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_core.compiler.compiler import (
         AUTHORITY_VERBS_COMPILER,
         CLAIM_EVIDENCE_COMPILER,
+        CLAIM_REBIND_COMPILER,
         GOVERNED_TRIGGERS_COMPILER,
         PROVIDER_BUILDS_COMPILER,
         SOURCE_CHECKED_COMPILER,
@@ -3509,6 +3527,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         GOVERNED_TRIGGERS_COMPILER,
         SUBJECT_IDENTITY_COMPILER,
         PROVIDER_BUILDS_COMPILER,
+        CLAIM_REBIND_COMPILER,
     }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())

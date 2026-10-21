@@ -219,7 +219,19 @@ CLAIM_LAW_V2_REVISION_9 = _artifact_law_coordinate(
     "playbill-claim-v2",
     semantic_revision=9,
 )
-CLAIM_LAW_V2 = CLAIM_LAW_V2_REVISION_9
+# Revision 10 (with compiler revision 35, claim re-bind): a revision that keeps
+# its statement may drop a citation by replacing it -- the same revision cites
+# new text in the same role and origin under the same CaptureContract identity
+# -- and then, as under ``replace``, every capture-contract pin names the
+# version of a Capture it cites. Every other check is revision 9's; an instance
+# on an earlier compiler keeps revision 9, and accepted generations replay
+# under the revision they recorded.
+CLAIM_LAW_V2_REVISION_10 = _artifact_law_coordinate(
+    CLAIM_LAW_V2_IDENTIFIER,
+    "playbill-claim-v2",
+    semantic_revision=10,
+)
+CLAIM_LAW_V2 = CLAIM_LAW_V2_REVISION_10
 CLAIM_LAW_V3_REVISION_7 = _artifact_law_coordinate(
     CLAIM_LAW_V3_IDENTIFIER,
     "playbill-claim-v3",
@@ -518,9 +530,15 @@ CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 CLAIM_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_LAW_V2_REVISION_10,
+    artifact_kind="claim",
+    artifact_tag="playbill-claim-v2",
+)
+CLAIM_V2_REVISION_9_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V2_REVISION_9,
     artifact_kind="claim",
     artifact_tag="playbill-claim-v2",
+    current=False,
 )
 CLAIM_V2_REVISION_8_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V2_REVISION_8,
@@ -707,6 +725,16 @@ PROVIDER_BUILDS_UPGRADE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-compiler-upgrade-v1",
     current=False,
 )
+# Revision 13 (to compiler revision 35, claim re-bind). Claim law v2 revision 10
+# judges new Claim revisions; nothing held is refused.
+CLAIM_REBIND_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=13
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
 AUTHORITY_VERBS_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=9
@@ -854,6 +882,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
         PROVIDER_BUILD_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_CONTRACT_ACCEPTANCE_LAW,
+        CLAIM_REBIND_UPGRADE_LAW,
         PROVIDER_BUILDS_UPGRADE_LAW,
         PROVIDER_PACKAGE_UPGRADE_LAW,
         RESOURCE_BUDGET_UPGRADE_LAW,
@@ -875,6 +904,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         ATTESTATION_ACCEPTANCE_LAW,
         RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_V2_ACCEPTANCE_LAW,
+        CLAIM_V2_REVISION_9_ACCEPTANCE_LAW,
         CLAIM_V2_REVISION_8_ACCEPTANCE_LAW,
         CLAIM_V2_REVISION_7_ACCEPTANCE_LAW,
         CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,

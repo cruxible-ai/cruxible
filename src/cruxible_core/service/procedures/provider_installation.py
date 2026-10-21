@@ -53,7 +53,7 @@ from cruxible_client.contracts.repairs import (
     HandEditRepair,
     RepairOperation,
 )
-from cruxible_core.compiler.compiler import PROVIDER_BUILDS_COMPILER
+from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, PROVIDER_BUILDS_COMPILER
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError, RequestRefusedError
 from cruxible_core.governance.seed_artifacts.workspace_file import (
@@ -652,7 +652,10 @@ def service_install_provider(
 
     instance.require_writable()
     enforce_customer_code_execution_supported()
-    if instance.accepted_coordinate().compiler != PROVIDER_BUILDS_COMPILER:
+    if instance.accepted_coordinate().compiler not in {
+        PROVIDER_BUILDS_COMPILER,
+        CLAIM_REBIND_COMPILER,
+    }:
         raise ConfigError(
             "provider installation requires the provider-builds compiler; "
             "run cruxible compiler upgrade first"
