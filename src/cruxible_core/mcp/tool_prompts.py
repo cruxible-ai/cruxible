@@ -227,9 +227,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         '(e.g. "project.work_item") with where filters such as '
         '{"field": "status", "eq": "ready"} (also ne, lt, lte, gt, gte, in, '
         "exists, contains), select, follow and order_by; contains alone searches every "
-        "Claim value; kind ClaimType or Procedure lists definitions, kind Trigger or Line "
-        "lists Triggers (name, schedule, target) and Lines (enabled, triggers). Or pass a "
-        "query name "
+        "Claim value; a definition kind (ClaimType, Procedure, Trigger, Line, SubjectKind, "
+        "CaptureContract, ProcedureMandate, QueryDefinition) lists those definitions with "
+        "typed columns. Or pass a query name "
         "with params (budgets, receipt=full for its replay receipt). Rows lead with values "
         "and carry flags (stale, contested, contradicted, uncovered, unsure_hold); status "
         "adds overturned, refused or retired Claims (retired also lists retired Subjects) "

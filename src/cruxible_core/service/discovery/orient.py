@@ -105,6 +105,7 @@ from cruxible_core.service.discovery.operational import (
     prediction_rows,
 )
 from cruxible_core.service.discovery.pins import PinKey, pins_page
+from cruxible_core.service.discovery.query_vocabulary import render_duration
 from cruxible_core.service.discovery.runs import run_counts, run_rows
 from cruxible_core.service.identity import authoring_refusal, principal_standing
 from cruxible_core.service.list_pages import (
@@ -388,15 +389,6 @@ def _value_type(
     return (str(declared) if declared is not None else "any"), None
 
 
-def _duration(microseconds: int) -> str:
-    for unit, size in (("d", 86_400_000_000), ("h", 3_600_000_000), ("m", 60_000_000)):
-        if microseconds and microseconds % size == 0:
-            return f"{microseconds // size}{unit}"
-    if microseconds % 1_000_000 == 0:
-        return f"{microseconds // 1_000_000}s"
-    return f"{microseconds}us"
-
-
 def _short_names(predicates: Iterable[str], kind: str, state: _State) -> dict[str, str]:
     """Each predicate's advertised field name for ``kind``, by the shared rule."""
 
@@ -448,7 +440,7 @@ def _descriptor(
         member_descriptions=claim_type.member_descriptions if full else (),
         revision_evidence=effective_revision_evidence(claim_type) if full else None,
         stale_after=(
-            _duration(freshness.stale_after.microseconds)
+            render_duration(freshness.stale_after.microseconds)
             if full and freshness is not None
             else None
         ),

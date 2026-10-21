@@ -448,6 +448,17 @@ def _query_named(world: World) -> object:
     )
 
 
+def _query_definitions(kind: str) -> Callable[[World], object]:
+    """One definition kind's listing: the world's definitions, never its Claims or Subjects."""
+
+    def run(world: World) -> object:
+        result = playbill_api.playbill_query(world.instance_id, request=QueryRequest(kind=kind))
+        assert result.rows, (kind, result)
+        return result
+
+    return run
+
+
 def _next(*, sources: bool = False) -> Callable[[World], object]:
     def run(world: World) -> object:
         return playbill_api.playbill_next(
@@ -789,6 +800,10 @@ def _routes() -> list[Route]:
         Route("read.get.claim", _get(lambda w: w.claims[f"{w.subject(7)}#title"])),
         Route("read.query.where", _query_where),
         Route("read.query.named", _query_named),
+        Route("read.query.subject_kinds", _query_definitions("SubjectKind")),
+        Route("read.query.capture_contracts", _query_definitions("CaptureContract")),
+        Route("read.query.mandates", _query_definitions("ProcedureMandate")),
+        Route("read.query.query_definitions", _query_definitions("QueryDefinition")),
         Route("read.next.stored_queue", _next()),
         Route("read.next.workspace_sources", _next(sources=True)),
         Route("read.coverage.workspace_sources", _coverage, prepare=_observe_reports),
@@ -1076,6 +1091,10 @@ _ONTOLOGY_READS: dict[str, Callable[[World], object]] = {
     "get.claim_type": lambda world: playbill_api.playbill_get(
         world.instance_id, request=GetRequest(ref=f"ClaimType:{KIND}.title")
     ),
+    "query.subject_kinds": _query_definitions("SubjectKind"),
+    "query.capture_contracts": _query_definitions("CaptureContract"),
+    "query.mandates": _query_definitions("ProcedureMandate"),
+    "query.query_definitions": _query_definitions("QueryDefinition"),
 }
 
 

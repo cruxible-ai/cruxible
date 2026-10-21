@@ -37,7 +37,11 @@ from typing import Any, Literal, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_contention,
+    effective_evidence_requirement,
+)
 from cruxible_client.contracts.claim_verdicts import (
     EvidenceCurrency,
     EvidenceRelativeClaimVerdictV1,
@@ -105,6 +109,7 @@ from cruxible_core.indexes.typed_state import LIVE_SUBJECT_PREDICATE_CLAIMS_SQL
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
+from cruxible_core.service.discovery.kit_owners import kit_owners, owned_by
 from cruxible_core.service.discovery.listed_kinds import LISTED_KINDS, listed_kind_answer
 from cruxible_core.service.discovery.query import (
     evaluate_accepted_query,
@@ -126,10 +131,12 @@ from cruxible_core.service.discovery.query_vocabulary import (
     check_operator,
     check_value,
     claim_type_row,
+    implied_role,
     load_query_vocabulary,
     object_label,
     query_not_found,
     query_refusal,
+    render_duration,
     value_type_of,
 )
 from cruxible_core.service.discovery.read_flags import (
@@ -1534,9 +1541,21 @@ def _contains_everywhere(
 # -- ClaimType and Procedure definitions ---------------------------------------
 
 _ARTIFACT_FIELDS: dict[str, tuple[str, ...]] = {
-    "ClaimType": ("namespace", "name", "subject_kind"),
+    "ClaimType": (
+        "namespace",
+        "name",
+        "subject_kind",
+        "role",
+        "selector",
+        "on_conflict",
+        "captured_required",
+        "kit",
+    ),
     "Procedure": ("namespace", "name"),
 }
+#: Definition filters whose values are true or false.
+_ARTIFACT_BOOLEAN_FIELDS = frozenset({"captured_required"})
+_ROLES = ("derivation", "environment_binding", "normative", "observation")
 _ARTIFACT_COLUMNS: dict[str, tuple[QueryColumn, ...]] = {
     "ClaimType": (
         QueryColumn(name="predicate", type="string"),
@@ -1546,6 +1565,14 @@ _ARTIFACT_COLUMNS: dict[str, tuple[QueryColumn, ...]] = {
         QueryColumn(name="members", type="string", cardinality="many"),
         QueryColumn(name="description", type="string"),
         QueryColumn(name="evidence", type="string", cardinality="many"),
+        # Selected only: how a write is shaped, how rivals settle, who owns it.
+        QueryColumn(name="role", type="enum", members=_ROLES),
+        QueryColumn(name="roles", type="enum", members=_ROLES, cardinality="many"),
+        QueryColumn(name="stale_after", type="string"),
+        QueryColumn(name="selector", type="enum", members=("all", "only_contender")),
+        QueryColumn(name="on_conflict", type="enum", members=("refuse", "unresolved")),
+        QueryColumn(name="captured_required", type="boolean"),
+        QueryColumn(name="kit", type="string"),
     ),
     "Procedure": (
         QueryColumn(name="name", type="string"),
@@ -1558,6 +1585,29 @@ _ARTIFACT_COLUMNS: dict[str, tuple[QueryColumn, ...]] = {
 }
 
 
+#: The columns a definition row shows without ``select``.
+_ARTIFACT_DEFAULT_COLUMNS: dict[str, int] = {"ClaimType": 7, "Procedure": 2}
+
+
+def _claim_type_detail(claim_type: ClaimType, owners: Mapping[str, str]) -> dict[str, Any]:
+    """A ClaimType row's selected-only cells, read off the parsed ClaimType and its kit."""
+
+    contention = claim_type_contention(claim_type)
+    freshness = claim_type.evidence_freshness
+    cells: dict[str, Any] = {
+        "role": implied_role(claim_type),
+        "roles": list(claim_type.permitted_roles),
+        "stale_after": (
+            None if freshness is None else render_duration(freshness.stale_after.microseconds)
+        ),
+        "selector": contention.selector,
+        "on_conflict": contention.on_conflict,
+        "captured_required": effective_evidence_requirement(claim_type) == "captured",
+        "kit": owned_by(owners, "ClaimType", claim_type.predicate),
+    }
+    return {name: value for name, value in cells.items() if value is not None}
+
+
 def _namespace(name: str) -> str:
     return name.rsplit(".", 1)[0] if "." in name else ""
 
@@ -1567,6 +1617,8 @@ def _artifact_facets(kind: str, row: dict[str, Any]) -> dict[str, list[object]]:
     facets: dict[str, list[object]] = {"name": [name], "namespace": [_namespace(name)]}
     if kind == "ClaimType":
         facets["subject_kind"] = list(row.get("subject_kinds", ()))
+        for name in ("role", "selector", "on_conflict", "captured_required", "kit"):
+            facets[name] = [row[name]] if name in row else []
     return facets
 
 
@@ -1593,11 +1645,15 @@ def _artifact_answer(
     capped, cap_notes = _capped(result)
     contracts = CaptureContractNames(instance, coordinate)
     runnable: dict[str, str] = {}
-    if kind == "Procedure":
-        with instance.bind_accepted_projection(coordinate) as projection:
+    owners: Mapping[str, str] = {}
+    with instance.bind_accepted_projection(coordinate) as projection:
+        if kind == "Procedure":
             runnable = {
                 row.identity: row.runnable for row in projection.typed.procedure_inventory()
             }
+        else:
+            # The installed kits' receipts: one range read, each parsed once per process.
+            owners = kit_owners(instance, projection.typed.connection)
     rows: list[dict[str, Any]] = []
     identities: list[str] = []
     for item in result.rows:
@@ -1617,7 +1673,7 @@ def _artifact_answer(
                     subject_kinds=tuple(source.allowed_subject_kinds),
                     object_kinds=tuple(source.allowed_object_subject_kinds),
                 )
-            rows.append(claim_type_row(info, contracts))
+            rows.append({**claim_type_row(info, contracts), **_claim_type_detail(source, owners)})
         else:
             assert isinstance(source, ProcedureArtifact)
             rows.append(
@@ -1627,9 +1683,10 @@ def _artifact_answer(
                 }
             )
         identities.append(item.artifact.identity)
-    columns = _ARTIFACT_COLUMNS[kind]
-    if request is not None:
-        rows, identities, columns = _shape_artifact_rows(kind, rows, identities, request)
+    # A spec or named query answers the default columns; a compact one shapes its own.
+    rows, identities, columns = _shape_artifact_rows(
+        kind, rows, identities, request or QueryRequest(kind=kind)
+    )
     return _Answer(
         mode=mode,
         kind=kind,
@@ -1670,6 +1727,26 @@ def _shape_artifact_rows(
                 field_path=path,
             )
         value = item.value
+        if item.field in _ARTIFACT_BOOLEAN_FIELDS:
+            if item.operator not in {"eq", "ne"}:
+                raise query_refusal(
+                    "cruxible.query.operator_not_applicable",
+                    f"{item.operator!r} does not apply to {kind} {item.field}",
+                    nearest=("eq", "ne"),
+                    repair="use eq or ne",
+                    field_path=path,
+                )
+            if isinstance(value, str) and value in {"true", "false"}:
+                value = value == "true"
+            if not isinstance(value, bool):
+                raise query_refusal(
+                    "cruxible.query.value_type_mismatch",
+                    f"{kind} {item.field} values are true or false",
+                    repair=f"pass {item.field}=true or {item.field}=false",
+                    field_path=f"{path}.{item.operator}",
+                )
+            checks.append((item.field, item.operator, value))
+            continue
         if item.operator == "in":
             if not all(isinstance(entry, str) for entry in cast(tuple[object, ...], value)):
                 raise query_refusal(
@@ -1733,8 +1810,9 @@ def _shape_artifact_rows(
         )
         kept_rows = [kept_rows[position] for position in order]
         kept_ids = [kept_ids[position] for position in order]
+    chosen: list[QueryColumn] = list(columns[: _ARTIFACT_DEFAULT_COLUMNS[kind]])
     if request.select:
-        chosen: list[QueryColumn] = []
+        chosen = []
         for index, name in enumerate(request.select):
             match = next((column for column in columns if column.name == name), None)
             if match is None:
@@ -1746,13 +1824,12 @@ def _shape_artifact_rows(
                     field_path=f"select[{index}]",
                 )
             chosen.append(match)
-        key = "predicate" if kind == "ClaimType" else "name"
-        selected = {column.name for column in chosen} | {key}
-        kept_rows = [
-            {name: value for name, value in row.items() if name in selected} for row in kept_rows
-        ]
-        columns = tuple(chosen)
-    return kept_rows, kept_ids, columns
+    key = "predicate" if kind == "ClaimType" else "name"
+    selected = {column.name for column in chosen} | {key}
+    kept_rows = [
+        {name: value for name, value in row.items() if name in selected} for row in kept_rows
+    ]
+    return kept_rows, kept_ids, tuple(chosen)
 
 
 def _require_artifact_names(
@@ -2516,7 +2593,13 @@ def service_playbill_query(
             request=request,
         )
     elif request.kind in LISTED_KINDS:
-        listed = listed_kind_answer(instance, coordinate, request, evaluation_time=evaluation_time)
+        listed = listed_kind_answer(
+            instance,
+            coordinate,
+            request,
+            vocabulary=vocabulary,
+            evaluation_time=evaluation_time,
+        )
         answer = _Answer(
             mode="inline",
             kind=request.kind,
