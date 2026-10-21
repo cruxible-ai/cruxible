@@ -1,27 +1,78 @@
 # Concepts
 
-This page explains the model behind the commands. The
-[Quickstart](quickstart.md) shows it in use; the [CLI reference](cli-reference.md)
-and [MCP tools](mcp-tools.md) list every operation.
+This page explains the ideas Cruxible is built on: what each one is, and what
+it gives you. The [Quickstart](quickstart.md) shows them in use; the [CLI
+reference](cli-reference.md) and [MCP tools](mcp-tools.md) list every
+operation.
 
-## Accepted state
+## What Cruxible is for
 
-A daemon owns each instance's accepted state: a Git ledger whose commits are
-accepted generations, plus content-addressed storage for large bodies. Nothing
-becomes accepted except by activating a proposal, and every accepted
-generation has a coordinate:
+Teams of people and agents act on shared knowledge every day: which services
+depend on which libraries, who owns a system, whether a release is safe to
+ship. Most of that knowledge lives in documents, tickets, chat threads and
+agents' context windows, and it fails in familiar ways:
 
-- the Git object ID of the ledger commit;
-- the semantic root, a digest of what the state means;
-- the generation root, a digest of the generation;
-- the compiler digest, naming the rules that interpreted it.
+- it drifts out of date, and nobody notices;
+- it gets overwritten, and the earlier version and the reason for the change
+  are lost;
+- two copies disagree, and nobody can say which one is right;
+- an agent acts on it without being able to tell a checked fact from a guess.
 
-Generations are also numbered (0 is genesis). Reads answer at a coordinate,
-the current head unless you name an older one with `--at`, so an answer can
-always say which state it came from.
+Cruxible keeps that knowledge as **hard state**: typed values, each stored
+with the reason and the evidence behind it, changed only through checked and
+approved changes, with a complete record of what was believed, when, and why.
 
-Everything else is derived and can be rebuilt: the daemon's indexes, the
-floor files in your workspace, and the projection blocks in your pages.
+It doesn't replace your databases, APIs or files. They stay the authority for
+their own records; Cruxible records what your team knows about them and where
+that knowledge came from. And no language model runs inside Cruxible: people
+and agents supply the judgment, and Cruxible checks it, records it and serves
+it back, deterministically.
+
+The rest of this page builds the system up from its foundation: the ledger.
+
+## The ledger
+
+### What it is
+
+Each body of knowledge, an **instance**, is kept by a background server, the
+**daemon**, in a **ledger**: a Git repository that only the daemon writes to.
+Every accepted change becomes one commit in it, called a **generation**.
+Generations are numbered from 0, the instance's genesis, and an accepted
+change is the only way a new one is made. Large bodies, like the bytes of a
+web page fetched as evidence, sit beside the ledger in content-addressed
+storage, named by their digest, and the ledger refers to them.
+
+Every generation has a **coordinate** that names it exactly:
+
+- the Git object ID of its commit, which pins the ledger's exact contents;
+- the semantic root, a digest of what the knowledge means;
+- the generation root, a digest of the generation itself;
+- the compiler digest, which names the rules that interpreted it (see [The
+  compiler](#the-compiler)).
+
+### What it gives you
+
+- **One authority.** There is exactly one place where the team's knowledge is
+  accepted, and one way in: an accepted change. Everything else that shows
+  knowledge, such as the daemon's search indexes, the files in your workspace,
+  or a table in a document, is derived from the ledger. When they disagree,
+  the ledger is right, and anything derived can be rebuilt from it.
+- **History that never loses anything.** A change adds a generation; it never
+  rewrites an old one. Every earlier state stays readable (`--at`), and every
+  value's history says who changed it, when, and the reason they gave.
+- **Changes you can verify.** The daemon signs every generation, and an
+  approval is a signature made with the approver's own key over the exact
+  change. You don't have to trust a log line that says something was
+  approved: the signature is in the ledger.
+- **Answers that say where they came from.** Every read is answered at a
+  coordinate: the current head, unless you ask for an earlier one. Because the
+  coordinate pins both the knowledge and the rules that read it, the same
+  question at the same coordinate always gets the same answer, and every
+  answer can name the exact state it came from.
+- **Ordinary tools.** The ledger is Git. A proposed change is a branch you can
+  diff before it's accepted, the ledger can be mirrored to a remote
+  (`cruxible ledger set-mirror`) so reviewers and auditors can fetch it, and
+  its history reads with tools you already have.
 
 ## Subjects, ClaimTypes and Claims
 
