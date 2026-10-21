@@ -1161,10 +1161,11 @@ def test_the_ontology_moves_only_with_its_definitions(session: Session) -> None:
     """The ontology files cost the definitions that changed, never the instance.
 
     In SMALL and in LARGE (ten times the work items and Claims): a ten-Claim
-    write delivers no ``ontology/`` file and renders none, and a description
-    edit of one ClaimType delivers only the kind card it shows on and
-    ``ontology/claim-types/INDEX`` (no ``current/`` file: a description shows
-    a Subject nothing), with the advance's work flat across the two worlds.
+    write delivers no ``ontology/`` file and renders none, and a revision of
+    one ClaimType that changes no view (a description edit; the v1 test
+    vocabulary carries none, so only its lineage moves) delivers only the
+    kind card it shows on and ``ontology/claim-types/INDEX`` (no ``current/``
+    file), with the advance's work flat across the two worlds.
     """
 
     from cruxible_core.service.floor import floor_ontology

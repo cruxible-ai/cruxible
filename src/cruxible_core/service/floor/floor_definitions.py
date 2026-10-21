@@ -1,21 +1,26 @@
 """Every accepted revision of each definition path the floor reads, as a persistent chain.
 
 A floor file that shows a definition is stamped from that definition's
-history, not from the instance: the stamp a ``current/`` field reads from its
-ClaimType is the last sequence at which the ClaimType changed what a Subject
-file shows of it (its cardinality and whether it is live), so a revision that
-only edits the ClaimType's description restamps no Subject file.
+history, not from the instance. The stamp a ``current/`` field reads from its
+ClaimType (and its short-name shadow) is the last sequence at which that
+ClaimType changed what a Subject file shows of it: its cardinality and whether
+it is live. A revision that changes neither restamps no Subject through it.
+(A revision of a ClaimType that has live Claims also revises each of them --
+they pin it exactly -- and those Subjects restamp through their own Claims.)
 
 One chain per definition path holds its revisions to a generation, newest
 first, each over the chain before it, which it shares: extending a path's
 history by one revision is one node, and cutting it back drops only the newer
-nodes. Each node carries the parsed value, and for each declared view (a
-projection of the value some floor file shows) the sequence at which that view
-last changed, so reading when a view last moved is O(1) and a pure function of
-the generation. A cold build reads each definition path's revisions once
-(``member_sequences`` plus one blob read per touched sequence): O(definition
-revisions), never O(Claims). An advance reads only the revisions the change
-added.
+nodes. The families: ClaimTypes, SubjectKinds, CaptureContracts, Procedure
+Mandates, Lines, Triggers, QueryDefinitions and kit receipts (the Documents
+``documents/kit-<id>.json``). Each node carries the parsed value, the targets
+that revision reached (``floor_ontology.ontology_reach``), and for each
+declared view (a projection of the value some floor file shows) the sequence
+at which that view last changed, so reading when a view last moved is O(1)
+and a pure function of the generation. A cold build reads each definition
+path's revisions once (``member_sequences`` plus one blob read per touched
+sequence): O(definition revisions), never O(Claims). An advance reads only
+the revisions the change added.
 """
 
 from __future__ import annotations

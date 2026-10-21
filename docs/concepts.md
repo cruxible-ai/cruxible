@@ -281,7 +281,10 @@ reads, each pinned where its preview was read.
 ### The floor
 
 The floor is a directory of plain files, `.cruxible/floor/`, with one file per
-Subject (`current/<kind>/<id>.yaml`, each line a value and its Claim ID), for
+Subject (`current/<kind>/<id>.yaml`, each line a value and its Claim ID) and
+the accepted definitions under `ontology/` (a card per kind with each field's
+type, cardinality, evidence, owner and who settles it; INDEX files of the
+ClaimTypes, CaptureContracts, queries, Lines and installed kits), for
 orientation and grep. It is eventually current: it follows accepted state
 shortly after each change, so read exact values after a write with `get` or
 `query`, not the floor.

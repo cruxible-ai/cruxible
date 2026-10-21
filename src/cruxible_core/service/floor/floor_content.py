@@ -43,9 +43,28 @@ verbs. The floor does no matching of its own: grep is the search.
 - `current/<kind>/<id>.<field>.txt`: a text value too long to inline, whole.
 - `current/<kind>/INDEX`: one tab-separated line per Subject of that kind: its
   ref, a title-like value, and its state-like fields.
+- `ontology/`: the accepted definitions, live ones only. Each file's first
+  line names it, its owner and `changed gen <n>`; `owner=` is `kit=<id>` (an
+  installed kit's receipt owns it), `kit=<id> edited` (and the held definition
+  differs from what the kit installed) or `local`.
+  - `ontology/INDEX`: one tab-separated line per kind a SubjectKind or
+    ClaimType names: its identity rule, field count, owner and description.
+  - `ontology/kinds/<kind>.md`: one card per kind: its identity, then one
+    `## <field>  <predicate>  owner=...` section per field whose next line
+    starts `<field>: <type>  <cardinality>  ...` (a grep hit on it describes
+    the field), who settles it (`settled by: mandate ...` or `review`), and its
+    description; `## pointed at by` lists the fields of other kinds that point
+    here.
+  - `ontology/claim-types/INDEX`, `ontology/contracts/INDEX`,
+    `ontology/queries/INDEX`, `ontology/lines/INDEX`, `ontology/kits/INDEX`:
+    one tab-separated line per ClaimType, CaptureContract, QueryDefinition,
+    Line (its Triggers and its Procedure's Mandates) and installed kit (its
+    edited and retired definitions); `ontology/contracts/<id>.md` names the
+    ClaimTypes that admit and require each contract. Whether a newer kit
+    release exists is not accepted state: `cruxible kit status`.
 - `changes/<seq>.json`: the accepted change that introduced a current Claim
-  revision: its time, actor, the rationale its proposal recorded, and the refs
-  it changed.
+  or definition revision: its time, actor, the rationale its proposal
+  recorded, and the refs it changed.
 - `sources/INDEX`: one tab-separated line per evidence source: the source, its
   CaptureContract(s), where it lives (the workspace path the client's source
   catalog binds it to, marked `(missing)` when no such file exists; else a
@@ -64,7 +83,8 @@ answers with the live verdict.
 
 ## The loop
 
-1. `grep -rn "some text" .cruxible/floor/current`
+1. `grep -rn "some text" .cruxible/floor/current`; for what a field means,
+   `grep -rn "<field>:" .cruxible/floor/ontology`.
 2. Read the hit's first line: its ref, and the generation it last changed.
 3. `cruxible get <ref>` for the live values and verdicts (`orient`
    says how far behind the floor is).
@@ -88,6 +108,8 @@ show (`notes_digest`).
 
 ## Not for grep
 
+- Counts: `ontology/` shows no Subject or Claim counts, which move with every
+  write; `orient` has them.
 - `sources/LEDGER`: `sources/INDEX` as accepted state alone gives it, with
   only ledger-derived locators (a Document ref, else every external
   `coordinate/selector` type pair, comma-separated, or `-`); the client joins

@@ -267,7 +267,7 @@ def test_a_field_stamp_follows_its_claim_type_and_its_short_name_shadow() -> Non
 def test_a_claim_type_revision_restamps_subjects_only_when_it_changes_what_they_show(
     tmp_path: Any, monkeypatch: Any
 ) -> None:
-    """A shadow ClaimType's description edit moves no field; its retirement renames one.
+    """A shadow ClaimType revision that shows nothing new moves no field; retiring it renames one.
 
     ``project.work_item.ext.note`` shows as its full name while the predicate
     ``ext.note`` is live. A revision of that shadow rewrites none of the
@@ -298,8 +298,10 @@ def test_a_claim_type_revision_restamps_subjects_only_when_it_changes_what_they_
         return render_subject(**kwargs)
 
     monkeypatch.setattr(floor_index, "render_subject", counting)
-    # A description edit shows a Subject file nothing new: no Subject is
-    # rendered, restamped or delivered.
+    # A revision that leaves cardinality and liveness as they were (a v1
+    # ClaimType carries no description, so this one changes only its
+    # lineage) shows a Subject file nothing new: none is rendered, restamped
+    # or delivered.
     migrate_claim_type(instance, "ext.note", description="A shadowing predicate.")
     described = advance_floor_index(instance)
     assert rendered == []
