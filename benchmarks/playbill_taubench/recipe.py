@@ -333,7 +333,13 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         input_path = input_dir / f"claim-type-{path.stem}.json"
         input_path.write_text(authoring_input.model_dump_json())
         answer = run_cli_json(
-            "claim-type", "propose", "--input", str(input_path), "--name", f"{name}-{path.stem}"
+            "claim-type",
+            "propose",
+            "--input",
+            str(input_path),
+            "--name",
+            f"{name}-{path.stem}",
+            "--no-accept",
         )
         record(f"claim_type:{path.stem}", "playbill_propose_claim_type_input", proposal_id(answer))
 

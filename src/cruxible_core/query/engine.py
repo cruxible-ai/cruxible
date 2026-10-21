@@ -554,11 +554,13 @@ class _Evaluator:
         form: tuple[str, ...] = (),
         vocabulary: tuple[str, ...] = (),
     ) -> QueryTypedValue | None:
-        """Return the declared-type comparable, or None when the value is absent.
+        """Return the one declared-type comparable, or None when there is no one value.
 
-        ``form`` is the canonical form of the stored values this operand is
-        compared with; the operand is canonicalized by it first. ``vocabulary``
-        is the closed value set of a Claim field it is compared with.
+        Ordering reads one value per row: a many-valued field holding exactly one
+        orders as it; several have no single value to order by. ``form`` is the
+        canonical form of the stored values this operand is compared with; the
+        operand is canonicalized by it first. ``vocabulary`` is the closed value
+        set of a Claim field it is compared with.
         """
 
         resolved = self.resolve(row, ref)
@@ -566,11 +568,47 @@ class _Evaluator:
             return None
         value = resolved.value
         if resolved.many is not None:
-            # A comparison reads one value: a many-valued field holding exactly
-            # one compares as it; several have no single value to compare.
             if len(resolved.many) != 1:
                 return None
             value = resolved.many[0]
+        return self._coerce(ref, value, value_type, form=form, vocabulary=vocabulary)
+
+    def typed_values(
+        self,
+        row: _Row,
+        ref: QueryValueRef,
+        value_type: QueryValueType,
+        *,
+        form: tuple[str, ...] = (),
+        vocabulary: tuple[str, ...] = (),
+    ) -> tuple[QueryTypedValue, ...] | None:
+        """Every declared-type comparable an operand holds, or None when it is absent.
+
+        A filter compares each value of a many-valued field: it holds when any
+        value satisfies it (``ne`` and ``not in``: when no value is excluded),
+        as the compact ``--where`` reads the same field.
+        """
+
+        resolved = self.resolve(row, ref)
+        if resolved.state != "present":
+            return None
+        values = resolved.many if resolved.many is not None else (resolved.value,)
+        if not values:
+            return None
+        return tuple(
+            self._coerce(ref, value, value_type, form=form, vocabulary=vocabulary)
+            for value in values
+        )
+
+    def _coerce(
+        self,
+        ref: QueryValueRef,
+        value: object,
+        value_type: QueryValueType,
+        *,
+        form: tuple[str, ...],
+        vocabulary: tuple[str, ...],
+    ) -> QueryTypedValue:
         if form:
             try:
                 value = canonicalize_literal(value, form)
@@ -603,7 +641,11 @@ class _Evaluator:
         return coerced
 
     def matches(self, row: _Row, filter_: QueryFilter) -> bool:
-        """Evaluate one declared filter; an absent or conflicted value never matches."""
+        """Evaluate one declared filter; an absent or conflicted value never matches.
+
+        A many-valued operand matches when any of its values does; ``ne``
+        matches when none of them equals the other side.
+        """
 
         if isinstance(filter_, QueryConjunctionFilter):
             return all(self.matches(row, item) for item in filter_.filters)
@@ -621,14 +663,14 @@ class _Evaluator:
                 present = bool(claims)
             return present != filter_.negated
         if isinstance(filter_, QueryComparisonFilter):
-            left = self.typed(
+            left = self.typed_values(
                 row,
                 filter_.left,
                 filter_.value_type,
                 form=self._operand_form(filter_.left, filter_.right),
                 vocabulary=self._operand_vocabulary(filter_.left, filter_.right),
             )
-            right = self.typed(
+            right = self.typed_values(
                 row,
                 filter_.right,
                 filter_.value_type,
@@ -637,13 +679,18 @@ class _Evaluator:
             )
             if left is None or right is None:
                 return False
-            return bool(
-                _OPERATORS[filter_.operator](_compare(left.value, right.value, filter_.value_type))
+            orders = (
+                _compare(one.value, other.value, filter_.value_type)
+                for one in left
+                for other in right
             )
+            if filter_.operator == "ne":
+                return not any(order == 0 for order in orders)
+            return any(_OPERATORS[filter_.operator](order) for order in orders)
         return self._membership(row, filter_)
 
     def _membership(self, row: _Row, filter_: QueryMembershipFilter) -> bool:
-        left = self.typed(
+        left = self.typed_values(
             row,
             filter_.left,
             filter_.value_type,
@@ -654,14 +701,18 @@ class _Evaluator:
             return filter_.negated
         found = False
         for candidate in filter_.values:
-            right = self.typed(
+            right = self.typed_values(
                 row,
                 candidate,
                 filter_.value_type,
                 form=self._operand_form(candidate, filter_.left),
                 vocabulary=self._operand_vocabulary(candidate, filter_.left),
             )
-            if right is not None and _compare(left.value, right.value, filter_.value_type) == 0:
+            if right is not None and any(
+                _compare(one.value, other.value, filter_.value_type) == 0
+                for one in left
+                for other in right
+            ):
                 found = True
                 break
         return found != filter_.negated

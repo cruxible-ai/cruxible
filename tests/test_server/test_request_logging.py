@@ -286,7 +286,12 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
     )
     proposed = app_client.post(
         f"/api/v1/{instance_id}/documents/proposals",
-        json={"shell": shell.model_dump(mode="json"), "proposal_name": "activation-actor"},
+        json={
+            "shell": shell.model_dump(mode="json"),
+            "proposal_name": "activation-actor",
+            # This test walks the explicit approve and activate lifecycle.
+            "accept": "never",
+        },
         headers=headers,
     )
     assert proposed.status_code == 200, proposed.text

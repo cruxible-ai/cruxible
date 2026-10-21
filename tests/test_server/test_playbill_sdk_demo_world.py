@@ -268,6 +268,7 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
             str(input_path),
             "--name",
             "empty-policy-cli",
+            "--no-accept",
             "--json",
         ],
     )
@@ -310,6 +311,7 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
                 },
             ),
             "proposal_name": "empty-policy-http",
+            "accept": "never",
         },
     )
     assert http_proposal.status_code == 200, http_proposal.text
@@ -773,6 +775,7 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
         instance_id,
         input=claim_type_input.model_dump(mode="json"),
         proposal_name="example-claim-type",
+        accept="never",
     )
     _approve_and_activate(
         http,

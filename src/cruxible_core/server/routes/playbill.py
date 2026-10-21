@@ -319,6 +319,7 @@ def propose_document(
         base=req.base,
         dry_run=req.dry_run,
         at=req.at,
+        accept=req.accept,
     )
 
 
@@ -642,6 +643,7 @@ def propose_files(
         proposal_name=req.proposal_name,
         dry_run=req.dry_run,
         at=req.at,
+        accept=req.accept,
     )
 
 
@@ -661,6 +663,7 @@ def propose_claim_type(
             base=req.base,
             dry_run=req.dry_run,
             at=req.at,
+            accept=req.accept,
         )
     return playbill_api.playbill_propose_builtin_claim_type(
         resolve_server_instance_id(instance_id),
@@ -669,6 +672,7 @@ def propose_claim_type(
         base=req.base,
         dry_run=req.dry_run,
         at=req.at,
+        accept=req.accept,
     )
 
 

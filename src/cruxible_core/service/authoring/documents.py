@@ -17,6 +17,7 @@ from cruxible_client.contracts.attestations import (
     VerifiedApproval,
     verify_approval,
 )
+from cruxible_client.contracts.authoring_landing import AuthoringLanding
 from cruxible_client.contracts.candidates import CandidateMemberEvidence, CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import ProposalDigest, file_digest
 from cruxible_client.contracts.compiler_upgrade import CompilerUpgrade, CompilerUpgradeNotice
@@ -124,6 +125,12 @@ class ProposalInspection(_StrictServiceModel):
     workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     #: A compiler upgrade's one-way notice: what activating it means.
     compiler_upgrade: CompilerUpgradeNotice | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    #: Whether the call landed the change (policy and caller allowed it) or
+    #: stopped at the proposal, and why; absent where the call never tries.
+    outcome: AuthoringLanding | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )

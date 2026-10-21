@@ -178,13 +178,19 @@ from cruxible_core.service.authoring.documents import (
     ActivationReceipt as ServiceActivationReceipt,
 )
 from cruxible_core.service.authoring.documents import (
+    ProposalInspection as ServiceProposalInspection,
+)
+from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_propose_playbill_document,
     service_propose_playbill_principal_change,
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.authoring.landing import service_land_authoring_submit
+from cruxible_core.service.authoring.landing import (
+    land_direct_proposal,
+    service_land_authoring_submit,
+)
 from cruxible_core.service.authoring.projection_sync import (
     service_read_playbill_block_sync_backing,
 )
@@ -974,13 +980,15 @@ def playbill_propose_document(
     base: AcceptedCoordinate | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.ProposalInspection:
     check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
+        instance = get_playbill_manager().get(instance_id)
         result = _proposal_validation_boundary(
             "document",
             lambda: service_propose_playbill_document(
-                get_playbill_manager().get(instance_id),
+                instance,
                 shell=shell,
                 actor_id=_actor_id(instance_id),
                 proposal_name=proposal_name,
@@ -991,6 +999,7 @@ def playbill_propose_document(
                 at=at,
             ),
         )
+        result = _land_direct(instance_id, instance, result, accept=accept)
         return contracts.ProposalInspection.model_validate(result.model_dump(mode="json"))
 
 
@@ -1365,13 +1374,15 @@ def playbill_propose_file_bundle(
     proposal_name: str,
     dry_run: bool | None = None,
     at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.ProposalInspection:
     check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
+        instance = get_playbill_manager().get(instance_id)
         result = _proposal_validation_boundary(
             "file bundle",
             lambda: service_propose_playbill_file_bundle(
-                get_playbill_manager().get(instance_id),
+                instance,
                 bundle=bundle,
                 file=file,
                 actor_id=_actor_id(instance_id),
@@ -1381,7 +1392,26 @@ def playbill_propose_file_bundle(
                 at=at,
             ),
         )
+        result = _land_direct(instance_id, instance, result, accept=accept)
     return contracts.ProposalInspection.model_validate(result.model_dump(mode="json"))
+
+
+def _land_direct(
+    instance_id: str,
+    instance: PlaybillInstance,
+    inspection: ServiceProposalInspection,
+    *,
+    accept: AuthoringAccept,
+) -> ServiceProposalInspection:
+    """Land a directly proposed change when policy and this caller allow it."""
+
+    return land_direct_proposal(
+        instance,
+        inspection,
+        actor_id=_actor_id(instance_id),
+        accept=accept,
+        may_activate=_permits("cruxible_proposal_activate", instance_id=instance_id),
+    )
 
 
 def _evaluation_time(value: datetime | None) -> datetime:
@@ -1396,6 +1426,7 @@ def playbill_propose_builtin_claim_type(
     base: AcceptedCoordinate | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.ClaimTypeInputProposalResult:
     check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
@@ -1413,6 +1444,9 @@ def playbill_propose_builtin_claim_type(
                 at=at,
             ),
         )
+        result = result.model_copy(
+            update={"proposal": _land_direct(instance_id, instance, result.proposal, accept=accept)}
+        )
         return contracts.ClaimTypeInputProposalResult.model_validate(result.model_dump(mode="json"))
 
 
@@ -1424,13 +1458,15 @@ def playbill_propose_claim_type_input(
     base: AcceptedCoordinate | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
 ) -> contracts.ClaimTypeInputProposalResult:
     check_permission("cruxible_propose", instance_id=instance_id)
     with change_entry(dry_run, "direct"):
+        instance = get_playbill_manager().get(instance_id)
         result = _proposal_validation_boundary(
             "claim type input",
             lambda: service_propose_playbill_claim_type_input(
-                get_playbill_manager().get(instance_id),
+                instance,
                 input=input,
                 base=base,
                 actor_id=_actor_id(instance_id),
@@ -1439,6 +1475,9 @@ def playbill_propose_claim_type_input(
                 dry_run=dry_run,
                 at=at,
             ),
+        )
+        result = result.model_copy(
+            update={"proposal": _land_direct(instance_id, instance, result.proposal, accept=accept)}
         )
         return contracts.ClaimTypeInputProposalResult.model_validate(result.model_dump(mode="json"))
 

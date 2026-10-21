@@ -336,13 +336,12 @@ def test_under_none_the_origin_goes_stale_past_the_freshness_horizon() -> None:
 
 
 def _input(**update: object) -> object:
-    from cruxible_core.claims.claim_type_inputs import (
-        ClaimTypeInputRecord,
-        claim_type_input_template,
-    )
+    from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
+    from tests.core_support._claim_type_support import defaulted_claim_type_input_example
 
+    # A complete v7 record (every structural field stated, no v7/v8 field).
     return ClaimTypeInputRecord.model_validate(
-        {**claim_type_input_template().model_dump(mode="json"), **update}
+        {**defaulted_claim_type_input_example().model_dump(mode="json"), **update}
     )
 
 

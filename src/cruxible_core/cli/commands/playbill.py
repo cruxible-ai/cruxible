@@ -5,7 +5,6 @@ from __future__ import annotations
 import getpass
 import json
 import os
-import re
 import shlex
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -131,7 +130,11 @@ from cruxible_client.contracts.public_names import public_name as _public_name
 from cruxible_client.contracts.read_values import shown_plain
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
-from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+from cruxible_client.contracts.temporal import (
+    format_datetime,
+    parse_datetime,
+    parse_iso_duration_microseconds,
+)
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.write import (
@@ -234,11 +237,6 @@ from cruxible_core.service.proposals.review import (
 )
 
 ResultT = TypeVar("ResultT")
-_ISO8601_DURATION = re.compile(
-    r"P(?:(?P<weeks>[0-9]+)W|(?:(?P<days>[0-9]+)D)?"
-    r"(?:T(?:(?P<hours>[0-9]+)H)?(?:(?P<minutes>[0-9]+)M)?"
-    r"(?:(?P<seconds>[0-9]+)(?:\.(?P<fraction>[0-9]{1,6}))?S)?)?)"
-)
 
 
 def _parse_expiring_duration(
@@ -246,39 +244,10 @@ def _parse_expiring_duration(
     _parameter: click.Parameter,
     value: str,
 ) -> int:
-    match = _ISO8601_DURATION.fullmatch(value)
-    if match is None or not any(
-        match.group(key) is not None
-        for key in (
-            "weeks",
-            "days",
-            "hours",
-            "minutes",
-            "seconds",
-        )
-    ):
-        raise click.BadParameter(
-            "use a nonnegative ISO-8601 duration with days, weeks, hours, minutes, or seconds "
-            "(for example P7D or PT12H)"
-        )
-    if "T" in value and not any(
-        match.group(key) is not None
-        for key in (
-            "hours",
-            "minutes",
-            "seconds",
-        )
-    ):
-        raise click.BadParameter("the ISO-8601 time section must contain a duration component")
-    fraction = match.group("fraction") or ""
-    return (
-        int(match.group("weeks") or 0) * 604_800_000_000
-        + int(match.group("days") or 0) * 86_400_000_000
-        + int(match.group("hours") or 0) * 3_600_000_000
-        + int(match.group("minutes") or 0) * 60_000_000
-        + int(match.group("seconds") or 0) * 1_000_000
-        + int(fraction.ljust(6, "0") or 0)
-    )
+    try:
+        return parse_iso_duration_microseconds(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
 
 
 def _server_call(
@@ -2220,6 +2189,7 @@ def document_group() -> None:
 @click.option("--envelope", type=PayloadFile())
 @click.option("--template", is_flag=True, help="Print a Document proposal template.")
 @click.option("--name", "proposal_name")
+@click.option("--no-accept", is_flag=True, help="Propose only; do not land the change.")
 @change_control_options
 @json_option
 @handle_errors
@@ -2227,11 +2197,15 @@ def propose_document(
     envelope: str | None,
     template: bool,
     proposal_name: str | None,
+    no_accept: bool,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Use the sanctioned command-local Document proposal path."""
+    """Propose one Document; it lands when policy and your tier allow.
+
+    --no-accept keeps the proposal for someone to activate.
+    """
 
     if (envelope is None) == (not template):
         raise click.UsageError("choose exactly one of --envelope or --template")
@@ -2251,6 +2225,7 @@ def propose_document(
             proposal_name=proposal_name,
             dry_run=dry_run,
             at=at,
+            accept="never" if no_accept else "if_allowed",
         ),
         command_name="cruxible document propose",
     )
@@ -3042,6 +3017,7 @@ def remove_file(name: str, repository_root: str | None, output_json: bool) -> No
 )
 @click.option("--file", "file", required=True, help="The catalog file to propose.")
 @click.option("--name", "proposal_name", required=True, help="The proposal's name.")
+@click.option("--no-accept", is_flag=True, help="Propose only; do not land the change.")
 @_file_options
 @change_control_options
 @json_option
@@ -3050,6 +3026,7 @@ def propose_files(
     bundle_path: str | None,
     file: str,
     proposal_name: str,
+    no_accept: bool,
     portable_catalog: str | None,
     local_catalog: str | None,
     root_alias: tuple[str, ...],
@@ -3062,8 +3039,9 @@ def propose_files(
 
     Without --bundle the workspace catalog is compiled first, exactly as
     files compile does; with it, the frozen bundle is proposed as written.
-    An ordinary Document proposal, reviewed, approved and activated as usual;
-    the compilation it came from is recorded with it.
+    An ordinary Document proposal that lands when policy and your tier allow
+    (--no-accept keeps the proposal); one that needs an approver waits for
+    them. The compilation it came from is recorded with it.
     """
 
     if bundle_path is not None and (
@@ -3102,6 +3080,7 @@ def propose_files(
             proposal_name=proposal_name,
             dry_run=dry_run,
             at=at,
+            accept="never" if no_accept else "if_allowed",
         )
 
     result = _server_call(call, command_name="cruxible files propose")
@@ -3113,6 +3092,7 @@ def propose_files(
     click.echo(f"{file}: {result.status}")
     if proposal_id:
         click.echo(f"Proposal: {proposal_id}")
+    _echo_landing(result.outcome)
     echo_preview_next(result.status, result.accepted_coordinate)
 
 
@@ -3564,36 +3544,65 @@ def claim_type_group() -> None:
 
 
 @claim_type_group.command("propose")
-@click.option("--input", "input_path", type=PayloadFile())
+@click.option(
+    "--input",
+    "input_path",
+    type=PayloadFile(),
+    help=(
+        "A ClaimTypeInputRecord. A new ClaimType states predicate, allowed_subject_kinds, "
+        "object_kind and cardinality (and literal_schema or allowed_object_subject_kinds); "
+        "every other field has a default: permitted_roles [default_role] or [normative]; "
+        "one own-words evidence rule (plus one per anticipated_source_ids entry); no "
+        "admission requirements; supported, current resolution. An edit states only what "
+        "changes: an omitted field keeps the accepted value. State canonical_form ([] for "
+        "none) for a field that keys a SubjectKind. Durations take ISO-8601 (P30D)."
+    ),
+)
 @click.option(
     "--template",
     is_flag=True,
-    help="Print one complete model-generated ClaimTypeInputRecord without contacting the daemon.",
+    help="Print a minimal ClaimTypeInputRecord without contacting the daemon.",
+)
+@click.option(
+    "--expanded",
+    is_flag=True,
+    help="With --template: print every default the minimal record takes.",
 )
 @click.option(
     "--builtin",
     type=click.Choice(sorted(BUILTIN_CLAIM_TYPES)),
-    help="Adopt the daemon's exact built-in ClaimType (new instances start with it).",
+    help="Adopt a built-in ClaimType this instance does not hold yet (new instances start "
+    "with them).",
 )
 @click.option("--name", "proposal_name")
+@click.option("--no-accept", is_flag=True, help="Propose only; do not land the change.")
 @change_control_options
 @json_option
 @handle_errors
 def propose_claim_type(
     input_path: str | None,
     template: bool,
+    expanded: bool,
     builtin: str | None,
     proposal_name: str | None,
+    no_accept: bool,
     dry_run: bool | None,
     at: str | None,
     output_json: bool,
 ) -> None:
-    """Use the sanctioned typed-input ClaimType proposal path."""
+    """Propose one ClaimType; it lands when policy and your tier allow.
+
+    An edit of a ClaimType that live Claims use carries them to the new
+    version. --no-accept keeps the proposal for someone to activate.
+    """
 
     if sum((input_path is not None, template, builtin is not None)) != 1:
         raise click.UsageError("provide exactly one of --input, --template or --builtin")
+    if expanded and not template:
+        raise click.UsageError("--expanded applies only to --template")
+    accept: AuthoringAccept = "never" if no_accept else "if_allowed"
     if template:
-        _emit_json(claim_type_input_template().model_dump(mode="json"))
+        _emit_json(claim_type_input_template(expanded=expanded).model_dump(mode="json"))
         return
     if builtin is not None:
         builtin_result = _server_call(
@@ -3603,6 +3612,7 @@ def propose_claim_type(
                 proposal_name=proposal_name or f"builtin-{builtin.replace('.', '-')}",
                 dry_run=dry_run,
                 at=at,
+                accept=accept,
             ),
             command_name="cruxible claim-type propose",
         )
@@ -3621,8 +3631,7 @@ def propose_claim_type(
                 f"{_validation_path(tuple(item['loc']))}: {item['msg']}"
                 for item in exc.errors(include_url=False)
             )
-            + ". Pass a complete ClaimTypeInputRecord whose evidence_admission_policy.rules "
-            "match its capture contracts"
+            + ". `cruxible claim-type propose --template` prints a minimal record"
         ) from exc
     input_result = _server_call(
         lambda client, instance_id: client.propose_claim_type_input(
@@ -3631,6 +3640,7 @@ def propose_claim_type(
             proposal_name=proposal_name or claim_type_input.predicate,
             dry_run=dry_run,
             at=at,
+            accept=accept,
         ),
         command_name="cruxible claim-type propose",
     )
@@ -3655,10 +3665,30 @@ def _echo_proposal(
         if isinstance(item, Mapping):
             click.echo(f"  {item.get('code')}: {printable(str(item.get('message', '')))}")
     for warning in () if lint is None else lint.warnings:
-        click.echo(f"lint: {warning.code} at {warning.field_path}")
-    if proposal_id:
+        contract = (
+            f" (contract {_public_name(warning.contract_identity)})"
+            if warning.contract_identity and warning.contract_identity != "unresolved"
+            else ""
+        )
+        click.echo(f"lint: {warning.code} at {warning.field_path}{contract}")
+    if inspection.outcome is not None:
+        _echo_landing(inspection.outcome)
+    elif proposal_id:
         click.echo(f"next: cruxible get {proposal_id}")
     echo_preview_next(inspection.status, inspection.accepted_coordinate)
+
+
+def _echo_landing(outcome: contracts.AuthoringLanding | None) -> None:
+    """Whether a direct propose landed its change, or why it stopped and what to run."""
+
+    if outcome is None:
+        return
+    if isinstance(outcome, contracts.AuthoringLanded):
+        click.echo(f"landed: accepted at {outcome.accepted_coordinate.git_oid[:12]}")
+        return
+    click.echo(outcome.message)
+    if outcome.next:
+        click.echo(f"next: {outcome.next}")
 
 
 @claim_type_group.command("migrate")

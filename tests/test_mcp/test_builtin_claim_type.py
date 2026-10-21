@@ -28,4 +28,5 @@ def test_builtin_adoption_sends_only_the_builtin_name(monkeypatch) -> None:
         "proposal_name": "adopt-alias",
         "dry_run": None,
         "at": None,
+        "accept": "if_allowed",
     }

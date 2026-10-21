@@ -37,10 +37,7 @@ from cruxible_client.contracts.laws import (
     AcceptanceLawRegistry,
 )
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
-from cruxible_core.claims.claim_type_inputs import (
-    ClaimTypeInputRecord,
-    claim_type_input_template,
-)
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -48,6 +45,7 @@ from cruxible_core.proposals.proposals import (
 )
 from cruxible_core.proposals.settlement import ChangeActorBinding, parse_change_set_record
 from cruxible_core.runtime.instance import PlaybillInstance
+from tests.core_support._claim_type_support import defaulted_claim_type_input_example
 from tests.core_support._support import client_material, initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
@@ -63,7 +61,7 @@ def _claim_type(
     *,
     object_subject_kind: str | None = None,
 ) -> ClaimType:
-    payload = claim_type_input_template().model_dump(mode="json")
+    payload = defaulted_claim_type_input_example().model_dump(mode="json")
     payload.update(predicate=predicate, allowed_subject_kinds=[subject_kind])
     if object_subject_kind is not None:
         payload.pop("literal_schema", None)

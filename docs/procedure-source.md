@@ -654,9 +654,12 @@ establish absence of unknown or excluded facts.
 
 A projected field over a many-valued ClaimType (`cardinality: many`) is the list
 of its values, in canonical order, and is never a conflict; only a one-valued
-field's competing values are a `claim_object` conflict. A comparison filter or
-ordering key over a many-valued field reads its value when it holds exactly one
-and finds no value to compare when it holds several.
+field's competing values are a `claim_object` conflict. A comparison or
+membership filter over a many-valued field holds when any of its values
+satisfies it (`ne` and `not in`: when none of them is excluded), as compact
+`query --where` reads the same field. An ordering key over a many-valued field
+reads its value when it holds exactly one and has no value to order by when it
+holds several.
 
 ### Typed rows and projections
 

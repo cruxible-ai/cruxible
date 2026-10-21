@@ -8147,7 +8147,7 @@
           },
           "QueryDefinitionSpec": {
             "additionalProperties": false,
-            "description": "Authoring grammar: omitted ClaimType pins resolve at the intent base.\n\nExplicit pins remain assertions, never silently rebound. Accepted artifacts\nalways pass the stricter QueryDefinition validation after lowering.",
+            "description": "Authoring grammar: omitted ClaimType pins resolve at the intent base.\n\nExplicit pins remain assertions, never silently rebound. Accepted artifacts\nalways pass the stricter QueryDefinition validation after lowering. The\nshape, cardinality, dedupe, evaluation policy and budgets may be left out\n(``query_spec_defaults``); the stored definition states them.",
             "properties": {
               "artifact_format": {
                 "default": "playbill-query-definition-v1",
@@ -8329,13 +8329,7 @@
             "required": [
               "identity",
               "entry",
-              "result_binding",
-              "result_shape",
-              "result_cardinality",
-              "dedupe",
-              "evaluation_policy",
-              "default_budgets",
-              "maximum_budgets"
+              "result_binding"
             ],
             "title": "QueryDefinitionSpec",
             "type": "object"
@@ -91209,7 +91203,7 @@
           },
           "QueryDefinitionSpec": {
             "additionalProperties": false,
-            "description": "Authoring grammar: omitted ClaimType pins resolve at the intent base.\n\nExplicit pins remain assertions, never silently rebound. Accepted artifacts\nalways pass the stricter QueryDefinition validation after lowering.",
+            "description": "Authoring grammar: omitted ClaimType pins resolve at the intent base.\n\nExplicit pins remain assertions, never silently rebound. Accepted artifacts\nalways pass the stricter QueryDefinition validation after lowering. The\nshape, cardinality, dedupe, evaluation policy and budgets may be left out\n(``query_spec_defaults``); the stored definition states them.",
             "properties": {
               "artifact_format": {
                 "default": "playbill-query-definition-v1",
@@ -91391,13 +91385,7 @@
             "required": [
               "identity",
               "entry",
-              "result_binding",
-              "result_shape",
-              "result_cardinality",
-              "dedupe",
-              "evaluation_policy",
-              "default_budgets",
-              "maximum_budgets"
+              "result_binding"
             ],
             "title": "QueryDefinitionSpec",
             "type": "object"

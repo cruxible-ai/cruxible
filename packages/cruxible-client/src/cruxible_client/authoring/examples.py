@@ -870,6 +870,11 @@ AUTHORING_EXAMPLE_NOTES: Final[dict[AuthoringExampleName, str]] = {
         "bindings maps each Blueprint slot to an installed Provider; "
         "cruxible get Blueprint:<name> lists the Providers that fit each slot."
     ),
+    "query-claims-by-type": (
+        "result_shape, result_cardinality, dedupe, evaluation_policy and both budgets "
+        "here are the defaults (subject / many / subject / supported, current, conflicts "
+        "surfaced / 100 and 1000); a Subject query may leave them out."
+    ),
     "trigger": (
         CRON_UTC_HINT + ' Generation floor refresh: {"kind":"trigger",'
         '"name":"floor-refresh","schedule":{"kind":"generation_accepted"},'

@@ -37,6 +37,7 @@ from cruxible_client.contracts.compact_query import (
     query_filter,
 )
 from cruxible_client.contracts.get_display import exact_content_marker_text
+from cruxible_client.contracts.public_names import public_name
 from cruxible_client.contracts.read_values import ExactContentRef, ShownObject, TruncatedText
 from cruxible_client.contracts.temporal import format_datetime
 
@@ -188,11 +189,31 @@ def _cell(value: object) -> str:
     return text if len(text) <= _CELL_WIDTH else text[: _CELL_WIDTH - 1] + "…"
 
 
+#: Columns whose cells name stored identities, by row kind: a table shows each
+#: by its public name (``cruxible.``), while the typed rows keep the stored one.
+_IDENTITY_COLUMNS: dict[str, frozenset[str]] = {
+    "ClaimType": frozenset({"evidence"}),
+    "CaptureContract": frozenset({"name", "sources"}),
+}
+
+
+def _public_cell(value: object) -> object:
+    if isinstance(value, str):
+        return public_name(value)
+    if isinstance(value, list | tuple):
+        return [_public_cell(item) for item in value]
+    return value
+
+
 def render_query_table(page: QueryResultRecord) -> str:
     """An aligned table of the page's values and flags, then its notes."""
 
     names = [column.name for column in page.columns]
-    rows = [dict(row) for row in page.rows]
+    rows: list[dict[str, Any]] = [dict(row) for row in page.rows]
+    identity_columns = _IDENTITY_COLUMNS.get(page.kind or "", frozenset())
+    for row in rows:
+        for name in identity_columns & row.keys():
+            row[name] = _public_cell(row[name])
     header: list[str] = []
     if rows and "subject" in rows[0]:
         header.append("subject")

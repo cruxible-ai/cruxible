@@ -1396,7 +1396,7 @@ def test_an_ordinary_document_named_like_a_receipt_does_not_break_kits(
         lifecycle=DocumentLifecycle(revision=1),
     )
     proposed = playbill_api.playbill_propose_document(
-        consumer.instance_id, shell=shell, proposal_name="kit-notes"
+        consumer.instance_id, shell=shell, proposal_name="kit-notes", accept="never"
     )
     consumer.activate(proposed.proposal["admission"]["proposal_id"])
 
