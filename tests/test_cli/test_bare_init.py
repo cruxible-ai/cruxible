@@ -121,6 +121,31 @@ def test_a_bare_init_creates_the_host_and_the_cli_acts_as_its_owner(daemon: Path
     assert payload["principal_source"] == "remembered"
 
 
+def test_init_with_a_reviewer_key_dir_leaves_the_reviewer_usable_by_context(
+    daemon: Path,
+) -> None:
+    """The reviewer gets settings as `principal add` gives them: switch with context use."""
+
+    reviewer_dir = daemon / "rev"
+    result = _run("init", "--reviewer-key-dir", str(reviewer_dir))
+
+    assert result.exit_code == 0, result.output
+    instance_id = load_cli_context().instance_id
+    assert instance_id is not None
+    settings = reviewer_dir / "cruxible.env"
+    assert settings.is_file()
+    assert "export CRUXIBLE_PRINCIPAL_ID=reviewer" in settings.read_text()
+    assert f"Reviewer settings: {settings}" in result.stdout
+    assert "cruxible context use --principal reviewer" in result.stdout
+    remembered = load_cli_context().principals[principal_binding(URL, instance_id)]
+    assert remembered.active == "alice"
+    assert remembered.settings["reviewer"] == str(settings.resolve())
+
+    switched = _run("context", "use", "--principal", "reviewer")
+    assert switched.exit_code == 0, switched.output
+    assert _whoami()["actor_id"] == "reviewer"
+
+
 def test_context_use_principal_switches_and_an_explicit_principal_wins(daemon: Path) -> None:
     assert _run("init").exit_code == 0
     instance_id = load_cli_context().instance_id

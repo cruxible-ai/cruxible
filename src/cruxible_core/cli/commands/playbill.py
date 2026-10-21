@@ -1217,6 +1217,14 @@ def init_playbill(
         marker.unlink()
     _activate_server_instance(result.instance_id)
     owner_token = _mint_owner_credential(owner, principal_id=principal_id)
+    # The reviewer gets what `principal add` gives a principal: a settings file
+    # and, with auth on, its own graph_write credential, so `context use
+    # --principal reviewer` works without --signer-id or a hand-set identity.
+    reviewer_token = (
+        None
+        if reviewer is None
+        else _mint_owner_credential(reviewer, principal_id="reviewer", mode="graph_write")
+    )
     settings = write_principal_settings(
         owner_key_dir,
         ctx_obj=_root_ctx_obj(),
@@ -1227,10 +1235,34 @@ def init_playbill(
         written_by="cruxible init",
     )
     _remember_principal_settings(result.instance_id, principal_id, settings, activate=True)
+    reviewer_settings = None
+    if reviewer is not None and reviewer_key_dir is not None:
+        reviewer_settings = write_principal_settings(
+            Path(reviewer_key_dir).expanduser(),
+            ctx_obj=_root_ctx_obj(),
+            instance_id=result.instance_id,
+            principal_id="reviewer",
+            private_key_path=reviewer.private_key_path,
+            token=reviewer_token,
+            written_by="cruxible init",
+        )
+        _remember_principal_settings(
+            result.instance_id, "reviewer", reviewer_settings, activate=False
+        )
     if git_workspace is not None:
         _write_world_stub(git_workspace, result.instance_id)
     if output_json:
-        _emit_json({**_json_receipt(result), "owner_settings_path": str(settings)})
+        _emit_json(
+            {
+                **_json_receipt(result),
+                "owner_settings_path": str(settings),
+                **(
+                    {}
+                    if reviewer_settings is None
+                    else {"reviewer_settings_path": str(reviewer_settings)}
+                ),
+            }
+        )
         return
     click.echo(f"Cruxible initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
@@ -1255,6 +1287,8 @@ def init_playbill(
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
         click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
+        click.echo(f"Reviewer settings: {reviewer_settings}")
+        click.echo("Act as the reviewer with: cruxible context use --principal reviewer")
 
 
 def _os_principal_id() -> str:
@@ -1379,12 +1413,15 @@ def _refuse_custody_inside(
     return resolved
 
 
-def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) -> str | None:
-    """With daemon auth on, mint the new owner's own admin credential; return its token.
+def _mint_owner_credential(
+    owner: GeneratedKeyMaterial, *, principal_id: str, mode: str = "admin"
+) -> str | None:
+    """With daemon auth on, mint an init principal its own credential; return its token.
 
     The operator credential that ran init acts as no principal, so the owner
-    needs one that acts as it. The owner's fresh key signs its consent. With auth
-    off nothing is minted: the configured principal ID is the identity.
+    (admin) and the reviewer (graph_write) each need one that acts as them. The
+    principal's fresh key signs its consent. With auth off nothing is minted:
+    the configured principal ID is the identity.
     """
 
     if get_runtime_bearer_token() is None:
@@ -1400,11 +1437,11 @@ def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) ->
         lambda client, instance_id: client.create_runtime_credential(
             instance_id,
             principal_id=principal_id,
-            permission_mode="admin",
+            permission_mode=cast(Any, mode),
             principal_proof=sign_runtime_credential_mint(
                 instance_id=instance_id,
                 principal_id=principal_id,
-                permission_mode="admin",
+                permission_mode=cast(Any, mode),
                 label=principal_id,
                 private_key_path=owner.private_key_path,
                 forbidden_roots=_custody_forbidden_roots(),
