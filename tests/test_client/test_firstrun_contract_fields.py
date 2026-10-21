@@ -71,7 +71,13 @@ def test_new_lint_codes_are_closed_vocabulary_members() -> None:
 def test_statement_lines_are_absent_until_a_producer_reads_them() -> None:
     line = contracts.ClaimLine(claim=CLAIM, subject="acme/widget", field="price", value=42)
     coverage = contracts.CoverageResult(
-        coordinate=contracts.AcceptedCoordinate(git_oid="1" * 40, generation=1), result={}
+        coordinate=contracts.AcceptedCoordinate(
+            git_oid="4" * 64,
+            semantic_root="sha256:" + "1" * 64,
+            generation_root="sha256:" + "2" * 64,
+            compiler_digest="sha256:" + "3" * 64,
+        ),
+        result={},
     )
     assert "claims" not in coverage.model_dump(mode="json")
     with_lines = coverage.model_copy(update={"claims": (line,)})
