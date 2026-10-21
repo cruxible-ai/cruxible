@@ -27,9 +27,19 @@ windows, and it fails in familiar ways:
 - two copies disagree, and nobody can say which one is right;
 - an agent acts on it without being able to tell a checked fact from a guess.
 
-Cruxible keeps that knowledge as **hard state**: typed values, each stored
-with the reason and the evidence behind it, changed only through checked and
+Cruxible isn't a new source of truth: your databases, APIs, documents and
+tickets stay that. Cruxible maintains what your team believes about the world,
+drawn from those sources, as **hard state**: typed values, each stored with
+the reason and the evidence behind it, changed only through checked and
 approved changes, with a complete record of what was believed, when, and why.
+
+Two costs shape how it works. Beliefs are acquired when a question needs
+them, so knowledge costs what your questions cost, not what the world
+contains: a model is never complete, and doesn't need to be. And beliefs are
+kept consistent at the cost of what changed: when a source changes, only the
+beliefs resting on it come back for review. Because a model is never complete,
+an absence means "none" only inside a scope someone has read in full;
+otherwise it means "unknown".
 
 ## The approach
 
@@ -86,11 +96,13 @@ flowchart LR
     change -.->|Lines act<br/>through providers| world
 ```
 
-Cruxible doesn't replace your databases, APIs or files. They stay the
-authority for their own records; Cruxible records what your team knows about
-them and where that knowledge came from. And no language model runs inside
-Cruxible: people and agents supply the judgment, and Cruxible checks it,
-records it and serves it back, deterministically.
+No language model runs inside Cruxible: people and agents supply the
+judgment, and Cruxible checks it, records it and serves it back,
+deterministically. Cruxible never decides what a contradiction, a refusal or a
+drifted source means; it shows it, and a person or an agent decides.
+Consequences follow only from policy you author, such as a rule for what a
+contradicting attestation does to a Claim, or a mandate that lets a Line
+settle changes on its own.
 
 The rest of this page builds the system up from its foundation: the ledger.
 
@@ -535,7 +547,10 @@ reads, each pinned where its preview was read.
 
 The floor puts the current state where agents already look: a directory of
 plain files, `.cruxible/floor/`, with one file per Subject
-(`current/<kind>/<id>.yaml`, each line a value and its Claim ID), for
+(`current/<kind>/<id>.yaml`, each line a value and its Claim ID) and the
+accepted definitions under `ontology/` (a card per kind with each field's type,
+cardinality, evidence, owner and who settles it; INDEX files of the
+ClaimTypes, CaptureContracts, queries, Lines and installed kits), for
 orientation and grep. It is eventually current: it follows accepted state
 shortly after each change, so read exact values after a write with `get` or
 `query`, not the floor.
