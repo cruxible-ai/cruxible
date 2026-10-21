@@ -161,12 +161,15 @@ The examples use four kinds, each named by something people already call it:
 |---|---|---|
 | `catalog.part` | its part number (`bp-1142`) | People look parts up, link to them and review them one at a time. |
 | `catalog.vehicle` | make, model and year (`honda-civic-2019`) | Parts point at vehicles, and "what fits this car?" starts from one. |
-| `catalog.note` | a short slug (`civic-pad-fitment-check`) | A fitment check or a report is written once and points at what it's about. |
-| `catalog.decision` | a short slug | A ruling the team made, which governs parts and can amend an earlier one. |
+| `catalog.note` | a short slug (`civic-pad-fitment-check`) | Only worth a kind when you'll ask which notes are about a part; the body stays in a file. Otherwise cite a Document. |
+| `catalog.decision` | a short slug | A ruling people query by status and scope (governs, amends); its reasoning lives in a doc section the Claims cite. |
 
-Because a part is named by its part number, everyone who records `bp-1142`
-is talking about the same Subject. A title like "Front brake pads" would
-change, and two parts could share it.
+If a kind's main field would be a paragraph, it's prose: put it in a file and
+point at it.
+
+Because a part is named by its part number, everyone who records `bp-1142` is
+talking about the same Subject. A title like "Front brake pads" would change,
+and two parts could share it.
 
 A **ClaimType** defines one field of a kind. It names the predicate
 (`catalog.part.category`, whose field name is `category`) and says:

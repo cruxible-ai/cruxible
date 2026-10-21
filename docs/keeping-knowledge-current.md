@@ -181,6 +181,37 @@ Both are ordinary fields, so the judgment has its reason and its history like
 any other Claim. `cruxible curation list` shows the items detection recorded,
 and `overrule`, `suppress`, `unsuppress` and `accept-fixed` close them out.
 
+## When a field turns into prose
+
+Fields drift toward prose over time. A summary that started as one line picks
+up a second sentence, then a paragraph, and a field meant to record a ruling
+ends up holding the whole argument for it. Watch for two signs, since nothing
+in `next` flags them: values that keep getting longer (reads cut them short
+with `…`), and a field that holds reasoning rather than a fact anyone would
+filter or count by.
+
+The fix keeps both the reasoning and a value worth querying:
+
+1. Write each long value as a section of a document.
+2. In the same `write`, keep a one-line value (a summary or a status) that
+   cites the section.
+3. Retire the long Claims there too.
+
+From then on, an edit to the section brings the one-line value back for
+review as `citation_drifted`, which asks whether the summary still says what
+the section says:
+
+~~~text
+$ cruxible next
+repair  citation_drifted  Claim:CLM-4f1a552f…  next=cruxible.set
+  repair: cruxible set catalog.decision/wiper-brand catalog.decision.summary '…' --role normative
+~~~
+
+[Building team knowledge](building-team-knowledge.md#typed-state-or-prose) has
+the rule for what belongs in a field, and [Evolving your
+vocabulary](evolving-your-vocabulary.md#move-a-paragraph-field-into-prose)
+walks through the move, including retiring the long field.
+
 ## What to verify next: audit
 
 `next` is about what changed. `cruxible audit` is about what was never

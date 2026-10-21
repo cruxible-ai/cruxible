@@ -205,6 +205,95 @@ Re-author each Claim in the new form, or retire it, in the same change set.
 Often it's simpler to add the new field beside the old one, fill it in, and
 retire the old one when nothing reads it.
 
+### Move a paragraph field into prose
+
+A field whose values have grown into paragraphs (a decision's whole ruling, a
+long rationale) is prose in the wrong place: reads cut it short, nobody can
+filter by it, and it can't be edited like a document. Move the text into a
+document, keep a short value that points at it, and retire the long field.
+
+Here, `catalog.decision.ruling` holds each decision's full ruling. Create the
+page and name it, then make the move in one `write`: each ruling becomes a
+section with an `id`, a one-line `summary` cites its section, and the long
+Claim is retired:
+
+~~~yaml
+because: Move decision rulings into the decisions page; keep a one-line summary that cites each.
+docs:
+  - op: append
+    id: ceramic
+    file: docs/decisions.md
+    under: [Decisions]
+    text: |
+      ## Ceramic pads by default
+
+      We stock ceramic front pads (bp-2210) as the default for the 2019 Civic instead of
+      the semi-metallic bp-1142. Customers complained about brake dust and noise ...
+changes:
+  - {op: set, subject: catalog.decision/ceramic-pads-default, field: summary,
+     value: "Ceramic front pads (bp-2210) are the default for the 2019 Civic.",
+     evidence: {kind: section, ref: ceramic}}
+  - {op: retire, target: CLM-88af13a35fee7502bbe9d0592a1b4bfb, reason: superseded}
+~~~
+
+~~~text
+$ cruxible files add decisions docs/decisions.md
+$ cruxible write move-rulings.yaml --dry-run
+would accept (generation 21, 454fd7f0f0a9)
+  doc docs/decisions.md ['Decisions', 'Ceramic pads by default']: not written (sha256:1777714a…)
+  set catalog.decision/ceramic-pads-default summary: Ceramic front pads (bp-2210) are the default for the 2019 Civic.  [CLM-…; verdict supported]
+  retire catalog.decision/ceramic-pads-default ruling: We stock ceramic front pads (bp-2210) as the default for the 2019 Civic instead of the semi-metallic bp-1142. Customers… (399 chars; --detail evidence for all)  [CLM-88af13a3…]
+  ...
+next: Run the same command without --dry-run, adding --at 454fd7f0f0a9
+
+$ cruxible write move-rulings.yaml --at 454fd7f0f0a9
+accepted (generation 22, a1f869045bd6)
+...
+$ cruxible query catalog.decision --select status,summary
+subject                                status    summary                                                       flags
+catalog.decision/ceramic-pads-default  accepted  Ceramic front pads (bp-2210) are the default for the 2019 C…  -
+catalog.decision/wiper-brand           accepted  We carry one wiper blade line, Acme's wb-330.                 -
+~~~
+
+The section counts as your own words, so the summary is `supported`, and an
+edit to the section later brings the summary back as `citation_drifted`
+([Keeping knowledge current](keeping-knowledge-current.md#when-a-field-turns-into-prose)).
+The old rulings stay readable in each decision's history.
+
+Once no live Claim uses the long field, retire its definition. A retirement
+is a succession whose successor is the current definition with
+`lifecycle.state` set to `retired`; `cruxible claim-type migrate` takes it,
+first as a preflight that lists the dependents:
+
+<!-- update: first-run batch -->
+~~~text
+$ cruxible claim-type migrate retire-ruling.json      # {"mode": "preflight", "successor": {…}, "dependents": []}
+ClaimType migration preflight
+...
+Blast radius: 2 dependent(s)
+  Claim:CLM-760d1a32ecbe941c631363c520f0c0f5 (claim)
+  Claim:CLM-88af13a35fee7502bbe9d0592a1b4bfb (claim)
+Semantic delta:
+  ...
+  /lifecycle/state: "live" -> "retired"
+~~~
+
+The dependents are the Claims you just retired; they move with the retired
+definition (`"disposition": "successor"`), which keeps their history readable.
+Submit with `"mode": "submit"` and those dispositions, and approve the
+proposal it prints. Afterwards the field is gone from the vocabulary:
+
+~~~text
+$ cruxible set catalog.decision/wiper-brand ruling "…" --because "…"
+refused (generation 23, ea4f653efbab)
+cruxible.write.unknown_field (change 0): catalog.decision has no field 'ruling'
+~~~
+
+To keep the field with a tighter shape instead, revise it after the move with
+a succession that adds a `maxLength`; a long value still in it can't be
+carried, so move every one first ([the worked
+example](#a-worked-example-splitting-a-category) shows a succession).
+
 ### Adopt a built-in field
 
 Cruxible ships `semantic.alias` and `semantic.distinct_from` ([Keeping
