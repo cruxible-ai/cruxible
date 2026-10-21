@@ -1,14 +1,15 @@
 """``query`` answers every definition kind agents ask the ontology about.
 
-``query kind=SubjectKind`` and ``kind=CaptureContract`` list those
-definitions with the same compact grammar as the other definition kinds
-(``where``, ``select``, ``order_by``, ``contains``, paging): each row reads its
-own artifact and what the ontology holds about it, never a scan over Claims,
-Subjects or Captures.
+``query kind=SubjectKind``, ``kind=CaptureContract`` and
+``kind=ProcedureMandate`` list those definitions with the same compact grammar
+as the other definition kinds (``where``, ``select``, ``order_by``,
+``contains``, paging): each row reads its own artifact and what the ontology
+holds about it, never a scan over Claims, Subjects or Captures.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.read_refusals import ReadRefusalError
 from tests.core_support._write_support import KIND, REPORTS, seed_write_surface
+from tests.test_proposals.test_delegated_settlement import STATUS
+from tests.test_proposals.test_delegated_settlement import _world as settle_world
 from tests.test_service.test_write_verbs import _move_to_v7
 
 
@@ -30,6 +33,13 @@ def instance(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance:
     # measured admits only repo.reports and now requires a Capture under it.
     _move_to_v7(seeded, "measured", evidence_requirement="captured")
     return seeded
+
+
+@pytest.fixture(scope="module")
+def settling(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance:
+    """A settle mandate (triage) scoped to the status ClaimType under a condition query."""
+
+    return settle_world(Path(tmp_path_factory.mktemp("definition-kinds-settle")))[0]
 
 
 def _query(instance: Any, **fields: Any) -> Any:
@@ -192,3 +202,65 @@ def test_capture_contracts_filter_on_grade_reliance_and_source_kinds(instance: A
     with pytest.raises(ReadRefusalError) as refused:
         _query(instance, kind="CaptureContract", where=[{"field": "grade", "eq": "measured"}])
     assert refused.value.error_code == "cruxible.query.value_type_mismatch"
+
+
+# -- ProcedureMandate ----------------------------------------------------------------
+
+_WHEN = datetime(2026, 6, 1, tzinfo=UTC)
+
+
+def test_mandates_list_their_grant_scope_condition_and_expiry(settling: Any) -> None:
+    result = _query(settling, kind="ProcedureMandate", evaluation_time=_WHEN)
+
+    assert [column.name for column in result.columns] == [
+        "name",
+        "procedure",
+        "grant",
+        "state",
+        "scope",
+        "change_kinds",
+        "condition",
+        "suspended",
+        "lifecycle",
+        "expires_at",
+    ]
+    (row,) = (item for item in result.rows if item["name"] == "triage")
+    assert row["procedure"].startswith("Procedure:")
+    assert (row["grant"], row["state"]) == ("settle", "active")
+    assert row["scope"] == [f"ClaimType:{STATUS}"]
+    assert row["change_kinds"] == ["create", "revise"]
+    assert row["condition"] == "QueryDefinition:project.settle-condition"
+    assert row["suspended"] is False and row["lifecycle"] == "live"
+    assert row["expires_at"] == "2027-01-01T00:00:00Z"
+
+
+def test_mandates_filter_on_grant_scope_and_expiry(settling: Any) -> None:
+    def names(**fields: Any) -> list[str]:
+        rows = _query(settling, kind="ProcedureMandate", evaluation_time=_WHEN, **fields).rows
+        return [row["name"] for row in rows]
+
+    assert "triage" in names(where=[{"field": "grant", "eq": "settle"}])
+    assert "triage" not in names(where=[{"field": "grant", "eq": "propose"}])
+    assert "triage" in names(where=[{"field": "scope", "eq": f"ClaimType:{STATUS}"}])
+    assert "triage" in names(where=[{"field": "change_kinds", "eq": "revise"}])
+    assert "triage" not in names(where=[{"field": "change_kinds", "eq": "retire"}])
+    assert "triage" in names(where=[{"field": "suspended", "eq": "false"}])
+    assert "triage" in names(where=[{"field": "expires_at", "lt": "2027-01-01T00:00:01Z"}])
+    assert "triage" not in names(where=[{"field": "expires_at", "gte": "2027-06-01T00:00:00Z"}])
+    # The same instant in another offset is the same expiry.
+    assert "triage" in names(where=[{"field": "expires_at", "eq": "2027-01-01T01:00:00+01:00"}])
+    assert "triage" in names(where=[{"field": "state", "eq": "active"}])
+    late = _query(
+        settling,
+        kind="ProcedureMandate",
+        evaluation_time=datetime(2026, 12, 28, tzinfo=UTC),
+        select=["state", "version"],
+    )
+    (row,) = (item for item in late.rows if item["name"] == "triage")
+    assert row == {"name": "triage", "state": "expiring", "version": 1}
+    with pytest.raises(ReadRefusalError) as refused:
+        names(where=[{"field": "expires_at", "lt": "next year"}])
+    assert refused.value.error_code == "cruxible.query.value_type_mismatch"
+    with pytest.raises(ReadRefusalError) as wrong:
+        names(where=[{"field": "expires_at", "contains": "2027"}])
+    assert wrong.value.error_code == "cruxible.query.operator_not_applicable"

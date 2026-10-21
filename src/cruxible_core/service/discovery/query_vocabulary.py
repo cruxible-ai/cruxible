@@ -66,6 +66,7 @@ QUERYABLE_DEFINITION_KINDS = (
     "Line",
     "SubjectKind",
     "CaptureContract",
+    "ProcedureMandate",
 )
 _ORDERED = frozenset({"string", "integer", "decimal", "timestamp", "date"})
 _COMPARISONS = frozenset({"lt", "lte", "gt", "gte"})

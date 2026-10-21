@@ -37,6 +37,12 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import CaptureContract
 from cruxible_client.contracts.claim_types import effective_evidence_requirement
 from cruxible_client.contracts.compact_query import QueryColumn, QueryRequest
+from cruxible_client.contracts.procedure_mandates import (
+    MANDATE_CHANGE_KIND_ORDER,
+    ProcedureMandate,
+    ProcedureMandateV1,
+    mandate_grant,
+)
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
 from cruxible_client.contracts.procedures.windows import CaptureEventWindow
 from cruxible_client.contracts.subject_kinds import SubjectKind, SubjectKindKeys
@@ -61,8 +67,14 @@ from cruxible_core.service.discovery.query_vocabulary import (
 )
 from cruxible_core.service.read_refusals import nearest
 
-ListedKind = Literal["Trigger", "Line", "SubjectKind", "CaptureContract"]
-LISTED_KINDS: tuple[ListedKind, ...] = ("Trigger", "Line", "SubjectKind", "CaptureContract")
+ListedKind = Literal["Trigger", "Line", "SubjectKind", "CaptureContract", "ProcedureMandate"]
+LISTED_KINDS: tuple[ListedKind, ...] = (
+    "Trigger",
+    "Line",
+    "SubjectKind",
+    "CaptureContract",
+    "ProcedureMandate",
+)
 assert set(LISTED_KINDS) <= set(QUERYABLE_DEFINITION_KINDS)
 #: The most rows one Trigger or Line listing answers; past it the answer is capped.
 LISTING_MAX_RESULTS = 2000
@@ -73,6 +85,7 @@ _LISTING_DIGEST_DOMAIN = "playbill-compact-listing-v1"
 _LIFECYCLES = ("live", "retired")
 _SCHEDULES = ("cadence", "capture_landing", "cron", "generation_accepted", "window_close")
 _AUTHORITIES = ("observe", "propose", "settle")
+_MANDATE_STATES = ("active", "expired", "expiring", "not_yet_valid", "retired", "suspended")
 _RUNG_OF: dict[str, int] = {authority: rung for rung, authority in RUNG_AUTHORITY.items()}
 #: Rows scanned per index chunk while matching.
 _CHUNK = 500
@@ -201,12 +214,42 @@ _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
         ListedField(QueryColumn(name="admitted_by", type="integer")),
         ListedField(QueryColumn(name="required_by", type="integer")),
     ),
+    "ProcedureMandate": (
+        ListedField(QueryColumn(name="name", type="string"), index_column="identity"),
+        ListedField(
+            QueryColumn(name="procedure", type="string"), index_column="procedure_identity"
+        ),
+        ListedField(
+            QueryColumn(name="grant", type="enum", members=("propose", "settle")),
+            index_column="rung",
+            index_map={"propose": 2, "settle": 3},
+        ),
+        ListedField(QueryColumn(name="state", type="enum", members=_MANDATE_STATES)),
+        ListedField(QueryColumn(name="scope", type="string", cardinality="many")),
+        ListedField(
+            QueryColumn(
+                name="change_kinds",
+                type="enum",
+                members=MANDATE_CHANGE_KIND_ORDER,
+                cardinality="many",
+            )
+        ),
+        ListedField(QueryColumn(name="condition", type="string")),
+        ListedField(QueryColumn(name="suspended", type="boolean")),
+        ListedField(
+            QueryColumn(name="lifecycle", type="enum", members=_LIFECYCLES),
+            index_column="lifecycle",
+        ),
+        ListedField(QueryColumn(name="expires_at", type="timestamp")),
+        ListedField(QueryColumn(name="version", type="integer"), filterable=False, default=False),
+    ),
 }
 _SPECS: Mapping[ListedKind, _KindSpec] = {
     "Trigger": _KindSpec("triggers"),
     "Line": _KindSpec("lines"),
     "SubjectKind": _KindSpec("subject_kinds", key="kind"),
     "CaptureContract": _KindSpec("capture_contracts"),
+    "ProcedureMandate": _KindSpec("procedure_mandates"),
 }
 assert set(_FIELDS) == set(_SPECS) == set(LISTED_KINDS)
 
@@ -675,9 +718,40 @@ def _capture_contract_row(context: _RowContext) -> Callable[[Any], dict[str, Any
     return row
 
 
+def _mandate_row(context: _RowContext) -> Callable[[Any], dict[str, Any]]:
+    """A ProcedureMandate row: what it grants, over which ClaimTypes, under what condition.
+
+    ``state`` is the mandate's at the evaluation time, as orient's mandates
+    rows show it; a v1 mandate has no scope, condition or kill switch.
+    """
+
+    from cruxible_core.service.discovery.operational import mandate_state
+
+    def row(source: Any) -> dict[str, Any]:
+        mandate = cast(ProcedureMandateV1 | ProcedureMandate, source)
+        current = mandate if isinstance(mandate, ProcedureMandate) else None
+        scope = () if current is None else current.scope
+        kinds = {kind for item in scope for kind in item.change_kinds}
+        condition = None if current is None else current.condition
+        return {
+            "name": mandate.identity.name,
+            "procedure": mandate.procedure.target.qualified,
+            "grant": mandate_grant(mandate),
+            "state": mandate_state(mandate, now=context.evaluation_time),
+            "scope": [item.claim_type.target.qualified for item in scope],
+            "change_kinds": [kind for kind in MANDATE_CHANGE_KIND_ORDER if kind in kinds],
+            "condition": None if condition is None else condition.query.target.qualified,
+            "suspended": current is not None and current.suspended,
+            "expires_at": render_instant(mandate.expires_at),
+        }
+
+    return row
+
+
 _ROWS: Mapping[str, Callable[[_RowContext], Callable[[Any], dict[str, Any]]]] = {
     "SubjectKind": _subject_kind_row,
     "CaptureContract": _capture_contract_row,
+    "ProcedureMandate": _mandate_row,
 }
 
 
