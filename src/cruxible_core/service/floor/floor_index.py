@@ -4,9 +4,12 @@ Every floor file is stamped with ``changed_at``, the latest accepted generation
 that touched any of its inputs. For a Subject's ``current/`` file those are
 the Subject itself, its Claims of any lifecycle, every Claim that ever pointed
 at it (so a moved edge restamps its old target and its new one), and the
-ClaimTypes (and the short-name shadows) of the fields it shows. The stamp is read from the
-history index, so a full render and an incremental one give the same bytes,
-and a file's bytes differ between two generations exactly when its stamp does.
+ClaimTypes (and the short-name shadows) of the fields it shows, for what a
+Subject file shows of them: a ClaimType's cardinality and liveness, read as
+the sequence that last changed them (``floor_definitions``), so a description
+edit restamps no Subject. The stamp is read from the history index, so a
+full render and an incremental one give the same bytes, and a file's bytes
+differ between two generations exactly when its stamp does.
 
 The index is rebuildable and instance-internal. It holds the parsed inputs
 (Subjects, Claims, ClaimTypes, the latest sequence of every ledger path), the
@@ -78,6 +81,13 @@ from cruxible_core.service.floor.floor_current import (
     render_subject,
     stamped,
     subject_ref,
+)
+from cruxible_core.service.floor.floor_definitions import (
+    CURRENT_VIEW,
+    DefinitionRevision,
+    definition_histories,
+    is_tracked,
+    view_changed_at,
 )
 from cruxible_core.service.floor.floor_sources import (
     DOCUMENTS_PREFIX,
@@ -159,6 +169,9 @@ class FloorInputs:
     contracts_by_digest: PMap[str, CaptureContract] = field(default_factory=PMap)
     contract_digests: PMap[str, str] = field(default_factory=PMap)
     source_latest: PCounts = EMPTY_PCOUNTS
+    # Definition path -> its revisions to this generation (``floor_definitions``):
+    # what each revision showed, and when each view of it last changed.
+    definitions: PMap[str, DefinitionRevision] = field(default_factory=PMap)
 
     @property
     def sources_changed(self) -> int:
@@ -618,6 +631,16 @@ def build_floor_inputs(
         sequence for path, sequence in latest.items() if path.startswith(_SOURCE_PREFIXES)
     )
     types = {item.predicate: item for item in held["claim_type"].values()}
+    tracked = sorted(
+        {path for path in (*raw, *latest) if is_tracked(path)}, key=lambda item: item.encode()
+    )
+    definitions = definition_histories(
+        instance,
+        history,
+        tracked,
+        at_most=location.sequence,
+        target_blobs={path: blob for path in tracked if (blob := raw.get(path)) is not None},
+    )
     contract_digests = {
         path: capture_contract_digest(contract).tagged
         for path, contract in held["contract"].items()
@@ -647,6 +670,7 @@ def build_floor_inputs(
         ),
         contract_digests=PMap(contract_digests),
         source_latest=source_latest,
+        definitions=PMap((path, chain) for path, chain in definitions.items() if chain is not None),
     )
 
 
@@ -807,6 +831,21 @@ def _patch_floor_inputs(
             pointer_moves.move(item, now, present=True)
     pointed_latest = inputs.pointed_latest.evolver()
     pointer_moves.apply(pointed_latest)
+    tracked = [path for path in changed if is_tracked(path)]
+    definitions = inputs.definitions.evolver()
+    for path, chain in definition_histories(
+        instance,
+        history,
+        tracked,
+        at_most=target.sequence,
+        target_blobs=blobs,
+        known=inputs.definitions,
+        since=inputs.generation,
+    ).items():
+        if chain is None:
+            definitions.discard(path)
+        else:
+            definitions[path] = chain
     types_now = types.persistent()
     live = inputs.live_predicates
     if live_added or live_removed:
@@ -844,6 +883,7 @@ def _patch_floor_inputs(
             contracts_by_digest=contracts_by_digest.persistent(),
             contract_digests=contract_digests.persistent(),
             source_latest=source_latest,
+            definitions=definitions.persistent(),
         ),
         touched,
     )
@@ -879,21 +919,30 @@ class _Stamps:
     def _latest(self, path: str | None) -> int:
         return 0 if path is None else self._inputs.latest.get(path, 0)
 
-    def name(self, predicate: str, kind: str) -> int:
-        """When the field ``predicate`` of ``kind`` last changed its type or short name.
+    def _shown(self, type_path: str | None) -> int:
+        """When a ClaimType last changed what a Subject file shows of it."""
 
-        The short name drops the ``kind.`` prefix unless the short string is
-        itself an accepted predicate, so it moves with that one ClaimType too.
+        if type_path is None:
+            return 0
+        return view_changed_at(self._inputs.definitions.get(type_path), CURRENT_VIEW)
+
+    def name(self, predicate: str, kind: str) -> int:
+        """When the field ``predicate`` of ``kind`` last changed its shown type or short name.
+
+        A field reads its ClaimType's cardinality and its short name, which
+        drops the ``kind.`` prefix unless the short string is itself a live
+        predicate, so it moves with that one ClaimType's liveness too. A
+        revision that changes neither (a description edit) moves no field.
         """
 
         key = (predicate, kind)
         known = self._names.get(key)
         if known is not None:
             return known
-        best = self._latest(_type_path(predicate))
+        best = self._shown(_type_path(predicate))
         prefix = f"{kind}."
         if predicate.startswith(prefix):
-            best = max(best, self._latest(_type_path(predicate[len(prefix) :])))
+            best = max(best, self._shown(_type_path(predicate[len(prefix) :])))
         self._names[key] = best
         return best
 
@@ -945,7 +994,8 @@ def _affected_subjects(old: FloorInputs, new: FloorInputs, changed: Collection[s
     outside this set reads none of the changed paths, so its stamp and bytes
     hold. A changed Subject reaches the targets of its live edges only (a
     retired Claim shows no edge), and a changed ClaimType the live Claims of
-    its predicate and shadow only: the work is what the change can render.
+    its predicate and shadow only, and only when it changed what they show
+    (its cardinality or liveness): the work is what the change can render.
     """
 
     affected: set[str] = set()
@@ -969,6 +1019,12 @@ def _affected_subjects(old: FloorInputs, new: FloorInputs, changed: Collection[s
                     # Every Subject it ever pointed at stamps with it: affected output.
                     affected.update(revisions.targets)
         elif path.startswith(CLAIM_TYPES_PREFIX):
+            if view_changed_at(old.definitions.get(path), CURRENT_VIEW) == view_changed_at(
+                new.definitions.get(path), CURRENT_VIEW
+            ):
+                # The revisions between show a Subject nothing new (a description
+                # edit): no field's stamp or bytes read them.
+                continue
             type_predicates.add(_predicate_of_type_path(path))
             for inputs in sides:
                 claim_type = inputs.claim_types.get(path)

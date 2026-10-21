@@ -1,0 +1,316 @@
+"""Every accepted revision of each definition path the floor reads, as a persistent chain.
+
+A floor file that shows a definition is stamped from that definition's
+history, not from the instance: the stamp a ``current/`` field reads from its
+ClaimType is the last sequence at which the ClaimType changed what a Subject
+file shows of it (its cardinality and whether it is live), so a revision that
+only edits the ClaimType's description restamps no Subject file.
+
+One chain per definition path holds its revisions to a generation, newest
+first, each over the chain before it, which it shares: extending a path's
+history by one revision is one node, and cutting it back drops only the newer
+nodes. Each node carries the parsed value, and for each declared view (a
+projection of the value some floor file shows) the sequence at which that view
+last changed, so reading when a view last moved is O(1) and a pure function of
+the generation. A cold build reads each definition path's revisions once
+(``member_sequences`` plus one blob read per touched sequence): O(definition
+revisions), never O(Claims). An advance reads only the revisions the change
+added.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from typing import Any
+
+from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
+from cruxible_client.contracts.errors import CruxibleError
+from cruxible_core.derived.persistent import PMap
+from cruxible_core.indexes.history.history_index import HistoryReader
+from cruxible_core.runtime.instance import PlaybillInstance
+
+CLAIM_TYPES_PREFIX = "claim-types/"
+
+#: The definition families whose histories the floor keeps.
+TRACKED_PREFIXES: tuple[str, ...] = (CLAIM_TYPES_PREFIX,)
+
+#: View indexes of a ClaimType node: what ``current/`` files show of it.
+CURRENT_VIEW = 0
+
+
+def is_tracked(path: str) -> bool:
+    """Whether ``path`` is a definition path the floor keeps a history of."""
+
+    return path.endswith(".json") and path.startswith(TRACKED_PREFIXES)
+
+
+def parse_definition(instance: PlaybillInstance, path: str, content: bytes | None) -> Any:
+    """The parsed definition at ``path``, or None when absent or not that family's artifact."""
+
+    if content is None:
+        return None
+    try:
+        if path.startswith(CLAIM_TYPES_PREFIX):
+            return parse_claim_type(content, path=path)
+    except CruxibleError:
+        return None
+    return None
+
+
+def _claim_type_views(value: Any) -> tuple[Any, ...]:
+    claim_type = value if isinstance(value, ClaimType) else None
+    current = (
+        None
+        if claim_type is None
+        else (claim_type.cardinality, claim_type.lifecycle.state == "live")
+    )
+    return (current,)
+
+
+def definition_views(path: str, value: Any) -> tuple[Any, ...]:
+    """The views a definition's revision shows, in view-index order."""
+
+    if path.startswith(CLAIM_TYPES_PREFIX):
+        return _claim_type_views(value)
+    return ()
+
+
+Reach = Callable[[str, Any], frozenset[str]]
+
+
+def _no_reach(_path: str, _value: Any) -> frozenset[str]:
+    return frozenset()
+
+
+class DefinitionRevision:
+    """One definition path's revisions to a generation, newest first, persistent.
+
+    A node is one revision (its sequence, its bytes and parsed value, None when
+    the path is absent there) over the chain before it, which it shares.
+    ``reach`` counts, over the whole chain, the targets each revision reached
+    (floor files, or other definition paths), so every target the path ever
+    reached is read without walking its history. ``view_at`` holds, per view,
+    the sequence at which that view last changed.
+    """
+
+    __slots__ = (
+        "first",
+        "length",
+        "older",
+        "raw",
+        "reach",
+        "sequence",
+        "targets",
+        "value",
+        "view_at",
+        "views",
+    )
+
+    sequence: int
+    raw: bytes | None
+    value: Any
+    older: DefinitionRevision | None
+    length: int
+    first: int
+    targets: frozenset[str]
+    reach: PMap[str, int]
+    views: tuple[Any, ...]
+    view_at: tuple[int, ...]
+
+    def __init__(
+        self,
+        sequence: int,
+        raw: bytes | None,
+        value: Any,
+        older: DefinitionRevision | None,
+        *,
+        reach: frozenset[str],
+        views: tuple[Any, ...],
+    ) -> None:
+        self.sequence = sequence
+        self.raw = raw
+        self.value = value
+        self.older = older
+        self.length = 1 if older is None else older.length + 1
+        self.first = sequence if older is None else older.first
+        self.targets = reach
+        counts: PMap[str, int] = PMap() if older is None else older.reach
+        for target in reach:
+            counts = counts.set(target, counts.get(target, 0) + 1)
+        self.reach = counts
+        self.views = views
+        if older is None or len(older.views) != len(views):
+            self.view_at = tuple(sequence for _view in views)
+        else:
+            self.view_at = tuple(
+                sequence if view != before else at
+                for view, before, at in zip(views, older.views, older.view_at, strict=True)
+            )
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __iter__(self) -> Iterator[tuple[int, Any]]:
+        """Oldest first, as ``(sequence, value)``: the whole history (tests only)."""
+
+        newest_first: list[tuple[int, Any]] = []
+        node: DefinitionRevision | None = self
+        while node is not None:
+            newest_first.append((node.sequence, node.value))
+            node = node.older
+        return reversed(newest_first)
+
+    @property
+    def present(self) -> bool:
+        return self.value is not None
+
+    def at_most(self, sequence: int) -> DefinitionRevision | None:
+        """The shared chain of the revisions at or before ``sequence``: drops only newer nodes."""
+
+        node: DefinitionRevision | None = self
+        while node is not None and node.sequence > sequence:
+            node = node.older
+        return node
+
+
+def view_changed_at(chain: DefinitionRevision | None, view: int) -> int:
+    """When ``view`` of a definition last changed at the chain's generation; 0 if never."""
+
+    return 0 if chain is None else chain.view_at[view]
+
+
+def reach_moves(
+    before: DefinitionRevision | None, after: DefinitionRevision | None
+) -> tuple[set[str], set[str]]:
+    """The targets a path newly ever reaches, and those it no longer ever reaches.
+
+    Walks only the nodes the two chains do not share.
+    """
+
+    if before is None or after is None:
+        return set(() if after is None else after.reach), set(
+            () if before is None else before.reach
+        )
+    added: set[str] = set()
+    removed: set[str] = set()
+    old: DefinitionRevision | None = before
+    new: DefinitionRevision | None = after
+    while old is not new:
+        if new is not None and (old is None or new.length >= old.length):
+            node = new
+            new = new.older
+            for target in node.targets:
+                if target not in before.reach:
+                    added.add(target)
+        else:
+            assert old is not None
+            node = old
+            old = old.older
+            for target in node.targets:
+                if target not in after.reach:
+                    removed.add(target)
+    return added, removed
+
+
+def definition_histories(
+    instance: PlaybillInstance,
+    history: HistoryReader,
+    paths: Sequence[str],
+    *,
+    at_most: int,
+    target_blobs: Mapping[str, bytes],
+    reach: Reach = _no_reach,
+    known: Mapping[str, DefinitionRevision] | None = None,
+    since: int | None = None,
+) -> dict[str, DefinitionRevision | None]:
+    """Each definition path's history at ``at_most``.
+
+    ``target_blobs`` holds every path's bytes at ``at_most`` (a path it lacks
+    is absent there). ``known`` holds each path's chain at generation
+    ``since``: it is extended by only the sequences in ``(since, at_most]``
+    (or cut back to ``at_most``), sharing the known chain below them. A path
+    it does not hold is read whole, from genesis on.
+    """
+
+    result: dict[str, DefinitionRevision | None] = {}
+    whole: list[str] = []
+    extended: list[str] = []
+    for path in paths:
+        prior = None if known is None or since is None else known.get(path)
+        if prior is None:
+            whole.append(path)
+        elif since is not None and at_most < since:
+            result[path] = prior.at_most(at_most)
+        else:
+            extended.append(path)
+    sequences: dict[str, tuple[int, ...]] = {}
+    if whole:
+        sequences.update(
+            (path, tuple(item for item in found if 0 < item <= at_most))
+            for path, found in history.member_sequences(whole).items()
+        )
+    if extended:
+        assert since is not None
+        sequences.update(history.member_sequences_between(extended, since, at_most))
+    # Every revision to read, by the sequence it is read at; genesis carries no
+    # change record, so a whole path's genesis bytes are read there too.
+    wanted: dict[int, list[str]] = {}
+    for path in whole:
+        wanted.setdefault(0, []).append(path)
+    for path, found in sequences.items():
+        for sequence in found:
+            if sequence != at_most:
+                wanted.setdefault(sequence, []).append(path)
+    contents: dict[tuple[str, int], bytes | None] = {}
+    for sequence in sorted(wanted):
+        if sequence == at_most:
+            continue
+        blobs = instance.blobs_at(history.generation(sequence).git_oid, wanted[sequence])
+        for path in wanted[sequence]:
+            contents[(path, sequence)] = blobs.get(path)
+
+    def node(
+        older: DefinitionRevision | None, path: str, sequence: int, raw: bytes | None
+    ) -> DefinitionRevision:
+        value = parse_definition(instance, path, raw)
+        return DefinitionRevision(
+            sequence,
+            raw,
+            value,
+            older,
+            reach=reach(path, value) if value is not None else frozenset(),
+            views=definition_views(path, value),
+        )
+
+    for path in whole:
+        chain: DefinitionRevision | None = None
+        touched = sequences.get(path, ())
+        genesis = target_blobs.get(path) if at_most == 0 else contents.get((path, 0))
+        if genesis is not None:
+            chain = node(None, path, 0, genesis)
+        for sequence in touched:
+            raw = target_blobs.get(path) if sequence == at_most else contents.get((path, sequence))
+            chain = node(chain, path, sequence, raw)
+        result[path] = chain
+    for path in extended:
+        assert known is not None
+        chain = known[path]
+        for sequence in sequences.get(path, ()):
+            raw = target_blobs.get(path) if sequence == at_most else contents.get((path, sequence))
+            chain = node(chain, path, sequence, raw)
+        result[path] = chain
+    return result
+
+
+__all__ = [
+    "CLAIM_TYPES_PREFIX",
+    "CURRENT_VIEW",
+    "TRACKED_PREFIXES",
+    "DefinitionRevision",
+    "definition_histories",
+    "definition_views",
+    "is_tracked",
+    "parse_definition",
+    "reach_moves",
+    "view_changed_at",
+]
