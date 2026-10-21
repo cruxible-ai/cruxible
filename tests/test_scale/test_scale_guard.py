@@ -1231,7 +1231,7 @@ def test_the_ontology_moves_only_with_its_definitions(session: Session) -> None:
             assert not [path for path in files if path.startswith("current/")], files
             assert [path for path in files if path.startswith("ontology/")] == [
                 "ontology/claim-types/INDEX",
-                f"ontology/kinds/{KIND}.md",
+                f"ontology/kinds/{KIND}.yaml",
             ], files
             assert sorted(rendered) == [path for path in files if path.startswith("ontology/")]
     for counter in COUNTERS:

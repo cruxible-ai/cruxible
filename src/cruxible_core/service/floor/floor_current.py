@@ -137,6 +137,12 @@ def _block(text: str) -> tuple[str, tuple[str, ...]] | None:
     return indicator, lines
 
 
+def literal_block(text: str) -> tuple[str, tuple[str, ...]] | None:
+    """A multi-line string as a YAML literal block (indicator, lines), or None to quote it."""
+
+    return _block(text)
+
+
 def literal_scalar(value: object) -> str:
     """A literal Claim value as one line of YAML."""
 
@@ -511,6 +517,7 @@ __all__ = [
     "body_available",
     "current_path",
     "index_path",
+    "literal_block",
     "literal_scalar",
     "render_index",
     "render_subject",

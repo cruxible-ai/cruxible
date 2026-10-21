@@ -3858,9 +3858,9 @@ audit path.
 | `current/<kind>/<id>.<field>.txt` | A text value too long to inline (over 2 KiB or 40 lines), whole; never truncated. |
 | `current/<kind>/INDEX` | One tab-separated line per Subject of the kind: ref, a title-like value, `field=value` for each state-like field. |
 | `ontology/INDEX` | One tab-separated line per kind a live SubjectKind or ClaimType names: kind, identity rule, field count, owner, the description's first sentence. |
-| `ontology/kinds/<kind>.md` | One card per kind (below): identity, then a section per live field, and the fields of other kinds pointing here. |
+| `ontology/kinds/<kind>.yaml` | One card per kind (below), in the `current/` convention: identity, then an entry per live field under `fields:`, and the fields of other kinds pointing here. |
 | `ontology/claim-types/INDEX` | One line per live ClaimType: predicate, subject kinds, value type, cardinality, default role, evidence (contracts and requirement), `stale_after`, contention, owner. |
-| `ontology/contracts/INDEX`, `ontology/contracts/<id>.md` | One line per live CaptureContract (grade, source kinds, logical sources, evidence kinds, how many live ClaimTypes admit and require it, owner), and a card naming those ClaimTypes. |
+| `ontology/contracts/INDEX`, `ontology/contracts/<id>.yaml` | One line per live CaptureContract (grade, source kinds, logical sources, evidence kinds, how many live ClaimTypes admit and require it, owner), and a card naming those ClaimTypes. |
 | `ontology/queries/INDEX` | One line per live QueryDefinition: name, parameters (`name:type`, `?` optional), result shape and cardinality, description, owner. |
 | `ontology/lines/INDEX` | One line per live Line: Procedure, `max_authority`, the trigger input and event it accepts, the live Triggers aimed at it, and the live Mandates on its Procedure (grant, validity window, `suspended`). Enablement is operational: `orient --section lines`. |
 | `ontology/kits/INDEX` | One line per installed kit, from its receipt: version, owned prefixes, the generation it was installed and last changed, live owned definitions, kept divergences, definitions edited locally (`(retired)`, `(missing)` marked), owned definitions retired, bundled providers. Whether a newer release exists is not accepted state: `cruxible kit status`. |
@@ -3913,26 +3913,39 @@ counts (they move with every write; `orient` has them). Each file's first line
 names it, its owner and `changed gen <n>`. `owner=` is `kit=<id>` (an
 installed kit's receipt owns the definition), `kit=<id> edited` (and the held
 definition's content differs from what the kit installed), or `local` (no
-receipt owns it; a kit's carried definitions are pinned, not owned). A kind
-card:
+receipt owns it; a kit's carried definitions are pinned, not owned). The kind
+and contract cards follow the `current/` convention: a `#` header line, then a
+strict subset of YAML that both greps line by line and parses. A kind card:
 
-~~~
+~~~yaml
 # vulnerability  ontology  owner=kit=security  changed gen 812
-identity: keys: security.vulnerability.cve_id (unique)  # SubjectKind:vulnerability
+kind: vulnerability
+identity: "keys: security.vulnerability.cve_id (unique)"  # SubjectKind:vulnerability
 description: A publicly disclosed software weakness tracked by CVE id.
-
-## kev_listed  security.vulnerability.kev_listed  owner=kit=security edited
-kev_listed: boolean  one  roles decision|observation (default observation)  evidence cisa.kev (captured)  contention only_contender/unresolved
-settled by: mandate kev-auto  Procedure:kev-sync  settle create|revise  condition query:kev-confirmed  valid 2026-10-01T00:00:00Z..2027-01-01T00:00:00Z
-Listed in CISA's Known Exploited Vulnerabilities catalog.
-
-## pointed at by
-affected_by <- package  security.package.affected_by  many
+fields:
+  kev_listed:  # boolean  one  roles decision|observation (default observation)  evidence cisa.kev (captured)  contention only_contender/unresolved
+    predicate: security.vulnerability.kev_listed
+    owner: kit=security edited
+    type: boolean
+    cardinality: one
+    roles:
+      - decision
+      - observation
+    default_role: observation
+    evidence:
+      - cisa.kev
+    evidence_requirement: captured
+    contention: only_contender/unresolved
+    settled_by:
+      - "mandate kev-auto  Procedure:kev-sync  settle create|revise  condition query:kev-confirmed  valid 2026-10-01T00:00:00Z..2027-01-01T00:00:00Z"
+    description: Listed in CISA's Known Exploited Vulnerabilities catalog.
+pointed_at_by:
+  - "affected_by <- package  security.package.affected_by  many"
 ~~~
 
-The signature line starts with the field's short name, so a grep hit on it
-describes itself. `settled by:` lists each live settle Mandate whose scope
-pins the ClaimType, or `review`.
+Each field's key line carries its signature as a comment, so a grep for
+`<field>:` lands on a line that describes it. `settled_by` lists each live
+settle Mandate whose scope pins the ClaimType, or `review`.
 
 ### Freshness and deltas
 

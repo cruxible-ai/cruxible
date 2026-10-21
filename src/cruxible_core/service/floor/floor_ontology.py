@@ -5,12 +5,14 @@ counts, no clock), so a coordinate fixes it:
 
 - ``ontology/INDEX``: one row per kind a live SubjectKind or live ClaimType
   names: identity rule, field count, owner, description's first sentence;
-- ``ontology/kinds/<kind>.md``: one card per such kind: its identity, then one
-  section per live field (signature line first, so a grep hit on it describes
-  itself, as a ``current/`` value line does), who settles it, its description,
-  and the live Subject-valued fields of other kinds that point at it;
+- ``ontology/kinds/<kind>.yaml``: one card per such kind, in ``current/``'s
+  convention (a ``#`` header line, then a strict subset of YAML): its
+  identity, then under ``fields:`` one entry per live field whose key line
+  carries the field's signature as its comment (so a grep hit on
+  ``<field>:`` describes it), who settles it, its description, and the live
+  Subject-valued fields of other kinds that point at it;
 - ``ontology/claim-types/INDEX``: one row per live ClaimType;
-- ``ontology/contracts/INDEX`` and ``ontology/contracts/<id>.md``: each live
+- ``ontology/contracts/INDEX`` and ``ontology/contracts/<id>.yaml``: each live
   CaptureContract and the live ClaimTypes that admit or require it;
 - ``ontology/queries/INDEX``: each live QueryDefinition's parameters and result;
 - ``ontology/lines/INDEX``: each live Line, the live Triggers aimed at it and
@@ -61,7 +63,7 @@ from cruxible_client.contracts.triggers import LineTarget, Trigger
 from cruxible_core.derived.persistent import EMPTY_PCOUNTS, EMPTY_PSET, PCounts, PMap, PSet
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.floor.floor_content import member_ref
-from cruxible_core.service.floor.floor_current import stamp_text
+from cruxible_core.service.floor.floor_current import literal_block, stamp_text, yaml_scalar
 from cruxible_core.service.floor.floor_definitions import (
     CAPTURE_CONTRACTS_PREFIX,
     CLAIM_TYPES_PREFIX,
@@ -95,15 +97,17 @@ INDEX_FILES: tuple[str, ...] = (
     KITS_INDEX,
 )
 _LOCAL = "local"
+#: Cards follow ``current/``: a ``#`` header line, then a strict subset of YAML.
+CARD_SUFFIX = ".yaml"
 _DESCRIPTION_CHARS = 160
 
 
 def kind_card_path(kind: str) -> str:
-    return f"{KINDS_DIRECTORY}{kind}.md"
+    return f"{KINDS_DIRECTORY}{kind}{CARD_SUFFIX}"
 
 
 def contract_card_path(contract_id: str) -> str:
-    return f"{CONTRACTS_DIRECTORY}{contract_id}.md"
+    return f"{CONTRACTS_DIRECTORY}{contract_id}{CARD_SUFFIX}"
 
 
 def _is_file(target: str) -> bool:
@@ -572,27 +576,51 @@ def _settlers(state: OntologyState, path: str, predicate: str) -> list[str]:
                 else f"  condition query:{mandate.condition.query.target.name}"
             )
             lines.append(
-                f"settled by: mandate {mandate.identity.name}  "
+                f"mandate {mandate.identity.name}  "
                 f"Procedure:{mandate.procedure.target.name}  "
                 f"settle {'|'.join(item.change_kinds)}{condition}  "
                 f"valid {_time(mandate.valid_from)}..{_time(mandate.expires_at)}"
                 + ("  suspended" if mandate.suspended else "")
             )
-    return lines or ["settled by: review"]
+    return lines or ["review"]
 
 
-def _description_lines(text: str | None) -> list[str]:
-    """A description as prose lines; none can read as a section header."""
+def _text_entry(key: str, text: str, indent: str) -> list[str]:
+    """One text value as YAML: a plain or quoted scalar, or a literal block for prose."""
 
-    if not text:
-        return []
-    lines = []
-    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        line = line.rstrip()
-        lines.append("\\" + line if line.startswith("#") else line)
-    while lines and not lines[-1]:
-        lines.pop()
-    return lines
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" in text.rstrip("\n"):
+        block = literal_block(text)
+        if block is not None:
+            indicator, lines = block
+            return [
+                f"{indent}{key}: {indicator}",
+                *(f"{indent}  {line}" if line else "" for line in lines),
+            ]
+    return [f"{indent}{key}: {yaml_scalar(text)}"]
+
+
+def _list_entry(key: str, items: Iterable[str], indent: str) -> list[str]:
+    values = list(items)
+    if not values:
+        return [f"{indent}{key}: []"]
+    return [f"{indent}{key}:", *(f"{indent}  - {yaml_scalar(item)}" for item in values)]
+
+
+def _signature(claim_type: ClaimType, names: ContractNamer) -> str:
+    """The field's whole contract on one line: what a grep hit on its name shows."""
+
+    parts = [
+        _value_type(claim_type),
+        claim_type.cardinality,
+        _roles(claim_type),
+        f"evidence {_evidence(claim_type, names)}",
+    ]
+    stale = _stale_after(claim_type)
+    if stale is not None:
+        parts.append(f"stale_after {stale}")
+    parts.append(f"contention {_contention(claim_type)}")
+    return "  ".join(_one_line(part) for part in parts)
 
 
 def _field_section(
@@ -603,27 +631,41 @@ def _field_section(
     kind: str,
     live_predicates: Collection[str],
 ) -> list[str]:
+    """One field under ``fields:``: its name with its signature as the line's comment."""
+
     short = short_field_name(claim_type.predicate, kind, live_predicates)
-    signature = [
-        f"{short}: {_value_type(claim_type)}",
-        claim_type.cardinality,
-        _roles(claim_type),
-        f"evidence {_evidence(claim_type, state.names)}",
-    ]
+    contracts = admitted_contracts(claim_type, state.names)
+    requirement = effective_evidence_requirement(claim_type)
     stale = _stale_after(claim_type)
-    if stale is not None:
-        signature.append(f"stale_after {stale}")
-    signature.append(f"contention {_contention(claim_type)}")
     lines = [
-        f"## {short}  {claim_type.predicate}  owner={owners.label(path)}",
-        "  ".join(signature),
-        *_settlers(state, path, claim_type.predicate),
-        *_description_lines(claim_type.description),
+        f"  {yaml_scalar(short)}:  # {_signature(claim_type, state.names)}",
+        f"    predicate: {yaml_scalar(claim_type.predicate)}",
+        f"    owner: {yaml_scalar(owners.label(path))}",
+        f"    type: {yaml_scalar(_value_type(claim_type))}",
+        f"    cardinality: {claim_type.cardinality}",
+        *_list_entry("roles", claim_type.permitted_roles, "    "),
         *(
-            f"member {item.member}: {_one_line(item.description)}"
-            for item in claim_type.member_descriptions
+            ()
+            if claim_type.default_role is None
+            else (f"    default_role: {yaml_scalar(claim_type.default_role)}",)
+        ),
+        *_list_entry("evidence", contracts, "    "),
+        f"    evidence_requirement: {yaml_scalar(requirement)}",
+        *(() if stale is None else (f"    stale_after: {yaml_scalar(stale)}",)),
+        f"    contention: {yaml_scalar(_contention(claim_type))}",
+        *_list_entry("settled_by", _settlers(state, path, claim_type.predicate), "    "),
+        *(
+            ()
+            if not claim_type.description
+            else _text_entry("description", claim_type.description, "    ")
         ),
     ]
+    if claim_type.member_descriptions:
+        lines.append("    members:")
+        lines.extend(
+            f"      - {yaml_scalar(f'{item.member}: {_one_line(item.description)}')}"
+            for item in claim_type.member_descriptions
+        )
     return lines
 
 
@@ -710,7 +752,7 @@ class _Renderer:
         elif path.startswith(KINDS_DIRECTORY):
             # Each field's short name, as a field here or as an edge pointing
             # here, moves with its shadow's liveness.
-            kind = path.removeprefix(KINDS_DIRECTORY).removesuffix(".md")
+            kind = path.removeprefix(KINDS_DIRECTORY).removesuffix(CARD_SUFFIX)
             for _type_file, claim_type in self._kind_types(path):
                 pointed = kind in claim_type.allowed_object_subject_kinds
                 for source in concrete_subject_kinds(claim_type.allowed_subject_kinds):
@@ -805,7 +847,7 @@ class _Renderer:
         )
 
     def _kind_card(self, card: str, changed_at: int) -> bytes | None:
-        kind = card.removeprefix(KINDS_DIRECTORY).removesuffix(".md")
+        kind = card.removeprefix(KINDS_DIRECTORY).removesuffix(CARD_SUFFIX)
         types = self._kind_types(card)
         fields = [
             (path, item)
@@ -818,14 +860,14 @@ class _Renderer:
         live = self.live_predicates()
         owner = _LOCAL if declared is None else self.owners.label(declared[0])
         subject_kind = None if declared is None else declared[1]
-        lines = [f"# {kind}  ontology  owner={owner}  {stamp_text(changed_at)}"]
-        identity = _identity(subject_kind)
-        lines.append(
-            f"identity: {identity}"
-            + ("" if subject_kind is None else f"  # SubjectKind:{subject_kind.subject_kind}")
-        )
+        lines = [
+            f"# {kind}  ontology  owner={owner}  {stamp_text(changed_at)}",
+            f"kind: {yaml_scalar(kind)}",
+            f"identity: {yaml_scalar(_identity(subject_kind))}"
+            + ("" if subject_kind is None else f"  # SubjectKind:{subject_kind.subject_kind}"),
+        ]
         if subject_kind is not None and subject_kind.description:
-            lines.append(f"description: {_one_line(subject_kind.description)}")
+            lines.extend(_text_entry("description", subject_kind.description, ""))
         sections = sorted(
             fields,
             key=lambda item: (
@@ -833,8 +875,8 @@ class _Renderer:
                 item[1].predicate.encode(),
             ),
         )
+        lines.append("fields:" if sections else "fields: {}")
         for path, claim_type in sections:
-            lines.append("")
             lines.extend(_field_section(self.state, self.owners, path, claim_type, kind, live))
         pointing = sorted(
             (
@@ -846,10 +888,15 @@ class _Renderer:
             key=lambda row: (row[0].encode(), row[1].encode(), row[2].predicate.encode()),
         )
         if pointing:
-            lines.extend(("", "## pointed at by"))
             lines.extend(
-                f"{short} <- {source}  {item.predicate}  {item.cardinality}"
-                for short, source, item in pointing
+                _list_entry(
+                    "pointed_at_by",
+                    (
+                        f"{short} <- {source}  {item.predicate}  {item.cardinality}"
+                        for short, source, item in pointing
+                    ),
+                    "",
+                )
             )
         return _render(lines)
 
@@ -904,7 +951,7 @@ class _Renderer:
         return (path, value) if isinstance(value, CaptureContract) and _live(value) else None
 
     def _contract_card(self, card: str, changed_at: int) -> bytes | None:
-        contract_id = card.removeprefix(CONTRACTS_DIRECTORY).removesuffix(".md")
+        contract_id = card.removeprefix(CONTRACTS_DIRECTORY).removesuffix(CARD_SUFFIX)
         found = self._contract(contract_id)
         if found is None:
             return None
@@ -913,17 +960,14 @@ class _Renderer:
         lines = [
             f"# CaptureContract:{contract_id}  ontology  owner={self.owners.label(path)}  "
             f"{stamp_text(changed_at)}",
-            f"grade: {contract.epistemic_grade}",
-            f"source kinds: {', '.join(contract.allowed_source_kinds) or '-'}",
-            f"logical sources: {', '.join(contract.logical_source_identities) or '-'}",
-            f"materialization: {', '.join(contract.allowed_materialization_modes) or '-'}",
-            f"evidence kinds: {', '.join(contract.evidence_kinds) or '-'}",
-            "",
-            "## admitted by",
-            *admitted,
-            "",
-            "## required by",
-            *required,
+            f"contract: {yaml_scalar(contract_id)}",
+            f"grade: {yaml_scalar(contract.epistemic_grade)}",
+            *_list_entry("source_kinds", contract.allowed_source_kinds, ""),
+            *_list_entry("logical_sources", contract.logical_source_identities, ""),
+            *_list_entry("materialization", contract.allowed_materialization_modes, ""),
+            *_list_entry("evidence_kinds", contract.evidence_kinds, ""),
+            *_list_entry("admitted_by", admitted, ""),
+            *_list_entry("required_by", required, ""),
         ]
         return _render(lines)
 
