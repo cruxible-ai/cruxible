@@ -90,7 +90,7 @@ repair  citation_drifted  Claim:CLM-e31c0922…  ...
 ~~~
 
 Whether the decision still holds after the edit is a judgment for a person or
-an agent, not for Cruxible. [Staying in step](concepts.md#staying-in-step)
+an agent, not for Cruxible. [Keeping knowledge current](keeping-knowledge-current.md)
 covers working through rows like these. More on writing documents and citing
 them is in [Evidence](concepts.md#evidence).
 

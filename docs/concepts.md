@@ -584,6 +584,9 @@ ledger says, and the documents people read move on from the ledger. Cruxible
 watches both and tells you, so nothing depends on someone remembering to
 check.
 
+[Keeping knowledge current](keeping-knowledge-current.md) covers working
+through the queue, repairs, duplicates and `audit`.
+
 ### Work queues
 
 Three queues tell you what to do, each a read:

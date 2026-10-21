@@ -241,8 +241,8 @@ settle`.
 ## Where to go next
 
 - [Building team knowledge](building-team-knowledge.md): what to model, and how.
-- [Evidence](concepts.md#evidence) and [Staying in step](concepts.md#staying-in-step):
-  the concepts behind this guide, and the work queue that shows drift and
-  expiry.
+- [Keeping knowledge current](keeping-knowledge-current.md): working
+  through drift, expiry and contradictions as they come up.
+- [Evidence](concepts.md#evidence): the concepts behind this guide.
 - The [CLI reference](cli-reference.md) for `claim attest`, `files` and
   `get --detail evidence`.
