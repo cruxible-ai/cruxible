@@ -7,9 +7,9 @@ operation.
 
 ## What Cruxible is for
 
-Teams of people and agents act on shared knowledge every day: which services
-depend on which libraries, who owns a system, whether a release is safe to
-ship. Most of that knowledge lives in documents, tickets, chat threads and
+Teams of people and agents act on shared knowledge every day: which parts fit
+which vehicles, which part replaces one that's discontinued, whether a
+supplier's catalog still says so. Most of that knowledge lives in documents, tickets, chat threads and
 agents' context windows, and it fails in familiar ways:
 
 - it drifts out of date, and nobody notices;
@@ -28,7 +28,8 @@ approved changes, with a complete record of what was believed, when, and why.
 ## The approach
 
 - **A symbolic model of your world.** You declare the kinds of thing your team
-  cares about, the fields each can have, and the relations between them.
+  cares about, the fields each can have, and the relations between them: parts
+  and vehicles, a part's category, which vehicles a part fits.
   Cruxible holds the current state of that model, and checks every change
   against it.
 - **Beliefs, with their reasons.** Every value is a Claim: something the team
@@ -108,9 +109,9 @@ Every generation has a **coordinate** that names it exactly:
 
 ```mermaid
 flowchart LR
-    g0["0<br/>genesis"] --> g1["1<br/>vocabulary installed"] --> g2["2<br/>pins recorded"]
-    g2 -.->|checked against 2| p["proposal:<br/>add advisory"]
-    p -->|approved and accepted| g3["3<br/>advisory accepted"]
+    g0["0<br/>genesis"] --> g1["1<br/>vocabulary defined"] --> g2["2<br/>catalog recorded"]
+    g2 -.->|checked against 2| p["proposal:<br/>add replacement part"]
+    p -->|approved and accepted| g3["3<br/>replacement recorded"]
 ```
 
 Each accepted change adds one generation on top of the last; a proposal is
@@ -120,9 +121,9 @@ reports the current one:
 
 ~~~json
 {
-  "git_oid": "e9eca0c2d82feb1aa1d747e366680afd1c1b08ed",
-  "semantic_root": "sha256:adcbb2c5b80ba504293d688f3d13ee1f709ed9b677bc946d36b515cf81ff5041",
-  "generation_root": "sha256:51cbafc9b8100c1a46414eea6f0aedefabdbda6334c599afb14a0279aff70430",
+  "git_oid": "d4cdcae9625a1a3f016cf0a2ff58aea8b3eecb58",
+  "semantic_root": "sha256:5b54f3105253749290c6a13beb3053fb2303880ac37fc14bdbefb30d45789f22",
+  "generation_root": "sha256:a9f5262235896fb4d8dfdf0df27aebf4cb55d98fc1fcc5542b90eeb22d546270",
   "compiler_digest": "sha256:8b1fc4c429fbbdc9eee3915dc3c22af64fdbdba3465795ceb270b01371f899bd"
 }
 ~~~
@@ -154,19 +155,20 @@ reports the current one:
 ## Subjects, ClaimTypes and Claims
 
 A **Subject** is a thing the instance knows about, named `kind/id`
-(`project.task/write-docs`). Kinds are dotted names you choose; core chooses
+(`catalog.part/bp-1142`, a set of brake pads; `catalog.vehicle/honda-civic-2019`). Kinds are dotted names you choose; core chooses
 the id. A **SubjectKind** declares how a kind's Subjects are named -- by the
 values of one or more key fields (a key that names one Subject, `unique`, or
 usually one, `hint`), or by a minted id -- and a new Subject is created by
 naming its kind and key, so the same key always names the same Subject.
 
 A **ClaimType** defines one field of a kind: the predicate
-(`project.task.status`, whose field name is `status`), what the value is (a
+(`catalog.part.category`, whose field name is `category`), what the value is (a
 literal checked against a JSON schema, a reference to another Subject, or exact
 content), whether a Subject holds one value or many, which roles a Claim may
 take (`normative`, `observation`, `environment_binding`, `derivation`), which
 evidence it admits, and how competing values resolve. A ClaimType whose value
-is another Subject is a typed relationship.
+is another Subject is a typed relationship: `catalog.part.fits` points from a
+part to the vehicles it fits.
 
 A **Claim** is one value of one field about one Subject: the statement, its
 role, the evidence it cites, and the rationale its author gave. A Claim has an
@@ -174,18 +176,18 @@ ID (`CLM-…`) and a history of revisions. Resolution places it in its slot as
 accepted, conflicted, overturned or refused, and retiring it ends it with a
 reason (`was-rescinded`, `was-wrong` or `superseded`).
 
-For example, the Claim that an advisory affects `requests 2.32.4`, and what it
-rests on:
+For example, the Claim that brake pads `bp-2210` fit the 2019 Civic, and what
+it rests on, a line of the supplier's catalog:
 
 ~~~text
-$ cruxible get CLM-9fee654bd6ad28d8806f4748d0b7a0ce
-pypi.release/requests-2.32.4  advisories = GHSA-gc5v-m9x4-r6x2
-CLM-9fee654bd6ad28d8806f4748d0b7a0ce  verdict=supported status=accepted revision=1
+$ cruxible get CLM-abbe35eeffed479c1b18674c93880802
+catalog.part/bp-2210  fits = catalog.vehicle/honda-civic-2019
+CLM-abbe35eeffed479c1b18674c93880802  verdict=supported status=accepted revision=1
 
-$ cruxible get CLM-9fee654bd6ad28d8806f4748d0b7a0ce --detail evidence
-value: GHSA-gc5v-m9x4-r6x2
-capture CAP-c8725ea94588  CaptureContract:cruxible.foreign-source.pypi v1  source=pypi  ...  evidence admitted
-rationale: PyPI lists GHSA-gc5v-m9x4-r6x2 against requests 2.32.4 (fixed in 2.33.0).
+$ cruxible get CLM-abbe35eeffed479c1b18674c93880802 --detail evidence
+value: catalog.vehicle/honda-civic-2019
+capture CAP-a0a989ec8fe7  CaptureContract:cruxible.foreign-source.catalog v1  source=catalog  ...  evidence admitted
+rationale: Acme's 2026 catalog lists bp-2210 for the 2019 Civic.
 ~~~
 
 Every Claim also has a verdict that says how well its evidence holds up:
@@ -210,28 +212,28 @@ down. A single write can add the prose to a Markdown file and record the
 Claims that cite it:
 
 ~~~yaml
-because: Pins from each service's requirements.txt.
+because: Acme catalog 2026, brakes page.
 docs:
   - op: append
-    id: pins
-    file: docs/dependencies.md
-    under: [Dependencies]
+    id: bp1142
+    file: docs/fitment.md
+    under: [Fitment notes]
     text: |
-      ## Pinned releases
+      ## bp-1142 front brake pads
 
-      - payments: requests 2.32.4
+      Acme catalog 2026, page 12: fits the 2019 Honda Civic (front axle).
 changes:
-  - {op: add, subject: app.service/payments, field: depends_on,
-     value: pypi.release/requests-2.32.4, evidence: {kind: section, ref: pins}}
+  - {op: add, subject: catalog.part/bp-1142, field: fits,
+     value: catalog.vehicle/honda-civic-2019, evidence: {kind: section, ref: bp1142}}
 ~~~
 
-The section lands in `docs/dependencies.md`, where people keep reading it,
-and the pin lands in the ledger citing it. If the section is later edited, the
+The note lands in `docs/fitment.md`, where people keep reading it, and the
+fitment lands in the ledger citing it. If the section is later edited, the
 Claim's citation drifts and `next` asks someone to re-check it.
 
 Markdown prose and the Claims it supports can land in one `write`. The agent
 chooses the file and ATX heading path, supplies `docs` append/replace operations,
-and cites `{"kind":"section","file":"notes.md","section":["Decision"]}`.
+and cites `{"kind":"section","file":"docs/fitment.md","section":["Fitment notes","bp-1142 front brake pads"]}`.
 The selected bytes include the heading and its own body, ending before the first
 child. Prose authored by that write counts as the author's own words: a retained
 self-source Capture keeps the basis and an ordinary file-copy citation records
@@ -534,22 +536,27 @@ An authored one needs only the staleness signal: you re-check it, and rewrite
 or repin it. See [Projection
 blocks](declared-blocks.md).
 
-For example, a table of affected services, rendered from a named query before
-any advisory was known, and after `block sync` once one was accepted:
+For example, the parts table on a page about the 2019 Civic, rendered from the
+named query `catalog.parts_for_vehicle`, and the same table after `block sync`
+once a replacement brake pad was recorded:
 
 ~~~markdown
-<!-- cruxible:block:exposed:ref:06b6a6dcecc2 -->
-_No rows._
-<!-- /cruxible:block:exposed -->
+<!-- cruxible:block:parts:ref:444ca169ec81 -->
+| subject | category | title |
+|---|---|---|
+| catalog.part/bp-1142 | brakes | Front brake pads |
+| catalog.part/wb-330 | wipers | Wiper blade, 22 inch |
+<!-- /cruxible:block:parts -->
 ~~~
 
 ~~~markdown
-<!-- cruxible:block:exposed:ref:a16953dd2dbd -->
-| subject | advisories | owner | release |
-|---|---|---|---|
-| app.service/billing | GHSA-gc5v-m9x4-r6x2 | grace | requests-2.32.4 |
-| app.service/payments | GHSA-gc5v-m9x4-r6x2 | ada | requests-2.32.4 |
-<!-- /cruxible:block:exposed -->
+<!-- cruxible:block:parts:ref:abfeac833d6e -->
+| subject | category | title |
+|---|---|---|
+| catalog.part/bp-1142 | brakes | Front brake pads |
+| catalog.part/bp-2210 | brakes | Ceramic front brake pads |
+| catalog.part/wb-330 | wipers | Wiper blade, 22 inch |
+<!-- /cruxible:block:parts -->
 ~~~
 
 The stamp in the opening marker (`ref:…`) is how Cruxible knows which state the
