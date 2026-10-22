@@ -153,6 +153,7 @@ from cruxible_client.contracts.canonical import (
     CanonicalValue,
     normalize_canonical,
 )
+from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import (
     CaptureContract,
@@ -2685,6 +2686,39 @@ class Cruxible:
         )
         return CaptureView(result=result)
 
+    def erase_capture(
+        self,
+        capture: str | CaptureRef,
+        *,
+        because: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> CaptureEraseResult:
+        """Erase one Capture's retained body under its contract's erasure rule.
+
+        The bytes are destroyed; the envelope, its contract and an erasure record
+        (who, when, ``because``) stay, and Claims citing it read the evidence as
+        erased. Only a contract that authorizes erasure allows it. It cannot be
+        undone: the default previews (``status="would_erase"``); commit with
+        ``dry_run=False, at=result.coordinate.digest``.
+
+        Next: ``cx.erase_capture(capture, because=..., dry_run=False,
+        at=preview.coordinate.digest)``; then ``cx.rebind(claim, capture=fresh)`` for
+        each Claim in ``result.left_without_evidence``.
+        """
+        result = self._client.erase_capture(
+            self._instance_id,
+            CaptureEraseRequest(
+                capture_digest=capture.capture_digest
+                if isinstance(capture, CaptureRef)
+                else capture,
+                because=because,
+                dry_run=dry_run,
+                at=at,
+            ),
+        )
+        return result
+
     def predictions(self, claim: str | ClaimVersionReference) -> api.ResolutionContractsResult:
         """List the accepted predictions that test one Claim version, retired ones included.
 
@@ -3462,19 +3496,22 @@ class Cruxible:
         because: str,
         file: str | None = None,
         section: str | None = None,
+        capture: str | CaptureRef | None = None,
         citation: str | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
     ) -> WriteOutcome:
-        """Re-cite a Claim whose cited text drifted on the text it rests on now.
+        """Re-cite a Claim on the text it rests on now, or on a fresh Capture.
 
         Name the new text as ``file="FILE#ANCHOR"`` or ``section="FILE#Heading/Path"``
-        (FILE is a catalogued file's path or catalog name); ``citation`` (12+ hex)
-        picks which citation is replaced when the Claim cites that file more than
-        once. The statement is not restated: the Claim keeps its value and ID, and
-        its history shows one ``rebound`` revision. A refusal raises
-        ``WriteRefusalError``.
+        (FILE is a catalogued file's path or catalog name), or a fresh Capture as
+        ``capture=`` (a digest, ``CAP-`` handle or ``CaptureRef``) under the same
+        CaptureContract as the citation it replaces: how a Claim whose Capture
+        was erased moves onto a new observation. ``citation`` (12+ hex) picks
+        which citation is replaced when more than one matches. The statement is
+        not restated: the Claim keeps its value and ID, and its history shows one
+        ``rebound`` revision. A refusal raises ``WriteRefusalError``.
 
         Next: ``outcome.next``; ``cx.get(claim, detail="history")`` shows the re-bind.
         """
@@ -3482,7 +3519,12 @@ class Cruxible:
         change = RebindChange(
             target=claim.address if isinstance(claim, ClaimRef) else claim,
             citation=citation,
-            evidence=rebind_evidence(file=file, section=section, workspace=self._workspace_root),
+            evidence=rebind_evidence(
+                file=file,
+                section=section,
+                capture=capture.capture_digest if isinstance(capture, CaptureRef) else capture,
+                workspace=self._workspace_root,
+            ),
         )
         (observed,) = observe_changes((change,), workspace=self._workspace_root)
         return self._written(

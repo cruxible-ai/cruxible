@@ -20,6 +20,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
+from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
@@ -626,6 +627,23 @@ def register_tools(
     ) -> CaptureRead:
         """Read exact retained Capture evidence with a byte budget and body permission."""
         return handlers.handle_playbill_read_capture(require_instance_id(instance_id), request)
+
+    @_tool
+    def cruxible_capture_erase(
+        instance_id: InstanceId = None,
+        *,
+        capture: Annotated[str, Field(description="A Capture digest or its CAP- handle.")],
+        because: Annotated[
+            str, Field(description="Why, recorded and shown; never repeat the erased bytes.")
+        ],
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
+    ) -> CaptureEraseResult:
+        """Erase one Capture's retained body (bytes gone, envelope and record kept)."""
+        return handlers.handle_playbill_erase_capture(
+            require_instance_id(instance_id),
+            CaptureEraseRequest(capture_digest=capture, because=because, dry_run=dry_run, at=at),
+        )
 
     @_tool
     def cruxible_files_check(

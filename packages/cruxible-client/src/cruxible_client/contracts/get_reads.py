@@ -25,6 +25,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import ClaimRetirementReason
 from cruxible_client.contracts.operational_reads import (
     GetCaptureCard,
+    GetCaptureErasure,
     GetLineCard,
     GetMandateCard,
     GetProcedureRunCard,
@@ -621,6 +622,12 @@ class GetCaptureEvidence(_StrictGetModel):
         "not_admitted: offered as evidence, refused by the rule; not_evidence: a copy "
         "the rule does not admit, which the verdict never reads."
     )
+    erased: GetCaptureErasure | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="Present when the Capture's retained body was erased: its bytes are gone, "
+        "so the verdict reads this evidence as no longer replayable.",
+    )
 
 
 #: Why an attestation does or does not count toward the Claim's verdict.
@@ -947,6 +954,7 @@ __all__ = [
     "GetCaptureContractCard",
     "GetTriggerCard",
     "GetSubjectKindCard",
+    "GetCaptureErasure",
     "GetCaptureEvidence",
     "GetCard",
     "GetClaimCard",

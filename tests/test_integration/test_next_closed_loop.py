@@ -189,6 +189,9 @@ EXPECTED_OPERATIONS = {
     "line_inbox_unread": "cruxible.inbox.list",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
     "evidence_unavailable": "hand_edit",
+    # Re-bind onto a fresh Capture under the same contract: the one exit while
+    # the Claim still carries the erased Capture.
+    "claim_evidence_erased": "cruxible.rebind",
     "prediction_settleable": "cruxible.prediction.settle",
     # Restoring an anchor's material is off the served verbs, like a Capture's.
     "prediction_window_unbindable": "hand_edit",
@@ -1770,6 +1773,37 @@ def _evidence_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "evidence_unavailable", _request(instance))
 
 
+def _claim_evidence_erased(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from tests.support.capture_erasure_world import erasure_world, rebind, rescan
+    from tests.test_consumers.test_evidence_availability import _drain
+    from tests.test_procedures.test_procedure_source_runs import NOW as WORLD_NOW
+    from tests.test_service.test_capture_erasure import _erase
+
+    world = erasure_world(root)
+    instance = world.instance
+
+    def request() -> NextRequest:
+        return _request(instance, evaluation_time=WORLD_NOW + timedelta(hours=1))
+
+    _drain(instance, now=WORLD_NOW)
+    _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+    _drain(instance, now=WORLD_NOW + timedelta(minutes=1))
+
+    row = _row(instance, "claim_evidence_erased", request())
+    assert row.subject_identity == f"Claim:{world.claim}"
+    assert row.related_identities == (f"Capture:{world.capture}",)
+    assert row.severity == "warning"
+    assert row.repair.operation == EXPECTED_OPERATIONS["claim_evidence_erased"]
+    assert row.repair.command.startswith(f"cruxible rebind {world.claim} --citation ")
+
+    # The named repair, with the fresh observation the re-binder chooses.
+    assert rebind(instance, world.claim, rescan(world)).refusal is None
+    _drain(instance, now=WORLD_NOW + timedelta(minutes=2))
+    _assert_gone(instance, "claim_evidence_erased", request())
+
+
 def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
@@ -2249,6 +2283,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("line_inbox_unread", None): _line_inbox_unread,
     ("subject_kind_undeclared", None): _subject_kind_undeclared,
     ("evidence_unavailable", None): _evidence_unavailable,
+    ("claim_evidence_erased", None): _claim_evidence_erased,
     ("prediction_settleable", None): _prediction_settleable,
     ("prediction_window_unbindable", None): _prediction_window_unbindable,
     ("kit_resume_blocked", None): _kit_resume_blocked,

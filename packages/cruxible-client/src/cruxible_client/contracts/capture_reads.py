@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cruxible_client.contracts.canonical import CasDigest
+from cruxible_client.contracts.capture_erasure import CaptureErasureRecord, validate_capture_ref
 from cruxible_client.contracts.captures import CaptureEnvelope, CaptureEnvelopeV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.source_references import SourceDereferenceResult
-
-#: A Capture named by the handle a card prints (``CAP-`` plus 12+ hex) or a
-#: digest prefix of 12+ hex; the daemon resolves it as the write verbs do: among
-#: Captures accepted Claims cite and retained ones that verify.
-_CAPTURE_PREFIX = re.compile(r"^(?:CAP-|sha256:)[0-9a-f]{12,63}$")
 
 
 class CaptureReadRequest(BaseModel):
@@ -32,10 +26,7 @@ class CaptureReadRequest(BaseModel):
     @field_validator("capture_digest")
     @classmethod
     def _digest(cls, value: str) -> str:
-        if _CAPTURE_PREFIX.fullmatch(value):
-            return value
-        CasDigest.from_tagged(value)
-        return value
+        return validate_capture_ref(value)
 
 
 class CaptureRead(BaseModel):
@@ -44,7 +35,13 @@ class CaptureRead(BaseModel):
     capture_digest: str
     coordinate: AcceptedCoordinate
     status: Literal["verified", "unavailable"]
+    #: Why it is unavailable: ``capture_unavailable`` (the envelope is not held),
+    #: ``contract_not_at_coordinate``, ``body_unavailable`` (the body is not held),
+    #: or ``body_erased`` (its body was erased; ``erasure`` says by whom and why).
     reason: str | None = None
+    erasure: CaptureErasureRecord | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     envelope: CaptureEnvelopeV1 | CaptureEnvelope | None = None
     contract_address: str | None = None
     epistemic_grade: Literal["observed", "derived", "predicted"] | None = None

@@ -60,6 +60,7 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace", "kit_status"]] = {
     "subject_kind_undeclared": "get",
     "consumer_stalled": "get",
     "evidence_unavailable": "get",
+    "claim_evidence_erased": "get",
     "prediction_settleable": "get",
     "prediction_window_unbindable": "get",
     "line_coverage_gap": "get",

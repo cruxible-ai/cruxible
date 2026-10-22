@@ -121,6 +121,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         # D8 carry (dev.decision/d8-carry-1016) disables the upgraded Line version.
         "line_disabled_by_upgrade",
         "evidence_unavailable",
+        # A live Claim whose every cited Capture, own words aside, has an erased body.
+        "claim_evidence_erased",
         # A closed prediction window its own resolution journal has not answered.
         "prediction_settleable",
         "prediction_window_unbindable",

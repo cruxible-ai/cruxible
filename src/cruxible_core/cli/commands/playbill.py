@@ -151,6 +151,7 @@ from cruxible_client.contracts.write import (
     SubjectRef,
     WriteOutcome,
     WriteRequest,
+    capture_handle,
 )
 from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
@@ -2299,7 +2300,7 @@ def propose_document(
 
 @playbill_group.group("capture")
 def capture_group() -> None:
-    """Read retained evidence from completed observations and Procedures."""
+    """Read retained evidence from completed observations and Procedures, or erase a body."""
 
 
 @capture_group.command("read")
@@ -2316,6 +2317,83 @@ def read_capture(capture_digest: str, max_bytes: int) -> None:
         command_name="cruxible capture read",
     )
     _emit_json(result.model_dump(mode="json"))
+
+
+@capture_group.command("erase")
+@click.argument("capture")
+@click.option(
+    "--because",
+    required=True,
+    help="Why the body is erased; recorded and shown wherever the Capture is read, so "
+    "never repeat the erased bytes.",
+)
+@change_control_options
+@json_option
+@handle_errors
+def erase_capture(
+    capture: str, because: str, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
+    """Erase one Capture's retained body: the bytes are destroyed, the record stays.
+
+    CAPTURE is a digest or the CAP- handle a get card prints. Only a Capture
+    whose CaptureContract authorizes erasure (erasure: authorized_by_rule) can
+    be erased. The envelope, its contract, its landing records and an erasure
+    record (who, when, why) stay; Claims citing it keep their history and read
+    the evidence as erased, no longer replayable. A live Claim citing it is
+    then changed by re-binding it onto a fresh Capture under the same contract
+    (rebind --capture); revising or retiring it refuses until then. Requires
+    graph_write. It cannot be undone, so it previews first; commit that
+    preview with --commit --at DIGEST.
+    """
+
+    from cruxible_client.contracts.capture_erasure import CaptureEraseRequest
+
+    try:
+        request = CaptureEraseRequest(
+            capture_digest=capture, because=because, dry_run=dry_run, at=at
+        )
+    except ValidationError as exc:
+        raise click.ClickException(validation_summary(exc)) from exc
+    result = _server_call(
+        lambda client, instance_id: client.erase_capture(instance_id, request),
+        command_name="cruxible capture erase",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    record = result.erasure
+    handle = capture_handle(record.capture_digest)
+    verb = {
+        "would_erase": "Would erase",
+        "erased": "Erased",
+        "already_erased": "Already erased",
+    }[result.status]
+    count = len(record.body_digests)
+    click.echo(
+        f"{verb} the retained body of {handle} ({count} object{'s' if count != 1 else ''}) "
+        f"under {_public_name(record.capture_contract)}"
+    )
+    if result.status != "would_erase":
+        click.echo(f"By: {printable(record.erased_by)} at {record.erased_at.isoformat()}")
+    click.echo(f"Because: {printable(record.because)}")
+    if result.citing_claim_count:
+        listed = ", ".join(result.citing_claims)
+        more = result.citing_claim_count - len(result.citing_claims)
+        click.echo(
+            f"Cited by {result.citing_claim_count} live Claim"
+            f"{'s' if result.citing_claim_count != 1 else ''}: {listed}"
+            + (f" (+{more} more)" if more > 0 else "")
+        )
+    if result.left_without_evidence:
+        click.echo(
+            "Left with no retained evidence (next lists them as claim_evidence_erased): "
+            + ", ".join(result.left_without_evidence)
+        )
+    if result.status == "would_erase":
+        click.echo(
+            "Verdicts will read it as no longer replayable; each field's rules decide the rest."
+        )
+        echo_preview_next(result.status, result.coordinate)
 
 
 @playbill_group.group("proposal")
@@ -5099,9 +5177,16 @@ def retire(
     help="FILE#Heading/Path: the section the Claim rests on now (FILE# for the preamble).",
 )
 @click.option(
+    "--capture",
+    "capture_ref",
+    default=None,
+    help="CAP-... or digest: a fresh Capture, under the replaced citation's contract.",
+)
+@click.option(
     "--citation",
     default=None,
-    help="The citation to replace (12+ hex); default: the Claim's one citation of FILE.",
+    help="The citation to replace (12+ hex); default: the Claim's one citation of FILE "
+    "or of the Capture's contract.",
 )
 @click.option(
     "--workspace-root",
@@ -5117,6 +5202,7 @@ def rebind(
     because: str,
     file_anchor: str | None,
     section_ref: str | None,
+    capture_ref: str | None,
     citation: str | None,
     workspace_root: str,
     dry_run: bool,
@@ -5124,21 +5210,26 @@ def rebind(
     at_oid: str | None,
     output_json: bool,
 ) -> None:
-    """Re-cite CLAIM, whose cited text drifted, on the text it rests on now.
+    """Re-cite CLAIM on the text it rests on now, or on a fresh Capture.
 
-    The statement stays as it is: the drifted citation is replaced by the new
+    The statement stays as it is: the named citation is replaced by the new
     one, recorded as one revision of the same Claim (history shows it as
-    rebound). FILE is a catalogued file's path or its catalog name. A citation
-    of other evidence, or a value that changed, is restated with set; a Claim
-    that no longer holds is retired.
+    rebound). FILE is a catalogued file's path or its catalog name. --capture
+    replaces a Capture citation with a fresh Capture under the same contract,
+    which is how a Claim whose Capture was erased moves onto a new
+    observation. A value that changed is restated with set; a Claim that no
+    longer holds is retired.
     """
 
     try:
         evidence = rebind_evidence(
-            file=file_anchor, section=section_ref, workspace=Path(workspace_root)
+            file=file_anchor,
+            section=section_ref,
+            capture=capture_ref,
+            workspace=Path(workspace_root),
         )
     except ValueError as exc:
-        raise click.UsageError(f"--file / --section: {exc}") from None
+        raise click.UsageError(f"--file / --section / --capture: {exc}") from None
     change: dict[str, object] = {"op": "rebind", "target": claim, "evidence": evidence}
     if citation is not None:
         change["citation"] = citation
@@ -5161,7 +5252,7 @@ def rebind(
             update={"changes": observe_changes(request.changes, workspace=Path(workspace_root))}
         )
     except (ValidationError, CoreError, ValueError) as exc:
-        raise click.UsageError(f"{file_anchor or section_ref}: {exc}") from None
+        raise click.UsageError(f"{file_anchor or section_ref or capture_ref}: {exc}") from None
     outcome = _server_call(
         lambda client, instance_id: client.write(instance_id, request=observed),
         command_name="cruxible rebind",
@@ -5607,11 +5698,18 @@ def _emit_get_text(result: Any) -> None:
         if result.evidence.content_digest is not None:
             click.echo(f"content_digest: {result.evidence.content_digest}")
         for capture in result.evidence.captures:
+            erased = capture.erased
             click.echo(
                 f"capture {capture.capture}  {_public_name(capture.contract)} "
                 f"v{capture.version}  source={_public_name(capture.source)}  "
                 f"observed={capture.observed_at.isoformat()}  "
                 f"{_citation_label(capture)}: {capture.status.replace('_', ' ')}"
+                + (
+                    ""
+                    if erased is None
+                    else f"  body erased {erased.at.isoformat()} by {printable(erased.by)}: "
+                    f"{printable(erased.because)}"
+                )
             )
         for attestation in result.evidence.attestations:
             click.echo(

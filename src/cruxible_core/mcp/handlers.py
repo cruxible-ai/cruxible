@@ -49,6 +49,7 @@ from cruxible_client.contracts.attestations import ApprovalAttestation, Approval
 from cruxible_client.contracts.authoring.models import BlockDetachResult
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
+from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResult,
@@ -655,6 +656,15 @@ def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequest) 
     return _daemon_call(
         lambda client: client.read_capture(instance_id, request),
         operation_name="cruxible_capture_read",
+    )
+
+
+def handle_playbill_erase_capture(
+    instance_id: str, request: CaptureEraseRequest
+) -> CaptureEraseResult:
+    return _daemon_call(
+        lambda client: client.erase_capture(instance_id, request),
+        operation_name="cruxible_capture_erase",
     )
 
 

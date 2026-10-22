@@ -121,6 +121,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Requires body-read permission; max_bytes bounds returned material. "
         "Never refetches sources."
     ),
+    "cruxible_capture_erase": (
+        "Use when a Capture's retained bytes must not stay (a secret a tool printed). "
+        "Only a contract that authorizes erasure allows it; it cannot be undone: preview, "
+        "then commit with dry_run=false and at=<the preview's coordinate digest>."
+    ),
     "cruxible_files_check": (
         "Use when you need to check the workspace's catalogued files (or a compiled "
         "bundle) against accepted state: aligned, modified, pending, behind and the rest."

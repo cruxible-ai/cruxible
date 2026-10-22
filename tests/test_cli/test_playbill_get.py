@@ -781,3 +781,40 @@ def test_evidence_attestation_lines_say_where_each_lives_and_whether_it_counts(
         f"attestation unsure by reviewer at {WHEN.isoformat()}  recorded  "
         "counts toward verdict: yes (consequence policy rule two-unsure)",
     ]
+
+
+def test_an_erased_capture_line_says_who_erased_its_body_and_why(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.get_reads import (
+        GetCaptureErasure,
+        GetCaptureEvidence,
+        GetEvidence,
+    )
+
+    capture = GetCaptureEvidence(
+        capture="CAP-0123456789ab",
+        contract="CaptureContract:security.scan-output",
+        version=1,
+        source="scanner",
+        observed_at=WHEN,
+        role="evidence",
+        origin="independent",
+        status="admitted",
+        erased=GetCaptureErasure(by="alice", at=WHEN, because="Printed a token; rotated."),
+    )
+    _stub(
+        monkeypatch,
+        _result(
+            "claim",
+            detail="evidence",
+            evidence=GetEvidence(value="high", captures=(capture,), attestations=()),
+        ),
+    )
+    result = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-1", "--detail", "evidence"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "evidence: admitted  body erased 2026-09-01T00:00:00+00:00 by alice: "
+        "Printed a token; rotated."
+    ) in result.output

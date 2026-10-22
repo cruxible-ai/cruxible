@@ -453,8 +453,13 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "init": _command("playbill", "init_playbill", "Bootstrap Cruxible state."),
     "whoami": _command("playbill", "whoami", "Explain the active writer identity and permissions."),
     "capture": _group(
-        "Read verified retained Capture evidence.",
-        {"read": _command("playbill", "read_capture", "Read one retained Capture.")},
+        "Read verified retained Capture evidence, or erase a retained body.",
+        {
+            "read": _command("playbill", "read_capture", "Read one retained Capture."),
+            "erase": _command(
+                "playbill", "erase_capture", "Erase one Capture's retained body (irreversible)."
+            ),
+        },
         module="playbill",
         attr="capture_group",
     ),

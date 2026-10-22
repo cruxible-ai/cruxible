@@ -34,6 +34,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
+from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequest,
@@ -195,7 +196,12 @@ from cruxible_core.service.authoring.projection_sync import (
     service_read_playbill_block_sync_backing,
 )
 from cruxible_core.service.authoring.write_verbs import WriteCaller, service_playbill_write
-from cruxible_core.service.change_preview import change_entry, change_scope, full_coordinate
+from cruxible_core.service.change_preview import (
+    change_entry,
+    change_scope,
+    full_coordinate,
+    state_change_scope,
+)
 from cruxible_core.service.claims.claim_reads import (
     service_read_claim_backings,
     service_read_claim_batch,
@@ -243,6 +249,7 @@ from cruxible_core.service.discovery.since import (
     service_playbill_since,
     validate_playbill_since_request,
 )
+from cruxible_core.service.evidence.capture_erasure import service_erase_capture
 from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
 from cruxible_core.service.evidence.file_catalog import (
@@ -1347,6 +1354,35 @@ def playbill_read_capture(instance_id: str, request: CaptureReadRequest) -> Capt
         request=request,
         access=_access(instance_id, include_body=True),
     )
+
+
+def playbill_erase_capture(instance_id: str, request: CaptureEraseRequest) -> CaptureEraseResult:
+    """Erase one Capture's retained body under the authority its contract grants.
+
+    The bytes are destroyed; the envelope, its contract, the landing records and
+    an erasure record (who, when, why) stay. It cannot be undone, so it previews
+    unless ``dry_run`` is false, and then commits only with ``at``: the state
+    coordinate its preview answered (R12).
+    """
+
+    check_permission("cruxible_capture_erase", instance_id=instance_id)
+    with change_entry(request.dry_run, "irreversible"):
+        actor_id = _actor_id(instance_id)
+        instance = get_playbill_manager().get(instance_id)
+        with state_change_scope(
+            dry_run=request.dry_run,
+            at=request.at,
+            kind="irreversible",
+            operation="cruxible.capture.erase",
+            describe=f"erasing Capture {request.capture_digest}",
+        ) as change:
+            return service_erase_capture(
+                instance,
+                request=request,
+                actor_id=actor_id,
+                previewing=change.previewing,
+                observe=change.observe,
+            )
 
 
 def playbill_file_context(instance_id: str) -> contracts.FileContext:

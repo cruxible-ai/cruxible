@@ -14,6 +14,7 @@ from pathlib import Path
 from cruxible_client.authoring.selectors import workspace_files
 from cruxible_client.contracts.write import (
     AddChange,
+    CaptureEvidence,
     Change,
     Evidence,
     FileEvidence,
@@ -68,17 +69,26 @@ def _catalogued_path(workspace: Path, file: str) -> str:
 
 
 def rebind_evidence(
-    *, file: str | None = None, section: str | None = None, workspace: Path
-) -> FileEvidence | SectionEvidence:
-    """The new text a re-bind cites: ``FILE#ANCHOR`` (file) or ``FILE#Heading/Path`` (section).
+    *,
+    file: str | None = None,
+    section: str | None = None,
+    capture: str | None = None,
+    workspace: Path,
+) -> FileEvidence | SectionEvidence | CaptureEvidence:
+    """What a re-bind cites now: ``FILE#ANCHOR`` (file), ``FILE#Heading/Path`` (section),
+    or a fresh Capture (a digest or ``CAP-`` handle) under the replaced citation's contract.
 
     FILE is a catalogued file's path or its catalog name; ``FILE#`` names a
     file's preamble. A heading that itself holds ``/`` is cited through a
     ``write`` change instead, whose section is a heading list.
     """
 
-    if (file is None) == (section is None):
-        raise ValueError("pass one of file (FILE#ANCHOR) or section (FILE#Heading/Path)")
+    if sum(item is not None for item in (file, section, capture)) != 1:
+        raise ValueError(
+            "pass one of file (FILE#ANCHOR), section (FILE#Heading/Path) or capture (CAP-...)"
+        )
+    if capture is not None:
+        return CaptureEvidence(capture=capture)
     spec = file if file is not None else section
     assert spec is not None
     path, mark, rest = spec.partition("#")

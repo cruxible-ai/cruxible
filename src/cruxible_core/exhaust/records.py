@@ -44,10 +44,12 @@ QUERY_RECEIPT_JOURNAL_FAMILY = "query-receipt-v1"
 LINE_DISPATCH_JOURNAL_FAMILY = "line-dispatch-v1"
 LINE_INBOX_JOURNAL_FAMILY = "line-inbox-v1"
 CLAIM_REOBSERVATION_JOURNAL_FAMILY = "claim-reobservation-v1"
+CAPTURE_ERASURE_JOURNAL_FAMILY = "capture-erasure-v1"
 REGISTERED_JOURNAL_FAMILIES: tuple[str, ...] = (
     LINE_DISPATCH_JOURNAL_FAMILY,
     LINE_INBOX_JOURNAL_FAMILY,
     CLAIM_REOBSERVATION_JOURNAL_FAMILY,
+    CAPTURE_ERASURE_JOURNAL_FAMILY,
     RESOLUTION_JOURNAL_FAMILY,
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     QUERY_RECEIPT_JOURNAL_FAMILY,
@@ -61,6 +63,7 @@ JournalEventKindV1 = Literal[
     "line_dispatch_transition",
     "line_inbox_transition",
     "claim_reobservation",
+    "capture_erasure",
     "occurrence_materialized",
     "occurrence_lapsed",
     "attempt_started",
@@ -192,6 +195,26 @@ def _validate_event_family(
             )
         ):
             raise ValueError("Claim re-observations carry no Procedure-run coordinates")
+        return
+    if event_kind == "capture_erasure" or journal_family == CAPTURE_ERASURE_JOURNAL_FAMILY:
+        # An erasure names the Capture and its destroyed bodies in its payload;
+        # it is evidence-plane state, never a step of any run.
+        if (
+            event_kind != "capture_erasure"
+            or journal_family != CAPTURE_ERASURE_JOURNAL_FAMILY
+            or any(
+                value is not None
+                for value in (
+                    procedure_artifact_digest,
+                    run_id,
+                    line_spec_digest,
+                    occurrence_id,
+                    attempt,
+                    admission_binding_digest,
+                )
+            )
+        ):
+            raise ValueError("Capture erasures carry no Procedure-run coordinates")
         return
     if journal_family == RESOLUTION_JOURNAL_FAMILY:
         if event_kind not in {
@@ -831,6 +854,7 @@ __all__ = [
     "QUERY_RECEIPT_EVENT_KIND",
     "QUERY_RECEIPT_JOURNAL_FAMILY",
     "LINE_INBOX_JOURNAL_FAMILY",
+    "CAPTURE_ERASURE_JOURNAL_FAMILY",
     "CLAIM_REOBSERVATION_JOURNAL_FAMILY",
     "REGISTERED_JOURNAL_FAMILIES",
     "StoredProcedureJournalRecordV1",

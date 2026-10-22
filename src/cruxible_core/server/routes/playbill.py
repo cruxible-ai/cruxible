@@ -14,6 +14,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
 )
+from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.change_control import ChangeControlRequest
 from cruxible_client.contracts.claim_attestations import (
@@ -605,6 +606,13 @@ def activate_proposal(
 @router.post("/{instance_id}/captures/read", response_model=CaptureRead)
 def read_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead:
     return playbill_api.playbill_read_capture(resolve_server_instance_id(instance_id), request)
+
+
+@router.post("/{instance_id}/captures/erase", response_model=CaptureEraseResult)
+def erase_capture(instance_id: str, request: CaptureEraseRequest) -> CaptureEraseResult:
+    """Erase one Capture's retained body; previews unless committed with ``at``."""
+
+    return playbill_api.playbill_erase_capture(resolve_server_instance_id(instance_id), request)
 
 
 @router.get(

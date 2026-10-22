@@ -19,6 +19,15 @@ corrupt is recorded damaged, so every read at a later position answers it
 absent and the next part's Claims citing it re-derive as not replayable; one
 found whole again is recorded present.
 
+A body erased under its contract's erasure rule (``capture erase``) is no
+defect either: the erasure journal says who erased it and why. The worker
+follows that journal like the generations, checking each erased Capture (and
+any cited Capture holding the same bytes) once, and records the live Claims
+whose every cited Capture, their own words aside, now has an erased body
+(``erased_claims``); ``next`` lists each as ``claim_evidence_erased``. A
+generation that re-cites such a Claim re-checks its Captures, so the row
+follows the Claim, not the erasure.
+
 Retention is evaluated at the generation or trigger event's recorded instant,
 never the worker's clock. The findings are a disposable projection of the
 store's current state: deleting them replays retained sweep events. Nothing here is governed, so the
@@ -54,6 +63,13 @@ from cruxible_core.consumers.protocol import (
     ConsumerWork,
 )
 from cruxible_core.consumers.state import DisposableState
+from cruxible_core.evidence.capture_erasures import (
+    CaptureErasureStore,
+    citing_live_claims,
+    claims_left_without_evidence,
+    erasure_journal_present,
+    evidence_captures,
+)
 from cruxible_core.triggers.journal import trigger_events
 
 #: The internal action this part performs; its registry entry names this part.
@@ -71,7 +87,7 @@ CREATE TABLE IF NOT EXISTS progress (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  generation INTEGER NOT NULL, sweep_sequence INTEGER NOT NULL DEFAULT 0,
  sweep_after TEXT, sweep_completed_at TEXT,
- last_error TEXT, last_error_at TEXT
+ last_error TEXT, last_error_at TEXT, erasure_sequence INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE TABLE IF NOT EXISTS pending (
  capture_digest TEXT PRIMARY KEY, evaluation_time TEXT NOT NULL
@@ -87,6 +103,11 @@ CREATE TABLE IF NOT EXISTS findings (
  object_digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('missing','corrupt')),
  checked_at TEXT NOT NULL, PRIMARY KEY(capture_digest, part)
 ) STRICT;
+CREATE TABLE IF NOT EXISTS erased_claims (
+ claim_identity TEXT NOT NULL, capture_digest TEXT NOT NULL, checked_by TEXT NOT NULL,
+ checked_at TEXT NOT NULL, PRIMARY KEY(claim_identity, capture_digest)
+) STRICT;
+CREATE INDEX IF NOT EXISTS erased_claims_by_check ON erased_claims(checked_by);
 """
 _STATE = DisposableState("next/evidence", _SCHEMA)
 
@@ -119,6 +140,38 @@ def evidence_findings(instance: Any) -> tuple[EvidenceFinding, ...]:
             checked_at=_instant(row[4]),
         )
         for row in rows
+    )
+
+
+@dataclass(frozen=True)
+class ErasedClaim:
+    """A live Claim whose every cited Capture, its own words aside, has an erased body."""
+
+    claim_identity: str
+    capture_digests: tuple[str, ...]
+    checked_at: datetime
+
+
+def erased_claims(instance: Any) -> tuple[ErasedClaim, ...]:
+    """The Claims the worker last found left without retained evidence; empty before it ran."""
+
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return ()
+        rows = connection.execute(
+            "SELECT claim_identity,capture_digest,checked_at FROM erased_claims "
+            "ORDER BY claim_identity,capture_digest"
+        ).fetchall()
+    grouped: dict[str, tuple[list[str], str]] = {}
+    for claim, capture, checked in rows:
+        captures, latest = grouped.setdefault(str(claim), ([], str(checked)))
+        captures.append(str(capture))
+        grouped[str(claim)] = (captures, max(latest, str(checked)))
+    return tuple(
+        ErasedClaim(
+            claim_identity=claim, capture_digests=tuple(captures), checked_at=_instant(checked)
+        )
+        for claim, (captures, checked) in grouped.items()
     )
 
 
@@ -224,6 +277,7 @@ def _absence_permitted(
 
 class EvidencePart:
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
+        self._follow_erasures(instance)
         with instance.accepted_history_reader() as history:
             head = history.sequence
             with _STATE.open(instance) as connection:
@@ -261,7 +315,56 @@ class EvidencePart:
                 "DO UPDATE SET evaluation_time=excluded.evaluation_time",
                 ((digest, format_datetime(evaluated_at)) for digest in captures),
             )
+            # A changed Claim answers again from the Captures it cites now: those
+            # still erased re-add its rows when they are checked (one indexed
+            # delete per changed Claim).
+            connection.executemany(
+                "DELETE FROM erased_claims WHERE claim_identity=?",
+                ((identity,) for identity in claims),
+            )
             connection.execute("UPDATE progress SET generation=?", (through,))
+
+    def _follow_erasures(self, instance: Any) -> None:
+        """Queue each newly erased Capture, and every cited one holding the same bytes.
+
+        Follows the erasure journal from this part's cursor: one record per
+        erasure, never a walk of the Captures. A part that has not started yet
+        leaves it to the first pass (which starts this cursor at the beginning).
+        """
+
+        if not erasure_journal_present(instance):
+            return
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            row = connection.execute("SELECT erasure_sequence FROM progress").fetchone()
+        if row is None:
+            return
+        erasures = CaptureErasureStore(instance)
+        records = erasures.records_after(int(row[0]), limit=CHECK_BATCH)
+        if not records:
+            return
+        queued: dict[str, str] = {}
+        with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+            connection = projection.typed.connection
+            for _sequence, record in records:
+                at = str(format_datetime(record.erased_at))
+                queued[record.capture_digest] = at
+                for (holder,) in connection.execute(
+                    "SELECT capture_digest FROM captures INDEXED BY captures_by_commitment "
+                    "WHERE evidence_commitment_digest IN ("
+                    + ",".join("?" for _ in record.body_digests)
+                    + ")",
+                    record.body_digests,
+                ):
+                    queued.setdefault(str(holder), at)
+        with _STATE.open(instance) as connection:
+            assert connection is not None
+            connection.executemany(
+                "INSERT INTO pending VALUES (?,?) ON CONFLICT(capture_digest) "
+                "DO UPDATE SET evaluation_time=excluded.evaluation_time",
+                queued.items(),
+            )
+            connection.execute("UPDATE progress SET erasure_sequence=?", (records[-1][0],))
 
     def due(self, instance: Any, *, now: datetime) -> Iterable[ConsumerWork]:
         with _STATE.open(instance) as connection:
@@ -344,6 +447,8 @@ class EvidencePart:
         store = instance.body_store()
         coordinate = instance.accepted_coordinate()
         observed: list[tuple[str, str, str, str]] = []
+        erased: list[tuple[str, str, str]] = []
+        any_erasure = erasure_journal_present(instance)
         with instance.bind_accepted_projection(coordinate) as projection:
             for digest in digests:
                 envelope_state = store.availability(digest)
@@ -369,10 +474,25 @@ class EvidencePart:
                     ),
                 ]
                 reported = False
-                for body in dict.fromkeys(bodies):
+                states = {body: store.availability(body) for body in dict.fromkeys(bodies)}
+                # An erased body is the erasure journal's record, not damage.
+                records = (
+                    CaptureErasureStore(instance).for_bodies(
+                        tuple(body for body, state in states.items() if state == "missing")
+                    )
+                    if any_erasure
+                    else {}
+                )
+                if records:
+                    erased.extend(
+                        (claim, cited, digest)
+                        for claim, cited in _left_without_evidence(instance, projection, digest)
+                    )
+                for body, body_state in states.items():
                     # Hashing it records a damaged (or repaired) body in the landing
                     # log, so the Claims citing it re-derive as not replayable.
-                    body_state = store.availability(body)
+                    if body in records:
+                        continue
                     if not reported and (
                         body_state == "corrupt"
                         or (
@@ -400,6 +520,14 @@ class EvidencePart:
             connection.executemany(
                 "INSERT INTO findings VALUES (?,?,?,?,?)",
                 ((*finding, format_datetime(now)) for finding in observed),
+            )
+            # Each checked Capture answers for the rows its check found.
+            connection.executemany(
+                "DELETE FROM erased_claims WHERE checked_by=?", ((digest,) for digest in digests)
+            )
+            connection.executemany(
+                "INSERT OR REPLACE INTO erased_claims VALUES (?,?,?,?)",
+                ((*row, format_datetime(now)) for row in erased),
             )
 
     def health(self, instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
@@ -449,6 +577,22 @@ class EvidencePart:
                 ),
             ),
         )
+
+
+def _left_without_evidence(
+    instance: Any, projection: Any, capture_digest: str
+) -> list[tuple[str, str]]:
+    """(Claim, erased Capture) for each live Claim citing this one that it leaves bare.
+
+    The Claims citing it (one indexed range), each with its own citations: the
+    work grows with this Capture's citations, never with the instance.
+    """
+
+    connection = projection.typed.connection
+    claims = claims_left_without_evidence(
+        instance, connection, citing_live_claims(connection, capture_digest)
+    )
+    return [(claim, cited) for claim in claims for cited in evidence_captures(connection, claim)]
 
 
 _PART = EvidencePart()
