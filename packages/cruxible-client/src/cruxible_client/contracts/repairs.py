@@ -106,6 +106,9 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     # Items a Line posted for judgment: read them, then ack, dismiss or link each.
     "line_inbox_unread": "judge_the_lines_unread_inbox_items",
     "evidence_unavailable": "restore_the_capture_from_backup_or_recapture_and_recite_its_claims",
+    # A Claim whose cited Captures' bodies were erased moves onto a fresh
+    # observation by a re-bind; revising or retiring it carries the erased ones.
+    "claim_evidence_erased": "rebind_onto_a_fresh_capture_under_the_same_contract",
     # The row names `settle RSC-...`; the daemon resolves the exact contract and
     # bound window, and which accepted observation settles it is the settler's call.
     "prediction_settleable": "settle_with_the_claim_id_of_an_accepted_observation_in_its_window",

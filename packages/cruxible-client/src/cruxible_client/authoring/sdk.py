@@ -2701,6 +2701,10 @@ class Cruxible:
         erased. Only a contract that authorizes erasure allows it. It cannot be
         undone: the default previews (``status="would_erase"``); commit with
         ``dry_run=False, at=result.coordinate.digest``.
+
+        Next: ``cx.erase_capture(capture, because=..., dry_run=False,
+        at=preview.coordinate.digest)``; then ``cx.rebind(claim, capture=fresh)`` for
+        each Claim in ``result.left_without_evidence``.
         """
         result = self._client.erase_capture(
             self._instance_id,

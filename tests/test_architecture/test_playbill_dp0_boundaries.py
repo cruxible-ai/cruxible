@@ -389,6 +389,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "submit_authoring",
         "submit_authoring_intent",
         "read_capture",
+        "erase_capture",
         "file_context",
         "check_file_bundle",
         "propose_file_bundle",
