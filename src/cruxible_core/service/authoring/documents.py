@@ -411,9 +411,16 @@ def service_submit_playbill_approval(
     instance.require_writable()
     proposal, candidate = _candidate_for_proposal(instance, proposal_id)
     if proposal.evaluation.evaluated_base_oid != instance.accepted_coordinate().git_oid:
-        recompiled = _recompile_for_review(instance, proposal)
+        recompiled = _recompile_for_review(
+            instance, proposal, approver=proposal.admission.actor_id != authenticated_submitter
+        )
         if recompiled is not None:
-            if recompiled.status == "ready_to_activate" and activate_when_complete and may_activate:
+            if (
+                recompiled.status == "ready_to_activate"
+                and recompiled.proposal_id is not None
+                and activate_when_complete
+                and may_activate
+            ):
                 return service_activate_playbill_proposal(
                     instance,
                     proposal_id=recompiled.proposal_id,
@@ -739,6 +746,8 @@ def _activate_candidate(
         recompiled = _recompile_for_review(instance, proposal)
         if recompiled is None:
             raise ProposalStale(proposal_id)
+        if recompiled.proposal_id is None:
+            return recompiled  # already live at the head: answered, nothing to activate
         if recompiled.status == "pending_review" and mandate_digest is None:
             return recompiled
         # An ordinary no-approval candidate can land in this same call. The
@@ -769,8 +778,8 @@ def _activate_candidate(
         # Settlement would refuse a moved head as an integrity failure; a proposal
         # that is merely stale gets the repair its author can run.
         if (
-            service_playbill_proposal_status(instance, proposal_id=proposal_id).terminal_reason
-            == "stale"
+            service_playbill_proposal_status(instance, proposal_id=proposal_id).status
+            == "awaiting_readmit"
         ):
             raise ProposalStale(proposal_id)
         base = instance.coordinate_for_oid(evaluation.evaluated_base_oid)
@@ -855,13 +864,34 @@ def _activate_candidate(
 
 
 def _recompile_for_review(
-    instance: PlaybillInstance, source: ProposalResult
+    instance: PlaybillInstance, source: ProposalResult, *, approver: bool = False
 ) -> ProposalRecompiled | None:
+    """Recompile a stale proposal an approval met; ``approver``: not its author.
+
+    A refused recompilation reaches an approver as ``readmit_refused`` with the
+    repair ``proposal reject``: only the author can make the change again, and
+    a rejection with a reason tells them why. Activation keeps ``ProposalStale``.
+    """
+    from cruxible_core.service.proposals.proposals import readmit_refused
     from cruxible_core.service.proposals.recompile import recompile_proposal
 
-    recompiled = recompile_proposal(instance, source)
+    try:
+        recompiled = recompile_proposal(instance, source)
+    except ProposalStale as exc:
+        if not approver:
+            raise
+        raise readmit_refused(instance, source, exc, approver=True) from exc
     if recompiled is None:
         return None
+    if recompiled.proposal is None:
+        return ProposalRecompiled(
+            status="already_live",
+            source_proposal_id=recompiled.source_proposal_id,
+            members_identical=False,
+            changed_members=recompiled.changed_members,
+            changed_members_truncated=recompiled.changed_members_truncated,
+            accepted_coordinate=recompiled.coordinate,
+        )
     result = recompiled.proposal
     assert isinstance(result, ProposalResult) and result.candidate is not None
     return ProposalRecompiled(

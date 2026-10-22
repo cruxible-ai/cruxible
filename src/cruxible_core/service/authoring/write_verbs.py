@@ -3970,6 +3970,8 @@ def _service_write(
                 raise
             receipt = None
         if isinstance(receipt, ProposalRecompiled):
+            # Only a Procedure's proposal recompiles to already-live; a write's names one.
+            assert receipt.proposal_id is not None
             checked_at = instance.coordinate_for_oid(receipt.accepted_coordinate.git_oid)
             approval = _approval(
                 instance,

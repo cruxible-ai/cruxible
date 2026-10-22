@@ -1997,7 +1997,7 @@ def _proposal_card(
     step: str | None = None
     if entry.status == "open" and entry.verdict == "candidate":
         step = "review"
-    elif entry.terminal_reason == "stale":
+    elif entry.status == "awaiting_readmit":
         step = "readmit"
     return GetProposalCard(
         proposal=resolved.identity,

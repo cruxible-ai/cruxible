@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pydantic import ValidationError
 
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
-from cruxible_client.contracts.errors import CruxibleError, ProposalStale
+from cruxible_client.contracts.errors import CruxibleError, ProposalStale, ReadmitRefusalOrigin
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate
 from cruxible_core.authoring.assignment_records import procedure_operation_id
 from cruxible_core.exhaust.payloads import UnavailablePayload, read_payload
@@ -37,10 +37,14 @@ from cruxible_core.service.proposals.recompile import RecompileInput
 from cruxible_core.storage.cas import BodyAccessContext
 
 
-def procedure_input(
-    instance: PlaybillInstance, origin: ProposalResult, head: AcceptedCoordinate
-) -> RecompileInput:
-    """Locate by operation/member then indexed run/event, bounded by this run's terminals."""
+def _retained_run(
+    instance: PlaybillInstance, origin: ProposalResult
+) -> tuple[ProcedureRunAdmissionV5, Mapping[str, object]]:
+    """The run admission and prepared terminal payload a Procedure proposal came from.
+
+    Located by operation/member, then by indexed run and event: bounded by this
+    one run's records.
+    """
     source_id = origin.admission.proposal_id
     operation = origin.admission.procedure_operation
     assert operation is not None
@@ -92,9 +96,43 @@ def procedure_input(
             reason="input_unavailable",
             detail="Procedure prepared request or admission is unavailable",
         )
+    return admission, prepared_payload
+
+
+def recompile_origin(
+    instance: PlaybillInstance, origin: ProposalResult
+) -> tuple[ReadmitRefusalOrigin, str | None]:
+    """Where a lowering origin's change came from, for a refused recompilation's repair.
+
+    A Line run names its Line; a direct run its Procedure; anything else is a
+    write. Read only on refusal: one run's records. An unavailable run names no
+    Procedure, and the repair falls back to withdraw.
+    """
+    if origin.admission.procedure_operation is None:
+        return "write", None
+    try:
+        admission, _payload = _retained_run(instance, origin)
+    except ProposalStale:
+        return "procedure", None
+    line = getattr(admission, "line_identity", None)
+    if admission.invocation_origin == "line" and line is not None:
+        return "line", line.name
+    return "procedure", admission.procedure_identity.name
+
+
+def procedure_input(
+    instance: PlaybillInstance, origin: ProposalResult, head: AcceptedCoordinate
+) -> RecompileInput:
+    """Re-lower the retained terminal at ``head``; never invokes a provider."""
+    source_id = origin.admission.proposal_id
+    operation = origin.admission.procedure_operation
+    assert operation is not None
+    admission, prepared_payload = _retained_run(instance, origin)
     try:
         request = TerminalEgressRequestV2.model_validate(prepared_payload.get("request"))
-        journaled = PreparedTerminalEgressV1.model_validate(prepared_payload.get("prepared"))
+        # The journaled preparation is only shape-checked: the decisions it
+        # records were made at the old head and are decided again at this one.
+        PreparedTerminalEgressV1.model_validate(prepared_payload.get("prepared"))
     except ValidationError as exc:
         raise ProposalStale(
             source_id, reason="input_unavailable", detail="Invalid retained Procedure request"
@@ -149,7 +187,7 @@ def procedure_input(
             instance=instance, accepted_mandates=dict(mandates), delegation=delegation
         )
         prepared = sink.prepare_recompilation(
-            request=request, admission=admission, evidence=evidence, journaled=journaled
+            request=request, admission=admission, evidence=evidence, source_proposal_id=source_id
         )
         request = request.model_copy(
             update={
@@ -159,8 +197,9 @@ def procedure_input(
         )
         # A delegated settle cannot silently change its bound grant or become
         # an ordinary fallback. Settlement rechecks its condition at the head.
+        # Nothing left to settle (every change already live) binds no grant.
         settle = origin.admission.settle_submission
-        if settle is not None and settle.mode == "delegated":
+        if settle is not None and settle.mode == "delegated" and prepared.prepared.target_paths:
             if request.procedure_mandate_digest != settle.mandate_digest:
                 raise ProposalDeliveryRefused(
                     "settle_mandate_missing",
@@ -193,6 +232,10 @@ def procedure_input(
     claim_outputs = {
         path: content for path, content in prepared.changed_members if path.startswith("claims/")
     }
+    recompiled_request = request
+
+    def published(successor_id: str | None) -> None:
+        sink.after_recompiled(recompiled_request, prepared, successor_id=successor_id)
 
     def authorize(
         current: AcceptedProjectionCoordinate, _tree: Mapping[str, bytes]
@@ -211,4 +254,6 @@ def procedure_input(
         creations=prepared.creations,
         authorize=authorize,
         settle_submission=origin.admission.settle_submission,
+        already_live=not prepared.prepared.target_paths,
+        published=published,
     )

@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import ProposalDigest
@@ -18,6 +18,7 @@ from cruxible_client.contracts.errors import (
     ProposalNotFoundError,
     ProposalReadmitAlreadyAccepted,
     ProposalReadmitNotStale,
+    ProposalReadmitRefused,
     ProposalReadmitRequiresResubmission,
     ProposalSelectorAmbiguousError,
     ProposalStale,
@@ -47,9 +48,14 @@ from cruxible_core.service.list_pages import (
     page_after_boundary,
 )
 
-ProposalInventoryStatus = Literal["open", "settled", "incomplete"]
+#: ``awaiting_readmit``: a candidate evaluated against a state accepted head has
+#: since moved past. Nothing settled it: it waits for its author to readmit it
+#: (recompile at the head) or withdraw it, and no approval can settle it as it
+#: stands. ``open`` candidates sit on the head and wait for review or activation.
+ProposalInventoryStatus = Literal["open", "awaiting_readmit", "settled", "incomplete"]
 ProposalIncompleteReason = Literal["missing_admission", "missing_evaluation", "missing_candidate"]
-ProposalTerminalReason = Literal["accepted", "refused", "stale", "withdrawn", "rejected"]
+ProposalTerminalReason = Literal["accepted", "refused", "withdrawn", "rejected"]
+_UNSETTLED_STATUSES = frozenset({"open", "awaiting_readmit"})
 #: Where the actor ID came from. ``runtime_credential`` is the principal the
 #: bearer credential is bound to; ``unbound_credential`` is a credential that
 #: acts as no principal (no actor ID); ``principal_claim`` is an auth-off
@@ -92,8 +98,8 @@ class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
             for value in (self.actor_id, self.target_ref, self.admitted_at, self.verdict)
         ):
             raise ValueError("complete proposal requires admission and evaluation evidence")
-        if (self.status == "open") != (self.terminal_reason is None):
-            raise ValueError("open proposal status and terminal reason disagree")
+        if (self.status in _UNSETTLED_STATUSES) != (self.terminal_reason is None):
+            raise ValueError("unsettled proposal status and terminal reason disagree")
         if self.verdict == "refused" and self.terminal_reason != "refused":
             raise ValueError("refused evaluation must be a settled refusal")
         return self
@@ -110,9 +116,30 @@ class PlaybillProposalListV1(_StrictOperationalReadModel):
 
 class PlaybillProposalReadmitResultV1(_StrictOperationalReadModel):
     tag: Literal["playbill-proposal-readmit-result-v1"] = "playbill-proposal-readmit-result-v1"
+    #: ``readmitted``: ``proposal`` is the readmission (or its preview).
+    #: ``already_live``: every change the stale proposal carried is live at the
+    #: head, so nothing was proposed: the source is closed as answered (a
+    #: preview closes nothing) and ``proposal`` is absent.
+    status: Literal["readmitted", "already_live"] = Field(
+        default="readmitted", exclude_if=lambda value: value == "readmitted"
+    )
     source_proposal_id: str
     operation_digest: str
-    proposal: ProposalInspection
+    proposal: ProposalInspection | None
+    #: The accepted coordinate after the call (``already_live`` only; a
+    #: readmission's own inspection carries it otherwise).
+    accepted_coordinate: AcceptedCoordinate | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def _outcome_shape(self) -> "PlaybillProposalReadmitResultV1":
+        answered = self.status == "already_live"
+        if answered != (self.proposal is None) or answered != (
+            self.accepted_coordinate is not None
+        ):
+            raise ValueError("a readmission names its proposal exactly when one was proposed")
+        return self
 
 
 class PlaybillProposalWithdrawResultV1(_StrictOperationalReadModel):
@@ -389,6 +416,10 @@ def _proposal_entries(
         ):
             missing.append("missing_candidate")
         reason = row["reason"]
+        # A moved base settles nothing: the candidate awaits its author's readmit.
+        awaiting_readmit = reason == "stale"
+        if awaiting_readmit:
+            reason = None
         if reason == "withdrawn":
             # One closing record carries both endings; its kind tells them apart.
             closed = evidence.read_withdrawal(row["proposal_id"])
@@ -404,7 +435,15 @@ def _proposal_entries(
                 else None,
                 verdict=None if row["evaluation_status"] == "missing" else row["evaluation_status"],
                 candidate_digest=row["candidate_digest"],
-                status="incomplete" if missing else "open" if reason is None else "settled",
+                status=(
+                    "incomplete"
+                    if missing
+                    else "awaiting_readmit"
+                    if awaiting_readmit
+                    else "open"
+                    if reason is None
+                    else "settled"
+                ),
                 terminal_reason=None if missing else reason,
                 incomplete_reasons=tuple(missing),
                 withdrawal_present=row["withdrawal_path"] is not None,
@@ -607,7 +646,7 @@ def stale_unreadmitted_proposals(
 ) -> tuple[StaleProposal, ...]:
     """The inventory's stale proposals nobody has withdrawn or readmitted.
 
-    Exactly `proposal list`'s `stale` terminal reason -- a candidate neither
+    Exactly `proposal list`'s `awaiting_readmit` status -- a candidate neither
     refused, accepted nor withdrawn whose parent semantic root is not the
     coordinate's -- read through the open-parent locator rather than the whole
     inventory; ``actor_id`` keeps only that author's. A proposal readmitted at
@@ -949,7 +988,7 @@ def _readmit(
         raise ProposalNotFoundError(proposal_id)
     if source_status.terminal_reason == "accepted":
         raise ProposalReadmitAlreadyAccepted(proposal_id)
-    if source_status.terminal_reason != "stale":
+    if source_status.status != "awaiting_readmit":
         raise ProposalReadmitNotStale(
             proposal_id, status=source_status.terminal_reason or source_status.status
         )
@@ -972,11 +1011,19 @@ def _readmit(
                 f"Pinned slot membership changed ({exc.reason}); {exc.detail}. "
                 "Run the write again at the current head."
             ) from exc
-        raise
+        raise readmit_refused(instance, source, exc) from exc
     if recompiled is not None:
         link = ProposalReadmissionLink(
             source_proposal_id=proposal_id, coordinate=recompiled.coordinate
         )
+        if recompiled.proposal is None:
+            return PlaybillProposalReadmitResultV1(
+                status="already_live",
+                source_proposal_id=proposal_id,
+                operation_digest=link.operation_digest,
+                proposal=None,
+                accepted_coordinate=recompiled.coordinate,
+            )
         return PlaybillProposalReadmitResultV1(
             source_proposal_id=proposal_id,
             operation_digest=link.operation_digest,
@@ -1068,6 +1115,41 @@ def _readmit(
     )
 
 
+def readmit_refused(
+    instance: PlaybillInstance,
+    source: ProposalResult,
+    refusal: ProposalStale,
+    *,
+    approver: bool = False,
+) -> ProposalReadmitRefused:
+    """A refused recompilation, with the real exit named by where the change came from.
+
+    Readmitting again would refuse the same way, so the repair is never
+    readmit: a Line's next run, the Procedure run again, the write made again,
+    or (always) withdraw. ``approver``: the caller is reviewing another actor's
+    proposal, whose exit is to reject it with a reason. One run's records are
+    read to name the origin, on this refusal path only.
+    """
+    from cruxible_core.service.proposals.procedure_recompile import recompile_origin
+    from cruxible_core.service.proposals.recompile import lowering_origin
+
+    if isinstance(refusal, ProposalReadmitRefused):
+        return refusal
+    try:
+        origin = lowering_origin(instance, source)
+    except ProposalStale:
+        origin = None
+    kind, name = ("procedure", None) if origin is None else recompile_origin(instance, origin)
+    return ProposalReadmitRefused(
+        source.admission.proposal_id,
+        reason=refusal.reason or "lowering_refused",
+        detail=refusal.detail,
+        origin=kind,
+        origin_name=name,
+        approver=approver,
+    )
+
+
 def service_withdraw_playbill_proposal(
     instance: PlaybillInstance,
     *,
@@ -1092,9 +1174,9 @@ def service_withdraw_playbill_proposal(
     settlement door refuses a proposal that carries one.
 
     Only an OPEN proposal is withdrawable. A settled one already has its terminal
-    reason -- accepted, refused, or stale -- and overwriting that with a
-    statement of intent would lose the outcome; a stale proposal that should not
-    be readmitted is the one exception, since staleness is not an ending.
+    reason -- accepted or refused -- and overwriting that with a statement of
+    intent would lose the outcome. A proposal awaiting readmit (its base moved)
+    has no ending yet, so it may be withdrawn instead of readmitted.
 
     WHO may withdraw. Ordinarily the proposal's own actor, matched on
     `admission.actor_id` -- which is the runtime credential's LABEL, because a
@@ -1273,7 +1355,7 @@ def _close_once(
     if entry is None:  # pragma: no cover - a read admission always lists
         raise ProposalNotFoundError(record.proposal_id)
     verb = "withdrawn" if record.kind == "withdrawn" else "rejected"
-    if entry.status != "open" and entry.terminal_reason != "stale":
+    if entry.status not in _UNSETTLED_STATUSES:
         raise ProposalAdmissionError(
             f"only an open or stale proposal may be {verb}; this one is {entry.terminal_reason}"
         )
@@ -1342,7 +1424,7 @@ def _end_closed_intent(instance: PlaybillInstance, proposal_id: str) -> None:
 
 
 def proposal_still_open(instance: PlaybillInstance, proposal_id: str) -> bool:
-    """Whether a proposal is open or stale: not yet accepted, refused, or closed.
+    """Whether a proposal is open or awaiting readmit: not yet accepted, refused, or closed.
 
     One keyed inventory row; a stale proposal (its base moved) is still open
     work, which only a close or a readmission ends.
@@ -1361,7 +1443,7 @@ def proposal_still_open(instance: PlaybillInstance, proposal_id: str) -> bool:
         ),
         None,
     )
-    return entry is not None and (entry.status == "open" or entry.terminal_reason == "stale")
+    return entry is not None and entry.status in _UNSETTLED_STATUSES
 
 
 def service_supersede_line_proposal(

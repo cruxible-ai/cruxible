@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from cruxible_client._error_base import CoreError, printable
 
@@ -398,8 +398,7 @@ class ProposalReadmitNotStale(ProposalAdmissionError):
         self.proposal_id = proposal_id
         self.status = status
         repair = (
-            "it can still be activated where it stands; run `cruxible proposal "
-            f"status {proposal_id}`"
+            f"it can still be activated where it stands; run `cruxible get {proposal_id}`"
             if status == "open"
             else "author the change again as a new proposal"
         )
@@ -414,7 +413,9 @@ class ProposalStale(ProposalAdmissionError):
 
     Retained lowering inputs recompile at head on explicit operations. A
     refusal leaves this proposal stale with a typed reason and readmit/withdraw
-    repair. Exact-byte origins keep ordinary readmission.
+    repair; a refused readmission itself is ``ProposalReadmitRefused``, whose
+    repair is the origin's own exit. Exact-byte origins keep ordinary
+    readmission.
     """
 
     error_code = "cruxible.proposal.stale"
@@ -435,6 +436,82 @@ class ProposalStale(ProposalAdmissionError):
             f"{why}, so it cannot be activated as it stands. Run `cruxible proposal readmit "
             f"{proposal_id}` to rebase it onto the current head as a new proposal to review, "
             f"or `cruxible proposal withdraw {proposal_id}`."
+        )
+
+
+ReadmitRefusalOrigin = Literal["line", "procedure", "write"]
+
+
+class ProposalReadmitRefused(ProposalStale):
+    """Recompiling a stale proposal at the head refused: readmitting it again cannot help.
+
+    The proposal stays stale (nothing is dropped), and the repair names the
+    real exit by where its change came from: a Line's next run proposes the
+    change afresh and supersedes it (``line run``), a Procedure is run again at
+    the head (``procedure run``), a write is made again at the head. The author
+    may always ``proposal withdraw`` it instead. An approver, who may not
+    readmit another actor's proposal, is pointed at ``proposal reject`` with a
+    reason, so the author learns of it.
+    """
+
+    error_code = "cruxible.proposal.readmit_refused"
+
+    def __init__(
+        self,
+        proposal_id: str,
+        *,
+        reason: str,
+        detail: str | None = None,
+        origin: ReadmitRefusalOrigin,
+        origin_name: str | None = None,
+        approver: bool = False,
+    ) -> None:
+        from cruxible_client.contracts.repairs import RepairOperation
+
+        self.proposal_id = proposal_id
+        self.reason = reason
+        self.detail = detail
+        self.origin = origin
+        self.origin_name = origin_name
+        said = (detail or "").strip().rstrip(".").strip()
+        why = f"{reason}: {said}" if said and said != reason else reason
+        withdraw = f"`cruxible proposal withdraw {proposal_id} --reason TEXT`"
+        if approver:
+            self.repair = RepairOperation(
+                operation="cruxible.proposal.reject", arguments={"proposal_id": proposal_id}
+            )
+            exit_ = (
+                "Only its author can make the change again; reject it with "
+                f"`cruxible proposal reject {proposal_id} --reason TEXT` so the author learns why."
+            )
+        elif origin == "line" and origin_name is not None:
+            self.repair = RepairOperation(
+                operation="cruxible.line.run", arguments={"line": origin_name}
+            )
+            exit_ = (
+                f"Run `cruxible line run {origin_name}`: its next run proposes the change at the "
+                f"head and supersedes this one. Or {withdraw}."
+            )
+        elif origin in {"line", "procedure"} and origin_name is not None:
+            self.repair = RepairOperation(
+                operation="cruxible.procedure.run", arguments={"procedure": origin_name}
+            )
+            exit_ = (
+                f"Run `cruxible procedure run {origin_name} INPUT` again at the head, "
+                f"or {withdraw}."
+            )
+        elif origin == "write":
+            self.repair = RepairOperation(operation="cruxible.write")
+            exit_ = f"Make the write again at the current head, or {withdraw}."
+        else:
+            self.repair = RepairOperation(
+                operation="cruxible.proposal.withdraw", arguments={"proposal_id": proposal_id}
+            )
+            exit_ = f"Its retained run input is unavailable: {withdraw}, and run it again."
+        ProposalAdmissionError.__init__(
+            self,
+            f"Proposal {proposal_id} cannot be readmitted: recompiling it at the current head "
+            f"refused ({why}), so readmitting it again would refuse the same way. {exit_}",
         )
 
 
