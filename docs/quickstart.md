@@ -104,13 +104,18 @@ crates.io and the rest, each named by its package URL (`pkg:pypi/…`).
 
 Write one into the repository with a generator for your ecosystem:
 
-<!-- coordinator: check the syft and uv lines -->
 ~~~bash
 mkdir -p sboms
-syft dir:. -o cyclonedx-json > sboms/app.cdx.json                         # any ecosystem
-uv export --format cyclonedx1.5 > sboms/app.cdx.json                      # a uv project
 uvx --from cyclonedx-bom cyclonedx-py requirements requirements.txt \
     --pyproject pyproject.toml --of JSON -o sboms/app.cdx.json            # a requirements.txt
+~~~
+
+For other ecosystems, use a general-purpose generator:
+
+<!-- maintainer: check the syft and uv lines (not run here) -->
+~~~bash
+syft dir:. -o cyclonedx-json > sboms/app.cdx.json                         # any ecosystem
+uv export --format cyclonedx1.5 > sboms/app.cdx.json                      # a uv project
 ~~~
 
 [cdxgen](https://github.com/CycloneDX/cdxgen) is another good option. The
