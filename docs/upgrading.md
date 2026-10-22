@@ -205,7 +205,10 @@ accepted history.
 
 You only need the upgrade to use what the new revision adds, such as new
 artifact format versions. Until then the daemon keeps serving the instance on
-its current compiler and refuses authoring that needs the new revision.
+its current compiler and refuses authoring that needs the new revision. For
+example, re-binding a drifted Claim to new text (`cruxible rebind`) needs
+compiler revision 35 (`claim-rebind-v1`): an instance created before it
+adopts it with `cruxible compiler upgrade`.
 
 ## Compiler facet states
 

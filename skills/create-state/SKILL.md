@@ -46,18 +46,16 @@ states, no numbers in titles, no reserved field names.
 ## 3. Define the vocabulary
 
 Follow [Evolving your
-vocabulary](https://docs.cruxible.ai/evolving-your-vocabulary/): add a field
-from `cruxible claim-type propose --template`, and a keyed kind with a
-`subject_kind` member beside its key ClaimType. Give each field a
-`description`, a `default_role`, and evidence rules that admit what will back
-its values for that role ([Evidence and
-admission](https://docs.cruxible.ai/evidence-and-admission/)).
-
-<!-- update: first-run batch -->
-Today a field definition must be complete (start from the template), a new
-field stops at a proposal (`cruxible proposal approve PROPOSAL_ID`), and a key
-ClaimType needs a `canonical_form`. Land one definition before proposing the
-next, or put them in one change set, so none goes stale.
+vocabulary](https://docs.cruxible.ai/evolving-your-vocabulary/): a field needs
+only its name, the kinds it applies to, what it holds, and one value or many
+(`cruxible claim-type propose --input FIELD.yaml --name NAME`); a keyed kind
+needs its key field (with a `canonical_form`) and then a `subject_kind`
+member. Give each field a `description`, the roles writers use, and evidence
+rules that admit what will back its values for that role ([Evidence and
+admission](https://docs.cruxible.ai/evidence-and-admission/#writing-a-fields-rules)).
+Read the lints each proposal prints (`permitted_role_unadmitted`,
+`field_name_reserved`): each names a mistake that would bite later. Values
+are integers, never floats.
 
 ## 4. Seed the values
 

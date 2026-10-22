@@ -136,12 +136,6 @@ query_definition:
     fields:
       - {name: title, value: {kind: claim_value, binding: part, predicate: catalog.part.title}}
   result_binding: part
-  result_shape: subject
-  result_cardinality: many
-  dedupe: subject
-  evaluation_policy: {visible_verdicts: [supported], visible_currency: [current], conflict_behavior: surface_conflicts}
-  default_budgets: {max_results: 100, max_traversal_depth: 0}
-  maximum_budgets: {max_results: 1000, max_traversal_depth: 0}
 ~~~
 
 ~~~text
@@ -155,12 +149,11 @@ catalog.part/bp-2210  Ceramic front brake pads  -
 ~~~
 
 The `entry` names the kind the rows are about, `where` filters them (here
-against the `category` parameter), `projection` picks the columns, and the
-last six lines set what a row is, which values are visible, and how many rows
-a run may return. Those six are required today even though the values above
-are the usual ones; they are expected to get defaults. A query that follows edges adds a `traversal` and raises
-`max_traversal_depth`; `cruxible authoring example query-claims-by-type`
-prints a fuller template.
+against the `category` parameter), `projection` picks the columns, and
+`result_binding` says which binding a row is. Everything else takes the usual
+defaults: one row per Subject, supported and current values only, and a
+bounded number of rows. A query that follows edges adds a `traversal`;
+`cruxible authoring example query-claims-by-type` prints a fuller template.
 
 ## Definitions are queryable too
 
@@ -175,9 +168,6 @@ kind              rule  keys                   uniqueness  description          
 catalog.part      keys  catalog.part.name      unique      A part in the catalog, named by its part number.  6         -    live
 catalog.vehicle   keys  catalog.vehicle.name   unique      A vehicle, named make-model-year.                 1         -    live
 ~~~
-
-When you `--select` columns of a definition, include its name column
-(`predicate` for ClaimType), or the rows won't say which definition they are.
 
 ## Reading the past
 
@@ -200,15 +190,25 @@ each change with its generation, author and reason:
 $ cruxible get catalog.part/bp-2210 --detail history --field fits
 ...
 fits
-  seq 35  6b7da3aee770  2026-10-21T19:08:13Z  by YOUR_ID  stated  catalog.vehicle/honda-civic-2019  [CLM-66ae…]
+  seq 21  4f0718f3f36e  2026-10-22T02:23:49.600012Z  by YOUR_ID  rebound  catalog.vehicle/honda-civic-2019  (CAP-cc2fb88675a6 -> CAP-30e0aeeecaf5)  [CLM-ef7f11e2…]
       reason: Acme reworded the catalog entry; the fitment still holds.
-  seq 35  6b7da3aee770  2026-10-21T19:08:13Z  by YOUR_ID  retired (superseded)  catalog.vehicle/honda-civic-2019  [CLM-fba5…]
-      reason: Acme reworded the catalog entry; the fitment still holds.
-  ...
+  seq 20  f79763ef6c2a  2026-10-22T02:23:29.942379Z  by YOUR_ID  stated  catalog.vehicle/honda-civic-2019  [CLM-ef7f11e2…]
+      reason: Acme's 2026 catalog lists bp-2210 for the 2019 Civic.
 ~~~
 
-`cruxible since GENERATION` lists every artifact each later generation
-created or retired.
+Here the supplier reworded its catalog line, and the fitment was re-bound to
+the new text: one Claim, two revisions.
+
+`cruxible since GENERATION` lists what each later generation created or
+retired, one line per value:
+
+~~~text
+$ cruxible since 27
+28  create  catalog.part/bp-1142  semantic.alias = bp1142  [CLM-fa381cefb106]
+29  retire  catalog.part/bp1142  title = Front brake pads  [CLM-3b21c9b9f3ee]
+29  retire  catalog.part/bp1142  name = bp1142  [CLM-9436ad1bc0a5]
+29  retire  subject catalog.part/bp1142
+~~~
 
 ## A map: orient
 

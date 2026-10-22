@@ -72,13 +72,15 @@ phone call:
 
 ~~~text
 $ cruxible set catalog.part/bp-2210 price 39 --because "Acme quoted 39 on the phone."
-refused (generation 15, 65a4644294d3)
-cruxible.write.evidence_required (change 0): price declares evidence_requirement 'captured' (…); your own words cannot back it
+refused (generation 30, d80df8c8c768)
+cruxible.write.evidence_required (change 0): price declares evidence_requirement 'captured' (cruxible.foreign-source.quotes); your own words cannot back it
+  nearest: cruxible.foreign-source.quotes
+  repair: Cite a Capture under cruxible.foreign-source.quotes: contract evidence naming it (--evidence-contract), a Capture handle (--capture), or file evidence (--evidence-file PATH#ANCHOR)
 
 $ cruxible set catalog.part/bp-1142 price 42 --because "Acme quote of 2026-10-21." \
     --evidence-file 'quotes/acme-2026-10-21.md#bp-1142 Front brake pads: 42 USD'
-accepted (generation 11, 3a2b5a725645)
-  set catalog.part/bp-1142 price: 42  [CLM-…; verdict supported]
+accepted (generation 31, e005b0166fcf)
+  set catalog.part/bp-1142 price: 42  [CLM-6b8184a5…; verdict supported]
 ~~~
 
 "Captured" rules out your own words, but a passage of a catalogued workspace
@@ -95,7 +97,7 @@ something a run observed.
 Fields are queryable like everything else:
 
 ~~~text
-$ cruxible query ClaimType --where 'name~catalog.part' --select predicate,role,stale_after,captured_required
+$ cruxible query ClaimType --where 'name~catalog.part' --select role,stale_after,captured_required
 predicate              role         stale_after  captured_required
 catalog.part.category  observation  -            false
 catalog.part.fits      observation  -            false
@@ -105,8 +107,44 @@ catalog.part.replaces  observation  -            false
 catalog.part.title     observation  -            false
 ~~~
 
-Defining a field's evidence rules is part of defining the field; see
-[Evolving your vocabulary](evolving-your-vocabulary.md#add-a-field).
+### Writing a field's rules
+
+A field's evidence rules are part of its definition. A field you define with
+no rules is normative and backed by its writer's own words. For anything
+else, name the role and the contracts that back it. A supplier's lead time,
+which must come from a quote and goes stale after 30 days:
+
+~~~yaml
+predicate: catalog.part.lead_time_days
+description: Days from order to delivery, as the supplier quotes it.
+allowed_subject_kinds: [catalog.part]
+object_kind: literal
+literal_schema: {type: integer, minimum: 0}
+cardinality: one
+permitted_roles: [observation]
+evidence_requirement: captured
+evidence_freshness: {stale_after: P30D}
+evidence_admission_policy:
+  rules:
+    - rule_id: supplier-quote
+      claim_roles: [observation]
+      capture_contracts: [CaptureContract:cruxible.foreign-source.quotes]
+      evidence_kinds: [self_asserted]
+      admission: direct
+      subject_binding: exact_claim_subject
+~~~
+
+~~~text
+$ cruxible claim-type propose --input lead-time.yaml --name add-lead-time
+admitted  sha256:5f33eb98…  verdict=candidate
+landed: accepted at f91d19c76229
+~~~
+
+`cruxible.foreign-source.NAME` admits passages of the catalogued file named
+`NAME` (here, the quotes file), and `cruxible.coordinator-self-source-v1`
+admits the writer's own words. Durations are ISO 8601 (`P30D`, `PT12H`).
+[Evolving your vocabulary](evolving-your-vocabulary.md#add-a-field) covers
+fields in general.
 
 ## Verdicts and flags
 
@@ -175,7 +213,7 @@ and any change to the file is reported, even an added line:
 ~~~bash
 cruxible files add returns docs/returns-policy.md --document-id returns-policy \
   --document-kind policy --title "Returns policy" --scope policies
-cruxible files propose --file returns --name returns-policy-v1 --commit
+cruxible files propose --file returns --name returns-policy-v1
 ~~~
 
 ~~~text
@@ -202,9 +240,18 @@ counts toward verdict: no (recorded, not accepted: the verdict reads accepted at
 
 The attestation is recorded and shown on the Claim (`get --detail evidence`
 lists it, with whether it counts and why), and `next` brings the
-contradiction back for review as `claim_contradicting_evidence_available`.
+contradiction back for review:
+
+~~~text
+$ cruxible next
+repair  claim_contradicting_evidence_available  Claim:CLM-ef7f11e2…  next=cruxible.authoring.example
+  repair: cruxible authoring example claim-revision
+  or: cruxible retire CLM-ef7f11e2…
+~~~
+
 The verdict doesn't move on its own: Cruxible shows the disagreement, and a
-person or an agent decides whether to revise or retire the Claim. An
+person or an agent decides whether to revise the Claim, retire it, or leave
+it. An
 attestation counts toward the verdict only when it is accepted citing a
 Capture the Claim admits, or when the field's attestation consequence policy
 says so.

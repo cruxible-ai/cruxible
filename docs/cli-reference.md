@@ -770,7 +770,9 @@ whose caller is not one of the owner principals it names is refused with
 Generates a client-held ordinary key outside the workspace and bootstraps the
 ledger with its public principal record. A missing `--key-dir` is created with
 mode 0700; an existing one must already exclude group and other access. An optional `--reviewer-key-dir` adds a
-second ordinary principal; pair it with `--require-independent-approval` to make
+second ordinary principal, `reviewer`, and writes its settings (`cruxible.env`)
+beside its key, printing the `cruxible context use --principal reviewer` that
+switches to it; pair it with `--require-independent-approval` to make
 one non-creator approval mandatory. Local key directories provide attribution
 and repository hygiene, not a security boundary. Organization review normally
 rides branch protection/CODEOWNERS on the state repository. The optional
@@ -887,8 +889,8 @@ and the daemon schedules background publication after proposal submission,
 approval, activation and withdrawal. Local writes return after durable local
 completion; the publisher combines pending work into exact ref snapshots.
 
-What travels: `refs/heads/main`, whichever of `refs/notes/playbill-gen`,
-`refs/notes/playbill-eval` and `refs/notes/playbill-approval` exist, one branch
+What travels: `refs/heads/main`, whichever of `refs/notes/cruxible-gen`,
+`refs/notes/cruxible-eval` and `refs/notes/cruxible-approval` exist, one branch
 per OPEN proposal under `refs/heads/proposals/`, and `refs/settled/archive` once
 there is retained closed work. Activated, withdrawn and stale review branches
 are removed; their commits and refused admission commits stay reachable through
@@ -1185,11 +1187,13 @@ replaced by a successor naming this instance's current digest, and pins are
 remapped to the digests this instance actually holds. A definition this instance
 holds differently takes the release's version as a successor of its own, and the
 preview says what that does here: `overwrites your edit` (edited since install,
-compared by content, so a reverted edit is no edit), `re-adds a definition you
+compared by content, so a reverted edit is no edit, and a pin that only
+followed a kit definition's own succession is no edit either), `re-adds a definition you
 retired`, `takes over a definition you defined outside the kit`, or `replaces a
 definition the kit depends on`. `--keep IDENTITY` (such as
 `ClaimType:acme.account.seats`, repeatable) and `--keep-local-edits` keep this
-instance's version instead; the receipt records each kept divergence, so a later
+instance's version instead (the preview reads `keep: X (keeps your edit)`, and
+`kit status` lists `kept: X (your edit)`); the receipt records each kept divergence, so a later
 release that leaves that definition as it was does not ask again. Every live
 artifact pinning a replaced definition takes one successor in the same change set,
 carried to the kit's final definitions (a Procedure or Blueprint moves its pins
@@ -1339,10 +1343,18 @@ Read the accepted ClaimTypes with `cruxible orient --section
 claim_types`, one ClaimType with `cruxible get ClaimType:PREDICATE`.
 
 A ClaimType is the governed interface a predicate must satisfy before any Claim
-may state it. `propose --input` accepts a complete `ClaimTypeInputRecord`; ClaimType
-is not part of the authoring coordinator's example vocabulary. `propose
---template` prints a complete literal `project.work_item.status` input with a
-`repo.replace-me` foreign-source evidence rule and does not contact the daemon.
+may state it. `propose --input` takes a `ClaimTypeInputRecord`. A new
+ClaimType states `predicate`, `allowed_subject_kinds`, `object_kind` and
+`cardinality` (and `literal_schema` or `allowed_object_subject_kinds`); every
+other field has a default: `permitted_roles` of `[default_role]` or
+`[normative]`, one own-words evidence rule (plus one per
+`anticipated_source_ids` entry), no admission requirements, and supported,
+current resolution. An edit of a held predicate states only what changes; an
+omitted field keeps its accepted value. `propose --template` prints that
+minimal record for a literal `project.work_item.status` without contacting the
+daemon, and `--template --expanded` prints every default it takes. A proposal
+lands when policy and the caller's tier allow (`--no-accept` only proposes),
+and an edit carries the Claims that use the field to the new version.
 An evidence rule names the CaptureContracts it admits by identity, in
 `capture_contracts` (`CaptureContract:<name>` or just the name); it admits
 evidence captured under every accepted version of those contracts, so improving
@@ -1353,8 +1365,15 @@ CaptureContract to place in the rule. An anchored binding (`authoring bind`,
 or `--evidence-file` on a write) carries that exact contract into the governed
 Claim candidate, so accepting the bound Claim accepts the contract and gives the
 rule an evidence producer. The writer's own words are admitted by naming
-`CaptureContract:playbill.coordinator-self-source-v1`. The input command lowers the tagless form
-and returns nonblocking policy/source lint beside the proposal. The optional,
+`CaptureContract:cruxible.coordinator-self-source-v1`, and a catalogued file
+named `NAME` by `CaptureContract:cruxible.foreign-source.NAME`; the stored
+spelling of either name is accepted too. Durations (`stale_after`,
+`unsure_hold_for`) take ISO 8601 (`P30D`). The input command lowers the tagless form
+and returns nonblocking policy/source lint beside the proposal, among it
+`cruxible.claim_type.permitted_role_unadmitted` (a permitted role no evidence
+rule admits, so every write in it lands `uncovered`) and
+`cruxible.claim_type.field_name_reserved` (a field name that collides with a
+read column). The optional,
 sorted `anticipated_source_ids` input supplies
 source-specific repair suggestions without entering the governed ClaimType.
 Expert proposals, migration preflight and submission, and SDK cold-dependency
@@ -1394,7 +1413,8 @@ key is `<text>`" (see Subject kinds below): one holder resolves, several refuse
 `cruxible.subject.key_ambiguous` naming each. None leaves the entry point's own
 rule in force (a write creates the Subject by key, a read refuses the unknown
 reference). So merging Subject A into B --
-alias B with A's id, then retire A -- sends every later reference to A to B.
+alias B with A's id, then retire A (`cruxible retire KIND/A --with-claims`) --
+sends every later reference to A to B.
 
 For a minted kind, and a grandfathered one, a change may not create a Subject
 that collides with a live Subject of its kind (a keyed kind is held to its key
@@ -1447,7 +1467,9 @@ ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
 `revision_evidence` rule (`replace`: a revision that changes its statement keeps
 exactly the evidence it cites; `accumulate`: it keeps everything its
 predecessors cited). A revision that states the same thing again keeps its
-evidence either way, and a carry never loses backing. The same statement,
+evidence either way, and a carry never loses backing. A re-bind
+(`cruxible rebind`) is the exception under either rule: it replaces the
+drifted citation it names with the new one, and keeps the rest. The same statement,
 citation role and origin, under the same verified Capture contract and observed
 content (the same file bytes, the same fetched body, the same words), changes no
 Claim; its admissible re-observation is recorded separately. No revision, no
@@ -1564,8 +1586,9 @@ whether it counts toward the verdict, for example `counts toward verdict: no
 attestation counts only through the ClaimType's consequence policy. With no
 policy, `next` resurfaces each principal's standing contradiction of a live
 Claim as `claim_contradicting_evidence_available` (detail `attestation_basis`
-`examined_existing`), whose repair restates, revises or retires the Claim; the
-verdict does not move.
+`examined_existing`), whose repair revises the Claim (`authoring example
+claim-revision`), with retiring it as the alternative; the verdict does not
+move.
 
 Claims are read through `cruxible query`, `cruxible get` and `cruxible orient`.
 `cruxible query KIND --select P --claims` is the status table: each
@@ -1750,8 +1773,9 @@ Cruxible names every new Subject; an author never chooses its id. A **SubjectKin
 as `identity` per kind in `orient`) declares how Subjects of one kind are named:
 
 - **keyed**: `keys` lists one or more key ClaimTypes (by predicate, in key order),
-  each a live ClaimType v8 about that kind only, literal and one-valued, accepted
-  in the same change or earlier; `uniqueness` is `unique` (a key names one
+  each a live ClaimType about that kind only, literal and one-valued, that
+  states a `canonical_form` (`[]` for none), accepted in the same change or
+  earlier; `uniqueness` is `unique` (a key names one
   Subject) or `hint` (a key usually does; a further holder is made only on
   purpose). The id is the readable rendering of the canonical key: each part
   NFKC-normalized and lowercased, every run outside `[a-z0-9.]` turned into `-`
@@ -1795,8 +1819,9 @@ A new Subject must be of a declared kind on every route -- authoring, writes,
 Procedure items, settle, raw proposals -- or the change refuses
 `cruxible.subject.kind_undeclared`, naming the SubjectKind to author. Subjects
 of a kind accepted before it was declared (or whose SubjectKind was retired)
-are grandfathered: readable, claimable and retirable (`subject_succession`
-member), never created again. `cruxible next` lists each kind with live
+are grandfathered: readable, claimable and retirable (`cruxible retire
+KIND/ID --with-claims`, or a `subject_succession` member), never created
+again. `cruxible next` lists each kind with live
 Subjects and no SubjectKind (`subject_kind_undeclared`) with the SubjectKind to
 author.
 
@@ -1920,7 +1945,10 @@ working (it resolves the Subject holding the slug, or creates it):
    "uniqueness": "unique"}]}
 ~~~
 
-`cruxible authoring example subject-kind` prints a complete one. Existing
+`cruxible authoring example subject-kind` prints a complete one. A change-set
+`claim_type` member takes the full definition; alternatively propose the slug
+field first with `cruxible claim-type propose --input` (a minimal record with
+its `canonical_form`), then submit the `subject_kind` member alone. Existing
 Subjects keep their ids; give each its slug Claim (`cruxible set
 dev.decision/<id> slug <id> --because ...`) so its key resolves to it.
 
@@ -1936,7 +1964,8 @@ holders would then share a unique key, unless the change handles them.
 A keyed Subject's key Claims are its identity parts, not beliefs about it, so
 they follow its lifecycle: retiring the Subject retires its live key Claims in
 the same change (core adds them; nobody names them), which frees the key -- a
-merge is an alias on the survivor plus the other Subject's retirement, and a
+merge is an alias on the survivor plus the other Subject's retirement
+(`cruxible retire KIND/ID --with-claims`), and a
 later creation by the freed key creates a new Subject. A live successor of the
 Subject carries its key Claims unchanged, unless the change revises them. Its
 other Claims still close over it as before.
@@ -1980,6 +2009,8 @@ costs the ontology's size: it never reads the Claims, Subjects or Captures.
   `captured_required` and `kit` (the installed kit that owns it). It filters on
   `namespace`, `name`, `subject_kind`, `role`, `selector`, `on_conflict`,
   `captured_required` and `kit`; `query Procedure` on `namespace` and `name`.
+  `--select` on a definition kind always keeps its name column (`predicate`
+  for ClaimType), so a row says which definition it is.
 - `query Trigger` lists Triggers by `name`, `schedule` (`cadence`, `cron`,
   `capture_landing`, `window_close`, `generation_accepted`), `target_kind`
   (`line` or `action`), `target` and `lifecycle`; `--select` adds `cron`,
@@ -2049,7 +2080,12 @@ row read, traversal paths, bound parameters, verdict, and the
 `playbill-query-execution-receipt-v1` whose digests replay it).
 
 Author named queries with a `query_definition` input through `cruxible authoring
-submit` (or `compile` for a staged intent), then review and accept its proposal.
+submit` (or `compile` for a staged intent); it lands when policy and the
+caller's tier allow. A definition needs only `identity`, `entry` and
+`result_binding` (plus the `where`, `projection` and `parameters` it uses);
+the rest defaults to one row per Subject (`result_shape: subject`,
+`result_cardinality: many`, `dedupe: subject`), supported and current values
+with conflicts surfaced, and bounded budgets.
 The SDK equivalent is `cx.query_definition(definition=QueryDefinitionInput(...)).submit()`,
 followed by the normal approval flow. `cx.changes().query_definition(...)`
 includes a query in a changeset. Omitted ClaimType pins resolve against the intent
@@ -2068,7 +2104,9 @@ admitted the Claim under, in the `visible_verdicts` vocabulary (`contradicted`,
 `stale`, `supported`, `uncovered`, `unresolved`), the same one the row's
 `read_claims` record. Both read the Claims the predicate's `claim_value` reads
 and nothing else: a conflicted one-cardinality value is a conflicted field, and
-a many-valued predicate reads the distinct values of its Claims as a list. They
+a many-valued predicate reads the distinct values of its Claims as a list. An
+`eq` comparison on a many-valued literal field holds when any of its values
+matches, as compact `--where` does. They
 compare and order as `value_type: string`; a literal outside the field's value
 set is refused when the definition is declared, and a parameter outside it
 refuses the run with `cruxible.query.value_type_mismatch`. At a past coordinate
@@ -2667,7 +2705,13 @@ lands on, else to the one live holder of the key; none refuses
 `proposal_lowering_refused` with `cruxible.subject.key_missing`, several with
 `key_ambiguous`. A v3 item without a `source` cites its closure's Capture as a
 v1 item does. A propose mandate reaches the created Subjects through its
-namespace (`subjects/<kind>`).
+namespace (`subjects/<kind>`). From the SDK, build these items with
+`ProcedureKeyedClaimProposalItem`, `ProcedureSubjectProposalItem`,
+`ProcedureClaimRetirementItem`, `ProcedureClaimStatement`,
+`SubjectKeyReference` and `LiteralClaimObject`, with `Item(path)` naming the
+current row's field, all from `cruxible_client.authoring.procedures`; each
+emits its own format tag, as `WorkspaceFileSourceRequestV2` does for a
+`workspace.file` Source request.
 
 An item may also retire a live Claim
 (`playbill-procedure-claim-retirement-item-v1`: `retires`, the Claim ID;
@@ -2938,8 +2982,8 @@ cruxible block depublish FILE_ID BLOCK_ID [--dry-run|--commit] [--at OID] [--jso
 Blocks are stamped, and nothing regenerates them on its own. The workflow: write
 the markers and the prose (or `repin --render` for a rendered table or list),
 `repin` to stamp, let `next` or `block sync` report a block stale or dirty,
-re-check it and repin; `block detach` and `block depublish` when its backings
-are gone. A rendered block is the exception: it is derived from state, so
+re-check it and repin; `block depublish` and then `block detach` when the
+block is no longer wanted. A rendered block is the exception: it is derived from state, so
 `block sync` re-renders a stale one itself (below). The client, not the daemon, computes every stamp: `repin` reads the
 backings, writes the marker and then declares the block to the instance.
 `--render` writes the body from the block's one `--query` backing: a Markdown
@@ -3082,9 +3126,10 @@ remain visible without a nonzero exit; `require_current` findings and integrity 
 exact successor candidates where available. `repin --backing DIGEST` selects a
 live successor explicitly.
 
-`block detach PATH...` removes markers from a retired block or a declaration
+`block detach PATH...` removes markers from a depublished block or a declaration
 belonging to a different instance, preserving its prose and all bytes outside
-the block; live blocks are refused. It uses a whole-file compare-and-swap and
+the block. A block still published is refused (`block_still_published`, with
+`cruxible block depublish FILE BLOCK` as its repair). It uses a whole-file compare-and-swap and
 does not rewrite or approve prose. `--dry-run` reports what would change and is
 pinned to the pages' bytes; `--commit --at DIGEST` refuses if a page changed
 since that preview.
@@ -3238,7 +3283,8 @@ it runs at, and `because` (`tier`, or `profile` when an MCP session's tool
 profile does not advertise it; `profile: "full"` does; or `authoring` when the
 caller cannot author on the instance at all, with `authoring_refusal` carrying
 the code, detail and repair `whoami` reports). The text output prints
-`repair withheld: <tool> needs the <tier> tier`, led by the identity repair
+`repair withheld: cruxible <verb> needs the <tier> tier` (the MCP tool name
+when no CLI verb maps), led by the identity repair
 when authoring gates it. Nothing is left out. A status facet (the compiler, floor, ledger mirror and
 so on) always reports its state; when its repair is one the caller cannot
 perform, the repair is dropped and the facet carries `repair_hidden: true` and
@@ -3268,9 +3314,12 @@ run `cruxible next` again without a cursor.
 `--brief` prints one line per row: severity, reason, subject, and the repair
 command if there is one. It also prints the status lines that need attention
 and the next-page cursor, and leaves out repair details and findings.
-Conflicting values in the same claim slot require revisions into distinct
-qualifiers; when a shared value field such as `topic` separates the contenders,
-the repair identifies that field.
+A `claim_conflicted` row's repair retires one contender, and its `or:` line
+retires the other; when a shared value field such as `topic` separates the
+contenders, revising them into distinct qualifiers is offered as well. In the
+text output, a row lists its alternatives as `or:` lines under `repair:`, and
+a row about a Claim can carry its Subject and predicate in parentheses after
+the identity.
 
 A `proposal_stale` row is exactly a `proposal list` entry whose terminal reason
 is `stale`: a candidate neither accepted, refused nor withdrawn whose parent is
@@ -3386,7 +3435,7 @@ of a `hint` kind holding one canonical key (`keys` groups), and live
 values of one literal predicate that meet but differ under its canonical form
 (`values` groups, naming the form). Cruxible proposes no fix; each group names its
 resolutions. Merge two Subjects by adding a `semantic.alias` to the one that
-stays and retiring the other; keep them apart by asserting
+stays and retiring the other (`cruxible retire KIND/ID --with-claims`); keep them apart by asserting
 `semantic.distinct_from` between them: no group ever holds a pair asserted
 distinct (a key's Subjects are taken in path order, and each joins the first
 group holding no Subject it is asserted distinct from), though each may still
@@ -3423,7 +3472,8 @@ cruxible audit [--claim-type ID]... [--subject-kind KIND]...
 ~~~
 
 Returns a deterministic Claim verification patrol ranked by the exact integer
-product of stake, weakness, and verification recency. Every row includes all
+product of stake, weakness, and verification recency. The text output leads
+each row with `subject  field = value  [CLM-…]`, then its factors. Every row includes all
 factor values and mechanical evidence references; it never includes a repair
 recommendation and never executes a Procedure. A successful read appends one
 idempotent completed-run record to the daemon-local operational store so
@@ -3484,7 +3534,10 @@ payload schema. Docs-only writes create no change set. Accepted and
 awaiting-approval outcomes write files; dry runs and refusals do not. Inspect
 `docs[].written`, digests, refusal/repair, and `next`: post-admission conflicts
 retain Claims but leave the file untouched. Projection blocks and paths under
-`.cruxible` or `.git` refuse. Document targets name `files propose`.
+`.cruxible` or `.git` refuse. Document targets name `files propose`. A
+refused document change prints `refused (not submitted)` with its code (such
+as `cruxible.doc.section_changed` or `cruxible.doc.projection_edit`) and a
+repair for that code.
 
 `set` puts VALUE in FIELD of SUBJECT (`kind/id`). On a single-value field it
 replaces the live value: the Claim it revises is found for you. SUBJECT
@@ -3497,8 +3550,9 @@ ClaimType's canonical form reads (`set security.vulnerability/CVE-2021-44228
 grammar, and `get`, `query --where`, `inbox link --subject` and authoring Claim
 subjects resolve it the same way. The change names the Subject written by its id. A Subject-valued VALUE
 must already exist. FIELD is a field of the kind as
-`orient` names it, or the full predicate. VALUE is text: an enum member, a
-number or `true`/`false` for such fields, a Subject as `kind/id` (`@kind/id`
+`orient` names it, or the full predicate. VALUE is text: an enum member, an
+integer or `true`/`false` for such fields (values are booleans, integers or
+text; a field cannot be defined with a non-integer `number`), a Subject as `kind/id` (`@kind/id`
 names the same Subject, in SUBJECT too), or the text itself for exact content
 (which is also its own evidence). The default evidence
 is `--because` as self evidence; `--evidence-file` cites text found once in a
@@ -3521,8 +3575,9 @@ naming it, or cites an older exact-bytes Capture with a
 `newer_capture_not_citable` warning. Either resolves to the digest
 before the write is lowered, and the change prints the Capture as
 `evidence CAP-<12 hex>`. The write accepts in the same call when the approval policy and your
-tier allow it; otherwise it prints the eligible approvers and the approve
-command. `--no-accept` only proposes. `--dry-run` runs every check and writes
+tier allow it; otherwise it prints why on an `awaiting:` line (for example
+`independent approval; approvers: reviewer`, or `activation; your tier cannot
+activate`) and the next command. `--no-accept` only proposes. `--dry-run` runs every check and writes
 nothing; pass its coordinate back as `--at` to refuse
 (`cruxible.write.slot_changed`) if the field moved since. `--expect VALUE` is
 the compare-and-set by value: it refuses `cruxible.write.slot_changed`, showing
@@ -3650,8 +3705,8 @@ linus`, `stated ... (contends with a live value)` for a competing value in a
 single-value field); `--field FIELD` narrows them to one field. Locating a page
 reads the Subject's own Claims and revisions; only the page's revisions are
 read. A body over 64 KiB needs `--range`. A summary cuts a string
-value over 500 characters and says how long it is; `--detail evidence` or
-`proof` shows it whole. Subject rows carry the Claim id behind each value. A
+value over 500 characters, says how long it is, and names the read that shows
+it whole (`cruxible get CLM-… --detail evidence`). Subject rows carry the Claim id behind each value. A
 summary's coordinate is the git oid's 12-hex prefix and the generation; the
 full accepted coordinate is under `--detail proof`. `--at` takes a git oid, a
 unique 12+ hex prefix of one, or a generation number, so either half of a
@@ -3826,6 +3881,9 @@ cruxible since GENERATION [--max-rows N] [--max-bytes N]
 ~~~
 
 Returns signed accepted ChangeSet members in `(GENERATION, pinned head]` order.
+The text output prints one line per value, led by the generation and the
+action: `28  create  catalog.part/bp-1142  semantic.alias = bp1142  [CLM-…]`,
+and `retire subject KIND/ID` for a retired Subject.
 Follow `next_cursor` to continue against the same historical head even if main
 advances; the cursor binds the lower bound, access profile, and page budgets.
 A page reads only the generations it shows, starting where the cursor stopped,
@@ -3885,7 +3943,7 @@ audit path.
 | `ontology/INDEX` | One tab-separated line per kind a live SubjectKind or ClaimType names: kind, identity rule, field count, owner, the description's first sentence. |
 | `ontology/kinds/<kind>.yaml` | One card per kind (below), in the `current/` convention: identity, then an entry per live field under `fields:`, and the fields of other kinds pointing here. |
 | `ontology/claim-types/INDEX` | One line per live ClaimType: predicate, subject kinds, value type, cardinality, default role, evidence (contracts and requirement), `stale_after`, contention, owner. |
-| `ontology/contracts/INDEX`, `ontology/contracts/<id>.yaml` | One line per live CaptureContract (grade, source kinds, logical sources, evidence kinds, how many live ClaimTypes admit and require it, owner), and a card naming those ClaimTypes. |
+| `ontology/contracts/INDEX`, `ontology/contracts/<name>.yaml` (the contract's public name, such as `cruxible.foreign-source.catalog.yaml`) | One line per live CaptureContract (grade, source kinds, logical sources, evidence kinds, how many live ClaimTypes admit and require it, owner), and a card naming those ClaimTypes. |
 | `ontology/queries/INDEX` | One line per live QueryDefinition: name, parameters (`name:type`, `?` optional), result shape and cardinality, description, owner. |
 | `ontology/lines/INDEX` | One line per live Line: Procedure, `max_authority`, the trigger input and event it accepts, the live Triggers aimed at it, and the live Mandates on its Procedure (grant, validity window, `suspended`). Enablement is operational: `orient --section lines`. |
 | `ontology/kits/INDEX` | One line per installed kit, from its receipt: version, owned prefixes, the generation it was installed and last changed, live owned definitions, kept divergences, definitions edited locally (`(retired)`, `(missing)` marked), owned definitions retired, bundled providers. Whether a newer release exists is not accepted state: `cruxible kit status`. |
@@ -4060,10 +4118,14 @@ Governed spans are annotated inline in card order. Ungoverned results are
 summarized once per operation, never one line per result:
 
 ~~~text
-Cruxible coverage: 2 exact, 1 drifted, 3 candidates, 41 none
-coverage complete for 47 returned spans at generation gen-sha256:...
+exact  catalogs/acme-2026.md:4-4  catalog.part/bp-2210  fits = catalog.vehicle/honda-civic-2019  [CLM-ef7f11e28462]
+Cruxible coverage: spans 1 exact, 0 drifted, 0 candidates, 0 none; cards 1 exact, 0 drifted, 0 candidates
+coverage complete for 1 returned spans at generation sha256:...
 omitted cards: 0, truncated spans: 0
 ~~~
+
+Each governed span leads with `subject  field = value  [CLM-…]`; the full
+binding of each span is in `--view manifest` and `--json`.
 
 A `none` is factual only inside a complete boundary, so a span whose health is
 `partial`, `stale`, `denied`, or `unavailable` prints that health and its reason
@@ -4184,7 +4246,8 @@ with terminal reason `withdrawn`. Only the actor who submitted a proposal may
 withdraw it (a later run of a Line withdraws its Line's open proposal as
 superseded, naming the successor in `superseded_by`; see [line](#line)); withdrawing an already-withdrawn proposal repeats the first answer
 rather than rewriting its reason, and a settled proposal refuses, because its
-outcome is not an intention to overwrite.
+outcome is not an intention to overwrite. Authoring the same change again
+after a withdrawal makes a new proposal.
 
 `proposal reject` is the reviewer's side of the same ending: a reviewer
 (`graph_write`) who will not accept another actor's open or stale proposal
@@ -4272,15 +4335,15 @@ note found"). From a clone of the ledger mirror, fetch them once:
 
 ~~~text
 git fetch origin '+refs/notes/*:refs/notes/*'
-git notes --ref=refs/notes/playbill-eval show origin/proposals/<proposal-id>
+git notes --ref=refs/notes/cruxible-eval show origin/proposals/<proposal-id>
 ~~~
 
 The candidate commit carries the change set's own summary as its message: a
 subject naming what the set does, then one line per member as `<disposition>
 <kind> <address> [qualifier]`. It is prose for a reader; nothing parses it. The
 daemon's records travel beside it as Git notes on that commit:
-`refs/notes/playbill-eval` holds the admission and the evaluation verdict with
-every diagnostic behind a refusal, and `refs/notes/playbill-approval` holds the
+`refs/notes/cruxible-eval` holds the admission and the evaluation verdict with
+every diagnostic behind a refusal, and `refs/notes/cruxible-approval` holds the
 canonical approval list, each entry carrying its signer's own attestation. Both
 are byte-identical projections of the proposal evidence store, which stays the
 source of record: activation refuses to settle a candidate whose note disagrees
@@ -4345,7 +4408,7 @@ registration is only proposed and the command prints each remaining step:
 `proposal approve` (which activates it), and, with auth,
 `credential mint --principal-id ID --key-dir DIR`, which writes the token into
 the same settings file. `cruxible init` writes the owner's settings file the
-same way. `proposal approve` defaults `--signer-id` to the configured principal
+same way, and with `--reviewer-key-dir` the reviewer's too. `proposal approve` defaults `--signer-id` to the configured principal
 and `--key` to `CRUXIBLE_PRINCIPAL_KEY`.
 
 A propose-only agent is a principal whose credential is `governed_write`: it

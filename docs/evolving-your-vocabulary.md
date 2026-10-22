@@ -39,156 +39,154 @@ early, and prefer adding a field to reshaping one that's full.
 `brake-pads` and `brake-rotors`. Four Claims are written under the field
 today: two parts are `brakes`, one `filters`, one `wipers`.
 
-A ClaimType change is a **succession**: a new version of the definition that
-names the one it replaces, together with what happens to each dependent. In
-one change set:
+A change to a field is a **succession**: a new version of its definition that
+replaces the old one, together with what happens to every Claim written under
+it. An edit names the field and only what changes; everything else carries
+over. The split takes three steps, each a reviewed change.
 
-- the successor: the current definition with the new enum, naming its
-  predecessor by digest. Read the current one with `cruxible get
-  ClaimType:catalog.part.category --detail proof --json`, change
-  `literal_schema`, and set `lifecycle.predecessor_digest` to its
-  `artifact_digest`;
-- `carry_all: true`, which carries every dependent you don't name: the
-  `filters` and `wipers` Claims, and the saved query that reads the field;
-- the two `brakes` Claims, each marked `re_author` and said again as
-  `brake-pads` by a Claim member in the same set.
+**1. Allow the new values.** Widening the list carries every Claim over as it
+is:
 
-<!-- update: first-run batch -->
-~~~json
-{"kind": "change_set", "rationale": "Split the brakes category into brake pads and brake rotors.", "members": [
- {"kind": "claim_type_succession", "successor": {"…": "the current definition, with the new enum and its predecessor's digest"},
-  "carry_all": true,
-  "dependents": [
-   {"identity": {"kind": "Claim", "name": "CLM-636f28bb87de32a5362b11ee30aa4d0c"}, "disposition": "re_author",
-    "successor_claim_id": "CLM-636f28bb87de32a5362b11ee30aa4d0c"},
-   {"identity": {"kind": "Claim", "name": "CLM-6b043535eef17f24cd5fb0868ef3dc60"}, "disposition": "re_author",
-    "successor_claim_id": "CLM-6b043535eef17f24cd5fb0868ef3dc60"}]},
- {"kind": "claim", "subject": "catalog.part/bp-1142", "predicate": "catalog.part.category",
-  "object": {"kind": "literal", "value": "brake-pads"}, "role": "observation",
-  "revises": "CLM-636f28bb87de32a5362b11ee30aa4d0c",
-  "rationale": "Brakes is split into brake pads and brake rotors; this is a pad.",
-  "source": {"kind": "self_source", "body": "category: brake-pads\n"}},
- {"kind": "claim", "subject": "catalog.part/bp-2210", "…": "the same, revising CLM-6b043535…"}
-]}
+~~~yaml
+predicate: catalog.part.category
+literal_schema:
+  type: string
+  enum: [brakes, brake-pads, brake-rotors, filters, lighting, wipers]
 ~~~
 
 ~~~text
-$ cruxible authoring submit split-brakes.json --brief
-outcome: accepted
-...
-
-$ cruxible query catalog.part --select category
-subject               category    flags
-catalog.part/af-208   filters     -
-catalog.part/bp-1142  brake-pads  -
-catalog.part/bp-2210  brake-pads  -
-catalog.part/wb-330   wipers      -
+$ cruxible claim-type propose --input widen.yaml --name widen-category
+admitted  sha256:b7b56ddc…  verdict=candidate
+landed: accepted at 38b76ed1a46e
 ~~~
 
-A re-authored Claim keeps its identity and its history, so the change reads
-as a revision:
+**2. Move the values.** Say again, in the new terms, what each `brakes` part
+is:
 
 ~~~text
-$ cruxible get catalog.part/bp-1142 --detail history --field category
-...
-category
-  seq 20  4ebd98cf01c7  2026-10-21T19:58:54.430050Z  by YOUR_ID  changed  brakes -> brake-pads  [CLM-636f28bb…]
-      reason: Split the brakes category into brake pads and brake rotors.
-  seq 18  34d3601cd417  2026-10-21T19:57:53.305113Z  by YOUR_ID  stated  brakes  [CLM-636f28bb…]
-      reason: Acme catalog 2026.
+$ cruxible write move-pads.yaml
+accepted (generation 42, d336bbfd5eb2)
+  set catalog.part/bp-1142 category: brakes -> brake-pads  [CLM-a7bf36ca…; verdict supported]
+  set catalog.part/bp-2210 category: brakes -> brake-pads  [CLM-8a23dd7f…; verdict supported]
 ~~~
 
-And the old value is gone from the vocabulary:
+**3. Drop the old value.** With nothing left on it, narrowing the list
+carries every Claim:
 
 ~~~text
-$ cruxible set catalog.part/bp-3300 category brakes --because "Acme catalog 2026."
-refused (generation 20, 4ebd98cf01c7)
+$ cruxible claim-type propose --input narrow.yaml --name narrow-category    # the enum without brakes
+admitted  sha256:959016af…  verdict=candidate
+landed: accepted at 99407d14196a
+
+$ cruxible set catalog.part/af-208 category brakes --because "…"
+refused (generation 43, 99407d14196a)
 cruxible.write.value_not_member (change 0): 'brakes' is not a member of category; its members are: brake-pads, brake-rotors, filters, lighting, wipers
   nearest: brake-pads, brake-rotors
 ~~~
 
-If the change misses a dependent, it's refused before anything is proposed
-(`cruxible.authoring.claim_type_succession_closure_incomplete`), and the
-repair lists every dependent it needs, saved queries included. Carrying a
-Claim whose value the new definition doesn't allow is refused too:
+A narrowing that would strand a value is refused before anything lands, and
+names the value:
 
 ~~~text
-cruxible.claim.literal_schema_invalid: The Claim literal 'wipers' fails the exact schema of ClaimType 'catalog.part.category'; its members are: brake-pads, brake-rotors, filters, lighting.
+$ cruxible claim-type propose --input drop-wipers.yaml --name drop-wipers --dry-run
+would_block  -  verdict=refused
+  cruxible.claim.literal_schema_invalid: The Claim literal 'wipers' fails the exact schema of ClaimType 'catalog.part.category'; its members are: brake-pads, brake-rotors, filters, lighting.
 ~~~
 
-`cruxible authoring compile FILE` runs these checks without submitting
-anything. From Python, `ChangeSetDraft.succeed_claim_type(successor,
-dependents=[...])` builds the same change, with `carry`, `re_author`, `retire`
-and `rescind` for each dependent ([For AI agents](for-ai-agents.md#evolving-vocabulary)).
+Each Claim keeps its identity, so the field's history reads as revisions
+(`cruxible get catalog.part/bp-1142 --detail history --field category`).
+
+To make a change like this in one atomic step instead, submit a
+`claim_type_succession` change-set member, which re-authors the moved Claims
+beside the new definition. It takes the full definition today: read it with
+`cruxible get ClaimType:catalog.part.category --detail proof --json`, change
+it, and set `lifecycle.predecessor_digest` to its `artifact_digest`
+(`cruxible authoring example claim-type-succession` prints a template). From
+Python, `ChangeSetDraft.succeed_claim_type(successor, dependents=[...])`
+builds the same change, with `carry`, `re_author`, `retire` and `rescind` for
+each dependent ([For AI agents](for-ai-agents.md#evolving-vocabulary)).
 
 ## Common tasks
 
 ### Add a field
 
-<!-- update: first-run batch -->
-Start from the template, which prints a complete definition to edit:
+A field needs its name, the kinds it applies to, what it holds, and how many
+values a Subject has; everything else has a default (`cruxible claim-type
+propose --template` prints this shape):
 
-~~~bash
-cruxible claim-type propose --template > weight.json
+~~~yaml
+predicate: catalog.part.warranty_months
+allowed_subject_kinds: [catalog.part]
+object_kind: literal
+literal_schema: {type: integer, minimum: 0}
+cardinality: one
 ~~~
-
-Change its `predicate` (`catalog.part.weight_grams`), the kinds it applies to,
-its `literal_schema` (`{"type": "integer", "minimum": 0}`), its roles, a
-`description`, and its evidence rules ([Evidence and
-admission](evidence-and-admission.md#how-a-field-admits-evidence)). Then
-propose it:
 
 ~~~text
-$ cruxible claim-type propose --input weight.json --name add-weight
-admitted  sha256:b6919d39…  verdict=candidate
-next: cruxible get sha256:b6919d39…
+$ cruxible claim-type propose --input warranty.yaml --name add-warranty
+admitted  sha256:a1a00ee1…  verdict=candidate
+landed: accepted at dfe3a8309a22
+
+$ cruxible set catalog.part/bp-1142 warranty_months 24 --because "Acme's warranty card."
+accepted (generation 34, d0f4b78923e6)
+  set catalog.part/bp-1142 warranty_months: 24  [CLM-db2ff013…; verdict supported]
 ~~~
 
-A new field stops at a proposal; approve it to accept it (`cruxible proposal
-approve PROPOSAL_ID`). Then it's ready to use:
-
-~~~text
-$ cruxible set catalog.part/bp-1142 weight_grams 680 --because "Weighed on the shop scale."
-accepted (generation 22, 113d18f376d1)
-  set catalog.part/bp-1142 weight_grams: 680  [CLM-62297008…; verdict supported]
-~~~
-
-To change a field later, submit a succession as in the example above.
+By default a field is normative and backed by its writer's own words. Add a
+`description`, the roles it takes, and evidence rules when it needs other
+evidence ([Evidence and
+admission](evidence-and-admission.md#writing-a-fields-rules) shows a field
+that requires a supplier's quote). Like any change, the field lands at once
+when your approval policy allows it; `--no-accept` only proposes it. Numbers
+are integers: store a price in cents, say. To change a field later, propose
+an edit naming only what changes, as in the example above.
 
 ### Add a kind of thing
 
 A new kind needs a **SubjectKind**, which says how its Subjects are named.
 Most kinds are keyed: a key field, such as a supplier's name, decides which
-Subject a name refers to, so the same supplier is never recorded twice. A
-keyed kind and its key field go in together:
+Subject a name refers to, so the same supplier is never recorded twice. Add
+the key field first, with a `canonical_form`, the rule that decides when two
+spellings are the same key:
 
-<!-- update: first-run batch -->
-~~~json
-{"kind": "subject_kind", "name": "catalog.supplier", "keys": ["catalog.supplier.name"],
- "uniqueness": "unique", "description": "A parts supplier, named by its name."}
+~~~yaml
+predicate: catalog.supplier.name
+description: "The supplier's name; its key."
+allowed_subject_kinds: [catalog.supplier]
+object_kind: literal
+literal_schema: {type: string, minLength: 1}
+cardinality: one
+canonical_form: [nfkc, trim, collapse_whitespace, casefold]
 ~~~
 
-in a change set beside the key ClaimType: literal, one value per Subject, and
-with a `canonical_form`, the rule that decides when two spellings are the same
-key (`cruxible authoring example subject-kind` prints a complete pair).
-
-Create a Subject by its key, and Cruxible assigns its id:
+Then declare the kind:
 
 ~~~text
-$ echo '{"kind": "subject", "subject_kind": "catalog.supplier", "key": "Acme Parts", "rationale": "Our main supplier."}' \
+$ cruxible claim-type propose --input supplier-name.yaml --name add-supplier-name
+admitted  sha256:46e5b47f…  verdict=candidate
+landed: accepted at 8c5c4c5e53ba
+
+$ echo '{"kind": "subject_kind", "name": "catalog.supplier", "keys": ["catalog.supplier.name"],
+    "uniqueness": "unique", "description": "A parts supplier, named by its name."}' \
     | cruxible authoring submit - --brief
 outcome: accepted
 ...
-$ cruxible query catalog.supplier --select name
-subject                      name        flags
-catalog.supplier/acme-parts  acme parts  -
+~~~
+
+Name a new Subject by its key, and Cruxible creates it and assigns its id:
+
+~~~text
+$ cruxible set "catalog.supplier/Bolt Supply" name "Bolt Supply" --because "A second supplier."
+accepted (generation 47, a8242f4b9a28)
+  create catalog.supplier/bolt-supply: created
+  + subject catalog.supplier/bolt-supply
 ~~~
 
 The key is stored in its canonical form (this one folds case), and any
 spelling of it finds the same Subject: `cruxible get "catalog.supplier/ACME
 parts"` reads `catalog.supplier/acme-parts`. A kind whose things have no
-natural name, such as a remediation task, is **minted** instead: Cruxible gives each a
-generated id. To bring an existing kind under keys, see [Subject
+natural name, such as a remediation task, is **minted** instead: Cruxible
+gives each a generated id. To bring an existing kind under keys, see [Subject
 kinds](cli-reference.md#subject-kinds-and-creation).
 
 ### Change what kind of value a field holds
@@ -261,11 +259,12 @@ edit to the section later brings the summary back as `citation_drifted`
 The old rulings stay readable in each decision's history.
 
 Once no live Claim uses the long field, retire its definition. A retirement
-is a succession whose successor is the current definition with
-`lifecycle.state` set to `retired`; `cruxible claim-type migrate` takes it,
-first as a preflight that lists the dependents:
+is a succession whose successor is the field's full current definition (read
+it with `cruxible get ClaimType:catalog.decision.ruling --detail proof
+--json`) with `lifecycle.state` set to `retired` and
+`lifecycle.predecessor_digest` set to its `artifact_digest`. `cruxible
+claim-type migrate` takes it, first as a preflight that lists the dependents:
 
-<!-- update: first-run batch -->
 ~~~text
 $ cruxible claim-type migrate retire-ruling.json      # {"mode": "preflight", "successor": {…}, "dependents": []}
 ClaimType migration preflight
@@ -281,11 +280,12 @@ Semantic delta:
 The dependents are the Claims you just retired; they move with the retired
 definition (`"disposition": "successor"`), which keeps their history readable.
 Submit with `"mode": "submit"` and those dispositions, and approve the
-proposal it prints. Afterwards the field is gone from the vocabulary:
+proposal it prints straight away: if anything else lands first, run the
+preflight and submit again. Afterwards the field is gone from the vocabulary:
 
 ~~~text
 $ cruxible set catalog.decision/wiper-brand ruling "…" --because "…"
-refused (generation 23, ea4f653efbab)
+refused (generation 55, fe1ac3c5eb75)
 cruxible.write.unknown_field (change 0): catalog.decision has no field 'ruling'
 ~~~
 
@@ -309,30 +309,38 @@ the upgrade, and names every definition where your version differs from the
 kit's:
 
 ~~~text
-$ cruxible kit add ./car-parts-1.1.0 --dry-run
+$ cruxible kit add car-parts:1.1.0
 car-parts 1.1.0: would_propose (upgrade from 1.0.0)
 ...
 ClaimType:
-  replace: ClaimType:catalog.part.title (overwrites your edit)
+  replace: ClaimType:catalog.part.title (overwrites your edit; 1 dependent(s))
   add: ClaimType:catalog.part.weight_grams
-...
-Preview at 2b5ee27583e9; nothing was written.
+QueryDefinition:
+  replace: QueryDefinition:catalog.parts_for_vehicle
+Preview at 246e273be249; nothing was written.
 ~~~
 
 Here the shop reworded the title field's description, and the release
-rewords it too. `--keep IDENTITY` keeps your version of one definition, and
-`--keep-local-edits` keeps every one you've changed:
+rewords it too. (The saved query is replaced because the release's version
+reads the new title definition; that isn't an edit of yours.) `--keep
+IDENTITY` keeps your version of one definition, and `--keep-local-edits`
+keeps every one you've changed:
 
 ~~~text
-$ cruxible kit add ./car-parts-1.1.0 --keep ClaimType:catalog.part.title --commit --at 2b5ee27583e9
+$ cruxible kit add car-parts:1.1.0 --keep ClaimType:catalog.part.title --commit --at 246e273be249
 car-parts 1.1.0: accepted (upgrade from 1.0.0)
 ...
 ClaimType:
-  keep: ClaimType:catalog.part.title (overwrites your edit; this instance's version is kept)
+  keep: ClaimType:catalog.part.title (keeps your edit)
   add: ClaimType:catalog.part.weight_grams
+
+$ cruxible kit status
+car-parts 1.1.0 sha256:0164a4b4…; …
+  ...
+  kept: ClaimType:catalog.part.title (your edit)
 ~~~
 
-The kept divergence is recorded, and `kit status` lists it, so a later release
+The kept divergence is recorded, so a later release
 that leaves that definition alone doesn't ask again. A release that narrows a
 field your Claims use needs the same decisions as any succession; see
 [Kits](kits.md) for upgrades in full.

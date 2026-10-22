@@ -144,7 +144,8 @@ To make these ideas concrete, the rest of this page uses a domain whose
 relationships everyone already knows: car parts and the vehicles they fit. A
 parts catalog is a solved problem in practice; it's here because nobody has to
 learn it first. The same model applies to whatever your team actually works
-on.
+on. To follow along, install the example kit the guides use: `cruxible kit
+add car-parts:1.0.0` ([Kits](kits.md#a-worked-example-installing-car-parts)).
 
 A **Subject** is a thing the instance knows about, named `kind/id`:
 `catalog.part/bp-1142` is a set of brake pads, and
@@ -270,7 +271,8 @@ A ClaimType's evidence rules say which of these support a value of that field.
 A Claim whose evidence the rules do not admit is still recorded, with the
 verdict `uncovered`, and `next` asks someone to bind better evidence. If a
 cited passage later changes, `next` reports the drift and asks someone to
-re-check the Claim, so a Claim never silently outlives its evidence.
+re-check the Claim: re-bind it to the new text if it still holds (`cruxible
+rebind`), or retire it. A Claim never silently outlives its evidence.
 
 The commonest evidence is something someone wrote down. Rather than keeping
 notes beside the knowledge, where they pile up, a single write can add the
@@ -425,7 +427,8 @@ change set that `.submit()` sends. `cruxible authoring example NAME` prints a
 template for each input.
 
 **Vocabulary** keeps its own group, `cruxible claim-type`: `propose` defines
-or revises a ClaimType, `migrate` succeeds one and decides, in the same change
+or revises a ClaimType (landing at once when the policy allows, like any
+change), `migrate` succeeds one and decides, in the same change
 set, what happens to every Claim that depends on it (carry it to the new
 version, retire it, or say it again under the new vocabulary), and `upgrade`
 moves older ClaimTypes to the current format. Changing vocabulary disposes
@@ -522,10 +525,12 @@ an approval still needs the principal's private key. Local key directories give
 attribution and hygiene, not a security boundary between processes of one OS
 user.
 
-`cruxible init` makes you the owner and remembers your settings; `cruxible
-principal add` registers another principal and writes its settings to its key
-directory; `cruxible context use --principal ID` switches which principal the
-CLI acts as; `cruxible whoami` reports who you are and whether you can author.
+`cruxible init` makes you the owner and remembers your settings (with
+`--reviewer-key-dir`, it also creates a reviewer and writes its settings);
+`cruxible principal add` registers another principal and writes its settings
+to its key directory; `cruxible context use --principal ID` switches which
+principal the CLI acts as; `cruxible whoami` reports who you are and whether
+you can author.
 [Review and governance](review-and-governance.md#a-propose-only-agent) sets up
 an agent whose every change waits for a person.
 
@@ -608,7 +613,7 @@ through the queue, repairs, duplicates and `audit`.
 Three queues tell you what to do, each a read:
 
 - **next** is what is wrong or waiting on you, each row with the exact
-  operation that repairs it: stale or drifted evidence, stale proposals, stale
+  operation that repairs it, and alternatives where there are several: stale or drifted evidence, stale proposals, stale
   blocks, Lines with gaps, available compiler upgrades, and more. It is one
   to-do list for people and agents alike.
 - **audit** ranks Claims worth verifying, by stake, weakness and recency.

@@ -107,7 +107,7 @@ awaiting approval (generation 2, 4de2da8e1fc9)
   set catalog.part/bp-1142 title: Front brake pads  [CLM-…; verdict supported]
 ...
 $ cruxible proposal approve sha256:33bafcbb…
-Error: PermissionDeniedError: … requires GRAPH_WRITE mode, but your credential is scoped to GOVERNED_WRITE mode. …
+Error: cruxible proposal approve needs the graph_write tier; this credential is governed_write. …
 ~~~
 
 You review and approve what it proposes under your own settings (`cruxible
@@ -211,8 +211,8 @@ The value verbs on each surface:
 | | One change | Several, atomically |
 |---|---|---|
 | MCP | `cruxible_set`, `cruxible_retire` | `cruxible_write` (`set`, `add`, `retire` changes, plus `docs`) |
-| CLI | `cruxible set`, `add`, `retire` | `cruxible write FILE` or `write -` |
-| SDK | `cx.set(...)`, `cx.retire(...)` | `cx.changes(because=...)`, then `.set`, `.add`, `.retire`, `.write()` |
+| CLI | `cruxible set`, `add`, `retire`, `rebind` | `cruxible write FILE` or `write -` |
+| SDK | `cx.set(...)`, `cx.add(...)`, `cx.retire(...)`, `cx.rebind(...)` | `cx.changes(because=...)`, then `.set`, `.add`, `.retire`, `.write()` |
 
 A batch can write the note and the Claim that cites it together:
 

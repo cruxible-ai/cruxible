@@ -51,6 +51,55 @@ Its last step settles. While its Line is capped at `propose`, that same step
 proposes instead, so one Procedure serves the Line before and after it
 graduates.
 
+### Write the Procedure
+
+A Procedure is written once, with the SDK's typed steps, and submitted like
+any definition. This one reads the file, shapes each line into a proposal
+item (`Item()` is the current line), and ends in a settle step:
+
+~~~python
+item = ProcedureKeyedClaimProposalItem(
+    statement=ProcedureClaimStatement(
+        subject=SubjectKeyReference(subject_kind="catalog.part", key=Item()),
+        predicate="catalog.part.discontinued",
+        object=LiteralClaimObject(value=True),
+        role="observation",
+    ),
+    rationale="Listed in Acme's discontinued-parts file.",
+)
+
+procedure = Sequence(
+    [
+        Source("list", capture_contract="catalog.supplier-file-v1", next="shape",
+               request=WorkspaceFileSourceRequestV2(
+                   logical_source="acme.discontinued", relative_path="$input.path",
+                   coordinate_type="http-response-v1", coordinate={"revision": "working"},
+                   selector_type="whole-response-v1", selector={"whole": True})),
+        Transform("shape", transform_kind="shape_items", contract_in=SHAPE_IN,
+                  contract_out=SHAPED, next="summary",
+                  spec=TransformShapeItemsSpec(items="$steps.list.content.lines",
+                                               fields=item.model_dump(mode="json"))),
+        Project("summary", contract_out=SUMMARY, next="settle",
+                fields={"listed": "$steps.shape.output_count"}),
+        SettleChangeSet("settle", candidate_templates={"items": "$steps.shape.items"},
+                        result="$steps.summary"),
+    ],
+    name="catalog.acme-discontinued",
+    contract_in=PATH, contract_out=SUMMARY, returns="summary",
+    acquisition_policy="catalog.acquisition",
+    budget=..., hard_caps=...,          # one minute and one read per run
+).bind(list=cx.provider_interface("workspace.file", provider="cruxible-builtin"))
+
+cx.changes(rationale="The Acme discontinued-parts check.") \
+    .procedure(definition=procedure.build()).submit()
+~~~
+
+The step classes and item builders come from
+`cruxible_client.authoring.procedures`; `PATH`, `SUMMARY`, `SHAPE_IN` and
+`SHAPED` are small input and output contracts, and `catalog.acquisition` is
+the acquisition policy that lets it read the file. The [Procedure source
+reference](procedure-source.md) covers every step.
+
 ### Write the Line, its Trigger and its mandate
 
 A Line, its Triggers and its mandate are definitions like any other, so they
@@ -65,7 +114,7 @@ go in through authoring as one change set:
   "schedule": {"kind": "cron", "expression": "0 6 * * *"}},
  {"kind": "procedure_mandate", "name": "catalog.acme-discontinued-propose", "procedure_name": "catalog.acme-discontinued",
   "grants": "propose", "namespace": ["claims"], "valid_from": "2026-10-21T00:00:00Z", "expires_at": "2027-01-19T00:00:00Z",
-  "resource_ceiling": {"max_wall_clock": {"microseconds": 120000000}, "max_provider_calls": 1,
+  "resource_ceiling": {"max_wall_clock": {"microseconds": 60000000}, "max_provider_calls": 1,
     "max_capture_bytes": 1000000, "max_items": 1000, "max_repeat_attempts": 1}}
 ]}
 ~~~
@@ -121,8 +170,16 @@ capture CAP-a175ef6cc924  CaptureContract:catalog.supplier-file-v1 v1  source=ac
 rationale: Listed in Acme's discontinued-parts file.
 ~~~
 
-A later run that finds nothing new proposes nothing, and a Line keeps at most
-one open proposal: a run whose change differs replaces it.
+A later run that finds nothing new proposes nothing, and says so:
+
+~~~text
+$ cruxible line run catalog.acme-discontinued
+...
+Terminal settle: nothing changed (2 items restate accepted state)
+~~~
+
+A Line keeps at most one open proposal: a run whose change differs replaces
+it.
 
 ## Running on a schedule
 
@@ -211,7 +268,7 @@ category:
   "scope": [{"claim_type": "catalog.part.discontinued", "change_kinds": ["create", "revise"]}],
   "condition": {"query_name": "catalog.part_categorized", "binding_parameter": "part_id",
                 "required_fields": ["category"], "fallback": "propose"},
-  "resource_ceiling": {"max_wall_clock": {"microseconds": 120000000}, "max_provider_calls": 1,
+  "resource_ceiling": {"max_wall_clock": {"microseconds": 60000000}, "max_provider_calls": 1,
     "max_capture_bytes": 1000000, "max_items": 1000, "max_repeat_attempts": 1}},
  {"kind": "line", "name": "catalog.acme-discontinued", "procedure_name": "catalog.acme-discontinued",
   "acquisition_policy_name": "catalog.acquisition", "max_authority": "settle",
@@ -237,10 +294,17 @@ discontinued
 
 When the list names a part the condition doesn't hold for (here `sp-77`, which
 has no category yet), the run follows the mandate's fallback, and the whole
-change goes to review:
+change goes to review: the new values, plus a refresh of the evidence of the
+parts already recorded, since the file they rest on changed:
 
 ~~~text
-Proposal settle: sha256:9f0ade2a… (settle fell back: cruxible.settle.condition_incomplete)
+$ cruxible proposal review sha256:…
+...
+Changes (4):
+  set catalog.part/bp-2210 discontinued: true  [CLM-74d21b57…]
+  refresh evidence catalog.part/wb-330 discontinued: true (value unchanged)  [CLM-ab549499…]
+  set catalog.part/sp-77 discontinued: true  [CLM-b8d73b81…]
+  refresh evidence catalog.part/af-208 discontinued: true (value unchanged)  [CLM-c31e37b5…]
 ~~~
 
 Delegate facts copied verbatim from a source, like this list. Keep judgments
@@ -284,15 +348,19 @@ $ cruxible inbox dismiss INB-0152266fe7d8 --reason "Prices are re-quoted from th
 dismissed  INB-0152266fe7d8  Line:catalog.acme-notices  -  2026-10-21T19:46:06.044545+00:00
 ~~~
 
-When a Line posts the same item again, it is counted as seen again and comes
-back unread, with your last decision shown:
+When a Line posts the same item again, it is counted as seen again and keeps
+your decision, so a Line that re-reads a whole file doesn't ask you to judge
+the same rows twice:
 
 ~~~text
-unread (was linked)  INB-b73819240332  Line:catalog.acme-notices  x2  2026-10-21T19:48:39.945154+00:00
+$ cruxible inbox list --line catalog.acme-notices
+STATUS  ITEM  LINE  SEEN  LAST_POSTED
+dismissed (+1 since)  INB-b73819240332  Line:catalog.acme-notices  x2  2026-10-22T02:41:25.215491+00:00
+...
 ~~~
 
-So a Line that re-reads a whole file on every run asks you to judge the same
-items again. Post from a source that lists what's new, or expect to re-judge.
+An item you linked to a proposal comes back unread if that proposal is
+rejected or withdrawn, since your decision no longer stands.
 
 ## Recovering missed work
 
@@ -345,8 +413,6 @@ See [Kits](kits.md#automation-that-comes-with-a-kit).
   propose or settle are refused. Renew mandates ahead of time.
 - **Graduating judgments.** Settle facts copied from a source, not
   conclusions drawn from them.
-- **Re-posting the same rows.** Re-reading a whole source brings judged
-  inbox items back unread.
 
 ## Where to go next
 
