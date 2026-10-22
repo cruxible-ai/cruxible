@@ -50,6 +50,9 @@
   "/api/v1/{instance_id}/bodies": {
     "POST": "CasObjectResult"
   },
+  "/api/v1/{instance_id}/captures/erase": {
+    "POST": "CaptureEraseResult"
+  },
   "/api/v1/{instance_id}/captures/read": {
     "POST": "CaptureRead"
   },
