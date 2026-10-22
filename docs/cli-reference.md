@@ -820,6 +820,7 @@ before keep it.) Install other provider packages with `cruxible provider install
 
 ```bash
 cruxible capture read CAPTURE_DIGEST [--max-bytes BYTES]
+cruxible capture erase CAPTURE --because TEXT [--dry-run|--commit] [--at DIGEST] [--json]
 ```
 
 Verify a retained Capture and return its evidence metadata and bounded material as JSON.
@@ -833,6 +834,27 @@ or prefix must name one Capture, resolved exactly as the write verbs resolve
 the prefix than one bounded lookup examines).
 Uses body-read permission and never refetches the external source. The SDK equivalent
 is `cx.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
+
+`capture erase` destroys one Capture's retained body: its CAS commitment and
+CAS source, the bytes replay reads. The envelope, its digest, its contract, the
+landing records and an erasure record (who, when, the `--because` text) stay.
+Only a Capture whose CaptureContract declares `erasure: authorized_by_rule`
+(with the `playbill.capture-erasure-authority-v1` erasure-rule pin) can be
+erased; anything else refuses `cruxible.capture.erasure_prohibited`, as do bytes
+held in the ledger (`erasure_ledger_material`), a Capture with no retained body
+(`erasure_nothing_retained`) and a body that is also a citing Claim's exact
+content (`erasure_body_in_accepted_state`). It needs `graph_write`. It cannot be
+undone, so it previews first: the preview lists the live Claims citing the
+Capture and those it would leave with no retained evidence, and answers a state
+digest; `--commit --at DIGEST` erases exactly what was previewed. A live Claim
+citing an erased Capture can afterwards be changed only by `rebind --capture`
+onto a fresh Capture under the same contract; until then revising or retiring
+it refuses `cruxible.claim.capture_unverified`. Afterwards
+`get --detail evidence` shows the Capture as erased, `capture read` answers
+`body_erased` with the record, verdicts read the evidence as no longer
+replayable, and `next` lists a Claim left with no retained evidence as
+`claim_evidence_erased`. The SDK equivalent is `cx.erase_capture(digest,
+because=...)`; MCP is `cruxible_capture_erase`.
 
 ## body
 
@@ -3184,6 +3206,15 @@ last check:
   `next` and `orient` still answer; only a read of the bytes themselves
   refuses. Restore its bytes, or recapture and re-cite; the worker's next check
   records the repair and clears the row.
+- `claim_evidence_erased` names a live Claim whose every cited Capture, its own
+  words aside, has had its retained body erased (`capture erase`), with those
+  Captures. The row adds no verdict of its own (a field that requires current
+  evidence already reads the Claim `stale`). The repair is `cruxible rebind
+  CLAIM --citation HEX --capture CAP-...` with a fresh observation under the same
+  contract; once no erased Capture is cited the worker clears the row. Until
+  then a revision or retirement of the Claim refuses
+  `cruxible.claim.capture_unverified`: both carry the erased Capture, whose body
+  no longer verifies.
 - `prediction_settleable` names a ResolutionContract with a closed bound window
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
@@ -3446,7 +3477,7 @@ cruxible add SUBJECT FIELD VALUE --because TEXT
 cruxible retire TARGET [FIELD [VALUE]] --because TEXT
   [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--with-claims]
   [--dry-run] [--no-accept] [--at GIT_OID] [--json]
-cruxible rebind CLAIM (--file FILE#ANCHOR | --section FILE#Heading/Path) --because TEXT
+cruxible rebind CLAIM (--file FILE#ANCHOR | --section FILE#Heading/Path | --capture CAP) --because TEXT
   [--citation HEX] [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
   [--at GIT_OID] [--json]
@@ -3551,6 +3582,9 @@ until that Claim is re-pointed or retired. `rebind` re-cites CLAIM, whose cited
 text drifted, on the text it rests on now (FILE is a catalogued file's path or
 catalog name): the statement stays, the drifted citation is replaced, and
 history shows one `rebound` revision of the same Claim (compiler revision 35).
+`--capture` replaces a Capture citation with a fresh Capture under the same
+CaptureContract (by default the Claim's one evidence citation under it): how a
+Claim whose Capture body was erased moves onto a new observation.
 `write` applies a
 FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
 [...]}`, or a bare list with `--because`, each change

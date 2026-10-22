@@ -223,6 +223,45 @@ sources and which agents to trust. See
 reference](cli-reference.md) for `prediction propose` and `prediction
 settle`.
 
+## Erasing a Capture that holds a secret
+
+A Capture retains the exact bytes it observed, so a tool that printed a secret
+(a token in a scan, a key in a log read) leaves that secret in the instance's
+body store. When the Capture's contract allows it, erase the bytes:
+
+~~~text
+$ cruxible capture erase CAP-5f31df955084 --because "Scan output printed the deploy token; rotated."
+Would erase the retained body of CAP-5f31df955084 (1 object) under CaptureContract:security.scan-output
+Because: Scan output printed the deploy token; rotated.
+Cited by 1 live Claim: CLM-…
+Left with no retained evidence (next lists them as claim_evidence_erased): CLM-…
+Verdicts will read it as no longer replayable; each field's rules decide the rest.
+Preview at 4be1…; nothing was written.
+Commit it: rerun the same command with --commit --at 4be1…
+~~~
+
+Erasure is governed by the contract: only a CaptureContract that declares
+`erasure: authorized_by_rule` (with the `playbill.capture-erasure-authority-v1`
+erasure-rule pin) allows it, and that declaration is accepted and fixed like the
+rest of the contract. Give sources that may capture secrets such a contract
+before they run; a Capture under any other contract keeps its bytes. Erasing
+needs `graph_write`, and it cannot be undone, so it commits only with the
+preview's `--at`.
+
+What goes is the body: the bytes replay reads. The Capture's envelope (what was
+observed, when, by which run, under which contract) stays, with an erasure
+record of who erased it, when and why; never put the secret in `--because`.
+Claims citing it keep their history. `get --detail evidence` shows the Capture
+as erased, and their verdicts read it as no longer replayable, with each
+field's own rules deciding what that means: a field that requires current
+evidence (the default) reads such a Claim `stale`. A live Claim left with no retained
+evidence appears in `next` as `claim_evidence_erased`. Move it onto a fresh
+observation with `cruxible rebind CLAIM --capture CAP-...` (a new Capture under
+the same contract); until then the Claim cannot be revised or retired, since
+both would carry the erased Capture, whose body no longer verifies. The ledger
+and its Git mirror never held these bytes, so nothing there changes; a value a
+Claim states is accepted state and is not erased.
+
 ## Pitfalls
 
 - **Own words for outside facts.** A fact about the world should rest on what

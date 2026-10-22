@@ -104,6 +104,15 @@ Each instance has one approval policy, chosen at `cruxible init`:
 Independence is what lets a team rely on each other's findings: under it, an
 agent that found something can't also be the one who confirms it.
 
+Approval is attribution and role separation, not a security boundary. A
+signature records which principal approved a change, and independence keeps
+one principal from both finding and confirming it; neither stops an agent that
+can read every principal's private key on the machine from signing as each of
+them. Where a fact must not rest on anyone's say-so, the control is the field's
+evidence rule: admit only Captures a run fetched from the outside world, which
+the daemon's journal proves were fresh reads, not bytes someone wrote (see
+[Evidence and admission](evidence-and-admission.md#requiring-captured-evidence)).
+
 ## Principals and credentials
 
 Two different things answer "who is this":
