@@ -19,18 +19,24 @@ parts example from [Concepts](concepts.md#knowledge-as-claims).
 
 ~~~text
 $ cruxible next
-blocking  claim_conflicted  subjects/catalog.part/bp-2210.json  ...
-repair  citation_drifted  Claim:CLM-14179bd0…  ...
-repair  claim_contradicting_evidence_available  Claim:CLM-14179bd0…  ...
-repair  proposal_stale  sha256:d23468f3…  ...
-warning  evidence_expiring  Claim:CLM-00e10f50…  ...
-warning  projection_backing_stale  civic#parts  ...
+blocking  claim_conflicted  subjects/catalog.part/bp-2210.json  next=cruxible.claim.retire
+  repair: cruxible retire CLM-f3163493…
+  or: cruxible retire CLM-0ce675c0…
+repair  claim_uncovered  Claim:CLM-af67bbf9…  (catalog.part/bp-1142 catalog.part.supplier)  next=cruxible.get
+  repair: cruxible get ClaimType:catalog.part.supplier
+  or: cruxible retire CLM-af67bbf9…
+repair  claim_contradicting_evidence_available  Claim:CLM-ef7f11e2…  next=cruxible.authoring.example
+  repair: cruxible authoring example claim-revision
+  or: cruxible retire CLM-ef7f11e2…
+repair  proposal_stale  sha256:928b83fd…  next=cruxible.proposal.readmit
+  repair: cruxible proposal readmit sha256:928b83fd…
 ~~~
 
 Each row starts with its severity (`blocking`, `repair`, `warning`), then its
-reason, then what it concerns, and the line under it names a repair command.
-Rows are read from what changed, so the queue stays cheap to read however much
-the instance holds.
+reason, then what it concerns (for a Claim, often its Subject and field), and
+the lines under it name a repair and, after `or:`, the alternatives. Rows are
+read from what changed, so the queue stays cheap to read however much the
+instance holds.
 
 ## Signals by family
 
@@ -53,23 +59,27 @@ the instance holds.
 A supplier rewrote the catalog line that `bp-2210`'s fitment cites. The Claim
 comes back as `citation_drifted`. Read the new text, then decide:
 
-- **It still holds**: restate it against the new text. Retire the drifted
-  Claim and state it again citing the new passage, in one write:
+- **It still holds**: **re-bind** it to the new text. The statement stays as
+  it is, and the drifted citation is replaced:
 
-  ~~~yaml
-  because: Acme reworded the catalog entry; the fitment still holds.
-  changes:
-    - {op: retire, target: CLM-fba5b025…, reason: superseded}
-    - op: add
-      subject: catalog.part/bp-2210
-      field: fits
-      value: catalog.vehicle/honda-civic-2019
-      evidence: {kind: file, file: "catalogs/acme-2026.md#bp-2210 Ceramic front brake pads. Fits: 2019 and 2020 Honda Civic"}
+  ~~~text
+  $ cruxible next
+  repair  citation_drifted  Claim:CLM-ef7f11e2…  next=cruxible.rebind
+    repair: cruxible rebind CLM-ef7f11e2… --citation 80ead46d3fd6
+    or: cruxible retire CLM-ef7f11e2…
+
+  $ cruxible rebind CLM-ef7f11e2… \
+      --file 'catalogs/acme-2026.md#bp-2210 Ceramic front brake pads. Fits: 2019 and 2020 Honda Civic' \
+      --because "Acme reworded the catalog entry; the fitment still holds."
+  accepted (generation 21, 4f0718f3f36e)
+    rebind catalog.part/bp-2210 fits: catalog.vehicle/honda-civic-2019 (value unchanged)  [CLM-ef7f11e2…; verdict supported]
   ~~~
 
-  This makes a new Claim: you judged the fitment again against the new text,
-  and the field's history (`get catalog.part/bp-2210 --detail history --field
-  fits`) shows both. A dedicated way to re-confirm a Claim in place is planned.
+  The Claim keeps its ID, and its history shows one `rebound` revision with
+  the old and new evidence (`get catalog.part/bp-2210 --detail history
+  --field fits`). Re-binding works within the same file or Document; for a
+  section you wrote, use `--section FILE#Heading/Path`. If the text moved to
+  a different source, retire the Claim and state it again citing the new one.
 - **It should now say something different**: write the new value citing the
   new text.
 - **It no longer holds**: retire it (`cruxible retire CLM-… --reason was-wrong
@@ -77,10 +87,16 @@ comes back as `citation_drifted`. Read the new text, then decide:
 
 A governed Document that changed (`document_modified`) is resolved by
 proposing its next revision (`cruxible files propose --file NAME --name
-NAME`), which goes through review like any change.
+NAME`), which lands under your approval policy like any change.
 
 Before editing a file that Claims cite, `cruxible coverage resolve --file
-PATH` lists which Claims rest on which of its lines.
+PATH` lists which Claims rest on which of its lines:
+
+~~~text
+$ cruxible coverage resolve --file catalogs/acme-2026.md
+exact  catalogs/acme-2026.md:4-4  catalog.part/bp-2210  fits = catalog.vehicle/honda-civic-2019  [CLM-ef7f11e28462]
+...
+~~~
 
 ### Freshness: evidence that expires
 
@@ -112,11 +128,16 @@ the contradiction doesn't hold up.
 
 ### Weak evidence
 
-A `claim_uncovered` row means a value landed without admitted evidence. Cite
-real evidence for it, or, if every write to that field lands uncovered, fix the
-field's rules: [Evidence and
-admission](evidence-and-admission.md#rules-are-per-role) explains the usual
-cause.
+A `claim_uncovered` row means a value landed without admitted evidence. The
+write that made it already said why:
+
+~~~text
+warning cruxible.write.verdict_not_supported: catalog.part/bp-1142 supplier was written, but its verdict is uncovered: it is a observation Claim, and the field's evidence rules admit only normative. Write it in an admitted role, or change the ClaimType's evidence rules.
+~~~
+
+Cite real evidence for it, write it in a role the field admits, or, if every
+write to that field lands uncovered, fix the field's rules ([Evidence and
+admission](evidence-and-admission.md#rules-are-per-role)).
 
 ### Pages that fell behind
 
@@ -169,10 +190,21 @@ Possible duplicates of catalog.part: 2 group(s); read 3 Subject(s), 0 alias(es),
 
 Record your judgment as state, so it isn't asked again:
 
-- **The same thing**: add the other spelling as an alias of the Subject you
-  keep (`cruxible add catalog.part/bp-1142 semantic.alias bp1142 --because
-  "…"`). References to the alias then resolve to the Subject you kept.
-  Retiring the duplicate Subject itself isn't possible yet; it's coming.
+- **The same thing**: merge them. Add the other spelling as an alias of the
+  Subject you keep, then retire the duplicate with its Claims:
+
+  ~~~text
+  $ cruxible add catalog.part/bp-1142 semantic.alias bp1142 --because "The same part, typed without the hyphen."
+  accepted (generation 28, 420fa99e97cc)
+  ...
+  $ cruxible retire catalog.part/bp1142 --with-claims --because "Duplicate of bp-1142."
+  accepted (generation 29, 039815ca8281)
+    retire Subject catalog.part/bp1142  [also retires CLM-3b21c9b9…, CLM-9436ad1b…]
+  ~~~
+
+  Without `--with-claims` the retirement is refused while the Subject still
+  holds Claims, and the refusal names them. From then on, references to
+  `bp1142` resolve to the Subject you kept.
 - **Different things that look alike**: say so with `semantic.distinct_from`
   (`cruxible add catalog.part/wb-330 semantic.distinct_from catalog.part/wb330
   --because "Different suppliers' part numbers."`).
@@ -181,12 +213,54 @@ Both are ordinary fields, so the judgment has its reason and its history like
 any other Claim. `cruxible curation list` shows the items detection recorded,
 and `overrule`, `suppress`, `unsuppress` and `accept-fixed` close them out.
 
+## When a field turns into prose
+
+Fields drift toward prose over time. A summary that started as one line picks
+up a second sentence, then a paragraph, and a field meant to record a ruling
+ends up holding the whole argument for it. Watch for two signs, since nothing
+in `next` flags them: values that keep getting longer (reads cut them short
+with `…`), and a field that holds reasoning rather than a fact anyone would
+filter or count by.
+
+The fix keeps both the reasoning and a value worth querying:
+
+1. Write each long value as a section of a document.
+2. In the same `write`, keep a one-line value (a summary or a status) that
+   cites the section.
+3. Retire the long Claims there too.
+
+From then on, an edit to the section brings the one-line value back for
+review as `citation_drifted`, which asks whether the summary still says what
+the section says. If it does, re-bind it to the edited section; if not,
+rewrite it:
+
+~~~text
+$ cruxible next
+repair  citation_drifted  Claim:CLM-55627160…  next=cruxible.rebind
+  repair: cruxible rebind CLM-55627160… --citation b9091755e6c0 --section 'decisions#Decisions/Ceramic pads for the 2019 Civic'
+  or: cruxible retire CLM-55627160…
+~~~
+
+[Building team knowledge](building-team-knowledge.md#typed-state-or-prose) has
+the rule for what belongs in a field, and [Evolving your
+vocabulary](evolving-your-vocabulary.md#move-a-paragraph-field-into-prose)
+walks through the move, including retiring the long field.
+
 ## What to verify next: audit
 
 `next` is about what changed. `cruxible audit` is about what was never
 checked well: it ranks Claims worth verifying by their stake, how weak their
-evidence is, and how long since anyone looked. Work from the top, reading each
-Claim with `get` and its evidence with `--detail evidence`.
+evidence is, and how long since anyone looked:
+
+~~~text
+$ cruxible audit
+40  catalog.part/bp-2210  fits = catalog.vehicle/honda-civic-2019  [CLM-ef7f11e28462]  stake=1 weakness=4 staleness=10
+36  catalog.vehicle/honda-civic-2019  year = 2019  [CLM-13f8500437eb]  stake=1 weakness=3 staleness=12
+...
+~~~
+
+Work from the top, reading each Claim with `get` and its evidence with
+`--detail evidence`.
 
 ## None, or unknown
 

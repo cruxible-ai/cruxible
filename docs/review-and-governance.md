@@ -26,12 +26,12 @@ other than its author, and names who can approve it:
 
 ~~~text
 $ cruxible set catalog.part/bp-1142 title "Front brake pads" --because "Acme catalog 2026."
-awaiting approval (generation 1, 9ab4879594a7)
-  set catalog.part/bp-1142 title: Front brake pads  [CLM-…; verdict supported]
+awaiting approval (generation 2, cd46246265f9)
+  set catalog.part/bp-1142 title: Front brake pads  [CLM-ec704119…; verdict supported]
   + subject catalog.part/bp-1142
-proposal: sha256:9a243eba… (awaiting_external_approval)
-awaiting: independent approval required; approvers: reviewer
-next: cruxible proposal approve sha256:9a243eba… --signer-id reviewer --key <reviewer.ed25519>
+proposal: sha256:9afd6283… (awaiting_external_approval)
+awaiting: independent approval; approvers: reviewer
+next: cruxible proposal approve sha256:9afd6283… --signer-id reviewer --key <reviewer.ed25519>
 ~~~
 
 `--no-accept` stops any write at a proposal even when it could land, and
@@ -43,7 +43,7 @@ next: cruxible proposal approve sha256:9a243eba… --signer-id reviewer --key <r
 review` shows what one would change and why:
 
 ~~~text
-$ cruxible proposal review sha256:9a243eba…
+$ cruxible proposal review sha256:9afd6283…
 ...
 Why:
   Acme catalog 2026.
@@ -60,17 +60,24 @@ When an approval is the one the proposal still needed, and the approver may
 activate, the same command accepts it:
 
 ~~~text
-$ cruxible proposal approve sha256:9a243eba… --signer-id reviewer --key ~/keys/grace/reviewer.ed25519
+$ cruxible context use --principal reviewer
+Active principal: reviewer (settings ~/keys/grace/cruxible.env)
+$ cruxible proposal approve sha256:9afd6283…
+Signing key for reviewer: ~/keys/grace/reviewer.ed25519 (from remembered settings ~/keys/grace/cruxible.env)
 ...
-Approved sha256:d06be161… as reviewer
-Activated at 2fd230e2638b…
+Approved sha256:fc586140… as reviewer
+Activated at 9b659ad32d3f…
 ~~~
+
+A reviewer created at `cruxible init --reviewer-key-dir DIR` has its settings
+in `DIR`, so `context use` switches to it; on another machine, a reviewer
+can instead pass `--signer-id reviewer --key PATH`.
 
 `--hold` signs without accepting, for when someone else should decide when
 the change lands; they run `proposal activate` later:
 
 ~~~text
-$ cruxible proposal approve sha256:93339c6f… --hold --signer-id reviewer --key …
+$ cruxible proposal approve sha256:93339c6f… --hold
 Approved sha256:64effc63… as reviewer
 Held: not activated. Next: cruxible proposal activate sha256:93339c6f…
 ~~~
@@ -79,12 +86,13 @@ If other changes were accepted after a proposal was checked, approving or
 activating recompiles it against the current state, as a fresh proposal that
 replaces the old one; approvals given to the old one don't carry over. If what
 it changes has itself moved in the meantime, it's refused, and `proposal
-readmit` rebases it as a new proposal to review.
+readmit` rebases it as a new proposal to review. A stale field proposal from
+`claim-type propose` is readmitted rather than recompiled, and a stale
+`claim-type migrate` is run again from its preflight.
 
 A reviewer who decides a change shouldn't land rejects it, saying why
 (`proposal reject ID --reason "…"`); an author drops their own proposal with
-`proposal withdraw ID --reason "…"`. Submitting exactly the same change again
-afterwards doesn't make a new proposal; change its `because` text.
+`proposal withdraw ID --reason "…"`.
 
 ## The approval policy
 
@@ -97,7 +105,7 @@ Each instance has one approval policy, chosen at `cruxible init`:
   An author approving their own change is refused:
 
   ~~~text
-  $ cruxible proposal approve sha256:9a243eba…
+  $ cruxible proposal approve sha256:9afd6283…
   Error: cruxible.approval.creator_forbidden: independent_approval_required mode needs an active ordinary approver other than the candidate creator, whose approval activates it
   ~~~
 
@@ -158,12 +166,15 @@ Actor: agent-b
 Credential permission mode: governed_write
 
 $ cruxible set catalog.part/bp-1142 title "Front brake pads" --because "Acme catalog 2026."
-awaiting approval (generation 2, 4de2da8e1fc9)
-  set catalog.part/bp-1142 title: Front brake pads  [CLM-…; verdict supported]
-...
+awaiting approval (generation 3, 5bbdedbab3a1)
+  set catalog.part/bp-1142 title: Front brake pads  [CLM-b6a3c08f…; verdict supported]
+  + subject catalog.part/bp-1142
+proposal: sha256:791e4f1f… (ready_to_activate)
+awaiting: activation; your tier cannot activate
+next: someone who can runs cruxible proposal activate sha256:791e4f1f…
 
-$ cruxible proposal approve sha256:33bafcbb…
-Error: PermissionDeniedError: … requires GRAPH_WRITE mode, but your credential is scoped to GOVERNED_WRITE mode. …
+$ cruxible proposal approve sha256:791e4f1f…
+Error: cruxible proposal approve needs the graph_write tier; this credential is governed_write. …
 ~~~
 
 You review and approve what it proposes under your own settings (`cruxible
@@ -209,7 +220,12 @@ approval records are kept:
 
 ~~~bash
 git diff cruxible-ledger/accepted...cruxible-ledger/proposals/<proposal-digest>
+git notes --ref=refs/notes/cruxible-eval show cruxible-ledger/proposals/<proposal-digest>
+git notes --ref=refs/notes/cruxible-approval show cruxible-ledger/proposals/<proposal-digest>
 ~~~
+
+The evaluation note carries the checks and every diagnostic behind a refusal;
+the approval note carries each signer's approval.
 
 To let reviewers and auditors elsewhere fetch the ledger, mirror it to a Git
 remote (an empty bare repository). From then on the daemon publishes in the

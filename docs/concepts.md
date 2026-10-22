@@ -7,82 +7,54 @@ operation.
 
 ## What Cruxible is for
 
-Teams of people and agents act on shared knowledge every day: which of your
-systems a new vulnerability actually reaches, why a design decision was made
-and whether it still holds, which leads an investigation has already ruled
-out, what an agent has checked and what it only assumed. Most of that
-knowledge lives in documents, tickets, chat threads and agents' context
-windows, and it fails in familiar ways:
+Cruxible keeps what a team of people and agents believes about its world as
+**hard state**: typed values, each with the reason and the evidence behind it,
+changed only through checked changes, with a full record of what was believed,
+when, and why.
 
-- it drifts out of date, and nobody notices;
-- it piles up instead of settling: notes and Markdown files grow by
-  appending, and what the team actually believes now is buried somewhere in
-  them;
-- it gets re-read and re-interpreted every time: each agent session starts by
-  re-ingesting the same documents to work out what the team believes, paying
-  for it in tokens and time, and two agents reading the same pages can come
-  away believing different things;
-- it gets overwritten, especially when several agents work at once, and the
-  earlier version and the reason for the change are lost;
-- two copies disagree, and nobody can say which one is right;
-- an agent acts on it without being able to tell a checked fact from a guess.
+Without it, that knowledge lives in documents, tickets, chat threads and
+agents' context windows, where it:
+
+- drifts out of date, and nobody notices;
+- piles up instead of settling, so what the team believes now is buried in
+  everything it once wrote;
+- gets re-read and re-interpreted by every agent session, at a cost in tokens
+  and time, and two agents can come away believing different things;
+- gets overwritten or copied, and nobody can say which version is right;
+- can't tell a checked fact from a guess.
 
 Cruxible isn't a new source of truth: your databases, APIs, documents and
-tickets stay that. Cruxible maintains what your team believes about the world,
-drawn from those sources, as **hard state**: typed values, each stored with
-the reason and the evidence behind it, changed only through checked and
-approved changes, with a complete record of what was believed, when, and why.
-
-Two costs shape how it works. Beliefs are acquired when a question needs
-them, so knowledge costs what your questions cost, not what the world
-contains: a model is never complete, and doesn't need to be. And beliefs are
-kept consistent at the cost of what changed: when a source changes, only the
-beliefs resting on it come back for review. Because a model is never complete,
-an absence means "none" only inside a scope someone has read in full;
-otherwise it means "unknown".
+tickets stay that. It holds the beliefs drawn from them, acquired when a
+question needs them and brought back for review only when what they rest on
+changes. A model is never complete, so an empty answer means "none" only
+where someone has read the whole scope; otherwise it means "unknown".
 
 ## The approach
 
-- **A symbolic model of your world.** You declare the kinds of thing your team
-  cares about, the fields each can have, and the relations between them.
-  Cruxible holds the current state of that model, and checks every change
-  against it.
-- **Beliefs, with their reasons.** Every value is a Claim: something the team
-  or an agent believes, stated with its rationale and the evidence it rests
-  on, so any answer can be traced back to where it came from. Each Claim
-  carries a verdict on how well its evidence holds up, so an agent reading the
-  team's current beliefs can tell solid ones from weak ones without digging.
-  Anyone can attest to a Claim, signing their support, contradiction or
-  uncertainty, without changing it.
-- **Knowledge that hardens.** Teams still think in prose. A write can add a
-  section to a Markdown document and, in the same change, record the Claim
-  that rests on it: the explanation stays readable in the repository, and the
-  belief it supports becomes a typed, shareable value instead of one more
-  paragraph. Once a belief is hardened into a Claim, agents read it directly,
-  with its evidence attached, instead of re-reading and re-interpreting every
-  document it came from, and every agent reads the same answer.
-- **Many writers, nothing overwritten.** A write based on a value someone else
-  has since changed is refused rather than silently winning. A disagreement
-  can stand as a competing value that stays visible until it's resolved. And
-  nothing is ever erased: every earlier value stays in the history.
-- **Knowledge as code.** The vocabulary is declared and versioned. Changes are
-  proposed, checked and reviewed before they land, like code, and can require
-  someone else's signed approval. The record of it all is a Git repository.
-  Vocabularies, queries and pipelines ship as kits that other teams install.
-- **Connected to the world.** Cruxible points at your files, APIs and
-  databases rather than copying them. A Claim cites the passage or the
-  fetched response it rests on, and passages of your documents can be
-  projections of the state, flagged when what they summarize changes. Lines
-  are pipelines that observe the outside world and act on it through
-  providers. What they find lands as proposed changes with their evidence
-  attached, which are approved like any other change, or settled on their own
-  only where a mandate allows it.
-- **Questions over the whole graph.** Queries follow relations between things
-  and answer the same way every time, at a named point in history.
+- **A symbolic model of your world.** You declare the kinds of thing you care
+  about, their fields and the relations between them, and every change is
+  checked against that model.
+- **Beliefs, with their reasons.** Every value is a Claim with its rationale,
+  its evidence, and a verdict on how well that evidence holds up, so a weak
+  belief looks weak.
+- **Knowledge that hardens.** One write can add a section to a document and
+  record the Claim it supports, so agents read the belief directly instead of
+  re-interpreting the prose.
+- **Many writers, nothing overwritten.** A write based on a stale read is
+  refused, a disagreement stays visible until someone resolves it, and every
+  earlier value stays in the history.
+- **Knowledge as code.** The vocabulary is declared and versioned, changes are
+  reviewed and can require someone else's signed approval, the record is a Git
+  repository, and vocabularies ship as kits.
+- **Connected to the world.** Claims cite the files and responses they rest
+  on, passages of your documents can reflect the state and are flagged when it
+  moves, and Lines observe the outside world and propose what they find.
+- **Questions over the whole graph.** Queries follow relations and give the
+  same answer every time, at any point in history.
 
-Put together, knowledge flows in from people, agents and the outside world,
-is checked and accepted into one ledger, and flows back out as answers and as
-the documents people read:
+Knowledge flows in from people, agents and the outside world, is checked and
+accepted into one ledger, and flows back out as answers and as the documents
+people read:
 
 ```mermaid
 flowchart LR
@@ -96,13 +68,10 @@ flowchart LR
     change -.->|Lines act<br/>through providers| world
 ```
 
-No language model runs inside Cruxible: people and agents supply the
-judgment, and Cruxible checks it, records it and serves it back,
-deterministically. Cruxible never decides what a contradiction, a refusal or a
-drifted source means; it shows it, and a person or an agent decides.
-Consequences follow only from policy you author, such as a rule for what a
-contradicting attestation does to a Claim, or a mandate that lets a Line
-settle changes on its own.
+No language model runs inside Cruxible. People and agents supply the
+judgment; Cruxible checks it, records it and serves it back. It shows a
+contradiction or a drifted source, and a person or an agent decides what it
+means.
 
 The rest of this page builds the system up from its foundation: the ledger.
 
@@ -175,7 +144,8 @@ To make these ideas concrete, the rest of this page uses a domain whose
 relationships everyone already knows: car parts and the vehicles they fit. A
 parts catalog is a solved problem in practice; it's here because nobody has to
 learn it first. The same model applies to whatever your team actually works
-on.
+on. To follow along, install the example kit the guides use: `cruxible kit
+add car-parts:1.0.0` ([Kits](kits.md#a-worked-example-installing-car-parts)).
 
 A **Subject** is a thing the instance knows about, named `kind/id`:
 `catalog.part/bp-1142` is a set of brake pads, and
@@ -186,6 +156,22 @@ usually one, `hint`), or by a minted id. A new Subject is created by naming its
 kind and key, so the same key always names the same Subject, however many
 writers mention it.
 
+The examples use four kinds, each named by something people already call it:
+
+| Kind | Named by | Why it's a kind of its own |
+|---|---|---|
+| `catalog.part` | its part number (`bp-1142`) | People look parts up, link to them and review them one at a time. |
+| `catalog.vehicle` | make, model and year (`honda-civic-2019`) | Parts point at vehicles, and "what fits this car?" starts from one. |
+| `catalog.note` | a short slug (`civic-pad-fitment-check`) | Only worth a kind when you'll ask which notes are about a part; the body stays in a file. Otherwise cite a Document. |
+| `catalog.decision` | a short slug | A ruling people query by status and scope (governs, amends); its reasoning lives in a doc section the Claims cite. |
+
+If a kind's main field would be a paragraph, it's prose: put it in a file and
+point at it.
+
+Because a part is named by its part number, everyone who records `bp-1142` is
+talking about the same Subject. A title like "Front brake pads" would change,
+and two parts could share it.
+
 A **ClaimType** defines one field of a kind. It names the predicate
 (`catalog.part.category`, whose field name is `category`) and says:
 
@@ -195,6 +181,27 @@ A **ClaimType** defines one field of a kind. It names the predicate
 - which roles a Claim may take (`normative`, `observation`,
   `environment_binding`, `derivation`);
 - which evidence it admits, and how competing values resolve.
+
+For a part, the fields and the reasons for their shapes are:
+
+| Field | Holds | One or many | Why this shape |
+|---|---|---|---|
+| `name` | text: the part number | one | The key. Normative, because the team assigns it. |
+| `title` | text | one | What the supplier calls the part; an observation. |
+| `category` | one of `brakes`, `filters`, `lighting`, `wipers` | one | A closed list, so a typo is refused and questions can group by it. |
+| `price` | a number | one | Must cite the supplier's quote, never someone's memory, and goes stale after a set time. |
+| `fits` | a `catalog.vehicle` | many | A relationship: one part fits many cars, and you can ask from either end. |
+| `replaces` | a `catalog.part` | many | A relationship between parts, for supersessions. |
+
+The main relationships connect the kinds into one graph:
+
+```mermaid
+flowchart LR
+    note["catalog.note"] -->|about| part["catalog.part"]
+    decision["catalog.decision"] -->|governs| part
+    part -->|fits| vehicle["catalog.vehicle"]
+    part -->|replaces| older["catalog.part<br/>(an older one)"]
+```
 
 Because every field is declared, a write that puts a value where it doesn't
 belong, like a category that doesn't exist, is refused before it lands, with
@@ -264,7 +271,8 @@ A ClaimType's evidence rules say which of these support a value of that field.
 A Claim whose evidence the rules do not admit is still recorded, with the
 verdict `uncovered`, and `next` asks someone to bind better evidence. If a
 cited passage later changes, `next` reports the drift and asks someone to
-re-check the Claim, so a Claim never silently outlives its evidence.
+re-check the Claim: re-bind it to the new text if it still holds (`cruxible
+rebind`), or retire it. A Claim never silently outlives its evidence.
 
 The commonest evidence is something someone wrote down. Rather than keeping
 notes beside the knowledge, where they pile up, a single write can add the
@@ -419,7 +427,8 @@ change set that `.submit()` sends. `cruxible authoring example NAME` prints a
 template for each input.
 
 **Vocabulary** keeps its own group, `cruxible claim-type`: `propose` defines
-or revises a ClaimType, `migrate` succeeds one and decides, in the same change
+or revises a ClaimType (landing at once when the policy allows, like any
+change), `migrate` succeeds one and decides, in the same change
 set, what happens to every Claim that depends on it (carry it to the new
 version, retire it, or say it again under the new vocabulary), and `upgrade`
 moves older ClaimTypes to the current format. Changing vocabulary disposes
@@ -516,10 +525,12 @@ an approval still needs the principal's private key. Local key directories give
 attribution and hygiene, not a security boundary between processes of one OS
 user.
 
-`cruxible init` makes you the owner and remembers your settings; `cruxible
-principal add` registers another principal and writes its settings to its key
-directory; `cruxible context use --principal ID` switches which principal the
-CLI acts as; `cruxible whoami` reports who you are and whether you can author.
+`cruxible init` makes you the owner and remembers your settings (with
+`--reviewer-key-dir`, it also creates a reviewer and writes its settings);
+`cruxible principal add` registers another principal and writes its settings
+to its key directory; `cruxible context use --principal ID` switches which
+principal the CLI acts as; `cruxible whoami` reports who you are and whether
+you can author.
 [Review and governance](review-and-governance.md#a-propose-only-agent) sets up
 an agent whose every change waits for a person.
 
@@ -602,7 +613,7 @@ through the queue, repairs, duplicates and `audit`.
 Three queues tell you what to do, each a read:
 
 - **next** is what is wrong or waiting on you, each row with the exact
-  operation that repairs it: stale or drifted evidence, stale proposals, stale
+  operation that repairs it, and alternatives where there are several: stale or drifted evidence, stale proposals, stale
   blocks, Lines with gaps, available compiler upgrades, and more. It is one
   to-do list for people and agents alike.
 - **audit** ranks Claims worth verifying, by stake, weakness and recency.

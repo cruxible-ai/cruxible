@@ -84,13 +84,16 @@ review.
 
 ~~~text
 $ cruxible next
-repair  citation_drifted  Claim:CLM-85862d47…  ...
-repair  citation_drifted  Claim:CLM-dbacbd09…  ...
-repair  citation_drifted  Claim:CLM-e31c0922…  ...
+repair  citation_drifted  Claim:CLM-55627160…  next=cruxible.rebind
+  repair: cruxible rebind CLM-55627160… --citation b9091755e6c0 --section 'decisions#Decisions/Ceramic pads for the 2019 Civic'
+  or: cruxible retire CLM-55627160…
+...
 ~~~
 
 Whether the decision still holds after the edit is a judgment for a person or
-an agent, not for Cruxible. [Keeping knowledge current](keeping-knowledge-current.md)
+an agent, not for Cruxible. If it does, re-bind each Claim to the edited
+section (the repair, plus a `--because`); if it doesn't, retire or revise
+them. [Keeping knowledge current](keeping-knowledge-current.md)
 covers working through rows like these. More on writing documents and citing
 them is in [Documents and notes](documents-and-notes.md).
 
@@ -211,11 +214,14 @@ observations, while its rules admit the writer's own words only for normative
 statements:
 
 ~~~text
-$ cruxible set catalog.part/bp-1142 supplier Acme --because "Acme catalog 2026."
-accepted (generation 20, d931f626644f)
-  set catalog.part/bp-1142 supplier: Acme  [CLM-…; verdict uncovered]
-warning cruxible.write.verdict_not_supported: catalog.part/bp-1142 supplier was written, but its verdict is uncovered: no admitted evidence backs it.
+$ cruxible set catalog.part/bp-1142 supplier Acme --because "We buy it from Acme."
+accepted (generation 24, d6b405f15016)
+  set catalog.part/bp-1142 supplier: Acme  [CLM-af67bbf9…; verdict uncovered]
+warning cruxible.write.verdict_not_supported: catalog.part/bp-1142 supplier was written, but its verdict is uncovered: it is a observation Claim, and the field's evidence rules admit only normative. Write it in an admitted role, or change the ClaimType's evidence rules.
 ~~~
+
+The mismatch shows earlier too: proposing such a field reports the lint
+`cruxible.claim_type.permitted_role_unadmitted`.
 
 [Evidence and admission](evidence-and-admission.md) explains roles, rules and
 verdicts in full.
@@ -225,7 +231,8 @@ verdicts in full.
 Six short names are reserved for the columns every read carries: `subject`,
 `subject_id`, `kind`, `predicate`, `claim` and `flags`, and anything starting
 with `value.`. A field you name `kind` works, but always reads under its full
-predicate (`catalog.part.kind`), never as `kind`. Pick another name.
+predicate (`catalog.part.kind`), never as `kind`. Proposing one reports the
+lint `cruxible.claim_type.field_name_reserved`; pick another name.
 
 ### Write a checkpoint as one change
 
@@ -255,9 +262,29 @@ cruxible.write.slot_changed (change 0): catalog.part/bp-1142 title changed after
 ## Where a vocabulary comes from
 
 You can install a vocabulary someone else built as a [kit](kits.md), extend or
-revise it like anything you authored yourself, or define your own fields with
-`cruxible claim-type propose`. [Evolving your vocabulary](evolving-your-vocabulary.md)
-covers defining and changing fields safely. Either way, start from the
+revise it like anything you authored yourself, or define your own fields. A
+field needs only its name, the kinds it applies to, what it holds, and how
+many values a Subject has:
+
+~~~yaml
+predicate: catalog.part.warranty_months
+allowed_subject_kinds: [catalog.part]
+object_kind: literal
+literal_schema: {type: integer, minimum: 0}
+cardinality: one
+~~~
+
+~~~text
+$ cruxible claim-type propose --input warranty.yaml --name add-warranty
+admitted  sha256:a1a00ee1…  verdict=candidate
+landed: accepted at dfe3a8309a22
+~~~
+
+Defined this way, a field is normative and backed by its writer's own words;
+[Evidence and admission](evidence-and-admission.md#writing-a-fields-rules)
+shows how to require other evidence. [Evolving your
+vocabulary](evolving-your-vocabulary.md) covers defining and changing fields
+safely. Either way, start from the
 questions your team needs answered, and add fields as those questions arrive.
 
 ## Mistakes we made ourselves

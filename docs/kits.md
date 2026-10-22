@@ -14,13 +14,16 @@ documenting kits. Command details are in the [CLI reference](cli-reference.md#ki
 
 ## A worked example: installing car parts
 
-`kit add` previews first and writes nothing:
+The car parts kit is published as `car-parts`. `kit add` previews first and
+writes nothing:
 
+<!-- publish: fill the car-parts digests -->
 ~~~text
-$ cruxible kit add ./car-parts-1.0.0
+$ cruxible kit add car-parts:1.0.0
 car-parts 1.0.0: would_propose (install)
-Built by YOUR_ID on inst_b3c4baf396a64672 at 995fe2441208 (claimed)
-...
+Built by … (claimed)
+CaptureContract:
+  add: CaptureContract:cruxible.coordinator-self-source-v1
 ClaimType:
   add: ClaimType:catalog.decision.amends
   ...
@@ -33,22 +36,22 @@ SubjectKind:
   add: SubjectKind:catalog.note
   add: SubjectKind:catalog.part
   add: SubjectKind:catalog.vehicle
-Preview at 23e34db895e5; nothing was written.
-Commit it: rerun the same command with --commit --at 23e34db895e5
+Preview at 8a8fa804bbb3; nothing was written.
+Commit it: rerun the same command with --commit --at 8a8fa804bbb3
 ~~~
 
 Committing at the previewed coordinate lands exactly what you saw, or refuses
 if the instance moved in between:
 
 ~~~text
-$ cruxible kit add ./car-parts-1.0.0 --commit --at 23e34db895e5
+$ cruxible kit add car-parts:1.0.0 --commit --at 8a8fa804bbb3
 car-parts 1.0.0: accepted (install)
 ...
 
 $ cruxible kit status
-car-parts 1.0.0 sha256:c41ec19f…; update check local source
-  source: car-parts-1.0.0
-  built by YOUR_ID on inst_b3c4baf396a64672 at 995fe2441208 (claimed)
+car-parts 1.0.0 sha256:3d992c39…; …
+  source: ghcr.io/cruxible-ai/kits/car-parts@sha256:<car-parts 1.0.0 digest>
+  built by … (claimed)
 ~~~
 
 Reads say who owns each definition: `orient --section claim_types` ends each

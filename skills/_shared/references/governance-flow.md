@@ -23,9 +23,8 @@ cruxible proposal approve PROPOSAL_ID    # signs; the approval that completes it
 - A stale proposal (`proposal_stale` in `next`) is recompiled at the current
   head when approved; approvals of the old one don't carry over. If what it
   changes has moved, `cruxible proposal readmit` rebases it for review.
-- `cruxible proposal withdraw ID --reason "…"` drops your own proposal (an
-  identical change submitted again afterwards needs a different `because`);
-  a reviewer turns one down with `cruxible proposal reject ID --reason "…"`.
+- `cruxible proposal withdraw ID --reason "…"` drops your own proposal; a
+  reviewer turns one down with `cruxible proposal reject ID --reason "…"`.
 - On MCP, `cruxible_proposal_approve` signs with a key from the server's
   `CRUXIBLE_MCP_KEY_DIR`; pass the reviewed `candidate_digest`.
 

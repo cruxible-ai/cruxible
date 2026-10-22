@@ -56,10 +56,16 @@ heading paths to find sections:
 - **`replace`** replaces the section at the heading path in `section`,
   including its heading. Add `expect` with the section's current digest (each
   write prints the digest it wrote): if someone changed the section since you
-  read it, the write is refused with `cruxible.doc.section_changed` and the
-  section's new digest, and nothing is written.
+  read it, nothing is written.
 - **`id`** names the section so changes can cite it as `{kind: section, ref:
   ID}`.
+
+~~~text
+$ cruxible write tidy-note.yaml
+refused (not submitted)
+cruxible.doc.section_changed: Section ('Decisions', 'Ceramic pads by default') now has digest sha256:1777714a…
+  repair: re-read the section, then retry with expect: sha256:1777714a…
+~~~
 
 A section written this way counts as its author's own words, with a location
 people can read, and a later edit to it brings every Claim citing it back for
@@ -107,7 +113,7 @@ added line, is reported.
 ~~~bash
 cruxible files add returns docs/returns-policy.md --document-id returns-policy \
   --document-kind policy --title "Returns policy" --scope policies
-cruxible files propose --file returns --name returns-policy-v1 --commit
+cruxible files propose --file returns --name returns-policy-v1
 ~~~
 
 ~~~text
@@ -116,8 +122,9 @@ warning  document_modified  document:returns-policy  next=cruxible.files.propose
   repair: cruxible files propose --file returns --name revise-returns
 ~~~
 
-Each new revision is proposed the same way and reviewed like any change. Most
-usage is citations; use a Document only when the wording itself is governed.
+Each new revision is proposed the same way, and lands under your approval
+policy like any change (`--no-accept` only proposes it). Most usage is
+citations; use a Document only when the wording itself is governed.
 
 ## Pages that reflect state: projection blocks
 
@@ -199,21 +206,39 @@ itself:
 
 ~~~text
 $ cruxible set catalog.part/bp-1142 title "Front brake pads" --because "…" \
-    --evidence-file 'docs/civic-2019.md#Front brake pads'
-refused (generation 18, 04b316178ef4)
-cruxible.projection.evidence_from_projection (change 0): Bytes [165, 181) of source 'civic' lie inside projection block 'parts'. A projection block is never evidence, whatever the citation role: cite the Claims it reflects, or prose outside the block.
+    --evidence-file 'docs/civic.md#Front brake pads'
+refused (generation 55, fe1ac3c5eb75)
+...
+cruxible.projection.evidence_from_projection (change 0): Bytes [163, 179) of source 'civic' lie inside projection block 'parts'. A projection block is never evidence, whatever the citation role: cite the Claims it reflects, or prose outside the block.
+  repair: Cite the accepted Claims the block reflects, or select prose outside it.
 ~~~
 
-For the same reason, a `write` can't change a section that holds a block
-(`cruxible.doc.projection_edit`); blocks change only through `block repin` and
-`block sync`.
+For the same reason, a `write` can't change a section that holds a block;
+blocks change only through `block repin` and `block sync`:
+
+~~~text
+$ cruxible write into-block.yaml
+refused (not submitted)
+cruxible.doc.projection_edit: A doc write edits prose only; a projection block changes through its backing
+  repair: cruxible block repin docs/civic.md parts
+~~~
 
 ### Taking a block down
 
 `cruxible block depublish FILE BLOCK` releases the block's registration, so
-`next` stops asking for it back; it doesn't edit the page. Then remove the
-markers, keeping the prose: `cruxible block detach PAGE` strips them when every
-backing of the block has been retired, and otherwise you remove them by hand.
+`next` stops asking for it back; it doesn't edit the page. Then `cruxible
+block detach PAGE` (the page's path) strips the markers and keeps the text
+between them:
+
+~~~text
+$ cruxible block depublish civic parts
+civic#parts: depublished
+$ cruxible block detach docs/civic.md
+docs/civic.md#parts: detached
+~~~
+
+Detaching a block that is still published is refused, with the depublish to
+run first (`refused:block_still_published`).
 
 ## Pitfalls
 
