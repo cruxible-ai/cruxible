@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -221,3 +222,34 @@ def test_the_cost_is_the_capture_and_the_claims_citing_it(
 
     # One citation lookup per citing Claim, per call (the preview and the commit).
     assert looked_up == [f"Claim:{world.claim}"] * 2
+
+
+def test_the_worker_resurfaces_a_claim_left_bare_and_clears_it_when_rebound(
+    world: ErasureWorld,
+) -> None:
+    from cruxible_core.consumers.next.evidence import erased_claims, evidence_findings
+    from tests.support.capture_erasure_world import rebind, rescan
+    from tests.test_consumers.test_evidence_availability import NOW, _drain
+
+    instance = world.instance
+    _drain(instance, now=NOW)
+    _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+    _drain(instance, now=NOW + timedelta(minutes=1))
+
+    (bare,) = erased_claims(instance)
+    assert bare.claim_identity == f"Claim:{world.claim}"
+    assert bare.capture_digests == (world.capture,)
+    assert evidence_findings(instance) == ()  # an erased body is no damage
+
+    # Retiring still carries the erased Capture, whose body no longer verifies.
+    retired = write(instance, {"op": "retire", "target": world.claim}, because="Erased.")
+    assert retired.refusal is not None
+    assert retired.refusal.code == "cruxible.claim.capture_unverified"
+
+    # Re-bound onto a fresh observation: the row follows the Claim away.
+    outcome = rebind(instance, world.claim, rescan(world))
+    assert outcome.refusal is None, outcome
+    _drain(instance, now=NOW + timedelta(minutes=2))
+    assert erased_claims(instance) == ()
+    (cited,) = _evidence(world).captures
+    assert cited.erased is None and cited.capture != capture_handle(world.capture)

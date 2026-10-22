@@ -5177,9 +5177,16 @@ def retire(
     help="FILE#Heading/Path: the section the Claim rests on now (FILE# for the preamble).",
 )
 @click.option(
+    "--capture",
+    "capture_ref",
+    default=None,
+    help="CAP-... or digest: a fresh Capture, under the replaced citation's contract.",
+)
+@click.option(
     "--citation",
     default=None,
-    help="The citation to replace (12+ hex); default: the Claim's one citation of FILE.",
+    help="The citation to replace (12+ hex); default: the Claim's one citation of FILE "
+    "or of the Capture's contract.",
 )
 @click.option(
     "--workspace-root",
@@ -5195,6 +5202,7 @@ def rebind(
     because: str,
     file_anchor: str | None,
     section_ref: str | None,
+    capture_ref: str | None,
     citation: str | None,
     workspace_root: str,
     dry_run: bool,
@@ -5202,21 +5210,26 @@ def rebind(
     at_oid: str | None,
     output_json: bool,
 ) -> None:
-    """Re-cite CLAIM, whose cited text drifted, on the text it rests on now.
+    """Re-cite CLAIM on the text it rests on now, or on a fresh Capture.
 
-    The statement stays as it is: the drifted citation is replaced by the new
+    The statement stays as it is: the named citation is replaced by the new
     one, recorded as one revision of the same Claim (history shows it as
-    rebound). FILE is a catalogued file's path or its catalog name. A citation
-    of other evidence, or a value that changed, is restated with set; a Claim
-    that no longer holds is retired.
+    rebound). FILE is a catalogued file's path or its catalog name. --capture
+    replaces a Capture citation with a fresh Capture under the same contract,
+    which is how a Claim whose Capture was erased moves onto a new
+    observation. A value that changed is restated with set; a Claim that no
+    longer holds is retired.
     """
 
     try:
         evidence = rebind_evidence(
-            file=file_anchor, section=section_ref, workspace=Path(workspace_root)
+            file=file_anchor,
+            section=section_ref,
+            capture=capture_ref,
+            workspace=Path(workspace_root),
         )
     except ValueError as exc:
-        raise click.UsageError(f"--file / --section: {exc}") from None
+        raise click.UsageError(f"--file / --section / --capture: {exc}") from None
     change: dict[str, object] = {"op": "rebind", "target": claim, "evidence": evidence}
     if citation is not None:
         change["citation"] = citation
@@ -5239,7 +5252,7 @@ def rebind(
             update={"changes": observe_changes(request.changes, workspace=Path(workspace_root))}
         )
     except (ValidationError, CoreError, ValueError) as exc:
-        raise click.UsageError(f"{file_anchor or section_ref}: {exc}") from None
+        raise click.UsageError(f"{file_anchor or section_ref or capture_ref}: {exc}") from None
     outcome = _server_call(
         lambda client, instance_id: client.write(instance_id, request=observed),
         command_name="cruxible rebind",

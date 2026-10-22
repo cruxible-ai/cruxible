@@ -463,16 +463,19 @@ class RetireChange(_StrictWriteModel):
 
 
 class RebindChange(_StrictWriteModel):
-    """Re-cite a drifted Claim on its text now; the value stays."""
+    """Re-cite a Claim on its text now, or on a fresh Capture; the value stays."""
 
     op: Literal["rebind"] = "rebind"
     target: ClaimId
     citation: str | None = Field(
         default=None,
         pattern=CITATION_REF_PATTERN,
-        description="Citation to replace (12+ hex); default: the Claim's one of that file.",
+        description="Citation to replace (12+ hex); default: the Claim's one of that file "
+        "or that Capture's contract.",
     )
-    evidence: Annotated[FileEvidence | SectionEvidence, Field(discriminator="kind")]
+    evidence: Annotated[
+        FileEvidence | SectionEvidence | CaptureEvidence, Field(discriminator="kind")
+    ]
 
 
 Change = Annotated[

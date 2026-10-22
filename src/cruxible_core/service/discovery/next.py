@@ -4964,6 +4964,91 @@ def _evidence_unavailable_items(
     return tuple(items)
 
 
+def _evidence_erased_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    access_profile: CoverageAccessProfile,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Live Claims left with no retained evidence: every cited Capture's body erased.
+
+    The evidence worker records them as it follows the erasure journal and the
+    generations; each row is confirmed here against this coordinate (still live,
+    still citing, still erased), one indexed lookup per row. The verdict is not
+    reinterpreted: the row resurfaces the Claim, and whoever reads it judges
+    what fresh observation, if any, it should rest on.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.consumers.next.evidence import erased_claims
+    from cruxible_core.evidence.capture_erasures import capture_erased
+
+    found = erased_claims(instance)
+    if not found:
+        return ()
+    items: list[PlaybillNextItemV1] = []
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        for row in found:
+            cited = {
+                str(item[0])
+                for item in connection.execute(
+                    "SELECT u.capture_digest FROM citation_uses u "
+                    "JOIN claims c ON c.identity=u.owner_key "
+                    "WHERE u.owner_kind='Claim' AND u.owner_key=? AND c.lifecycle='live'",
+                    (row.claim_identity,),
+                )
+            }
+            captures = tuple(digest for digest in row.capture_digests if digest in cited)
+            if not captures or not all(capture_erased(instance, digest) for digest in captures):
+                continue
+            claim_id = row.claim_identity.removeprefix("Claim:")
+            content = instance.blob_at(coordinate.git_oid, claim_path(claim_id))
+            if content is None:
+                continue
+            claim = parse_claim(content, path=claim_path(claim_id))
+            citation = next(
+                (
+                    item.citation_id
+                    for item in claim_citation_references(claim)
+                    if item.capture_digest in captures
+                ),
+                None,
+            )
+            items.append(
+                _item(
+                    severity="warning",
+                    reason="claim_evidence_erased",
+                    subject_identity=row.claim_identity,
+                    related_identities=tuple(sorted(f"Capture:{digest}" for digest in captures)),
+                    detail={
+                        "erased_capture_digests": list(captures),
+                        "predicate": claim.statement.predicate,
+                        "checked_at": format_datetime(row.checked_at),
+                    },
+                    # Claim law v2 revision 10 moves the citation onto a fresh
+                    # Capture under the same contract; a revision or retirement
+                    # still carries the erased Capture, whose body no longer
+                    # verifies, so re-binding is the one exit until it is gone.
+                    repair=PlaybillNextRepairV1(
+                        operation="cruxible.rebind",
+                        target=row.claim_identity,
+                        required_change="rebind_onto_a_fresh_capture_under_the_same_contract",
+                        arguments={
+                            "claim_id": claim_id,
+                            **(
+                                {}
+                                if citation is None
+                                else {"citation": citation.partition(":")[2][:12]}
+                            ),
+                        },
+                    ),
+                )
+            )
+    return tuple(items)
+
+
 def _prediction_items(
     instance: PlaybillInstance,
     *,
@@ -6611,6 +6696,11 @@ def _queue_at(
             expiring=None if stored is None else stored.expiring_mandates,
         ),
         *_evidence_unavailable_items(
+            instance,
+            coordinate=coordinate,
+            access_profile=request.access_profile,
+        ),
+        *_evidence_erased_items(
             instance,
             coordinate=coordinate,
             access_profile=request.access_profile,

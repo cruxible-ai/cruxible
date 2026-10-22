@@ -450,6 +450,7 @@ NextReason: TypeAlias = Literal[
     "line_settled_prior_refusals",
     "line_inbox_unread",
     "evidence_unavailable",
+    "claim_evidence_erased",
     "prediction_settleable",
     "prediction_window_unbindable",
     "subject_kind_undeclared",

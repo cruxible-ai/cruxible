@@ -2303,6 +2303,22 @@ class _Planner:
                     )
         return claim
 
+    def _capture_contract_identity(self, digest: str) -> str | None:
+        """The CaptureContract identity a Capture names, as accepted state holds it."""
+
+        try:
+            envelope = capture_envelope(
+                self.instance.body_store(), digest, access=_VALUE_READ_ACCESS
+            )
+        except (CruxibleError, ValueError):
+            return None
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            row = projection.typed.connection.execute(
+                "SELECT identity FROM capture_contracts WHERE artifact_digest=?",
+                (envelope.capture_contract_digest,),
+            ).fetchone()
+        return envelope.capture_contract_digest if row is None else str(row[0])
+
     def _citation_source(self, digest: str) -> str | None:
         """The workspace file (logical source id) a cited Capture observed, if any."""
 
@@ -2354,7 +2370,16 @@ class _Planner:
         claim = self._live_claim(index, claim_id, path=f"{prefix}.target")
         statement = claim.statement
         evidence = change.evidence
-        if evidence.observation is None:
+        fresh: str | None = None
+        if isinstance(evidence, CaptureEvidence):
+            fresh = (
+                evidence.capture
+                if evidence.capture.startswith("sha256:")
+                else self.capture_by_handle(
+                    evidence.capture, index=index, path=f"{prefix}.evidence.capture"
+                )
+            )
+        elif evidence.observation is None:
             raise _refuse(
                 "cruxible.write.file_evidence_unobserved",
                 "the new text was not read on the writer's side; the daemon never reads "
@@ -2377,11 +2402,27 @@ class _Planner:
                 field_path=f"{prefix}.target",
             )
         citations = claim.backing.citations
-        file_source = evidence.observation.source_id
+        file_source = (
+            None
+            if isinstance(evidence, CaptureEvidence) or evidence.observation is None
+            else evidence.observation.source_id
+        )
         if change.citation is not None:
             wanted = change.citation.removeprefix("sha256:")
             named = [
                 item for item in citations if item.citation_id.partition(":")[2].startswith(wanted)
+            ]
+        elif fresh is not None:
+            # The Claim's one evidence citation under the fresh Capture's contract:
+            # Claim law v2 revision 10 replaces a citation within its contract.
+            contract = self._capture_contract_identity(fresh)
+            named = [
+                item
+                for item in citations
+                if item.origin == "independent"
+                and item.role == "evidence"
+                and item.capture_digest != fresh
+                and self._capture_contract_identity(item.capture_digest) == contract
             ]
         else:
             # The Claim's one citation of that file: a file anchor replaces an
@@ -2394,11 +2435,17 @@ class _Planner:
                 and self._citation_source(item.capture_digest) == file_source
             ]
         shown = tuple(item.citation_id.partition(":")[2][:12] for item in citations)
+        what = (
+            f"{change.citation}"
+            if change.citation
+            else "under that Capture's contract"
+            if fresh is not None
+            else f"of {file_source}"
+        )
         if not named:
             raise _refuse(
                 "cruxible.write.citation_not_held",
-                f"{claim_id} holds no citation "
-                + (f"{change.citation}" if change.citation else f"of {file_source}"),
+                f"{claim_id} holds no citation " + what,
                 change=index,
                 candidates=shown,
                 repair="Name one of the listed citations with citation (--citation)",
@@ -2407,8 +2454,7 @@ class _Planner:
         if len(named) > 1:
             raise _refuse(
                 "cruxible.write.citation_ambiguous",
-                f"{claim_id} holds {len(named)} citations "
-                + (f"under {change.citation}" if change.citation else f"of {file_source}"),
+                f"{claim_id} holds {len(named)} citations " + what,
                 change=index,
                 candidates=tuple(item.citation_id.partition(":")[2][:12] for item in named),
                 repair="Name one of the listed citations with citation (--citation)",
@@ -2431,8 +2477,21 @@ class _Planner:
         own_words = replaced.role == "copy" and replaced.origin == "independent"
         replaces = {replaced.citation_id}
         source: Any
+        citation_role: Literal["evidence", "copy"] | None
         values: dict[str, Any] = {}
-        if own_words:
+        if fresh is not None:
+            if replaced.origin != "independent" or replaced.role != "evidence":
+                raise _refuse(
+                    "cruxible.write.rebind_needs_capture_citation",
+                    f"{replaced.citation_id.partition(':')[2][:12]} is not a Capture citation "
+                    "of evidence, so a Capture cannot replace it",
+                    change=index,
+                    repair="Name the Claim's evidence citation with citation (--citation)",
+                    field_path=f"{prefix}.citation",
+                )
+            source = ExistingCaptureCitationSource(capture_digest=fresh)
+            citation_role = "evidence"
+        elif own_words:
             # A located copy rests on the writer's own words, which cite the
             # same bytes: both move to the section's text now.
             if not isinstance(evidence, SectionEvidence):
@@ -2460,10 +2519,12 @@ class _Planner:
                 and content is not None
                 and self._content_of(item.capture_digest) == content
             )
+            assert isinstance(evidence, SectionEvidence) and evidence.observation is not None
             source = SelfSourceBody(content_base64=evidence.observation.selected_content_base64)
             values["located_at"] = evidence.observation
-            citation_role: Literal["evidence", "copy"] | None = None
+            citation_role = None
         elif replaced.origin == "independent" and replaced.role == "evidence":
+            assert not isinstance(evidence, CaptureEvidence)
             source, citation_role = evidence.observation, "evidence"
         else:
             raise _refuse(
@@ -2501,7 +2562,13 @@ class _Planner:
             effective_from=statement.effective_from,
             effective_until=statement.effective_until,
         )
-        member = ClaimAuthoringPayloadV2(
+        # A cited Capture travels in the payload that carries existing Captures.
+        payload_type = (
+            ClaimAuthoringPayload
+            if isinstance(source, ExistingCaptureCitationSource)
+            else ClaimAuthoringPayloadV2
+        )
+        member = payload_type(
             statement=authored,
             rationale=self.request.because,
             source=source,

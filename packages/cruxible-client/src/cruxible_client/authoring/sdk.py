@@ -3492,19 +3492,22 @@ class Cruxible:
         because: str,
         file: str | None = None,
         section: str | None = None,
+        capture: str | CaptureRef | None = None,
         citation: str | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
     ) -> WriteOutcome:
-        """Re-cite a Claim whose cited text drifted on the text it rests on now.
+        """Re-cite a Claim on the text it rests on now, or on a fresh Capture.
 
         Name the new text as ``file="FILE#ANCHOR"`` or ``section="FILE#Heading/Path"``
-        (FILE is a catalogued file's path or catalog name); ``citation`` (12+ hex)
-        picks which citation is replaced when the Claim cites that file more than
-        once. The statement is not restated: the Claim keeps its value and ID, and
-        its history shows one ``rebound`` revision. A refusal raises
-        ``WriteRefusalError``.
+        (FILE is a catalogued file's path or catalog name), or a fresh Capture as
+        ``capture=`` (a digest, ``CAP-`` handle or ``CaptureRef``) under the same
+        CaptureContract as the citation it replaces: how a Claim whose Capture
+        was erased moves onto a new observation. ``citation`` (12+ hex) picks
+        which citation is replaced when more than one matches. The statement is
+        not restated: the Claim keeps its value and ID, and its history shows one
+        ``rebound`` revision. A refusal raises ``WriteRefusalError``.
 
         Next: ``outcome.next``; ``cx.get(claim, detail="history")`` shows the re-bind.
         """
@@ -3512,7 +3515,12 @@ class Cruxible:
         change = RebindChange(
             target=claim.address if isinstance(claim, ClaimRef) else claim,
             citation=citation,
-            evidence=rebind_evidence(file=file, section=section, workspace=self._workspace_root),
+            evidence=rebind_evidence(
+                file=file,
+                section=section,
+                capture=capture.capture_digest if isinstance(capture, CaptureRef) else capture,
+                workspace=self._workspace_root,
+            ),
         )
         (observed,) = observe_changes((change,), workspace=self._workspace_root)
         return self._written(
