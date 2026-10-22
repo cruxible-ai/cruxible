@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from cruxible_client.contracts.capture_erasure import CaptureEraseRefusedError
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
@@ -175,6 +176,10 @@ def _status_for_error(exc: CoreError) -> int:
         # A read refusal is a request fault with its own coded status: an
         # unknown name is 404, an ambiguous one 409, anything else 400.
         return exc.http_status
+    if isinstance(exc, CaptureEraseRefusedError):
+        # The Capture's state refuses the erase (a conflict, not a malformed
+        # request); nothing was destroyed or recorded.
+        return exc.http_status
     if isinstance(exc, ProcedureSurfaceError):
         # A served Procedure/Line surface refusal is a request fault the caller
         # can repair, never a daemon fault: the class declares its own 4xx so
@@ -296,7 +301,7 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["selector"] = exc.selector
         context["accepted_forms"] = list(exc.accepted_forms)
         context["repair_commands"] = list(exc.repair_commands)
-    if isinstance(exc, ReadRefusalError):
+    if isinstance(exc, ReadRefusalError | CaptureEraseRefusedError):
         context.update(exc.context)
     if isinstance(exc, ClaimTypeNotFoundError):
         context["predicate"] = exc.predicate

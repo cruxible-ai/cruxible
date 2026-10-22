@@ -15,6 +15,7 @@ from cruxible_client.contracts.captures import (
     CaptureRetentionErasurePolicy,
     CaptureRunCoordinateV1,
     CaptureSelectionBudget,
+    authorize_erasure,
     capture_component_pin,
     capture_contract_digest,
 )
@@ -52,23 +53,15 @@ def capture_contract(
     mapping_pin = capture_component_pin(
         "source-subject-mapping", "playbill.external.record-subject-v1"
     )
-    erasure_pin = (
-        capture_component_pin("erasure-rule", "playbill.capture-erasure-authority-v1")
-        if erasure
-        else None
-    )
     replay = replay_pin.artifact_digest
     provenance = provenance_pin.artifact_digest
     mapping = mapping_pin.artifact_digest
-    erasure_rule = None if erasure_pin is None else erasure_pin.artifact_digest
     registry_pins = [
         provenance_pin,
         replay_pin,
         mapping_pin,
     ]
-    if erasure_pin is not None:
-        registry_pins.append(erasure_pin)
-    return CaptureContract(
+    contract = CaptureContract(
         identity=ArtifactIdentity(kind="CaptureContract", name=name),
         allowed_source_kinds=("cas", "external", "ledger"),
         logical_source_identities=("commerce.production.orders",),
@@ -85,8 +78,7 @@ def capture_contract(
         ),
         retention_erasure_policy=CaptureRetentionErasurePolicy(
             body_retention="optional",
-            erasure="authorized_by_rule" if erasure else "prohibited",
-            erasure_rule_digest=erasure_rule,
+            erasure="prohibited",
             selector_privacy=selector_privacy,
         ),
         replay_policy_digest=replay,
@@ -96,6 +88,7 @@ def capture_contract(
         source_subject_mapping_digest=mapping,
         pins=tuple(sorted(registry_pins, key=lambda item: (item.role, item.target.qualified))),
     )
+    return authorize_erasure(contract) if erasure else contract
 
 
 def provider(

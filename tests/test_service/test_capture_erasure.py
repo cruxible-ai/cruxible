@@ -7,18 +7,31 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
+from cruxible_client.contracts.capture_erasure import (
+    CaptureEraseRefusedError,
+    CaptureEraseRequest,
+    CaptureEraseResult,
+)
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
-from cruxible_client.contracts.errors import ReadRefusalError
+from cruxible_client.contracts.captures import (
+    CAPTURE_COMPONENTS,
+    authorize_erasure,
+    capture_component_pin,
+    capture_contract_path,
+    evaluate_capture_contract_law,
+)
 from cruxible_client.contracts.get_reads import GetRequest
+from cruxible_client.contracts.repairs import HandEditRepair, RepairOperation
 from cruxible_client.contracts.write import capture_handle
 from cruxible_core.errors import ChangeRefusedError
 from cruxible_core.evidence import capture_erasures
 from cruxible_core.evidence.capture_erasures import CaptureErasureStore
+from cruxible_core.server.errors import error_to_response
 from cruxible_core.service.change_preview import change_entry, state_change_scope
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.evidence.capture_erasure import service_erase_capture
 from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
+from tests.core_support._pc_c_support import capture_contract
 from tests.support.capture_erasure_world import READ, ErasureWorld, erasure_world, write
 
 BECAUSE = "The scan output printed an API key; rotated, so the bytes must go."
@@ -152,19 +165,86 @@ def test_a_contract_that_does_not_authorize_erasure_refuses_with_the_repair(
 ) -> None:
     world = erasure_world(tmp_path, erasure=False)
 
-    with pytest.raises(ReadRefusalError) as refused:
+    with pytest.raises(CaptureEraseRefusedError) as refused:
         _erase(world)
 
-    assert refused.value.error_code == "cruxible.capture.erasure_prohibited"
-    assert "authorized_by_rule" in str(refused.value)
-    assert "playbill.capture-erasure-authority-v1" in str(refused.value)
+    error = refused.value
+    assert error.error_code == "cruxible.capture.erasure_prohibited"
+    # Public names only: the contract and the helper that opts a new one in, never
+    # an internal field path or the rule's pin identifier.
+    text = str(error)
+    assert world.contract.identity.qualified in text and "authorize_erasure" in text
+    assert "retention_erasure_policy" not in text and "playbill." not in text
+    assert isinstance(error.repair, HandEditRepair)
+    assert error.repair.hand_edit.target == world.contract.identity.qualified
+    assert "authorize_erasure" in error.repair.hand_edit.required_change
+    status, body = error_to_response(error)
+    assert status == 409 and body.error_code == "cruxible.capture.erasure_prohibited"
+    assert body.repair == error.repair
+    assert body.context["capture_digest"] == world.capture
+    assert body.context["repair_line"] == error.repair_line
     assert world.instance.body_store().verify(world.body)
 
 
 def test_an_unknown_digest_refuses(world: ErasureWorld) -> None:
-    with pytest.raises(ReadRefusalError) as refused:
+    with pytest.raises(CaptureEraseRefusedError) as refused:
         _erase(world, capture="sha256:" + "e" * 64)
     assert refused.value.error_code == "cruxible.capture.erasure_unavailable"
+    assert refused.value.repair == RepairOperation(
+        operation="cruxible.get", arguments={"ref": "sha256:" + "e" * 64}
+    )
+
+
+def test_authorize_erasure_sets_the_policy_and_the_pin_together() -> None:
+    prohibited = capture_contract()
+    authorized = authorize_erasure(prohibited)
+
+    policy = authorized.retention_erasure_policy
+    assert policy.erasure == "authorized_by_rule"
+    (rule,) = (pin for pin in authorized.pins if pin.role == "erasure-rule")
+    assert policy.erasure_rule_digest == rule.artifact_digest
+    assert CAPTURE_COMPONENTS.resolves(rule)
+    # Everything else is the contract as written, and applying it twice is a no-op.
+    assert (
+        authorized.model_copy(
+            update={
+                "retention_erasure_policy": prohibited.retention_erasure_policy,
+                "pins": prohibited.pins,
+            }
+        )
+        == prohibited
+    )
+    assert authorize_erasure(authorized) == authorized
+    assert (
+        evaluate_capture_contract_law(
+            authorized, path=capture_contract_path("test.orders-v1"), predecessor=None
+        ).verdict
+        == "accepted"
+    )
+
+
+def test_a_policy_without_its_pin_refuses_naming_authorize_erasure() -> None:
+    rule = capture_component_pin("erasure-rule", "playbill.capture-erasure-authority-v1")
+    contract = capture_contract()
+    unpinned = contract.model_copy(
+        update={
+            "retention_erasure_policy": contract.retention_erasure_policy.model_copy(
+                update={
+                    "erasure": "authorized_by_rule",
+                    "erasure_rule_digest": rule.artifact_digest,
+                }
+            )
+        }
+    )
+
+    result = evaluate_capture_contract_law(
+        unpinned, path=capture_contract_path("test.orders-v1"), predecessor=None
+    )
+
+    assert result.verdict == "refused"
+    (diagnostic,) = result.diagnostics
+    assert diagnostic.code == "cruxible.capture_contract.erasure_rule_unresolved"
+    assert "authorize_erasure(contract)" in diagnostic.message
 
 
 def test_an_interrupted_erase_finishes_under_its_first_record(

@@ -199,7 +199,8 @@ class CaptureRetentionErasurePolicy(_StrictCaptureModel):
         authorized = self.erasure == "authorized_by_rule"
         if authorized != (self.erasure_rule_digest is not None):
             raise ValueError(
-                "authorized erasure requires exactly one registered erasure-rule digest"
+                "authorized erasure requires exactly one registered erasure-rule digest; "
+                "build the contract with authorize_erasure(contract)"
             )
         return self
 
@@ -352,6 +353,41 @@ class CaptureComponentRegistry:
 CAPTURE_COMPONENTS = CaptureComponentRegistry(
     tuple(capture_component_pin(role, name) for role, name in _CAPTURE_COMPONENT_PIN_NAMES)
 )
+
+_ERASURE_RULE_PIN = capture_component_pin("erasure-rule", "playbill.capture-erasure-authority-v1")
+
+
+def authorize_erasure(contract: CaptureContract) -> CaptureContract:
+    """Return ``contract`` declaring that its Captures' retained bodies may be erased.
+
+    This is the one way to opt a CaptureContract into ``cruxible capture erase``:
+    it sets the retention policy's ``erasure`` to ``authorized_by_rule`` with the
+    registered erasure rule's digest and adds that rule's pin, the exact pair the
+    contract law requires. Every other field is kept, and a contract that already
+    authorizes erasure comes back unchanged. The declaration is fixed for the
+    contract's identity, so apply it before the contract is first accepted; an
+    accepted contract that prohibits erasure needs a successor under a new name.
+    """
+
+    policy = contract.retention_erasure_policy.model_copy(
+        update={
+            "erasure": "authorized_by_rule",
+            "erasure_rule_digest": _ERASURE_RULE_PIN.artifact_digest,
+        }
+    )
+    pins = tuple(
+        sorted(
+            {_pin_key(pin): pin for pin in (*contract.pins, _ERASURE_RULE_PIN)}.values(),
+            key=_pin_key,
+        )
+    )
+    return CaptureContract.model_validate(
+        {
+            **contract.model_dump(mode="python"),
+            "retention_erasure_policy": policy.model_dump(mode="python"),
+            "pins": [pin.model_dump(mode="python") for pin in pins],
+        }
+    )
 
 
 DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContract(
@@ -883,7 +919,10 @@ def evaluate_capture_contract_law(
             diagnostics=(
                 _diagnostic(
                     "cruxible.capture_contract.erasure_rule_unresolved",
-                    "Authorized erasure requires an exact governed erasure-rule pin.",
+                    "Authorized erasure requires the registered erasure rule's exact pin; "
+                    "build the contract with authorize_erasure(contract) from "
+                    "cruxible_client.contracts.captures, which sets the policy and the pin "
+                    "together.",
                     path=path,
                 ),
             ),
@@ -3369,6 +3408,7 @@ __all__ = [
     "capture_is_direct_self_source",
     "classify_capture_reuse",
     "capture_contract_path",
+    "authorize_erasure",
     "capture_component_pin",
     "capture_digest",
     "foreign_source_capture_contract",
