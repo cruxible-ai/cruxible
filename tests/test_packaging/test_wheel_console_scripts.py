@@ -222,3 +222,22 @@ def test_base_runnable_alias_responds(installed_venv: Path, alias: str) -> None:
     script = _script_path(installed_venv, alias)
     completed = _run([str(script), "--version"])
     assert "cruxible" in completed.stdout.lower()
+
+
+def test_installed_wheel_ships_the_uv_provider_installs_need(installed_venv: Path) -> None:
+    """C1: a plain pip install carries uv; Provider preparation finds it there."""
+
+    python = _venv_bin(installed_venv) / "python"
+    completed = _run(
+        [
+            str(python),
+            "-c",
+            (
+                "from pathlib import Path; "
+                "from cruxible_core.providers.package_materialization import uv_executable; "
+                "uv = Path(uv_executable()); "
+                "print(uv.is_file(), uv.is_relative_to(Path(__import__('sys').prefix)))"
+            ),
+        ]
+    )
+    assert completed.stdout.split() == ["True", "True"]

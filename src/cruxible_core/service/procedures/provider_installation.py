@@ -6,7 +6,6 @@ import fcntl
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -72,6 +71,7 @@ from cruxible_core.providers.package_materialization import (
     package_preparation_errors,
     prepare_provider_package,
     toolchain,
+    uv_executable,
 )
 from cruxible_core.providers.package_metadata import read_package_registration
 from cruxible_core.providers.package_probe import run_package_probe
@@ -320,9 +320,7 @@ def _source_files(
     # all other dependencies remain constrained by lock hashes and index policy.
     names = {request.package}
     names.update(row["name"] for row in locked.packages if "registry" not in row.get("source", {}))
-    uv = shutil.which("uv")
-    if uv is None:
-        raise ConfigError("provider installation requires uv")
+    uv = uv_executable()
     wheels = {}
     for name in sorted(names):
         if name not in projects:

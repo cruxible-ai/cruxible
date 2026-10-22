@@ -98,6 +98,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureBudgetExhausted,
     ProcedureBudgetRefusalDetail,
     ProcedureChildInvocation,
+    ProcedureFailureCause,
     ProcedureHaltTerminal,
     ProcedureInternalFailure,
     ProcedureInternalFailureCode,
@@ -2545,6 +2546,12 @@ def _state_from_records(
                             "Admitted Procedure replay material fails its content address."
                         ),
                     }
+                    raw_cause = final.get("failure_cause")
+                    cause = (
+                        ProcedureFailureCause.model_validate(raw_cause)
+                        if raw_cause is not None
+                        else None
+                    )
                     terminal = ProcedureOperationalFailure.model_validate(
                         {
                             "code": failure_code,
@@ -2552,6 +2559,8 @@ def _state_from_records(
                                 str(failure_code),
                                 "Provider execution failed for an operational reason.",
                             ),
+                            "last_node_id": None if cause is None else cause.node_id,
+                            "cause": cause,
                             "journal_coordinate": _journal_coordinate(final_record),
                             "details": final.get("failure_details", {}),
                         }

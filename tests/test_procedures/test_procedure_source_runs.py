@@ -76,8 +76,11 @@ from cruxible_client.contracts.procedures.models import (
     SourceNode,
 )
 from cruxible_client.contracts.procedures.results import (
+    FAILURE_CAUSE_MESSAGE_LIMIT,
     ProcedureAdmissionRefusal,
     ProcedureNodeRefusal,
+    ProcedureOperationalFailure,
+    strip_url_userinfo,
 )
 from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservation,
@@ -93,6 +96,7 @@ from cruxible_client.contracts.providers import (
     provider_digest,
     provider_path,
 )
+from cruxible_client.contracts.repairs import HandEditRepair
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_V2_DIGEST,
     WorkspaceFileSourceRequestV2,
@@ -111,6 +115,7 @@ from cruxible_core.providers.provider_local_runtime import (
     ProviderDriverOutcomeV1,
 )
 from cruxible_core.providers.provider_runtime_contract import (
+    ProviderRuntimeProviderErrorPayloadV1,
     ProviderRuntimeRefusalV1,
     ProviderRuntimeResultEnvelopeV1,
 )
@@ -1129,6 +1134,72 @@ def test_a_required_rule_refuses_the_same_declined_read_at_the_source_node(
     assert isinstance(state.terminal, ProcedureNodeRefusal)
     assert state.terminal.node_id == "read"
     assert state.terminal.code == "provider_declined"
+
+
+class _UnreachableInvoker(_WorkspaceInvoker):
+    """The governed read happens; the Provider then cannot reach its target."""
+
+    def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):  # type: ignore[no-untyped-def]
+        self.spawn_calls += 1
+        return ProviderDriverOutcomeV1(
+            envelope=ProviderRuntimeResultEnvelopeV1(
+                protocol_version="1.0",
+                run_id=context.run_id,
+                status="error",
+                error=ProviderRuntimeProviderErrorPayloadV1(
+                    kind="ConnectError",
+                    message=(
+                        "[Errno 8] nodename nor servname provided: "
+                        "https://reader:s3cret@advisories.invalid/osv.json" + " (retrying)" * 200
+                    ),
+                ),
+            ),
+            stderr="",
+            duration_seconds=0.001,
+            egress=ProviderEgressObservation(
+                observer_backend="test-attribution",
+                observer_grade="attribution",
+            ),
+            verified_binding=bound.binding,
+        )
+
+
+def test_a_provider_error_reaches_the_run_state_with_its_cause(tmp_path: Path) -> None:
+    """A failed run names the node, the Provider's kind and its own message.
+
+    The message keeps what tells a DNS failure from an HTTP status, loses any
+    URL credential, and is capped; the declared repair says what to do with it.
+    """
+
+    instance, _owner, _procedure, root, _policy_artifact = _world(tmp_path)
+
+    state, invoker = _run(instance, root, invoker=_UnreachableInvoker())
+
+    assert invoker.spawn_calls == 1
+    assert state.status == "operational_failed", state.terminal
+    assert isinstance(state.terminal, ProcedureOperationalFailure)
+    assert state.terminal.code == "provider_execution_error"
+    cause = state.terminal.cause
+    assert cause is not None
+    assert (cause.node_id, cause.provider_code, cause.kind) == (
+        "read",
+        "provider_execution_error",
+        "ConnectError",
+    )
+    assert state.terminal.last_node_id == "read"
+    assert cause.message.startswith(
+        "[Errno 8] nodename nor servname provided: https://advisories.invalid/osv.json"
+    )
+    assert "s3cret" not in cause.message and "reader" not in cause.message
+    assert len(cause.message) == FAILURE_CAUSE_MESSAGE_LIMIT
+    assert isinstance(state.terminal.repair, HandEditRepair)
+    assert "transport error" in state.terminal.repair.hand_edit.required_change
+
+
+def test_a_failure_cause_strips_userinfo_from_every_url() -> None:
+    assert strip_url_userinfo(
+        "GET https://u:p@a.example/x then git+ssh://git@b.example/r and mailto:x@y"
+    ) == ("GET https://a.example/x then git+ssh://b.example/r and mailto:x@y")
 
 
 def _acquisition_decisions(instance: PlaybillInstance) -> list[tuple[str, str]]:

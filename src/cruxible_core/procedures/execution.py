@@ -107,6 +107,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionMaterialMember,
     ProcedureBudgetBoundaryObservation,
     ProcedureBudgetRefusalDetail,
+    ProcedureFailureCause,
     ProcedureNodeRefusalCode,
     ProcedureProviderBinding,
     ProcedureProviderBindingV1,
@@ -2506,10 +2507,27 @@ class _OperationalFailure(Exception):
         code: str,
         *,
         details: object | None = None,
+        cause: ProcedureFailureCause | None = None,
     ) -> None:
         super().__init__(code)
         self.code = code
         self.details = normalize_canonical({} if details is None else details)
+        self.cause = cause
+
+
+def _provider_failure_cause(
+    outcome: ProviderInvocationOutcome, *, node_id: str
+) -> ProcedureFailureCause:
+    """The Provider's own account of an operational failure, for the run's final record."""
+
+    detail = outcome.detail
+    kind = detail.get("kind") if isinstance(detail, dict) else None
+    return ProcedureFailureCause(
+        node_id=node_id,
+        provider_code=outcome.code or "provider_execution_error",
+        kind=kind if isinstance(kind, str) and kind else None,
+        message=outcome.message or "",
+    )
 
 
 class _InternalFailure(Exception):
@@ -2841,6 +2859,7 @@ class ProcedureExecutor:
         failure_message: str | None = None
         failure_code: str | None = None
         failure_details: object = {}
+        failure_cause: ProcedureFailureCause | None = None
         halt: CanonicalValue | None = None
         try:
             state = self._seed_state(prepared)
@@ -2927,6 +2946,7 @@ class ProcedureExecutor:
             status = "failed"
             failure_code = exc.code
             failure_details = exc.details
+            failure_cause = exc.cause
             failure_message = "Procedure execution failed."
         except _InternalFailure as exc:
             status = "failed"
@@ -2985,6 +3005,13 @@ class ProcedureExecutor:
             "failure": failure_message,
             "failure_code": failure_code,
             "failure_details": failure_details,
+            # Only a Provider's operational failure carries a cause; every other
+            # final record keeps its bytes.
+            **(
+                {}
+                if failure_cause is None
+                else {"failure_cause": failure_cause.model_dump(mode="json")}
+            ),
             "halt": halt,
             "semantic_result_digest": semantic_result_digest,
             "provider_calls": state.provider_calls,
@@ -5242,7 +5269,9 @@ class ProcedureExecutor:
                 ) from exc
             if outcome.outcome_class == "operational":
                 raise _OperationalFailure(
-                    outcome.code or "provider_execution_error", details=outcome.detail
+                    outcome.code or "provider_execution_error",
+                    details=outcome.detail,
+                    cause=_provider_failure_cause(outcome, node_id=node_id),
                 ) from exc
             raise _InternalFailure(
                 outcome.code or "provider_protocol_violation", details=outcome.detail
@@ -5442,7 +5471,9 @@ class ProcedureExecutor:
                 raise _ProviderNodeRefusal(outcome, node_id=node_id)
             if outcome.outcome_class == "operational":
                 raise _OperationalFailure(
-                    outcome.code or "provider_execution_error", details=outcome.detail
+                    outcome.code or "provider_execution_error",
+                    details=outcome.detail,
+                    cause=_provider_failure_cause(outcome, node_id=node_id),
                 )
             raise _InternalFailure(
                 outcome.code or "provider_protocol_violation", details=outcome.detail

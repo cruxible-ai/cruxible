@@ -97,3 +97,61 @@ def test_an_install_preview_resolves_the_package_and_writes_nothing(
     assert body["not_run"] == ["package_preparation", "deployment_readiness", "registration"]
     head = http.get(f"/api/v1/{instance_id}/head").json()
     assert body["coordinate"]["git_oid"] == head["coordinate"]["git_oid"]
+
+
+def test_uv_comes_from_the_packaged_binary_then_path_or_refuses_by_name(monkeypatch):
+    """C1/1d: uv is a cruxible-core dependency; without it the refusal says so."""
+
+    import sys
+    import types
+
+    from cruxible_core.providers import package_materialization as materialization
+
+    packaged = types.ModuleType("uv")
+    packaged.find_uv_bin = lambda: "/venv/bin/uv"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "uv", packaged)
+    monkeypatch.setattr(materialization.shutil, "which", lambda name: pytest.fail("PATH read"))
+    assert materialization.uv_executable() == "/venv/bin/uv"
+
+    monkeypatch.setitem(sys.modules, "uv", None)  # the package is not installed
+    monkeypatch.setattr(materialization.shutil, "which", lambda name: "/usr/local/bin/" + name)
+    assert materialization.uv_executable() == "/usr/local/bin/uv"
+
+    monkeypatch.setattr(materialization.shutil, "which", lambda name: None)
+    with pytest.raises(materialization.ProviderUvMissing) as refused:
+        materialization.uv_executable()
+    assert refused.value.error_code == "cruxible.provider.uv_missing"
+    assert str(refused.value).startswith("cruxible.provider.uv_missing: ")
+    assert "reinstall cruxible-core" in str(refused.value)
+
+
+def test_a_preparation_refusal_keeps_the_runtimes_message(monkeypatch):
+    """1d: the code alone does not say which artifact or why; the message does."""
+
+    import types
+
+    from cruxible_core.errors import ConfigError
+    from cruxible_core.providers import package_materialization as materialization
+
+    class RefusalError(Exception):
+        def __init__(self, code: str, message: str) -> None:
+            super().__init__(message)
+            self.code = code
+            self.refusal = types.SimpleNamespace(code=code, message=message)
+
+    errors = types.SimpleNamespace(RefusalError=RefusalError)
+    monkeypatch.setattr(materialization, "toolchain", lambda module: errors)
+
+    with pytest.raises(ConfigError) as refused:
+        with materialization.package_preparation_errors():
+            raise RefusalError(
+                "artifact_hash_mismatch",
+                "https://ci:token@index.example/simple/x.whl does not match the lock" + "!" * 2000,
+            )
+    message = str(refused.value)
+    assert message.startswith(
+        "Provider preparation refused: artifact_hash_mismatch: "
+        "https://index.example/simple/x.whl does not match the lock"
+    )
+    assert "token" not in message
+    assert len(message) < 1200
