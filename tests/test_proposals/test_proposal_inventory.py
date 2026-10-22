@@ -98,7 +98,9 @@ def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Pa
 
     result = service_list_playbill_proposals(instance)
     by_id = {item.proposal_id: item for item in result.entries}
-    assert by_id[stale.proposal.admission.proposal_id].terminal_reason == "stale"
+    stale_entry = by_id[stale.proposal.admission.proposal_id]
+    # A moved base settles nothing: the proposal awaits its author's readmit.
+    assert (stale_entry.status, stale_entry.terminal_reason) == ("awaiting_readmit", None)
     assert by_id[accepted.proposal.proposal.admission.proposal_id].terminal_reason == "accepted"
     assert by_id[refused.proposal.admission.proposal_id].terminal_reason == "refused"
     assert by_id[opened.proposal.admission.proposal_id].status == "open"
@@ -434,8 +436,8 @@ def test_a_stale_proposal_may_be_withdrawn_instead_of_readmitted(tmp_path: Path)
             item
             for item in service_list_playbill_proposals(instance).entries
             if item.proposal_id == proposal_id
-        ).terminal_reason
-        == "stale"
+        ).status
+        == "awaiting_readmit"
     )
 
     service_withdraw_playbill_proposal(

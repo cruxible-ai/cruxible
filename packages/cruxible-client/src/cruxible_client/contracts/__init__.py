@@ -820,8 +820,9 @@ class ProposalListEntry(BaseModel):
     admitted_at: str | None
     verdict: Literal["candidate", "refused"] | None
     candidate_digest: str | None = None
-    status: Literal["open", "settled", "incomplete"]
-    terminal_reason: Literal["accepted", "refused", "stale", "withdrawn", "rejected"] | None = None
+    #: ``awaiting_readmit``: its base moved; it waits for its author's readmit.
+    status: Literal["open", "awaiting_readmit", "settled", "incomplete"]
+    terminal_reason: Literal["accepted", "refused", "withdrawn", "rejected"] | None = None
     incomplete_reasons: tuple[
         Literal["missing_admission", "missing_evaluation", "missing_candidate"], ...
     ] = ()
@@ -833,7 +834,7 @@ class ProposalList(BaseModel):
 
     tag: Literal["playbill-proposal-list-v1"] = "playbill-proposal-list-v1"
     coordinate: AcceptedCoordinate
-    status_filter: Literal["open", "settled", "incomplete"] | None = None
+    status_filter: Literal["open", "awaiting_readmit", "settled", "incomplete"] | None = None
     entries: list[ProposalListEntry]
     truncated: bool = False
     next_cursor: str | None = None
@@ -851,9 +852,14 @@ class ProposalReadmitResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-readmit-result-v1"]
+    #: ``already_live``: every change the stale proposal carried is live at the
+    #: head; nothing was proposed, the source closed as answered, and
+    #: ``proposal`` is absent.
+    status: Literal["readmitted", "already_live"] = "readmitted"
     source_proposal_id: str
     operation_digest: str
-    proposal: ProposalInspection
+    proposal: ProposalInspection | None
+    accepted_coordinate: AcceptedCoordinate | None = None
 
 
 class ProposalWithdrawResult(BaseModel):

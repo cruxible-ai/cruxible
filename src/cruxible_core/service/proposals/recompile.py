@@ -59,16 +59,31 @@ class RecompileInput:
         Callable[[AcceptedProjectionCoordinate, Mapping[str, bytes]], Mapping[str, bytes] | None]
         | None
     ) = None
+    #: Every change the source carried is already live at the head: nothing is
+    #: left to propose, and the source closes as answered.
+    already_live: bool = False
+    #: Called once the recompilation committed, with the successor's proposal ID
+    #: (None when the source closed as already live): the origin's own follow-up
+    #: records, such as a Line's open-proposal record and re-observations.
+    published: Callable[[str | None], None] | None = None
 
 
 @dataclass(frozen=True)
 class Recompilation:
     source_proposal_id: str
-    proposal: ProposalResult | ProposalPreview
+    #: None exactly when ``already_live``: nothing was proposed.
+    proposal: ProposalResult | ProposalPreview | None
     members_identical: bool
     coordinate: AcceptedCoordinate
     changed_members: tuple[RecompiledMemberChange, ...]
     changed_members_truncated: bool
+    already_live: bool = False
+
+
+ALREADY_LIVE_REASON = (
+    "Already live at the head: every change this proposal carried is accepted, "
+    "so nothing is left to propose."
+)
 
 
 def _changed_members(
@@ -233,6 +248,7 @@ def _recompile_proposal(
     existing = tuple(
         item for item in evidence.admissions_at_target(target) if item.readmits == link
     )
+    inputs: RecompileInput | None = None
     if existing:
         result: ProposalResult | ProposalPreview = _proposal_result(
             instance, existing[0].proposal_id
@@ -248,40 +264,41 @@ def _recompile_proposal(
                     inputs = procedure_input(instance, origin, head)
                 else:
                     inputs = _authoring_input(instance, origin, head)
-                request = ProposalAdmissionRequest(
-                    target_ref=target,
-                    proposed_base_oid=head.git_oid,
-                    source_compilation_digest=link.operation_digest,
-                    rationale=inputs.rationale,
-                )
-
-                def authorize(
-                    current: AcceptedProjectionCoordinate, tree: Mapping[str, bytes]
-                ) -> Mapping[str, bytes] | None:
-                    if current.git_oid != head.git_oid:
-                        raise ProposalStale(source_id, reason="head_moved")
-                    return None if inputs.authorize is None else inputs.authorize(current, tree)
-
-                def service_with_creations() -> ProposalService:
-                    service = instance.proposal_service()
-                    authority = service.subject_assignment_authority
-                    own = frozenset(inputs.creations)
-                    service.subject_assignment_authority = lambda operation, creation: (
-                        (operation == inputs.operation and creation in own)
-                        or (authority is not None and authority(operation, creation))
+                if not inputs.already_live:
+                    request = ProposalAdmissionRequest(
+                        target_ref=target,
+                        proposed_base_oid=head.git_oid,
+                        source_compilation_digest=link.operation_digest,
+                        rationale=inputs.rationale,
                     )
-                    return service
 
-                checked = service_with_creations().preview(
-                    actor=AuthenticatedActor(actor_id=source.admission.actor_id),
-                    request=request,
-                    candidate_tree=inputs.tree,
-                    timestamp=inputs.timestamp,
-                    readmits=link,
-                    authorize=authorize,
-                    settle_submission=inputs.settle_submission,
-                )
-                generated_bodies = dict(dry_run_held_bodies() or {})
+                    def authorize(
+                        current: AcceptedProjectionCoordinate, tree: Mapping[str, bytes]
+                    ) -> Mapping[str, bytes] | None:
+                        if current.git_oid != head.git_oid:
+                            raise ProposalStale(source_id, reason="head_moved")
+                        return None if inputs.authorize is None else inputs.authorize(current, tree)
+
+                    def service_with_creations() -> ProposalService:
+                        service = instance.proposal_service()
+                        authority = service.subject_assignment_authority
+                        own = frozenset(inputs.creations)
+                        service.subject_assignment_authority = lambda operation, creation: (
+                            (operation == inputs.operation and creation in own)
+                            or (authority is not None and authority(operation, creation))
+                        )
+                        return service
+
+                    checked = service_with_creations().preview(
+                        actor=AuthenticatedActor(actor_id=source.admission.actor_id),
+                        request=request,
+                        candidate_tree=inputs.tree,
+                        timestamp=inputs.timestamp,
+                        readmits=link,
+                        authorize=authorize,
+                        settle_submission=inputs.settle_submission,
+                    )
+                    generated_bodies = dict(dry_run_held_bodies() or {})
         except ProposalStale as exc:
             if exc.proposal_id == source_id:
                 raise
@@ -290,6 +307,9 @@ def _recompile_proposal(
             raise ProposalStale(
                 source_id, reason=str(getattr(exc, "code", "input_unavailable")), detail=str(exc)
             ) from exc
+        if inputs.already_live:
+            # Outside the preview overlay: closing the answered source is a write.
+            return _close_already_live(instance, source, inputs, head, preview=preview)
         if checked.candidate is None:
             raise ProposalStale(
                 source_id,
@@ -384,4 +404,58 @@ def _recompile_proposal(
                 superseded_by=result.admission.proposal_id,
             ),
         )
+        if inputs is not None and inputs.published is not None:
+            inputs.published(result.admission.proposal_id)
     return Recompilation(source_id, result, identical, head, changed_members, truncated)
+
+
+def _close_already_live(
+    instance: PlaybillInstance,
+    source: ProposalResult,
+    inputs: RecompileInput,
+    head: AcceptedCoordinate,
+    *,
+    preview: bool,
+) -> Recompilation:
+    """Nothing is left to propose at the head: the stale source is answered.
+
+    The source closes under its own author, with no successor; a preview
+    reports the outcome and records nothing. Work is this source's own members.
+    """
+    from cruxible_core.service.change_preview import ChangeMode
+    from cruxible_core.service.proposals.proposals import _close_once
+
+    source_id = source.admission.proposal_id
+    before = (
+        {}
+        if source.candidate is None
+        else {
+            member.path: getattr(
+                member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
+            )
+            for member in source.candidate.members
+        }
+    )
+    changed_members, truncated = _changed_members(before, {})
+    if not preview:
+        _close_once(
+            instance,
+            ChangeMode(instance, previewing=False),
+            ProposalWithdrawalRecord(
+                proposal_id=source_id,
+                actor_id=source.admission.actor_id,
+                reason=ALREADY_LIVE_REASON,
+                withdrawn_at=str(format_datetime(datetime.now(timezone.utc))),
+            ),
+        )
+        if inputs.published is not None:
+            inputs.published(None)
+    return Recompilation(
+        source_id,
+        None,
+        members_identical=False,
+        coordinate=head,
+        changed_members=changed_members,
+        changed_members_truncated=truncated,
+        already_live=True,
+    )

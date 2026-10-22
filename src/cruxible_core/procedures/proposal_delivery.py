@@ -667,11 +667,15 @@ def _refuse_retired_lineage_conflicts(
     members: tuple[ClaimAuthoringPayload, ...],
     identity_to_item: Mapping[str, str],
 ) -> None:
-    """Refuse a terminal that both retires a Claim's lineage and revises or dispositions it.
+    """Refuse a terminal that both retires a Claim's lineage and revises or judges it.
 
     A Claim item revising (or restating, so targeting) a lineage another item
-    retires, or dispositioning it, asks for two different ends of one lineage
-    in one change: the terminal refuses rather than pick one.
+    retires, or taking a position on it (``support``, ``contradict`` or
+    ``unsure``), asks for two different ends of one lineage in one change: the
+    terminal refuses rather than pick one. A ``not_tested`` disposition of a
+    retiring sibling is admitted: it takes no position, and the slot law still
+    demands it, because retirements stage after the Claims they sit beside. So
+    one terminal can add a value and retire its sibling, as the write verbs do.
     """
 
     retiring = {claim_id: item_key for item_key, claim_id in retired.items()}
@@ -686,9 +690,10 @@ def _refuse_retired_lineage_conflicts(
             )
     for member in members:
         for disposition in member.existing_claim_dispositions:
-            if disposition.claim_id in retiring:
+            if disposition.claim_id in retiring and disposition.disposition != "not_tested":
                 raise _retirement_refusal(
-                    f"One terminal both retires {disposition.claim_id} and dispositions it.",
+                    f"One terminal both retires {disposition.claim_id} and dispositions it "
+                    f"{disposition.disposition}.",
                     code=RETIREMENT_LINEAGE_CONFLICT,
                     item_key=identity_to_item[authoring_member_identity(member)],
                     claim_id=disposition.claim_id,
@@ -1177,7 +1182,6 @@ def _with_many_valued_dispositions(
     *,
     claim_ids: Mapping[str, str],
     base_tree: SnapshotTree,
-    retiring: frozenset[str] = frozenset(),
 ) -> tuple[ClaimAuthoringPayload, ...]:
     """Let an item add a value to a many-valued slot, as the ``add`` write verb does.
 
@@ -1193,6 +1197,8 @@ def _with_many_valued_dispositions(
     and every earlier member moves its own Claim -- a new one, or the lineage it
     revises, out of whatever slot that lineage held -- into its own slot. So a
     member is dispositioned against exactly the slot lowering will stage it into.
+    A sibling the same terminal retires is still live when the member stages
+    (retirements stage last), so it is dispositioned ``not_tested`` too.
     """
 
     cardinality: dict[str, str | None] = {}
@@ -1235,10 +1241,7 @@ def _with_many_valued_dispositions(
             continue
         explicit = {item.claim_id for item in member.existing_claim_dispositions}
         added = sorted(
-            {claim_id for claim_id, held in location.items() if held == slot}
-            - explicit
-            - {own}
-            - retiring,
+            {claim_id for claim_id, held in location.items() if held == slot} - explicit - {own},
             key=lambda item: item.encode("ascii"),
         )
         location[own] = slot
@@ -1474,12 +1477,15 @@ class ProposalTerminalEgressSink:
         manifests: Mapping[str, TerminalItemDependencyManifestV1] | None = None,
         evidence: Mapping[str, str] | None = None,
         journaled: PreparedTerminalEgressV1 | None = None,
+        recompiles: str | None = None,
     ) -> PreparedTerminalEgressV1:
         """Lower the terminal's items once; report what delivery will change.
 
         ``journaled`` is the preparation recovery read back from the journal: a
         Line run's decision about its open proposal is reproduced from it, never
-        decided again against what changed since.
+        decided again against what changed since. ``recompiles`` names the stale
+        proposal an explicit recompilation re-lowers at the head: the Line's
+        decision is then made again at the head instead (``_line_proposal``).
         """
 
         if request.kind not in {"propose_change_set", "settle_change_set"}:
@@ -1600,7 +1606,6 @@ class ProposalTerminalEgressSink:
                 identity: claim_ids[item_key] for identity, item_key in identity_to_item.items()
             },
             base_tree=self.instance.immutable_tree_at(request.accepted_coordinate.git_oid),
-            retiring=frozenset(retired.values()),
         )
         all_members: tuple[AuthoringChangeSetMember, ...] = tuple(
             sorted(
@@ -1716,7 +1721,13 @@ class ProposalTerminalEgressSink:
                 )
         ordered_unchanged = tuple(sorted(unchanged.values(), key=lambda child: child.child_index))
         line_proposal = (
-            self._line_proposal(request, admission=admission, lowered=lowered, journaled=journaled)
+            self._line_proposal(
+                request,
+                admission=admission,
+                lowered=lowered,
+                journaled=journaled,
+                recompiles=recompiles,
+            )
             if target_paths and request.kind == "propose_change_set"
             else None
         )
@@ -1813,13 +1824,56 @@ class ProposalTerminalEgressSink:
         request: TerminalEgressRequestV2,
         admission: ProcedureRunAdmissionV1,
         evidence: Mapping[str, str],
-        journaled: PreparedTerminalEgressV1,
+        source_proposal_id: str,
     ) -> PreparedProposal:
-        """Use recovery's normal lowering at a new coordinate, without delivery."""
+        """Lower a stale proposal's retained terminal at a new coordinate, without delivery.
+
+        The lowering is recovery's normal one, but nothing decided at the old
+        head is replayed: a Line's open-proposal question is decided at the head
+        (the source is the open proposal its successor replaces), so a change
+        that is partly live by now lowers to what is left of it.
+        """
         self.prepare_terminal_egress(
-            request=request, admission=admission, evidence=evidence, journaled=journaled
+            request=request,
+            admission=admission,
+            evidence=evidence,
+            recompiles=source_proposal_id,
         )
         return self._prepared[(request.admission_binding_digest, request.node_id)]
+
+    def after_recompiled(
+        self,
+        request: TerminalEgressRequestV2,
+        prepared: PreparedProposal,
+        *,
+        successor_id: str | None,
+    ) -> None:
+        """Once a recompilation committed: what delivery would have recorded at the head.
+
+        Each unchanged item's re-observation is recorded, as delivery does. A
+        Line's open proposal moves to the successor, so the Line's next run
+        finds its change still current rather than opening a duplicate; a source
+        closed as already live leaves the record naming a closed proposal, which
+        the next run reads as no open proposal.
+        """
+
+        from cruxible_core.exhaust.line_dispatch import LineDispatchStore, LineOpenProposal
+
+        self._record_reobservations(request, prepared.prepared.unchanged)
+        decision = prepared.prepared.line_proposal
+        if successor_id is None or decision is None or decision.decision != "supersede":
+            return
+        LineDispatchStore(self.instance).record_open_proposal(
+            LineOpenProposal(
+                line_id=decision.line_id,
+                node_id=request.node_id,
+                proposal_id=successor_id,
+                signature=decision.signature,
+                superseded=decision.open_proposal_id,
+            ),
+            actor=request.actor_context,
+            now=datetime.now(timezone.utc),
+        )
 
     def _line_proposal(
         self,
@@ -1828,12 +1882,17 @@ class ProposalTerminalEgressSink:
         admission: ProcedureRunAdmissionV1,
         lowered: LoweredAuthoring,
         journaled: PreparedTerminalEgressV1 | None,
+        recompiles: str | None = None,
     ) -> LineProposalPreparationV1 | None:
         """A Line run's decision about its Line's open proposal; ``None`` off a Line.
 
         One keyed read of the Line's open-proposal record and one of that
         proposal's status. Recovery reproduces the journaled decision, after
         checking this lowering still carries the change it was made about.
+        Recompiling the stale proposal ``recompiles`` decides again at the head
+        and never keeps the source: when the Line's record names it, the
+        successor supersedes it (``after_recompiled`` moves the record); else
+        the successor is proposed without becoming the Line's open proposal.
         """
 
         from cruxible_client.contracts.procedures.line_specs import line_identity_digest
@@ -1845,6 +1904,22 @@ class ProposalTerminalEgressSink:
             return None
         line_id = line_identity_digest(identity)
         signature = line_change_signature(self.instance, lowered)
+        if recompiles is not None:
+            record = (
+                LineDispatchStore(self.instance).open_proposal(line_id, request.node_id)
+                if dispatch_root(self.instance).is_dir()
+                else None
+            )
+            if record is not None and record.proposal_id == recompiles:
+                return LineProposalPreparationV1(
+                    line_id=line_id,
+                    signature=signature,
+                    decision="supersede",
+                    open_proposal_id=recompiles,
+                )
+            return LineProposalPreparationV1(
+                line_id=line_id, signature=signature, decision="propose"
+            )
         if journaled is not None:
             decided = journaled.line_proposal
             if decided is not None and (

@@ -2457,6 +2457,9 @@ def readmit_proposal(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
+    if result.proposal is None:
+        click.echo(f"{result.status}  {result.source_proposal_id}")
+        return
     proposal = result.proposal.proposal
     evaluation = proposal.get("evaluation", {})
     admission = proposal.get("admission", {})

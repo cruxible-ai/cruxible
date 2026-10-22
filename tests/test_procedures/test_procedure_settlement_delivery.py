@@ -2107,8 +2107,8 @@ def test_a_moved_head_with_suspended_mandate_leaves_delegated_proposal_stale(
     assert set(recovered.values()) == {"refused"}
     assert instance.accepted_coordinate() == head
     assert (
-        service_playbill_proposal_status(instance, proposal_id=pending.proposal_id).terminal_reason
-        == "stale"
+        service_playbill_proposal_status(instance, proposal_id=pending.proposal_id).status
+        == "awaiting_readmit"
     )
     assert instance.proposal_evidence().read_withdrawal(pending.proposal_id) is None
 

@@ -75446,6 +75446,7 @@
               {
                 "enum": [
                   "open",
+                  "awaiting_readmit",
                   "settled",
                   "incomplete"
                 ],
@@ -75582,6 +75583,7 @@
               "status": {
                 "enum": [
                   "open",
+                  "awaiting_readmit",
                   "settled",
                   "incomplete"
                 ],
@@ -75611,7 +75613,6 @@
                     "enum": [
                       "accepted",
                       "refused",
-                      "stale",
                       "withdrawn",
                       "rejected"
                     ],
@@ -75686,6 +75687,7 @@
               {
                 "enum": [
                   "open",
+                  "awaiting_readmit",
                   "settled",
                   "incomplete"
                 ],
@@ -75817,6 +75819,7 @@
           "schema": {
             "enum": [
               "open",
+              "awaiting_readmit",
               "settled",
               "incomplete"
             ],
@@ -75868,7 +75871,6 @@
                 "enum": [
                   "accepted",
                   "refused",
-                  "stale",
                   "withdrawn",
                   "rejected"
                 ],
@@ -75974,6 +75976,7 @@
           "status": {
             "enum": [
               "open",
+              "awaiting_readmit",
               "settled",
               "incomplete"
             ],
@@ -76003,7 +76006,6 @@
                 "enum": [
                   "accepted",
                   "refused",
-                  "stale",
                   "withdrawn",
                   "rejected"
                 ],
@@ -76059,6 +76061,25 @@
     },
     "ProposalReadmitResult": {
       "fields": {
+        "accepted_coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "operation_digest": {
           "has_default": false,
           "has_default_factory": false,
@@ -76075,7 +76096,14 @@
           "json_name": "proposal",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/ProposalInspection"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProposalInspection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "source_proposal_id": {
@@ -76085,6 +76113,23 @@
           "required": true,
           "schema": {
             "title": "Source Proposal Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "default": "readmitted",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "default": "readmitted",
+            "enum": [
+              "readmitted",
+              "already_live"
+            ],
+            "title": "Status",
             "type": "string"
           }
         },
@@ -76554,15 +76599,42 @@
         },
         "additionalProperties": false,
         "properties": {
+          "accepted_coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "operation_digest": {
             "title": "Operation Digest",
             "type": "string"
           },
           "proposal": {
-            "$ref": "#/$defs/ProposalInspection"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProposalInspection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source_proposal_id": {
             "title": "Source Proposal Id",
+            "type": "string"
+          },
+          "status": {
+            "default": "readmitted",
+            "enum": [
+              "readmitted",
+              "already_live"
+            ],
+            "title": "Status",
             "type": "string"
           },
           "tag": {
@@ -76599,13 +76671,23 @@
           }
         },
         "candidate_digest": {
-          "has_default": false,
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
           "has_default_factory": false,
           "json_name": "candidate_digest",
-          "required": true,
+          "required": false,
           "schema": {
-            "title": "Candidate Digest",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
           }
         },
         "changed_members": {
@@ -76649,13 +76731,23 @@
           }
         },
         "proposal_id": {
-          "has_default": false,
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
           "has_default_factory": false,
           "json_name": "proposal_id",
-          "required": true,
+          "required": false,
           "schema": {
-            "title": "Proposal Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
           }
         },
         "source_proposal_id": {
@@ -76676,7 +76768,8 @@
           "schema": {
             "enum": [
               "pending_review",
-              "ready_to_activate"
+              "ready_to_activate",
+              "already_live"
             ],
             "title": "Status",
             "type": "string"
@@ -76762,14 +76855,22 @@
           }
         },
         "additionalProperties": false,
-        "description": "Review the new proposal normally; this call recorded no approval for it.",
+        "description": "Review the new proposal normally; this call recorded no approval for it.\n\n``already_live``: every change the stale proposal carried is already live at\nthe head, so nothing is left to propose. The source is closed as answered,\nno new proposal exists (``proposal_id`` and ``candidate_digest`` are absent),\nand nothing needs review.",
         "properties": {
           "accepted_coordinate": {
             "$ref": "#/$defs/AcceptedCoordinate"
           },
           "candidate_digest": {
-            "title": "Candidate Digest",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
           },
           "changed_members": {
             "default": [],
@@ -76790,8 +76891,16 @@
             "type": "boolean"
           },
           "proposal_id": {
-            "title": "Proposal Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
           },
           "source_proposal_id": {
             "title": "Source Proposal Id",
@@ -76800,7 +76909,8 @@
           "status": {
             "enum": [
               "pending_review",
-              "ready_to_activate"
+              "ready_to_activate",
+              "already_live"
             ],
             "title": "Status",
             "type": "string"
@@ -76815,8 +76925,6 @@
         "required": [
           "status",
           "source_proposal_id",
-          "proposal_id",
-          "candidate_digest",
           "members_identical",
           "accepted_coordinate"
         ],
@@ -76825,9 +76933,7 @@
       },
       "required_fields": [
         "accepted_coordinate",
-        "candidate_digest",
         "members_identical",
-        "proposal_id",
         "source_proposal_id",
         "status"
       ]

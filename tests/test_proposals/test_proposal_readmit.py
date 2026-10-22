@@ -566,3 +566,71 @@ def test_stale_message_is_plain_words_with_one_period_and_the_code_structured(
     )
     assert ".." not in message
     assert "cruxible.proposal.stale" not in message
+
+
+@pytest.mark.parametrize(
+    ("origin", "name", "approver", "operation", "arguments", "says"),
+    [
+        (
+            "line",
+            "advisories",
+            False,
+            "cruxible.line.run",
+            {"line": "advisories"},
+            "cruxible line run advisories",
+        ),
+        (
+            "procedure",
+            "import",
+            False,
+            "cruxible.procedure.run",
+            {"procedure": "import"},
+            "cruxible procedure run import INPUT",
+        ),
+        ("write", None, False, "cruxible.write", {}, "Make the write again at the current head"),
+        (
+            "procedure",
+            None,
+            False,
+            "cruxible.proposal.withdraw",
+            {"proposal_id": "prop-1"},
+            "retained run input is unavailable",
+        ),
+        (
+            "line",
+            "advisories",
+            True,
+            "cruxible.proposal.reject",
+            {"proposal_id": "prop-1"},
+            "cruxible proposal reject prop-1 --reason TEXT",
+        ),
+    ],
+)
+def test_a_refused_readmit_names_the_real_exit_by_origin_never_readmit(
+    origin: str,
+    name: str | None,
+    approver: bool,
+    operation: str,
+    arguments: dict[str, str],
+    says: str,
+) -> None:
+    from cruxible_client.contracts.errors import ProposalReadmitRefused
+
+    error = ProposalReadmitRefused(
+        "prop-1",
+        reason="effectful_operation_payload_mismatch",
+        detail="Recovery re-derived another change.",
+        origin=origin,  # type: ignore[arg-type]
+        origin_name=name,
+        approver=approver,
+    )
+
+    assert error.error_code == "cruxible.proposal.readmit_refused"
+    assert isinstance(error, ProposalStale)  # served as a stale-proposal refusal (409)
+    assert error.repair is not None
+    assert (error.repair.operation, error.repair.arguments) == (operation, arguments)
+    message = str(error)
+    assert says in message
+    assert "(effectful_operation_payload_mismatch: Recovery re-derived another change)" in message
+    assert "proposal readmit" not in message
+    assert ("proposal withdraw prop-1" in message) is not approver

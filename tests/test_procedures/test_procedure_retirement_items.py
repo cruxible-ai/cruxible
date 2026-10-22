@@ -6,7 +6,8 @@ the Procedure proposes and review judges it, or a settle grant whose scope
 lists ``retire`` for the ClaimType settles it; any other settle grant proposes
 instead (per-rule trust). The receipt binds the item to the retired member. A
 key Claim retires with its Subject, never as an item; a terminal that retires
-a lineage and also revises it refuses.
+a lineage and also revises it, or takes a position on it, refuses. One terminal
+may add a value to a many-valued slot and retire its sibling there.
 """
 
 from __future__ import annotations
@@ -53,12 +54,13 @@ def _head_claim(instance: Any, claim_id: str) -> Any:
     return parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
 
 
-def _proposed_world(tmp_path: Path):  # type: ignore[no-untyped-def]
+def _proposed_world(tmp_path: Path, *, claim_type: Any = None):  # type: ignore[no-untyped-def]
     """A fan-out proposal world whose first run's Claim is accepted; returns its ID too."""
 
     instance, owner, root, line, _procedure = delivery.proposal_world(
         tmp_path,
         templates=FAN_OUT,  # type: ignore[arg-type]
+        claim_type=claim_type,
     )
     _write_feed(root, [_element(None)])
     first = delivery.run_line(instance, root, line)
@@ -143,6 +145,93 @@ def test_retiring_and_revising_one_lineage_in_one_terminal_refuses(tmp_path: Pat
     assert refusal.details["code"] == "cruxible.procedure.retirement_lineage_conflict"
     assert refusal.details["claim_id"] == claim_id
     assert len(delivery._proposal_refs(instance)) == 1  # only the first run's
+
+
+def _valued(value: str) -> dict[str, object]:
+    """An item for the first run's slot (no qualifier) holding another value."""
+
+    item = _element(None)
+    item["statement"] = {  # type: ignore[index]
+        **item["statement"],  # type: ignore[dict-item]
+        "object": {"kind": "literal", "value": value},
+    }
+    return item
+
+
+def test_one_terminal_adds_a_value_and_retires_its_sibling_in_a_many_valued_slot(
+    tmp_path: Path,
+) -> None:
+    # Retirements stage after the Claims they sit beside, so the slot law still
+    # demands a disposition of the retiring sibling: it is dispositioned
+    # not_tested, as the write verbs do, rather than split across two runs.
+    instance, owner, root, line, claim_id = _proposed_world(
+        tmp_path, claim_type=delivery._many_valued_claim_type()
+    )
+    _write_feed(root, [_retire(claim_id), _valued("critical")])
+
+    state = delivery.run_line(instance, root, line, at=LATER)
+
+    assert state.status == "succeeded", state.terminal
+    (egress,) = state.terminal_egress
+    assert egress.verdict == "delivered" and egress.proposal_id is not None
+    retired_child, created_child = egress.children
+    assert retired_child.path == claim_path(claim_id)
+    created_id = _claim_id(created_child.path)
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+    assert _head_claim(instance, claim_id).lifecycle.state == "retired"
+    live = _head_claim(instance, created_id)
+    assert live.lifecycle.state == "live"
+    assert live.statement.object.model_dump(mode="json")["value"] == "critical"
+    assert [claim.identity.name for claim in delivery._live_slot_claims(instance)] == [created_id]
+
+
+@pytest.mark.parametrize("disposition", ["support", "contradict", "unsure", "not_tested"])
+def test_a_retiring_claim_admits_only_a_not_tested_disposition(disposition: str) -> None:
+    from cruxible_client.contracts.authoring.models import (
+        AuthoringClaimStatement,
+        AuthoringExistingClaimDisposition,
+        ClaimAuthoringPayload,
+        ClaimDependencyDrafts,
+        ExistingCaptureCitationSource,
+        authoring_member_identity,
+    )
+    from cruxible_core.procedures.proposal_delivery import (
+        ProposalDeliveryRefused,
+        _refuse_retired_lineage_conflicts,
+    )
+
+    retiring = "CLM-" + "a" * 32
+    member = ClaimAuthoringPayload(
+        statement=AuthoringClaimStatement.model_validate(_valued("critical")["statement"]),
+        rationale="Another value beside the retiring one.",
+        source=ExistingCaptureCitationSource(capture_digest="sha256:" + "c" * 64),
+        citation_role="evidence",
+        existing_claim_dispositions=(
+            AuthoringExistingClaimDisposition(claim_id=retiring, disposition=disposition),  # type: ignore[arg-type]
+        ),
+        dependency_drafts=ClaimDependencyDrafts(),
+    )
+
+    def check() -> None:
+        _refuse_retired_lineage_conflicts(
+            {"retire-item": retiring},
+            claim_ids={"add-item": "CLM-" + "b" * 32},
+            members=(member,),
+            identity_to_item={authoring_member_identity(member): "add-item"},
+        )
+
+    if disposition == "not_tested":
+        check()  # no position taken: the slot law's demand, admitted
+        return
+    with pytest.raises(ProposalDeliveryRefused) as refused:
+        check()
+    assert refused.value.details["code"] == "cruxible.procedure.retirement_lineage_conflict"
+    assert (refused.value.details["item_key"], refused.value.details["retired_by"]) == (
+        "add-item",
+        "retire-item",
+    )
 
 
 def test_a_retirement_of_no_live_claim_refuses(tmp_path: Path) -> None:
