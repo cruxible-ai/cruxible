@@ -3594,8 +3594,8 @@ on new evidence (other `--because` words, another Capture) that Claim's evidence
 is refreshed, never a second Claim written; `--expect-absent` refuses it
 instead (`cruxible.write.value_already_present`). `retire` ends one live
 Claim, named by ID, by SUBJECT FIELD when that field holds one value, or by
-SUBJECT FIELD VALUE for one of several (`cruxible retire app.service/payments
-depends_on pypi.release/requests-2.32.4`; in a `write` file, a target
+SUBJECT FIELD VALUE for one of several (`cruxible retire catalog.part/bp-2210
+fits catalog.vehicle/honda-civic-2019`; in a `write` file, a target
 `{"subject", "field", "value"}`); the
 Claims that depend on it retire with it; `--expect` compares the field's values
 as on `set`. TARGET alone as `kind/id` retires the Subject itself, with its key

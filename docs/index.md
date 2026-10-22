@@ -11,9 +11,9 @@ judgment; Cruxible checks it, records it and serves it back.
 
 ## Start here
 
-- [Quickstart](quickstart.md): set up a first project, record what the team
-  knows, review a change that comes in from outside, see a page flagged when
-  it falls out of date, and ask what a change affects.
+- [Quickstart](quickstart.md): in about ten minutes, find out which of your
+  project's dependencies carry a vulnerability attackers are exploiting now,
+  with every answer traced to its source.
 - [Concepts](concepts.md): the ideas behind Cruxible, and the words the rest
   of these docs use.
 
