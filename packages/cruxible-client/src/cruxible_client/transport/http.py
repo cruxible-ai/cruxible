@@ -17,6 +17,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
+from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequest,
@@ -1012,6 +1013,16 @@ class CruxibleClient:
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, CaptureRead)
+
+    def erase_capture(self, instance_id: str, request: CaptureEraseRequest) -> CaptureEraseResult:
+        """Erase one Capture's retained body. It cannot be undone: it previews unless
+        ``request.dry_run`` is false, and then commits only with ``request.at``."""
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/captures/erase",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return self._parse_model(response, CaptureEraseResult)
 
     def file_context(self, instance_id: str) -> contracts.FileContext:
         response = self._client.get(f"/api/v1/{instance_id}/files/context")

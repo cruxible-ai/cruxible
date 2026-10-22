@@ -75,6 +75,9 @@ PERMISSION_MODE_NAMES: tuple[str, ...] = tuple(_MODE_NAMES)
 
 TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_capture_read": PermissionMode.GOVERNED_WRITE,
+    # Erasing a retained body cannot be undone: the reviewing tier, never a
+    # propose-only agent (the contract's own erasure rule is the authority).
+    "cruxible_capture_erase": PermissionMode.GRAPH_WRITE,
     "cruxible_provider_list": PermissionMode.READ_ONLY,
     "cruxible_provider_install": PermissionMode.ADMIN,
     "cruxible_provider_retire": PermissionMode.ADMIN,

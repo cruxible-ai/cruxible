@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
+from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ExactContentClaimObject,
@@ -34,6 +35,7 @@ from cruxible_client.contracts.operational_reads import (
     LINE_CARD_RUNS,
     OPERATIONAL_CARD_LIST_LIMIT,
     GetCaptureCard,
+    GetCaptureErasure,
     GetLineCard,
     GetLineEnablement,
     GetLineOccurrence,
@@ -81,6 +83,7 @@ from cruxible_client.contracts.triggers import (
     TriggerSchedule,
     WindowCloseSchedule,
 )
+from cruxible_core.evidence.capture_erasures import erased_body
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -617,8 +620,11 @@ def line_rows(
 
 def _availability(
     instance: PlaybillInstance, digest: str
-) -> tuple[Literal["available", "unavailable"], str | None]:
-    """Whether the store can still produce a Capture, as the evidence worker last saw."""
+) -> tuple[Literal["available", "unavailable"], str | None, CaptureErasureRecord | None]:
+    """Whether the store can still produce a Capture, as the evidence worker last saw.
+
+    An erased body is no damage: the erasure record says who erased it and why.
+    """
 
     from cruxible_client.contracts.captures import required_capture_bodies
     from cruxible_core.consumers.next.evidence import evidence_findings
@@ -630,16 +636,27 @@ def _availability(
             PositionedBodies(store).verify(body)
             for body in required_capture_bodies(envelope, digest)
         ):
-            return "available", None
+            return "available", None, None
+        erasure = erased_body(instance, envelope)
+        if erasure is not None:
+            return (
+                "unavailable",
+                f"body erased {format_datetime(erasure.erased_at)} by {erasure.erased_by}",
+                erasure,
+            )
     except (CruxibleError, ValueError):
         pass
     found = [item for item in evidence_findings(instance) if item.capture_digest == digest]
     if found:
-        return "unavailable", "; ".join(
-            f"{item.part} {item.state} (checked {format_datetime(item.checked_at)})"
-            for item in found
+        return (
+            "unavailable",
+            "; ".join(
+                f"{item.part} {item.state} (checked {format_datetime(item.checked_at)})"
+                for item in found
+            ),
+            None,
         )
-    return "unavailable", "retained evidence unavailable at the read position"
+    return "unavailable", "retained evidence unavailable at the read position", None
 
 
 def capture_card(
@@ -704,7 +721,7 @@ def capture_card(
             if contract.startswith("unresolved:")
             else names.version_number(contract, contract_digest)
         )
-    status, status_detail = _availability(instance, digest)
+    status, status_detail, erasure = _availability(instance, digest)
     next_steps = [render(claim, None) for claim in citing[:1]]
     next_steps.append(read_capture(digest))
     return GetCaptureCard(
@@ -718,6 +735,9 @@ def capture_card(
         access=None if access is None else str(access),
         status=status,
         status_detail=status_detail,
+        erased=None
+        if erasure is None
+        else GetCaptureErasure(by=erasure.erased_by, at=erasure.erased_at, because=erasure.because),
         subjects=subjects,
         citing=citing,
         citing_total=citing_total,

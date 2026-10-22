@@ -37,3 +37,27 @@ def test_capture_read_permission_and_request_validation(
     finally:
         monkeypatch.delenv("CRUXIBLE_MODE")
         reset_permissions()
+
+
+def test_capture_erase_route_refuses_typed_and_needs_graph_write(
+    playbill_http: tuple[TestClient, str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    http, instance_id, _key = playbill_http
+    route = f"/api/v1/{instance_id}/captures/erase"
+    request = {"capture_digest": "sha256:" + "f" * 64, "because": "Rotated the leaked key."}
+    missing = http.post(route, json=request)
+    assert missing.status_code == 409, missing.text
+    assert missing.json()["error_code"] == "cruxible.capture.erasure_unavailable"
+    unconfirmed = http.post(route, json={**request, "dry_run": False})
+    assert unconfirmed.status_code == 400, unconfirmed.text
+    assert unconfirmed.json()["error_code"] == "cruxible.preview.confirmation_required"
+    assert http.post(route, json={**request, "because": "two\nlines"}).status_code == 422
+    assert http.post(route, json={**request, "capture_digest": "/etc/passwd"}).status_code == 422
+    monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+    reset_permissions()
+    try:
+        denied = http.post(route, json=request)
+        assert denied.status_code == 403, denied.text
+    finally:
+        monkeypatch.delenv("CRUXIBLE_MODE")
+        reset_permissions()

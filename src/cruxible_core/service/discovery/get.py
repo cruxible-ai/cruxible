@@ -72,6 +72,7 @@ from cruxible_client.contracts.get_reads import (
     GetBlueprintSlot,
     GetBody,
     GetCaptureContractCard,
+    GetCaptureErasure,
     GetCaptureEvidence,
     GetCard,
     GetClaimCard,
@@ -134,6 +135,7 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.triggers import Trigger
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import SUBJECT_KIND_PATTERN, SUBJECT_REF_TEXT_PATTERN
+from cruxible_core.evidence.capture_erasures import erased_body
 from cruxible_core.exhaust.journal_index import RunPageInvalidated
 from cruxible_core.indexes.history.history_index import (
     AcceptedGenerationLocation,
@@ -2046,6 +2048,8 @@ def _claim_evidence(
     captures: list[GetCaptureEvidence] = []
     for account in explanation.admission_accounts:
         envelope = capture_envelope(bodies, account.capture_digest, access=_SERVICE_ACCESS)
+        # One stat when nothing was ever erased; a lookup only for an absent body.
+        erasure = erased_body(instance, envelope)
         version = names.version_of(account.capture_contract_digest)
         source = getattr(envelope.source, "source_identity", None)
         if source is None and version is not None:
@@ -2062,6 +2066,11 @@ def _claim_evidence(
                 role=account.citation_role,
                 origin=account.citation_origin,
                 status=account.status,
+                erased=None
+                if erasure is None
+                else GetCaptureErasure(
+                    by=erasure.erased_by, at=erasure.erased_at, because=erasure.because
+                ),
             )
         )
     # Accepted attestations and the door's recorded events of this exact version.

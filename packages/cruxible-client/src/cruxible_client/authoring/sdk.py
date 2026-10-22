@@ -153,6 +153,7 @@ from cruxible_client.contracts.canonical import (
     CanonicalValue,
     normalize_canonical,
 )
+from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import (
     CaptureContract,
@@ -2684,6 +2685,35 @@ class Cruxible:
             ),
         )
         return CaptureView(result=result)
+
+    def erase_capture(
+        self,
+        capture: str | CaptureRef,
+        *,
+        because: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> CaptureEraseResult:
+        """Erase one Capture's retained body under its contract's erasure rule.
+
+        The bytes are destroyed; the envelope, its contract and an erasure record
+        (who, when, ``because``) stay, and Claims citing it read the evidence as
+        erased. Only a contract that authorizes erasure allows it. It cannot be
+        undone: the default previews (``status="would_erase"``); commit with
+        ``dry_run=False, at=result.coordinate.digest``.
+        """
+        result = self._client.erase_capture(
+            self._instance_id,
+            CaptureEraseRequest(
+                capture_digest=capture.capture_digest
+                if isinstance(capture, CaptureRef)
+                else capture,
+                because=because,
+                dry_run=dry_run,
+                at=at,
+            ),
+        )
+        return result
 
     def predictions(self, claim: str | ClaimVersionReference) -> api.ResolutionContractsResult:
         """List the accepted predictions that test one Claim version, retired ones included.

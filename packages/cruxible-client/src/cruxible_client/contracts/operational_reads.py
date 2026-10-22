@@ -183,6 +183,14 @@ class GetLineCard(_StrictOperationalModel):
     next: tuple[str, ...] = ()
 
 
+class GetCaptureErasure(_StrictOperationalModel):
+    """Who erased a Capture's retained body, when and why."""
+
+    by: str
+    at: datetime
+    because: str
+
+
 class GetCaptureCard(_StrictOperationalModel):
     """A retained Capture: its contract, when it was observed, and who cites it.
 
@@ -201,6 +209,7 @@ class GetCaptureCard(_StrictOperationalModel):
     access: str | None = Field(default=None, exclude_if=_omit_none)
     status: Literal["available", "unavailable"]
     status_detail: str | None = Field(default=None, exclude_if=_omit_none)
+    erased: GetCaptureErasure | None = Field(default=None, exclude_if=_omit_none)
     subjects: tuple[str, ...] = ()
     citing: tuple[str, ...] = ()
     citing_total: int = Field(default=0, ge=0)
@@ -432,6 +441,7 @@ __all__ = [
     "OPERATIONAL_CARD_LIST_LIMIT",
     "EnablementPrincipalKind",
     "GetCaptureCard",
+    "GetCaptureErasure",
     "GetLineEnablement",
     "GetLineCard",
     "GetLineOccurrence",

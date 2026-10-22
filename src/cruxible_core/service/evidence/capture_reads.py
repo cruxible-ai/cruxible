@@ -26,6 +26,7 @@ from cruxible_client.contracts.source_references import (
     SourceHandle,
 )
 from cruxible_core.errors import PermissionDeniedError
+from cruxible_core.evidence.capture_erasures import erased_body
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import service_open_playbill_source
@@ -178,6 +179,7 @@ class _LedgerResolver:
 CaptureUnavailableReason = Literal[
     "capture_unavailable", "contract_not_at_coordinate", "body_unavailable"
 ]
+#: A ``body_unavailable`` read whose body an erasure record names reads ``body_erased``.
 
 
 @dataclass(frozen=True)
@@ -482,11 +484,18 @@ def service_read_playbill_capture(
     )
     verified = verify_accepted_capture(instance, coordinate, request.capture_digest, access=access)
     if isinstance(verified, str):
+        erasure = None
+        if verified == "body_unavailable":
+            erasure = erased_body(
+                instance,
+                capture_envelope(instance.body_store(), request.capture_digest, access=access),
+            )
         return CaptureRead(
             capture_digest=request.capture_digest,
             coordinate=public,
             status="unavailable",
-            reason=verified,
+            reason=verified if erasure is None else "body_erased",
+            erasure=erasure,
         )
     store = instance.body_store()
     envelope, contract, path = verified.envelope, verified.contract, verified.contract_address
