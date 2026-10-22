@@ -667,11 +667,15 @@ def _refuse_retired_lineage_conflicts(
     members: tuple[ClaimAuthoringPayload, ...],
     identity_to_item: Mapping[str, str],
 ) -> None:
-    """Refuse a terminal that both retires a Claim's lineage and revises or dispositions it.
+    """Refuse a terminal that both retires a Claim's lineage and revises or judges it.
 
     A Claim item revising (or restating, so targeting) a lineage another item
-    retires, or dispositioning it, asks for two different ends of one lineage
-    in one change: the terminal refuses rather than pick one.
+    retires, or taking a position on it (``support``, ``contradict`` or
+    ``unsure``), asks for two different ends of one lineage in one change: the
+    terminal refuses rather than pick one. A ``not_tested`` disposition of a
+    retiring sibling is admitted: it takes no position, and the slot law still
+    demands it, because retirements stage after the Claims they sit beside. So
+    one terminal can add a value and retire its sibling, as the write verbs do.
     """
 
     retiring = {claim_id: item_key for item_key, claim_id in retired.items()}
@@ -686,9 +690,10 @@ def _refuse_retired_lineage_conflicts(
             )
     for member in members:
         for disposition in member.existing_claim_dispositions:
-            if disposition.claim_id in retiring:
+            if disposition.claim_id in retiring and disposition.disposition != "not_tested":
                 raise _retirement_refusal(
-                    f"One terminal both retires {disposition.claim_id} and dispositions it.",
+                    f"One terminal both retires {disposition.claim_id} and dispositions it "
+                    f"{disposition.disposition}.",
                     code=RETIREMENT_LINEAGE_CONFLICT,
                     item_key=identity_to_item[authoring_member_identity(member)],
                     claim_id=disposition.claim_id,
@@ -1177,7 +1182,6 @@ def _with_many_valued_dispositions(
     *,
     claim_ids: Mapping[str, str],
     base_tree: SnapshotTree,
-    retiring: frozenset[str] = frozenset(),
 ) -> tuple[ClaimAuthoringPayload, ...]:
     """Let an item add a value to a many-valued slot, as the ``add`` write verb does.
 
@@ -1193,6 +1197,8 @@ def _with_many_valued_dispositions(
     and every earlier member moves its own Claim -- a new one, or the lineage it
     revises, out of whatever slot that lineage held -- into its own slot. So a
     member is dispositioned against exactly the slot lowering will stage it into.
+    A sibling the same terminal retires is still live when the member stages
+    (retirements stage last), so it is dispositioned ``not_tested`` too.
     """
 
     cardinality: dict[str, str | None] = {}
@@ -1235,10 +1241,7 @@ def _with_many_valued_dispositions(
             continue
         explicit = {item.claim_id for item in member.existing_claim_dispositions}
         added = sorted(
-            {claim_id for claim_id, held in location.items() if held == slot}
-            - explicit
-            - {own}
-            - retiring,
+            {claim_id for claim_id, held in location.items() if held == slot} - explicit - {own},
             key=lambda item: item.encode("ascii"),
         )
         location[own] = slot
@@ -1600,7 +1603,6 @@ class ProposalTerminalEgressSink:
                 identity: claim_ids[item_key] for identity, item_key in identity_to_item.items()
             },
             base_tree=self.instance.immutable_tree_at(request.accepted_coordinate.git_oid),
-            retiring=frozenset(retired.values()),
         )
         all_members: tuple[AuthoringChangeSetMember, ...] = tuple(
             sorted(
