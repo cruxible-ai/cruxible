@@ -79,9 +79,9 @@ With no instance selected, `cruxible init` creates a host on the daemon,
 makes you its owner under your OS username with a key kept under
 `~/.config/cruxible/keys/`, attaches the repository as its workspace, and
 remembers all of it, so later commands need no flags or environment. The
-[Quickstart](docs/quickstart.md) continues from here: install a small
-vocabulary, write typed values, review a change from the outside world, and
-watch a page that depends on it get flagged.
+[Quickstart](docs/quickstart.md) continues from here: install the security
+kit, let an agent pull in what your project ships and runs, and ask which of
+its dependencies carry a vulnerability attackers are exploiting now.
 
 An MCP client launches `cruxible mcp` (`uvx cruxible mcp` from the registry
 listing). Every tool runs on a daemon: the server uses `CRUXIBLE_SERVER_SOCKET`
@@ -102,6 +102,7 @@ credentials](docs/concepts.md#who-acts) explains both.
 
 - [Quickstart](docs/quickstart.md)
 - [Concepts](docs/concepts.md)
+- [Security walkthrough](docs/security-walkthrough.md)
 - [Building team knowledge](docs/building-team-knowledge.md)
 - [For AI agents](docs/for-ai-agents.md)
 - [Kits](docs/kits.md)
