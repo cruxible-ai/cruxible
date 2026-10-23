@@ -8,12 +8,18 @@
       ...
       providers/acme_parser-1.0.0-py3-none-any.whl     (bundled provider packages:
       providers/acme-parser-1.0.0.uv.lock               built wheels and their locks)
+      README.md                                         (inert files the manifest
+      examples/...                                       lists: README, reference,
+      skills/<name>/SKILL.md                             examples and agent skills)
 
 The directory is what a kit repository reviews. Distributed, a kit is an OCI
 artifact (``application/vnd.cruxible.kit.v1``): the manifest as its config blob
-and one deterministic tar of the artifacts (and, under ``providers/``, the
-bundled provider files) as its layer, so rebuilding a release gives the same
-digest. A kit can come from a directory, an OCI image layout or a registry
+and one deterministic tar of the artifacts (under ``providers/``, the bundled
+provider files; under ``files/``, the inert files) as its layer, so rebuilding a
+release gives the same digest. Inert files stay out of the release identity and
+never reach the daemon: ``kit pull`` writes them into the kit directory and
+``write_kit_docs`` / ``install_kit_skills`` put them where a reader or agent
+looks. A kit can come from a directory, an OCI image layout or a registry
 reference; either way the daemon receives the bundle, and the bundled provider
 files reach it through its body store (``stage_kit_providers``).
 """
@@ -41,10 +47,12 @@ from cruxible_client.artifacts import (
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_DIRECTORY,
+    KIT_FILE_DIRECTORY,
     KIT_MANIFEST_FILE,
     KIT_PROVIDER_DIRECTORY,
     KitArtifactBytes,
     KitBundle,
+    KitFileBytes,
     KitManifest,
     KitProviderFileBytes,
     KitStatus,
@@ -124,7 +132,55 @@ def read_kit_directory(root: Path) -> KitBundle:
         if path.is_symlink():
             raise ValueError(f"kit provider file {name} is a symbolic link")
         files.append(KitProviderFileBytes.of(name, path.read_bytes()))
-    return KitBundle(manifest=manifest, artifacts=tuple(artifacts), provider_files=tuple(files))
+    return KitBundle(
+        manifest=manifest,
+        artifacts=tuple(artifacts),
+        provider_files=tuple(files),
+        files=_read_kit_files(root, manifest),
+    )
+
+
+def _read_kit_files(root: Path, manifest: KitManifest) -> tuple[KitFileBytes, ...]:
+    """The inert files the manifest lists, read at their own paths under ``root``.
+
+    Other files beside them (a kit repository's sources and tests) are not kit
+    content and are never read.
+    """
+
+    resolved_root = root.resolve()
+    held = []
+    missing = []
+    for item in manifest.files:
+        path = root / item.path
+        if path.is_symlink() or any(parent.is_symlink() for parent in _parents(root, item.path)):
+            raise ValueError(f"kit file {item.path} is (or sits under) a symbolic link")
+        if not path.is_file():
+            missing.append(item.path)
+            continue
+        if not path.resolve().is_relative_to(resolved_root):
+            raise ValueError(f"kit file {item.path} escapes the kit directory")
+        held.append(KitFileBytes.of(item.path, path.read_bytes()))
+    if missing:
+        raise ValueError(f"kit directory {root} lacks the manifest's kit files {missing}")
+    return tuple(held)
+
+
+def _parents(root: Path, relative: str) -> list[Path]:
+    parts = relative.split("/")[:-1]
+    return [root.joinpath(*parts[:end]) for end in range(1, len(parts) + 1)]
+
+
+def _write_new_file(root: Path, relative: str, content: bytes) -> None:
+    """Write one file under ``root`` (contained, never following a link, never replacing)."""
+
+    resolved_root = root.resolve()
+    target = root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.parent.resolve().is_relative_to(resolved_root):
+        raise ValueError(f"{relative} escapes {root}")
+    # ``x`` refuses an existing file and a dangling link alike.
+    with target.open("xb") as handle:
+        handle.write(content)
 
 
 def write_kit_directory(bundle: KitBundle, root: Path) -> None:
@@ -149,20 +205,82 @@ def write_kit_directory(bundle: KitBundle, root: Path) -> None:
         target = root / KIT_PROVIDER_DIRECTORY / provider_file.filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(provider_file.content)
+    if bundle.manifest.files and not bundle.files:
+        raise ValueError("this bundle names kit files but carries none of their bytes")
+    for kit_file in bundle.files:
+        _write_new_file(root, kit_file.path, kit_file.content)
+
+
+def write_kit_docs(bundle: KitBundle, out: Path, *, skills: bool = True) -> tuple[Path, ...]:
+    """Write the kit's inert files into a new directory ``out``, at their own paths.
+
+    ``skills=False`` leaves the agent skills out. Returns the files written.
+    """
+
+    if bundle.manifest.files and not bundle.files:
+        raise KitSourceError("the kit names inert files but carries none of their bytes")
+    selected = [item for item in bundle.manifest.files if skills or item.role != "skill"]
+    contents = bundle.file_contents()
+    out.mkdir(parents=True, exist_ok=False)
+    for item in selected:
+        _write_new_file(out, item.path, contents[item.path])
+    return tuple(out / item.path for item in selected)
+
+
+def kit_skill_directory_name(kit_id: str, skill: str) -> str:
+    """Where a kit's skill installs: ``<kit>-<skill>``, unless the skill already
+    carries the kit's name as its prefix."""
+
+    return skill if skill.startswith(f"{kit_id}-") else f"{kit_id}-{skill}"
+
+
+def install_kit_skills(bundle: KitBundle, skills_root: Path) -> tuple[Path, ...]:
+    """Install each agent skill the kit carries as ``skills_root/<kit>-<skill>/``.
+
+    A skill directory that already exists is refused before anything is written,
+    so an install never mixes two releases' files. Returns the skill directories.
+    """
+
+    if bundle.manifest.files and not bundle.files:
+        raise KitSourceError("the kit names inert files but carries none of their bytes")
+    kit_id = bundle.manifest.kit_id
+    by_skill: dict[str, list[tuple[str, bytes]]] = {}
+    contents = bundle.file_contents()
+    for item in bundle.manifest.files:
+        if item.skill is None:
+            continue
+        inside = item.path.split("/", 2)[2]
+        by_skill.setdefault(item.skill, []).append((inside, contents[item.path]))
+    targets = {
+        skill: skills_root / kit_skill_directory_name(kit_id, skill) for skill in sorted(by_skill)
+    }
+    taken = sorted(str(path) for path in targets.values() if path.exists() or path.is_symlink())
+    if taken:
+        raise KitSourceError(f"skill directories already exist: {', '.join(taken)}")
+    skills_root.mkdir(parents=True, exist_ok=True)
+    for skill, target in targets.items():
+        target.mkdir()
+        for inside, content in by_skill[skill]:
+            _write_new_file(target, inside, content)
+    return tuple(targets.values())
 
 
 _PROVIDER_PREFIX = KIT_PROVIDER_DIRECTORY + "/"
+_FILE_PREFIX = KIT_FILE_DIRECTORY + "/"
 
 
 def _pack_kit(bundle: KitBundle) -> tuple[bytes, tuple[bytes, ...]]:
     if bundle.manifest.provider_files() and not bundle.provider_files:
         raise ValueError("this bundle names provider packages but carries none of their bytes")
     config = pretty_canonical_bytes(bundle.manifest.model_dump(mode="json"))
+    if bundle.manifest.files and not bundle.files:
+        raise ValueError("this bundle names kit files but carries none of their bytes")
     files = {
         **bundle.contents(),
         **{
             _PROVIDER_PREFIX + name: content for name, content in bundle.provider_contents().items()
         },
+        **{_FILE_PREFIX + path: content for path, content in bundle.file_contents().items()},
     }
     return config, (pack_files(files),)
 
@@ -172,17 +290,27 @@ def _unpack_kit(config: bytes, layers: tuple[bytes, ...]) -> KitBundle:
         raise ValueError("a kit artifact has exactly one layer")
     manifest = KitManifest.model_validate_json(config)
     files = unpack_files(layers[0])
+    carried = sorted(
+        path.removeprefix(_FILE_PREFIX) for path in files if path.startswith(_FILE_PREFIX)
+    )
+    if carried != sorted(manifest.kit_files()):
+        raise ValueError("a kit artifact's layer must hold exactly its manifest's kit files")
     return KitBundle(
         manifest=manifest,
         artifacts=tuple(
             KitArtifactBytes.of(path, files[path])
             for path in sorted(files)
-            if not path.startswith(_PROVIDER_PREFIX)
+            if not path.startswith((_PROVIDER_PREFIX, _FILE_PREFIX))
         ),
         provider_files=tuple(
             KitProviderFileBytes.of(path.removeprefix(_PROVIDER_PREFIX), files[path])
             for path in sorted(files)
             if path.startswith(_PROVIDER_PREFIX)
+        ),
+        files=tuple(
+            KitFileBytes.of(path.removeprefix(_FILE_PREFIX), files[path])
+            for path in sorted(files)
+            if path.startswith(_FILE_PREFIX)
         ),
     )
 

@@ -177,6 +177,10 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("CaptureRunCoordinate", "bound_generation"): "SETTLEMENT ORDER",
     ("CaptureReobservationEvidence", "observed_at"): "ASSERTION TIME",
     ("CaptureReobservationEvidence", "recorded_at"): "ASSERTION TIME",
+    ("CaptureUploadSession", "expires_at"): "VALIDITY WINDOW",
+    ("CaptureUploadSessionRecord", "created_at"): "ASSERTION TIME",
+    ("CaptureUploadSessionRecord", "expires_at"): "VALIDITY WINDOW",
+    ("UploadLimits", "session_seconds"): "VALIDITY WINDOW",
     # When an erasure was recorded: the journal record's own recording instant.
     ("CaptureErasureRecord", "erased_at"): "ASSERTION TIME",
     ("GetCaptureErasure", "at"): "ASSERTION TIME",

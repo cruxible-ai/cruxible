@@ -74,6 +74,12 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProof
 from cruxible_client.contracts.types import CompilerCoordinate
+from cruxible_client.contracts.uploads import (
+    CaptureUploadCompleteRequest,
+    CaptureUploadCompleteResult,
+    CaptureUploadOpenRequest,
+    CaptureUploadSession,
+)
 from cruxible_client.contracts.write import (
     RetireRequest,
     SetRequest,
@@ -575,6 +581,86 @@ class CruxibleClient:
             json={"content_base64": base64.b64encode(content).decode("ascii")},
         )
         return self._parse_model(response, contracts.CasObjectResult)
+
+    def open_capture_upload(
+        self, instance_id: str, *, byte_length: int, sha256: str, filename: str
+    ) -> CaptureUploadSession:
+        """Open an upload session for one file of exactly these bytes."""
+
+        request = CaptureUploadOpenRequest(
+            byte_length=byte_length, sha256=sha256, filename=filename
+        )
+        response = self._client.post(
+            f"/api/v1/{instance_id}/uploads", json=request.model_dump(mode="json")
+        )
+        return self._parse_model(response, CaptureUploadSession)
+
+    def capture_upload_status(self, instance_id: str, upload_id: str) -> CaptureUploadSession:
+        response = self._client.get(f"/api/v1/{instance_id}/uploads/{upload_id}")
+        return self._parse_model(response, CaptureUploadSession)
+
+    def put_capture_upload_part(
+        self, instance_id: str, upload_id: str, part: int, content: bytes
+    ) -> CaptureUploadSession:
+        """Send one part as raw octets (at most ``UPLOAD_PART_SIZE`` bytes)."""
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/uploads/{upload_id}/parts/{part}",
+            content=content,
+            headers={"content-type": "application/octet-stream"},
+        )
+        return self._parse_model(response, CaptureUploadSession)
+
+    def complete_capture_upload(
+        self, instance_id: str, upload_id: str, request: CaptureUploadCompleteRequest
+    ) -> CaptureUploadCompleteResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/uploads/{upload_id}/complete",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return self._parse_model(response, CaptureUploadCompleteResult)
+
+    def upload_capture(
+        self,
+        instance_id: str,
+        content: bytes,
+        *,
+        filename: str,
+        procedure: str,
+        input: Mapping[str, object] | None = None,
+        input_path_field: str = "relative_path",
+        at: contracts.AcceptedCoordinate | None = None,
+    ) -> CaptureUploadCompleteResult:
+        """Upload a scan or log and read it as a Capture through ``procedure``.
+
+        Opens a session, sends each part of at most ``UPLOAD_PART_SIZE`` bytes,
+        and completes it; the daemon runs the acquire Procedure on the staged
+        file and deletes it.
+        """
+
+        import hashlib
+
+        session = self.open_capture_upload(
+            instance_id,
+            byte_length=len(content),
+            sha256=f"sha256:{hashlib.sha256(content).hexdigest()}",
+            filename=filename,
+        )
+        for part in session.missing_parts:
+            start = part * session.part_size
+            self.put_capture_upload_part(
+                instance_id, session.upload_id, part, content[start : start + session.part_size]
+            )
+        return self.complete_capture_upload(
+            instance_id,
+            session.upload_id,
+            CaptureUploadCompleteRequest(
+                procedure=procedure,
+                input=dict(input or {}),
+                input_path_field=input_path_field,
+                at=at,
+            ),
+        )
 
     def decommission_instance(
         self,

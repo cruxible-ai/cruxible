@@ -2125,3 +2125,40 @@ def test_a_pin_that_followed_a_local_succession_is_not_an_edit(
     taking = {item.path: (item.action, item.consequence) for item in taken.plan}
     assert taking[_path(SEATS)] == ("replace", "overwrites_your_edit")
     assert taking[query_path][1] is None
+
+
+def test_a_release_with_inert_files_installs_as_the_same_release(
+    worlds: tuple[_World, _World], tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.kits import KitFileBytes, kit_file_entry
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = publisher.http  # type: ignore[assignment]
+    built = transport.build_kit(
+        publisher.instance_id,
+        KitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",)),
+    )
+    readme = b"# acme\n"
+    documented = built.bundle.model_copy(
+        update={
+            "manifest": built.bundle.manifest.model_copy(
+                update={"files": (kit_file_entry("README.md", readme),)}
+            ),
+            "files": (KitFileBytes.of("README.md", readme),),
+        }
+    )
+    directory = tmp_path / "acme-1.0.0"
+    write_kit_directory(documented, directory)
+    read_back = read_kit_directory(directory)
+    assert read_back.file_contents() == {"README.md": readme}
+    assert read_back.manifest.content_digest == built.bundle.manifest.content_digest
+
+    proposed = transport.add_kit(
+        consumer.instance_id,
+        KitAddRequest(bundle=read_back, source=directory.name, dry_run=False),
+    )
+    consumer.settle(proposed)
+    (installed,) = transport.kit_status(consumer.instance_id).kits
+    assert installed.content_digest == built.bundle.manifest.content_digest

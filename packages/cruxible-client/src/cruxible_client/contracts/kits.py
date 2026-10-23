@@ -37,6 +37,9 @@ KIT_ARTIFACT_DIRECTORY = "artifacts"
 #: packages: built wheels and uv locks, never source.
 KIT_PROVIDER_DIRECTORY = "providers"
 KIT_RECEIPT_DOCUMENT_KIND = "kit_receipt"
+#: Where a kit artifact's layer holds the kit's inert files (README, reference,
+#: examples, skills). A kit directory holds them at their own paths.
+KIT_FILE_DIRECTORY = "files"
 
 # The definition families a kit may carry. Authority (governance, principals,
 # mandates), local binding (providers, lines) and state (subjects, claims,
@@ -304,6 +307,101 @@ class KitProviderFileBytes(_Strict):
         return cls(filename=filename, content_base64=base64.b64encode(content).decode("ascii"))
 
 
+#: What an inert kit file is for: ``readme`` (a top-level README), ``reference``
+#: (other documentation), ``example`` (under ``examples/``), ``skill`` (a file of
+#: one agent skill, under ``skills/<name>/``).
+KitFileRole = Literal["readme", "reference", "example", "skill"]
+
+#: The names a kit directory gives its definition and provider content: an
+#: inert file never sits under them.
+_KIT_RESERVED_ROOTS = frozenset({KIT_MANIFEST_FILE, KIT_ARTIFACT_DIRECTORY, KIT_PROVIDER_DIRECTORY})
+_KIT_FILE_PATH_MAX = 240
+
+
+def kit_file_path_allowed(path: str) -> bool:
+    """A canonical relative path for an inert kit file, outside the definition paths."""
+
+    parts = path.split("/")
+    return (
+        0 < len(path) <= _KIT_FILE_PATH_MAX
+        and "\\" not in path
+        and all(part not in {"", ".", ".."} for part in parts)
+        and all(part.isprintable() and not part.startswith(".") for part in parts)
+        and parts[0].casefold() not in {name.casefold() for name in _KIT_RESERVED_ROOTS}
+    )
+
+
+def kit_file_role_of(path: str) -> KitFileRole:
+    """The role a kit file's path implies; a README elsewhere is ``reference``."""
+
+    parts = path.split("/")
+    if parts[0] == "skills" and len(parts) >= 3:
+        return "skill"
+    if parts[0] == "examples" and len(parts) >= 2:
+        return "example"
+    if len(parts) == 1 and parts[0].casefold().startswith("readme"):
+        return "readme"
+    return "reference"
+
+
+class KitFile(_Strict):
+    """One inert file a kit release carries for its reader: never a definition.
+
+    Kit files are not part of the release identity (``content_digest``), so a
+    docs fix leaves every definition digest and KitReceipt as it was; ``kit add``
+    never sends them to the daemon.
+    """
+
+    path: str
+    sha256: str
+    role: KitFileRole
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if not kit_file_path_allowed(value):
+            raise ValueError(f"{value!r} is not a kit file path")
+        return value
+
+    @field_validator("sha256")
+    @classmethod
+    def _sha256(cls, value: str) -> str:
+        return _digest(value)
+
+    @model_validator(mode="after")
+    def _role_matches_path(self) -> KitFile:
+        if self.role != kit_file_role_of(self.path):
+            raise ValueError(
+                f"kit file {self.path} is a {kit_file_role_of(self.path)}, not a {self.role}"
+            )
+        return self
+
+    @property
+    def skill(self) -> str | None:
+        """The skill this file belongs to (``skills/<name>/...``), if any."""
+
+        return self.path.split("/")[1] if self.role == "skill" else None
+
+
+def _kit_files(value: tuple[KitFile, ...]) -> tuple[KitFile, ...]:
+    paths = tuple(item.path for item in value)
+    _sorted_unique(paths, label="kit file paths")
+    # Case-insensitive file systems would fold two names onto one file, and a
+    # file cannot also be a directory of another.
+    folded = [path.casefold() for path in paths]
+    if len(set(folded)) != len(folded):
+        raise ValueError("kit file paths must differ ignoring case")
+    directories = {
+        "/".join(parts[:end])
+        for parts in (p.split("/") for p in folded)
+        for end in range(1, len(parts))
+    }
+    clash = sorted(set(folded) & directories)
+    if clash:
+        raise ValueError(f"kit file {clash[0]} is also a directory of another kit file")
+    return value
+
+
 class KitProvenance(_Strict):
     """Where a release was built: claimed by the builder, not proven.
 
@@ -334,6 +432,9 @@ class KitManifest(_Strict):
     #: and lock carried) and index defaults (installed by name and version).
     providers: tuple[KitProvider, ...] = Field(default=(), exclude_if=lambda value: not value)
     provenance: KitProvenance | None = None
+    #: Inert files for the kit's reader, sorted by path: not part of
+    #: ``content_digest``, never sent to ``kit add``.
+    files: tuple[KitFile, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("kit_id")
     @classmethod
@@ -363,6 +464,11 @@ class KitManifest(_Strict):
         _provider_files(value)
         return value
 
+    @field_validator("files")
+    @classmethod
+    def _files(cls, value: tuple[KitFile, ...]) -> tuple[KitFile, ...]:
+        return _kit_files(value)
+
     def provider_files(self) -> dict[str, str]:
         """Every bundled provider file name -> its sha256."""
 
@@ -370,14 +476,20 @@ class KitManifest(_Strict):
 
     @property
     def content_digest(self) -> str:
-        """The release identity: every manifest field, including each artifact digest."""
+        """The release identity: every manifest field, including each artifact digest,
+        apart from where it was built and its inert files."""
 
         return Sha256Value(
             canonical_digest(
                 "playbill-kit-content-v1",
-                self.model_dump(mode="json", exclude={"tag", "provenance"}),
+                self.model_dump(mode="json", exclude={"tag", "provenance", "files"}),
             )
         ).tagged
+
+    def kit_files(self) -> dict[str, str]:
+        """Every inert kit file path -> its sha256."""
+
+        return {item.path: item.sha256 for item in self.files}
 
     def digests(self) -> dict[str, str]:
         return {item.path: item.artifact_digest for item in self.artifacts}
@@ -412,6 +524,45 @@ class KitArtifactBytes(_Strict):
         return cls(path=path, content_base64=base64.b64encode(content).decode("ascii"))
 
 
+class KitFileBytes(_Strict):
+    path: str
+    content_base64: str
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if not kit_file_path_allowed(value):
+            raise ValueError(f"{value!r} is not a kit file path")
+        return value
+
+    @field_validator("content_base64")
+    @classmethod
+    def _content(cls, value: str) -> str:
+        try:
+            base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("kit file content must be canonical base64") from exc
+        return value
+
+    @property
+    def content(self) -> bytes:
+        return base64.b64decode(self.content_base64, validate=True)
+
+    @classmethod
+    def of(cls, path: str, content: bytes) -> KitFileBytes:
+        return cls(path=path, content_base64=base64.b64encode(content).decode("ascii"))
+
+
+def kit_file_entry(path: str, content: bytes) -> KitFile:
+    """The manifest entry for one inert file: its sha256 and the role its path implies."""
+
+    return KitFile(
+        path=path,
+        sha256=Sha256Value(hashlib.sha256(content).hexdigest()).tagged,
+        role=kit_file_role_of(path),
+    )
+
+
 class KitBundle(_Strict):
     """A manifest and the exact bytes of every artifact it names.
 
@@ -426,6 +577,8 @@ class KitBundle(_Strict):
     provider_files: tuple[KitProviderFileBytes, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
+    #: The inert files' bytes, or nothing (a bundle on its way to ``kit add``).
+    files: tuple[KitFileBytes, ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @field_validator("artifacts")
     @classmethod
@@ -454,11 +607,29 @@ class KitBundle(_Strict):
                 raise ValueError(f"bundled provider file {item.filename} differs from its sha256")
         return self
 
+    @model_validator(mode="after")
+    def _file_bytes(self) -> KitBundle:
+        if not self.files:
+            return self
+        expected = self.manifest.kit_files()
+        paths = tuple(item.path for item in self.files)
+        _sorted_unique(paths, label="kit bundle files")
+        if set(paths) != set(expected):
+            raise ValueError("kit file bytes must cover exactly the manifest's files")
+        for item in self.files:
+            actual = Sha256Value(hashlib.sha256(item.content).hexdigest()).tagged
+            if actual != expected[item.path]:
+                raise ValueError(f"kit file {item.path} differs from its sha256")
+        return self
+
     def contents(self) -> dict[str, bytes]:
         return {item.path: item.content for item in self.artifacts}
 
     def provider_contents(self) -> dict[str, bytes]:
         return {item.filename: item.content for item in self.provider_files}
+
+    def file_contents(self) -> dict[str, bytes]:
+        return {item.path: item.content for item in self.files}
 
 
 class KitInstalledArtifact(_Strict):
@@ -663,7 +834,9 @@ class KitAddRequest(_Strict):
                 "bundled provider files travel through the body store: stage each one "
                 "(the CLI and MCP adapters do) and send the bundle without them"
             )
-        return value
+        # Inert files are the reader's copy: the daemon installs definitions and
+        # providers only, so their bytes never travel with an install.
+        return value.model_copy(update={"files": ()}) if value.files else value
 
     @field_validator("keep", "retire_dependents")
     @classmethod

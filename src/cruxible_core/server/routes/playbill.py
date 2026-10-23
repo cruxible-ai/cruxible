@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Body, Query, Request
+from fastapi import Path as PathParam
 from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
@@ -60,6 +61,12 @@ from cruxible_client.contracts.provider_installation import (
     ProviderMoveResult,
     ProviderRetireRequest,
     ProviderRetireResult,
+)
+from cruxible_client.contracts.uploads import (
+    CaptureUploadCompleteRequest,
+    CaptureUploadCompleteResult,
+    CaptureUploadOpenRequest,
+    CaptureUploadSession,
 )
 from cruxible_client.contracts.write import (
     RetireRequest,
@@ -301,6 +308,42 @@ def store_body(
 ) -> contracts.CasObjectResult:
     return playbill_api.playbill_store_body(
         resolve_server_instance_id(instance_id), content_base64=req.content_base64
+    )
+
+
+@router.post("/{instance_id}/uploads", response_model=CaptureUploadSession)
+def capture_upload_open(instance_id: str, req: CaptureUploadOpenRequest) -> CaptureUploadSession:
+    return playbill_api.playbill_capture_upload_open(resolve_server_instance_id(instance_id), req)
+
+
+@router.get("/{instance_id}/uploads/{upload_id}", response_model=CaptureUploadSession)
+def capture_upload_status(instance_id: str, upload_id: str) -> CaptureUploadSession:
+    return playbill_api.playbill_capture_upload_status(
+        resolve_server_instance_id(instance_id), upload_id
+    )
+
+
+@router.post("/{instance_id}/uploads/{upload_id}/parts/{part}", response_model=CaptureUploadSession)
+def capture_upload_part(
+    instance_id: str,
+    upload_id: str,
+    part: Annotated[int, PathParam(ge=0)],
+    content: Annotated[bytes, Body(media_type="application/octet-stream")],
+) -> CaptureUploadSession:
+    # The part arrives as raw octets: at most 512 KiB, so it stays under a 1 MB edge cap.
+    return playbill_api.playbill_capture_upload_part(
+        resolve_server_instance_id(instance_id), upload_id, part, content=content
+    )
+
+
+@router.post(
+    "/{instance_id}/uploads/{upload_id}/complete", response_model=CaptureUploadCompleteResult
+)
+def capture_upload_complete(
+    instance_id: str, upload_id: str, req: CaptureUploadCompleteRequest
+) -> CaptureUploadCompleteResult:
+    return playbill_api.playbill_capture_upload_complete(
+        resolve_server_instance_id(instance_id), upload_id, req
     )
 
 

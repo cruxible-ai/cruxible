@@ -76,6 +76,15 @@ A kit carries definitions from seven families:
 | ProviderInterfaces | The typed contracts provider slots name |
 | SourceAcquisitionPolicies | What a Procedure may read from outside sources |
 
+Beside the definitions, a release can carry inert files for its reader: its
+README, other reference pages, `examples/` and agent skills under
+`skills/<name>/`. The manifest lists each one with its sha256, but they are
+not part of the release's content digest, so a docs-only fix leaves every
+definition digest and every install receipt as it was (the image digest still
+moves, so a published version takes a patch bump). `kit add` never sends them
+to the daemon; `kit pull` writes them into the kit directory at their own
+paths.
+
 A kit never carries state or authority: no Subjects or Claims, no Lines or
 Triggers, no mandates, no principals, no approval policy. Those belong to the
 instance that installs the kit. A Line that should run a kit's Procedure is
@@ -463,8 +472,13 @@ kit does, so it can't drift from what the kit installs.
 ### Share it
 
 The kit directory holds `cruxible-kit.json` (the manifest), `artifacts/`
-(one file per definition) and `providers/` (the bundled wheels and lock
-files). Share it
+(one file per definition), `providers/` (the bundled wheels and lock
+files) and the inert files the manifest lists, at their own paths (README,
+`reference.md`, `examples/`, `skills/<name>/`). Other files in the directory
+(build scripts, tests) are never read. Each skill installs as its own
+`<kit>-<skill>/` directory (the name stays as is when it already starts with
+the kit's id), so a skill's relative links reach only its own files and its
+sibling skills; name the README's sections instead of linking to them. Share it
 as a directory, or as an OCI image layout. There is no public `kit push`:
 official kits are published by Cruxible's release tooling, and a version tag
 there never moves to different content.

@@ -108,9 +108,14 @@ class WorkspaceFileReader:
         attached_roots: Sequence[Path],
         operational_allowed_roots: Sequence[Path] = (),
         managed_roots: Sequence[Path] = (),
+        daemon_owned: bool = False,
     ) -> None:
         self.instance_id = instance_id
         self.operating_profile = operating_profile
+        #: Every root is one the daemon itself staged (a Capture upload's
+        #: ``uploads`` workspace), never a client mount, so a cloud profile
+        #: reads it too.
+        self.daemon_owned = daemon_owned
         self._attached = self._canonical_roots(attached_roots)
         self._roots = self._canonical_roots((*attached_roots, *operational_allowed_roots))
         self._managed_roots = self._canonical_roots(managed_roots, require_directory=False)
@@ -156,7 +161,7 @@ class WorkspaceFileReader:
         author's.
         """
 
-        if self.operating_profile == "cloud":
+        if self.operating_profile == "cloud" and not self.daemon_owned:
             raise WorkspaceFileReadRefused(
                 "cloud_no_mounts", "cloud profile has no daemon-local workspace mounts"
             )
@@ -307,7 +312,7 @@ class WorkspaceFileReader:
         derived_request_digest: str,
         read_at: datetime,
     ) -> WorkspaceFileReadResultV1:
-        if self.operating_profile == "cloud":
+        if self.operating_profile == "cloud" and not self.daemon_owned:
             raise WorkspaceFileReadRefused(
                 "cloud_no_mounts", "cloud profile has no daemon-local workspace mounts"
             )

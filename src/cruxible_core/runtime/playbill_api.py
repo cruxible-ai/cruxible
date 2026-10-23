@@ -115,6 +115,12 @@ from cruxible_client.contracts.types import (
     OperatingProfile,
     PrincipalRecord,
 )
+from cruxible_client.contracts.uploads import (
+    CaptureUploadCompleteRequest,
+    CaptureUploadCompleteResult,
+    CaptureUploadOpenRequest,
+    CaptureUploadSession,
+)
 from cruxible_client.contracts.validation_messages import validation_lines, validation_summary
 from cruxible_client.contracts.write import (
     RetireRequest,
@@ -133,7 +139,7 @@ from cruxible_core.claims.claim_type_migrations import (
 from cruxible_core.coverage.adapter import WorkingSourceObservation
 from cruxible_core.coverage.contracts import CoverageCardBudget
 from cruxible_core.coverage.indexes import CoverageScanBudget
-from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
+from cruxible_core.documents.workspace_file import WorkspaceFileReader, WorkspaceFileReadRefused
 from cruxible_core.errors import (
     AuthenticationError,
     ConfigError,
@@ -315,6 +321,7 @@ from cruxible_core.service.proposals.review import (
     service_prepare_playbill_approval,
     service_review_playbill_proposal,
 )
+from cruxible_core.service.uploads import CaptureUploadRefused, check_upload_procedure
 from cruxible_core.storage.cas import BodyAccessContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -977,6 +984,100 @@ def playbill_store_body(instance_id: str, *, content_base64: str) -> contracts.C
         raise DataValidationError("Cruxible body is not canonical base64") from exc
     result = service_store_playbill_body(get_playbill_manager().get(instance_id), content=content)
     return contracts.CasObjectResult.model_validate(result.model_dump(mode="json"))
+
+
+#: Uploads have no MCP tool (a part base64-encoded costs ~350k tokens per MiB);
+#: each request passes the gate of the body store it feeds: GOVERNED_WRITE plus
+#: the writer check (``cruxible_body_store``).
+def playbill_capture_upload_open(
+    instance_id: str, request: CaptureUploadOpenRequest
+) -> CaptureUploadSession:
+    """Open an upload session for one file, owned by this caller."""
+
+    check_permission("cruxible_body_store", instance_id=instance_id)
+    principal_id = _actor_id(instance_id)
+    return (
+        get_playbill_manager()
+        .upload_store(instance_id)
+        .open(principal_id=principal_id, request=request, now=utc_now())
+    )
+
+
+def playbill_capture_upload_status(instance_id: str, upload_id: str) -> CaptureUploadSession:
+    """The caller's open upload and the parts the daemon holds (to resume one)."""
+
+    check_permission("cruxible_body_store", instance_id=instance_id)
+    principal_id = _actor_id(instance_id)
+    return (
+        get_playbill_manager()
+        .upload_store(instance_id)
+        .session(principal_id=principal_id, upload=upload_id, now=utc_now())
+    )
+
+
+def playbill_capture_upload_part(
+    instance_id: str, upload_id: str, part: int, *, content: bytes
+) -> CaptureUploadSession:
+    """Stage one part (raw bytes, at most UPLOAD_PART_SIZE) of the caller's upload."""
+
+    check_permission("cruxible_body_store", instance_id=instance_id)
+    principal_id = _actor_id(instance_id)
+    return (
+        get_playbill_manager()
+        .upload_store(instance_id)
+        .put_part(
+            principal_id=principal_id, upload=upload_id, part=part, content=content, now=utc_now()
+        )
+    )
+
+
+def playbill_capture_upload_complete(
+    instance_id: str, upload_id: str, request: CaptureUploadCompleteRequest
+) -> CaptureUploadCompleteResult:
+    """Read the caller's upload as a Capture: run the acquire Procedure on it.
+
+    The run passes the same gate as a direct Procedure run. Everything that can
+    refuse without staging (the session, the gate, the Procedure's read) is
+    checked first, so a refusal leaves the upload open for a corrected retry;
+    once staged, the session is removed whatever the run does.
+    """
+
+    check_permission("cruxible_body_store", instance_id=instance_id)
+    check_permission("cruxible_procedure_run", instance_id=instance_id, audit_success=False)
+    enforce_customer_code_execution_supported()
+    principal_id = _actor_id(instance_id)
+    manager = get_playbill_manager()
+    store = manager.upload_store(instance_id)
+    store.session(principal_id=principal_id, upload=upload_id, now=utc_now())
+    if request.input_path_field in request.input:
+        raise CaptureUploadRefused(
+            "input_path_conflict",
+            f"input already sets {request.input_path_field!r}; the daemon sets it to the "
+            "staged upload, so leave it out.",
+        )
+    actor = _procedure_run_admitted(instance_id, request.procedure, at=request.at)
+    check_upload_procedure(manager.get(instance_id), request.procedure, request.at)
+    with store.staged(principal_id=principal_id, upload=upload_id, now=utc_now()) as (
+        staging_root,
+        session,
+    ):
+        run = _run_procedure(
+            instance_id,
+            request.procedure,
+            request=ProcedureRunRequest(
+                at=request.at,
+                input={**request.input, request.input_path_field: session.filename},
+            ),
+            actor=actor,
+            workspace_file_reader=manager.upload_file_reader(instance_id, staging_root),
+        )
+    return CaptureUploadCompleteResult(
+        upload_id=session.upload_id,
+        filename=session.filename,
+        sha256=session.sha256,
+        byte_length=session.byte_length,
+        run=run,
+    )
 
 
 def playbill_propose_document(
@@ -2221,16 +2322,7 @@ def playbill_procedure_run(
     # customer code at all; refuse at the served boundary so the operator gets
     # the mapped error instead of a node refusal buried in a run journal.
     enforce_customer_code_execution_supported()
-    _check_run_target_permission(
-        "cruxible_procedure_run",
-        instance_id,
-        lambda: procedure_run_target_rung(
-            get_playbill_manager().get(instance_id), name, request.at
-        ),
-    )
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Procedure run requires an authenticated actor identity")
+    actor = _procedure_run_admitted(instance_id, name, at=request.at)
     manager = get_playbill_manager()
     try:
         workspace_file_reader = manager.workspace_file_reader(instance_id)
@@ -2238,6 +2330,38 @@ def playbill_procedure_run(
         # Reader construction is operational. Non-workspace runs remain usable;
         # the executor gives workspace occurrences their typed binding refusal.
         workspace_file_reader = None
+    return _run_procedure(
+        instance_id, name, request=request, actor=actor, workspace_file_reader=workspace_file_reader
+    )
+
+
+def _procedure_run_admitted(
+    instance_id: str, name: str, *, at: contracts.AcceptedCoordinate | None
+) -> GovernedActorContext:
+    """The rest of the served gate a direct Procedure run passes, after the
+    ``cruxible_procedure_run`` check and the customer-code gate: the caller's
+    tier for what the Procedure can do, and an attributed actor."""
+
+    _check_run_target_permission(
+        "cruxible_procedure_run",
+        instance_id,
+        lambda: procedure_run_target_rung(get_playbill_manager().get(instance_id), name, at),
+    )
+    actor = _write_actor_context(instance_id)
+    if actor is None:
+        raise AuthenticationError("Procedure run requires an authenticated actor identity")
+    return actor
+
+
+def _run_procedure(
+    instance_id: str,
+    name: str,
+    *,
+    request: ProcedureRunRequest,
+    actor: GovernedActorContext,
+    workspace_file_reader: WorkspaceFileReader | None,
+) -> contracts.ProcedureRunState:
+    manager = get_playbill_manager()
     result = service_run_playbill_procedure(
         manager.get(instance_id),
         name=name,

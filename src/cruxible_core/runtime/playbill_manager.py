@@ -47,6 +47,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     load_procedure_run_config,
 )
 from cruxible_core.service.proposals.proposal_receive import load_proposal_receive_config
+from cruxible_core.service.uploads import CaptureUploadRefused, CaptureUploadStore, UploadLimits
 from cruxible_core.storage.preview_fence import PreviewWriteRefused
 
 _log = structlog.get_logger("cruxible.provider_runtime")
@@ -358,6 +359,67 @@ class PlaybillInstanceManager:
                 managed_root,
                 trust_path.parent,
             ),
+        )
+
+    def upload_store(self, instance_id: str) -> CaptureUploadStore:
+        """This instance's Capture upload sessions under the operator's upload root.
+
+        The root is daemon-owned and must sit outside every managed root (the
+        state root, the registry, the instance's own directory), because the
+        upload reader is the one workspace reader a cloud profile allows.
+        """
+
+        managed_root, trust_path, _attached = self._paths(instance_id)
+        config = self.provider_runtime_operator().config
+        if config.upload_root is None:
+            raise CaptureUploadRefused(
+                "not_configured",
+                "This daemon takes no uploads: the operator sets upload_root in "
+                "daemon/provider-runtime.json (a directory outside the state root).",
+                http_status=409,
+            )
+        root = Path(config.upload_root)
+        resolved = root.resolve()
+        for managed in (
+            get_server_state_root(),
+            get_registry().state_root,
+            managed_root,
+            trust_path.parent,
+        ):
+            held = managed.resolve()
+            if resolved.is_relative_to(held) or held.is_relative_to(resolved):
+                raise CaptureUploadRefused(
+                    "not_configured",
+                    "The configured upload_root overlaps a Cruxible managed root; the operator "
+                    "must move it outside the state root.",
+                    http_status=409,
+                )
+        return CaptureUploadStore(
+            resolved,
+            instance_id,
+            UploadLimits(
+                max_bytes=config.upload_max_bytes,
+                session_seconds=config.upload_session_seconds,
+                max_open_sessions=config.upload_max_open_sessions,
+            ),
+        )
+
+    def upload_file_reader(self, instance_id: str, staging_root: Path) -> WorkspaceFileReader:
+        """The workspace reader for one upload's run: its staging root is the only root."""
+
+        managed_root, trust_path, _attached = self._paths(instance_id)
+        instance = self.get(instance_id)
+        return WorkspaceFileReader(
+            instance_id=instance_id,
+            operating_profile=instance.descriptor.operating_profile,
+            attached_roots=(staging_root,),
+            managed_roots=(
+                get_server_state_root(),
+                get_registry().state_root,
+                managed_root,
+                trust_path.parent,
+            ),
+            daemon_owned=True,
         )
 
     def procedure_run_config(self) -> ProcedureRunOperationalConfigV1:
