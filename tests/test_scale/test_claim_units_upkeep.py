@@ -191,7 +191,9 @@ def _disputed(root: Path, rivals: int) -> sqlite3.Connection:
     connection.executescript(schema_sql())
     _put_type(connection, SLOT_TYPE)
     for index in range(rivals):
-        _put_claim(connection, claim(7000 + index, SLOT_TYPE, LiteralClaimObject(value=f"v{index}")))
+        _put_claim(
+            connection, claim(7000 + index, SLOT_TYPE, LiteralClaimObject(value=f"v{index}"))
+        )
     refresh_claim_units(connection)
     return connection
 

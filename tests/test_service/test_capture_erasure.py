@@ -573,7 +573,7 @@ def test_bytes_present_again_under_an_erasure_without_a_position_are_erased_anew
 def test_an_interrupted_erase_without_a_position_is_finished_under_a_record_of_its_own(
     world: ErasureWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Recheck E-002: an old interrupted erase cannot prove its bytes are the same; it records anew."""
+    """Recheck E-002: an interrupted erase recorded without a position records anew."""
 
     from cruxible_core.storage.cas import ContentAddressedBodyStore
 

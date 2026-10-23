@@ -37,6 +37,7 @@ import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from cruxible_client.contracts.primitives import canonical_json
@@ -745,8 +746,7 @@ def polarity_issues(
                 {
                     other
                     for opposite in {
-                        "inverse" if row.polarity == "positive" else "positive"
-                        for row in entering
+                        "inverse" if row.polarity == "positive" else "positive" for row in entering
                     }
                     for other in _unseen_opposites(
                         parent,
@@ -754,7 +754,7 @@ def polarity_issues(
                         opposite,
                         written=[row for row in written if row.polarity == opposite],
                         skip=targets,
-                        seen=lambda identity, polarity, slot=slot: seen(identity, polarity, slot),
+                        seen=partial(seen, slot=slot),
                         rebased=base_claim is not None,
                         base_changes=base_changes,
                     )

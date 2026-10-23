@@ -297,9 +297,10 @@ class CaptureErasureStore:
 
         A Capture erased before whose bytes landed again since (stored anew,
         by any Capture of them), or whose record cannot show they did not, is
-        erased again: a new record at its own journal and landing position. Its instant is the instance's recording clock at
-        the append, raised to the last record's, never a caller's. Nothing is
-        written while previewing. The caller unlinks the bytes after this returns.
+        erased again: a new record at its own journal and landing position. Its
+        instant is the instance's recording clock at the append, raised to the
+        last record's, never a caller's. Nothing is written while previewing.
+        The caller unlinks the bytes after this returns.
         """
 
         if is_previewing():
