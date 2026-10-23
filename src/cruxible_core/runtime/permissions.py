@@ -130,6 +130,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_authoring_status": PermissionMode.READ_ONLY,
     "cruxible_authoring_example": PermissionMode.READ_ONLY,
     "cruxible_body_store": PermissionMode.GOVERNED_WRITE,
+    "cruxible_capture_upload": PermissionMode.GOVERNED_WRITE,
     "cruxible_document_propose": PermissionMode.GOVERNED_WRITE,
     "cruxible_files_propose": PermissionMode.GOVERNED_WRITE,
     "cruxible_claim_type_propose": PermissionMode.GOVERNED_WRITE,

@@ -275,6 +275,28 @@ def test_unknown_binding_and_cloud_refuse(tmp_path: Path) -> None:
     assert caught.value.path_class == "cloud_no_mounts"
 
 
+def test_a_daemon_owned_upload_root_reads_on_the_cloud_profile_too(tmp_path: Path) -> None:
+    root = tmp_path / "uploads"
+    root.mkdir()
+    (root / "scan.json").write_bytes(b"{}")
+    request = _request(root, "scan.json")
+    uploads = WorkspaceFileReader(
+        instance_id="workspace-reader-test",
+        operating_profile="cloud",
+        attached_roots=(root,),
+        managed_roots=(tmp_path / "state",),
+        daemon_owned=True,
+    )
+    assert uploads.workspace_names == ("uploads",)
+    assert _read(uploads, request).receipt.byte_length == 2
+    # The carve-out is the root's, not the profile's: the deny rules still hold.
+    (root / ".git").mkdir()
+    (root / ".git" / "config").write_bytes(b"x")
+    with pytest.raises(WorkspaceFileReadRefused) as caught:
+        _read(uploads, _request(root, ".git/config"))
+    assert caught.value.path_class == "git_metadata"
+
+
 def test_operational_config_widens_roots_but_managed_root_is_excluded(tmp_path: Path) -> None:
     attached = tmp_path / "attached"
     allowed = tmp_path / "allowed"

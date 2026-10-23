@@ -249,6 +249,35 @@ Runtimes that must execute Provider code run without
 `CRUXIBLE_HOSTED_SERVER_PROFILE` set: that is the ordinary single-tenant
 profile, and it is unchanged.
 
+## Evidence Uploads
+
+A hosted runtime has no workspace mounts, so a scan or log reaches it as an
+upload. The operator names a daemon-owned staging directory outside the state
+root in `daemon/provider-runtime.json`:
+
+```json
+{"upload_root": "/var/lib/cruxible-uploads"}
+```
+
+Optional limits sit beside it: `upload_max_bytes` (default 8 MiB per file),
+`upload_session_seconds` (default 3600) and `upload_max_open_sessions` (default
+8 per instance). Without `upload_root` the daemon refuses uploads
+(`cruxible.upload.not_configured`).
+
+An upload is three kinds of request, each at GOVERNED_WRITE by a principal that
+can write here: `POST /api/v1/{instance}/uploads` opens a session for an exact
+length, sha256 and file name; `POST .../uploads/{upload_id}/parts/{n}` sends one
+part of at most 512 KiB as raw `application/octet-stream`, so every request
+stays under the edge's 1 MB body cap; `POST .../uploads/{upload_id}/complete`
+names the acquire Procedure (`procedure`, its other `input`, and
+`input_path_field`, `relative_path` by default). Completing runs that Procedure
+exactly as a direct run, at the caller's tier for it, with a one-file `uploads`
+workspace as its only readable root; the Capture, its receipt, replay and the
+import Line that fires on it are the ordinary ones. The staged file and its parts
+are deleted when the run returns or fails. A session belongs to the principal
+that opened it, takes each part once (a retry must be the same bytes), and
+expires unfinished. The client's `upload_capture` does all three.
+
 ## Private Runtime Network
 
 Hosted runtimes should not publish port `8100` on the public host interface.

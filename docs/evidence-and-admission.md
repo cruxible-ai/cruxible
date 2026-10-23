@@ -25,7 +25,9 @@ A Claim rests on one or more of these:
   a supplier's catalog saved in the repository (`--evidence-file
   PATH#ANCHOR`).
 - **A Capture**: retained bytes recorded under a CaptureContract, typically a
-  response that a Procedure fetched from the outside world.
+  response that a Procedure fetched from the outside world, or a file it read
+  from the workspace or from an upload (a hosted instance's way in for scans and
+  logs; see [the hosted runtime image](hosted-runtime-image.md#evidence-uploads)).
 
 `get --detail evidence` shows what a Claim rests on and whether each piece
 counts. Here, a fitment the shop checked and wrote up, and a fitment cited from

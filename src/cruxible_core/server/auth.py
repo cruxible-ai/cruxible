@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import hmac
+import re
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -90,6 +91,11 @@ _STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # state-changing request that carries a *body* and lacks an allowed Origin must
 # carry exactly this type.
 _JSON_MEDIA_TYPE = "application/json"
+# A Capture upload part is raw octets. ``application/octet-stream`` is not a
+# CORS-simple type either, so a browser must preflight it; it is admitted on the
+# part route alone, and every other bodied route stays JSON-only.
+_OCTET_MEDIA_TYPE = "application/octet-stream"
+_UPLOAD_PART_ROUTE = re.compile(r"^/api/v1/[^/]+/uploads/[0-9a-f]{32}/parts/[0-9]+$")
 
 MISSING_BEARER_CREDENTIAL_MESSAGE = (
     "Daemon reachable; credential missing. Supply a bearer token in "
@@ -421,6 +427,10 @@ async def token_auth_middleware(
         and origin is None
         and _request_has_body(request)
         and _request_media_type(request) != _JSON_MEDIA_TYPE
+        and not (
+            _request_media_type(request) == _OCTET_MEDIA_TYPE
+            and _UPLOAD_PART_ROUTE.fullmatch(request.url.path) is not None
+        )
     ):
         return _forbidden_origin_response(request)
     # Credential-free surfaces: liveness and version.

@@ -60,6 +60,10 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 PROVIDER_RUNTIME_CONFIG_PATH = Path("daemon/provider-runtime.json")
+DEFAULT_UPLOAD_MAX_BYTES = 8 * 1024 * 1024
+MAX_UPLOAD_MAX_BYTES = 1024 * 1024 * 1024
+DEFAULT_UPLOAD_SESSION_SECONDS = 3_600.0
+DEFAULT_UPLOAD_MAX_OPEN_SESSIONS = 8
 ProviderRecoveryFoldDisposition = Literal["handled", "unclaimed", "fold_failed"]
 _ConstructionStage = Literal[
     "state root",
@@ -180,6 +184,39 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
     workspace_allowed_roots: tuple[str, ...] = ()
     provider_repository: str | None = None
     provider_index_urls: tuple[str, ...] = ()
+    #: Where Capture uploads stage (a daemon-owned directory outside the state
+    #: root). Unset, the daemon refuses uploads.
+    upload_root: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: The largest file one upload may carry.
+    upload_max_bytes: int = Field(
+        default=DEFAULT_UPLOAD_MAX_BYTES,
+        ge=1,
+        le=MAX_UPLOAD_MAX_BYTES,
+        exclude_if=lambda value: value == DEFAULT_UPLOAD_MAX_BYTES,
+    )
+    #: How long an upload session stays open before it expires.
+    upload_session_seconds: float = Field(
+        default=DEFAULT_UPLOAD_SESSION_SECONDS,
+        gt=0,
+        le=86_400,
+        exclude_if=lambda value: value == DEFAULT_UPLOAD_SESSION_SECONDS,
+    )
+    #: Open upload sessions one instance may hold at once.
+    upload_max_open_sessions: int = Field(
+        default=DEFAULT_UPLOAD_MAX_OPEN_SESSIONS,
+        ge=1,
+        le=1_024,
+        exclude_if=lambda value: value == DEFAULT_UPLOAD_MAX_OPEN_SESSIONS,
+    )
+
+    @field_validator("upload_root")
+    @classmethod
+    def _upload_root(cls, value: str | None) -> str | None:
+        if value is not None:
+            path = Path(value)
+            if not path.is_absolute() or value != str(path) or ".." in path.parts:
+                raise ValueError("the upload root must be a canonical absolute path")
+        return value
 
     @field_validator("provider_repository")
     @classmethod
