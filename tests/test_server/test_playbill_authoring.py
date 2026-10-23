@@ -405,6 +405,7 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
         "playbill-claim-type-v6",
         "playbill-claim-type-v7",
         "playbill-claim-type-v8",
+        "cruxible-claim-type-v9",
     ]
 
     response = client.post(

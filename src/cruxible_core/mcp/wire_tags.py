@@ -1,6 +1,6 @@
 """Format tags are internal: MCP input schemas hide them and the server fills them in.
 
-Every request model carries a ``playbill-*-vN`` format tag (``tag``,
+Every request model carries a ``playbill-*-vN`` (or ``cruxible-*-vN``) format tag (``tag``,
 ``artifact_format``...). The tag is how bytes name their own format, which is
 the server's business; a model writing a call should not have to copy it. So the
 advertised input schema drops every property whose only admissible values are
@@ -21,8 +21,9 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
-#: A format tag: the frozen ``playbill-`` namespace, one family, a version.
-TAG_RE = re.compile(r"^playbill-[a-z0-9-]+-v\d+(?:\.\d+)?$")
+#: A format tag: the frozen ``playbill-`` namespace, or the ``cruxible-`` one formats
+#: take at their next version bump (``cruxible-claim-type-v9``), one family, a version.
+TAG_RE = re.compile(r"^(?:playbill|cruxible)-[a-z0-9-]+-v\d+(?:\.\d+)?$")
 _VERSION_RE = re.compile(r"-v(\d+)(?:\.(\d+))?$")
 
 
