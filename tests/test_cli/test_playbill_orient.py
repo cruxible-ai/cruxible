@@ -44,8 +44,9 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     text = cruxible.run(
         "orient",
     ).stdout
-    assert f"  {KIND}  subjects=1" in text
-    assert "    status  one  enum[blocked|done|ready]" in text
+    # The map prints one line per kind; --kind prints its fields in full.
+    assert f"  {KIND}  subjects=1  fields=slug,status\n" in text
+    assert "enum[" not in text
     assert "Next:\n  cruxible orient --kind " + KIND in text
 
     detail = cruxible.json("orient", "--kind", KIND)
@@ -156,7 +157,7 @@ def test_both_kind_views_print_shared_evidence_once_and_empty_exceptions() -> No
             {"name": "note", "type": "string", "cardinality": "one", "evidence": ["other"]},
         ],
     }
-    for view in ({"kinds": [kind]}, {"kind_detail": {**kind, "sample_subject_ids": []}}):
+    for view in ({"kind_detail": {**kind, "sample_subject_ids": []}},):
         text = _render_orient(
             {
                 "instance": "inst",
@@ -195,7 +196,7 @@ def test_orient_maps_stored_playbill_contract_names_to_cruxible_for_display() ->
             "generation": 3,
             "coordinate": {"git_oid": "a" * 64},
             "accepted_at": "2026-09-29T00:00:00Z",
-            "kinds": [kind],
+            "kind_detail": {**kind, "sample_subject_ids": []},
         }
     )
     assert "playbill." not in text
@@ -269,3 +270,49 @@ def test_a_stale_floor_prints_how_far_behind_it_is_and_how_to_refresh() -> None:
         f"Floor: .cruxible/floor at {'b' * 12}, 2 generation(s) behind; "
         "refresh: cruxible floor export --force"
     ) in text
+
+
+def test_the_default_map_prints_one_line_per_kind_and_flat_nonzero_counts() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    def kind(name: str, subjects: int, fields: int) -> dict[str, object]:
+        return {
+            "kind": name,
+            "subjects": subjects,
+            "predicates": [
+                {"name": f"f{index}", "type": "string", "cardinality": "one"}
+                for index in range(fields)
+            ],
+        }
+
+    text = _render_orient(
+        {
+            "instance": "inst",
+            "generation": 3,
+            "coordinate": {"git_oid": "a" * 64},
+            "accepted_at": "2026-09-29T00:00:00Z",
+            "kinds": [kind("a.asset", 4, 9), kind("a.empty", 0, 2), kind("a.idle", 0, 1)],
+            "artifacts": {
+                "claim_types": 12,
+                "procedures": 0,
+                "claims": {"live": 40, "retired": 0},
+            },
+            "queries": [
+                {
+                    "name": "assets_by_owner",
+                    "params": ["owner: string"],
+                    "description": "Assets an owner holds. Each row names the asset. " + "x" * 200,
+                },
+                {"name": "long", "params": [], "description": "y" * 150},
+            ],
+        }
+    )
+    lines = text.splitlines()
+    assert lines[1:4] == [
+        "Kinds (3):",
+        "  a.asset  subjects=4  fields=f0,f1,f2,f3,f4,f5 (+3)",
+        "  no subjects yet (2): a.empty, a.idle",
+    ]
+    assert "Artifacts: claim_types=12 claims.live=40" in lines
+    assert "  assets_by_owner(owner: string)  Assets an owner holds." in lines
+    assert "  long()  " + "y" * 97 + "..." in lines

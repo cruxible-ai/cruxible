@@ -606,3 +606,24 @@ def test_rebind_re_cites_a_claim_on_its_new_text_by_catalog_name(
     assert change.op == "rebind" and change.evidence.observation is not None  # type: ignore[union-attr]
     both = _run("rebind", claim, "--because", "x")
     assert both.exit_code == 2 and "pass one of file" in both.output
+
+
+def test_rebind_from_capture_moves_every_citing_claim_in_one_change(
+    served: _ServiceClient,
+) -> None:
+    old, new = "CAP-" + "a" * 12, "CAP-" + "b" * 12
+    _run("rebind", "--from-capture", old, "--capture", new, "--because", "Fresh scan.")
+    (request,) = [item for item in served.requests if isinstance(item, WriteRequest)]
+    (change,) = request.changes
+    assert change.op == "rebind"
+    assert (change.target, change.from_capture) == (None, old)  # type: ignore[union-attr]
+    assert change.evidence.kind == "capture"  # type: ignore[union-attr]
+    for args, says in (
+        (("rebind", "CLM-" + "1" * 32, "--from-capture", old), "not both"),
+        (("rebind", "--capture", new), "not both"),
+        (("rebind", "--from-capture", old, "--file", "a.md#x"), "pass --capture NEW"),
+        (("rebind", "--from-capture", old, "--capture", new, "--citation", "c" * 12), "--citation"),
+    ):
+        refused = _run(*args, "--because", "x")
+        assert refused.exit_code == 2 and says in refused.output, refused.output
+    assert len(served.requests) == 1

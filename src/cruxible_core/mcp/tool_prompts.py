@@ -147,7 +147,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "pass a ClaimTypeInputRecord: a new one states its subject kinds, object and "
         "cardinality, and every other field "
         "has a default (`cruxible claim-type propose --template --expanded`); an edit states "
-        "only what changes. Lands when policy and your tier allow; accept=never proposes only."
+        "only what changes; inverse makes it record absence (a none). Lands when policy and "
+        "your tier allow; accept=never proposes only."
     ),
     "cruxible_claim_type_migrate": (
         "Use when a ClaimType and all of its dependent Claim dispositions must change atomically."

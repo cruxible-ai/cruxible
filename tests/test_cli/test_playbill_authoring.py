@@ -116,7 +116,9 @@ def test_cli_line_run_forwards_only_the_occurrence_assertion(monkeypatch) -> Non
         ],
     )
 
-    assert result.exit_code == 0, result.output
+    # A refused run exits 1 after printing its JSON, so `&&` stops.
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout)["status"] == "admission_refused"
     assert calls == [("inst_line", digest, occurrence, "2026-09-02T12:00:00+00:00")]
 
 

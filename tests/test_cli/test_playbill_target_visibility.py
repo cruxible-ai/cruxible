@@ -531,8 +531,11 @@ def test_claim_type_template_does_not_announce_a_write_target(
         ],
     )
 
+    from cruxible_core.cli.commands.playbill import _CLAIM_TYPE_INVERSE_HINT
+
     assert result.exit_code == 0, result.output
-    assert result.stderr == ""
+    # Only the template's optional-field hint, never a write target line.
+    assert result.stderr == _CLAIM_TYPE_INVERSE_HINT + "\n"
 
 
 def test_workspace_attach_writes_config_only_after_exact_daemon_registration(

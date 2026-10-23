@@ -24,7 +24,9 @@ from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
 
 
 @pytest.mark.parametrize("hold", (False, True))
-@pytest.mark.parametrize("recompiled_status", (None, "pending_review", "ready_to_activate"))
+@pytest.mark.parametrize(
+    "recompiled_status", (None, "pending_review", "ready_to_activate", "already_live")
+)
 @pytest.mark.parametrize("output_json", (False, True))
 def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     tmp_path: Path,
@@ -64,8 +66,14 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
         else contracts.ProposalRecompiled(
             status=recompiled_status,
             source_proposal_id=proposal_id,
-            proposal_id="sha256:" + "a" * 64,
-            candidate_digest="sha256:" + "b" * 64,
+            **(
+                {}
+                if recompiled_status == "already_live"
+                else {
+                    "proposal_id": "sha256:" + "a" * 64,
+                    "candidate_digest": "sha256:" + "b" * 64,
+                }
+            ),
             members_identical=True,
             accepted_coordinate=contracts.AcceptedCoordinate.from_internal(
                 instance.accepted_coordinate()
@@ -154,6 +162,13 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     if recompiled is not None:
         if output_json:
             assert json.loads(result.stdout) == recompiled.model_dump(mode="json")
+        elif recompiled_status == "already_live":
+            # Nothing was proposed, so there is no successor to name.
+            assert result.stdout.splitlines()[-1] == (
+                f"{proposal_id} is already live at the head: every change it carried is "
+                "accepted; closed as answered, nothing to review."
+            )
+            assert "None" not in result.stdout
         else:
             operation = "review" if recompiled_status == "pending_review" else "activate"
             assert result.stdout.splitlines()[-1] == (
@@ -161,6 +176,11 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
             )
         return
     if not output_json:
+        # --yes prints one counts line before signing, not the approval summary.
+        counts = result.stdout.splitlines()[0]
+        assert counts.startswith(f"Signing {proposal.candidate.candidate_digest} ({proposal_id}): ")
+        assert " change" in counts
+        assert "Required approvals" not in result.stdout
         assert "Approved " in result.stdout
         return
     receipt = json.loads(result.stdout)
@@ -267,3 +287,33 @@ def test_cli_missing_signer_never_falls_back_to_daemon(
     assert result.exit_code != 0
     assert submitted is False
     assert instance.accepted_history()[-1].sequence == 0
+
+
+def test_cli_approval_without_a_terminal_refuses_before_contacting_the_daemon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: (_ for _ in ()).throw(AssertionError("no prompt, no daemon call")),
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_cli",
+            "proposal",
+            "approve",
+            "PRP-0123456789ab",
+            "--signer-id",
+            "reviewer",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Aborted" not in result.output
+    assert (
+        "review it with `cruxible proposal review PRP-0123456789ab`, then rerun with --yes"
+        in result.stderr
+    )

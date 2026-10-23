@@ -190,6 +190,9 @@ class McpRebindChange(RebindChange):
     __doc__ = RebindChange.__doc__
 
     target: str = Field(description="CLM-…")
+    # MCP cites file and section text only, never a fresh Capture, so the
+    # Capture-wide re-bind (which needs one) is not offered here.
+    from_capture: SkipJsonSchema[str | None] = None
     citation: str | None = Field(default=None, description="Its 12+ hex; default: one of FILE.")
     evidence: McpFileEvidence | McpSectionEvidence
 
@@ -569,7 +572,7 @@ def register_tools(
     def cruxible_proposal_list(
         instance_id: InstanceId = None,
         *,
-        status: Literal["open", "settled", "incomplete"] | None = None,
+        status: Literal["open", "awaiting_readmit", "settled", "incomplete"] | None = None,
         limit: Annotated[
             int, Field(ge=1, le=contracts.PROPOSAL_LIST_MAX_LIMIT)
         ] = contracts.PROPOSAL_LIST_DEFAULT_LIMIT,

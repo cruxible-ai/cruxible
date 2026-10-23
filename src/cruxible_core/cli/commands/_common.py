@@ -57,6 +57,16 @@ def _interactive_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
+def _can_confirm() -> bool:
+    """Whether a prompt on standard error can be answered: stdin and stderr are a TTY.
+
+    A command whose prompt goes to stderr keeps stdout for its output (``--json``
+    piped elsewhere), so only the prompt's own streams need a person.
+    """
+
+    return sys.stdin.isatty() and sys.stderr.isatty()
+
+
 def change_control_options(fn: Callable[..., Any]) -> Callable[..., Any]:
     """``--dry-run/--commit``, ``--at`` and ``--yes``: the R12 change control on every change.
 

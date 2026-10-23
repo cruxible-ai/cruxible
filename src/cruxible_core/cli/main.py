@@ -16,7 +16,11 @@ from cruxible_client.authoring.context import (
     ContextResolutionError,
     resolve_context,
 )
-from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
+from cruxible_client.contracts.repairs import (
+    HandEditRepair,
+    RepairOperation,
+    render_served_repair,
+)
 from cruxible_client.contracts.workspace_layout import WorkspaceDirectoryConflict
 from cruxible_core.cli.context import (
     CliContextState,
@@ -241,16 +245,37 @@ def handle_errors(f: Any) -> Any:
                 )
                 sys.exit(1)
             if isinstance(exc, ClientCoreError):
-                # A refusal rebuilt from the wire is the bare base class; its code
-                # leads its message already, so the class name would be noise.
-                prefix = "" if type(exc) is ClientCoreError else f"{exc.__class__.__name__}: "
-                click.secho(f"Error: {prefix}{exc}", fg="red", err=True)
+                # A refusal rebuilt from the wire is the bare base class, and a
+                # typed one (a registry refusal) may lead with its code too; then
+                # the class name would be noise.
+                code = getattr(exc, "error_code", None)
+                message = str(exc)
+                leads_with_code = isinstance(code, str) and message.startswith(f"{code}:")
+                prefix = (
+                    ""
+                    if type(exc) is ClientCoreError or leads_with_code
+                    else f"{exc.__class__.__name__}: "
+                )
+                served = getattr(exc, "repair", None)
                 repairs = tuple(getattr(exc, "repair_commands", ()))
+                repair_line = (
+                    served.hand_edit.required_change
+                    if isinstance(served, HandEditRepair) and not repairs
+                    else None
+                )
+                if repair_line is not None and message.endswith(f" {repair_line}"):
+                    # A message that ends with its hand edit (an erase refusal's
+                    # repair line) prints that line on its own Repair line.
+                    message = message.removesuffix(f" {repair_line}")
+                else:
+                    repair_line = None
+                click.secho(f"Error: {prefix}{message}", fg="red", err=True)
                 for repair in repairs:
                     click.secho(f"Repair: {repair}", fg="red", err=True)
-                served = getattr(exc, "repair", None)
                 if not repairs and isinstance(served, RepairOperation):
                     click.secho(f"Repair: {render_served_repair(served)}", fg="red", err=True)
+                if repair_line is not None:
+                    click.secho(f"Repair: {repair_line}", fg="red", err=True)
                 sys.exit(1)
 
             import httpx

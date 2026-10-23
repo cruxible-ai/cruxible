@@ -2892,7 +2892,7 @@ class Cruxible:
     def proposals(
         self,
         *,
-        status: Literal["open", "settled", "incomplete"] | None = None,
+        status: Literal["open", "awaiting_readmit", "settled", "incomplete"] | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> api.ProposalList:
