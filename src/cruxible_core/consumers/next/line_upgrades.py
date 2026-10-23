@@ -1,4 +1,7 @@
-"""Disabled-by-upgrade findings derived from accepted Line version changes.
+"""Disabled-by-upgrade and never-enabled findings derived from accepted Line version changes.
+
+A Line whose identity is new and was never enabled owes ``line enable``: a
+warning row until its first enablement or its retirement.
 
 The durable cursor and rows commit together. A crash before commit replays only
 those generations; deleting this disposable projection rebuilds from retained
@@ -27,6 +30,7 @@ CREATE TABLE lines (identity TEXT PRIMARY KEY, digest TEXT NOT NULL,
  procedure TEXT NOT NULL) STRICT;
 CREATE TABLE disabled (identity TEXT PRIMARY KEY, line_id TEXT NOT NULL,
  digest TEXT NOT NULL, procedure TEXT NOT NULL) STRICT;
+CREATE TABLE unenabled (identity TEXT PRIMARY KEY, line_id TEXT NOT NULL) STRICT;
 """,
 )
 
@@ -73,6 +77,17 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                             "UPDATE disabled SET digest=? WHERE identity=?",
                             (version.artifact_digest, version.identity),
                         )
+                line_id = line_identity_digest(line.identity)
+                if line.lifecycle.state == "retired" or _ever_enabled(instance, line_id):
+                    connection.execute(
+                        "DELETE FROM unenabled WHERE identity=?", (version.identity,)
+                    )
+                elif old is None:
+                    # A new Line identity starts disabled: name `line enable` until
+                    # its first enablement (or retirement) closes the row.
+                    connection.execute(
+                        "INSERT OR REPLACE INTO unenabled VALUES(?,?)", (version.identity, line_id)
+                    )
                 if line.lifecycle.state == "retired":
                     connection.execute("DELETE FROM disabled WHERE identity=?", (version.identity,))
                 elif (
@@ -84,7 +99,7 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                         "INSERT OR REPLACE INTO disabled VALUES(?,?,?,?)",
                         (
                             version.identity,
-                            line_identity_digest(line.identity),
+                            line_id,
                             version.artifact_digest,
                             line.procedure.artifact_digest,
                         ),
@@ -94,6 +109,36 @@ def catch_up(instance: Any, *, through: int | None = None) -> None:
                     (version.identity, version.artifact_digest, line.procedure.artifact_digest),
                 )
         connection.execute("UPDATE progress SET generation=?", (end,))
+
+
+def _ever_enabled(instance: Any, line_id: str) -> bool:
+    """Whether any version of the Line was ever enabled: a keyed probe of its sessions."""
+
+    with LineDispatchStore(instance).locked() as dispatch:
+        return (
+            dispatch.execute(
+                "SELECT 1 FROM sessions WHERE line_id=? LIMIT 1", (line_id,)
+            ).fetchone()
+            is not None
+        )
+
+
+def unenabled_lines(instance: Any) -> tuple[str, ...]:
+    """Accepted Lines never enabled since they were added; a first enablement closes each."""
+
+    catch_up(instance)
+    with _STATE.open(instance) as connection:
+        assert connection is not None
+        rows = connection.execute(
+            "SELECT identity,line_id FROM unenabled ORDER BY identity"
+        ).fetchall()
+        result = []
+        for identity, line_id in rows:
+            if _ever_enabled(instance, line_id):
+                connection.execute("DELETE FROM unenabled WHERE identity=?", (identity,))
+            else:
+                result.append(str(identity))
+        return tuple(result)
 
 
 def _was_enabled(instance: Any, line_id: str, digest: str) -> bool:

@@ -179,6 +179,10 @@ EXPECTED_OPERATIONS = {
     "consumer_stalled": "cruxible.line.enable",
     # A carried Line resumes only after the operator enables its upgraded version.
     "line_disabled_by_upgrade": "cruxible.line.enable",
+    # A Line accepted and never enabled starts running on its Triggers once enabled.
+    "line_not_enabled": "cruxible.line.enable",
+    # A failed run of a Trigger's occurrence: fix its cause; the next good run clears it.
+    "line_run_failed": "hand_edit",
     # A restart leaves the downtime unmatched: evaluating that exact range covers it.
     "line_coverage_gap": "cruxible.line.evaluate",
     # Work matched before a restart waits for an explicit dispatch.
@@ -2008,6 +2012,114 @@ def _line_work_pending(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "line_work_pending", request)
 
 
+def _line_not_enabled(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from cruxible_client.contracts.triggers import CaptureLandingSchedule
+    from cruxible_core.service.procedures.line_dispatch import service_enable_line
+    from tests.test_procedures import test_line_arming as arming
+    from tests.test_procedures.test_line_triggers import SELECTOR, line_world
+
+    instance, line, _procedure = line_world(root, CaptureLandingSchedule(event=SELECTOR))
+    request = _request(instance)
+
+    row = _row(instance, "line_not_enabled", request)
+    assert row.subject_identity == line.identity.qualified and row.severity == "warning"
+    assert row.repair.command == f"cruxible line enable {line.identity.name}"
+
+    # The named repair: enable it. A later disable owes nothing: it was deliberate.
+    service_enable_line(
+        instance,
+        line.identity.name,
+        principal=arming.LOCAL,
+        actor=arming._actor(instance),
+        now=arming.READ_TIME,
+        daemon_id="daemon",
+    )
+    _assert_gone(instance, "line_not_enabled", request)
+
+
+def _line_run_failed(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineEvaluateRequest
+    from cruxible_core.procedures import execution
+    from cruxible_core.service.procedures.line_dispatch import (
+        service_dispatch_line,
+        service_evaluate_line,
+    )
+    from tests.test_procedures import test_line_arming as arming
+
+    instance, line, _start, restarted = _restarted_line(root)
+    request = _request(instance)
+
+    def failing(*_args: object, **_kwargs: object) -> object:
+        raise execution._OperationalFailure("provider_execution_error", details={"kind": "dns"})
+
+    def dispatch(at):  # type: ignore[no-untyped-def]
+        return service_dispatch_line(
+            instance,
+            line.identity.name,
+            LineDispatchRequest(),
+            actor=arming._actor(instance),
+            now=at,
+            caller_rung=3,
+        )
+
+    with monkeypatch.context() as patched:
+        patched.setattr(execution.ProcedureExecutor, "_walk", failing)
+        assert [item.status for item in dispatch(restarted).items] == ["admitted"]
+    row = _row(instance, "line_run_failed", request)
+    assert row.subject_identity == line.identity.qualified
+    assert row.detail["failure_code"] == "provider_execution_error"
+    assert row.repair.operation == "hand_edit" and row.repair.command is None
+
+    # The repair: the cause is fixed (here the failure is gone); the Line's
+    # next run of a Trigger's occurrence succeeds and clears the row.
+    gap = _row(instance, "line_coverage_gap", request)
+    since, until = gap.repair.arguments["since"], gap.repair.arguments["until"]
+    service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequest(
+            since=datetime.fromisoformat(since), until=datetime.fromisoformat(until)
+        ),
+        actor=arming._actor(instance),
+        now=restarted + timedelta(seconds=5),
+    )
+    assert [item.status for item in dispatch(restarted + timedelta(seconds=6)).items] == [
+        "admitted"
+    ]
+    _assert_gone(instance, "line_run_failed", request)
+
+    # A manual run's failure is the caller's to see, never a row.
+    _line_manual_failure_is_no_row(instance, line, monkeypatch, request)
+
+
+def _line_manual_failure_is_no_row(instance, line, monkeypatch, request) -> None:  # type: ignore[no-untyped-def]
+    from cruxible_core.procedures import execution
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequest,
+        service_run_playbill_line,
+    )
+    from tests.test_procedures import test_line_arming as arming
+
+    def failing(*_args: object, **_kwargs: object) -> object:
+        raise execution._OperationalFailure("provider_execution_error")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(execution.ProcedureExecutor, "_walk", failing)
+        try:
+            service_run_playbill_line(
+                instance,
+                path_identity_digest=line.identity.name,
+                request=LineRunRequest(line=line.identity.name),
+                actor_context=arming._actor(instance),
+                caller_rung=3,
+            )
+        except Exception:  # noqa: BLE001 - a refused manual run is no row either
+            pass
+    _assert_gone(instance, "line_run_failed", request)
+
+
 def _line_inbox_unread(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from cruxible_core.service.procedures.line_inbox import (
         service_acknowledge_inbox_item,
@@ -2277,6 +2389,8 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("mandate_expiring", None): _mandate_expiring,
     ("consumer_stalled", None): _consumer_stalled,
     ("line_disabled_by_upgrade", None): _line_disabled_by_upgrade,
+    ("line_not_enabled", None): _line_not_enabled,
+    ("line_run_failed", None): _line_run_failed,
     ("line_coverage_gap", None): _line_coverage_gap,
     ("line_work_pending", None): _line_work_pending,
     ("line_settled_prior_refusals", None): _line_settled_prior_refusals,
@@ -2488,3 +2602,67 @@ def test_a_compiler_upgrade_offers_signing_before_activation(
     )
     assert receipt.status == "accepted"
     assert rows("proposal_awaiting_activation") == []
+
+
+def test_an_approver_sees_a_stale_proposal_awaiting_its_authors_readmit(tmp_path: Path) -> None:
+    """A stale candidate is never approvable; its readmit is the author's alone."""
+
+    from cruxible_client.contracts.approval_policy import (
+        APPROVAL_POLICY_PATH,
+        ApprovalPolicy,
+        render_approval_policy,
+    )
+    from tests.test_proposals.test_approval_policy import _activate as _activate_policy
+    from tests.test_proposals.test_approval_policy import _submit_tree
+    from tests.test_proposals.test_proposals import DOCUMENT_PATH, _shell
+
+    instance, _owner = initialize_local(tmp_path)
+    tightening = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            APPROVAL_POLICY_PATH: render_approval_policy(
+                ApprovalPolicy(mode="independent_approval_required")
+            ),
+        },
+        name="stale-approver-tighten",
+    )
+    assert _activate_policy(instance, tightening, tmp_path=tmp_path).status == "accepted"
+    base = instance.tree_at(instance.accepted_coordinate().git_oid)
+    first = instance.store_document_body(b"# First\n")
+    second = instance.store_document_body(b"# Second\n")
+    overtaken = _submit_tree(
+        instance,
+        {**base, DOCUMENT_PATH: render_document(_shell(first.digest))},
+        name="stale-approver-overtaken",
+    )
+    winner = _submit_tree(
+        instance,
+        {**base, DOCUMENT_PATH: render_document(_shell(second.digest, title="Second"))},
+        name="stale-approver-winner",
+    )
+    stale_id = overtaken.admission.proposal_id
+
+    def reviewer_rows(reason: str) -> list[Any]:
+        return [
+            item
+            for item in service_playbill_next(
+                instance, request=_request(instance), caller_principal_id="reviewer"
+            ).items
+            if item.reason == reason and item.subject_identity == stale_id
+        ]
+
+    assert len(reviewer_rows("proposal_awaiting_approval")) == 1
+    assert _activate_policy(instance, winner, tmp_path=tmp_path, approve=True).status == "accepted"
+
+    # The head moved past it: no approve; stale, awaiting the author's readmit.
+    assert reviewer_rows("proposal_awaiting_approval") == []
+    (row,) = reviewer_rows("proposal_stale")
+    assert row.severity == "warning" and row.repair is None
+    assert row.repair_requires.operation == "cruxible.proposal.readmit"
+    assert row.repair_requires.because == ("author",)
+    assert row.detail["awaiting"] == "author_readmit"
+    assert row.detail["actor_id"] == "owner"
+    # The author's own row still names the readmit.
+    author = _row(instance, "proposal_stale", _request(instance), caller_principal_id="owner")
+    assert author.repair.command == f"cruxible proposal readmit {stale_id}"

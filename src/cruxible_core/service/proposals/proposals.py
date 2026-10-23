@@ -27,6 +27,7 @@ from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
 from cruxible_core.indexes.proposals.proposal_index import timestamp
+from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -524,6 +525,7 @@ class StaleProposal:
     target_ref: str
     admitted_at: str
     candidate_parent_semantic_root: str
+    candidate_digest: str
 
 
 def readmission_operation_digest(proposal_id: str, coordinate: AcceptedCoordinate) -> str:
@@ -669,7 +671,10 @@ def stale_unreadmitted_proposals(
         rows = _open_candidates(
             connection,
             sequence,
-            columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_parent_semantic_root",
+            columns=(
+                "proposal_id,actor_id,target_ref,admitted_at_us,"
+                "candidate_parent_semantic_root,candidate_digest"
+            ),
             where=where,
             parameters=parameters,
         )
@@ -695,6 +700,7 @@ def stale_unreadmitted_proposals(
                     target_ref=row["target_ref"],
                     admitted_at=timestamp(row["admitted_at_us"]),
                     candidate_parent_semantic_root=row["candidate_parent_semantic_root"],
+                    candidate_digest=row["candidate_digest"],
                 )
             )
     return tuple(stale)
@@ -767,24 +773,16 @@ def proposals_awaiting_approval(
         )
     awaiting = []
     for row in rows:
-        candidate = evidence.read_candidate(row["candidate_digest"])
-        signers = {
-            submission.attestation.signer_id
-            for submission in evidence.read_approvals(row["candidate_digest"])
-        }
-        if principal_id in signers:
+        counts = _approval_awaited(
+            evidence,
+            row["candidate_digest"],
+            actor_id=row["actor_id"],
+            principal_id=principal_id,
+            ordinary_principal_ids=ordinary_principal_ids,
+        )
+        if counts is None:
             continue
-        if candidate.approval_requirements:
-            if row["actor_id"] == principal_id:
-                continue  # The creator never counts toward an independent requirement.
-            eligible = len((signers - {row["actor_id"]}) & ordinary_principal_ids)
-            minimum = candidate.approval_requirements[0].minimum_distinct_signers
-            if eligible >= minimum:
-                continue
-        elif _signature_required_unsigned(candidate, signers, ordinary_principal_ids):
-            eligible, minimum = 0, 1
-        else:
-            continue
+        eligible, minimum = counts
         awaiting.append(
             ProposalAwaitingApproval(
                 proposal_id=row["proposal_id"],
@@ -799,6 +797,72 @@ def proposals_awaiting_approval(
     return tuple(awaiting)
 
 
+def _approval_awaited(
+    evidence: ProposalEvidenceStore,
+    candidate_digest: str,
+    *,
+    actor_id: str,
+    principal_id: str,
+    ordinary_principal_ids: frozenset[str],
+) -> tuple[int, int] | None:
+    """(eligible approvals, minimum) when `principal_id`'s approval would advance it, else None.
+
+    Counted exactly as activation counts it: distinct active ordinary signers
+    other than the creator; a compiler upgrade with no signature at all also
+    waits on one, which its creator may give.
+    """
+
+    candidate = evidence.read_candidate(candidate_digest)
+    signers = {
+        submission.attestation.signer_id for submission in evidence.read_approvals(candidate_digest)
+    }
+    if principal_id in signers:
+        return None
+    if candidate.approval_requirements:
+        if actor_id == principal_id:
+            return None  # The creator never counts toward an independent requirement.
+        eligible = len((signers - {actor_id}) & ordinary_principal_ids)
+        minimum = candidate.approval_requirements[0].minimum_distinct_signers
+        return None if eligible >= minimum else (eligible, minimum)
+    if _signature_required_unsigned(candidate, signers, ordinary_principal_ids):
+        return 0, 1
+    return None
+
+
+def stale_proposals_awaiting_approval(
+    instance: PlaybillInstance,
+    coordinate: AcceptedCoordinate,
+    *,
+    principal_id: str,
+    ordinary_principal_ids: frozenset[str],
+) -> tuple[tuple[StaleProposal, int, int], ...]:
+    """Stale proposals `principal_id` would approve, were they at the head: the approver's view.
+
+    Exactly ``stale_unreadmitted_proposals`` (``proposal list``'s
+    ``awaiting_readmit``), kept where this principal's approval is one the
+    candidate still awaits, counted as ``proposals_awaiting_approval`` counts
+    it. No approval can settle one as it stands: it awaits its author's
+    readmit, and only then this principal's review. Each comes with its
+    (eligible approvals, minimum). O(stale open candidates), as the listing.
+    """
+
+    if principal_id not in ordinary_principal_ids:
+        return ()
+    evidence = instance.proposal_evidence()
+    found = []
+    for proposal in stale_unreadmitted_proposals(instance, coordinate):
+        counts = _approval_awaited(
+            evidence,
+            proposal.candidate_digest,
+            actor_id=proposal.actor_id,
+            principal_id=principal_id,
+            ordinary_principal_ids=ordinary_principal_ids,
+        )
+        if counts is not None:
+            found.append((proposal, *counts))
+    return tuple(found)
+
+
 @dataclass(frozen=True)
 class ProposalAwaitingActivation:
     """One of a principal's own open candidates whose approval requirement is met."""
@@ -808,6 +872,8 @@ class ProposalAwaitingActivation:
     admitted_at: str
     candidate_digest: str
     approvals: int
+    #: Whether its approval policy asked for any approval (met), or none at all.
+    approval_required: bool
 
 
 def proposals_awaiting_activation(
@@ -866,6 +932,7 @@ def proposals_awaiting_activation(
                 admitted_at=timestamp(row["admitted_at_us"]),
                 candidate_digest=row["candidate_digest"],
                 approvals=eligible,
+                approval_required=bool(candidate.approval_requirements),
             )
         )
     return tuple(ready)

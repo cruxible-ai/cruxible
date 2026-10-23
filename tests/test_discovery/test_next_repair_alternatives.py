@@ -112,7 +112,7 @@ def test_a_captured_field_restates_on_contract_evidence_its_role_admits() -> Non
         "--evidence-contract cruxible.foreign-source.repo.reports"
     )
     (retire,) = row.repair.alternatives
-    assert retire.command == f"cruxible retire {CLAIM}"
+    assert retire.command == f"cruxible retire {CLAIM} --because TEXT"
 
 
 def test_a_captured_field_whose_role_no_rule_admits_keeps_the_authoring_door() -> None:
@@ -167,7 +167,7 @@ def test_contradicting_evidence_is_read_then_restated_on_own_evidence_or_retired
     restate, retire = row.repair.alternatives
     # The restatement never cites the Capture that contradicts the Claim.
     assert restate.command is not None and "--capture" not in restate.command
-    assert retire.command == f"cruxible retire {CLAIM}"
+    assert retire.command == f"cruxible retire {CLAIM} --because TEXT"
     mcp = _row(repair, "mcp").repair
     assert mcp is not None and mcp.command == f'cruxible_get(ref="Capture:{CAPTURE}")'
 
@@ -199,7 +199,10 @@ def test_a_drifted_citation_re_binds_or_retires_on_every_surface() -> None:
             _commitment(section=None), coordinate=_coordinate(), drift_state=state
         )
         assert row.repair is not None
-        assert row.repair.command == f"cruxible rebind {CLAIM} --citation {'e' * 12}"
+        assert row.repair.command == (
+            f"cruxible rebind {CLAIM} --citation {'e' * 12} --file FILE#ANCHOR --because TEXT"
+        )
+        assert row.repair.operands_to_add == ("file", "because")
         assert [item.operation for item in row.repair.alternatives] == ["cruxible.claim.retire"]
 
     section = _citation_drift_item(
@@ -209,7 +212,8 @@ def test_a_drifted_citation_re_binds_or_retires_on_every_surface() -> None:
     )
     assert section.repair is not None
     assert section.repair.command == (
-        f"cruxible rebind {CLAIM} --citation {'e' * 12} --section 'repo.reports#Pricing/Widgets'"
+        f"cruxible rebind {CLAIM} --citation {'e' * 12} --section 'repo.reports#Pricing/Widgets' "
+        "--because TEXT"
     )
     mcp = _item(
         severity=section.severity,
@@ -231,7 +235,8 @@ def test_a_drifted_citation_re_binds_or_retires_on_every_surface() -> None:
     ).repair
     assert sdk is not None
     assert sdk.command == (
-        f'cx.rebind("{CLAIM}", citation="{"e" * 12}", section="repo.reports#Pricing/Widgets")'
+        f'cx.rebind("{CLAIM}", citation="{"e" * 12}", section="repo.reports#Pricing/Widgets", '
+        'because="TEXT")'
     )
 
 
