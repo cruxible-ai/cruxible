@@ -2184,9 +2184,9 @@ def evaluate_claim_law(
     revised; it enters the verdict as no longer replayable. Replaying accepted
     history (no new-citation proof) verifies the same way, so a generation that
     cited the Capture before it was erased still reproduces, as replayable as it
-    was then. A Capture cited anew still needs its body. With `origin_replay_exempt` (revision 10) a ``none``
-    type compiles adjudication rule v3, whose origin-only entries need no current
-    replay.
+    was then. A Capture cited anew still needs its body. With
+    `origin_replay_exempt` (revision 10) a ``none`` type compiles adjudication
+    rule v3, whose origin-only entries need no current replay.
 
     An inverse Claim (object ``none``, ClaimType v9) is judged by the type's
     inverse: its object names the unit the inverse is keyed by, it cites at least
