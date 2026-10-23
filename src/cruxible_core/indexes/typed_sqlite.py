@@ -266,6 +266,9 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
         from cruxible_core.indexes.subject_identity import refresh_subject_keys
 
         refresh_subject_keys(expected)
+        from cruxible_core.indexes.claim_units import refresh_claim_units
+
+        refresh_claim_units(expected)
         for table in (
             "members",
             "principals",
@@ -273,6 +276,7 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             "claim_type_names",
             "vocabulary_terms",
             "subject_keys",
+            "claim_units",
             "provider_registration_order",
             "provider_heads",
             "provider_control_domains",
@@ -390,6 +394,7 @@ def replace_rows(
     whole_checks: bool = True,
     historical_provider_source: Callable[[str, int], bytes | None] | None = None,
 ) -> None:
+    from cruxible_core.indexes.claim_units import refresh_claim_units
     from cruxible_core.indexes.subject_identity import refresh_subject_keys
 
     changed = tuple(sorted(set(changed_paths)))
@@ -414,6 +419,25 @@ def replace_rows(
     # Every replaced path's rows go in one statement per table (children before
     # their parents, as the per-path loop deleted them): the same rows, whatever
     # the number of paths.
+    # The unit index follows the Claims and ClaimTypes the change writes (the
+    # rows they leave and the rows they become) and the key Claims among them.
+    claim_paths = [path for path in changed if path.startswith("claims/")]
+    unit_claims = {
+        (str(identity), str(subject_path), str(predicate))
+        for identity, subject_path, predicate in select_in(
+            connection,
+            "SELECT identity,subject_path,predicate FROM claims WHERE path IN ({})",
+            claim_paths,
+        )
+    }
+    type_inverses_before = {
+        str(identity): (kind, predicate)
+        for identity, kind, predicate in select_in(
+            connection,
+            "SELECT identity,inverse_key,inverse_key_predicate FROM claim_types WHERE path IN ({})",
+            [path for path in changed if path.startswith("claim-types/")],
+        )
+    }
     replaced = sorted(
         (str(path), str(identity), str(kind))
         for path, identity, kind in select_in(
@@ -461,6 +485,7 @@ def replace_rows(
     refresh_provider_heads(connection, sources, historical_source=historical_provider_source)
     if not changed:
         refresh_subject_keys(connection)
+        refresh_claim_units(connection)
     else:
         for row in parsed.envelopes:
             if row.kind == "subject":
@@ -476,6 +501,34 @@ def replace_rows(
             )
         )
         refresh_subject_keys(connection, subjects=key_subjects, kinds=key_kinds)
+        unit_claims.update(
+            (str(identity), str(subject_path), str(predicate))
+            for identity, subject_path, predicate in select_in(
+                connection,
+                "SELECT identity,subject_path,predicate FROM claims WHERE identity IN ({})",
+                [row.identity for row in parsed.envelopes if row.kind == "claim"],
+            )
+        )
+        type_inverses_after = {
+            str(identity): (kind, predicate)
+            for identity, kind, predicate in select_in(
+                connection,
+                "SELECT identity,inverse_key,inverse_key_predicate FROM claim_types "
+                "WHERE identity IN ({})",
+                [row.identity for row in parsed.envelopes if row.kind == "claim-type"],
+            )
+        }
+        refresh_claim_units(
+            connection,
+            claims={identity for identity, _subject, _predicate in unit_claims},
+            key_subjects={(subject, predicate) for _identity, subject, predicate in unit_claims},
+            claim_types={
+                identity
+                for identity in {*type_inverses_before, *type_inverses_after}
+                if type_inverses_before.get(identity, (None, None))
+                != type_inverses_after.get(identity, (None, None))
+            },
+        )
     if bodies is not None:
         populate_citations(
             connection,
