@@ -298,6 +298,18 @@
   "/api/v1/{instance_id}/since": {
     "POST": "SinceResult"
   },
+  "/api/v1/{instance_id}/uploads": {
+    "POST": "CaptureUploadSession"
+  },
+  "/api/v1/{instance_id}/uploads/{upload_id}": {
+    "GET": "CaptureUploadSession"
+  },
+  "/api/v1/{instance_id}/uploads/{upload_id}/complete": {
+    "POST": "CaptureUploadCompleteResult"
+  },
+  "/api/v1/{instance_id}/uploads/{upload_id}/parts/{part}": {
+    "POST": "CaptureUploadSession"
+  },
   "/api/v1/{instance_id}/whoami": {
     "GET": "WhoAmI"
   },
