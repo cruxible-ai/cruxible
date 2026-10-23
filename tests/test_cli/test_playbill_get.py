@@ -818,3 +818,58 @@ def test_an_erased_capture_line_says_who_erased_its_body_and_why(
         "evidence: admitted  body erased 2026-09-01T00:00:00+00:00 by alice: "
         "Printed a token; rotated."
     ) in result.output
+
+
+@pytest.mark.parametrize("erased", [True, False])
+def test_a_stale_claim_card_says_when_its_evidence_was_erased(
+    monkeypatch: pytest.MonkeyPatch, erased: bool
+) -> None:
+    from cruxible_client.contracts.get_reads import (
+        GetCaptureErasure,
+        GetCaptureEvidence,
+        GetEvidence,
+    )
+
+    card = GetClaimCard(
+        claim="CLM-" + "b" * 32,
+        subject="security.asset/a",
+        predicate="severity",
+        predicate_full="security.asset.severity",
+        value="high",
+        verdict="stale",
+        status="ineligible",
+        revision=1,
+        flags=("stale",),
+    )
+    capture = GetCaptureEvidence(
+        capture="CAP-0123456789ab",
+        contract="CaptureContract:security.scan-output",
+        version=1,
+        source="scanner",
+        observed_at=WHEN,
+        role="evidence",
+        origin="independent",
+        status="admitted",
+        erased=GetCaptureErasure(by="alice", at=WHEN, because="Rotated.") if erased else None,
+    )
+    results = [
+        _result("claim", card=card),
+        _result(
+            "claim",
+            detail="evidence",
+            evidence=GetEvidence(value="high", captures=(capture,), attestations=()),
+        ),
+    ]
+    stub = _stub(monkeypatch, results[0])
+    stub.get = lambda instance_id, *, request: (  # type: ignore[method-assign]
+        stub.requests.append(request) or results[len(stub.requests) - 1]
+    )
+
+    text = CliRunner().invoke(cli, [*PREFIX, "get", "CLM-bbbbbbbb"])
+
+    assert text.exit_code == 0, text.output
+    marker = " (evidence erased)" if erased else ""
+    assert f"verdict=stale{marker} status=ineligible revision=1" in text.output
+    # The one evidence read is pinned to the generation and time the card answered at.
+    follow = stub.requests[1]
+    assert (follow.detail, follow.at, follow.evaluation_time) == ("evidence", "1" * 12, WHEN)

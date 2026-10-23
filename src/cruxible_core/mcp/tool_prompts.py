@@ -240,7 +240,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "typed columns. Or pass a query name "
         "with params (budgets, receipt=full for its replay receipt). Rows lead with values "
         "and carry flags (stale, contested, contradicted, uncovered, unsure_hold); status "
-        "adds overturned, refused or retired Claims (retired also lists retired Subjects) "
+        "adds overturned, ineligible or retired Claims (retired also lists retired Subjects) "
         "and claims=true names each cell's Claims. "
         "When truncated, pass next_cursor back as cursor. A wrong name refuses with the "
         "nearest valid names."

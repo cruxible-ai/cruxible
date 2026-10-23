@@ -1252,3 +1252,13 @@ def test_raw_claim_type_envelope_option_is_removed() -> None:
     result = CliRunner().invoke(cli, ["claim-type", "propose", "--envelope", "-"])
     assert result.exit_code == 2
     assert "No such option: --envelope" in result.output
+
+
+def test_cli_lint_lines_carry_the_warnings_meaning_when_it_has_words() -> None:
+    from cruxible_core.cli.commands.playbill import _claim_type_lint_meaning
+
+    assert _claim_type_lint_meaning("cruxible.claim_type.stale_eligible_never_current") == (
+        ": eligible_verdicts lists stale while require_current is true: stale contenders "
+        "never resolve"
+    )
+    assert _claim_type_lint_meaning("cruxible.claim_type.field_name_reserved") == ""

@@ -1616,7 +1616,7 @@ Claims are read through `cruxible query`, `cruxible get` and `cruxible orient`.
 `cruxible query KIND --select P --claims` is the status table: each
 cell names its Claims with their ID, value, verdict, resolution status and
 role, for every Subject of `KIND` (narrow with `--where 'subject_id in a,b'`);
-`--status overturned --status refused --status retired` adds the Claims
+`--status overturned --status ineligible --status retired` adds the Claims
 resolution set aside or that were retired. A query lists a kind's live Subjects;
 `--status retired` also lists its retired Subjects, and every row then states its
 Subject's `lifecycle` (`live` or `retired`). `cruxible get CLM-...`
@@ -3861,7 +3861,7 @@ declaring artifact (`get ApprovalPolicy:instance` reads the approval policy,
 `get ProcedureRuntimePolicy:instance` the Procedure runtime ceilings and
 `get SourceAcquisitionPolicy:NAME` one source acquisition policy).
 The default map also counts every accepted Claim by status (accepted,
-conflicted, overturned, refused, retired) under `artifacts.claims`. Kinds page the same way
+conflicted, ineligible, overturned, retired) under `artifacts.claims`. Kinds page the same way
 when there are more than `--limit`. `--at` reads an earlier accepted generation.
 `--json` returns the whole structured answer, including the coordinate and
 generation.

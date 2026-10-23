@@ -1829,7 +1829,7 @@ class World:
 
         Lighter than ``prefetch`` when only values and verdicts are wanted: one
         ``query`` per Subject kind asks for each cell's Claims, including those
-        resolution overturned or refused. Strings are subject kind/id addresses
+        resolution overturned or found ineligible. Strings are subject kind/id addresses
         or paths and fully qualified predicates. A string value over 500
         characters is a ``TruncatedText`` (``preview``, ``length``), never the
         value: ``cx.read_whole(item.value)`` reads it whole at this World's coordinate.
@@ -1912,7 +1912,7 @@ class World:
                         "kind": kind,
                         "where": [{"field": "subject_id", "in": list(ids)}],
                         "select": list(select),
-                        "status": ("live", "overturned", "refused"),
+                        "status": ("live", "overturned", "ineligible"),
                         "claims": True,
                         "limit": QUERY_MAX_LIMIT,
                         "cursor": cursor,

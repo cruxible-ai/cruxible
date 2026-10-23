@@ -31,7 +31,8 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     assert mapped["tag"] == "playbill-orient-v1"
     (kind,) = mapped["kinds"]
     assert (kind["kind"], kind["subjects"]) == (KIND, 1)
-    assert [item["name"] for item in kind["predicates"]] == ["slug", "status"]
+    assert kind["fields"] == ["slug", "status"]
+    assert "more_fields" not in kind
     assert kind["identity"] == f"keys: {KIND}.slug (unique)"
     # The kind's slug key and status, and the builtin semantic.alias and
     # semantic.distinct_from.
@@ -276,14 +277,15 @@ def test_the_default_map_prints_one_line_per_kind_and_flat_nonzero_counts() -> N
     from cruxible_core.cli.commands.playbill import _render_orient
 
     def kind(name: str, subjects: int, fields: int) -> dict[str, object]:
-        return {
+        # The wire's OrientKindSummary: the first five field names, then a count.
+        row: dict[str, object] = {
             "kind": name,
             "subjects": subjects,
-            "predicates": [
-                {"name": f"f{index}", "type": "string", "cardinality": "one"}
-                for index in range(fields)
-            ],
+            "fields": [f"f{index}" for index in range(min(fields, 5))],
         }
+        if fields > 5:
+            row["more_fields"] = fields - 5
+        return row
 
     text = _render_orient(
         {
@@ -310,7 +312,7 @@ def test_the_default_map_prints_one_line_per_kind_and_flat_nonzero_counts() -> N
     lines = text.splitlines()
     assert lines[1:4] == [
         "Kinds (3):",
-        "  a.asset  subjects=4  fields=f0,f1,f2,f3,f4,f5 (+3)",
+        "  a.asset  subjects=4  fields=f0,f1,f2,f3,f4 (+4)",
         "  no subjects yet (2): a.empty, a.idle",
     ]
     assert "Artifacts: claim_types=12 claims.live=40" in lines

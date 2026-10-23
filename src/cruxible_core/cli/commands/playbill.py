@@ -3869,6 +3869,15 @@ def propose_claim_type(
     _echo_proposal(input_result.proposal, input_result.lint)
 
 
+def _claim_type_lint_meaning(code: str) -> str:
+    """``: what it means`` for a lint warning that has words, else nothing."""
+
+    from cruxible_core.claims.claim_type_inputs import CLAIM_TYPE_LINT_TEXT
+
+    meaning = CLAIM_TYPE_LINT_TEXT.get(code)
+    return "" if meaning is None else f": {meaning}"
+
+
 def _echo_proposal(
     inspection: contracts.ProposalInspection, lint: contracts.ClaimTypeProposalLint | None
 ) -> None:
@@ -3889,7 +3898,10 @@ def _echo_proposal(
             if warning.contract_identity and warning.contract_identity != "unresolved"
             else ""
         )
-        click.echo(f"lint: {warning.code} at {warning.field_path}{contract}")
+        click.echo(
+            f"lint: {warning.code} at {warning.field_path}{contract}"
+            + _claim_type_lint_meaning(warning.code)
+        )
     if inspection.outcome is not None:
         _echo_landing(inspection.outcome)
     elif proposal_id:
@@ -3973,7 +3985,9 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
         click.echo("  none")
     else:
         for warning in result.lint.warnings:
-            click.echo(f"  {warning.field_path}: {warning.code}")
+            click.echo(
+                f"  {warning.field_path}: {warning.code}" + _claim_type_lint_meaning(warning.code)
+            )
 
 
 @claim_type_group.command("upgrade")
@@ -5569,7 +5583,7 @@ def get_by_ref(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    _emit_get_text(result)
+    _emit_get_text(result, evidence_erased=_stale_claim_evidence_erased(request, result))
     if result.next_cursor is not None:
         narrowed = "" if field_name is None else f" --field {shlex.quote(field_name)}"
         click.echo(
@@ -5726,8 +5740,35 @@ def _citation_label(capture: Any) -> str:
     return str(capture.role)
 
 
-def _emit_get_text(result: Any) -> None:
-    """Values first, per kind; ``--json`` carries the whole structured result."""
+def _stale_claim_evidence_erased(request: Any, result: Any) -> bool:
+    """Whether a stale Claim card reads stale because a cited Capture's body was erased.
+
+    The summary card carries no erasure; only a stale Claim's card asks, with
+    one evidence read pinned to the generation and time the card answered at.
+    """
+
+    card = result.card
+    if result.kind != "claim" or card is None or getattr(card, "verdict", None) != "stale":
+        return False
+    evidence_request = request.model_copy(
+        update={
+            "detail": "evidence",
+            "at": result.coordinate.git_oid,
+            "evaluation_time": result.evaluation_time,
+        }
+    )
+    evidence = _server_call(
+        lambda client, instance_id: client.get(instance_id, request=evidence_request),
+        command_name="cruxible get",
+    ).evidence
+    return evidence is not None and any(item.erased is not None for item in evidence.captures)
+
+
+def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
+    """Values first, per kind; ``--json`` carries the whole structured result.
+
+    ``evidence_erased`` marks a stale Claim's verdict as read from erased evidence.
+    """
 
     if result.card is not None:
         card = result.card.model_dump(mode="json")
@@ -5743,7 +5784,9 @@ def _emit_get_text(result: Any) -> None:
                 f"{_get_value_text(card['value'], claim=card.get('claim'))}"
             )
             click.echo(
-                f"{card['claim']}  verdict={card['verdict']} status={card['status']} "
+                f"{card['claim']}  verdict={card['verdict']}"
+                + (" (evidence erased)" if evidence_erased else "")
+                + f" status={card['status']} "
                 f"revision={card['revision']}"
                 + (f" accepted={card['accepted']}" if card.get("accepted") else "")
             )
@@ -6750,8 +6793,8 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     "--status",
     "statuses",
     multiple=True,
-    type=click.Choice(["live", "overturned", "refused", "retired"]),
-    help="Which Claims cells show (repeatable): live (default), overturned, refused, retired.",
+    type=click.Choice(["live", "ineligible", "overturned", "retired"]),
+    help="Which Claims cells show (repeatable): live (default), overturned, ineligible, retired.",
 )
 @click.option("--claims", "with_claims", is_flag=True, help="Also show each cell's Claims.")
 @click.option("--name", "query_name", default=None, help="Run an accepted named query.")
@@ -8072,7 +8115,10 @@ def next_work(
         if about is not None:
             row += f"  ({about})"
         if item.repair is None:
-            needs = _next_requirement_hint(item.repair_requires)
+            author = item.detail.get("actor_id") if isinstance(item.detail, dict) else None
+            needs = _next_requirement_hint(
+                item.repair_requires, author=author if isinstance(author, str) else None
+            )
             click.echo(row + ("" if output_brief else f"  repair withheld: {needs}"))
             if not output_brief:
                 for finding in item.findings:
@@ -8084,9 +8130,21 @@ def next_work(
             click.echo(row + (f"  next={item.repair.command}" if item.repair.command else ""))
             continue
         click.echo(f"{row}  next={item.repair.operation}")
+        for line in _next_run_failure_lines(item):
+            click.echo(f"  {line}")
         click.echo(f"  repair: {_next_repair_hint(item.repair)}")
         for alternative in item.repair.alternatives:
             click.echo(f"  or: {_next_repair_hint(alternative)}")
+        operands = dict.fromkeys(
+            (
+                *item.repair.operands_to_add,
+                *(op for alt in item.repair.alternatives for op in alt.operands_to_add),
+            )
+        )
+        if operands:
+            click.echo(
+                "  fill in: " + ", ".join(_NEXT_OPERAND_PLACEHOLDER_TEXT[op] for op in operands)
+            )
         for finding in item.findings:
             click.echo(f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}")
     if result.unobserved_domains and not output_brief:
@@ -8096,6 +8154,34 @@ def next_work(
             f"Showing {len(result.items)} of {result.total_items} rows. "
             f"Next: --cursor {result.next_cursor}"
         )
+
+
+#: What each placeholder a repair command leaves (`operands_to_add`) stands for.
+_NEXT_OPERAND_PLACEHOLDER_TEXT: dict[str, str] = {
+    "because": "TEXT (why, in your words)",
+    "file": "FILE#ANCHOR (the file and anchor holding the new text)",
+    "capture": "CAP (the fresh Capture's handle)",
+}
+
+
+def _next_run_failure_lines(item: contracts.NextItem) -> list[str]:
+    """A failed Line run's row: the run, its failure code and its cause, if recorded."""
+
+    detail = item.detail if isinstance(item.detail, dict) else {}
+    if item.reason != "line_run_failed" or not isinstance(detail.get("run_id"), str):
+        return []
+    lines = [
+        f"run {detail['run_id']} failed"
+        + (f" ({detail['failure_code']})" if detail.get("failure_code") else "")
+        + (f" at {detail['finalized_at']}" if detail.get("finalized_at") else "")
+    ]
+    cause = detail.get("cause")
+    if isinstance(cause, dict):
+        lines.append(
+            f"Cause: {cause.get('node_id')}: "
+            f"{cause.get('kind') or cause.get('provider_code')}: {cause.get('message')}"
+        )
+    return lines
 
 
 def _next_claim_about(item: contracts.NextItem) -> str | None:
@@ -8108,8 +8194,14 @@ def _next_claim_about(item: contracts.NextItem) -> str | None:
     return f"{subject.removeprefix('subjects/').removesuffix('.json')} {predicate}"
 
 
-def _next_requirement_hint(requires: contracts.NextRepairRequirement | None) -> str:
-    """What running a withheld repair needs, in one phrase."""
+def _next_requirement_hint(
+    requires: contracts.NextRepairRequirement | None, *, author: str | None = None
+) -> str:
+    """What running a withheld repair needs, in one phrase.
+
+    ``author`` names the actor an ``author``-gated repair (a stale proposal's
+    readmit) waits on, from the row's ``actor_id``.
+    """
 
     if requires is None:
         return "this caller cannot run it"
@@ -8123,6 +8215,8 @@ def _next_requirement_hint(requires: contracts.NextRepairRequirement | None) -> 
         needs.append(f"the {requires.tier} tier")
     if "profile" in requires.because:
         needs.append(f"the {requires.profile} MCP tool profile")
+    if "author" in requires.because:
+        needs.append(f"the proposal's author ({author or 'unknown actor'})")
     refusal = requires.authoring_refusal
     if "authoring" in requires.because and refusal is not None:
         # The identity repair comes first: no tier helps a caller that cannot author.
@@ -8701,19 +8795,17 @@ def _orient_predicate_line(item: Mapping[str, Any]) -> str:
     return "  ".join(parts)
 
 
-#: The default map names this many of a kind's fields, then counts the rest.
-_ORIENT_FIELDS_SHOWN = 6
 #: A query's description in the default map: its first sentence, at most this long.
 _ORIENT_QUERY_TEXT_LIMIT = 100
 
 
 def _orient_kind_summary(kind: Mapping[str, Any]) -> str:
-    """One line per kind in the default map: `orient --kind` prints every field."""
+    """One line per kind in the default map (`OrientKindSummary`): its first
+    fields by name and a count of the rest; `orient --kind` prints every field."""
 
-    names = [str(item["name"]) for item in kind["predicates"]]
-    shown = ",".join(names[:_ORIENT_FIELDS_SHOWN])
-    more = len(names) - _ORIENT_FIELDS_SHOWN
-    fields = f"  fields={shown}" + (f" (+{more})" if more > 0 else "") if names else ""
+    names = [str(name) for name in kind.get("fields", ())]
+    more = int(kind.get("more_fields", 0))
+    fields = f"  fields={','.join(names)}" + (f" (+{more})" if more > 0 else "") if names else ""
     return f"{kind['kind']}  subjects={kind['subjects']}{fields}"
 
 
