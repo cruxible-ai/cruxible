@@ -51,6 +51,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObject,
     AuthoringExistingClaimDisposition,
     AuthoringIntentV1,
+    AuthoringNoneClaimObject,
     AuthoringReferenceExpectation,
     AuthoringSlotExpectation,
     ChangeSetAuthoringPayload,
@@ -99,7 +100,6 @@ from cruxible_client.contracts.claims import (
     ClaimRetireDependent,
     ExactContentClaimObject,
     LiteralClaimObject,
-    NoneClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -1573,7 +1573,7 @@ class _Planner:
         *,
         index: int,
         field_name: str,
-    ) -> NoneClaimObject:
+    ) -> AuthoringNoneClaimObject:
         """The inverse Claim object a none names, in the unit its ClaimType's inverse keys.
 
         ``{"none": null}`` is a one-valued field's whole slot; ``{"none": KEY}``
@@ -1624,7 +1624,7 @@ class _Planner:
                         change=index,
                         field_path=path,
                     )
-                return NoneClaimObject(
+                return AuthoringNoneClaimObject(
                     of=self.literal(
                         key_info,
                         value.none,
@@ -1648,8 +1648,8 @@ class _Planner:
                         repair="Name an accepted Subject as kind/id",
                         field_path=f"{path}.none",
                     )
-                return NoneClaimObject(of=of)
-            return NoneClaimObject(
+                return AuthoringNoneClaimObject(of=of)
+            return AuthoringNoneClaimObject(
                 of=self.literal(
                     info, value.none, index=index, field_name=field_name, path=f"{path}.none"
                 )
@@ -1662,7 +1662,7 @@ class _Planner:
                 repair='Pass {"none": null}',
                 field_path=f"{path}.none",
             )
-        return NoneClaimObject()
+        return AuthoringNoneClaimObject()
 
     def none_evidence(self, info: PredicateInfo, *, index: int, field_name: str, unit: str) -> None:
         """Refuse a none backed only by own words, unless an inverse rule admits them.

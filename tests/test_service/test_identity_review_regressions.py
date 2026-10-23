@@ -1074,7 +1074,7 @@ def test_a_none_of_a_subject_named_by_key_resolves_like_a_subject_value(
 ) -> None:
     """A Procedure item may state a none (inverse) whose ``of`` names its Subject by key."""
 
-    from cruxible_client.contracts.claims import NoneClaimObject
+    from cruxible_client.contracts.authoring.models import AuthoringNoneClaimObject
     from cruxible_client.contracts.procedures.proposal_items import (
         ProcedureKeyedClaimProposalItem,
         ProcedureNoneClaimObject,
@@ -1114,7 +1114,7 @@ def test_a_none_of_a_subject_named_by_key_resolves_like_a_subject_value(
     with instance.bind_accepted_projection(base) as projection:
         keys.bind(IdentityView(projection.typed.connection, key_reader=tree_key_reader(base_tree)))
         statement = keys.statement(item)
-    assert isinstance(statement.object, NoneClaimObject)
+    assert isinstance(statement.object, AuthoringNoneClaimObject)
     assert isinstance(statement.object.of, SubjectClaimObject)
     assert statement.object.of.address.artifact_path == subject_path(DECISION, "other-name")
     # A slot none (no ``of``) passes through as the plain none.
@@ -1123,7 +1123,7 @@ def test_a_none_of_a_subject_named_by_key_resolves_like_a_subject_value(
             "statement": item.statement.model_copy(update={"object": ProcedureNoneClaimObject()})
         }
     )
-    assert keys.statement(slot).object == NoneClaimObject()
+    assert keys.statement(slot).object == AuthoringNoneClaimObject()
 
 
 def test_an_appended_intent_event_is_never_visible_partially(

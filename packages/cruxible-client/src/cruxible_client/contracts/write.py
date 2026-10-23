@@ -142,17 +142,12 @@ def _omit_none(value: object) -> bool:
 
 
 class NoneValue(_StrictWriteModel):
-    """A none: the field holds nothing (an inverse Claim), on a ClaimType that declares one.
+    """A none: the field holds nothing; needs a ClaimType inverse and its evidence."""
 
-    ``{"none": null}`` says a one-valued field holds no value; ``{"none": KEY}``
-    says a many-valued field does not hold KEY: the value itself (a Subject as
-    kind/id) under an ``object`` inverse, the object's key value under an
-    ``object_key`` one. Only evidence one of the inverse's rules admits backs it.
-    """
-
-    none: ClaimValue | None = Field(
-        description="null: the field holds no value; else the value (or key) it does not hold.",
-    )
+    # ``{"none": null}``: a one-valued field holds no value. ``{"none": KEY}``:
+    # a many-valued field does not hold KEY (the value, a Subject as kind/id,
+    # under an ``object`` inverse; the object's key value under ``object_key``).
+    none: ClaimValue | None = Field(description="null, or the value (key) not held.")
 
 
 #: What a set or add writes: a value, or a none.

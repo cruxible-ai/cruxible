@@ -126,7 +126,7 @@ class ProcedureNoneClaimObject(_StrictProposalItemModel):
             Field(discriminator="kind"),
         ]
         | None
-    ) = Field(default=None, exclude_if=lambda value: value is None)
+    ) = None
 
 
 ProcedureClaimObject = Annotated[

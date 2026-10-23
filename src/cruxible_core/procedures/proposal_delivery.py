@@ -45,6 +45,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     AuthoringExistingClaimDisposition,
     AuthoringIntentV1,
+    AuthoringNoneClaimObject,
     CandidateStatus,
     ChangeSetAuthoringPayload,
     ChangeSetClaimIdentity,
@@ -67,7 +68,6 @@ from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, pa
 from cruxible_client.contracts.claims import (
     ClaimRetireDependent,
     LiteralClaimObject,
-    NoneClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -994,7 +994,7 @@ class _SubjectKeys:
             of = value.of
             if isinstance(of, SubjectKeyClaimObject):
                 of = SubjectClaimObject(address=self.address(of.subject))
-            value = NoneClaimObject(of=of)
+            value = AuthoringNoneClaimObject(of=of)
         return AuthoringClaimStatement(
             subject=subject,
             predicate=statement.predicate,

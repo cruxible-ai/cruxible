@@ -46,7 +46,6 @@ from cruxible_client.contracts.claims import (
     ClaimRetireDependent,
     ClaimRetirementReason,
     LiteralClaimObject,
-    NoneClaimObject,
     SubjectClaimObject,
     claim_path,
 )
@@ -375,10 +374,25 @@ class AuthoringExactContentObject(_StrictAuthoringModel):
         return _canonical_base64(self.content_base64, label="exact-content body")
 
 
-#: A Claim object as authored. ``none`` is an inverse (ClaimType v9): the unit
-#: its ``of`` names holds nothing.
+class AuthoringNoneClaimObject(_StrictAuthoringModel):
+    """A none as authored (an inverse Claim, ClaimType v9): the unit ``of`` names holds nothing.
+
+    ``of`` is absent for a whole one-valued slot, else the object (``object``
+    inverse) or the key value (``object_key``). Lowering stores it as the
+    accepted ``NoneClaimObject``.
+    """
+
+    kind: Literal["none"] = "none"
+    of: Annotated[LiteralClaimObject | SubjectClaimObject, Field(discriminator="kind")] | None = (
+        None
+    )
+
+
 AuthoringClaimObject = Annotated[
-    LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObject | NoneClaimObject,
+    LiteralClaimObject
+    | SubjectClaimObject
+    | AuthoringExactContentObject
+    | AuthoringNoneClaimObject,
     Field(discriminator="kind"),
 ]
 
@@ -2499,6 +2513,7 @@ __all__ = [
     "AuthoringClaimStatement",
     "AuthoringDiagnostic",
     "AuthoringExactContentObject",
+    "AuthoringNoneClaimObject",
     "AuthoringIntentCompileRequest",
     "AuthoringIntentCompileRequestV1",
     "AuthoringIntentList",

@@ -46,6 +46,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     AuthoringExactContentObject,
     AuthoringIntentV1,
+    AuthoringNoneClaimObject,
     AuthoringTriggerSchedule,
     BlueprintAuthoringPayload,
     BlueprintInstantiation,
@@ -690,8 +691,10 @@ def _exact_object(
     instance: PlaybillInstance,
     value: object,
 ) -> LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | NoneClaimObject:
+    if isinstance(value, AuthoringNoneClaimObject):
+        return NoneClaimObject(of=value.of)
     if not isinstance(value, AuthoringExactContentObject):
-        assert isinstance(value, LiteralClaimObject | SubjectClaimObject | NoneClaimObject)
+        assert isinstance(value, LiteralClaimObject | SubjectClaimObject)
         return value
     content = value.content
     stored = instance.body_store().store(content)
@@ -794,11 +797,11 @@ def _with_aliases_resolved(
         target = resolved(value.address, "statement.object.address")
         if target != value.address:
             value = SubjectClaimObject(address=target)
-    elif isinstance(value, NoneClaimObject) and isinstance(value.of, SubjectClaimObject):
+    elif isinstance(value, AuthoringNoneClaimObject) and isinstance(value.of, SubjectClaimObject):
         # A none of a Subject (an object-keyed inverse) names it as a value does.
         target = resolved(value.of.address, "statement.object.of.address")
         if target != value.of.address:
-            value = NoneClaimObject(of=SubjectClaimObject(address=target))
+            value = AuthoringNoneClaimObject(of=SubjectClaimObject(address=target))
     if subject == statement.subject and value is statement.object:
         return payload
     return payload.model_copy(
