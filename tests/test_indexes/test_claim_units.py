@@ -391,6 +391,45 @@ def test_a_flip_over_several_values_retires_the_rest_in_the_same_set() -> None:
     assert judge(parent, runs_none(1, "gh"), runs(2, "r2", live=False)) == []
 
 
+def test_the_write_verbs_flip_shapes_are_judged_as_flips() -> None:
+    """IV precondition: the shapes set/add/retire write are flips, both ways, in one change.
+
+    A one-valued ``set`` revises the live Claim into the other polarity; a
+    many-valued unit flips by retiring its values and adding the none (a new
+    lineage) in the same change set, and back by retiring the none and adding
+    the value. The writer names what it retires: a value left live refuses.
+    """
+
+    value = claim(1, SLOT_TYPE, LiteralClaimObject(value="ready"))
+    landed = tree(SLOT_TYPE, value)
+    # set FIELD none over the value, and set FIELD value over the none: revisions.
+    assert judge(landed, claim(1, SLOT_TYPE, NoneClaimObject())) == []
+    noned = tree(SLOT_TYPE, claim(1, SLOT_TYPE, NoneClaimObject()))
+    assert judge(noned, claim(1, SLOT_TYPE, LiteralClaimObject(value="done"))) == []
+    # A one-valued flip as retire-plus-new is a flip too.
+    retired = claim(1, SLOT_TYPE, LiteralClaimObject(value="ready"), live=False)
+    assert judge(landed, claim(2, SLOT_TYPE, NoneClaimObject()), retired) == []
+    # Many values under an object_key inverse: retire them all and add the none.
+    parent = tree(
+        *TYPES, product(10, "r1", "gh"), product(11, "r2", "gh"), runs(1, "r1"), runs(2, "r2")
+    )
+    none = runs_none(3, "gh")
+    assert judge(parent, none, runs(1, "r1", live=False)) == [POLARITY_CONFLICT]
+    assert judge(parent, none, runs(1, "r1", live=False), runs(2, "r2", live=False)) == []
+    # Not a revision flip: each retirement keeps the reason its writer gave.
+    wrong = runs(2, "r2", live=False, reason="was-wrong")
+    assert judge(parent, none, runs(1, "r1", live=False), wrong) == []
+    # And back: retire the none, add a value of its key.
+    held = tree(*TYPES, product(10, "r1", "gh"), runs_none(3, "gh"))
+    assert judge(held, runs(1, "r1")) == [POLARITY_CONFLICT]
+    assert judge(held, runs(1, "r1"), runs_none(3, "gh", live=False)) == []
+    # An object unit (a literal many-valued field) flips the same way.
+    labels = tree(OBJECT_TYPE, claim(1, OBJECT_TYPE, LiteralClaimObject(value="a")))
+    none_a = claim(2, OBJECT_TYPE, NoneClaimObject(of=LiteralClaimObject(value="a")))
+    retired_a = claim(1, OBJECT_TYPE, LiteralClaimObject(value="a"), live=False)
+    assert judge(labels, none_a, retired_a) == []
+
+
 def test_an_object_key_flip_stays_in_its_unit() -> None:
     parent = tree(*TYPES, product(10, "r1", "gh"), runs(1, "r1"))
     assert judge(parent, runs_none(1, "git")) == [FLIP_UNIT_MOVED]
