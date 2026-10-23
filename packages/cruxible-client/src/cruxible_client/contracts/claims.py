@@ -3378,6 +3378,7 @@ def evaluate_claim_law(
         claim_type_digest=claim_type.artifact_digest,
         origin_supports=creation_covered,
         origin_replay_exempt=origin_replay_exempt,
+        inverse=isinstance(statement.object, NoneClaimObject),
     )
     adjudication_rule_digest = claim_adjudication_rule_digest(rule)
     basis = tuple(sorted(evidence_basis, key=lambda item: item.encode("utf-8")))

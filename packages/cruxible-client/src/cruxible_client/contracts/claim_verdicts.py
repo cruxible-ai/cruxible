@@ -12,7 +12,11 @@ from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvid
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.captures import CanonicalDuration
-from cruxible_client.contracts.claim_types import ClaimType, effective_evidence_requirement
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    effective_evidence_requirement,
+    effective_inverse_stale_after,
+)
 from cruxible_client.contracts.content_memo import seal, sealed_derive, sealed_memo
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyAny
 from cruxible_client.contracts.providers import ProviderV1
@@ -155,6 +159,7 @@ def claim_adjudication_rule(
     claim_type_digest: str,
     origin_supports: bool = False,
     origin_replay_exempt: bool = False,
+    inverse: bool = False,
 ) -> ClaimAdjudicationRuleAny:
     """Compile the conservative rule from the exact accepted ClaimType.
 
@@ -163,10 +168,15 @@ def claim_adjudication_rule(
     compiles the v2 rule whatever the requirement: Claim law v2 revision 9
     asks it for a key Claim written with its Subject's creation, which the
     creation itself covers. ``origin_replay_exempt`` (Claim law v2 revision 10)
-    compiles the v3 rule wherever the v2 rule would be compiled.
+    compiles the v3 rule wherever the v2 rule would be compiled. ``inverse``
+    compiles the rule an inverse Claim (a none) is judged by: its evidence ages
+    on the inverse's own ``stale_after`` (``effective_inverse_stale_after``),
+    which is the type's freshness unless the inverse declares its own.
     """
 
     ArtifactDigest.from_tagged(claim_type_digest)
+    # Only an inverse with its own horizon compiles a different rule.
+    inverse = inverse and claim_type.inverse is not None
     # A pure function of the accepted ClaimType and these values: compiled
     # (and sealed, so its digest is taken once) once per sealed ClaimType.
     return sealed_derive(
@@ -176,6 +186,7 @@ def claim_adjudication_rule(
             claim_type_digest,
             origin_supports,
             origin_replay_exempt,
+            inverse,
         ),
         lambda: _sealed(
             _compile_claim_adjudication_rule(
@@ -183,6 +194,7 @@ def claim_adjudication_rule(
                 claim_type_digest=claim_type_digest,
                 origin_supports=origin_supports,
                 origin_replay_exempt=origin_replay_exempt,
+                inverse=inverse,
             )
         ),
     )
@@ -199,8 +211,16 @@ def _compile_claim_adjudication_rule(
     claim_type_digest: str,
     origin_supports: bool,
     origin_replay_exempt: bool = False,
+    inverse: bool = False,
 ) -> ClaimAdjudicationRuleAny:
     supports = origin_supports or effective_evidence_requirement(claim_type) == "none"
+    horizon = (
+        effective_inverse_stale_after(claim_type)
+        if inverse
+        else None
+        if claim_type.evidence_freshness is None
+        else claim_type.evidence_freshness.stale_after
+    )
     rule_type: (
         type[ClaimAdjudicationRuleV1] | type[ClaimAdjudicationRule] | type[ClaimAdjudicationRuleV3]
     ) = (
@@ -214,10 +234,8 @@ def _compile_claim_adjudication_rule(
         shell_sensitive=claim_type.referent_sensitivity == "shell",
         max_evidence_age=(
             None
-            if claim_type.evidence_freshness is None
-            else CanonicalDuration.model_validate(
-                claim_type.evidence_freshness.stale_after.model_dump(mode="json")
-            )
+            if horizon is None
+            else CanonicalDuration.model_validate(horizon.model_dump(mode="json"))
         ),
         require_current_replay=claim_type.resolution_policy.require_current,
         conflict_behavior=(
