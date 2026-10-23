@@ -2407,3 +2407,103 @@ def test_claim_law_revision_10_refuses_a_drop_replaced_under_another_contract(
         },
     )
     assert _refusal(outcome).code == "cruxible.claim.rebind_unmatched"
+
+
+# -- 4f: a re-bind from one Capture moves every live Claim citing it ------------------
+
+
+def test_a_rebind_names_one_claim_or_one_capture() -> None:
+    capture = {"kind": "capture", "capture": "CAP-" + "a" * 12}
+    claim = "CLM-" + "0" * 32
+    for change, match in (
+        ({"op": "rebind", "evidence": capture}, "target or from_capture"),
+        (
+            {
+                "op": "rebind",
+                "target": claim,
+                "from_capture": "CAP-" + "b" * 12,
+                "evidence": capture,
+            },
+            "target or from_capture",
+        ),
+        (
+            {
+                "op": "rebind",
+                "from_capture": "CAP-" + "b" * 12,
+                "evidence": {"kind": "file", "file": "a.md#x"},
+            },
+            "fresh Capture",
+        ),
+        (
+            {
+                "op": "rebind",
+                "from_capture": "CAP-" + "b" * 12,
+                "citation": "c" * 12,
+                "evidence": capture,
+            },
+            "leave citation out",
+        ),
+    ):
+        with pytest.raises(ValueError, match=match):
+            WriteRequest.model_validate({"because": "x", "changes": [change]})
+
+
+def test_rebind_from_capture_moves_every_live_claim_citing_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.write import capture_handle
+    from tests.support.capture_erasure_world import erasure_world, rescan
+    from tests.support.capture_erasure_world import write as world_write
+
+    world = erasure_world(tmp_path)
+    instance = world.instance
+    second = world_write(
+        instance,
+        {
+            "op": "set",
+            "subject": WI2,
+            "field": "severity",
+            "value": "low",
+            "evidence": {"kind": "capture", "capture": world.capture},
+        },
+        because="The scanner reported it.",
+    )
+    assert second.refusal is None, second
+    other = second.changes[0].claim
+    assert other is not None
+    fresh = rescan(world)
+
+    def rebind_from(stale: str, **request: Any) -> WriteOutcome:
+        return service_playbill_write(
+            instance,
+            request=WriteRequest.model_validate(
+                {
+                    "because": "Re-scanned after the token was rotated.",
+                    "changes": [
+                        {
+                            "op": "rebind",
+                            "from_capture": stale,
+                            "evidence": {"kind": "capture", "capture": fresh},
+                        }
+                    ],
+                    **request,
+                }
+            ),
+            caller=caller(),
+        )
+
+    # Over the cap, it refuses before planning a single re-bind.
+    monkeypatch.setattr(write_verbs, "MAX_REBIND_FROM_CAPTURE", 1)
+    over = rebind_from(capture_handle(world.capture))
+    assert _refusal(over).code == "cruxible.write.rebind_too_many"
+    monkeypatch.undo()
+
+    outcome = rebind_from(capture_handle(world.capture))
+    assert outcome.status == "accepted", outcome
+    assert [(item.op, item.revises) for item in outcome.changes] == [
+        ("rebind", claim) for claim in sorted((world.claim, other))
+    ]
+    assert {item.capture for item in outcome.changes} == {capture_handle(fresh)}
+    # Nothing cites the old Capture now.
+    again = rebind_from(world.capture)
+    assert _refusal(again).code == "cruxible.write.capture_not_cited"

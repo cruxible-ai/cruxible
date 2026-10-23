@@ -462,11 +462,25 @@ class RetireChange(_StrictWriteModel):
         return self
 
 
+#: The most live Claims one ``from_capture`` re-bind moves, as many as one write's changes.
+MAX_REBIND_FROM_CAPTURE = 500
+
+
 class RebindChange(_StrictWriteModel):
-    """Re-cite a Claim on its text now, or on a fresh Capture; the value stays."""
+    """Re-cite a Claim on its text now, or on a fresh Capture; the value stays.
+
+    ``from_capture`` instead of ``target`` re-cites every live Claim citing that
+    Capture on the fresh one (``evidence`` a capture), at most 500.
+    """
 
     op: Literal["rebind"] = "rebind"
-    target: ClaimId
+    target: ClaimId | None = Field(default=None, exclude_if=_omit_none)
+    from_capture: str | None = Field(
+        default=None,
+        pattern=CAPTURE_REF_PATTERN,
+        exclude_if=_omit_none,
+        description="Instead of target: every live Claim citing this Capture.",
+    )
     citation: str | None = Field(
         default=None,
         pattern=CITATION_REF_PATTERN,
@@ -476,6 +490,20 @@ class RebindChange(_StrictWriteModel):
     evidence: Annotated[
         FileEvidence | SectionEvidence | CaptureEvidence, Field(discriminator="kind")
     ]
+
+    @model_validator(mode="after")
+    def _one_target(self) -> RebindChange:
+        if (self.target is None) == (self.from_capture is None):
+            raise ValueError("a rebind names target or from_capture, not both")
+        if self.from_capture is not None:
+            if not isinstance(self.evidence, CaptureEvidence):
+                raise ValueError("a from_capture rebind cites a fresh Capture as its evidence")
+            if self.citation is not None:
+                raise ValueError(
+                    "a from_capture rebind replaces each Claim's citation of that Capture; "
+                    "leave citation out"
+                )
+        return self
 
 
 Change = Annotated[
@@ -827,6 +855,7 @@ __all__ = [
     "RetireRequest",
     "SetRequest",
     "WriteRequest",
+    "MAX_REBIND_FROM_CAPTURE",
     "RebindChange",
     "RetireChange",
     "SelfEvidence",

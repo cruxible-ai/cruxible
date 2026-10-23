@@ -700,6 +700,21 @@ def subject_creation_shape(kind: str, key_hint: str = "<value>") -> str:
     )
 
 
+def write_create_change_shape(
+    kind: str, keys: Sequence[str], *, label: str = "new", minted: bool = False
+) -> str:
+    """The ``write`` change that creates a Subject of ``kind``, its key parts named.
+
+    The same write names the created Subject as ``{"created": label}``. A minted
+    kind's create carries no key; a keyed one names each declared key predicate.
+    """
+
+    change: dict[str, object] = {"op": "create", "label": label, "subject_kind": kind}
+    if not minted:
+        change["key"] = [{"predicate": predicate, "value": "<value>"} for predicate in keys]
+    return json.dumps(change)
+
+
 def undeclared_kind_repair(kind: str) -> str:
     """The SubjectKind an author writes so ``kind`` can have new Subjects."""
 
@@ -1582,6 +1597,7 @@ __all__ = [
     "single_key_holders",
     "single_key_value",
     "subject_creation_shape",
+    "write_create_change_shape",
     "subject_key_message",
     "subjects_with_key",
     "SUBJECT_KIND_UNDECLARED",
