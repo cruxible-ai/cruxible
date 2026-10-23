@@ -56,14 +56,35 @@ def _earliest_end(instance) -> datetime | None:  # type: ignore[no-untyped-def]
     return datetime(1970, 1, 1, tzinfo=AT.tzinfo) + timedelta(microseconds=min(ends))
 
 
+def _earliest_fact_end(instance) -> datetime | None:  # type: ignore[no-untyped-def]
+    tables = facts.stored_tables(instance)
+    assert tables is not None
+    upper = facts._FACT_COLUMNS.index("upper_us")
+    ends = [row[upper] for row in tables["claim_facts"] if row[upper] is not None]
+    if not ends:
+        return None
+    return datetime(1970, 1, 1, tzinfo=AT.tzinfo) + timedelta(microseconds=min(ends))
+
+
 def test_a_fire_refreshes_at_its_recorded_instant_and_serving_needs_no_fold(
     tmp_path: Path,
 ) -> None:
     instance, _owner = _freshness_world(tmp_path)
     drain(instance, now=AT)
+    lead = _deadline(instance)
+    # Armed at the earliest end over the facts and the row keys together. The
+    # first is the evidence_expiring lead's start, clamped to horizon/4 before
+    # the support expires (stale_after 10 s): only a row key ends there.
+    assert lead is not None and lead == _earliest_end(instance)
+    fact_end = _earliest_fact_end(instance)
+    assert fact_end is not None and fact_end - lead == timedelta(seconds=10) / 4
+    assert any(
+        event.action == facts.NEXT_EXPIRE for event in fire_internal_triggers(instance, now=lead)
+    )
+    with patch.object(facts, "_claim_facts", side_effect=AssertionError("no fact ended")):
+        drain(instance, now=lead)
     edge = _deadline(instance)
-    # Armed at the earliest end over the facts and the row keys together.
-    assert edge is not None and edge == _earliest_end(instance)
+    assert edge == fact_end == _earliest_end(instance)
     request = NextRequest(evaluation_time=edge, access_profile=_access())
     # A read past the bound is served: it derives what ended and rolls it back.
     before = facts.stored_tables(instance)
