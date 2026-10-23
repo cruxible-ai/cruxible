@@ -253,6 +253,7 @@ class _World:
         erasure_contract: Any = None,
         erasure_preceded: Any = None,
         erasure_cutoffs: Any = None,
+        referents: frozenset[AcceptedCoordinate] | None = None,
     ) -> ClaimLawResult:
         shell = _shell()
         contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
@@ -300,7 +301,9 @@ class _World:
             erasure_preceded=erasure_preceded,
             erasure_cutoffs=erasure_cutoffs,
             accepted_coordinate=self.coordinate,
-            accepted_referent_coordinates=frozenset({self.coordinate}),
+            accepted_referent_coordinates=(
+                frozenset({self.coordinate}) if referents is None else referents
+            ),
         )
 
 
@@ -718,6 +721,72 @@ def test_replay_counts_only_the_erasures_at_or_before_the_recorded_position(
         erasure_cutoffs={capture: 3},
     )
     assert _through(between) == 3 and replayed.evidence == between.evidence
+
+
+def _before_positions(result: ClaimLawResult) -> dict[str, Any]:
+    """A judgment's Claim law evidence as the evaluator before positions recorded it."""
+
+    assert result.evidence is not None
+    evidence = result.evidence.model_dump(mode="json")
+    for capture in evidence["verdict_captures"]:
+        capture.pop("erasures_through", None)
+    return evidence
+
+
+def test_a_judgment_accepted_before_erasure_positions_replays_by_its_own_rule(
+    world: _World,
+) -> None:
+    """Recheck E-001: no recorded position is not "counted no erasure".
+
+    The evaluator before positions counted an erasure recorded under an
+    accepted head before the judgment's own, and recorded no position. Its
+    evidence replays by that rule, whatever was erased since.
+    """
+
+    from cruxible_core.proposals.proposals import erasure_cutoffs_from_claim_evidence
+
+    claim_type = _claim_type()
+    positive = world.claim(claim_type, LiteralClaimObject(value="alice"), value="alice")
+    body = _body(positive)
+    (capture,) = positive.backing.capture_digests
+    referents = frozenset({PRIOR_HEAD, world.coordinate})
+    erasable, ancestor = _shared_erasure(body, sequence=2)
+    _erasable, own = _shared_erasure(body, head=world.coordinate, sequence=3)
+    later_head = PRIOR_HEAD.model_copy(update={"git_oid": "55" * 20})
+    _erasable, later = _shared_erasure(body, head=later_head, sequence=9)
+
+    def judge(records: tuple[Any, ...], **extra: Any) -> ClaimLawResult:
+        return world.judge(
+            positive,
+            claim_type,
+            extra_contracts=(erasable,),
+            erasure_records=lambda bodies: records,
+            referents=referents,
+            **extra,
+        )
+
+    # An ancestor-head erasure the judgment counted: unreplayable, no position.
+    recorded = _before_positions(judge((ancestor,)))
+    assert recorded["verdict_captures"][0]["current_replay_available"] is False
+    cutoffs = erasure_cutoffs_from_claim_evidence(recorded)
+    assert cutoffs == {capture: None}
+    for since in ((ancestor,), (ancestor, own), (ancestor, own, later)):
+        replayed = judge(since, erasure_cutoffs=cutoffs)
+        assert replayed.evidence is not None
+        assert replayed.evidence.model_dump(mode="json") == recorded
+    # No erasure when judged (or one under its own head, which that rule never
+    # counted): replayable, and it replays so with any erasure recorded since.
+    clean = _before_positions(judge(()))
+    assert erasure_cutoffs_from_claim_evidence(clean) == {}
+    for since in ((own,), (own, later)):
+        replayed = judge(since, erasure_cutoffs={})
+        assert replayed.evidence is not None
+        assert replayed.evidence.model_dump(mode="json") == clean
+    # A judgment that recorded its position replays by position, as before.
+    positioned = judge((ancestor,))
+    assert erasure_cutoffs_from_claim_evidence(
+        positioned.evidence.model_dump(mode="json")  # type: ignore[union-attr]
+    ) == {capture: 2}
 
 
 def test_whether_an_erasure_destroyed_a_captures_material_is_a_storage_position(
