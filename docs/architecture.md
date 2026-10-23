@@ -341,10 +341,19 @@ Subject's key value) and its polarity (a value or a none). An accepted
 generation recomputes only the rows of the Claims it writes, of the values
 pointing at a Subject whose key Claim it writes, and of a ClaimType whose
 inverse key it changes. The candidate boundary reads those rows for the units a
-change touches and refuses a change set that would leave a unit holding both a
-value and a none (`cruxible.claim.polarity_conflict`), or an `object_key` flip
-that leaves its unit (`cruxible.claim.flip_unit_moved`). Admission and
-settlement both judge there, at the head the change lands on. A none Claim's
-row carries its `of` only in `none_of`, never in the object or literal columns
-value reads project. Projection storage schema 21 adds the index and rebuilds
-each projection once on first bind.
+change touches, with bounded seeks (a written value seeks the unit's nones, a
+written none its first few values; a unit's own polarity is never enumerated),
+and refuses a change set that would leave a unit holding both a value and a
+none (`cruxible.claim.polarity_conflict`), more than one none
+(`cruxible.claim.inverse_duplicate`), an `object_key` flip that leaves its unit
+(`cruxible.claim.flip_unit_moved`), or a retirement riding along with a flip
+that does not end `superseded` (`cruxible.claim.flip_retirement_reason`). A
+one-valued field under `conflict_result: unresolved` may hold a value and a
+none in dispute only deliberately: each Claim the change writes into the
+dispute stands against opposites live in the change's own base, the ones its
+writer read; one that landed meanwhile refuses. Admission and settlement both
+judge there, at the head the change lands on. A none Claim's row carries its
+`of` only in `none_of`, never in the object or literal columns, and ordinary
+value reads select `object_kind <> 'none'`, so a none never reads as a null.
+Projection storage schema 21 adds the index and rebuilds each projection once
+on first bind.
