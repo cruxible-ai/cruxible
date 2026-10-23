@@ -214,11 +214,28 @@ def append_section(
     if content is None and inserted.preamble.end != inserted.preamble.start:
         raise DocSectionError("section_invalid", "Only frontmatter may precede the new heading.")
     first = inserted.sections[0]
-    if (under and first.level != parent.level + 1) or any(
-        item.level <= first.level for item in inserted.sections[1:]
-    ):
+    if under and first.level != parent.level + 1:
+        wanted = parent.level + 1
         raise DocSectionError(
-            "section_invalid", "Append must add one child subtree at the next level."
+            "section_invalid",
+            f"Under {parent.path[-1]!r} (level {parent.level}) the appended heading must be "
+            f"level {wanted}; TEXT starts with {first.path[-1]!r} at level {first.level}.",
+            repair=f"Start TEXT with {'#' * wanted} {first.path[-1]}",
+        )
+    siblings = [first, *(item for item in inserted.sections[1:] if item.level <= first.level)]
+    if len(siblings) > 1:
+        names = ", ".join(repr(item.path[-1]) for item in siblings[:5])
+        more = f" (+{len(siblings) - 5})" if len(siblings) > 5 else ""
+        raise DocSectionError(
+            "section_invalid",
+            f"An append adds one section; TEXT has {len(siblings)} headings at level "
+            f"{first.level}"
+            + ("" if all(item.level == first.level for item in siblings) else " or above")
+            + f" ({names}{more}).",
+            repair=(
+                "Append each with its own op, or nest the later ones one level under "
+                f"{first.path[-1]!r}"
+            ),
         )
     if len({item.path for item in inserted.sections}) != len(inserted.sections):
         raise DocSectionError("section_exists", "Append text contains duplicate section paths.")

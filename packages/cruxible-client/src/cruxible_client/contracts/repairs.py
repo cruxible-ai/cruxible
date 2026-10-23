@@ -44,6 +44,12 @@ UNDECLARED_HAND_EDIT_CHANGE = "read_the_refusal_details_and_revise_the_named_art
 # is declared here beside the vocabularies it covers, never derived from the
 # code, and the served refusal models read it when a producer carries none.
 DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
+    # The failure's `cause` carries the Provider's kind and message: a transport
+    # error clears once the target is reachable; an HTTP status is the input's.
+    "provider_execution_error": (
+        "Read the failure cause. A transport error (connect, DNS, timeout): rerun "
+        "once the target is reachable. An HTTP status: revise the URL input, then rerun."
+    ),
     "workspace_binding_missing": (
         "Restore the bound file at the catalog entry's locator, or correct or remove "
         "that entry in the workspace file catalog."

@@ -7,6 +7,7 @@ supervised child separately. Client-local paths never enter this module.
 
 import importlib
 import platform
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -22,6 +23,7 @@ from packaging.markers import default_environment
 from packaging.tags import sys_tags
 
 from cruxible_client.contracts.canonical import canonical_digest
+from cruxible_client.contracts.procedures.results import failure_cause_message
 from cruxible_client.contracts.providers import (
     Provider,
     ProviderLocalDistributionPin,
@@ -44,6 +46,42 @@ def toolchain(module: str) -> Any:
         ) from exc
 
 
+class ProviderUvMissing(ConfigError):
+    """The daemon environment has no uv to materialize a Provider environment with."""
+
+    error_code = "cruxible.provider.uv_missing"
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"{self.error_code}: Provider installation needs uv in the daemon environment. "
+            "It ships as a cruxible-core dependency; reinstall cruxible-core, or put "
+            "`uv` on the daemon's PATH."
+        )
+
+
+def uv_executable() -> str:
+    """The uv binary Provider preparation runs, or a named refusal before any work.
+
+    The ``uv`` PyPI package (a cruxible-core dependency) ships its binary beside
+    the interpreter; ``PATH`` is the fallback for an environment installed some
+    other way.
+    """
+
+    try:
+        packaged = importlib.import_module("uv")
+    except ImportError:
+        pass
+    else:
+        try:
+            return str(packaged.find_uv_bin())
+        except FileNotFoundError:
+            pass
+    found = shutil.which("uv")
+    if found is None:
+        raise ProviderUvMissing()
+    return found
+
+
 @contextmanager
 def package_preparation_errors() -> Iterator[None]:
     """Translate toolchain refusals without leaking build output or credentials."""
@@ -51,7 +89,8 @@ def package_preparation_errors() -> Iterator[None]:
     try:
         yield
     except refusal as exc:
-        raise ConfigError(f"Provider preparation refused: {exc.code}") from exc
+        message = failure_cause_message(str(exc.refusal.message))
+        raise ConfigError(f"Provider preparation refused: {exc.code}: {message}") from exc
     except (ValueError, BadZipFile) as exc:
         raise ConfigError(
             f"Provider package metadata or lock is invalid: {str(exc)[:1024]}"
@@ -219,7 +258,7 @@ def prepare_provider_package(
         index_url=custody.as_uri(),
         url=pin.url,
     )
-    builder = backend.UvSyncBuilder(python_executable=sys.executable)
+    builder = backend.UvSyncBuilder(uv_executable(), python_executable=sys.executable)
     cache = toolchain("cache").MaterializationCache(cache_root)
     # Never repair an existing environment in place: an admitted run may still
     # name it. Explicit re-verification reports drift rather than deleting it.

@@ -55615,6 +55615,52 @@
             "title": "ProcedureBudgetRefusalDetail",
             "type": "object"
           },
+          "ProcedureFailureCause": {
+            "additionalProperties": false,
+            "description": "What the Provider said when its invocation failed for an operational reason.\n\nProjected from the run's own completion, never re-derived: ``provider_code``\nis the Provider outcome's code, ``kind`` its error kind when the runtime\nnames one (a transport error and an HTTP status differ here), and\n``message`` the Provider's message with URL userinfo stripped.",
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kind"
+              },
+              "message": {
+                "default": "",
+                "maxLength": 1024,
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "minLength": 1,
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider_code": {
+                "minLength": 1,
+                "title": "Provider Code",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-procedure-failure-cause-v1",
+                "default": "cruxible-procedure-failure-cause-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "provider_code"
+            ],
+            "title": "ProcedureFailureCause",
+            "type": "object"
+          },
           "ProcedureHaltTerminal": {
             "additionalProperties": false,
             "properties": {
@@ -56049,6 +56095,17 @@
           "ProcedureOperationalFailure": {
             "additionalProperties": false,
             "properties": {
+              "cause": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureFailureCause"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "classification": {
                 "const": "operational_failure",
                 "default": "operational_failure",
@@ -58258,6 +58315,52 @@
             "title": "ProcedureBudgetRefusalDetail",
             "type": "object"
           },
+          "ProcedureFailureCause": {
+            "additionalProperties": false,
+            "description": "What the Provider said when its invocation failed for an operational reason.\n\nProjected from the run's own completion, never re-derived: ``provider_code``\nis the Provider outcome's code, ``kind`` its error kind when the runtime\nnames one (a transport error and an HTTP status differ here), and\n``message`` the Provider's message with URL userinfo stripped.",
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kind"
+              },
+              "message": {
+                "default": "",
+                "maxLength": 1024,
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "minLength": 1,
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider_code": {
+                "minLength": 1,
+                "title": "Provider Code",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-procedure-failure-cause-v1",
+                "default": "cruxible-procedure-failure-cause-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "provider_code"
+            ],
+            "title": "ProcedureFailureCause",
+            "type": "object"
+          },
           "ProcedureHaltTerminal": {
             "additionalProperties": false,
             "properties": {
@@ -58692,6 +58795,17 @@
           "ProcedureOperationalFailure": {
             "additionalProperties": false,
             "properties": {
+              "cause": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureFailureCause"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "classification": {
                 "const": "operational_failure",
                 "default": "operational_failure",
@@ -60345,6 +60459,52 @@
             "title": "ProcedureBudgetRefusalDetail",
             "type": "object"
           },
+          "ProcedureFailureCause": {
+            "additionalProperties": false,
+            "description": "What the Provider said when its invocation failed for an operational reason.\n\nProjected from the run's own completion, never re-derived: ``provider_code``\nis the Provider outcome's code, ``kind`` its error kind when the runtime\nnames one (a transport error and an HTTP status differ here), and\n``message`` the Provider's message with URL userinfo stripped.",
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kind"
+              },
+              "message": {
+                "default": "",
+                "maxLength": 1024,
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "minLength": 1,
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider_code": {
+                "minLength": 1,
+                "title": "Provider Code",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-procedure-failure-cause-v1",
+                "default": "cruxible-procedure-failure-cause-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "provider_code"
+            ],
+            "title": "ProcedureFailureCause",
+            "type": "object"
+          },
           "ProcedureHaltTerminal": {
             "additionalProperties": false,
             "properties": {
@@ -60779,6 +60939,17 @@
           "ProcedureOperationalFailure": {
             "additionalProperties": false,
             "properties": {
+              "cause": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureFailureCause"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "classification": {
                 "const": "operational_failure",
                 "default": "operational_failure",
@@ -62764,6 +62935,52 @@
             "title": "ProcedureBudgetRefusalDetail",
             "type": "object"
           },
+          "ProcedureFailureCause": {
+            "additionalProperties": false,
+            "description": "What the Provider said when its invocation failed for an operational reason.\n\nProjected from the run's own completion, never re-derived: ``provider_code``\nis the Provider outcome's code, ``kind`` its error kind when the runtime\nnames one (a transport error and an HTTP status differ here), and\n``message`` the Provider's message with URL userinfo stripped.",
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kind"
+              },
+              "message": {
+                "default": "",
+                "maxLength": 1024,
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "minLength": 1,
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider_code": {
+                "minLength": 1,
+                "title": "Provider Code",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-procedure-failure-cause-v1",
+                "default": "cruxible-procedure-failure-cause-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "provider_code"
+            ],
+            "title": "ProcedureFailureCause",
+            "type": "object"
+          },
           "ProcedureHaltTerminal": {
             "additionalProperties": false,
             "properties": {
@@ -63198,6 +63415,17 @@
           "ProcedureOperationalFailure": {
             "additionalProperties": false,
             "properties": {
+              "cause": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureFailureCause"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "classification": {
                 "const": "operational_failure",
                 "default": "operational_failure",
@@ -65287,6 +65515,52 @@
             "title": "ProcedureBudgetRefusalDetail",
             "type": "object"
           },
+          "ProcedureFailureCause": {
+            "additionalProperties": false,
+            "description": "What the Provider said when its invocation failed for an operational reason.\n\nProjected from the run's own completion, never re-derived: ``provider_code``\nis the Provider outcome's code, ``kind`` its error kind when the runtime\nnames one (a transport error and an HTTP status differ here), and\n``message`` the Provider's message with URL userinfo stripped.",
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kind"
+              },
+              "message": {
+                "default": "",
+                "maxLength": 1024,
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "minLength": 1,
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider_code": {
+                "minLength": 1,
+                "title": "Provider Code",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-procedure-failure-cause-v1",
+                "default": "cruxible-procedure-failure-cause-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "provider_code"
+            ],
+            "title": "ProcedureFailureCause",
+            "type": "object"
+          },
           "ProcedureHaltTerminal": {
             "additionalProperties": false,
             "properties": {
@@ -65721,6 +65995,17 @@
           "ProcedureOperationalFailure": {
             "additionalProperties": false,
             "properties": {
+              "cause": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureFailureCause"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "classification": {
                 "const": "operational_failure",
                 "default": "operational_failure",
@@ -68092,6 +68377,52 @@
             "title": "ProcedureChildInvocation",
             "type": "object"
           },
+          "ProcedureFailureCause": {
+            "additionalProperties": false,
+            "description": "What the Provider said when its invocation failed for an operational reason.\n\nProjected from the run's own completion, never re-derived: ``provider_code``\nis the Provider outcome's code, ``kind`` its error kind when the runtime\nnames one (a transport error and an HTTP status differ here), and\n``message`` the Provider's message with URL userinfo stripped.",
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Kind"
+              },
+              "message": {
+                "default": "",
+                "maxLength": 1024,
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "minLength": 1,
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider_code": {
+                "minLength": 1,
+                "title": "Provider Code",
+                "type": "string"
+              },
+              "tag": {
+                "const": "cruxible-procedure-failure-cause-v1",
+                "default": "cruxible-procedure-failure-cause-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "provider_code"
+            ],
+            "title": "ProcedureFailureCause",
+            "type": "object"
+          },
           "ProcedureHaltTerminal": {
             "additionalProperties": false,
             "properties": {
@@ -68526,6 +68857,17 @@
           "ProcedureOperationalFailure": {
             "additionalProperties": false,
             "properties": {
+              "cause": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureFailureCause"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "classification": {
                 "const": "operational_failure",
                 "default": "operational_failure",

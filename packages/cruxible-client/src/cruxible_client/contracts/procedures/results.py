@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Literal, TypeAlias
@@ -372,6 +373,47 @@ class ProcedureNodeRefusal(_StrictResultModel):
         return self
 
 
+#: A failure cause's message is at most this many characters once redacted.
+FAILURE_CAUSE_MESSAGE_LIMIT = 1024
+
+# ``scheme://user:secret@host`` -> ``scheme://host``. A Provider message may
+# quote the URL it failed to reach, and that URL may carry a credential.
+_URL_USERINFO = re.compile(r"(?P<scheme>\b[A-Za-z][A-Za-z0-9+.\-]*://)[^/@\s]*@")
+
+
+def strip_url_userinfo(text: str) -> str:
+    """Remove the userinfo part of every URL in ``text``."""
+
+    return _URL_USERINFO.sub(r"\g<scheme>", text)
+
+
+def failure_cause_message(text: str) -> str:
+    """The served form of a Provider's failure message: userinfo stripped, capped."""
+
+    return strip_url_userinfo(text)[:FAILURE_CAUSE_MESSAGE_LIMIT]
+
+
+class ProcedureFailureCause(_StrictResultModel):
+    """What the Provider said when its invocation failed for an operational reason.
+
+    Projected from the run's own completion, never re-derived: ``provider_code``
+    is the Provider outcome's code, ``kind`` its error kind when the runtime
+    names one (a transport error and an HTTP status differ here), and
+    ``message`` the Provider's message with URL userinfo stripped.
+    """
+
+    tag: Literal["cruxible-procedure-failure-cause-v1"] = "cruxible-procedure-failure-cause-v1"
+    node_id: str = Field(min_length=1)
+    provider_code: str = Field(min_length=1)
+    kind: str | None = None
+    message: str = Field(default="", max_length=FAILURE_CAUSE_MESSAGE_LIMIT)
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def _message(cls, value: object) -> object:
+        return failure_cause_message(value) if isinstance(value, str) else value
+
+
 class ProcedureOperationalFailure(_StrictResultModel):
     tag: Literal["playbill-procedure-operational-failure-v1"] = (
         "playbill-procedure-operational-failure-v1"
@@ -380,6 +422,8 @@ class ProcedureOperationalFailure(_StrictResultModel):
     code: ProcedureOperationalFailureCode
     message: str
     last_node_id: str | None = None
+    #: The Provider's own account of the failure, when a Provider failed.
+    cause: ProcedureFailureCause | None = None
     journal_coordinate: ProcedureJournalCoordinate | None = None
     details: object = Field(default_factory=dict)
     retryable: bool = True
@@ -1541,6 +1585,10 @@ __all__ = [
     "ProcedureNodeRefusal",
     "ProcedureOperationalFailureCode",
     "ProcedureOperationalFailure",
+    "ProcedureFailureCause",
+    "FAILURE_CAUSE_MESSAGE_LIMIT",
+    "failure_cause_message",
+    "strip_url_userinfo",
     "ProviderBucketClassificationPlan",
     "ProcedureProviderBindingV1",
     "ProcedureProviderBinding",

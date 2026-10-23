@@ -419,3 +419,58 @@ def test_an_availability_evicted_before_the_insert_keeps_every_dependency(
     cold = _outcome(lambda: _derive(instance, fresh=True)[0])
     assert warm == cold
     assert isinstance(warm, dict) and warm != before
+
+
+@pytest.mark.parametrize("require_current", [True, False])
+def test_require_current_keeps_a_stale_contender_from_resolving(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, require_current: bool
+) -> None:
+    """6g: a contender's `current` comes from its verdict's currency.
+
+    A ClaimType whose `eligible_verdicts` admits `stale` resolves a stale
+    contender only when `require_current` is off.
+    """
+
+    from cruxible_core.service.claims import claims as claims_service
+
+    instance, _owner = seed_claims(tmp_path)
+    coordinate = instance.accepted_coordinate()
+    claims = tuple(ClaimVerdictReadContext(instance, coordinate).claims())
+    slots: dict[tuple[str, str], list] = {}
+    for claim in claims:
+        key = (claim.statement.subject.artifact_path, claim.statement.predicate)
+        slots.setdefault(key, []).append(claim)
+    (claim,) = next(group for group in slots.values() if len(group) == 1)
+    parse = claims_service.parse_claim_type
+
+    def admitting_stale(content, *, path):
+        claim_type = parse(content, path=path)
+        policy = claim_type.resolution_policy.model_copy(
+            update={
+                "eligible_verdicts": ("stale", "supported"),
+                "require_current": require_current,
+            }
+        )
+        return claim_type.model_copy(update={"resolution_policy": policy})
+
+    monkeypatch.setattr(claims_service, "parse_claim_type", admitting_stale)
+    verdicts: dict = {}
+
+    def resolve():
+        return claims_service.resolve_playbill_claim_group(
+            instance,
+            subject=claim.statement.subject,
+            predicate=claim.statement.predicate,
+            coordinate=coordinate,
+            evaluated_at=EVALUATION_TIME,
+            claims=(claim,),
+            verdicts_by_identity=verdicts,
+        )
+
+    selected = (f"Claim:{claim.identity.name}",)
+    assert resolve().selected_claim_identities == selected
+    (identity,) = verdicts
+    verdicts[identity] = verdicts[identity].model_copy(
+        update={"verdict": "stale", "currency": "stale"}
+    )
+    assert resolve().selected_claim_identities == (() if require_current else selected)

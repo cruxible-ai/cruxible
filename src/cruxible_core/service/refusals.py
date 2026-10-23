@@ -57,7 +57,7 @@ ALL_SERVED_REFUSAL_CODES = frozenset().union(*CLOSED_SERVED_REFUSAL_VOCABULARIES
 # Everything else resolves to the truthful undeclared hand edit. The count is
 # pinned by the guardrail so a new closed refusal member cannot join silently:
 # adding one forces either a declared repair or an explicit re-pin here.
-UNDECLARED_REFUSAL_CODE_COUNT = 146
+UNDECLARED_REFUSAL_CODE_COUNT = 145
 
 
 def repair_for_refusal(code: str) -> ServedRepair:

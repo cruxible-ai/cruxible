@@ -142,10 +142,12 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.write import (
     CLAIM_ID_PATTERN,
     DOCS_ONLY_HINT,
+    MAX_REBIND_FROM_CAPTURE,
     AddChange,
     ApprovalNeeded,
     ApprovalReason,
     CaptureEvidence,
+    Change,
     ChangeOutcome,
     ContractEvidence,
     CreateChange,
@@ -193,10 +195,10 @@ from cruxible_core.indexes.subject_identity import (
     compiler_upgrade_repair,
     key_ambiguous_message,
     key_encoding,
-    subject_creation_shape,
     subject_kind_of,
     tree_key_reader,
     undeclared_kind_repair,
+    write_create_change_shape,
 )
 from cruxible_core.indexes.typed_state import LIVE_SLOT_CLAIM_DIGESTS_SQL, LIVE_SLOT_CLAIMS_SQL
 from cruxible_core.proposals.prepared_evaluation import SettlementHandoff
@@ -596,6 +598,9 @@ class _Planner:
         self._planned_keys: dict[tuple[str, str], _Bound] = {}
         self._pending_paths: dict[str, _Bound] = {}
         self._key_reader: KeyReader | None = None
+        # Each re-bind a ``from_capture`` expanded into, by its position in the
+        # expanded changes: the Capture whose citation it replaces.
+        self._rebind_from: dict[int, str] = {}
 
     # -- accepted state ----------------------------------------------------------
 
@@ -973,7 +978,7 @@ class _Planner:
                 field_path=path,
             )
         if self._single_key(kind) is None:
-            shape = subject_creation_shape(kind, subject_id)
+            shape = write_create_change_shape(kind, declared.keys, minted=declared.minted)
             how = (
                 "is minted: core names its Subjects"
                 if declared.minted
@@ -986,9 +991,10 @@ class _Planner:
                 "create one from a reference",
                 change=index,
                 repair=(
-                    "Create it with cruxible authoring compile (a subject input naming its "
-                    f"kind and key: {shape}; omit key for a minted kind), then write about the "
-                    "id the result reports"
+                    f"Create it in this write: add the change {shape}"
+                    + ("" if declared.minted else " with each key value filled in")
+                    + ', and name it {"created": "new"} where this change names '
+                    f"{kind}/{subject_id}"
                 ),
                 field_path=path,
             )
@@ -2345,19 +2351,93 @@ class _Planner:
             return None
         return observed_content(envelope).digest
 
+    def expanded_changes(self) -> tuple[Change, ...]:
+        """The write's changes, each ``from_capture`` re-bind expanded where it stands.
+
+        A ``from_capture`` re-bind becomes one re-bind per live Claim citing that
+        Capture, in Claim-ID order, each replacing its citation of it with the
+        fresh Capture. The expanded re-binds take its place, so the write's
+        outcomes, and any refusal's change index, count them one by one. Cost:
+        one indexed range of the Capture's citations, capped.
+        """
+
+        changes = self.request.changes
+        if not any(
+            isinstance(item, RebindChange) and item.from_capture is not None for item in changes
+        ):
+            return changes
+        expanded: list[Change] = []
+        for index, change in enumerate(changes):
+            if not isinstance(change, RebindChange) or change.from_capture is None:
+                expanded.append(change)
+                continue
+            path = f"changes[{index}].from_capture"
+            stale = (
+                change.from_capture
+                if change.from_capture.startswith("sha256:")
+                else self.capture_by_handle(change.from_capture, index=index, path=path)
+            )
+            citing = self._live_claims_citing(stale, limit=MAX_REBIND_FROM_CAPTURE + 1)
+            if not citing:
+                raise _refuse(
+                    "cruxible.write.capture_not_cited",
+                    f"no live Claim cites {capture_handle(stale)}, so there is nothing to re-bind",
+                    change=index,
+                    repair="Name the Capture the Claims cite now; get on a Claim lists them",
+                    field_path=path,
+                )
+            if len(citing) > MAX_REBIND_FROM_CAPTURE:
+                raise _refuse(
+                    "cruxible.write.rebind_too_many",
+                    f"more than {MAX_REBIND_FROM_CAPTURE} live Claims cite "
+                    f"{capture_handle(stale)}; one write re-binds at most "
+                    f"{MAX_REBIND_FROM_CAPTURE}",
+                    change=index,
+                    repair="Re-bind them by Claim (target) across several writes",
+                    field_path=path,
+                )
+            for claim_id in citing:
+                self._rebind_from[len(expanded)] = stale
+                expanded.append(RebindChange(target=claim_id, evidence=change.evidence))
+        if len(expanded) > MAX_REBIND_FROM_CAPTURE:
+            raise _refuse(
+                "cruxible.write.rebind_too_many",
+                f"the expanded write holds {len(expanded)} changes; one write holds at most "
+                f"{MAX_REBIND_FROM_CAPTURE}",
+                repair="Split the write: re-bind from the Capture in a write of its own",
+                field_path="changes",
+            )
+        return tuple(expanded)
+
+    def _live_claims_citing(self, capture_digest: str, *, limit: int) -> list[str]:
+        """Live Claims citing the Capture, in ID order: one indexed range, at most ``limit``."""
+
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            rows = projection.typed.connection.execute(
+                "SELECT DISTINCT u.owner_key FROM citation_uses u INDEXED BY citations_by_capture "
+                "JOIN claims c ON c.identity=u.owner_key "
+                "WHERE u.capture_digest=? AND u.owner_kind='Claim' AND c.lifecycle='live' "
+                "ORDER BY u.owner_key LIMIT ?",
+                (capture_digest, limit),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
     def rebind_change(self, index: int, change: RebindChange) -> _Planned:
         """Re-cite one live Claim on the text it rests on now; the statement stays.
 
         Core reads the statement, so the author never restates it. The named
-        citation (by default the Claim's one citation of the evidence's file)
-        is replaced by the new text's: a section that is a located copy also
-        replaces its paired own-words citation (the same bytes). Claim law v2
-        revision 10 admits the result as a revision of the same Claim. Cost:
+        citation (by default the Claim's one citation of the evidence's file;
+        for a re-bind expanded from ``from_capture``, its citation of that
+        Capture) is replaced by the new text's: a section that is a located copy
+        also replaces its paired own-words citation (the same bytes). Claim law
+        v2 revision 10 admits the result as a revision of the same Claim. Cost:
         this Claim and its citations.
         """
 
         prefix = f"changes[{index}]"
+        assert change.target is not None, "from_capture re-binds are expanded before planning"
         claim_id = _bare(change.target)
+        replacing = self._rebind_from.get(index)
         retire_repair = f"Retire it: {_render_write_call(self.request.surface, 'retire', claim_id)}"
         if not admits_claim_rebind(self.head.compiler):
             raise _refuse(
@@ -2407,7 +2487,9 @@ class _Planner:
             if isinstance(evidence, CaptureEvidence) or evidence.observation is None
             else evidence.observation.source_id
         )
-        if change.citation is not None:
+        if replacing is not None:
+            named = [item for item in citations if item.capture_digest == replacing]
+        elif change.citation is not None:
             wanted = change.citation.removeprefix("sha256:")
             named = [
                 item for item in citations if item.citation_id.partition(":")[2].startswith(wanted)
@@ -2436,7 +2518,9 @@ class _Planner:
             ]
         shown = tuple(item.citation_id.partition(":")[2][:12] for item in citations)
         what = (
-            f"{change.citation}"
+            f"of {capture_handle(replacing)}"
+            if replacing is not None
+            else f"{change.citation}"
             if change.citation
             else "under that Capture's contract"
             if fresh is not None
@@ -3019,7 +3103,7 @@ class _Planner:
         # A Subject's retirement is planned last: what the write's other changes
         # retire or revise no longer references it.
         order = sorted(
-            enumerate(self.request.changes),
+            enumerate(self.expanded_changes()),
             key=lambda item: (
                 3
                 if isinstance(item[1], RetireChange) and _names_subject(item[1])

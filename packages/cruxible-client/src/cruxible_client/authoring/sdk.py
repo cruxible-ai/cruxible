@@ -1884,7 +1884,9 @@ class WriteBatch:
 
     def __repr__(self) -> str:
         spelled = ", ".join(
-            f"{item.op} {item.target}"
+            f"rebind from {item.from_capture}"
+            if isinstance(item, RebindChange) and item.from_capture is not None
+            else f"{item.op} {item.target}"
             if isinstance(item, RetireChange | RebindChange)
             else f"create {item.subject_kind} as {item.label}"
             if isinstance(item, CreateChange)
@@ -3491,12 +3493,13 @@ class Cruxible:
 
     def rebind(
         self,
-        claim: str | ClaimRef,
+        claim: str | ClaimRef | None = None,
         *,
         because: str,
         file: str | None = None,
         section: str | None = None,
         capture: str | CaptureRef | None = None,
+        from_capture: str | CaptureRef | None = None,
         citation: str | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
@@ -3513,11 +3516,20 @@ class Cruxible:
         not restated: the Claim keeps its value and ID, and its history shows one
         ``rebound`` revision. A refusal raises ``WriteRefusalError``.
 
+        ``from_capture=`` instead of ``claim`` re-binds every live Claim citing
+        that Capture onto ``capture=`` in one write (at most 500): one outcome
+        per Claim.
+
         Next: ``outcome.next``; ``cx.get(claim, detail="history")`` shows the re-bind.
         """
 
         change = RebindChange(
             target=claim.address if isinstance(claim, ClaimRef) else claim,
+            from_capture=(
+                from_capture.capture_digest
+                if isinstance(from_capture, CaptureRef)
+                else from_capture
+            ),
             citation=citation,
             evidence=rebind_evidence(
                 file=file,

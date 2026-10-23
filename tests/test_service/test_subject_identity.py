@@ -315,7 +315,25 @@ def test_a_write_creates_only_a_single_key_kind_by_its_key(instance: PlaybillIns
         )
         assert refused.refusal is not None, kind
         assert refused.refusal.code == "cruxible.write.subject_not_found", kind
-        assert '"kind": "subject"' in (refused.refusal.repair or ""), kind
+        # 4g: the repair is the same-write create, its key predicates named.
+        repair = refused.refusal.repair or ""
+        assert f'{{"op": "create", "label": "new", "subject_kind": "{kind}"' in repair, kind
+        assert '{"created": "new"}' in repair, kind
+    pair_repair = write(
+        instance, {"op": "set", "subject": f"{PAIR}/one", "field": "left", "value": "x"}
+    ).refusal
+    assert pair_repair is not None
+    assert (
+        f'"key": [{{"predicate": "{PAIR}.left", "value": "<value>"}}, '
+        f'{{"predicate": "{PAIR}.right", "value": "<value>"}}]'
+    ) in (pair_repair.repair or "")
+    # Following the repair lands the write.
+    followed = write(
+        instance,
+        {"op": "create", "label": "new", "subject_kind": TICKET},
+        {"op": "set", "subject": {"created": "new"}, "field": "title", "value": "x"},
+    )
+    assert followed.status == "accepted", followed
     # A single-key hint kind is created by key like a unique one.
     created = write(
         instance, {"op": "add", "subject": f"{NOTE}/one", "field": "semantic.alias", "value": "o"}
