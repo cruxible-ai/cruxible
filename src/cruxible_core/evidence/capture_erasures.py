@@ -292,6 +292,29 @@ class CaptureErasureStore:
                     found[body] = CaptureErasureRecord.model_validate_json(row[0])
         return found
 
+    def records_for_bodies(self, body_digests: tuple[str, ...]) -> tuple[CaptureErasureRecord, ...]:
+        """Every erasure record naming any of these body objects, in recorded order.
+
+        One indexed range per body; an instance that never erased anything
+        answers without opening a file.
+        """
+
+        if not body_digests or not self.root.is_dir():
+            return ()
+        found: dict[str, tuple[int, CaptureErasureRecord]] = {}
+        with self._locked() as conn:
+            if conn is None:
+                return ()
+            for body in dict.fromkeys(body_digests):
+                for sequence, raw in conn.execute(
+                    "SELECT e.sequence, e.record FROM erased_bodies b JOIN erasures e "
+                    "ON e.capture_digest=b.capture_digest WHERE b.body_digest=?",
+                    (body,),
+                ):
+                    record = CaptureErasureRecord.model_validate_json(raw)
+                    found[record.capture_digest] = (int(sequence), record)
+        return tuple(record for _sequence, record in sorted(found.values(), key=lambda x: x[0]))
+
     def head_sequence(self) -> int:
         """The journal's newest sequence (0 before any record): where a follower starts."""
 

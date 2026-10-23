@@ -50,9 +50,11 @@ from cruxible_client.contracts.captures import (
     VerifiedCaptureMemo,
     capture_contract_digest,
     capture_contract_is_self_asserted,
+    capture_erasure_authorized,
     capture_is_coordinator_self_source,
     capture_is_direct_selection_bound,
     capture_is_direct_self_source,
+    capture_retained_body_digests,
     classify_capture_reuse,
     parse_capture_envelope,
     verify_capture,
@@ -2020,6 +2022,62 @@ def _rebind_replaces(
     )
 
 
+def _stored_capture_envelope(
+    store: CaptureObjectStoreProtocol, digest: str
+) -> CaptureEnvelopeAny | None:
+    """The envelope a Capture digest names, or None when the store cannot give it."""
+
+    try:
+        return parse_capture_envelope(
+            store.read(
+                digest,
+                access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
+            )
+        )
+    except (FormatError, ValueError):
+        return None
+
+
+def _governed_erasures(
+    envelope: CaptureEnvelopeAny,
+    *,
+    records: Callable[[tuple[str, ...]], tuple[CaptureErasureRecord, ...]],
+    contracts_by_digest: Mapping[str, list[AcceptedCaptureContract]],
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None,
+    evaluated_at: datetime,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """This Capture's retained bodies governed erasures destroyed: at all, and by ``evaluated_at``.
+
+    A record counts when it names a body this Capture retains, was made under the
+    erasure authority of the contract version it names (this Capture's own, or,
+    for a body shared with another Capture, that Capture's), and came after this
+    Capture was observed (bytes stored again by a later Capture are its own).
+    """
+
+    retained = capture_retained_body_digests(envelope)
+    if not retained:
+        return frozenset(), frozenset()
+    destroyed: set[str] = set()
+    by_evaluation: set[str] = set()
+    for record in records(retained):
+        if record.erased_at < envelope.observed_at:
+            continue
+        candidates = list(contracts_by_digest.get(record.capture_contract_digest, ()))
+        if not candidates and historical_capture_contract is not None:
+            historical = historical_capture_contract(record.capture_contract_digest)
+            candidates = [] if historical is None else [historical]
+        if not any(
+            capture_erasure_authorized(record, item.contract, contract_digest=item.artifact_digest)
+            for item in candidates
+        ):
+            continue
+        hit = set(record.body_digests) & set(retained)
+        destroyed |= hit
+        if record.erased_at <= evaluated_at:
+            by_evaluation |= hit
+    return frozenset(destroyed), frozenset(by_evaluation)
+
+
 def _inverse_object_refusal(
     value: NoneClaimObject,
     *,
@@ -2109,7 +2167,7 @@ def _inverse_rules_admit(
     envelope: CaptureEnvelopeAny,
     verified_attestations: tuple[VerifiedClaimAttestationV1, ...],
 ) -> bool:
-    """Whether one of the inverse's own evidence rules admits this cited Capture."""
+    """Whether one of the inverse's own evidence rules admits this Capture as evidence."""
 
     rules = tuple(
         rule
@@ -2132,8 +2190,11 @@ def _inverse_rules_admit(
         capture_digest=capture_digest,
     ):
         return False
+    # Only evidential admission establishes a negative: origin-only admission
+    # (a Claim's own words standing for themselves) never does.
     return any(
         decision.trace.result.verdict == "eligible"
+        and decision.trace.result.admission in {"direct", "derivational"}
         for decision in evaluate_capture_evidence_admissions(
             claim,
             claim_type=restricted,
@@ -2172,21 +2233,28 @@ def evaluate_claim_law(
     accepted_subject_version: Callable[[str, str], bool] | None = None,
     subject_creation_key: bool = False,
     claim_rebind: bool = False,
-    erasure_record: Callable[[str], CaptureErasureRecord | None] | None = None,
+    erasure_records: Callable[[tuple[str, ...]], tuple[CaptureErasureRecord, ...]] | None = None,
+    erasure_affects_verdict: bool = False,
     origin_replay_exempt: bool = False,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
 
-    With `erasure_record` (compiler revision 35: Claim law v2 revision 10 and v3
-    revision 11) a Capture the Claim inherits from its accepted predecessor whose
-    retained body was erased under its contract's authority verifies on its
-    envelope and that erasure record, so the Claim can still be retired or
-    revised; it enters the verdict as no longer replayable. Replaying accepted
-    history (no new-citation proof) verifies the same way, so a generation that
-    cited the Capture before it was erased still reproduces, as replayable as it
-    was then. A Capture cited anew still needs its body. With
-    `origin_replay_exempt` (revision 10) a ``none`` type compiles adjudication
-    rule v3, whose origin-only entries need no current replay.
+    `erasure_records` answers the governed erasure records naming a Capture's
+    retained bodies (one record can name bodies other Captures hold too: bodies
+    are content-addressed). A record counts for a Capture when it was made under
+    the authority of the contract version it names and after the Capture was
+    observed. A Capture the Claim inherits from its accepted predecessor, or any
+    Capture while replaying accepted history (no new-citation proof), whose
+    bodies such records destroyed verifies on its envelope; a Capture cited anew
+    still needs its body. With `erasure_affects_verdict` (compiler revision 35:
+    Claim law v2 revision 10 and v3 revision 11) a Capture whose bodies a counted
+    record erased at or before the evaluation instant enters the verdict as not
+    replayable, whether or not the same bytes were stored again later: the
+    recorded, ordered erasure state decides, never what the store holds now.
+    Earlier laws use the records only to verify storage while replaying, so their
+    recorded law evidence reproduces exactly. With `origin_replay_exempt`
+    (revision 10) a ``none`` type compiles adjudication rule v3, whose
+    origin-only entries need no current replay.
 
     An inverse Claim (object ``none``, ClaimType v9) is judged by the type's
     inverse: its object names the unit the inverse is keyed by, it cites at least
@@ -2257,12 +2325,14 @@ def evaluate_claim_law(
         else "self"
     )
     carry = predecessor is not None and claim.backing == predecessor.claim.backing
-    # A flip: the revision changes polarity (positive to inverse, or back).
-    flipping = bool(
+    # A flip: the revision changes polarity (positive to inverse, or back). It is
+    # a flip whatever its backing, so a carry of the same backing never skips the
+    # flip's unit and inverse-evidence checks.
+    polarity_changed = bool(
         predecessor is not None
-        and not carry
         and claim_polarity(claim.statement) != claim_polarity(predecessor.claim.statement)
     )
+    flipping = polarity_changed and not carry
     replacing = bool(
         (revision_evidence == "replace" or flipping)
         and predecessor is not None
@@ -2436,10 +2506,17 @@ def evaluate_claim_law(
             )
             if refusal is not None:
                 return refusal
+        # A Subject `of` names an object only an object-keyed inverse carries, so
+        # it is judged as that object even after the type drops its inverse (an
+        # attributed retirement keeps the object context it was accepted with).
+        absent = statement.object.of
         judged_object = (
-            statement.object.of
-            if contract.inverse is not None
-            and isinstance(contract.inverse.key, ClaimInverseObjectKey)
+            absent
+            if isinstance(absent, SubjectClaimObject)
+            or (
+                contract.inverse is not None
+                and isinstance(contract.inverse.key, ClaimInverseObjectKey)
+            )
             else None
         )
     else:
@@ -2696,7 +2773,7 @@ def evaluate_claim_law(
                 "Subject you mean.",
                 path=path,
             )
-        if flipping:
+        if polarity_changed:
             moved = _flip_unit_moved(claim.statement, predecessor.claim.statement, contract)
             if moved is not None:
                 return _diagnostic("cruxible.claim.flip_unit_moved", moved, path=path)
@@ -2901,36 +2978,44 @@ def evaluate_claim_law(
                 path=path,
             )
         erased = False
-        if (
-            (envelope is None or resolved_contract is None)
-            and erasure_record is not None
-            # Inherited (a retirement or revision after the erasure), or accepted
-            # history replayed after it; a Capture cited anew needs its body.
-            and (capture_digest_value in inherited_captures or not require_new_citation_proof)
-            and named
-            and (record := erasure_record(capture_digest_value)) is not None
-        ):
-            # A Capture whose body was erased under its contract's authority: its
-            # envelope and the erasure record stand for it. It is unreplayable
-            # for a judgment made after the erasure, and as it was for one made
-            # before (a replay reproduces what was judged then).
-            for contract_candidate in contracts_by_digest.get(named, []):
-                try:
-                    envelope = verify_capture(
-                        capture_digest_value,
-                        store=capture_store,
-                        contract=contract_candidate.contract,
-                        ledger_resolver=ledger_resolver,
-                        producer_artifact_digests=known_producer_digests,
-                        producer_receipt_resolver=producer_receipt_resolver,
-                        require_production_proof=False,
-                        erasure=record,
-                    )
-                except (FormatError, ValueError):
-                    continue
-                resolved_contract = contract_candidate
-                erased = record.erased_at <= evaluated_at
-                break
+        if erasure_records is not None and named:
+            # The envelope stays when bodies are erased; read it to name them.
+            examined = envelope or _stored_capture_envelope(capture_store, capture_digest_value)
+            destroyed, by_evaluation = (
+                (frozenset(), frozenset())
+                if examined is None
+                else _governed_erasures(
+                    examined,
+                    records=erasure_records,
+                    contracts_by_digest=contracts_by_digest,
+                    historical_capture_contract=historical_capture_contract,
+                    evaluated_at=evaluated_at,
+                )
+            )
+            if (
+                (envelope is None or resolved_contract is None)
+                and destroyed
+                # Inherited (a retirement or revision after the erasure), or accepted
+                # history replayed after it; a Capture cited anew needs its body.
+                and (capture_digest_value in inherited_captures or not require_new_citation_proof)
+            ):
+                for contract_candidate in contracts_by_digest.get(named, []):
+                    try:
+                        envelope = verify_capture(
+                            capture_digest_value,
+                            store=capture_store,
+                            contract=contract_candidate.contract,
+                            ledger_resolver=ledger_resolver,
+                            producer_artifact_digests=known_producer_digests,
+                            producer_receipt_resolver=producer_receipt_resolver,
+                            require_production_proof=False,
+                            erased_bodies=destroyed,
+                        )
+                    except (FormatError, ValueError):
+                        continue
+                    resolved_contract = contract_candidate
+                    break
+            erased = erasure_affects_verdict and bool(by_evaluation)
         if envelope is None or resolved_contract is None:
             return _diagnostic(
                 "cruxible.claim.capture_unverified",
@@ -3127,7 +3212,7 @@ def evaluate_claim_law(
     if (
         isinstance(statement.object, NoneClaimObject)
         and contract.inverse is not None
-        and not carry
+        and (not carry or polarity_changed)
         and not inverse_evidence
     ):
         return _diagnostic(

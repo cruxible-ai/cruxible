@@ -381,10 +381,91 @@ def test_an_erasure_record_that_is_not_the_contracts_own_does_not_verify(
     erased = _erase(world, dry_run=False, at=_erase(world).coordinate.digest).erasure
     forged = erased.model_copy(update={"erasure_rule_digest": "sha256:" + "0" * 64})
     monkeypatch.setattr(
-        LocalProducerReceiptResolver, "capture_erasure", lambda self, digest: forged
+        LocalProducerReceiptResolver, "body_erasures", lambda self, bodies: (forged,)
     )
 
     retired = write(world.instance, {"op": "retire", "target": world.claim}, because="Erased.")
 
     assert retired.refusal is not None
     assert retired.refusal.code == "cruxible.claim.capture_unverified"
+
+
+def _full_recovery(world: ErasureWorld) -> object:
+    """Recover from genesis: no checkpoint and no publication, so every generation replays."""
+
+    import shutil
+
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    instance = world.instance
+    before = instance.accepted_coordinate()
+    instance.settled_workspace_advertisement()
+    shutil.rmtree(instance.root / "projections")
+    (instance.root / "projections").mkdir()
+    shutil.rmtree(instance._checkpoint_directory(instance.root), ignore_errors=True)
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert reopened.accepted_coordinate() == before
+    return reopened
+
+
+def test_a_history_written_after_an_erasure_recovers_exactly(world: ErasureWorld) -> None:
+    from tests.support.capture_erasure_world import cite, rescan
+
+    _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+    revised = cite(world.instance, rescan(world), "low")
+    assert revised.refusal is None, revised.refusal
+    retired = write(world.instance, {"op": "retire", "target": world.claim}, because="Done.")
+    assert retired.refusal is None, retired.refusal
+    # A Subject created by its key: its key Claim is covered by the creation, so
+    # under revision 10 it is judged with adjudication rule v3.
+    created = write(
+        world.instance,
+        {"op": "set", "subject": "project.work_item/wi-77", "field": "title", "value": "New."},
+        because="A new work item.",
+    )
+    assert created.refusal is None, created.refusal
+    from cruxible_client.contracts.claim_types import (
+        claim_type_digest,
+        claim_type_path,
+        parse_claim_type,
+    )
+    from cruxible_client.contracts.claim_verdicts import (
+        claim_adjudication_rule,
+        claim_adjudication_rule_digest,
+    )
+
+    path = claim_type_path("project.work_item.slug")
+    head = world.instance.accepted_coordinate()
+    slug = parse_claim_type(world.instance.tree_at(head.git_oid)[path], path=path)
+    v3 = claim_adjudication_rule_digest(
+        claim_adjudication_rule(
+            slug,
+            claim_type_digest=claim_type_digest(slug).tagged,
+            origin_supports=True,
+            origin_replay_exempt=True,
+        )
+    )
+    assert v3 in repr(world.instance.accepted_history()[-1].record)
+
+    # Genesis-rooted replay of every generation, under compiler 35 and Claim law
+    # v2 revision 10: the one that first cited the Capture (before its erasure),
+    # the revision and the retirement (after it) all reproduce their law evidence.
+    _full_recovery(world)
+
+
+def test_bytes_stored_again_after_an_erasure_do_not_change_a_recorded_verdict(
+    world: ErasureWorld,
+) -> None:
+    from tests.support.capture_erasure_world import cite, rescan
+
+    original = world.instance.body_store().read(world.body, access=READ)
+    _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+    revised = cite(world.instance, rescan(world), "low")
+    assert revised.refusal is None, revised.refusal
+    # The same bytes land again (a body is content-addressed: any Capture of them).
+    world.instance.body_store().store(original)
+    assert world.instance.body_store().verify(world.body)
+
+    # The revision was judged with the Capture erased; replay reads the recorded
+    # erasure, not the bytes that are back, so it reproduces the same evidence.
+    _full_recovery(world)

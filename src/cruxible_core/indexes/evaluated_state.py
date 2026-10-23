@@ -208,6 +208,13 @@ class EvaluationRows:
 
         return select_claim_type_names(self.connection, names, table=self.table("claim_type_names"))
 
+    def claim_types_naming_subject_kind(self, kind: str) -> tuple[str, ...]:
+        from cruxible_core.indexes.typed_state import select_claim_types_naming_subject_kind
+
+        return select_claim_types_naming_subject_kind(
+            self.connection, kind, table=self.table("claim_type_names")
+        )
+
     def provider_sibling_domains(self, name: str, path: str) -> frozenset[str]:
         """Name-domain counts plus changed providers; never enumerate retained builds."""
 

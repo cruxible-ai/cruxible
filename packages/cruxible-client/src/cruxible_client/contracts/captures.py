@@ -2835,9 +2835,14 @@ def build_derived_cas_capture(
 
 @runtime_checkable
 class CaptureErasureLookupProtocol(Protocol):
-    """A verification context that can also say whether a Capture's body was erased."""
+    """A verification context that can also say which retained bodies were erased.
 
-    def capture_erasure(self, capture_digest: str) -> CaptureErasureRecord | None: ...
+    ``body_erasures`` answers every governed erasure record naming any of the
+    given body digests, in recorded order. A body is content-addressed, so one
+    Capture's erasure destroys the same bytes for every Capture that holds them.
+    """
+
+    def body_erasures(self, body_digests: tuple[str, ...]) -> tuple[CaptureErasureRecord, ...]: ...
 
 
 def capture_retained_body_digests(envelope: CaptureEnvelopeAny) -> tuple[str, ...]:
@@ -2851,20 +2856,18 @@ def capture_retained_body_digests(envelope: CaptureEnvelopeAny) -> tuple[str, ..
     return tuple(sorted(set(found)))
 
 
-def _erasure_authorized(
-    erasure: CaptureErasureRecord,
-    envelope: CaptureEnvelopeAny,
-    *,
-    digest: str,
-    contract: CaptureContract,
+def capture_erasure_authorized(
+    erasure: CaptureErasureRecord, contract: CaptureContract, *, contract_digest: str
 ) -> bool:
-    """Whether ``erasure`` is exactly the governed erasure of this Capture's retained bodies."""
+    """Whether ``erasure`` was made under ``contract``'s own erasure authority.
+
+    ``contract`` is the exact version the record names (``contract_digest``):
+    it authorizes erasure by rule, and the record names that rule.
+    """
 
     policy = contract.retention_erasure_policy
     return (
-        erasure.capture_digest == digest
-        and erasure.capture_contract_digest == envelope.capture_contract_digest
-        and erasure.body_digests == capture_retained_body_digests(envelope)
+        erasure.capture_contract_digest == contract_digest
         and policy.erasure == "authorized_by_rule"
         and policy.erasure_rule_digest == erasure.erasure_rule_digest
     )
@@ -2879,7 +2882,7 @@ def verify_capture(
     producer_artifact_digests: Mapping[str, str] | None = None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
     require_production_proof: bool = True,
-    erasure: CaptureErasureRecord | None = None,
+    erased_bodies: frozenset[str] = frozenset(),
 ) -> CaptureEnvelopeV1 | CaptureEnvelope:
     """Replay one envelope and every proof available for its source kind.
 
@@ -2895,16 +2898,15 @@ def verify_capture(
     the producer artifact and the strictness agree. Ledger-sourced Captures are
     always verified afresh, against the caller's own ledger resolver.
 
-    ``erasure`` verifies a Capture whose retained body was erased under its
-    contract's authority: everything is checked as usual except the bytes the
-    record says were destroyed, and only when the record is exactly that
-    governed erasure (this Capture, its contract version, its retained bodies,
-    the contract's erasure rule). Such a verification is never remembered.
+    ``erased_bodies`` verifies a Capture whose retained bodies were destroyed by
+    a governed erasure (the caller established it from the erasure records):
+    everything is checked as usual except those bodies, which must be retained
+    bodies of this Capture. Such a verification is never remembered.
     """
 
     CasDigest.from_tagged(digest)
     expected_contract = capture_contract_digest(contract).tagged
-    if erasure is not None:
+    if erased_bodies:
         return _verify_capture_once(
             digest,
             store=store,
@@ -2913,7 +2915,7 @@ def verify_capture(
             producer_artifact_digests=producer_artifact_digests,
             producer_receipt_resolver=producer_receipt_resolver,
             require_production_proof=require_production_proof,
-            erasure=erasure,
+            erased_bodies=erased_bodies,
         )
     if producer_receipt_resolver is not None:
         memo = producer_receipt_resolver.recall_verified(digest)
@@ -3094,7 +3096,7 @@ def _verify_capture_once(
     producer_artifact_digests: Mapping[str, str] | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     require_production_proof: bool,
-    erasure: CaptureErasureRecord | None = None,
+    erased_bodies: frozenset[str] = frozenset(),
 ) -> CaptureEnvelopeV1 | CaptureEnvelope:
     content = store.read(
         digest,
@@ -3106,13 +3108,9 @@ def _verify_capture_once(
     expected_contract = capture_contract_digest(contract).tagged
     if envelope.capture_contract_digest != expected_contract:
         raise CaptureFormatError("Capture envelope names a different contract digest")
-    erased: frozenset[str] = frozenset()
-    if erasure is not None:
-        if not _erasure_authorized(erasure, envelope, digest=digest, contract=contract):
-            raise CaptureFormatError(
-                "Capture erasure record is not its contract's governed erasure"
-            )
-        erased = frozenset(erasure.body_digests)
+    erased = erased_bodies
+    if not erased <= set(capture_retained_body_digests(envelope)):
+        raise CaptureFormatError("erased bodies are not retained bodies of this Capture")
     executable = envelope.run_coordinate.executable_identity
     if isinstance(envelope, CaptureEnvelopeV1):
         if executable == contract.identity:
@@ -3481,6 +3479,7 @@ __all__ = [
     "capture_contract_path",
     "authorize_erasure",
     "CaptureErasureLookupProtocol",
+    "capture_erasure_authorized",
     "capture_retained_body_digests",
     "capture_component_pin",
     "capture_digest",
