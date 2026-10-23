@@ -9,7 +9,9 @@ interrupted erasure leaves its record and the body, and the retry (the bytes
 last landed at or before that position) finishes the unlink without writing
 another. Bytes stored again after it (landed later) are another Capture's
 material, so erasing them again is another erasure, recorded at its own
-position.
+position; so is erasing bytes present under a record that carries no position
+(written before positions were kept) or names a replaced log, since it cannot
+show they are the bytes it destroyed.
 
 A record outlives the bytes it names. Whether a Capture reads as erased is the
 record together with the body store: the body must also be absent at the read's
@@ -246,14 +248,15 @@ class CaptureErasureStore:
         ).fetchone()
         return None if row is None else _recorded(row)
 
-    def _relanded(self, entry: RecordedCaptureErasure) -> bool:
-        """Whether a body ``entry`` names landed again after it was recorded.
+    def _retries(self, entry: RecordedCaptureErasure) -> bool:
+        """Whether erasing these bytes now finishes ``entry``: its positions prove it.
 
-        The bytes it found were then destroyed and stored anew: erasing them is
-        another erasure. Otherwise (they last landed at or before the record) an
-        unfinished erasure of the same bytes is being retried. A record without
-        a landing position, or a replaced log, cannot tell: such a record is
-        retried, as before positions were kept.
+        ``entry`` destroyed what had landed by its recorded landing position; the
+        bytes present now are the same ones (an interrupted erasure being retried)
+        only when none of its bodies landed again after that position, in the log
+        it was recorded in. A record without a landing position (written before
+        positions were kept), or one whose log was replaced, cannot show that:
+        the bytes present now are erased under a record of their own.
         """
 
         landing = entry.landing
@@ -266,14 +269,15 @@ class CaptureErasureStore:
         for body in entry.record.body_digests:
             last = log.last_completion_at(body, identity=head.identity, sequence=head.sequence)
             if last is not None and last[1] == "stored" and last[0] > landing.sequence:
-                return True
-        return False
+                return False
+        return True
 
     def unfinished(self, capture_digest: str) -> CaptureErasureRecord | None:
-        """The latest erasure of this Capture whose bytes have not landed again since.
+        """The latest erasure of this Capture that erasing its bytes now would finish.
 
         Its retry finishes the unlink under it; None when this Capture was never
-        erased or its bytes were stored again (erasing them is a new erasure).
+        erased, or its bytes may have been stored again since (erasing them is a
+        new erasure): they landed again, or the record cannot show they did not.
         """
 
         if not self.root.is_dir():
@@ -282,7 +286,7 @@ class CaptureErasureStore:
             if conn is None:
                 return None
             latest = self._latest(conn, capture_digest)
-        return None if latest is None or self._relanded(latest) else latest.record
+        return None if latest is None or not self._retries(latest) else latest.record
 
     # -- writes -------------------------------------------------------------
 
@@ -292,10 +296,11 @@ class CaptureErasureStore:
         """Append one erasure record, or answer the unfinished one these bytes still have.
 
         A Capture erased before whose bytes landed again since (stored anew,
-        by any Capture of them) is erased again: a new record at its own journal
-        and landing position. Its instant is the instance's recording clock at
-        the append, raised to the last record's, never a caller's. Nothing is
-        written while previewing. The caller unlinks the bytes after this returns.
+        by any Capture of them), or whose record cannot show they did not, is
+        erased again: a new record at its own journal and landing position. Its
+        instant is the instance's recording clock at the append, raised to the
+        last record's, never a caller's. Nothing is written while previewing.
+        The caller unlinks the bytes after this returns.
         """
 
         if is_previewing():
@@ -303,7 +308,7 @@ class CaptureErasureStore:
         with self._locked(create=True) as conn:
             assert conn is not None
             known = self._latest(conn, record.capture_digest)
-            if known is not None and not self._relanded(known):
+            if known is not None and self._retries(known):
                 return known.record
             journal = self._journal(create=True)
             assert journal is not None

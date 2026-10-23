@@ -20,8 +20,9 @@ bounded seeks per changed Claim (a written value seeks the unit's nones, a
 written none the first few values; neither enumerates its own polarity), plus
 the same fan-in. It refuses a change set after which a unit holds a live value
 and a live none (``cruxible.claim.polarity_conflict``; one-valued rivals under
-``conflict_result: unresolved`` may dispute only against opposites live in the
-change's own base, a deliberate contend), more than one none
+``conflict_result: unresolved`` may dispute only when the write declared a
+contend, and only against opposites live in the change's own base), more than
+one none
 (``cruxible.claim.inverse_duplicate``), a flip under an ``object_key`` inverse
 that leaves its unit (``cruxible.claim.flip_unit_moved``: the Claim law cannot
 read the object's key, the boundary can), and a retirement riding along with a
@@ -36,6 +37,7 @@ import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from cruxible_client.contracts.primitives import canonical_json
@@ -462,6 +464,67 @@ def _holders(
     return found
 
 
+_UNIT_MEMBERS_SQL = (
+    "SELECT claim_identity FROM main.claim_units WHERE subject_path=? AND predicate=? "
+    "AND unit=? AND qualifier IS ? AND polarity=? AND unit_kind=? AND claim_identity IN ({})"
+)
+
+
+def _claim_identity_of(path: str) -> str | None:
+    if not path.startswith("claims/") or not path.endswith(".json"):
+        return None
+    return "Claim:" + path.rsplit("/", 1)[-1].removesuffix(".json")
+
+
+def _unseen_opposites(
+    parent: sqlite3.Connection,
+    unit_key: UnitKey,
+    polarity: str,
+    *,
+    written: list[UnitRow],
+    skip: Mapping[str, object],
+    seen: Callable[[str, str], bool],
+    rebased: bool,
+    base_changes: frozenset[str] | None,
+) -> list[str]:
+    """The ``polarity`` holders of a disputed unit its writer did not see.
+
+    The change's own rows are judged as its base held them. A parent row the
+    change leaves alone was seen when the base is the parent, so a current-base
+    dispute reads nothing more. Rebased, a holder unseen in the base landed
+    meanwhile: with the paths that changed between base and parent
+    (``base_changes``) only those are read, one keyed row each; without them
+    the unit's holders of that polarity are read (rebased history only).
+    """
+
+    unseen = [row.claim_identity for row in written if not seen(row.claim_identity, polarity)]
+    if not rebased:
+        return unseen
+    if base_changes is None:
+        holders = _holders(parent, unit_key, polarity, skip=skip, limit=None)
+    else:
+        landed = sorted(
+            identity
+            for identity in map(_claim_identity_of, base_changes)
+            if identity is not None and identity not in skip
+        )
+        subject_path, predicate, qualifier, unit_kind, unit = unit_key
+        holders = (
+            [
+                str(row[0])
+                for row in select_in(
+                    parent,
+                    _UNIT_MEMBERS_SQL,
+                    landed,
+                    prefix=(subject_path, predicate, unit, qualifier, polarity, unit_kind),
+                )
+            ]
+            if landed
+            else []
+        )
+    return unseen + [identity for identity in holders if not seen(identity, polarity)]
+
+
 def _named(identities: list[str]) -> str:
     shown = ", ".join(_claim_ref(item) for item in identities[:_SHOWN])
     return shown + (", ..." if len(identities) > _SHOWN else "")
@@ -474,6 +537,8 @@ def polarity_issues(
     claim_types: Mapping[str, Any],
     claim_type_of: Callable[[str], Any],
     base_claim: Callable[[str], Facts | None] | None = None,
+    contending: frozenset[str] = frozenset(),
+    base_changes: frozenset[str] | None = None,
 ) -> tuple[PolarityIssue, ...]:
     """The polarity law over one change, judged against its parent's unit index.
 
@@ -483,10 +548,14 @@ def polarity_issues(
     writes, by identity (None: removed); ``claim_type_of(identity)`` reads any
     ClaimType after the change. ``base_claim(identity)`` reads a Claim as the
     change's own base held it, when the change was made against an earlier
-    head than ``parent`` (a rebase); None: its base is the parent. The parent's
-    rows are read only for the units the change touches, and only as far as
-    each check needs: a value written into a unit seeks its nones, a none
-    written seeks the values, and neither enumerates its own polarity.
+    head than ``parent`` (a rebase); None: its base is the parent;
+    ``base_changes`` then names the paths that differ between the two, when
+    known. ``contending`` names the changed Claims whose write declared a
+    contend: only those may enter a one-valued dispute, and seeing the opposite
+    in the base is never that declaration. The parent's rows are read only for
+    the units the change touches, and only as far as each check needs: a value
+    written into a unit seeks its nones, a none written seeks the values, and
+    neither enumerates its own polarity.
     """
 
     in_scope = set(claims)
@@ -585,11 +654,11 @@ def polarity_issues(
     def seen(identity: str, polarity: str, slot: tuple[str, str, str | None]) -> bool:
         """Whether the change's author saw this Claim hold ``polarity`` in ``slot``.
 
-        A one-valued dispute is a deliberate act against a Claim its writer
-        read: the opposite was live, in that slot and polarity, in the base the
-        change was made against. A Claim the change writes was seen only as its
-        base held it; one the parent holds that the change does not touch was
-        seen when the base is the parent.
+        A one-valued dispute is declared (``contending``) and stands only
+        against Claims its writer could read: the opposite was live, in that
+        slot and polarity, in the base the change was made against. A Claim the
+        change writes was seen only as its base held it; one the parent holds
+        that the change does not touch was seen when the base is the parent.
         """
 
         before: Facts | None
@@ -649,27 +718,46 @@ def polarity_issues(
             and claim_type.resolution_policy.conflict_result == "unresolved"
         ):
             # One-valued rivals may dispute, but only deliberately: each Claim
-            # the change writes into the dispute stands against opposites its
-            # writer saw (a contend), never against one that landed meanwhile.
+            # the change writes into the dispute was written to contend (the
+            # write declared it), and stands only against opposites its writer
+            # saw, never against one that landed meanwhile. Rivals already
+            # disputing in the base start no new dispute.
             slot = (subject_path, predicate, qualifier)
-            unseen = [row for row in written if not seen(row.claim_identity, row.polarity, slot)]
-            if not unseen:
+            entering = [row for row in written if not seen(row.claim_identity, row.polarity, slot)]
+            if not entering:
                 continue
-            every = {
-                "positive": written_values
-                + _holders(parent, unit_key, "positive", skip=targets, limit=None),
-                "inverse": nones,
-            }
+            undeclared = [row for row in entering if row.claim_identity not in contending]
+            if undeclared:
+                issues.append(
+                    PolarityIssue(
+                        POLARITY_CONFLICT,
+                        cause[undeclared[0].claim_identity],
+                        f"{where} would hold both a value ({_named(values)}) and none "
+                        f"({_named(nones)}) for {shown_unit}, and "
+                        f"{_named([row.claim_identity for row in undeclared])} was not "
+                        "written to contend. A one-valued field is disputed only by a write "
+                        "that contends with the value its writer read: revise the opposite "
+                        "Claim into this one (a flip), retire it in the same change, or "
+                        "write this one with contend.",
+                    )
+                )
+                continue
             blind = sorted(
                 {
                     other
-                    for row in unseen
-                    for other, polarity in (
-                        (item, opposite)
-                        for opposite in ({"positive", "inverse"} - {row.polarity})
-                        for item in every[opposite]
+                    for opposite in {
+                        "inverse" if row.polarity == "positive" else "positive" for row in entering
+                    }
+                    for other in _unseen_opposites(
+                        parent,
+                        unit_key,
+                        opposite,
+                        written=[row for row in written if row.polarity == opposite],
+                        skip=targets,
+                        seen=partial(seen, slot=slot),
+                        rebased=base_claim is not None,
+                        base_changes=base_changes,
                     )
-                    if not seen(other, polarity, slot)
                 }
             )
             if not blind:
@@ -677,7 +765,7 @@ def polarity_issues(
             issues.append(
                 PolarityIssue(
                     POLARITY_CONFLICT,
-                    cause[unseen[0].claim_identity],
+                    cause[entering[0].claim_identity],
                     f"{where} would hold both a value and none for {shown_unit}, and "
                     f"{_named(blind)} was not live there when this change was made. A "
                     "one-valued field is disputed only by contending with the value its "
@@ -872,6 +960,8 @@ def candidate_polarity_issues(
     candidate_tree: Mapping[str, bytes],
     scope: tuple[str, ...],
     base_tree: Mapping[str, bytes] | None = None,
+    base_changes: frozenset[str] | None = None,
+    contending: frozenset[str] = frozenset(),
 ) -> tuple[PolarityIssue, ...]:
     """The polarity law of one change set, judged at the candidate boundary.
 
@@ -879,8 +969,11 @@ def candidate_polarity_issues(
     two changes that each pass alone cannot both land when together they would
     leave a unit holding both polarities: the second is judged against the
     first's accepted state. ``base_tree`` is the head the change was made
-    against when that is not ``current_tree`` (a rebase): a one-valued dispute
-    stands only against the opposite Claims live there, the ones its writer saw.
+    against when that is not ``current_tree`` (a rebase), and ``base_changes``
+    the paths that differ between them, when known. ``contending`` names the
+    Claims (``Claim:<id>``) the change's write declared a contend for: a
+    one-valued dispute needs that declaration, and stands only against the
+    opposite Claims live in the base, the ones its writer saw.
     """
 
     from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
@@ -928,6 +1021,8 @@ def candidate_polarity_issues(
             claim_types=claim_types,
             claim_type_of=claim_type_of,
             base_claim=base_claim,
+            contending=contending,
+            base_changes=base_changes if base_tree is not None else None,
         )
 
 

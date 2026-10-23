@@ -350,8 +350,11 @@ none (`cruxible.claim.polarity_conflict`), more than one none
 that does not end `superseded` (`cruxible.claim.flip_retirement_reason`). A
 one-valued field under `conflict_result: unresolved` may hold a value and a
 none in dispute only deliberately: each Claim the change writes into the
-dispute stands against opposites live in the change's own base, the ones its
-writer read; one that landed meanwhile refuses. Admission and settlement both
+dispute must be one its write declared a contend for (seeing the opposite in
+the base is not that declaration), and stands against opposites live in the
+change's own base, the ones its writer read; one that landed meanwhile
+refuses. No write carries that declaration to the boundary before the `none`
+verb (slice I3), so until then every new value-beside-none dispute refuses. Admission and settlement both
 judge there, at the head the change lands on. A none Claim's row carries its
 `of` only in `none_of`, never in the object or literal columns, and ordinary
 value reads select `object_kind <> 'none'`, so a none never reads as a null.

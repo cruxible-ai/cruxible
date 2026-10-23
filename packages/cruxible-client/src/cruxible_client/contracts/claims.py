@@ -2047,6 +2047,7 @@ def _governed_erasures(
     erasure_contract: Callable[[RecordedCaptureErasure], AcceptedCaptureContract | None] | None,
     preceded: Callable[[str, RecordedCaptureErasure], bool] | None,
     through: int | None,
+    unpositioned: Callable[[RecordedCaptureErasure], bool] | None = None,
 ) -> tuple[frozenset[str], frozenset[str], int | None]:
     """This Capture's retained bodies governed erasures destroyed: at all, and before this judgment.
 
@@ -2060,6 +2061,9 @@ def _governed_erasures(
     before this judgment by its erasure journal position: live (``through`` None)
     every record the journal holds; on replay, those at or before ``through``,
     the position the judgment recorded. Neither a clock nor a head orders them.
+    A replayed judgment that recorded no position though it counted erasures
+    (made before positions were recorded) is replayed by the rule it was made
+    under (``unpositioned``), and reports no position.
     Returns the bodies destroyed, those destroyed before this judgment, and the
     last journal position counted for the latter.
     """
@@ -2088,7 +2092,10 @@ def _governed_erasures(
         if not hit:
             continue
         destroyed |= hit
-        if through is None or item.sequence <= through:
+        if unpositioned is not None:
+            if unpositioned(item):
+                before |= hit
+        elif through is None or item.sequence <= through:
             before |= hit
             counted = item.sequence if counted is None else max(counted, item.sequence)
     return frozenset(destroyed), frozenset(before), counted
@@ -2254,7 +2261,7 @@ def evaluate_claim_law(
     | None = None,
     erasure_affects_verdict: bool = False,
     erasure_preceded: Callable[[str, RecordedCaptureErasure], bool] | None = None,
-    erasure_cutoffs: Mapping[str, int] | None = None,
+    erasure_cutoffs: Mapping[str, int | None] | None = None,
     origin_replay_exempt: bool = False,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
@@ -2278,7 +2285,11 @@ def evaluate_claim_law(
     live (`erasure_cutoffs` None) every record the journal holds, and the
     evidence records the last position counted (`erasures_through`); replaying,
     `erasure_cutoffs` is that recorded position per Capture (absent: none
-    counted), never a clock, a head or what the store holds now. Earlier laws
+    counted), never a clock, a head or what the store holds now. A cutoff of
+    None is a judgment recorded without a position although it counted an
+    erasure (accepted before positions were recorded): it replays by the rule
+    it was made under, an erasure recorded under an accepted head before the
+    judgment's own and not before the Capture was observed. Earlier laws
     use the erasures only to verify storage while replaying, so their recorded
     law evidence reproduces exactly.
     With `origin_replay_exempt` (revision 10) a ``none`` type compiles
@@ -2935,6 +2946,15 @@ def evaluate_claim_law(
                     path=path,
                 )
     inherited_captures = inherited_capture_digests(claim, path=path, predecessor=predecessor)
+    # A judgment accepted before erasure positions were recorded counted an
+    # erasure recorded under an accepted head before its own (its parent) and
+    # not before the Capture was observed; it replays by exactly that rule.
+    prior_heads = (
+        frozenset()
+        if accepted_coordinate is None
+        else (accepted_referent_coordinates or frozenset({accepted_coordinate}))
+        - {accepted_coordinate}
+    )
 
     # Computed once per law: the producer digests every verification consults,
     # and the contracts grouped by the contract digest a Capture names.
@@ -3012,6 +3032,16 @@ def evaluate_claim_law(
         if erasure_records is not None and named:
             # The envelope stays when bodies are erased; read it to name them.
             examined = envelope or _stored_capture_envelope(capture_store, capture_digest_value)
+            through = (
+                None if erasure_cutoffs is None else erasure_cutoffs.get(capture_digest_value, 0)
+            )
+            unpositioned = (
+                None
+                if erasure_cutoffs is None or through is not None or examined is None
+                else lambda item, observed=examined.observed_at: (
+                    item.coordinate in prior_heads and item.record.erased_at >= observed
+                )
+            )
             destroyed, by_evaluation, counted = (
                 (frozenset(), frozenset(), None)
                 if examined is None
@@ -3022,11 +3052,8 @@ def evaluate_claim_law(
                     contracts_by_digest=contracts_by_digest,
                     erasure_contract=erasure_contract,
                     preceded=erasure_preceded,
-                    through=(
-                        None
-                        if erasure_cutoffs is None
-                        else erasure_cutoffs.get(capture_digest_value, 0)
-                    ),
+                    through=through,
+                    unpositioned=unpositioned,
                 )
             )
             if (

@@ -756,33 +756,54 @@ def claim_admission_accounts_from_candidate(
 
 def erasure_cutoffs_from_candidate(
     candidate: CandidateRecordAnyVersion,
-) -> dict[str, dict[str, int]]:
+) -> dict[str, dict[str, int | None]]:
     """The erasure journal position each accepted Claim judgment counted, per Capture.
 
-    Read from the Claim law evidence the candidate commits (``erasures_through``
-    on its verdict Captures): replay counts exactly the erasures at or before
-    it, so what each judgment saw reproduces from recorded positions alone.
+    Read from the Claim law evidence the candidate commits, per member path
+    (``erasure_cutoffs_from_claim_evidence``).
     """
 
-    cutoffs: dict[str, dict[str, int]] = {}
+    cutoffs: dict[str, dict[str, int | None]] = {}
     if isinstance(candidate, CandidateRecordV1):
         return cutoffs
     for evidence in candidate.law_evidence:
         raw = evidence.result.get("claim_evidence")
         if not isinstance(raw, dict):
             continue
-        captures = raw.get("verdict_captures", ())
-        if not isinstance(captures, list):
+        found = erasure_cutoffs_from_claim_evidence(raw)
+        if found:
+            cutoffs[evidence.path] = found
+    return cutoffs
+
+
+def erasure_cutoffs_from_claim_evidence(claim_evidence: Mapping[str, Any]) -> dict[str, int | None]:
+    """The erasure journal position one Claim judgment counted, per Capture.
+
+    From ``erasures_through`` on its verdict Captures: replay counts exactly
+    the erasures at or before it, so what the judgment saw reproduces from
+    recorded positions alone. A Capture the judgment found not replayable with
+    no position recorded is None: a judgment accepted before positions were
+    recorded (or one whose Capture was never replayable, which no erasure
+    changes), replayed by the rule it was made under, never read as having
+    counted no erasure. A replayable Capture is absent: it counted none, under
+    either rule.
+    """
+
+    captures = claim_evidence.get("verdict_captures", ())
+    if not isinstance(captures, list | tuple):
+        raise ProposalIntegrityError("candidate Claim law evidence is malformed")
+    cutoffs: dict[str, int | None] = {}
+    for entry in captures:
+        if not isinstance(entry, dict):
             raise ProposalIntegrityError("candidate Claim law evidence is malformed")
-        for entry in captures:
-            if not isinstance(entry, dict):
-                raise ProposalIntegrityError("candidate Claim law evidence is malformed")
-            through = entry.get("erasures_through")
-            if through is None:
-                continue
-            if not isinstance(through, int) or isinstance(through, bool) or through < 1:
-                raise ProposalIntegrityError("candidate erasure position is malformed")
-            cutoffs.setdefault(evidence.path, {})[str(entry.get("capture_digest"))] = through
+        through = entry.get("erasures_through")
+        if through is None:
+            if entry.get("current_replay_available") is False:
+                cutoffs[str(entry.get("capture_digest"))] = None
+            continue
+        if not isinstance(through, int) or isinstance(through, bool) or through < 1:
+            raise ProposalIntegrityError("candidate erasure position is malformed")
+        cutoffs[str(entry.get("capture_digest"))] = through
     return cutoffs
 
 
@@ -1889,8 +1910,9 @@ class _MemberContext:
     #: candidate is not this: what it cites for the first time still needs proof.
     replaying_accepted: bool = False
     #: Replaying, the erasure journal position each Capture's accepted judgment
-    #: counted (absent: none); None outside replay, where the journal decides.
-    erasure_cutoffs: Mapping[str, int] | None = None
+    #: counted (absent: none; None: recorded before positions, replayed by its
+    #: own rule); None outside replay, where the journal decides.
+    erasure_cutoffs: Mapping[str, int | None] | None = None
 
     def accepted_coordinate(self) -> AcceptedCoordinate:
         return AcceptedCoordinate.from_internal(self.current)
@@ -4616,12 +4638,14 @@ def _evaluate_scoped_members(
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
     settle_condition: DelegatedAuthorityVerdict | None = None,
     base_tree: Mapping[str, bytes] | None = None,
-    replay_erasure_cutoffs: Mapping[str, Mapping[str, int]] | None = None,
+    base_changes: frozenset[str] | None = None,
+    replay_erasure_cutoffs: Mapping[str, Mapping[str, int | None]] | None = None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
     ``base_tree`` is the head the change was made against, for a rebased
-    evaluation (None: its base is ``current_tree``).
+    evaluation (None: its base is ``current_tree``), and ``base_changes`` the
+    paths that differ between the two, when known.
 
     One pipeline, in one order: refuse a member this build cannot parse, close
     the dependency graph, then dispatch each scoped path to the single law
@@ -5017,11 +5041,14 @@ def _evaluate_scoped_members(
                 claim_admission_accounts=claim_admission_accounts,
             )
         # The polarity law (inverse Claims): after the change set no unit holds
-        # a live value and a live none (a one-valued dispute only against an
-        # opposite live in the change's own base) or two nones, and an
-        # object_key flip stays in its unit. Judged here, at the head the change
-        # lands on, so two changes that each pass alone cannot both land; read
-        # from the parent's unit index for the units the change touches.
+        # a live value and a live none, or two nones, and an object_key flip
+        # stays in its unit. A one-valued dispute needs a contend the write
+        # declared; no candidate carries that declaration yet (the none verb
+        # does, slice I3), so every value-beside-none it would start refuses:
+        # seeing the opposite in the base is never the declaration. Judged
+        # here, at the head the change lands on, so two changes that each pass
+        # alone cannot both land; read from the parent's unit index for the
+        # units the change touches.
         from cruxible_core.indexes.claim_units import candidate_polarity_issues
 
         polarity = candidate_polarity_issues(
@@ -5029,6 +5056,7 @@ def _evaluate_scoped_members(
             candidate_tree=candidate_tree,
             scope=scope,
             base_tree=base_tree,
+            base_changes=base_changes,
         )
         if polarity:
             return CandidateEvaluation(
@@ -5420,7 +5448,7 @@ def evaluate_proposal_tree(
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
     base_changes: frozenset[str] | None = None,
     settle_condition: DelegatedAuthorityVerdict | None = None,
-    replay_erasure_cutoffs: Mapping[str, Mapping[str, int]] | None = None,
+    replay_erasure_cutoffs: Mapping[str, Mapping[str, int | None]] | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -5588,6 +5616,7 @@ def evaluate_proposal_tree(
             acceptance_laws=acceptance_laws,
             historical_law_coordinates=historical_law_coordinates or {},
             base_tree=base_tree if rebased else None,
+            base_changes=base_changes if rebased else None,
             replay_erasure_cutoffs=replay_erasure_cutoffs,
             replaying_accepted=replaying_accepted,
             retained_tree=retained_tree,
