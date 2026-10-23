@@ -426,7 +426,9 @@ class _Inner:
         await send({"type": "http.response.body", "body": b"ok"})
 
 
-def _drive(limiter_app, *, chunks: int, chunk: int, headers=()) -> tuple[int, int]:  # noqa: ANN001
+def _drive(  # noqa: ANN001
+    limiter_app, *, chunks: int, chunk: int, headers=(), path: str | None = None
+) -> tuple[int, int]:
     """Run one part request through the limiter; return (status, chunks consumed)."""
 
     import asyncio
@@ -446,7 +448,7 @@ def _drive(limiter_app, *, chunks: int, chunk: int, headers=()) -> tuple[int, in
     scope = {
         "type": "http",
         "method": "POST",
-        "path": f"/api/v1/inst_uploads/uploads/{'a' * 32}/parts/0",
+        "path": path or f"/api/v1/inst_uploads/uploads/{'a' * 32}/parts/0",
         "headers": list(headers),
     }
     asyncio.run(limiter_app(scope, receive, send))
@@ -476,6 +478,42 @@ def test_a_part_body_is_bounded_before_it_is_buffered() -> None:
     inner = _Inner()
     status, _consumed = _drive(UploadPartBodyLimit(inner), chunks=8, chunk=65_536)
     assert (status, inner.reached, len(inner.body)) == (200, True, UPLOAD_PART_SIZE)
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        f"{'a' * 32}/parts/+0",
+        f"{'a' * 32}/parts/-0",
+        f"{'a' * 32}/parts/0.0",
+        f"{'a' * 32}/parts/zero",
+        f"{'a' * 32}/parts/0/",
+        "invalid/parts/0",
+        f"{'A' * 32}/parts/0",
+    ],
+)
+def test_every_path_the_part_route_could_receive_is_bounded(tail: str) -> None:
+    """UPLOAD-003 recheck: FastAPI buffers before it validates or coerces the path
+    parameters, so spellings the narrow route shape misses are bounded too."""
+
+    from cruxible_core.server.upload_part_limit import UPLOAD_PART_ROUTE, UploadPartBodyLimit
+
+    path = f"/api/v1/inst_uploads/uploads/{tail}"
+    inner = _Inner()
+    status, consumed = _drive(UploadPartBodyLimit(inner), chunks=64, chunk=65_536, path=path)
+    assert (status, inner.reached) == (413, False)
+    assert consumed == UPLOAD_PART_SIZE // 65_536 + 1
+    inner = _Inner()
+    status, consumed = _drive(
+        UploadPartBodyLimit(inner),
+        chunks=64,
+        chunk=65_536,
+        headers=[(b"content-type", b"application/json"), (b"content-length", b"4194306")],
+        path=path,
+    )
+    assert (status, consumed, inner.reached) == (413, 0, False)
+    # The auth middleware's octet-stream exception keeps the narrow shape.
+    assert UPLOAD_PART_ROUTE.fullmatch(path) is None
 
 
 # -- over HTTP --------------------------------------------------------------------
