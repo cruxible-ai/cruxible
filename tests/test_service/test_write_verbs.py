@@ -2070,10 +2070,12 @@ def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
         first: second,
         second: first,
     }
+    # Each retirement names the operand it still needs (round-3 4b: full operands).
     assert {item.command for item in options} == {
-        f"cruxible retire {first}",
-        f"cruxible retire {second}",
+        f"cruxible retire {first} --because TEXT",
+        f"cruxible retire {second} --because TEXT",
     }
+    assert {item.operands_to_add for item in options} == {("because",)}
 
     # Each option is a runnable retirement; running one resolves the contest.
     outcome = _write(

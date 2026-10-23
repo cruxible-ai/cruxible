@@ -122,7 +122,7 @@ def test_orient_counts_claims_by_status_including_retired(tmp_path: Path) -> Non
     assert counts.retired == 1
     # The live status Claim, and each work item's key Claim (its slug).
     keys = len(fixture_key_claims(instance.tree_at(instance.accepted_coordinate().git_oid)))
-    assert counts.accepted + counts.conflicted + counts.overturned + counts.refused == 1 + keys
+    assert counts.accepted + counts.conflicted + counts.overturned + counts.ineligible == 1 + keys
     # The section and kind views carry no counts; only the default map does.
     assert service_playbill_orient(instance, section="documents").artifacts is None
 
@@ -170,14 +170,14 @@ def test_query_cells_show_the_slot_answer_and_name_each_claims_status(tmp_path: 
         kind=SUBJECT_KIND,
         where=where,
         select=["status"],
-        status=["live", "overturned", "refused"],
+        status=["live", "overturned", "ineligible"],
         claims=True,
     ).rows
     assert sorted(row["status"]) == ["blocked", "ready"]
     # Each cell's Claims are typed QueryClaim entries, not loose dicts.
     cell = {item.value: item for item in row["claims"]["status"]}
     assert cell["ready"].claim == winner and cell["ready"].status == "accepted"
-    assert cell["blocked"].status in {"overturned", "refused"}
+    assert cell["blocked"].status in {"overturned", "ineligible"}
     assert {item.role for item in cell.values()} <= {"normative", "observation"}
 
     # Only the set-aside ones.
@@ -186,7 +186,7 @@ def test_query_cells_show_the_slot_answer_and_name_each_claims_status(tmp_path: 
         kind=SUBJECT_KIND,
         where=where,
         select=["status"],
-        status=["overturned", "refused"],
+        status=["overturned", "ineligible"],
     ).rows
     assert row["status"] == "blocked"
 
