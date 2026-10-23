@@ -812,6 +812,9 @@ def resolve_playbill_claim_group(
                 object_value=value,
                 verdict=contender_verdict,
                 basis_kinds=evaluated_verdict.basis_kinds,
+                # `require_current` filters on this: a stale contender never
+                # resolves, even where `eligible_verdicts` admits `stale`.
+                current=evaluated_verdict.currency != "stale",
             )
         )
     resolution = resolve_claim_contenders(
