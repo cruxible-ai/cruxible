@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-22:r3w1-a",
-    "surface_digest": "sha256:c74d052860f109a164ae64130919036df514c93ca25c5934c330d492e1306e84"
+    "register_entry": "2026-10-22:r3-rc1",
+    "surface_digest": "sha256:c06dc8a8e6a33f0e772f9f0eb39f3dc62b706b738114ca45dfc9a62d5e728ae3"
   },
   "surface": {
     "cli_leaves": [
@@ -2645,7 +2645,7 @@
           "list_proposals"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_list_proposals",
-        "input_schema_digest": "sha256:43533774d2ace059d617ea7f4aefd735ca699a2cac36b01c50e31b621386f4e7",
+        "input_schema_digest": "sha256:0dd82bb206d3f698f7372ebccf3e3febc56e4113f59bcd8cfd5adbdf4b6a64af",
         "name": "cruxible_proposal_list",
         "output_schema_digest": "sha256:5daeb51b22c05df0d4fdeabc12a29654f66e91a9fdf1c1c12a49e4ca20b96de5",
         "permission": "READ_ONLY"
@@ -2809,7 +2809,7 @@
           "write"
         ],
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_write",
-        "input_schema_digest": "sha256:541654f44758887b16127cf6c860756c18b9f8d7035170e35cd9a40377cf61b0",
+        "input_schema_digest": "sha256:db63d2ec1c631ea9302aec02d9e62392411a7ece9aa65de57de151826908b62c",
         "name": "cruxible_write",
         "output_schema_digest": "sha256:27596e51d0c4ad320292e78671cf20689da3fe489dc070ad213c24e2491b9775",
         "permission": "GOVERNED_WRITE"
