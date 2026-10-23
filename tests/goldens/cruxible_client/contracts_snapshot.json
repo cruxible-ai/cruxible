@@ -97727,6 +97727,15 @@
                 "type": "object"
               },
               {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/$defs/QueryNone"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
                 "type": "null"
               }
             ]
@@ -99118,6 +99127,69 @@
               "operand"
             ],
             "title": "QueryNegationFilter",
+            "type": "object"
+          },
+          "QueryNone": {
+            "additionalProperties": false,
+            "description": "One none behind a cell: ``rows[i].nones[column]`` lists a field's live nones.\n\nA none (a ClaimType v9 inverse Claim) says the field holds nothing (``of``\nabsent: a one-valued field's whole slot) or does not hold ``of``; it is\nnever a cell value. A cell with no value and no current none is unknown.",
+            "properties": {
+              "claim": {
+                "title": "Claim",
+                "type": "string"
+              },
+              "flags": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "stale",
+                    "contested",
+                    "contradicted",
+                    "uncovered",
+                    "unsure_hold"
+                  ],
+                  "type": "string"
+                },
+                "title": "Flags",
+                "type": "array"
+              },
+              "of": {
+                "$ref": "#/$defs/ShownValue",
+                "default": null
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "status": {
+                "enum": [
+                  "accepted",
+                  "conflicted",
+                  "ineligible",
+                  "overturned",
+                  "retired"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "verdict": {
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim",
+              "verdict",
+              "status"
+            ],
+            "title": "QueryNone",
             "type": "object"
           },
           "QueryOrdering": {
