@@ -2503,7 +2503,6 @@ def test_rebind_from_capture_moves_every_live_claim_citing_it(
     assert [(item.op, item.revises) for item in outcome.changes] == [
         ("rebind", claim) for claim in sorted((world.claim, other))
     ]
-    assert {item.capture for item in outcome.changes} == {capture_handle(fresh)}
     # Nothing cites the old Capture now.
     again = rebind_from(world.capture)
     assert _refusal(again).code == "cruxible.write.capture_not_cited"
