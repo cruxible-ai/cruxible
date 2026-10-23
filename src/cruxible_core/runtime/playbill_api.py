@@ -986,12 +986,15 @@ def playbill_store_body(instance_id: str, *, content_base64: str) -> contracts.C
     return contracts.CasObjectResult.model_validate(result.model_dump(mode="json"))
 
 
+#: Uploads have no MCP tool (a part base64-encoded costs ~350k tokens per MiB);
+#: each request passes the gate of the body store it feeds: GOVERNED_WRITE plus
+#: the writer check (``cruxible_body_store``).
 def playbill_capture_upload_open(
     instance_id: str, request: CaptureUploadOpenRequest
 ) -> CaptureUploadSession:
     """Open an upload session for one file, owned by this caller."""
 
-    check_permission("cruxible_capture_upload", instance_id=instance_id)
+    check_permission("cruxible_body_store", instance_id=instance_id)
     principal_id = _actor_id(instance_id)
     return (
         get_playbill_manager()
@@ -1003,7 +1006,7 @@ def playbill_capture_upload_open(
 def playbill_capture_upload_status(instance_id: str, upload_id: str) -> CaptureUploadSession:
     """The caller's open upload and the parts the daemon holds (to resume one)."""
 
-    check_permission("cruxible_capture_upload", instance_id=instance_id)
+    check_permission("cruxible_body_store", instance_id=instance_id)
     principal_id = _actor_id(instance_id)
     return (
         get_playbill_manager()
@@ -1017,7 +1020,7 @@ def playbill_capture_upload_part(
 ) -> CaptureUploadSession:
     """Stage one part (raw bytes, at most UPLOAD_PART_SIZE) of the caller's upload."""
 
-    check_permission("cruxible_capture_upload", instance_id=instance_id)
+    check_permission("cruxible_body_store", instance_id=instance_id)
     principal_id = _actor_id(instance_id)
     return (
         get_playbill_manager()
@@ -1039,7 +1042,9 @@ def playbill_capture_upload_complete(
     once staged, the session is removed whatever the run does.
     """
 
-    check_permission("cruxible_capture_upload", instance_id=instance_id)
+    check_permission("cruxible_body_store", instance_id=instance_id)
+    check_permission("cruxible_procedure_run", instance_id=instance_id, audit_success=False)
+    enforce_customer_code_execution_supported()
     principal_id = _actor_id(instance_id)
     manager = get_playbill_manager()
     store = manager.upload_store(instance_id)
@@ -2312,6 +2317,11 @@ def playbill_procedure_run(
     *,
     request: ProcedureRunRequest,
 ) -> contracts.ProcedureRunState:
+    check_permission("cruxible_procedure_run", instance_id=instance_id, audit_success=False)
+    # A shared hosted profile with no isolated execution backend cannot run
+    # customer code at all; refuse at the served boundary so the operator gets
+    # the mapped error instead of a node refusal buried in a run journal.
+    enforce_customer_code_execution_supported()
     actor = _procedure_run_admitted(instance_id, name, at=request.at)
     manager = get_playbill_manager()
     try:
@@ -2328,14 +2338,10 @@ def playbill_procedure_run(
 def _procedure_run_admitted(
     instance_id: str, name: str, *, at: contracts.AcceptedCoordinate | None
 ) -> GovernedActorContext:
-    """The served gate every direct Procedure run passes before it runs: the
-    caller's tier for what the Procedure can do, and an attributed actor."""
+    """The rest of the served gate a direct Procedure run passes, after the
+    ``cruxible_procedure_run`` check and the customer-code gate: the caller's
+    tier for what the Procedure can do, and an attributed actor."""
 
-    check_permission("cruxible_procedure_run", instance_id=instance_id, audit_success=False)
-    # A shared hosted profile with no isolated execution backend cannot run
-    # customer code at all; refuse at the served boundary so the operator gets
-    # the mapped error instead of a node refusal buried in a run journal.
-    enforce_customer_code_execution_supported()
     _check_run_target_permission(
         "cruxible_procedure_run",
         instance_id,

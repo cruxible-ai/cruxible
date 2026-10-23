@@ -93,7 +93,7 @@ class UploadLimits:
     max_open_sessions: int
 
 
-class _SessionRecord(BaseModel):
+class CaptureUploadSessionRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     upload_id: str
@@ -178,15 +178,17 @@ class CaptureUploadStore:
             raise _not_found() from None
         return self.instance_root / value
 
-    def _record(self, directory: Path) -> _SessionRecord | None:
+    def _record(self, directory: Path) -> CaptureUploadSessionRecord | None:
         try:
             if not _real_directory(directory):
                 return None
-            return _SessionRecord.model_validate_json(_read(directory / _SESSION_FILE))
+            return CaptureUploadSessionRecord.model_validate_json(_read(directory / _SESSION_FILE))
         except (OSError, ValidationError):
             return None
 
-    def _owned(self, principal_id: str, value: str, now: datetime) -> tuple[Path, _SessionRecord]:
+    def _owned(
+        self, principal_id: str, value: str, now: datetime
+    ) -> tuple[Path, CaptureUploadSessionRecord]:
         directory = self._session_dir(value)
         record = self._record(directory)
         if record is None or record.principal_id != principal_id or record.upload_id != value:
@@ -200,7 +202,7 @@ class CaptureUploadStore:
             )
         return directory, record
 
-    def _received(self, directory: Path, record: _SessionRecord) -> tuple[int, ...]:
+    def _received(self, directory: Path, record: CaptureUploadSessionRecord) -> tuple[int, ...]:
         parts = directory / _PARTS
         held = []
         for part in range(record.part_count):
@@ -211,7 +213,7 @@ class CaptureUploadStore:
                 continue
         return tuple(held)
 
-    def _view(self, directory: Path, record: _SessionRecord) -> CaptureUploadSession:
+    def _view(self, directory: Path, record: CaptureUploadSessionRecord) -> CaptureUploadSession:
         return CaptureUploadSession(
             upload_id=record.upload_id,
             filename=record.filename,
@@ -271,7 +273,7 @@ class CaptureUploadStore:
         directory = self.instance_root / value
         os.mkdir(directory, 0o700)
         os.mkdir(directory / _PARTS, 0o700)
-        record = _SessionRecord(
+        record = CaptureUploadSessionRecord(
             upload_id=value,
             principal_id=principal_id,
             filename=request.filename,
@@ -366,7 +368,7 @@ class CaptureUploadStore:
         finally:
             _remove_tree(directory)
 
-    def _assemble(self, directory: Path, record: _SessionRecord, target: Path) -> None:
+    def _assemble(self, directory: Path, record: CaptureUploadSessionRecord, target: Path) -> None:
         digest = hashlib.sha256()
         total = 0
         descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _FILE_FLAGS, 0o600)
