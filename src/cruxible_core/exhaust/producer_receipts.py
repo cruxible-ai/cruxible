@@ -165,6 +165,13 @@ class LocalProducerReceiptResolver:
             )
         return self._erasures.records_for_bodies(body_digests)
 
+    def erasure_preceded(self, capture_digest: str, erasure: RecordedCaptureErasure) -> bool:
+        """Whether the Capture had landed when ``erasure`` was recorded (storage positions)."""
+
+        from cruxible_core.evidence.capture_erasures import capture_landed_by
+
+        return capture_landed_by(self._bodies, capture_digest, erasure)
+
 
 #: The verification context the current request owns, with the instance it serves.
 _REQUEST_CONTEXT: ContextVar[tuple[tuple[str, str], LocalProducerReceiptResolver] | None] = (

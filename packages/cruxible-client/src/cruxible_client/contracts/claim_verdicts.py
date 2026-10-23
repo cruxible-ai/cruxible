@@ -250,6 +250,10 @@ class CaptureVerdictEvidence(_StrictVerdictModel):
     observed_at: datetime
     source_effective_until: datetime | None = None
     current_replay_available: bool
+    #: The last erasure journal position this judgment counted for the Capture's
+    #: bodies, when a governed erasure it counted made it unreplayable (compiler
+    #: revision 35). A replay counts exactly the erasures at or before it.
+    erasures_through: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
 
     @field_validator("capture_digest")
     @classmethod

@@ -420,6 +420,14 @@ class LandingLog:
     def last_completion(self, digest: str, *, identity: str, sequence: int) -> LandingKind | None:
         """The digest's last completion at or before ``sequence`` of the log ``identity``."""
 
+        found = self.last_completion_at(digest, identity=identity, sequence=sequence)
+        return None if found is None else found[1]
+
+    def last_completion_at(
+        self, digest: str, *, identity: str, sequence: int
+    ) -> tuple[int, LandingKind] | None:
+        """The digest's last completion at or before ``sequence``, with its own sequence."""
+
         if not identity or sequence <= 0:
             return None
         key = (str(self._store._algorithm_root), identity)
@@ -436,7 +444,7 @@ class LandingLog:
             if not events:
                 return None
             found = bisect_right(events, sequence, key=lambda event: event[0])
-            return events[found - 1][1] if found > 0 else None
+            return events[found - 1] if found > 0 else None
 
     def _disagrees(self, digest: str, state: BodyState) -> bool:
         """Whether what a verification found contradicts the log's current presence.

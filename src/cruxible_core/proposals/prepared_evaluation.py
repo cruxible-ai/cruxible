@@ -176,6 +176,11 @@ class _ObservedReceipts:
             self.scope.ineligible = True
         return found
 
+    def erasure_preceded(self, capture_digest: str, erasure: RecordedCaptureErasure) -> bool:
+        if not isinstance(self.source, CaptureErasureLookupProtocol):
+            return True
+        return self.source.erasure_preceded(capture_digest, erasure)
+
 
 class PreparedEvaluationScope:
     """Private capability held by exactly one synchronous coordinator submit."""
