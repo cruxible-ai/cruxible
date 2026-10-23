@@ -27,14 +27,20 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from cruxible_client.contracts.authoring.models import (
-    AuthoringClaimObject,
     AuthoringClaimStatement,
+    AuthoringExactContentObject,
     AuthoringExistingClaimDisposition,
     ClaimDerivationBinding,
     ExistingCaptureCitationSource,
     SelfSourceBody,
 )
-from cruxible_client.contracts.claims import ClaimFormatError, ClaimRetirementReason, claim_path
+from cruxible_client.contracts.claims import (
+    ClaimFormatError,
+    ClaimRetirementReason,
+    LiteralClaimObject,
+    SubjectClaimObject,
+    claim_path,
+)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subject_kinds import (
     SubjectKeyReference,
@@ -106,8 +112,30 @@ class SubjectKeyClaimObject(_StrictProposalItemModel):
     subject: SubjectKeyReference
 
 
+class ProcedureNoneClaimObject(_StrictProposalItemModel):
+    """A none (an inverse Claim) whose ``of`` may name its Subject by key.
+
+    Delivery resolves a ``subject_key`` ``of`` as it resolves a Subject value
+    and lowers the plain ``NoneClaimObject``.
+    """
+
+    kind: Literal["none"] = "none"
+    of: (
+        Annotated[
+            LiteralClaimObject | SubjectClaimObject | SubjectKeyClaimObject,
+            Field(discriminator="kind"),
+        ]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
+
+
 ProcedureClaimObject = Annotated[
-    AuthoringClaimObject | SubjectKeyClaimObject, Field(discriminator="kind")
+    LiteralClaimObject
+    | SubjectClaimObject
+    | AuthoringExactContentObject
+    | ProcedureNoneClaimObject
+    | SubjectKeyClaimObject,
+    Field(discriminator="kind"),
 ]
 
 
@@ -245,6 +273,7 @@ __all__ = [
     "ProcedureClaimRetirementItem",
     "ProcedureClaimStatement",
     "ProcedureKeyedClaimProposalItem",
+    "ProcedureNoneClaimObject",
     "ProcedureProposalItemAny",
     "ProcedureSubjectProposalItem",
     "SubjectKeyClaimObject",

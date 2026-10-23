@@ -46,6 +46,7 @@ from cruxible_client.contracts.claims import (
     ClaimRetireDependent,
     ClaimRetirementReason,
     LiteralClaimObject,
+    NoneClaimObject,
     SubjectClaimObject,
     claim_path,
 )
@@ -374,8 +375,10 @@ class AuthoringExactContentObject(_StrictAuthoringModel):
         return _canonical_base64(self.content_base64, label="exact-content body")
 
 
+#: A Claim object as authored. ``none`` is an inverse (ClaimType v9): the unit
+#: its ``of`` names holds nothing.
 AuthoringClaimObject = Annotated[
-    LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObject,
+    LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObject | NoneClaimObject,
     Field(discriminator="kind"),
 ]
 

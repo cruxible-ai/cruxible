@@ -1069,6 +1069,63 @@ def test_a_subject_valued_object_reference_is_checked_like_a_subject(
 # F-003 (delta 2): an intent event is published whole, never seen partial.
 
 
+def test_a_none_of_a_subject_named_by_key_resolves_like_a_subject_value(
+    instance: PlaybillInstance,
+) -> None:
+    """A Procedure item may state a none (inverse) whose ``of`` names its Subject by key."""
+
+    from cruxible_client.contracts.claims import NoneClaimObject
+    from cruxible_client.contracts.procedures.proposal_items import (
+        ProcedureKeyedClaimProposalItem,
+        ProcedureNoneClaimObject,
+    )
+    from cruxible_core.indexes.subject_identity import IdentityView, tree_key_reader
+    from cruxible_core.procedures.proposal_delivery import _SubjectKeys
+    from tests.test_service.test_subject_identity import _create
+
+    _create(instance, DECISION, "original")
+    _create(instance, DECISION, "other name")
+    base = instance.accepted_coordinate()
+    base_tree = instance.immutable_tree_at(base.git_oid)
+    item = ProcedureKeyedClaimProposalItem.model_validate(
+        {
+            "tag": "playbill-procedure-claim-proposal-item-v3",
+            "statement": {
+                "tag": "playbill-procedure-claim-statement-v1",
+                "subject": SemanticAddress.whole_artifact(
+                    subject_path(DECISION, "original")
+                ).model_dump(mode="json"),
+                "predicate": f"{DECISION}.related",
+                "object": {
+                    "kind": "none",
+                    "of": {
+                        "kind": "subject_key",
+                        "subject": {"subject_kind": DECISION, "key": {"slug": "other name"}},
+                    },
+                },
+                "role": "observation",
+            },
+            "rationale": "Not related.",
+            "revises": None,
+        }
+    )
+    assert isinstance(item.statement.object, ProcedureNoneClaimObject)
+    keys = _SubjectKeys(instance, base=base, base_tree=base_tree)
+    with instance.bind_accepted_projection(base) as projection:
+        keys.bind(IdentityView(projection.typed.connection, key_reader=tree_key_reader(base_tree)))
+        statement = keys.statement(item)
+    assert isinstance(statement.object, NoneClaimObject)
+    assert isinstance(statement.object.of, SubjectClaimObject)
+    assert statement.object.of.address.artifact_path == subject_path(DECISION, "other-name")
+    # A slot none (no ``of``) passes through as the plain none.
+    slot = item.model_copy(
+        update={
+            "statement": item.statement.model_copy(update={"object": ProcedureNoneClaimObject()})
+        }
+    )
+    assert keys.statement(slot).object == NoneClaimObject()
+
+
 def test_an_appended_intent_event_is_never_visible_partially(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
