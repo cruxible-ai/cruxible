@@ -26,7 +26,7 @@ from cruxible_client.artifacts import (
     write_layout,
 )
 from cruxible_client.artifacts.oci import sha256_digest
-from cruxible_client.artifacts.registry import environment_credentials
+from cruxible_client.artifacts.registry import RegistryRefusal, environment_credentials
 from cruxible_client.contracts.kits import (
     KitArtifact,
     KitArtifactBytes,
@@ -425,8 +425,75 @@ def test_an_oversized_error_body_is_read_only_up_to_its_bound(tmp_path: Path) ->
     registry = FakeRegistry()
     registry.error_body = b"x" * (8 * 1024 * 1024)
     with registry.client(tmp_path / "cache") as client:
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(RegistryRefusal, match="registry_unavailable"):
             client.pull(parse_reference("registry.test/t/n:1"))
+
+
+# -- 1e: registry answers are typed refusals, never raw HTTP errors -------------------
+
+
+def test_an_unpublished_kit_is_not_found_and_names_private_access(tmp_path: Path) -> None:
+    registry = FakeRegistry()
+    with registry.client(tmp_path / "cache", credentials=lambda host: None) as client:
+        with pytest.raises(RegistryRefusal) as refused:
+            fetch_kit_image("registry.test/kits/absent:1.0.0", registry=client)
+    assert refused.value.error_code == "cruxible.kit.not_found"
+    assert refused.value.status == 404
+    assert str(refused.value) == (
+        "cruxible.kit.not_found: registry.test/kits/absent:1.0.0 is not published (HTTP 404), "
+        "or it is private: set CRUXIBLE_REGISTRY=registry.test, CRUXIBLE_REGISTRY_USERNAME "
+        "and CRUXIBLE_REGISTRY_PASSWORD"
+    )
+    # With credentials for that registry, a 404 is just unpublished.
+    with registry.client(tmp_path / "cache", credentials=lambda host: ("u", "p")) as client:
+        with pytest.raises(RegistryRefusal) as again:
+            client.pull(parse_reference("registry.test/kits/absent:1.0.0"))
+    assert again.value.error_code == "cruxible.kit.not_found"
+    assert "private" not in str(again.value)
+
+
+@pytest.mark.parametrize(
+    ("status", "credentials", "code"),
+    [
+        (401, None, "cruxible.kit.not_found"),
+        (403, None, "cruxible.kit.not_found"),
+        (401, ("u", "p"), "cruxible.kit.registry_denied"),
+        (403, ("u", "p"), "cruxible.kit.registry_denied"),
+        (429, None, "cruxible.kit.registry_unavailable"),
+        (503, ("u", "p"), "cruxible.kit.registry_unavailable"),
+    ],
+)
+def test_a_refused_token_or_a_busy_registry_is_typed(
+    tmp_path: Path, status: int, credentials: tuple[str, str] | None, code: str
+) -> None:
+    registry = FakeRegistry()
+    plain = registry.handler
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/token":
+            return httpx.Response(status)
+        return plain(request)
+
+    client = RegistryClient(
+        transport=httpx.MockTransport(handler),
+        cache=BlobCache(tmp_path / "cache"),
+        credentials=lambda host: credentials,
+    )
+    with client, pytest.raises(RegistryRefusal) as refused:
+        client.list_tags(parse_reference("registry.test/kits/private:1"))
+    assert (refused.value.error_code, refused.value.status) == (code, status)
+
+
+def test_an_unreachable_registry_is_typed(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("[Errno 8] nodename nor servname provided", request=request)
+
+    client = RegistryClient(transport=httpx.MockTransport(handler), cache=BlobCache(tmp_path))
+    with client, pytest.raises(RegistryRefusal) as refused:
+        fetch_kit_image("registry.invalid/kits/a:1", registry=client)
+    assert refused.value.error_code == "cruxible.kit.registry_unreachable"
+    assert refused.value.status is None
+    assert "registry.invalid could not be reached (ConnectError: [Errno 8]" in str(refused.value)
 
 
 def test_an_artifact_over_the_total_budget_is_refused_before_any_blob_is_fetched(

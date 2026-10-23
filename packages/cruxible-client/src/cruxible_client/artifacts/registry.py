@@ -17,6 +17,7 @@ import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import httpx
 
@@ -27,6 +28,7 @@ from cruxible_client.artifacts.oci import (
     manifest_descriptors,
     sha256_digest,
 )
+from cruxible_client.errors import ConfigError
 
 DEFAULT_NAMESPACE = "ghcr.io/cruxible-ai/kits"
 _NAME_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$")
@@ -34,6 +36,58 @@ _TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 Credentials = Callable[[str], tuple[str, str] | None]
+
+RegistryRefusalReason = Literal[
+    "not_found", "registry_denied", "registry_unavailable", "registry_unreachable"
+]
+_PRIVATE_HINT = (
+    "or it is private: set CRUXIBLE_REGISTRY={registry}, CRUXIBLE_REGISTRY_USERNAME and "
+    "CRUXIBLE_REGISTRY_PASSWORD"
+)
+
+
+class RegistryRefusal(ConfigError):
+    """A registry answer, or its absence, as a typed refusal instead of a raw HTTP error.
+
+    Kits are the artifacts a registry serves, so the codes are the kit's:
+    ``cruxible.kit.not_found`` (404, or 401/403 to an anonymous caller, which a
+    registry answers for a private repository), ``cruxible.kit.registry_denied``
+    (401/403 with credentials), ``cruxible.kit.registry_unavailable`` (429, 5xx)
+    and ``cruxible.kit.registry_unreachable`` (no answer at all).
+    """
+
+    def __init__(self, reason: RegistryRefusalReason, detail: str, *, status: int | None) -> None:
+        self.reason: RegistryRefusalReason = reason
+        self.error_code = f"cruxible.kit.{reason}"
+        self.status = status
+        super().__init__(f"{self.error_code}: {detail}")
+
+
+def _status_refusal(
+    response: httpx.Response, ref: Reference, *, anonymous: bool
+) -> RegistryRefusal | None:
+    """The refusal an error status means, or None for a status this module does not name."""
+
+    status = response.status_code
+    if status == 404 or (status in {401, 403} and anonymous):
+        detail = f"{ref} is not published (HTTP {status})"
+        if anonymous:
+            detail += ", " + _PRIVATE_HINT.format(registry=ref.registry)
+        return RegistryRefusal("not_found", detail, status=status)
+    if status in {401, 403}:
+        return RegistryRefusal(
+            "registry_denied",
+            f"{ref.registry} refused the CRUXIBLE_REGISTRY_USERNAME credentials for {ref} "
+            f"(HTTP {status}); check they grant read access to it",
+            status=status,
+        )
+    if status == 429 or status >= 500:
+        return RegistryRefusal(
+            "registry_unavailable",
+            f"{ref.registry} could not serve {ref} now (HTTP {status}); retry later",
+            status=status,
+        )
+    return None
 
 
 @dataclass(frozen=True)
@@ -198,7 +252,17 @@ class RegistryClient:
     def _url(self, ref: Reference, suffix: str) -> str:
         return f"{self._scheme}://{ref.registry}/v2/{ref.repository}/{suffix}"
 
-    def _token(self, host: str, challenge: str, scope: str) -> str | None:
+    def _check(self, response: httpx.Response, ref: Reference) -> None:
+        """Raise the typed refusal an error status means; any other error status raw."""
+
+        if response.status_code < 400:
+            return
+        refusal = _status_refusal(response, ref, anonymous=self._credentials(ref.registry) is None)
+        if refusal is not None:
+            raise refusal
+        response.raise_for_status()
+
+    def _token(self, ref: Reference, host: str, challenge: str, scope: str) -> str | None:
         """A bearer token for ``host``; credentials only to that host's own realm."""
 
         if not challenge.lower().startswith("bearer "):
@@ -219,7 +283,7 @@ class RegistryClient:
         response, body = self._send(
             "GET", realm + "?" + urllib.parse.urlencode(query), headers, None, MAX_TOKEN_BYTES
         )
-        response.raise_for_status()
+        self._check(response, ref)
         payload = json.loads(body)
         token = payload.get("token") or payload.get("access_token")
         return token if isinstance(token, str) else None
@@ -246,7 +310,15 @@ class RegistryClient:
             if _origin(url)[0] != self._scheme:
                 raise ValueError(f"{url} does not use {self._scheme}")
             request = self._http.build_request(method, url, headers=sent, content=content)
-            response = self._http.send(request, stream=True, follow_redirects=False)
+            try:
+                response = self._http.send(request, stream=True, follow_redirects=False)
+            except httpx.TransportError as exc:
+                raise RegistryRefusal(
+                    "registry_unreachable",
+                    f"{_origin(url)[1]} could not be reached ({type(exc).__name__}: {exc}); "
+                    "check the network and the registry name",
+                    status=None,
+                ) from exc
             try:
                 if response.is_redirect:
                     target = urllib.parse.urljoin(url, response.headers["location"])
@@ -286,7 +358,7 @@ class RegistryClient:
         response, body = self._send(method, url, sent, content, limit)
         if response.status_code == 401:
             host = origin[1] if origin[2] is None else f"{origin[1]}:{origin[2]}"
-            token = self._token(host, response.headers.get("www-authenticate", ""), scope)
+            token = self._token(ref, host, response.headers.get("www-authenticate", ""), scope)
             if token is not None:
                 self._tokens[key] = token
                 sent["Authorization"] = f"Bearer {token}"
@@ -303,7 +375,7 @@ class RegistryClient:
             headers={"Accept": MANIFEST_MEDIA_TYPE},
             limit=MAX_MANIFEST_BYTES,
         )
-        response.raise_for_status()
+        self._check(response, ref)
         if ref.digest is not None and sha256_digest(manifest) != ref.digest:
             raise ValueError(f"{ref} returned a manifest with a different digest")
         config, layers = manifest_descriptors(manifest)
@@ -321,7 +393,7 @@ class RegistryClient:
             if cached is not None:
                 return cached
             blob, content = self._request("GET", ref, self._url(ref, f"blobs/{digest}"), limit=size)
-            blob.raise_for_status()
+            self._check(blob, ref)
             if sha256_digest(content) != digest:
                 raise ValueError(f"{ref} served blob {digest} with different bytes")
             self._cache.put(content)
@@ -335,7 +407,7 @@ class RegistryClient:
         response, body = self._request(
             "GET", ref, self._url(ref, "tags/list?n=1000"), limit=MAX_MANIFEST_BYTES
         )
-        response.raise_for_status()
+        self._check(response, ref)
         payload = json.loads(body)
         tags = payload.get("tags") if isinstance(payload, dict) else None
         if tags is None:
