@@ -467,12 +467,11 @@ MAX_REBIND_FROM_CAPTURE = 500
 
 
 class RebindChange(_StrictWriteModel):
-    """Re-cite a Claim on its text now, or on a fresh Capture; the value stays.
+    """Re-cite a Claim on its text now, or on a fresh Capture; the value stays."""
 
-    ``from_capture`` instead of ``target`` re-cites every live Claim citing that
-    Capture on the fresh one (``evidence`` a capture), at most 500.
-    """
-
+    # ``from_capture`` instead of ``target`` re-cites every live Claim citing that
+    # Capture on the fresh one (``evidence`` a capture), at most 500. The class
+    # docstring is the MCP tool text too, so this note stays out of it.
     op: Literal["rebind"] = "rebind"
     target: ClaimId | None = Field(default=None, exclude_if=_omit_none)
     from_capture: str | None = Field(
