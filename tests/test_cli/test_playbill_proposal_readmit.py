@@ -89,6 +89,73 @@ def test_cli_reports_the_new_proposal_without_hiding_its_source(monkeypatch) -> 
     ]
 
 
+def test_cli_says_an_already_live_readmit_closed_as_answered(monkeypatch) -> None:
+    class StubClient:
+        def resolve_proposal_selector(self, instance_id, selector):
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
+
+        def readmit_proposal(self, instance_id, proposal_id, **_control):
+            return contracts.ProposalReadmitResult(
+                tag="playbill-proposal-readmit-result-v1",
+                status="already_live",
+                source_proposal_id=SOURCE_ID,
+                operation_digest=OPERATION,
+                proposal=None,
+                accepted_coordinate=COORDINATE,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "readmit",
+            SOURCE_ID,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        f"{SOURCE_ID} is already live at the head: every change it carried is accepted; "
+        "closed as answered, nothing to review."
+    ]
+
+
+def test_proposal_list_filters_proposals_awaiting_readmit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str | None] = []
+
+    class StubClient:
+        def list_proposals(self, _instance_id: str, *, status: str | None, **_page: object):
+            seen.append(status)
+            return contracts.ProposalList(
+                coordinate=COORDINATE, status_filter="awaiting_readmit", entries=[]
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "proposal",
+            "list",
+            "--status",
+            "awaiting_readmit",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == ["awaiting_readmit"]
+
+
 def test_cli_renders_typed_selector_candidates_and_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -838,7 +838,7 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        status: Literal["open", "settled", "incomplete"] | None = None,
+        status: Literal["open", "awaiting_readmit", "settled", "incomplete"] | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> contracts.ProposalList:

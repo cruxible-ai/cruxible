@@ -101,10 +101,38 @@ def test_a_proposed_item_names_how_many_earlier_refusals_it_matches(capsys) -> N
             children=(child,),
         ),
     )
-    assert out.splitlines()[1] == (
+    assert out.splitlines()[1:] == [
+        "  1 item: 1 changed, 1 with earlier refusals",
         f"  {child.path} (1 earlier refusal of this statement on this evidence; "
-        "see proposal review)"
+        "see proposal review)",
+    ]
+
+
+def test_a_large_proposal_counts_its_items_and_lists_the_first_ten_changed(capsys) -> None:
+    from cruxible_client.contracts.procedures.results import ProcedureTerminalEgressChild
+
+    children = tuple(
+        ProcedureTerminalEgressChild(
+            child_index=index,
+            item_key=f"item-{index}",
+            manifest_digest="sha256:" + "c" * 64,
+            path=f"claims/22/CLM-{index:032x}.json",
+            unchanged=index >= 360,
+        )
+        for index in range(367)
     )
+    out = _echo(
+        capsys,
+        _settle(
+            settle_outcome="proposed",
+            fallback_reason="cruxible.settle.condition_false",
+            children=children,
+        ),
+    )
+    lines = out.splitlines()
+    assert lines[1] == "  367 items: 360 changed, 7 unchanged"
+    assert lines[2:12] == [f"  claims/22/CLM-{index:032x}.json" for index in range(10)]
+    assert lines[12:] == [f"  ... and 350 more: cruxible proposal review {PROPOSAL} (or --json)"]
 
 
 def test_a_terminal_whose_items_all_restate_accepted_state_says_nothing_changed(capsys) -> None:

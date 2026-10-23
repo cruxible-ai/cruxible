@@ -7,6 +7,7 @@ import json
 import os
 import shlex
 import subprocess
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -122,7 +123,10 @@ from cruxible_client.contracts.kits import (
 )
 from cruxible_client.contracts.line_dispatch import LineDispatchItem, LineEvaluateResult
 from cruxible_client.contracts.principals import is_canonical_principal_id
-from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
+from cruxible_client.contracts.procedures.results import (
+    ProcedureHaltTerminal,
+    ProcedureTerminalEgressChild,
+)
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.provider_installation import (
@@ -167,6 +171,7 @@ from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, claim_t
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
+    _can_confirm,
     _dispatch_cli,
     _echo_active_write_target,
     _echo_creation_write_target,
@@ -2339,11 +2344,12 @@ def erase_capture(
     whose CaptureContract authorizes erasure (erasure: authorized_by_rule) can
     be erased. The envelope, its contract, its landing records and an erasure
     record (who, when, why) stay; Claims citing it keep their history and read
-    the evidence as erased, no longer replayable. A live Claim citing it is
-    then changed by re-binding it onto a fresh Capture under the same contract
-    (rebind --capture); revising or retiring it refuses until then. Requires
-    graph_write. It cannot be undone, so it previews first; commit that
-    preview with --commit --at DIGEST.
+    the evidence as erased, no longer replayable. A live Claim citing it can
+    still be revised or retired; `rebind --from-capture CAPTURE --capture NEW`
+    moves every Claim citing it onto a fresh observation under the same
+    contract. Requires graph_write. It cannot be undone, so it previews first;
+    commit that preview with --commit --at DIGEST. A refusal prints its
+    repair.
     """
 
     from cruxible_client.contracts.capture_erasure import CaptureEraseRequest
@@ -2402,7 +2408,12 @@ def proposal_group() -> None:
 
 
 @proposal_group.command("list")
-@click.option("--status", type=click.Choice(["open", "settled", "incomplete"]), default=None)
+@click.option(
+    "--status",
+    type=click.Choice(["open", "awaiting_readmit", "settled", "incomplete"]),
+    default=None,
+    help="awaiting_readmit: its base moved; it waits for its author's readmit.",
+)
 @click.option(
     "--limit",
     default=contracts.PROPOSAL_LIST_DEFAULT_LIMIT,
@@ -2458,7 +2469,7 @@ def readmit_proposal(
         _emit_json(result.model_dump(mode="json"))
         return
     if result.proposal is None:
-        click.echo(f"{result.status}  {result.source_proposal_id}")
+        click.echo(_already_live_line(result.source_proposal_id))
         return
     proposal = result.proposal.proposal
     evaluation = proposal.get("evaluation", {})
@@ -2632,7 +2643,12 @@ def review_proposal(
         "signer's remembered settings or `cruxible init` keep)."
     ),
 )
-@click.option("--yes", is_flag=True, help="Approve after rendering without an interactive prompt.")
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Sign without the prompt, printing one counts line and any earlier refusals; "
+    "needed where no one is at the terminal.",
+)
 @click.option(
     "--hold",
     is_flag=True,
@@ -2659,9 +2675,15 @@ def approve_proposal(
     Activation runs in the same command when no approval is still required and
     your tier may activate (graph_write). `--hold` signs only, for a reviewer
     leaving activation timing to someone else, who runs `proposal activate`.
-    Otherwise the result says what remains.
+    Otherwise the result says what remains. Without a terminal to prompt at,
+    it refuses unless --yes is passed.
     """
 
+    if not yes and not _can_confirm():
+        raise click.UsageError(
+            "proposal approve asks before signing and no one is at this terminal; review it "
+            f"with `cruxible proposal review {proposal_id}`, then rerun with --yes"
+        )
     configured = _root_ctx_obj().get("principal_id")
     if signer_id is None:
         if configured is None:
@@ -2693,11 +2715,16 @@ def approve_proposal(
     )
     review = ProposalReview.model_validate(challenge.review.model_dump(mode="json"))
     if not output_json:
-        render = render_playbill_proposal_review if full else render_playbill_approval_summary
-        click.echo(render(review), nl=False)
+        if full:
+            click.echo(render_playbill_proposal_review(review), nl=False)
+        elif yes:
+            for line in _approval_counts_lines(review):
+                click.echo(line)
+        else:
+            click.echo(render_playbill_approval_summary(review), nl=False)
     if key.source != "option":
         click.echo(_signing_key_line(key), err=True)
-    if not yes and not click.confirm("Sign this exact candidate?"):
+    if not yes and not click.confirm("Sign this exact candidate?", err=True):
         raise click.Abort()
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     signer = LocalEd25519ApprovalSigner.open(
@@ -2731,7 +2758,44 @@ def approve_proposal(
         click.echo(line)
 
 
+def _approval_counts_lines(review: ProposalReview) -> list[str]:
+    """What `approve --yes` prints before signing: one counts line, then every earlier
+    refusal of a proposed statement on its evidence (`--full` renders everything)."""
+
+    dispositions = Counter(member.disposition for member in review.members)
+    counts = ", ".join(f"{count} {name}" for name, count in sorted(dispositions.items()))
+    total = len(review.members)
+    lines = [
+        f"Signing {review.candidate_digest} ({review.proposal_id}): {total} change"
+        f"{'s' if total != 1 else ''}" + (f" ({counts})" if counts else "")
+    ]
+    for member in review.members:
+        for receipt in member.prior_refusals:
+            verb = "retired" if receipt.kind == "claim_retired" else "rejected"
+            subject = (
+                f"Claim {receipt.claim_id}"
+                if receipt.kind == "claim_retired"
+                else f"proposal {receipt.proposal_id} (Claim {receipt.claim_id})"
+            )
+            code = "" if receipt.reason_code is None else f" [{receipt.reason_code}]"
+            lines.append(
+                f"  earlier refusal {member.path}: {subject} {verb} by {receipt.decided_by} "
+                f"at {receipt.decided_at}{code}"
+            )
+    return lines
+
+
+def _already_live_line(proposal_id: str) -> str:
+    return (
+        f"{proposal_id} is already live at the head: every change it carried is accepted; "
+        "closed as answered, nothing to review."
+    )
+
+
 def _echo_recompiled_proposal(result: contracts.ProposalRecompiled) -> None:
+    if result.status == "already_live" or result.proposal_id is None:
+        click.echo(_already_live_line(result.source_proposal_id))
+        return
     click.echo(
         f"Recompiled as {result.proposal_id}; review this new proposal "
         f"(members identical: {result.members_identical})"
@@ -3686,6 +3750,14 @@ def claim_type_group() -> None:
     """Propose and read the governed predicate vocabulary."""
 
 
+_CLAIM_TYPE_INVERSE_HINT = (
+    'Optional: "inverse": {"key": {"kind": "slot"}, "evidence_rules": ["RULE_ID"]} records '
+    "absence (a none) on Captures one of those rules admits; a many-valued type keys it "
+    '{"kind": "object"} or {"kind": "object_key", "predicate": KEY}; "stale_after": "P7D" '
+    "overrides its freshness."
+)
+
+
 @claim_type_group.command("propose")
 @click.option(
     "--input",
@@ -3698,13 +3770,16 @@ def claim_type_group() -> None:
         "one own-words evidence rule (plus one per anticipated_source_ids entry); no "
         "admission requirements; supported, current resolution. An edit states only what "
         "changes: an omitted field keeps the accepted value. State canonical_form ([] for "
-        "none) for a field that keys a SubjectKind. Durations take ISO-8601 (P30D)."
+        "none) for a field that keys a SubjectKind. State inverse (key, evidence_rules, "
+        "optional stale_after) for a type that records absence: a none. Durations take "
+        "ISO-8601 (P30D)."
     ),
 )
 @click.option(
     "--template",
     is_flag=True,
-    help="Print a minimal ClaimTypeInputRecord without contacting the daemon.",
+    help="Print a minimal ClaimTypeInputRecord without contacting the daemon (stderr names "
+    "the optional inverse field).",
 )
 @click.option(
     "--expanded",
@@ -3746,6 +3821,7 @@ def propose_claim_type(
     accept: AuthoringAccept = "never" if no_accept else "if_allowed"
     if template:
         _emit_json(claim_type_input_template(expanded=expanded).model_dump(mode="json"))
+        click.echo(_CLAIM_TYPE_INVERSE_HINT, err=True)
         return
     if builtin is not None:
         builtin_result = _server_call(
@@ -5165,7 +5241,14 @@ def retire(
 
 
 @playbill_group.command("rebind")
-@click.argument("claim")
+@click.argument("claim", required=False)
+@click.option(
+    "--from-capture",
+    "from_capture",
+    default=None,
+    help="CAP-... or digest, instead of CLAIM: re-bind every live Claim citing this Capture "
+    "onto --capture (at most 500).",
+)
 @click.option("--because", required=True, help="Why the new text backs it.")
 @click.option(
     "--file",
@@ -5201,7 +5284,8 @@ def retire(
 @_write_options
 @handle_errors
 def rebind(
-    claim: str,
+    claim: str | None,
+    from_capture: str | None,
     because: str,
     file_anchor: str | None,
     section_ref: str | None,
@@ -5222,8 +5306,18 @@ def rebind(
     which is how a Claim whose Capture was erased moves onto a new
     observation. A value that changed is restated with set; a Claim that no
     longer holds is retired.
+
+    --from-capture CAP --capture NEW, instead of CLAIM, re-binds every live
+    Claim citing CAP onto NEW in one write, each replacing its citation of
+    CAP; it takes no --citation.
     """
 
+    if (claim is None) == (from_capture is None):
+        raise click.UsageError("pass CLAIM or --from-capture CAP, not both")
+    if from_capture is not None and (capture_ref is None or citation is not None):
+        raise click.UsageError(
+            "--from-capture moves Claims onto a fresh Capture: pass --capture NEW and no --citation"
+        )
     try:
         evidence = rebind_evidence(
             file=file_anchor,
@@ -5233,7 +5327,11 @@ def rebind(
         )
     except ValueError as exc:
         raise click.UsageError(f"--file / --section / --capture: {exc}") from None
-    change: dict[str, object] = {"op": "rebind", "target": claim, "evidence": evidence}
+    change: dict[str, object] = {"op": "rebind", "evidence": evidence}
+    if from_capture is not None:
+        change["from_capture"] = from_capture
+    else:
+        change["target"] = claim
     if citation is not None:
         change["citation"] = citation
     request = _write_request(
@@ -6896,9 +6994,29 @@ def _echo_run_outcome(result: contracts.ProcedureRunState, label: str) -> None:
             click.echo(f"Repair: {_cli_repair(repair)}")
         elif isinstance(details, dict) and isinstance(details.get("repair"), str):
             click.echo(f"Repair: {details['repair']}")
+        cause = getattr(terminal, "cause", None)
+        if cause is not None:
+            # The Provider's own account: a transport error and an HTTP status
+            # differ in kind, which the code alone does not say.
+            click.echo(
+                f"Cause: {cause.node_id}: {cause.kind or cause.provider_code}: {cause.message}"
+            )
     elif isinstance(terminal, ProcedureHaltTerminal) and terminal.reason:
         click.echo(f"Halted at {terminal.node_id}: {terminal.reason}")
     click.echo(f"Next: {result.next_operation['kind']}")
+
+
+#: A run that ends in one of these exits 1, after its output, so `&&` stops.
+_FAILED_RUN_STATUSES = frozenset(
+    {"admission_refused", "node_refused", "operational_failed", "internal_failed"}
+)
+
+
+def _exit_for_run(result: contracts.ProcedureRunState) -> None:
+    """Exit 1 when the run refused or failed; succeeded, halted and running exit 0."""
+
+    if result.status in _FAILED_RUN_STATUSES:
+        raise SystemExit(1)
 
 
 def _echo_source_observations(result: contracts.ProcedureRunState) -> None:
@@ -6919,6 +7037,44 @@ def _echo_source_observations(result: contracts.ProcedureRunState) -> None:
         if observation.capture_digest is not None:
             click.echo(f"Capture {where}: {observation.capture_digest}")
     _echo_terminal_egress(result)
+
+
+#: A delivered proposal's changed item paths printed before the rest are counted.
+_EGRESS_CHANGED_PATHS_SHOWN = 10
+
+
+def _proposed_children_lines(
+    proposal_id: str, children: Sequence[ProcedureTerminalEgressChild]
+) -> list[str]:
+    """A delivered proposal's items: one counts line, every item matching an earlier
+    refusal, the first changed paths, then where the rest are."""
+
+    if not children:
+        return []
+    changed = [child for child in children if not child.unchanged]
+    refused = [child for child in children if child.prior_refusals]
+    counts = [f"{len(changed)} changed"]
+    if len(changed) != len(children):
+        counts.append(f"{len(children) - len(changed)} unchanged")
+    if refused:
+        counts.append(f"{len(refused)} with earlier refusals")
+    total = len(children)
+    lines = [f"  {total} item{'s' if total != 1 else ''}: {', '.join(counts)}"]
+    for child in refused:
+        count = len(child.prior_refusals)
+        lines.append(
+            f"  {child.path or child.item_key} ({count} earlier refusal"
+            f"{'s' if count != 1 else ''} of this statement on this evidence; "
+            "see proposal review)"
+        )
+    listed = [child for child in changed if child.path is not None and not child.prior_refusals]
+    lines.extend(f"  {child.path}" for child in listed[:_EGRESS_CHANGED_PATHS_SHOWN])
+    if len(listed) > _EGRESS_CHANGED_PATHS_SHOWN:
+        lines.append(
+            f"  ... and {len(listed) - _EGRESS_CHANGED_PATHS_SHOWN} more: "
+            f"cruxible proposal review {proposal_id} (or --json)"
+        )
+    return lines
 
 
 def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
@@ -6966,16 +7122,8 @@ def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
                 f"Proposal {egress.node_id}: {egress.proposal_id} "
                 f"candidate {egress.candidate_digest}{fallback}{superseded}"
             )
-            for child in egress.children:
-                if child.path is not None:
-                    count = len(child.prior_refusals)
-                    earlier = (
-                        f" ({count} earlier refusal{'s' if count != 1 else ''} of this "
-                        "statement on this evidence; see proposal review)"
-                        if count
-                        else ""
-                    )
-                    click.echo(f"  {child.path}{earlier}")
+            for line in _proposed_children_lines(egress.proposal_id, egress.children):
+                click.echo(line)
         elif (
             egress.verdict == "delivered"
             and egress.children
@@ -7044,6 +7192,12 @@ def run_procedure(
     contract_file: str | None,
     event_file: str | None,
 ) -> None:
+    """Run an accepted Procedure.
+
+    Exits 1 after its output (`--json` too) when the run refused or failed:
+    admission_refused, node_refused, operational_failed, internal_failed.
+    """
+
     resolution_contract = (
         None if contract_file is None else _read_model(contract_file, ResolutionContractReference)
     )
@@ -7063,11 +7217,13 @@ def run_procedure(
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        _exit_for_run(result)
         return
     _echo_run_outcome(result, result.run_id or name)
     if result.receipt_digest is not None:
         click.echo(f"Receipt: {result.receipt_digest}")
     _echo_source_observations(result)
+    _exit_for_run(result)
 
 
 @procedure_group.command("measure")
@@ -7755,7 +7911,8 @@ def run_line(
     """Run LINE once now: one manual occurrence under the Line's inputs, budgets and authority.
 
     It never selects, consumes or waits on a Trigger, and runs whether or not
-    the Line is enabled; the run is recorded on the Line's history.
+    the Line is enabled; the run is recorded on the Line's history. Exits 1
+    after its output (`--json` too) when the run refused or failed.
     """
 
     resolution_contract = (
@@ -7788,9 +7945,11 @@ def run_line(
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        _exit_for_run(result)
         return
     _echo_run_outcome(result, result.run_id or line)
     _echo_source_observations(result)
+    _exit_for_run(result)
 
 
 @playbill_group.command("next")
@@ -8542,6 +8701,46 @@ def _orient_predicate_line(item: Mapping[str, Any]) -> str:
     return "  ".join(parts)
 
 
+#: The default map names this many of a kind's fields, then counts the rest.
+_ORIENT_FIELDS_SHOWN = 6
+#: A query's description in the default map: its first sentence, at most this long.
+_ORIENT_QUERY_TEXT_LIMIT = 100
+
+
+def _orient_kind_summary(kind: Mapping[str, Any]) -> str:
+    """One line per kind in the default map: `orient --kind` prints every field."""
+
+    names = [str(item["name"]) for item in kind["predicates"]]
+    shown = ",".join(names[:_ORIENT_FIELDS_SHOWN])
+    more = len(names) - _ORIENT_FIELDS_SHOWN
+    fields = f"  fields={shown}" + (f" (+{more})" if more > 0 else "") if names else ""
+    return f"{kind['kind']}  subjects={kind['subjects']}{fields}"
+
+
+def _flattened_counts(counts: Mapping[str, Any], prefix: str = "") -> list[str]:
+    """Non-zero counts as `name=N`, a nested family as `family.name=N`."""
+
+    flat: list[str] = []
+    for name, value in counts.items():
+        if isinstance(value, Mapping):
+            flat.extend(_flattened_counts(value, f"{prefix}{name}."))
+        elif value:
+            flat.append(f"{prefix}{name}={value}")
+    return flat
+
+
+def _first_sentence(text: str) -> str:
+    """A description's first sentence, cut to the default map's width."""
+
+    first = text.strip().split("\n", 1)[0]
+    end = first.find(". ")
+    if end != -1:
+        first = first[: end + 1]
+    if len(first) > _ORIENT_QUERY_TEXT_LIMIT:
+        first = first[: _ORIENT_QUERY_TEXT_LIMIT - 3].rstrip() + "..."
+    return first
+
+
 def _render_orient(result: Mapping[str, Any]) -> str:
     lines = [
         f"Cruxible {result['instance']} generation={result['generation']} "
@@ -8575,18 +8774,16 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     kinds = result.get("kinds")
     if kinds is not None:
         lines.append(f"Kinds ({len(kinds)}):")
+        empty = [str(kind["kind"]) for kind in kinds if not kind["subjects"]]
         for kind in kinds:
-            shared = kind.get("evidence")
-            lines.append(
-                f"  {kind['kind']}  subjects={kind['subjects']}"
-                + (f"  evidence={','.join(map(_public_name, shared))}" if shared else "")
-            )
-            lines.extend(f"    {_orient_predicate_line(item)}" for item in kind["predicates"])
+            if kind["subjects"]:
+                lines.append(f"  {_orient_kind_summary(kind)}")
+        if empty:
+            lines.append(f"  no subjects yet ({len(empty)}): {', '.join(empty)}")
     artifacts = result.get("artifacts")
     if artifacts is not None:
-        lines.append(
-            "Artifacts: " + " ".join(f"{name}={count}" for name, count in artifacts.items())
-        )
+        counts = _flattened_counts(artifacts)
+        lines.append("Artifacts: " + (" ".join(counts) if counts else "none"))
     detail = result.get("kind_detail")
     if detail is not None:
         shared = detail.get("evidence")
@@ -8695,8 +8892,12 @@ def _render_orient(result: Mapping[str, Any]) -> str:
             lines.append("Queries:")
         for query in queries:
             params = ", ".join(query["params"])
-            description = f"  {query['description']}" if query.get("description") else ""
-            lines.append(f"  {query['name']}({params}){description}")
+            description = query.get("description") or ""
+            if section is None:
+                description = _first_sentence(description)
+            lines.append(
+                f"  {query['name']}({params})" + (f"  {description}" if description else "")
+            )
     attention = result.get("attention")
     if attention is not None:
         lines.append(
@@ -8757,7 +8958,11 @@ def orient(
     evaluation_time: str | None,
     output_json: bool,
 ) -> None:
-    """Map accepted state: kinds, predicates, artifacts, attention and next commands."""
+    """Map accepted state: kinds, predicates, artifacts, attention and next commands.
+
+    The map prints one line per kind (its first fields, then a count);
+    --kind prints one kind's every field, and --json carries everything.
+    """
 
     result = _server_call(
         lambda client, instance_id: client.orient(

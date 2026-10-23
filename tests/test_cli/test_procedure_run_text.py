@@ -48,3 +48,43 @@ def test_an_input_refusal_names_the_offending_field(capsys) -> None:
 def test_a_successful_run_leads_with_its_result(capsys) -> None:
     out = _echo(capsys, status="succeeded", result={"count": 1}, next_operation={"kind": "done"})
     assert out == 'audit.sign-line: succeeded\nResult: {"count": 1}\nNext: done\n'
+
+
+def test_an_operational_failure_names_the_providers_cause(capsys) -> None:
+    from cruxible_client.contracts.procedures.results import (
+        ProcedureFailureCause,
+        ProcedureOperationalFailure,
+    )
+
+    failure = ProcedureOperationalFailure(
+        code="provider_execution_error",
+        message="Provider execution failed for an operational reason.",
+        last_node_id="fetch",
+        cause=ProcedureFailureCause(
+            node_id="fetch",
+            provider_code="provider_execution_error",
+            kind="HttpStatus",
+            message="GET https://feed.test/kev.json returned 404",
+        ),
+    )
+    out = _echo(capsys, status="operational_failed", terminal=failure)
+    assert "Cause: fetch: HttpStatus: GET https://feed.test/kev.json returned 404\n" in out
+    untyped = failure.model_copy(
+        update={"cause": failure.cause.model_copy(update={"kind": None})}  # type: ignore[union-attr]
+    )
+    assert "Cause: fetch: provider_execution_error: GET" in _echo(
+        capsys, status="operational_failed", terminal=untyped
+    )
+
+
+def test_a_refused_or_failed_run_exits_1_and_the_rest_exit_0() -> None:
+    import pytest
+
+    from cruxible_core.cli.commands.playbill import _exit_for_run
+
+    for status in ("admission_refused", "node_refused", "operational_failed", "internal_failed"):
+        with pytest.raises(SystemExit) as stopped:
+            _exit_for_run(SimpleNamespace(status=status))  # type: ignore[arg-type]
+        assert stopped.value.code == 1
+    for status in ("succeeded", "halted", "running"):
+        _exit_for_run(SimpleNamespace(status=status))  # type: ignore[arg-type]

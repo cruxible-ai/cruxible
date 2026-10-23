@@ -125,3 +125,42 @@ def test_a_because_with_a_control_character_never_leaves_the_client(
 
     assert result.exit_code != 0
     assert stub.requests == []
+
+
+def test_an_erase_refusal_prints_its_repair_line_on_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.capture_erasure import CaptureEraseRefusedError
+    from cruxible_client.contracts.repairs import HandEditInstruction, HandEditRepair
+    from cruxible_client.errors import response_to_error
+    from cruxible_core.server.errors import error_to_response
+
+    repair_line = "Author a successor contract built with authorize_erasure(contract)"
+    refusal = CaptureEraseRefusedError(
+        "cruxible.capture.erasure_prohibited",
+        "CaptureContract:security.scan-output does not authorize erasing its Captures",
+        capture_digest=CAPTURE,
+        repair=HandEditRepair(
+            hand_edit=HandEditInstruction(
+                target="CaptureContract:security.scan-output", required_change=repair_line
+            )
+        ),
+        repair_line=repair_line,
+    )
+    wire = response_to_error(*error_to_response(refusal))
+
+    class _Refusing:
+        def erase_capture(self, instance_id: str, request: CaptureEraseRequest) -> Any:
+            raise wire
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: _Refusing())
+    result = CliRunner().invoke(
+        cli, [*PREFIX, "capture", "erase", "CAP-5f31df955084", "--because", BECAUSE]
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr.splitlines()[-2:] == [
+        "Error: cruxible.capture.erasure_prohibited: CaptureContract:security.scan-output "
+        "does not authorize erasing its Captures.",
+        f"Repair: {repair_line}",
+    ]

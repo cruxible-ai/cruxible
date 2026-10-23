@@ -410,3 +410,24 @@ def test_kit_status_lists_bundled_providers_and_their_install_state(
 
     assert result.exit_code == 0, result.output
     assert "provider kit-call (kit-call 0.2.0): differs (installed: 0.1.0)" in result.output
+
+
+def test_a_registry_refusal_prints_its_code_without_the_class_name() -> None:
+    import click
+
+    from cruxible_client.artifacts.registry import RegistryRefusal
+    from cruxible_core.cli.main import handle_errors
+
+    @click.command()
+    @handle_errors
+    def fetch() -> None:
+        raise RegistryRefusal(
+            "not_found", "ghcr.io/acme/kit:1 is not published (HTTP 404)", status=404
+        )
+
+    result = CliRunner().invoke(fetch)
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "Error: cruxible.kit.not_found: ghcr.io/acme/kit:1 is not published (HTTP 404)\n"
+    )

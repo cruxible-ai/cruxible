@@ -446,7 +446,7 @@ def orient(
 )
 def list_proposals(
     instance_id: str,
-    status: Literal["open", "settled", "incomplete"] | None = None,
+    status: Literal["open", "awaiting_readmit", "settled", "incomplete"] | None = None,
     limit: int = Query(
         default=contracts.PROPOSAL_LIST_DEFAULT_LIMIT,
         ge=1,
