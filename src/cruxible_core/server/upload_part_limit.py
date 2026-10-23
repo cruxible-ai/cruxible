@@ -21,6 +21,11 @@ from cruxible_client.contracts.uploads import UPLOAD_PART_SIZE
 from cruxible_core.server.errors import ErrorResponse
 
 UPLOAD_PART_ROUTE = re.compile(r"^/api/v1/[^/]+/uploads/[0-9a-f]{32}/parts/[0-9]+$")
+# The limiter bounds every path the part route could receive, valid or not: FastAPI
+# buffers the body before it validates the upload id or coerces ``part`` (``+0``,
+# ``-0`` and ``0.0`` all read as zero), so the narrow shape above, which the auth
+# middleware's octet-stream exception keeps, must not decide what gets bounded.
+UPLOAD_PART_LIMITED_ROUTE = re.compile(r"^/api/v1/[^/]+/uploads/[^/]*/parts/[^/]*/?$")
 PART_TOO_LARGE_CODE = "cruxible.upload.part_too_large"
 
 
@@ -47,7 +52,7 @@ class UploadPartBodyLimit:
         if (
             scope["type"] != "http"
             or scope.get("method") != "POST"
-            or UPLOAD_PART_ROUTE.fullmatch(scope.get("path", "")) is None
+            or UPLOAD_PART_LIMITED_ROUTE.fullmatch(scope.get("path", "")) is None
         ):
             await self.app(scope, receive, send)
             return
@@ -86,4 +91,9 @@ class UploadPartBodyLimit:
         await self.app(scope, replay, send)
 
 
-__all__ = ["PART_TOO_LARGE_CODE", "UPLOAD_PART_ROUTE", "UploadPartBodyLimit"]
+__all__ = [
+    "PART_TOO_LARGE_CODE",
+    "UPLOAD_PART_LIMITED_ROUTE",
+    "UPLOAD_PART_ROUTE",
+    "UploadPartBodyLimit",
+]
