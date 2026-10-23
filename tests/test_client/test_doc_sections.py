@@ -102,8 +102,32 @@ def test_append_root_allows_any_level_and_repairs_missing_newline() -> None:
     "text", ["plain body", "# Peer", "### Too deep", "## New\n# Escape", "## X\n## Y"]
 )
 def test_append_refuses_invalid_subtrees(text: str) -> None:
-    with pytest.raises(DocSectionError, match="Append"):
+    with pytest.raises(DocSectionError, match="(?i)append"):
         append_section(b"# A\n", under=("A",), text=text)
+
+
+def test_append_names_the_level_it_needs_under_its_parent() -> None:
+    with pytest.raises(DocSectionError) as refused:
+        append_section(b"# A\n## B\n", under=("A", "B"), text="## New\nbody")
+    assert str(refused.value) == (
+        "Under 'B' (level 2) the appended heading must be level 3; "
+        "TEXT starts with 'New' at level 2."
+    )
+    assert refused.value.repair == "Start TEXT with ### New"
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("## X\n## Y", "TEXT has 2 headings at level 2 ('X', 'Y')."),
+        ("## New\n# Escape", "TEXT has 2 headings at level 2 or above ('New', 'Escape')."),
+    ],
+)
+def test_append_of_several_sections_names_them(text: str, message: str) -> None:
+    with pytest.raises(DocSectionError) as refused:
+        append_section(b"# A\n", under=("A",), text=text)
+    assert str(refused.value) == "An append adds one section; " + message
+    assert refused.value.repair is not None and "its own op" in refused.value.repair
 
 
 def test_append_and_rename_refuse_collisions_including_descendants() -> None:
