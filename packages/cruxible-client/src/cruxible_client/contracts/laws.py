@@ -18,6 +18,7 @@ CLAIM_TYPE_LAW_V5_IDENTIFIER = "playbill.claim-type.v5"
 CLAIM_TYPE_LAW_V6_IDENTIFIER = "playbill.claim-type.v6"
 CLAIM_TYPE_LAW_V7_IDENTIFIER = "playbill.claim-type.v7"
 CLAIM_TYPE_LAW_V8_IDENTIFIER = "playbill.claim-type.v8"
+CLAIM_TYPE_LAW_V9_IDENTIFIER = "cruxible.claim-type.v9"
 CLAIM_LAW_V2_IDENTIFIER = "playbill.claim.v2"
 CLAIM_LAW_V3_IDENTIFIER = "playbill.claim.v3"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
@@ -326,6 +327,15 @@ CLAIM_TYPE_LAW_V8_REVISION_1 = _artifact_law_coordinate(
     "playbill-claim-type-v8",
     semantic_revision=1,
 )
+# ClaimType v9: v8 plus an inverse (how a Claim states that a unit holds
+# nothing), admitted with compiler revision 35. The v8 law applies, and an
+# inverse must name a unit (never exact content), evidence rules the type
+# declares and, keyed by object_key, a key of every object SubjectKind.
+CLAIM_TYPE_LAW_V9_REVISION_1 = _artifact_law_coordinate(
+    CLAIM_TYPE_LAW_V9_IDENTIFIER,
+    "cruxible-claim-type-v9",
+    semantic_revision=1,
+)
 PROVIDER_LAW = _artifact_law_coordinate(
     PROVIDER_LAW_IDENTIFIER,
     "playbill-provider-v1",
@@ -517,6 +527,11 @@ CLAIM_TYPE_V8_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_TYPE_LAW_V8_REVISION_1,
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v8",
+)
+CLAIM_TYPE_V9_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_TYPE_LAW_V9_REVISION_1,
+    artifact_kind="claim-type",
+    artifact_tag="cruxible-claim-type-v9",
 )
 CAPTURE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CAPTURE_CONTRACT_LAW_REVISION_4,
@@ -925,6 +940,7 @@ ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CLAIM_TYPE_V6_REVISION_1_ACCEPTANCE_LAW,
         CLAIM_TYPE_V7_ACCEPTANCE_LAW,
         CLAIM_TYPE_V8_ACCEPTANCE_LAW,
+        CLAIM_TYPE_V9_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,

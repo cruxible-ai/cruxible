@@ -15,10 +15,11 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pydantic import ValidationError
 
+from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
 from cruxible_client.contracts.captures import (
     CaptureFormatError,
     CaptureProductionRecord,
@@ -54,6 +55,9 @@ from cruxible_core.procedures.execution import (
     procedure_line_journal_stream,
 )
 from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+if TYPE_CHECKING:
+    from cruxible_core.evidence.capture_erasures import CaptureErasureStore
 
 #: The records a receipt or production proof is built from; no other payload is read.
 _PROOF_EVENT_KINDS = frozenset(
@@ -96,6 +100,8 @@ class LocalProducerReceiptResolver:
         full_journal: bool,
     ) -> None:
         self._journal_root = exhaust_root / "procedure-runs"
+        self._exhaust_root = exhaust_root
+        self._erasures: CaptureErasureStore | None = None
         self._instance_id = instance_id
         self._bodies = bodies
         self._full_journal = full_journal
@@ -142,6 +148,23 @@ class LocalProducerReceiptResolver:
 
     def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
         self._verified.remember(memo)
+
+    def capture_erasure(self, capture_digest: str) -> CaptureErasureRecord | None:
+        """The governed erasure recorded for one Capture, read from this instance's journal.
+
+        Asked only when an inherited Capture's body no longer verifies; an
+        instance that never erased anything answers without opening a file.
+        """
+
+        from cruxible_core.evidence.capture_erasures import CaptureErasureStore
+
+        if self._erasures is None:
+            self._erasures = CaptureErasureStore.reader(
+                exhaust_root=self._exhaust_root,
+                instance_id=self._instance_id,
+                bodies=self._bodies,
+            )
+        return self._erasures.for_capture(capture_digest)
 
 
 #: The verification context the current request owns, with the instance it serves.

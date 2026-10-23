@@ -186,7 +186,8 @@ class CaptureEraseResult(_StrictErasureModel):
     replayable, and each ClaimType's own rules decide what that means (one that
     requires current replay reads the Claim ``stale``). A live Claim citing an
     erased Capture moves on by a re-bind onto a fresh Capture under the same
-    contract; a revision or retirement still carries the erased one and refuses.
+    contract, and can be revised or retired: what it inherits verifies on the
+    envelope and this record (compiler revision 35).
     """
 
     tag: Literal["playbill-capture-erase-result-v1"] = "playbill-capture-erase-result-v1"

@@ -26,6 +26,7 @@ from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ExactContentClaimObject,
+    NoneClaimObject,
     SubjectClaimObject,
 )
 from cruxible_client.contracts.errors import CruxibleError
@@ -844,6 +845,8 @@ def _claim_value(claim: ClaimArtifactAny) -> object:
         return _subject_ref(obj.address.artifact_path)
     if isinstance(obj, ExactContentClaimObject):
         return obj.content_digest
+    if isinstance(obj, NoneClaimObject):
+        return obj.model_dump(mode="json")
     return obj.value
 
 

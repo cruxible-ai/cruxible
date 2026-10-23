@@ -1168,6 +1168,13 @@ def parse_projection_tree(
                 ):
                     raise ProjectionFormatError("ClaimType v7 and v8 require compiler revision 31")
                 if (
+                    claim_type.artifact_format == "cruxible-claim-type-v9"
+                    and artifact_kinds is not PROVIDER_BUILDS_ARTIFACT_KINDS
+                ):
+                    # Revision 35 admits v9; it shares revision 34's grammar, and
+                    # admission (not this parse) refuses v9 under revision 34.
+                    raise ProjectionFormatError("ClaimType v9 requires compiler revision 35")
+                if (
                     claim_type.artifact_format == "playbill-claim-type-v5"
                     and artifact_kinds
                     not in (

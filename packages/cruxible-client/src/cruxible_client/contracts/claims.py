@@ -34,6 +34,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.canonical_forms import is_canonical_literal
+from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
@@ -64,7 +65,11 @@ from cruxible_client.contracts.claim_attestations import (
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
+    CLAIM_TYPE_V9_FORMAT,
     AcceptedClaimType,
+    ClaimInverse,
+    ClaimInverseObjectKey,
+    ClaimInverseObjectKeyPart,
     ClaimType,
     EvidenceRequirement,
     claim_type_accepts_subject,
@@ -159,10 +164,81 @@ class ExactContentClaimObject(_StrictClaimModel):
         return self
 
 
+class NoneClaimObject(_StrictClaimModel):
+    """An inverse Claim's object: the unit its ClaimType's inverse names holds nothing.
+
+    ``of`` names the unit within the slot: omitted for an inverse keyed by
+    ``slot`` (the whole one-valued slot), the absent object itself for one keyed
+    by ``object``, and the key value (a literal in the key ClaimType's canonical
+    form) for one keyed by ``object_key``. Only a ClaimType v9 that declares an
+    inverse admits one.
+    """
+
+    kind: Literal["none"] = "none"
+    of: Annotated[LiteralClaimObject | SubjectClaimObject, Field(discriminator="kind")] | None = (
+        Field(default=None, exclude_if=lambda value: value is None)
+    )
+
+
 ClaimObject = Annotated[
-    LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject,
+    LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | NoneClaimObject,
     Field(discriminator="kind"),
 ]
+
+
+ClaimPolarity: TypeAlias = Literal["positive", "inverse"]
+
+
+def claim_polarity(statement: ClaimStatement) -> ClaimPolarity:
+    """``inverse`` for a Claim stating that its unit holds nothing, else ``positive``."""
+
+    return "inverse" if isinstance(statement.object, NoneClaimObject) else "positive"
+
+
+class ClaimUnitKey(_StrictClaimModel):
+    """The unit of a slot one Claim speaks about, under its ClaimType's inverse.
+
+    A unit holds positives or one inverse, never both. ``value`` is ``None`` for
+    a ``slot`` unit, the object's canonical JSON for an ``object`` unit and the
+    canonical key value for an ``object_key`` unit.
+    """
+
+    kind: Literal["slot", "object", "object_key"]
+    value: object = None
+
+
+def claim_unit_key(
+    statement: ClaimStatement,
+    inverse: ClaimInverse,
+    *,
+    object_key_value: Callable[[SemanticAddress, str], object] | None = None,
+) -> ClaimUnitKey | None:
+    """The unit ``statement`` speaks about, or None when it cannot be read here.
+
+    ``object_key_value(address, predicate)`` reads the one live key value of an
+    object Subject (None: none or several); it is consulted only for a positive
+    Claim under an inverse keyed by ``object_key``.
+    """
+
+    key = inverse.key
+    value = statement.object
+    if isinstance(key, ClaimInverseObjectKey):
+        named = value.of if isinstance(value, NoneClaimObject) else value
+        return (
+            None
+            if named is None
+            else ClaimUnitKey(kind="object", value=named.model_dump(mode="json"))
+        )
+    if isinstance(key, ClaimInverseObjectKeyPart):
+        if isinstance(value, NoneClaimObject):
+            if not isinstance(value.of, LiteralClaimObject):
+                return None
+            return ClaimUnitKey(kind="object_key", value=value.of.value)
+        if not isinstance(value, SubjectClaimObject) or object_key_value is None:
+            return None
+        found = object_key_value(value.address, key.predicate)
+        return None if found is None else ClaimUnitKey(kind="object_key", value=found)
+    return ClaimUnitKey(kind="slot")
 
 
 class ClaimStatement(_StrictClaimModel):
@@ -1944,6 +2020,131 @@ def _rebind_replaces(
     )
 
 
+def _inverse_object_refusal(
+    value: NoneClaimObject,
+    *,
+    contract: ClaimType,
+    claim_types: Mapping[str, AcceptedClaimType],
+    path: str,
+) -> ClaimLawResult | None:
+    """Refuse an inverse its ClaimType does not declare, or whose ``of`` misses the key."""
+
+    inverse = contract.inverse
+    if contract.artifact_format != CLAIM_TYPE_V9_FORMAT or inverse is None:
+        return _diagnostic(
+            "cruxible.claim.inverse_undeclared",
+            f"ClaimType {contract.predicate!r} declares no inverse, so a Claim of it cannot "
+            "state that its value is none; declare `inverse` on the ClaimType, or retire the "
+            "values that no longer hold.",
+            path=path,
+            field="object",
+        )
+    key = inverse.key
+    if isinstance(key, ClaimInverseObjectKeyPart):
+        key_type = claim_types.get(f"ClaimType:{key.predicate}")
+        if not isinstance(value.of, LiteralClaimObject):
+            problem = f"names its unit by the key {key.predicate!r}: `of` is that key's value"
+        elif key_type is None:
+            problem = f"is keyed by {key.predicate!r}, which does not resolve"
+        elif key_type.claim_type.literal_schema is not None and not _validate_literal_schema(
+            value.of.value, key_type.claim_type.literal_schema
+        ):
+            problem = f"names a key value {value.of.value!r} that {key.predicate!r} does not admit"
+        elif not is_canonical_literal(value.of.value, key_type.claim_type.canonical_form or ()):
+            problem = (
+                f"names the key value {value.of.value!r}, which is not in the canonical form "
+                f"{key.predicate!r} declares; store its canonical value"
+            )
+        else:
+            return None
+    elif isinstance(key, ClaimInverseObjectKey):
+        if value.of is not None:
+            return None
+        problem = "is keyed by object: `of` is the object it says is absent"
+    else:
+        if value.of is None:
+            return None
+        problem = "is keyed by slot: the whole slot holds nothing, so `of` is omitted"
+    return _diagnostic(
+        "cruxible.claim.inverse_key_mismatch",
+        f"The inverse of {contract.predicate!r} {problem}.",
+        path=path,
+        field="object",
+    )
+
+
+def _flip_unit_moved(
+    statement: ClaimStatement, previous: ClaimStatement, contract: ClaimType
+) -> str | None:
+    """Why a flip leaves the unit it revises, or None when it provably stays.
+
+    Subject and predicate are held by the revision checks; a flip also keeps
+    its qualifier, and under an inverse keyed by object the absent object is
+    the positive's own. An object_key flip names a key value whose holder is
+    read from state, so the candidate boundary judges it.
+    """
+
+    if statement.qualifier != previous.qualifier:
+        return "A flip keeps the qualifier of the Claim it revises."
+    inverse = contract.inverse
+    if inverse is None or not isinstance(inverse.key, ClaimInverseObjectKey):
+        return None
+    new_unit = claim_unit_key(statement, inverse)
+    old_unit = claim_unit_key(previous, inverse)
+    if new_unit is None or new_unit != old_unit:
+        return (
+            "A flip stays in its unit: an inverse keyed by object names the object the positive "
+            "held. Write the none for that object, or retire this Claim and state the other."
+        )
+    return None
+
+
+def _inverse_rules_admit(
+    claim: ClaimArtifactAny,
+    *,
+    contract: ClaimType,
+    inverse: ClaimInverse,
+    capture_digest: str,
+    capture_contract: AcceptedCaptureContract,
+    envelope: CaptureEnvelopeAny,
+    verified_attestations: tuple[VerifiedClaimAttestationV1, ...],
+) -> bool:
+    """Whether one of the inverse's own evidence rules admits this cited Capture."""
+
+    rules = tuple(
+        rule
+        for rule in contract.evidence_admission_policy.rules
+        if rule.rule_id in inverse.evidence_rules
+    )
+    if not rules:
+        return False
+    restricted = contract.model_copy(
+        update={
+            "evidence_admission_policy": contract.evidence_admission_policy.model_copy(
+                update={"rules": rules}
+            )
+        }
+    )
+    if not capture_citation_eligible(
+        claim,
+        claim_type=restricted,
+        capture_contract=capture_contract,
+        capture_digest=capture_digest,
+    ):
+        return False
+    return any(
+        decision.trace.result.verdict == "eligible"
+        for decision in evaluate_capture_evidence_admissions(
+            claim,
+            claim_type=restricted,
+            capture_digest=capture_digest,
+            capture_contract=capture_contract,
+            envelope=envelope,
+            verified_attestations=verified_attestations,
+        )
+    )
+
+
 def evaluate_claim_law(
     claim: ClaimArtifactAny,
     *,
@@ -1971,8 +2172,28 @@ def evaluate_claim_law(
     accepted_subject_version: Callable[[str, str], bool] | None = None,
     subject_creation_key: bool = False,
     claim_rebind: bool = False,
+    erasure_record: Callable[[str], CaptureErasureRecord | None] | None = None,
+    origin_replay_exempt: bool = False,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
+
+    With `erasure_record` (compiler revision 35: Claim law v2 revision 10 and v3
+    revision 11) a Capture the Claim inherits from its accepted predecessor whose
+    retained body was erased under its contract's authority verifies on its
+    envelope and that erasure record, so the Claim can still be retired or
+    revised; it enters the verdict as no longer replayable. Replaying accepted
+    history (no new-citation proof) verifies the same way, so a generation that
+    cited the Capture before it was erased still reproduces, as replayable as it
+    was then. A Capture cited anew still needs its body. With `origin_replay_exempt` (revision 10) a ``none``
+    type compiles adjudication rule v3, whose origin-only entries need no current
+    replay.
+
+    An inverse Claim (object ``none``, ClaimType v9) is judged by the type's
+    inverse: its object names the unit the inverse is keyed by, it cites at least
+    one Capture an inverse evidence rule admits, and a revision that changes
+    polarity (a flip) stays in its unit and carries exactly the evidence it cites,
+    as under ``replace``. No Claim accepted before compiler revision 35 names a v9
+    ClaimType, so every earlier Claim is judged as before.
 
     With `claim_rebind` (Claim law v2 revision 10, with compiler revision 35) a
     revision that keeps its statement may drop a citation by replacing it: the
@@ -2036,8 +2257,14 @@ def evaluate_claim_law(
         else "self"
     )
     carry = predecessor is not None and claim.backing == predecessor.claim.backing
+    # A flip: the revision changes polarity (positive to inverse, or back).
+    flipping = bool(
+        predecessor is not None
+        and not carry
+        and claim_polarity(claim.statement) != claim_polarity(predecessor.claim.statement)
+    )
     replacing = bool(
-        revision_evidence == "replace"
+        (revision_evidence == "replace" or flipping)
         and predecessor is not None
         and not carry
         and claim.statement
@@ -2199,18 +2426,40 @@ def evaluate_claim_law(
         )
 
     object_subject: _ResolvedReferent | None = None
-    if not claim_type_retirement_shape_exempt and statement.object.kind != contract.object_kind:
+    # What the object section judges: an inverse keyed by object is judged as the
+    # object it says is absent; any other inverse has no object to judge.
+    judged_object: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | None
+    if isinstance(statement.object, NoneClaimObject):
+        if not claim_type_retirement_shape_exempt:
+            refusal = _inverse_object_refusal(
+                statement.object, contract=contract, claim_types=claim_types, path=path
+            )
+            if refusal is not None:
+                return refusal
+        judged_object = (
+            statement.object.of
+            if contract.inverse is not None
+            and isinstance(contract.inverse.key, ClaimInverseObjectKey)
+            else None
+        )
+    else:
+        judged_object = statement.object
+    if (
+        judged_object is not None
+        and not claim_type_retirement_shape_exempt
+        and judged_object.kind != contract.object_kind
+    ):
         return _diagnostic(
             "cruxible.claim.object_kind_mismatch",
-            f"The Claim object kind {statement.object.kind!r} differs from ClaimType "
+            f"The Claim object kind {judged_object.kind!r} differs from ClaimType "
             f"{contract.predicate!r}, which states {contract.object_kind!r}.",
             path=path,
             field="object",
         )
-    if isinstance(statement.object, LiteralClaimObject):
+    if isinstance(judged_object, LiteralClaimObject):
         if not claim_type_retirement_shape_exempt and (
             contract.literal_schema is None
-            or not _validate_literal_schema(statement.object.value, contract.literal_schema)
+            or not _validate_literal_schema(judged_object.value, contract.literal_schema)
         ):
             members = (
                 None if contract.literal_schema is None else contract.literal_schema.get("enum")
@@ -2222,7 +2471,7 @@ def evaluate_claim_law(
             )
             return _diagnostic(
                 "cruxible.claim.literal_schema_invalid",
-                f"The Claim literal {statement.object.value!r} fails the exact schema of "
+                f"The Claim literal {judged_object.value!r} fails the exact schema of "
                 f"ClaimType {contract.predicate!r}{admitted}.",
                 path=path,
                 field="object",
@@ -2231,11 +2480,11 @@ def evaluate_claim_law(
         # No Claim accepted before v8 names a v8 ClaimType, so every earlier
         # Claim is judged exactly as before.
         if not claim_type_retirement_shape_exempt and not is_canonical_literal(
-            statement.object.value, contract.canonical_form or ()
+            judged_object.value, contract.canonical_form or ()
         ):
             return _diagnostic(
                 "cruxible.claim.literal_not_canonical",
-                f"The Claim literal {statement.object.value!r} is not in the canonical form "
+                f"The Claim literal {judged_object.value!r} is not in the canonical form "
                 f"ClaimType {contract.predicate!r} declares "
                 f"({', '.join(contract.canonical_form or ())}); store its canonical value.",
                 path=path,
@@ -2247,9 +2496,9 @@ def evaluate_claim_law(
                 "Literal Claims cannot name an object Subject shell digest.",
                 path=path,
             )
-    elif isinstance(statement.object, SubjectClaimObject):
+    elif isinstance(judged_object, SubjectClaimObject):
         object_subject = _resolved_referent(
-            statement.object.address,
+            judged_object.address,
             subjects,
             claim_types,
             descriptor=descriptor,
@@ -2293,7 +2542,8 @@ def evaluate_claim_law(
     elif claim.backing.referent_context.object_content_digest is not None:
         return _diagnostic(
             "cruxible.claim.object_context_unexpected",
-            "Exact-content Claims cannot name an object Subject shell digest.",
+            "Exact-content Claims and inverses without an object cannot name an object "
+            "Subject shell digest.",
             path=path,
         )
 
@@ -2446,6 +2696,10 @@ def evaluate_claim_law(
                 "Subject you mean.",
                 path=path,
             )
+        if flipping:
+            moved = _flip_unit_moved(claim.statement, predecessor.claim.statement, contract)
+            if moved is not None:
+                return _diagnostic("cruxible.claim.flip_unit_moved", moved, path=path)
         if claim.statement.predicate != predecessor.claim.statement.predicate:
             return _diagnostic(
                 "cruxible.claim.revision_predicate_moved",
@@ -2582,6 +2836,7 @@ def evaluate_claim_law(
     contracts_by_digest: dict[str, list[AcceptedCaptureContract]] | None = None
     cited_contract_versions: set[str] = set()
     captured_evidence = False
+    inverse_evidence = False
     for capture_digest_value in claim.backing.capture_digests:
         envelope = None
         resolved_contract = None
@@ -2645,6 +2900,37 @@ def evaluate_claim_law(
                 + str(production_gap),
                 path=path,
             )
+        erased = False
+        if (
+            (envelope is None or resolved_contract is None)
+            and erasure_record is not None
+            # Inherited (a retirement or revision after the erasure), or accepted
+            # history replayed after it; a Capture cited anew needs its body.
+            and (capture_digest_value in inherited_captures or not require_new_citation_proof)
+            and named
+            and (record := erasure_record(capture_digest_value)) is not None
+        ):
+            # A Capture whose body was erased under its contract's authority: its
+            # envelope and the erasure record stand for it. It is unreplayable
+            # for a judgment made after the erasure, and as it was for one made
+            # before (a replay reproduces what was judged then).
+            for contract_candidate in contracts_by_digest.get(named, []):
+                try:
+                    envelope = verify_capture(
+                        capture_digest_value,
+                        store=capture_store,
+                        contract=contract_candidate.contract,
+                        ledger_resolver=ledger_resolver,
+                        producer_artifact_digests=known_producer_digests,
+                        producer_receipt_resolver=producer_receipt_resolver,
+                        require_production_proof=False,
+                        erasure=record,
+                    )
+                except (FormatError, ValueError):
+                    continue
+                resolved_contract = contract_candidate
+                erased = record.erased_at <= evaluated_at
+                break
         if envelope is None or resolved_contract is None:
             return _diagnostic(
                 "cruxible.claim.capture_unverified",
@@ -2763,6 +3049,20 @@ def evaluate_claim_law(
             if eligible
             else ()
         )
+        if (
+            isinstance(statement.object, NoneClaimObject)
+            and contract.inverse is not None
+            and not inverse_evidence
+        ):
+            inverse_evidence = _inverse_rules_admit(
+                claim,
+                contract=contract,
+                inverse=contract.inverse,
+                capture_digest=capture_digest_value,
+                capture_contract=resolved_contract,
+                envelope=envelope,
+                verified_attestations=tuple(verified_attestations),
+            )
         for decision in decisions:
             admission = decision.trace.result
             if admission.verdict == "eligible" and admission.admission is not None:
@@ -2809,7 +3109,8 @@ def evaluate_claim_law(
                     else envelope.source_effective_time.effective_until
                 ),
                 current_replay_available=(
-                    envelope.commitment.materialization in {"ledger", "cas", "external"}
+                    not erased
+                    and envelope.commitment.materialization in {"ledger", "cas", "external"}
                 ),
             )
         )
@@ -2821,6 +3122,19 @@ def evaluate_claim_law(
             "Under revision_evidence 'replace', a revision that changes its statement "
             "carries exactly the evidence it cites, so every capture-contract pin must name "
             "the contract version of a Capture it cites.",
+            path=path,
+        )
+    if (
+        isinstance(statement.object, NoneClaimObject)
+        and contract.inverse is not None
+        and not carry
+        and not inverse_evidence
+    ):
+        return _diagnostic(
+            "cruxible.claim.inverse_evidence_required",
+            f"An inverse of {contract.predicate!r} states that its unit holds nothing, which "
+            "only evidence can establish: cite a Capture one of its inverse evidence rules "
+            f"({', '.join(contract.inverse.evidence_rules)}) admits.",
             path=path,
         )
     if evidence_requirement == "captured" and not carry and not captured_evidence:
@@ -2902,6 +3216,7 @@ def evaluate_claim_law(
         contract,
         claim_type_digest=claim_type.artifact_digest,
         origin_supports=creation_covered,
+        origin_replay_exempt=origin_replay_exempt,
     )
     adjudication_rule_digest = claim_adjudication_rule_digest(rule)
     basis = tuple(sorted(evidence_basis, key=lambda item: item.encode("utf-8")))
@@ -2988,8 +3303,13 @@ __all__ = [
     "ClaimStatement",
     "ClaimStatementCard",
     "ClaimUnsupportedFormatError",
+    "ClaimPolarity",
+    "ClaimUnitKey",
     "ExactContentClaimObject",
     "LiteralClaimObject",
+    "NoneClaimObject",
+    "claim_polarity",
+    "claim_unit_key",
     "LegacyCitationReference",
     "SubjectClaimObject",
     "claim_artifact_digest",

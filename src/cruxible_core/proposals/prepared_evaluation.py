@@ -24,7 +24,9 @@ from typing import TYPE_CHECKING, Any, cast
 from cruxible_client.contracts.authoring_profiles import ClaimTypeExpansionEvidence
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
 from cruxible_client.contracts.captures import (
+    CaptureErasureLookupProtocol,
     CaptureObjectStoreProtocol,
     CaptureProductionRecord,
     ProcedureProducerReceiptProtocol,
@@ -163,6 +165,14 @@ class _ObservedReceipts:
     def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
         self._own.add(memo.capture_digest)
         self.source.remember_verified(memo)
+
+    def capture_erasure(self, capture_digest: str) -> CaptureErasureRecord | None:
+        # Erasure state is not a body this evaluation observes, so its answer
+        # is never reused across submits.
+        self.scope.ineligible = True
+        if isinstance(self.source, CaptureErasureLookupProtocol):
+            return self.source.capture_erasure(capture_digest)
+        return None
 
 
 class PreparedEvaluationScope:

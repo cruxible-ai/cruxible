@@ -321,11 +321,6 @@ def test_the_worker_resurfaces_a_claim_left_bare_and_clears_it_when_rebound(
     assert bare.capture_digests == (world.capture,)
     assert evidence_findings(instance) == ()  # an erased body is no damage
 
-    # Retiring still carries the erased Capture, whose body no longer verifies.
-    retired = write(instance, {"op": "retire", "target": world.claim}, because="Erased.")
-    assert retired.refusal is not None
-    assert retired.refusal.code == "cruxible.claim.capture_unverified"
-
     # Re-bound onto a fresh observation: the row follows the Claim away.
     outcome = rebind(instance, world.claim, rescan(world))
     assert outcome.refusal is None, outcome
@@ -333,3 +328,63 @@ def test_the_worker_resurfaces_a_claim_left_bare_and_clears_it_when_rebound(
     assert erased_claims(instance) == ()
     (cited,) = _evidence(world).captures
     assert cited.erased is None and cited.capture != capture_handle(world.capture)
+
+
+def test_a_claim_left_bare_can_still_be_retired(world: ErasureWorld) -> None:
+    _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+
+    # The retirement inherits the erased Capture: it verifies on its envelope and
+    # the erasure record, so the Claim is not stranded (compiler revision 35).
+    retired = write(world.instance, {"op": "retire", "target": world.claim}, because="Erased.")
+
+    assert retired.refusal is None, retired.refusal
+
+
+def test_a_claim_left_bare_can_still_be_revised_onto_new_evidence(world: ErasureWorld) -> None:
+    from tests.support.capture_erasure_world import cite, rescan
+
+    _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+    fresh = rescan(world)
+
+    # The type accumulates evidence, so the revision inherits the erased Capture too.
+    revised = cite(world.instance, fresh, "low")
+
+    assert revised.refusal is None, revised.refusal
+    assert revised.changes[0].claim == world.claim
+    erased, current = sorted(_evidence(world).captures, key=lambda item: item.erased is None)
+    assert erased.erased is not None and current.erased is None
+
+
+def test_citing_an_erased_capture_anew_still_needs_its_body(world: ErasureWorld) -> None:
+    _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+
+    outcome = write(
+        world.instance,
+        {
+            "op": "set",
+            "subject": "project.work_item/wi-2",
+            "field": "severity",
+            "value": "high",
+            "evidence": {"kind": "capture", "capture": world.capture},
+        },
+        because="Cites the erased scan.",
+    )
+
+    assert outcome.refusal is not None
+
+
+def test_an_erasure_record_that_is_not_the_contracts_own_does_not_verify(
+    world: ErasureWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.exhaust.producer_receipts import LocalProducerReceiptResolver
+
+    erased = _erase(world, dry_run=False, at=_erase(world).coordinate.digest).erasure
+    forged = erased.model_copy(update={"erasure_rule_digest": "sha256:" + "0" * 64})
+    monkeypatch.setattr(
+        LocalProducerReceiptResolver, "capture_erasure", lambda self, digest: forged
+    )
+
+    retired = write(world.instance, {"op": "retire", "target": world.claim}, because="Erased.")
+
+    assert retired.refusal is not None
+    assert retired.refusal.code == "cruxible.claim.capture_unverified"

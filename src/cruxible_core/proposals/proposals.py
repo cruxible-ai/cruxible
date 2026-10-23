@@ -70,8 +70,10 @@ from cruxible_client.contracts.canonical import (
     semantic_projection,
     typed_digest,
 )
+from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
+    CaptureErasureLookupProtocol,
     CaptureFormatError,
     CaptureObjectStoreProtocol,
     ProducerReceiptResolverProtocol,
@@ -83,6 +85,7 @@ from cruxible_client.contracts.claim_attestations import (
     accepted_referent_coordinates_from_tree,
 )
 from cruxible_client.contracts.claim_types import (
+    CLAIM_TYPE_V9_FORMAT,
     AcceptedClaimType,
     ClaimType,
     ClaimTypeFormatError,
@@ -100,6 +103,7 @@ from cruxible_client.contracts.claims import (
     ClaimLawEvidenceAny,
     ExactContentClaimObject,
     LiteralClaimObject,
+    NoneClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_preserves_derivation,
@@ -258,6 +262,7 @@ from cruxible_client.contracts.subject_kinds import (
     AcceptedSubjectKind,
     SubjectKindFormatError,
     evaluate_subject_kind_law,
+    live_subject_kind,
     parse_subject_kind,
     subject_kind_digest,
 )
@@ -1074,6 +1079,9 @@ def _effective_claim_values(
         if statement.effective_from is not None and statement.effective_from > at:
             continue
         if statement.effective_until is not None and statement.effective_until <= at:
+            continue
+        if isinstance(statement.object, NoneClaimObject):
+            # An inverse holds no value: it never projects one into a policy.
             continue
         value = _claim_policy_value(statement.object)
         predicate_values = collected.setdefault(statement.subject.artifact_path, {}).setdefault(
@@ -3435,6 +3443,10 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         # Claim law v2 revision 10 alone: a same-statement revision may replace
         # a citation with one of the text it rests on now.
         claim_rebind=installed.coordinate == CLAIM_LAW_V2_REVISION_10,
+        # Revision 10 alone: a `none` type's origin-only evidence needs no current
+        # replay (adjudication rule v3).
+        origin_replay_exempt=installed.coordinate == CLAIM_LAW_V2_REVISION_10,
+        erasure_record=_erasure_record(context, installed),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -3477,6 +3489,51 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         query_receipt_digests=context.claim_admission_query_digests_by_path.get(context.path, ()),
         retired=claim.lifecycle.state == "retired",
     )
+
+
+def _inverse_subject_kind_keys(
+    context: _MemberContext, claim_type: ClaimType
+) -> dict[str, tuple[str, ...] | None] | None:
+    """Each object SubjectKind's declared keys in the candidate, for an object_key inverse.
+
+    Read only when the ClaimType declares one: one SubjectKind per object kind.
+    """
+
+    inverse = claim_type.inverse
+    if inverse is None or inverse.key.kind != "object_key":
+        return None
+    keys: dict[str, tuple[str, ...] | None] = {}
+    for kind in claim_type.allowed_object_subject_kinds:
+        try:
+            declared = live_subject_kind(context.candidate_tree, kind)
+        except SubjectKindFormatError:
+            declared = None
+        keys[kind] = None if declared is None else tuple(declared.keys)
+    return keys
+
+
+def _erasure_record(
+    context: _MemberContext, installed: InstalledAcceptanceLaw
+) -> Callable[[str], CaptureErasureRecord | None] | None:
+    """The erasure lookup the Claim law consults for an inherited Capture, under compiler 35.
+
+    A retirement or revision inherits every Capture its predecessor cited; one
+    erased under its contract's authority verifies on its envelope and erasure
+    record (Claim law v2 revision 10 and v3 revision 11, with compiler 35). The
+    verification context answers it, when it can.
+    """
+
+    from cruxible_core.compiler.compiler import admits_claim_rebind
+
+    if not admits_claim_rebind(context.current.compiler) or installed.coordinate not in {
+        CLAIM_LAW_V2_REVISION_10,
+        CLAIM_LAW_V3_REVISION_11,
+    }:
+        return None
+    resolver = context.producer_receipt_resolver
+    if isinstance(resolver, CaptureErasureLookupProtocol):
+        return resolver.capture_erasure
+    return None
 
 
 def _claim_type_v6_unresolved(context: _MemberContext, claim_type: ClaimType) -> tuple[str, ...]:
@@ -3542,11 +3599,31 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
                     ),
                 )
             )
+    from cruxible_core.compiler.compiler import admits_claim_rebind
+
+    if (
+        claim_type.artifact_format == CLAIM_TYPE_V9_FORMAT
+        and context.historical_law_coordinate is None
+        and not admits_claim_rebind(context.current.compiler)
+    ):
+        # ClaimType v9 (inverses) is admitted with compiler revision 35, as
+        # revision 31 admitted v8; an earlier compiler has no law for it.
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "cruxible.claim_type.compiler_unsupported",
+                    "A ClaimType that declares an inverse (v9) requires compiler revision 35; "
+                    "upgrade the instance first.",
+                    context.path,
+                ),
+            )
+        )
     law = evaluate_claim_type_law(
         claim_type,
         path=context.path,
         predecessor=predecessor,
         accepted_artifacts=context.candidate_identities,
+        subject_kind_keys=_inverse_subject_kind_keys(context, claim_type),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -3556,6 +3633,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         "playbill-claim-type-v6",
         "playbill-claim-type-v7",
         "playbill-claim-type-v8",
+        CLAIM_TYPE_V9_FORMAT,
     } and claim_type.lifecycle.state == ("live"):
         unresolved = _claim_type_v6_unresolved(context, claim_type)
         if unresolved:

@@ -9,6 +9,7 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Field,
     GetJsonSchemaHandler,
     ValidationError,
     field_validator,
@@ -35,9 +36,13 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
+    CLAIM_TYPE_V9_FORMAT,
     V7_AND_LATER_FORMATS,
+    V8_AND_LATER_FORMATS,
     ClaimAttestationConsequencePolicy,
     ClaimFreshnessDuration,
+    ClaimInverse,
+    ClaimInverseKey,
     ClaimType,
     EvidenceRequirement,
     RevisionEvidence,
@@ -98,6 +103,7 @@ _V7_INPUT_FIELDS = (
     "evidence_requirement",
     "revision_evidence",
     "canonical_form",
+    "inverse",
 )
 
 #: The structural fields an edit keeps from its predecessor when left out.
@@ -166,6 +172,35 @@ class ClaimTypeMemberDescriptionInput(_StrictClaimTypeInputModel):
     description: str
 
 
+class ClaimInverseInput(_StrictClaimTypeInputModel):
+    """How the type states that a unit holds nothing (ClaimType v9).
+
+    ``key`` names the unit: ``{kind: slot}`` for a one-valued type,
+    ``{kind: object}`` or ``{kind: object_key, predicate}`` (a key ClaimType of
+    every object SubjectKind) for a many-valued one. ``evidence_rules`` are ids
+    of the type's own evidence rules, in any order; only a Capture one of them
+    admits establishes a none. ``stale_after`` takes ``P7D`` (absent: the type's
+    evidence freshness applies).
+    """
+
+    key: ClaimInverseKey
+    evidence_rules: tuple[str, ...] = Field(min_length=1)
+    stale_after: ClaimDurationInput | None = None
+    description: str | None = None
+
+    def lowered(self) -> ClaimInverse:
+        return ClaimInverse(
+            key=self.key,
+            evidence_rules=tuple(
+                sorted(set(self.evidence_rules), key=lambda item: item.encode("utf-8"))
+            ),
+            stale_after=self.stale_after,
+            description=(
+                None if self.description is None else canonical_description_text(self.description)
+            ),
+        )
+
+
 class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     """One ClaimType, as authored: state what differs from the defaults.
 
@@ -194,7 +229,7 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     explicit ``null`` clears a field that may be empty (``literal_schema``,
     ``evidence_freshness``, ``attestation_consequence_policy``,
     ``unsure_hold_for``, ``description``, ``member_descriptions`` (``[]`` too),
-    ``default_role``, ``canonical_form``); the others always have a value, so
+    ``default_role``, ``canonical_form``, ``inverse``); the others always have a value, so
     they are named or left out, never ``null``. Over a ClaimType before v7,
     omitted descriptions start empty, the default role is none, and the
     requirement and revision evidence are the predecessor's meaning: ``self``
@@ -259,6 +294,9 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     #: Omitted: kept from the predecessor (none before v8). ``null`` or ``[]``:
     #: no transform.
     canonical_form: tuple[CanonicalTransform, ...] | None = None
+    #: How the type states absence (ClaimType v9): stating it lowers to v9.
+    #: Omitted: kept from the predecessor (none before v9). ``null``: cleared.
+    inverse: ClaimInverseInput | None = None
     anticipated_source_ids: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -471,6 +509,7 @@ class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
             "cruxible.claim_type.attestation_threshold_disabled",
             "cruxible.claim_type.permitted_role_unadmitted",
             "cruxible.claim_type.field_name_reserved",
+            "cruxible.claim_type.inverse_on_enum_or_boolean",
         ],
         CurrentCode,
     ]
@@ -711,7 +750,7 @@ def _canonical_form(
 
     inherited = (
         predecessor.canonical_form
-        if predecessor is not None and predecessor.artifact_format == "playbill-claim-type-v8"
+        if predecessor is not None and predecessor.artifact_format in V8_AND_LATER_FORMATS
         else None
     )
     if value.states("canonical_form"):
@@ -719,6 +758,24 @@ def _canonical_form(
             return None if inherited is None else ()
         return value.canonical_form
     return inherited
+
+
+def _inverse(
+    value: ClaimTypeInputRecord, predecessor: ClaimType | None
+) -> tuple[bool, ClaimInverse | None]:
+    """Whether a lowered ClaimType is v9, and the inverse it declares.
+
+    Stating ``inverse`` lowers to v9. Left out, a v9 predecessor's inverse is
+    kept (merge-patch); ``null`` clears it, and a v9 ClaimType never lowers back
+    to v8, as a v8 one never lowers back to v7.
+    """
+
+    v9 = predecessor is not None and predecessor.artifact_format == CLAIM_TYPE_V9_FORMAT
+    if value.states("inverse"):
+        if value.inverse is None:
+            return v9, None
+        return True, value.inverse.lowered()
+    return v9, None if predecessor is None or not v9 else predecessor.inverse
 
 
 def lower_claim_type_input(
@@ -747,6 +804,13 @@ def lower_claim_type_input(
     if canonical_form is not None:
         payload["artifact_format"] = "playbill-claim-type-v8"
         payload["canonical_form"] = list(canonical_form)
+    v9, inverse = _inverse(value, predecessor)
+    if v9:
+        # v9 is v8 plus an inverse: it states its canonical form too.
+        payload["artifact_format"] = CLAIM_TYPE_V9_FORMAT
+        payload["canonical_form"] = list(canonical_form or ())
+        if inverse is not None:
+            payload["inverse"] = inverse.model_dump(mode="json")
     # Every rule names its contracts by identity. A rule naming an exact digest
     # no accepted contract version carries has no identity to follow, so it is
     # refused rather than authored as a v5 exact-digest rule.
@@ -955,6 +1019,21 @@ def lint_claim_type_input(
                     replacement_rule_fragment={"minimum_independent_control_components": 1},
                 )
             )
+    schema = effective.literal_schema
+    if (
+        effective.inverse is not None
+        and (effective.cardinality or "") == "one"
+        and isinstance(schema, dict)
+        and ("enum" in schema or schema.get("type") == "boolean")
+    ):
+        # A member of the enum (or false) states the negative as a found value.
+        warnings.append(
+            ClaimTypeLintWarningV1(
+                code="cruxible.claim_type.inverse_on_enum_or_boolean",
+                field_path="$.inverse",
+                replacement_rule_fragment={"inverse": None},
+            )
+        )
     warnings.sort(key=lambda item: canonical_bytes(item.model_dump(mode="json")))
     return ClaimTypeProposalLintV1(warnings=tuple(warnings))
 

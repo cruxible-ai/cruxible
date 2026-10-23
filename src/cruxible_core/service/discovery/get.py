@@ -47,6 +47,7 @@ from cruxible_client.contracts.claims import (
     ClaimBacking,
     ClaimRetirementReason,
     ExactContentClaimObject,
+    NoneClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -1086,6 +1087,8 @@ def _artifact_value(claim: ClaimArtifactAny) -> object:
         return _subject_ref(obj.address.artifact_path)
     if isinstance(obj, ExactContentClaimObject):
         return obj.content_digest
+    if isinstance(obj, NoneClaimObject):
+        return obj.model_dump(mode="json")
     return obj.value
 
 

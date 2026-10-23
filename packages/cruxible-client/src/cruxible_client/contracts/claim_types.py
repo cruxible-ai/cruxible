@@ -6,7 +6,7 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping
-from typing import Any, Callable, Final, Literal, cast
+from typing import Annotated, Any, Callable, Final, Literal, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
@@ -119,20 +119,110 @@ class ClaimAttestationConsequencePolicy(_StrictClaimTypeModel):
         return value
 
 
+class ClaimInverseSlotKey(_StrictClaimTypeModel):
+    """A one-valued slot's unit is the whole slot: its inverse says it holds nothing."""
+
+    kind: Literal["slot"]
+
+
+class ClaimInverseObjectKey(_StrictClaimTypeModel):
+    """A many-valued unit is one object: its inverse says that object is not held."""
+
+    kind: Literal["object"]
+
+
+class ClaimInverseObjectKeyPart(_StrictClaimTypeModel):
+    """A many-valued, Subject-valued unit is one key part of the object Subject.
+
+    ``predicate`` is a key ClaimType of every object SubjectKind; the inverse
+    says no object with that key value is held, whichever Subject has it.
+    """
+
+    kind: Literal["object_key"]
+    predicate: str
+
+    @field_validator("predicate")
+    @classmethod
+    def _predicate(cls, value: str) -> str:
+        if not _PREDICATE_RE.fullmatch(value):
+            raise ValueError("an inverse key predicate must be a canonical qualified identifier")
+        return value
+
+
+ClaimInverseKey: TypeAlias = Annotated[
+    ClaimInverseSlotKey | ClaimInverseObjectKey | ClaimInverseObjectKeyPart,
+    Field(discriminator="kind"),
+]
+
+
+class ClaimInverse(_StrictClaimTypeModel):
+    """How a ClaimType v9 states absence: the unit an inverse Claim covers and its evidence.
+
+    An inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds
+    no value. Only a Capture one of ``evidence_rules`` admits can establish it,
+    whatever the type's ``evidence_requirement``. ``stale_after`` is how long an
+    inverse stays current (absent: the type's ``evidence_freshness``), so
+    absence can expire sooner than presence. ``description`` says what a none
+    means for this predicate.
+    """
+
+    tag: Literal["cruxible-claim-inverse-v1"] = "cruxible-claim-inverse-v1"
+    key: ClaimInverseKey
+    evidence_rules: tuple[str, ...] = Field(min_length=1)
+    stale_after: ClaimFreshnessDuration | None = None
+    description: str | None = None
+
+    @field_validator("evidence_rules")
+    @classmethod
+    def _evidence_rules(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for item in value:
+            governance_identifier(item, label="inverse evidence rule id")
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("inverse evidence_rules must be sorted and unique")
+        return value
+
+    @field_validator("stale_after")
+    @classmethod
+    def _stale_after(cls, value: ClaimFreshnessDuration | None) -> ClaimFreshnessDuration | None:
+        if value is not None and value.microseconds <= 0:
+            raise ValueError("inverse stale_after must be positive")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def _description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _canonical_text(value, label="inverse description", maximum=_DESCRIPTION_MAX)
+
+
 CURRENT_CLAIM_TYPE_FORMAT: Final = "playbill-claim-type-v7"
+#: The ClaimType format that can declare an inverse (``ClaimInverse``).
+CLAIM_TYPE_V9_FORMAT: Final = "cruxible-claim-type-v9"
 _CURRENT_POLICY_FORMATS: Final = frozenset(
     {
         "playbill-claim-type-v5",
         "playbill-claim-type-v6",
         "playbill-claim-type-v7",
         "playbill-claim-type-v8",
+        CLAIM_TYPE_V9_FORMAT,
     }
 )
 _IDENTITY_RULE_FORMATS: Final = frozenset(
-    {"playbill-claim-type-v6", "playbill-claim-type-v7", "playbill-claim-type-v8"}
+    {
+        "playbill-claim-type-v6",
+        "playbill-claim-type-v7",
+        "playbill-claim-type-v8",
+        CLAIM_TYPE_V9_FORMAT,
+    }
 )
-#: The formats that carry the v7 fields: v7, and v8 (v7 plus a canonical form).
-V7_AND_LATER_FORMATS: Final = frozenset({"playbill-claim-type-v7", "playbill-claim-type-v8"})
+#: The formats that carry the v7 fields: v7, v8 (v7 plus a canonical form) and v9
+#: (v8 plus an inverse).
+V7_AND_LATER_FORMATS: Final = frozenset(
+    {"playbill-claim-type-v7", "playbill-claim-type-v8", CLAIM_TYPE_V9_FORMAT}
+)
+#: The formats that carry a canonical form: v8, and v9.
+V8_AND_LATER_FORMATS: Final = frozenset({"playbill-claim-type-v8", CLAIM_TYPE_V9_FORMAT})
 CLAIM_TYPE_FORMATS: Final = (
     "playbill-claim-type-v1",
     "playbill-claim-type-v3",
@@ -141,6 +231,7 @@ CLAIM_TYPE_FORMATS: Final = (
     "playbill-claim-type-v6",
     "playbill-claim-type-v7",
     "playbill-claim-type-v8",
+    CLAIM_TYPE_V9_FORMAT,
 )
 
 #: What a Claim of this type must be backed by. ``none``: the Claim's own origin
@@ -160,6 +251,8 @@ V7_FIELDS: Final = (
 )
 #: ClaimType v8 adds the canonical form its literal values are stored and compared in.
 V8_FIELDS: Final = ("canonical_form",)
+#: ClaimType v9 adds the inverse: how a Claim of the type states absence.
+V9_FIELDS: Final = ("inverse",)
 _DESCRIPTION_MAX: Final = 1024
 _MEMBER_DESCRIPTION_MAX: Final = 256
 
@@ -198,6 +291,12 @@ def _member_key(member: object) -> bytes:
     return canonical_bytes(member)
 
 
+def claim_type_version_label(artifact_format: str) -> str:
+    """``playbill-claim-type-v7`` is ``v7``; ``cruxible-claim-type-v9`` is ``v9``."""
+
+    return "v" + artifact_format.rpartition("-v")[2]
+
+
 class ClaimType(_StrictClaimTypeModel):
     @classmethod
     def __get_pydantic_json_schema__(
@@ -223,6 +322,7 @@ class ClaimType(_StrictClaimTypeModel):
         "playbill-claim-type-v6",
         "playbill-claim-type-v7",
         "playbill-claim-type-v8",
+        "cruxible-claim-type-v9",
     ] = "playbill-claim-type-v7"
     identity: ArtifactIdentity
     predicate: str
@@ -270,6 +370,10 @@ class ClaimType(_StrictClaimTypeModel):
     #: The ordered transforms (``contracts.canonical_forms``) every literal value
     #: of this predicate is stored and compared in. ``()`` states no transform.
     canonical_form: tuple[CanonicalTransform, ...] | None = None
+    # ClaimType v9. Every earlier format holds it at null and never writes it; a
+    # v9 type without one omits it, as ``unsure_hold_for`` is omitted.
+    #: How a Claim of this type states that a unit holds nothing (an inverse).
+    inverse: ClaimInverse | None = None
 
     @model_serializer(mode="wrap")
     def _versioned_wire(self, handler: Any) -> dict[str, object]:
@@ -277,8 +381,11 @@ class ClaimType(_StrictClaimTypeModel):
         if self.artifact_format not in V7_AND_LATER_FORMATS:
             for field in V7_FIELDS:
                 payload.pop(field, None)
-        if self.artifact_format != "playbill-claim-type-v8":
+        if self.artifact_format not in V8_AND_LATER_FORMATS:
             for field in V8_FIELDS:
+                payload.pop(field, None)
+        if self.artifact_format != CLAIM_TYPE_V9_FORMAT or self.inverse is None:
+            for field in V9_FIELDS:
                 payload.pop(field, None)
         if self.unsure_hold_for is None:
             payload.pop("unsure_hold_for", None)
@@ -341,13 +448,34 @@ class ClaimType(_StrictClaimTypeModel):
             return None
         return validate_canonical_form(value)
 
+    def _validate_v9_fields(self) -> None:
+        if self.artifact_format != CLAIM_TYPE_V9_FORMAT:
+            if self.inverse is not None:
+                raise ValueError("only ClaimType v9 can declare an inverse")
+            return
+        if self.inverse is None:
+            return
+        key = self.inverse.key
+        if isinstance(key, ClaimInverseSlotKey) and self.cardinality != "one":
+            raise ValueError("an inverse keyed by slot needs a one-valued ClaimType")
+        if not isinstance(key, ClaimInverseSlotKey) and self.cardinality != "many":
+            raise ValueError(
+                f"an inverse keyed by {key.kind} needs a many-valued ClaimType; a one-valued "
+                "type's unit is its slot"
+            )
+        if isinstance(key, ClaimInverseObjectKeyPart) and self.object_kind != "subject":
+            raise ValueError("an inverse keyed by object_key needs a Subject-valued ClaimType")
+
     def _validate_v8_fields(self) -> None:
-        if self.artifact_format != "playbill-claim-type-v8":
+        if self.artifact_format not in V8_AND_LATER_FORMATS:
             if self.canonical_form is not None:
-                raise ValueError("only ClaimType v8 can carry a canonical_form")
+                raise ValueError("only ClaimType v8 and later can carry a canonical_form")
             return
         if self.canonical_form is None:
-            raise ValueError("ClaimType v8 states its canonical_form explicitly ([] for none)")
+            raise ValueError(
+                f"ClaimType {claim_type_version_label(self.artifact_format)} states its "
+                "canonical_form explicitly ([] for none)"
+            )
         if self.canonical_form and self.object_kind != "literal":
             raise ValueError("a canonical_form applies only to literal ClaimTypes")
         members = None if self.literal_schema is None else self.literal_schema.get("enum")
@@ -424,8 +552,9 @@ class ClaimType(_StrictClaimTypeModel):
                 raise ValueError("ClaimType unsure_hold_for must be positive")
         self._validate_v7_fields()
         self._validate_v8_fields()
+        self._validate_v9_fields()
         if self.artifact_format in _IDENTITY_RULE_FORMATS:
-            version = self.artifact_format.removeprefix("playbill-claim-type-")
+            version = claim_type_version_label(self.artifact_format)
             if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicy):
                 raise ValueError(
                     f"ClaimType {version} requires evidence policy v3 naming CaptureContracts "
@@ -614,6 +743,14 @@ def _claim_type_digest_v8(claim_type: ClaimType) -> ArtifactDigest:
     )
 
 
+def _claim_type_digest_v9(claim_type: ClaimType) -> ArtifactDigest:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-envelope-v1",
+        claim_type.model_dump(mode="json"),
+    )
+
+
 CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = {
     "playbill-claim-type-v1": _claim_type_digest_v1,
     "playbill-claim-type-v3": _claim_type_digest_v3,
@@ -622,6 +759,7 @@ CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = 
     "playbill-claim-type-v6": _claim_type_digest_v6,
     "playbill-claim-type-v7": _claim_type_digest_v7,
     "playbill-claim-type-v8": _claim_type_digest_v8,
+    CLAIM_TYPE_V9_FORMAT: _claim_type_digest_v9,
 }
 
 
@@ -634,6 +772,17 @@ def effective_revision_evidence(claim_type: ClaimType) -> RevisionEvidence:
     """What a statement-changing revision keeps; every format before v7 accumulates."""
 
     return claim_type.revision_evidence or "accumulate"
+
+
+def effective_inverse_stale_after(claim_type: ClaimType) -> ClaimFreshnessDuration | None:
+    """How long an inverse of this type stays current: its own horizon, else the type's."""
+
+    if claim_type.inverse is None:
+        return None
+    if claim_type.inverse.stale_after is not None:
+        return claim_type.inverse.stale_after
+    freshness = claim_type.evidence_freshness
+    return None if freshness is None else freshness.stale_after
 
 
 def effective_canonical_form(claim_type: ClaimType) -> tuple[CanonicalTransform, ...]:
@@ -779,14 +928,78 @@ def _v7_law_refusal(claim_type: ClaimType, *, path: str) -> CompilerDiagnostic |
     return None
 
 
+def _v9_law_refusal(
+    claim_type: ClaimType,
+    *,
+    path: str,
+    subject_kind_keys: Mapping[str, tuple[str, ...] | None] | None,
+) -> CompilerDiagnostic | None:
+    """The ClaimType v9 law: the v8 rules, plus an inverse that can be stated and judged.
+
+    An inverse needs a unit a Claim can name (never exact content), evidence
+    rules the type declares, and, keyed by ``object_key``, a predicate that is a
+    key of every object SubjectKind (``subject_kind_keys``: each kind's declared
+    keys in candidate state, None for a kind with no SubjectKind).
+    """
+
+    inverse = claim_type.inverse
+    if inverse is None:
+        return None
+    if claim_type.object_kind == "exact_content":
+        return _diagnostic(
+            "cruxible.claim_type.inverse_object_kind",
+            "An inverse cannot be declared for an exact_content ClaimType: its unit would be "
+            "bytes, and absence of bytes is not a statement about the world. Remove `inverse`.",
+            path=path,
+        )
+    declared = {rule.rule_id for rule in claim_type.evidence_admission_policy.rules}
+    unknown = [rule for rule in inverse.evidence_rules if rule not in declared]
+    if unknown:
+        return _diagnostic(
+            "cruxible.claim_type.inverse_rule_unresolved",
+            f"inverse.evidence_rules names {', '.join(unknown)}, which the type's "
+            "evidence_admission_policy does not declare; name rules it declares: "
+            f"{', '.join(sorted(declared)) or 'none'}.",
+            path=path,
+        )
+    key = inverse.key
+    if isinstance(key, ClaimInverseObjectKeyPart):
+        if subject_kind_keys is None:
+            return _diagnostic(
+                "cruxible.claim_type.inverse_key_unresolved",
+                f"inverse key {key.predicate!r} cannot be checked against the object "
+                "SubjectKinds here; propose the ClaimType through a change set.",
+                path=path,
+            )
+        missing = [
+            kind
+            for kind in claim_type.allowed_object_subject_kinds
+            if key.predicate not in (subject_kind_keys.get(kind) or ())
+        ]
+        if missing or not claim_type.allowed_object_subject_kinds:
+            return _diagnostic(
+                "cruxible.claim_type.inverse_key_unresolved",
+                f"inverse key {key.predicate!r} must be a key ClaimType of every object "
+                f"SubjectKind; it is not a key of {', '.join(missing) or 'any kind'}. Name a "
+                "key the kinds declare, or key the inverse by object.",
+                path=path,
+            )
+    return None
+
+
 def evaluate_claim_type_law(
     claim_type: ClaimType,
     *,
     path: str,
     predecessor: AcceptedClaimType | None,
     accepted_artifacts: Mapping[str, tuple[ArtifactIdentity, str]] | None = None,
+    subject_kind_keys: Mapping[str, tuple[str, ...] | None] | None = None,
 ) -> ClaimTypeLawResult:
-    """Evaluate exact path, lifecycle, and digest-pinned dependencies."""
+    """Evaluate exact path, lifecycle, and digest-pinned dependencies.
+
+    ``subject_kind_keys`` (the v9 law) is each object SubjectKind's declared key
+    ClaimTypes in candidate state, read only for an inverse keyed by object_key.
+    """
 
     try:
         validate_claim_type_path(claim_type, path)
@@ -797,6 +1010,10 @@ def evaluate_claim_type_law(
         )
     if claim_type.artifact_format in V7_AND_LATER_FORMATS:
         refusal = _v7_law_refusal(claim_type, path=path)
+        if refusal is not None:
+            return ClaimTypeLawResult(verdict="refused", diagnostics=(refusal,))
+    if claim_type.artifact_format == CLAIM_TYPE_V9_FORMAT:
+        refusal = _v9_law_refusal(claim_type, path=path, subject_kind_keys=subject_kind_keys)
         if refusal is not None:
             return ClaimTypeLawResult(verdict="refused", diagnostics=(refusal,))
     if accepted_artifacts is not None:
@@ -884,6 +1101,12 @@ __all__ = [
     "AcceptedClaimType",
     "CLAIM_TYPE_DIGEST_FUNCTIONS",
     "CLAIM_TYPE_FORMATS",
+    "CLAIM_TYPE_V9_FORMAT",
+    "ClaimInverse",
+    "ClaimInverseKey",
+    "ClaimInverseObjectKey",
+    "ClaimInverseObjectKeyPart",
+    "ClaimInverseSlotKey",
     "ClaimAttestationConsequencePolicy",
     "ClaimAttestationConsequenceRule",
     "ClaimType",
@@ -893,11 +1116,15 @@ __all__ = [
     "RevisionEvidence",
     "V7_AND_LATER_FORMATS",
     "V7_FIELDS",
+    "V8_AND_LATER_FORMATS",
     "V8_FIELDS",
+    "V9_FIELDS",
     "canonical_description_text",
     "claim_type_contention",
     "claim_type_format_version",
+    "claim_type_version_label",
     "effective_canonical_form",
+    "effective_inverse_stale_after",
     "effective_evidence_requirement",
     "effective_revision_evidence",
     "ClaimEvidenceFreshness",

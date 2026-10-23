@@ -16,6 +16,7 @@ from typing import Any
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ExactContentClaimObject,
+    NoneClaimObject,
     SubjectClaimObject,
 )
 from cruxible_client.contracts.read_values import ClaimLine, summary_value
@@ -54,6 +55,9 @@ def claim_line(claim: ClaimArtifactAny, *, accepted_predicates: Collection[str])
         value = subject_ref(obj.address.artifact_path)
     elif isinstance(obj, ExactContentClaimObject):
         value = obj.content_digest
+    elif isinstance(obj, NoneClaimObject):
+        # An inverse (ClaimType v9) shows its object as stored, never as a value.
+        value = obj.model_dump(mode="json")
     else:
         value = obj.value
     return ClaimLine(
