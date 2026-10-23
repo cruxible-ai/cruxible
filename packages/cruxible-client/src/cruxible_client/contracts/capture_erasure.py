@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from cruxible_client.contracts.canonical import CasDigest
 from cruxible_client.contracts.change_control import DryRun, PreviewAt, StateCoordinate
 from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.repairs import ServedRepair
 
 #: A Capture named by the handle a card prints (``CAP-`` plus 12+ hex) or a
@@ -143,6 +144,19 @@ class CaptureErasureRecord(_StrictErasureModel):
         return validate_erasure_because(value)
 
 
+class RecordedCaptureErasure(_StrictErasureModel):
+    """One erasure as the erasure journal holds it: the record and where it was made.
+
+    ``coordinate`` is the accepted head the erasure was recorded under. A
+    judgment made against a later head saw it; one made against that head or an
+    earlier one did not, whatever the clocks say. The contract authorizing it is
+    resolved as of this coordinate too.
+    """
+
+    record: CaptureErasureRecord
+    coordinate: AcceptedCoordinate
+
+
 class CaptureEraseRequest(_StrictErasureModel):
     """Erase one Capture's retained body; previews unless committed with ``at``."""
 
@@ -209,6 +223,7 @@ __all__ = [
     "CaptureEraseRequest",
     "CaptureEraseResult",
     "CaptureErasureRecord",
+    "RecordedCaptureErasure",
     "validate_capture_ref",
     "validate_erasure_because",
 ]

@@ -353,3 +353,45 @@ def test_a_subject_kind_cannot_drop_a_key_an_inverse_names(tmp_path: Path) -> No
     )
     assert "cruxible.subject_kind.inverse_dependents_not_settled" in repr(rekeyed)
     assert rekeyed.status.proposal_id is None or "refused" in repr(rekeyed.status)  # type: ignore[attr-defined]
+
+
+def test_lint_warns_when_stale_is_eligible_but_current_is_required(tmp_path: Path) -> None:
+    from cruxible_core.claims.claim_type_inputs import (
+        CLAIM_TYPE_LINT_TEXT,
+        ClaimTypeInputRecord,
+        lint_claim_type_input,
+    )
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    resolution = {
+        "cardinality": "one",
+        "eligible_verdicts": ["stale", "supported"],
+        "required_basis_kinds": [],
+        "require_current": True,
+        "selector": "only_contender",
+        "conflict_result": "unresolved",
+    }
+    record = {
+        "predicate": "project.work_item.phase",
+        "allowed_subject_kinds": ["project.work_item"],
+        "object_kind": "literal",
+        "literal_schema": {"type": "string"},
+        "cardinality": "one",
+        "resolution_policy": resolution,
+    }
+
+    def codes(value: dict[str, object]) -> list[str]:
+        lint = lint_claim_type_input(
+            instance,
+            ClaimTypeInputRecord.model_validate(value),
+            coordinate=instance.accepted_coordinate(),
+        )
+        return [item.code for item in lint.warnings]
+
+    assert codes(record) == ["cruxible.claim_type.stale_eligible_never_current"]
+    assert CLAIM_TYPE_LINT_TEXT["cruxible.claim_type.stale_eligible_never_current"] == (
+        "eligible_verdicts lists stale while require_current is true: stale contenders "
+        "never resolve"
+    )
+    assert codes({**record, "resolution_policy": {**resolution, "require_current": False}}) == []

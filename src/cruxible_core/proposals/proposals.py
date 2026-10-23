@@ -70,7 +70,7 @@ from cruxible_client.contracts.canonical import (
     semantic_projection,
     typed_digest,
 )
-from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
+from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     CaptureErasureLookupProtocol,
@@ -3465,6 +3465,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         # replay (adjudication rule v3).
         origin_replay_exempt=installed.coordinate == CLAIM_LAW_V2_REVISION_10,
         erasure_records=_erasure_records(context, installed),
+        erasure_contract=_erasure_authority(context),
         erasure_affects_verdict=_erasure_affects_verdict(context, installed),
     )
     if law.verdict == "refused":
@@ -3573,6 +3574,31 @@ def _inverse_subject_kind_keys(
     return keys
 
 
+def _erasure_authority(
+    context: _MemberContext,
+) -> Callable[[RecordedCaptureErasure], AcceptedCaptureContract | None]:
+    """The contract version an erasure names, resolved as of the erasure's own head.
+
+    An erasure made under a contract accepted after a replayed generation still
+    explains why that generation's bytes are gone: its authority is checked in
+    the prefix that ends where the erasure was recorded, never in the replayed
+    judgment's own dependency prefix. A head this ledger does not hold resolves
+    nothing.
+    """
+
+    def authority(item: RecordedCaptureErasure) -> AcceptedCaptureContract | None:
+        if context.historical_artifact_provider is None:
+            return None
+        try:
+            return historical_capture_contract_resolver(
+                context.historical_artifact_provider, item.coordinate
+            )(item.record.capture_contract_digest)
+        except (CruxibleError, ValueError, KeyError):
+            return None
+
+    return authority
+
+
 def _erasure_affects_verdict(context: _MemberContext, installed: InstalledAcceptanceLaw) -> bool:
     """Whether governed erasures enter the verdict: compiler 35's Claim laws only."""
 
@@ -3586,7 +3612,7 @@ def _erasure_affects_verdict(context: _MemberContext, installed: InstalledAccept
 
 def _erasure_records(
     context: _MemberContext, installed: InstalledAcceptanceLaw
-) -> Callable[[tuple[str, ...]], tuple[CaptureErasureRecord, ...]] | None:
+) -> Callable[[tuple[str, ...]], tuple[RecordedCaptureErasure, ...]] | None:
     """The erasure lookup the Claim law consults, when it may consult one.
 
     Under compiler 35's Claim laws (v2 revision 10, v3 revision 11) a retirement

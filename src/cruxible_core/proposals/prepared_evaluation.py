@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 from cruxible_client.contracts.authoring_profiles import ClaimTypeExpansionEvidence
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
+from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
 from cruxible_client.contracts.captures import (
     CaptureErasureLookupProtocol,
     CaptureObjectStoreProtocol,
@@ -166,7 +166,7 @@ class _ObservedReceipts:
         self._own.add(memo.capture_digest)
         self.source.remember_verified(memo)
 
-    def body_erasures(self, body_digests: tuple[str, ...]) -> tuple[CaptureErasureRecord, ...]:
+    def body_erasures(self, body_digests: tuple[str, ...]) -> tuple[RecordedCaptureErasure, ...]:
         if not isinstance(self.source, CaptureErasureLookupProtocol):
             return ()
         found = self.source.body_erasures(body_digests)

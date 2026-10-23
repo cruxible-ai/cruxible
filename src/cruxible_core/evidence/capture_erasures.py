@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
+from cruxible_client.contracts.capture_erasure import CaptureErasureRecord, RecordedCaptureErasure
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
@@ -55,14 +55,15 @@ _FENCE = "capture-erasure-local-v1"
 _PARTITION = "erasures"
 _EVENT_KIND: JournalEventKindV1 = "capture_erasure"
 _ACCESS = BodyAccessContext(principal_id="capture-erasure", can_read_body=True)
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 ERASURE_DIRECTORY = "capture-erasures"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1), sequence INTEGER NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS erasures (
- capture_digest TEXT PRIMARY KEY, record TEXT NOT NULL, sequence INTEGER NOT NULL
+ capture_digest TEXT PRIMARY KEY, record TEXT NOT NULL, sequence INTEGER NOT NULL,
+ coordinate TEXT NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS erased_bodies (
  body_digest TEXT NOT NULL, capture_digest TEXT NOT NULL, sequence INTEGER NOT NULL,
@@ -143,8 +144,10 @@ class CaptureErasureStore:
                     conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                 conn.executescript(_SCHEMA)
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
-                for sequence, record in self._read_after(journal, 0 if row is None else row[0]):
-                    self._apply(conn, record, sequence)
+                for sequence, record, coordinate in self._read_entries(
+                    journal, 0 if row is None else row[0]
+                ):
+                    self._apply(conn, record, sequence, coordinate)
                 # A preview reads the caught-up projection and leaves the file as it was.
                 keep = conn.rollback if is_previewing() else conn.commit
                 keep()
@@ -158,6 +161,14 @@ class CaptureErasureStore:
     ) -> Iterator[tuple[int, CaptureErasureRecord]]:
         """Each journal record after ``sequence``: one payload read per record."""
 
+        for found, record, _coordinate in self._read_entries(journal, sequence, limit=limit):
+            yield found, record
+
+    def _read_entries(
+        self, journal: LocalJournalBackend, sequence: int, *, limit: int | None = None
+    ) -> Iterator[tuple[int, CaptureErasureRecord, AcceptedCoordinate]]:
+        """Each journal record after ``sequence`` with the accepted head it was made under."""
+
         bodies = self._body_store()
         for count, stored in enumerate(
             journal.select_records(
@@ -169,13 +180,27 @@ class CaptureErasureStore:
             payload = parse_journal_payload(
                 bodies.read(stored.record.payload_digest, access=_ACCESS)
             )
-            yield stored.record.sequence, _record(payload, stored.record.recorded_at)
+            yield (
+                stored.record.sequence,
+                _record(payload, stored.record.recorded_at),
+                stored.record.accepted_coordinate,
+            )
 
     @staticmethod
-    def _apply(conn: sqlite3.Connection, record: CaptureErasureRecord, sequence: int) -> None:
+    def _apply(
+        conn: sqlite3.Connection,
+        record: CaptureErasureRecord,
+        sequence: int,
+        coordinate: AcceptedCoordinate,
+    ) -> None:
         conn.execute(
-            "INSERT OR IGNORE INTO erasures VALUES (?,?,?)",
-            (record.capture_digest, record.model_dump_json(), sequence),
+            "INSERT OR IGNORE INTO erasures VALUES (?,?,?,?)",
+            (
+                record.capture_digest,
+                record.model_dump_json(),
+                sequence,
+                coordinate.model_dump_json(),
+            ),
         )
         conn.executemany(
             "INSERT OR IGNORE INTO erased_bodies VALUES (?,?,?)",
@@ -249,7 +274,7 @@ class CaptureErasureStore:
                 expected_head=head,
             )
             written = _record(payload, stored.record.recorded_at)
-            self._apply(conn, written, stored.record.sequence)
+            self._apply(conn, written, stored.record.sequence, stored.record.accepted_coordinate)
             conn.commit()
             return written
 
@@ -292,8 +317,10 @@ class CaptureErasureStore:
                     found[body] = CaptureErasureRecord.model_validate_json(row[0])
         return found
 
-    def records_for_bodies(self, body_digests: tuple[str, ...]) -> tuple[CaptureErasureRecord, ...]:
-        """Every erasure record naming any of these body objects, in recorded order.
+    def records_for_bodies(
+        self, body_digests: tuple[str, ...]
+    ) -> tuple[RecordedCaptureErasure, ...]:
+        """Every erasure naming any of these body objects, with its head, in recorded order.
 
         One indexed range per body; an instance that never erased anything
         answers without opening a file.
@@ -301,19 +328,25 @@ class CaptureErasureStore:
 
         if not body_digests or not self.root.is_dir():
             return ()
-        found: dict[str, tuple[int, CaptureErasureRecord]] = {}
+        found: dict[str, tuple[int, RecordedCaptureErasure]] = {}
         with self._locked() as conn:
             if conn is None:
                 return ()
             for body in dict.fromkeys(body_digests):
-                for sequence, raw in conn.execute(
-                    "SELECT e.sequence, e.record FROM erased_bodies b JOIN erasures e "
-                    "ON e.capture_digest=b.capture_digest WHERE b.body_digest=?",
+                for sequence, raw, coordinate in conn.execute(
+                    "SELECT e.sequence, e.record, e.coordinate FROM erased_bodies b "
+                    "JOIN erasures e ON e.capture_digest=b.capture_digest WHERE b.body_digest=?",
                     (body,),
                 ):
                     record = CaptureErasureRecord.model_validate_json(raw)
-                    found[record.capture_digest] = (int(sequence), record)
-        return tuple(record for _sequence, record in sorted(found.values(), key=lambda x: x[0]))
+                    found[record.capture_digest] = (
+                        int(sequence),
+                        RecordedCaptureErasure(
+                            record=record,
+                            coordinate=AcceptedCoordinate.model_validate_json(coordinate),
+                        ),
+                    )
+        return tuple(item for _sequence, item in sorted(found.values(), key=lambda x: x[0]))
 
     def head_sequence(self) -> int:
         """The journal's newest sequence (0 before any record): where a follower starts."""

@@ -380,8 +380,11 @@ def test_an_erasure_record_that_is_not_the_contracts_own_does_not_verify(
 
     erased = _erase(world, dry_run=False, at=_erase(world).coordinate.digest).erasure
     forged = erased.model_copy(update={"erasure_rule_digest": "sha256:" + "0" * 64})
+    (recorded,) = CaptureErasureStore(world.instance).records_for_bodies(erased.body_digests)
     monkeypatch.setattr(
-        LocalProducerReceiptResolver, "body_erasures", lambda self, bodies: (forged,)
+        LocalProducerReceiptResolver,
+        "body_erasures",
+        lambda self, bodies: (recorded.model_copy(update={"record": forged}),),
     )
 
     retired = write(world.instance, {"op": "retire", "target": world.claim}, because="Erased.")
