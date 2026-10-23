@@ -31,6 +31,8 @@ from typing import Any, Literal
 
 from cruxible_client.contracts.capture_erasure import (
     CAPTURE_ERASURE_MAX_LISTED_CLAIMS,
+    CaptureEraseRefusalCode,
+    CaptureEraseRefusedError,
     CaptureEraseRequest,
     CaptureEraseResult,
     CaptureErasureRecord,
@@ -46,9 +48,14 @@ from cruxible_client.contracts.captures import (
     parse_capture_contract,
 )
 from cruxible_client.contracts.change_control import StateCoordinate
-from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.repairs import (
+    HandEditInstruction,
+    HandEditRepair,
+    RepairOperation,
+    ServedRepair,
+)
 from cruxible_client.contracts.source_references import LedgerSourceReference
 from cruxible_core.evidence.capture_erasures import (
     CaptureErasureStore,
@@ -73,15 +80,30 @@ _BUILT_IN_CONTRACTS = {
 }
 
 
-def _refuse(code: str, message: str, *, repair_line: str, digest: str) -> ReadRefusalError:
-    return ReadRefusalError(
+def _refuse(
+    code: CaptureEraseRefusalCode,
+    message: str,
+    *,
+    repair_line: str,
+    digest: str,
+    repair: ServedRepair | None = None,
+) -> CaptureEraseRefusedError:
+    """One erase refusal; the repair defaults to reading the Capture's card."""
+
+    return CaptureEraseRefusedError(
         code,
         message,
-        http_status=409,
-        repair=RepairOperation(operation="cruxible.get", arguments={"ref": digest}),
+        capture_digest=digest,
+        repair=repair or RepairOperation(operation="cruxible.get", arguments={"ref": digest}),
         repair_line=repair_line,
-        context={"capture_digest": digest},
     )
+
+
+_PROHIBITED_REPAIR = (
+    "A contract's erasure policy is fixed for its identity, so this body stays. For sources "
+    "that may capture secrets, author a successor contract under a new name built with "
+    "authorize_erasure(contract) (cruxible_client.contracts.captures), and capture under it"
+)
 
 
 def accepted_capture_contract(
@@ -155,6 +177,10 @@ def service_erase_capture(
                 "accepted state moved past this instance's verified head",
                 repair_line="Run the erase again; it is judged at the new head",
                 digest=request.capture_digest,
+                repair=RepairOperation(
+                    operation="cruxible.capture.erase",
+                    arguments={"capture_digest": request.capture_digest},
+                ),
             )
         digest = _full_capture_digest(instance, head, request.capture_digest)
         envelope, contract, bodies, citing, left = _checked(
@@ -254,16 +280,15 @@ def _checked(
         if _erasure_rule(contract) is None:
             raise _refuse(
                 "cruxible.capture.erasure_prohibited",
-                f"{contract.identity.qualified} does not authorize erasing its Captures "
-                f"(retention_erasure_policy.erasure is "
-                f"{contract.retention_erasure_policy.erasure})",
-                repair_line=(
-                    "A contract's erasure policy is fixed for its identity, so this body stays. "
-                    "For sources that may capture secrets, author a CaptureContract that declares "
-                    "erasure: authorized_by_rule with the erasure-rule pin "
-                    "playbill.capture-erasure-authority-v1, and capture under it"
-                ),
+                f"{contract.identity.qualified} does not authorize erasing its Captures",
+                repair_line=_PROHIBITED_REPAIR,
                 digest=digest,
+                repair=HandEditRepair(
+                    hand_edit=HandEditInstruction(
+                        target=contract.identity.qualified,
+                        required_change=_PROHIBITED_REPAIR,
+                    )
+                ),
             )
         if envelope.commitment.materialization == "ledger" or isinstance(
             envelope.source, LedgerSourceReference
@@ -295,10 +320,12 @@ def _checked(
             )
         ]
         if exact:
+            claim = exact[0].removeprefix("Claim:")
             raise _refuse(
                 "cruxible.capture.erasure_body_in_accepted_state",
-                f"Capture {digest}'s body is also the exact content of {exact[0]}, "
+                f"Capture {digest}'s body is also the exact content of {claim}, "
                 "which accepted state keeps",
+                repair=RepairOperation(operation="cruxible.get", arguments={"ref": claim}),
                 repair_line=(
                     "Erasure removes evidence bodies only; a Claim's value is accepted state "
                     "and stays, with its history"

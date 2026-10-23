@@ -31,6 +31,7 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
+    capture_retained_body_digests,
 )
 from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.primitives import new_id
@@ -97,6 +98,26 @@ class CaptureErasureStore:
         self.root = _root(instance)
         self.path = self.root / "erasures.sqlite3"
         self.stream = _stream(instance)
+        self._bodies: Any = None
+
+    @classmethod
+    def reader(cls, *, exhaust_root: Path, instance_id: str, bodies: Any) -> CaptureErasureStore:
+        """A read-only view from the parts a verification context holds (it never records)."""
+
+        store = cls.__new__(cls)
+        store.instance = None
+        store.root = exhaust_root / ERASURE_DIRECTORY
+        store.path = store.root / "erasures.sqlite3"
+        store.stream = JournalStreamIdentityV1(
+            instance_id=instance_id,
+            journal_family=CAPTURE_ERASURE_JOURNAL_FAMILY,
+            stream_id="erasures",
+        )
+        store._bodies = bodies
+        return store
+
+    def _body_store(self) -> Any:
+        return self._bodies if self._bodies is not None else self.instance.body_store()
 
     def _journal(self, *, create: bool) -> LocalJournalBackend | None:
         if create:
@@ -137,7 +158,7 @@ class CaptureErasureStore:
     ) -> Iterator[tuple[int, CaptureErasureRecord]]:
         """Each journal record after ``sequence``: one payload read per record."""
 
-        bodies = self.instance.body_store()
+        bodies = self._body_store()
         for count, stored in enumerate(
             journal.select_records(
                 self.stream, partition_id=_PARTITION, first_sequence=sequence + 1
@@ -297,14 +318,7 @@ def erasure_journal_present(instance: Any) -> bool:
 def retained_body_digests(envelope: Any) -> tuple[str, ...]:
     """The body objects a Capture keeps in the store: its CAS commitment and CAS source."""
 
-    from cruxible_client.contracts.source_references import CasSourceReference
-
-    found: list[str] = []
-    if envelope.commitment.materialization == "cas":
-        found.append(envelope.commitment.digest)
-    if isinstance(envelope.source, CasSourceReference):
-        found.append(envelope.source.content_digest)
-    return tuple(sorted(set(found)))
+    return capture_retained_body_digests(envelope)
 
 
 def erased_body(instance: Any, envelope: Any) -> CaptureErasureRecord | None:

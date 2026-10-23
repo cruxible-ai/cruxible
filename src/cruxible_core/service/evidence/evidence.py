@@ -1099,30 +1099,56 @@ def _reproduced_claim_adjudication_rule(
     the origin-supports rule of a ClaimType whose own rule does not: a key
     Claim covered by its Subject's creation. That rule reproduces from the same
     ClaimType chain; no other law's evidence can select it.
+
+    Evidence recorded under revision 10 may also carry rule v3 (origin-only
+    entries need no current replay) wherever v2 would be; it reproduces as v3.
+    A Claim recorded under v2 keeps v2.
     """
 
     creation_covered = law_digest in {
         CLAIM_LAW_V2_REVISION_9.digest,
         CLAIM_LAW_V2_REVISION_10.digest,
     }
+    replay_exempt_options = (
+        (False, True) if law_digest == CLAIM_LAW_V2_REVISION_10.digest else (False,)
+    )
 
     def reproduces(item: ClaimType, digest: str) -> ClaimAdjudicationRuleAny | None:
         """The current rule this ClaimType version's recorded rule stands for, if any."""
 
-        if (
-            claim_adjudication_rule_digest(claim_adjudication_rule(item, claim_type_digest=digest))
-            == evidence_digest
-        ):
-            return current_rule
-        if creation_covered and (
-            claim_adjudication_rule_digest(
-                claim_adjudication_rule(item, claim_type_digest=digest, origin_supports=True)
-            )
-            == evidence_digest
-        ):
-            return claim_adjudication_rule(
-                claim_type, claim_type_digest=current_digest, origin_supports=True
-            )
+        for exempt in replay_exempt_options:
+            if (
+                claim_adjudication_rule_digest(
+                    claim_adjudication_rule(
+                        item, claim_type_digest=digest, origin_replay_exempt=exempt
+                    )
+                )
+                == evidence_digest
+            ):
+                return (
+                    claim_adjudication_rule(
+                        claim_type, claim_type_digest=current_digest, origin_replay_exempt=True
+                    )
+                    if exempt
+                    else current_rule
+                )
+            if creation_covered and (
+                claim_adjudication_rule_digest(
+                    claim_adjudication_rule(
+                        item,
+                        claim_type_digest=digest,
+                        origin_supports=True,
+                        origin_replay_exempt=exempt,
+                    )
+                )
+                == evidence_digest
+            ):
+                return claim_adjudication_rule(
+                    claim_type,
+                    claim_type_digest=current_digest,
+                    origin_supports=True,
+                    origin_replay_exempt=exempt,
+                )
         return None
 
     def verdict_projection(item: ClaimType) -> dict[str, object]:

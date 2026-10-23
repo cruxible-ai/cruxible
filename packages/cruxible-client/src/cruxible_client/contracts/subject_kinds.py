@@ -265,9 +265,10 @@ def key_claim_type_problem(
             f"key ClaimType {predicate!r} is not a live accepted ClaimType; accept it in this "
             "change or an earlier one"
         )
-    if shape.artifact_format != "playbill-claim-type-v8":
+    if shape.artifact_format not in {"playbill-claim-type-v8", "cruxible-claim-type-v9"}:
         return (
-            f"key ClaimType {predicate!r} must be a ClaimType v8 (it declares a canonical form); "
+            f"key ClaimType {predicate!r} must be a ClaimType v8 or later (it declares a "
+            "canonical form); "
             "repair: state canonical_form ([] for none) in its `cruxible claim-type propose "
             "--input` record, as `cruxible authoring example subject-kind` shows"
         )

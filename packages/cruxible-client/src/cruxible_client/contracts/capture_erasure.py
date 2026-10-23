@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.canonical import CasDigest
 from cruxible_client.contracts.change_control import DryRun, PreviewAt, StateCoordinate
+from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.repairs import ServedRepair
 
 #: A Capture named by the handle a card prints (``CAP-`` plus 12+ hex) or a
 #: digest prefix of 12+ hex; the daemon resolves it as the write verbs do: among
@@ -57,6 +59,48 @@ def validate_erasure_because(value: str) -> str:
     if any(not character.isprintable() for character in value):
         raise ValueError("because may not contain control characters")
     return value
+
+
+CaptureEraseRefusalCode: TypeAlias = Literal[
+    "cruxible.capture.erasure_head_moved",
+    "cruxible.capture.erasure_unavailable",
+    "cruxible.capture.erasure_contract_unavailable",
+    "cruxible.capture.erasure_prohibited",
+    "cruxible.capture.erasure_ledger_material",
+    "cruxible.capture.erasure_nothing_retained",
+    "cruxible.capture.erasure_body_in_accepted_state",
+]
+
+
+class CaptureEraseRefusedError(CruxibleError):
+    """An erase refused before anything was destroyed or recorded, with its repair.
+
+    Each code carries the repair that fits it (``repair``, a runnable operation
+    or a hand edit) and one line saying what to do (``repair_line``); the HTTP
+    boundary answers 409 with both. The message names public things only: the
+    Capture, its contract, the citing Claim, and ``authorize_erasure``.
+    """
+
+    http_status = 409
+
+    def __init__(
+        self,
+        code: CaptureEraseRefusalCode,
+        message: str,
+        *,
+        capture_digest: str,
+        repair: ServedRepair,
+        repair_line: str,
+    ) -> None:
+        self.error_code = code
+        self.capture_digest = capture_digest
+        self.repair = repair
+        self.repair_line = repair_line
+        self.context: dict[str, Any] = {
+            "capture_digest": capture_digest,
+            "repair_line": repair_line,
+        }
+        super().__init__(f"{code}: {message}. {repair_line}")
 
 
 class _StrictErasureModel(BaseModel):
@@ -142,7 +186,8 @@ class CaptureEraseResult(_StrictErasureModel):
     replayable, and each ClaimType's own rules decide what that means (one that
     requires current replay reads the Claim ``stale``). A live Claim citing an
     erased Capture moves on by a re-bind onto a fresh Capture under the same
-    contract; a revision or retirement still carries the erased one and refuses.
+    contract, and can be revised or retired: what it inherits verifies on the
+    envelope and this record (compiler revision 35).
     """
 
     tag: Literal["playbill-capture-erase-result-v1"] = "playbill-capture-erase-result-v1"
@@ -159,6 +204,8 @@ class CaptureEraseResult(_StrictErasureModel):
 __all__ = [
     "CAPTURE_ERASURE_BECAUSE_MAX_LENGTH",
     "CAPTURE_ERASURE_MAX_LISTED_CLAIMS",
+    "CaptureEraseRefusalCode",
+    "CaptureEraseRefusedError",
     "CaptureEraseRequest",
     "CaptureEraseResult",
     "CaptureErasureRecord",

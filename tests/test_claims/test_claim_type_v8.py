@@ -119,7 +119,7 @@ def test_v8_writes_its_form_round_trips_and_digests_apart_from_v7() -> None:
 def test_v8_states_its_form_and_only_v8_may_carry_one() -> None:
     with pytest.raises(ValidationError, match="states its canonical_form explicitly"):
         v8(None)  # type: ignore[arg-type]
-    with pytest.raises(ValidationError, match="only ClaimType v8 can carry"):
+    with pytest.raises(ValidationError, match="only ClaimType v8 and later can carry"):
         v7(canonical_form=("trim",))
 
 

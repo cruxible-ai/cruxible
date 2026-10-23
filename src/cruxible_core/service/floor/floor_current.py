@@ -53,6 +53,7 @@ from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ExactContentClaimObject,
+    NoneClaimObject,
     SubjectClaimObject,
 )
 from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
@@ -244,6 +245,8 @@ def _value_key(claim: ClaimArtifactAny) -> str:
         return repr(("exact_content", obj.content_digest, obj.span))
     if isinstance(obj, SubjectClaimObject):
         return repr(("subject", obj.address.artifact_path))
+    if isinstance(obj, NoneClaimObject):
+        return repr(("none", canonical_bytes(obj.model_dump(mode="json"))))
     return repr(("literal", canonical_bytes(obj.value)))
 
 
@@ -289,6 +292,17 @@ class ValueRenderer:
                 marker = f"{{exact_content: {value.exact_content}, bytes: {size}}}"
                 return _Shown(marker, None, note, plain=marker)
             return self.text(value, note=note, text_name=text_name)
+        if isinstance(obj, NoneClaimObject):
+            # An inverse (ClaimType v9): the unit holds nothing.
+            absent = obj.of
+            marker = (
+                "none"
+                if absent is None
+                else f"none of {subject_ref(absent.address.artifact_path)}"
+                if isinstance(absent, SubjectClaimObject)
+                else f"none of {canonical_bytes(absent.value).decode('utf-8')}"
+            )
+            return _Shown(marker, None, note, plain=marker)
         literal = obj.value
         if isinstance(literal, str):
             return self.text(literal, note=note, text_name=text_name)

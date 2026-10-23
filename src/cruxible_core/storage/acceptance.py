@@ -91,7 +91,29 @@ def cited_bodies(
                     _CAPTURE_EDGES.popitem(last=False)
         found.update(edges[0])
         captures.extend(edges[1])
-    return tuple(sorted(found))
+    return tuple(sorted(found - _governed_erasures(found - visited, bodies)))
+
+
+def _governed_erasures(candidates: set[str], bodies: ContentAddressedBodyStore) -> set[str]:
+    """Retained bodies the store erased on purpose (``capture erase``), not lost.
+
+    A Claim may keep citing a Capture whose body was erased under its contract's
+    authority (its retirement or revision inherits it): the envelope stays and
+    is flushed, the erased body is not there to flush. Only an ``erased``
+    landing completion counts; a body lost any other way still fails the
+    barrier. One lookup per cited body, from the landing log's index.
+    """
+
+    landings = getattr(bodies, "landings", None)
+    if landings is None or not candidates:
+        return set()
+    head = landings.head()
+    return {
+        digest
+        for digest in candidates
+        if landings.last_completion(digest, identity=head.identity, sequence=head.sequence)
+        == "erased"
+    }
 
 
 def flush_acceptance(

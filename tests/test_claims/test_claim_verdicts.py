@@ -345,3 +345,55 @@ def test_observation_trust_presentation_is_a_separate_fixed_axis() -> None:
     assert observation_trust_grade("daemon-fetched") == "daemon_fetched"
     assert observation_trust_grade("provider-signed") == "provider_receipted"
     assert observation_trust_grade("witnessed") == "witnessed"
+
+
+def test_rule_v3_exempts_a_none_types_origin_only_evidence_from_current_replay() -> None:
+    from cruxible_client.contracts.claim_verdicts import (
+        ClaimAdjudicationRule,
+        ClaimAdjudicationRuleV3,
+    )
+
+    claim_type = _claim_type()
+    none_type = claim_type.model_copy(update={"evidence_requirement": "none"})
+    type_digest = claim_type_digest(claim_type).tagged
+    v2 = claim_adjudication_rule(none_type, claim_type_digest=type_digest).model_copy(
+        update={"require_current_replay": True}
+    )
+    v3 = claim_adjudication_rule(
+        none_type, claim_type_digest=type_digest, origin_replay_exempt=True
+    ).model_copy(update={"require_current_replay": True})
+    assert isinstance(v2, ClaimAdjudicationRule) and isinstance(v3, ClaimAdjudicationRuleV3)
+    assert claim_adjudication_rule_digest(v2) != claim_adjudication_rule_digest(v3)
+    # A type whose Claims need evidence compiles v1 either way.
+    assert claim_adjudication_rule(
+        claim_type, claim_type_digest=type_digest, origin_replay_exempt=True
+    ) == claim_adjudication_rule(claim_type, claim_type_digest=type_digest)
+
+    # An origin-only copy whose body was erased (no current replay).
+    copy = _capture("copy", admission="origin_only", replay=False)
+
+    def verdict(rule: object) -> str:
+        return evaluate_claim_verdict(
+            claim_statement_digest=STATEMENT_DIGEST,
+            rule=rule,  # type: ignore[arg-type]
+            evaluation_time=NOW,
+            captures=(copy,),
+            attestations=(),
+            providers={},
+        ).verdict
+
+    assert verdict(v2) == "stale"
+    assert verdict(v3) == "supported"
+    # Direct evidence still needs a current replay under v3.
+    direct = _capture("direct", replay=False)
+    assert (
+        evaluate_claim_verdict(
+            claim_statement_digest=STATEMENT_DIGEST,
+            rule=v3,
+            evaluation_time=NOW,
+            captures=(direct,),
+            attestations=(),
+            providers={},
+        ).verdict
+        == "stale"
+    )

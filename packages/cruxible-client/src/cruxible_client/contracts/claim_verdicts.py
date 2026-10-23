@@ -117,13 +117,36 @@ class ClaimAdjudicationRule(_ClaimAdjudicationRuleBase):
     origin_supports: Literal[True] = True
 
 
-ClaimAdjudicationRuleAny = ClaimAdjudicationRuleV1 | ClaimAdjudicationRule
+class ClaimAdjudicationRuleV3(_ClaimAdjudicationRuleBase):
+    """The v2 rule, with a Claim's origin-only evidence exempt from current replay.
+
+    Under the v2 rule a ``none`` Claim is supported on its origin alone, yet an
+    origin-only copy of its evidence still had to replay currently, so erasing
+    that copy read the Claim ``stale``. Under v3 an origin-only entry never needs
+    a current replay; every other entry is judged as under v2. Compiled by Claim
+    law v2 revision 10 (compiler revision 35) wherever v2 would be.
+    """
+
+    tag: Literal["cruxible-claim-adjudication-rule-v3"] = "cruxible-claim-adjudication-rule-v3"
+    origin_supports: Literal[True] = True
+    origin_replay_exempt: Literal[True] = True
+
+
+ClaimAdjudicationRuleAny = ClaimAdjudicationRuleV1 | ClaimAdjudicationRule | ClaimAdjudicationRuleV3
 
 
 def _admitted_kinds(rule: ClaimAdjudicationRuleAny) -> frozenset[str]:
-    if isinstance(rule, ClaimAdjudicationRule):
+    if isinstance(rule, ClaimAdjudicationRule | ClaimAdjudicationRuleV3):
         return frozenset({"origin_only", "direct", "derivational"})
     return frozenset({"direct", "derivational"})
+
+
+def _replay_required(rule: ClaimAdjudicationRuleAny, evidence: CaptureVerdictEvidence) -> bool:
+    """Whether this entry must replay currently to count (rule v3 exempts origin-only)."""
+
+    if not rule.require_current_replay:
+        return False
+    return not (isinstance(rule, ClaimAdjudicationRuleV3) and evidence.admission == "origin_only")
 
 
 def claim_adjudication_rule(
@@ -131,6 +154,7 @@ def claim_adjudication_rule(
     *,
     claim_type_digest: str,
     origin_supports: bool = False,
+    origin_replay_exempt: bool = False,
 ) -> ClaimAdjudicationRuleAny:
     """Compile the conservative rule from the exact accepted ClaimType.
 
@@ -138,18 +162,27 @@ def claim_adjudication_rule(
     requirement is ``none``, which compiles the v2 rule. ``origin_supports``
     compiles the v2 rule whatever the requirement: Claim law v2 revision 9
     asks it for a key Claim written with its Subject's creation, which the
-    creation itself covers.
+    creation itself covers. ``origin_replay_exempt`` (Claim law v2 revision 10)
+    compiles the v3 rule wherever the v2 rule would be compiled.
     """
 
     ArtifactDigest.from_tagged(claim_type_digest)
-    # A pure function of the accepted ClaimType and these two values: compiled
+    # A pure function of the accepted ClaimType and these values: compiled
     # (and sealed, so its digest is taken once) once per sealed ClaimType.
     return sealed_derive(
         claim_type,
-        ("claim_verdicts.claim_adjudication_rule", claim_type_digest, origin_supports),
+        (
+            "claim_verdicts.claim_adjudication_rule",
+            claim_type_digest,
+            origin_supports,
+            origin_replay_exempt,
+        ),
         lambda: _sealed(
             _compile_claim_adjudication_rule(
-                claim_type, claim_type_digest=claim_type_digest, origin_supports=origin_supports
+                claim_type,
+                claim_type_digest=claim_type_digest,
+                origin_supports=origin_supports,
+                origin_replay_exempt=origin_replay_exempt,
             )
         ),
     )
@@ -165,10 +198,14 @@ def _compile_claim_adjudication_rule(
     *,
     claim_type_digest: str,
     origin_supports: bool,
+    origin_replay_exempt: bool = False,
 ) -> ClaimAdjudicationRuleAny:
-    rule_type: type[ClaimAdjudicationRuleV1] | type[ClaimAdjudicationRule] = (
-        ClaimAdjudicationRule
-        if origin_supports or effective_evidence_requirement(claim_type) == "none"
+    supports = origin_supports or effective_evidence_requirement(claim_type) == "none"
+    rule_type: (
+        type[ClaimAdjudicationRuleV1] | type[ClaimAdjudicationRule] | type[ClaimAdjudicationRuleV3]
+    ) = (
+        (ClaimAdjudicationRuleV3 if origin_replay_exempt else ClaimAdjudicationRule)
+        if supports
         else ClaimAdjudicationRuleV1
     )
     return rule_type(
@@ -611,7 +648,7 @@ def _capture_current(
         microseconds=rule.max_evidence_age.microseconds
     ):
         return False
-    if rule.require_current_replay and not evidence.current_replay_available:
+    if _replay_required(rule, evidence) and not evidence.current_replay_available:
         return False
     return True
 
@@ -740,7 +777,7 @@ def evaluate_claim_verdict(
         >= _freshest_observation(item, reobservations, evaluation_time)[0]
         + timedelta(microseconds=rule.max_evidence_age.microseconds)
         and (item.source_effective_until is None or evaluation_time < item.source_effective_until)
-        and (not rule.require_current_replay or item.current_replay_available)
+        and (not _replay_required(rule, item) or item.current_replay_available)
         and (not rule.shell_sensitive or referent_current)
         for item in captures
     ):
@@ -836,6 +873,7 @@ __all__ = [
     "ClaimAdjudicationRuleAny",
     "ClaimAdjudicationRuleV1",
     "ClaimAdjudicationRule",
+    "ClaimAdjudicationRuleV3",
     "ClaimVerdictResultV1",
     "ClaimVerdictResult",
     "ClaimVerdictResultAny",

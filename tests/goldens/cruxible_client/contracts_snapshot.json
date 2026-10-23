@@ -5899,6 +5899,130 @@
             "title": "ClaimInput",
             "type": "object"
           },
+          "ClaimInverse": {
+            "additionalProperties": false,
+            "description": "How a ClaimType v9 states absence: the unit an inverse Claim covers and its evidence.\n\nAn inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds\nno value. Only a Capture one of ``evidence_rules`` admits can establish it,\nwhatever the type's ``evidence_requirement``. ``stale_after`` is how long an\ninverse stays current (absent: the type's ``evidence_freshness``), so\nabsence can expire sooner than presence. ``description`` says what a none\nmeans for this predicate.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "evidence_rules": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Evidence Rules",
+                "type": "array"
+              },
+              "key": {
+                "discriminator": {
+                  "mapping": {
+                    "object": "#/$defs/ClaimInverseObjectKey",
+                    "object_key": "#/$defs/ClaimInverseObjectKeyPart",
+                    "slot": "#/$defs/ClaimInverseSlotKey"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ClaimInverseSlotKey"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimInverseObjectKey"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimInverseObjectKeyPart"
+                  }
+                ],
+                "title": "Key"
+              },
+              "stale_after": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimFreshnessDuration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tag": {
+                "const": "cruxible-claim-inverse-v1",
+                "default": "cruxible-claim-inverse-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "evidence_rules"
+            ],
+            "title": "ClaimInverse",
+            "type": "object"
+          },
+          "ClaimInverseObjectKey": {
+            "additionalProperties": false,
+            "description": "A many-valued unit is one object: its inverse says that object is not held.",
+            "properties": {
+              "kind": {
+                "const": "object",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "ClaimInverseObjectKey",
+            "type": "object"
+          },
+          "ClaimInverseObjectKeyPart": {
+            "additionalProperties": false,
+            "description": "A many-valued, Subject-valued unit is one key part of the object Subject.\n\n``predicate`` is a key ClaimType of every object SubjectKind; the inverse\nsays no object with that key value is held, whichever Subject has it.",
+            "properties": {
+              "kind": {
+                "const": "object_key",
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "predicate"
+            ],
+            "title": "ClaimInverseObjectKeyPart",
+            "type": "object"
+          },
+          "ClaimInverseSlotKey": {
+            "additionalProperties": false,
+            "description": "A one-valued slot's unit is the whole slot: its inverse says it holds nothing.",
+            "properties": {
+              "kind": {
+                "const": "slot",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "ClaimInverseSlotKey",
+            "type": "object"
+          },
           "ClaimResolutionPolicy": {
             "additionalProperties": false,
             "properties": {
@@ -6098,7 +6222,8 @@
                   "playbill-claim-type-v5",
                   "playbill-claim-type-v6",
                   "playbill-claim-type-v7",
-                  "playbill-claim-type-v8"
+                  "playbill-claim-type-v8",
+                  "cruxible-claim-type-v9"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -6220,6 +6345,17 @@
               },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "inverse": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimInverse"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "lifecycle": {
                 "$ref": "#/$defs/ArtifactLifecycle",
@@ -16227,6 +16363,7 @@
               "mapping": {
                 "exact_content": "#/$defs/ExactContentClaimObject",
                 "literal": "#/$defs/LiteralClaimObject",
+                "none": "#/$defs/NoneClaimObject",
                 "subject": "#/$defs/SubjectClaimObject"
               },
               "propertyName": "kind"
@@ -16240,6 +16377,9 @@
               },
               {
                 "$ref": "#/$defs/ExactContentClaimObject"
+              },
+              {
+                "$ref": "#/$defs/NoneClaimObject"
               }
             ],
             "title": "Object"
@@ -16418,6 +16558,46 @@
             "title": "LiteralClaimObject",
             "type": "object"
           },
+          "NoneClaimObject": {
+            "additionalProperties": false,
+            "description": "An inverse Claim's object: the unit its ClaimType's inverse names holds nothing.\n\n``of`` names the unit within the slot: omitted for an inverse keyed by\n``slot`` (the whole one-valued slot), the absent object itself for one keyed\nby ``object``, and the key value (a literal in the key ClaimType's canonical\nform) for one keyed by ``object_key``. Only a ClaimType v9 that declares an\ninverse admits one.",
+            "properties": {
+              "kind": {
+                "const": "none",
+                "default": "none",
+                "title": "Kind",
+                "type": "string"
+              },
+              "of": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "literal": "#/$defs/LiteralClaimObject",
+                        "subject": "#/$defs/SubjectClaimObject"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/LiteralClaimObject"
+                      },
+                      {
+                        "$ref": "#/$defs/SubjectClaimObject"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Of"
+              }
+            },
+            "title": "NoneClaimObject",
+            "type": "object"
+          },
           "SemanticAddress": {
             "additionalProperties": false,
             "description": "Stable meaning identity, independent of source-line presentation.",
@@ -16498,6 +16678,7 @@
               "mapping": {
                 "exact_content": "#/$defs/ExactContentClaimObject",
                 "literal": "#/$defs/LiteralClaimObject",
+                "none": "#/$defs/NoneClaimObject",
                 "subject": "#/$defs/SubjectClaimObject"
               },
               "propertyName": "kind"
@@ -16511,6 +16692,9 @@
               },
               {
                 "$ref": "#/$defs/ExactContentClaimObject"
+              },
+              {
+                "$ref": "#/$defs/NoneClaimObject"
               }
             ],
             "title": "Object"
@@ -20184,6 +20368,7 @@
                   "mapping": {
                     "exact_content": "#/$defs/ExactContentClaimObject",
                     "literal": "#/$defs/LiteralClaimObject",
+                    "none": "#/$defs/NoneClaimObject",
                     "subject": "#/$defs/SubjectClaimObject"
                   },
                   "propertyName": "kind"
@@ -20197,6 +20382,9 @@
                   },
                   {
                     "$ref": "#/$defs/ExactContentClaimObject"
+                  },
+                  {
+                    "$ref": "#/$defs/NoneClaimObject"
                   }
                 ],
                 "title": "Object"
@@ -20338,6 +20526,46 @@
               "value"
             ],
             "title": "LiteralClaimObject",
+            "type": "object"
+          },
+          "NoneClaimObject": {
+            "additionalProperties": false,
+            "description": "An inverse Claim's object: the unit its ClaimType's inverse names holds nothing.\n\n``of`` names the unit within the slot: omitted for an inverse keyed by\n``slot`` (the whole one-valued slot), the absent object itself for one keyed\nby ``object``, and the key value (a literal in the key ClaimType's canonical\nform) for one keyed by ``object_key``. Only a ClaimType v9 that declares an\ninverse admits one.",
+            "properties": {
+              "kind": {
+                "const": "none",
+                "default": "none",
+                "title": "Kind",
+                "type": "string"
+              },
+              "of": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "literal": "#/$defs/LiteralClaimObject",
+                        "subject": "#/$defs/SubjectClaimObject"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/LiteralClaimObject"
+                      },
+                      {
+                        "$ref": "#/$defs/SubjectClaimObject"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Of"
+              }
+            },
+            "title": "NoneClaimObject",
             "type": "object"
           },
           "SemanticAddress": {
@@ -84845,6 +85073,130 @@
             "title": "ClaimFreshnessDuration",
             "type": "object"
           },
+          "ClaimInverse": {
+            "additionalProperties": false,
+            "description": "How a ClaimType v9 states absence: the unit an inverse Claim covers and its evidence.\n\nAn inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds\nno value. Only a Capture one of ``evidence_rules`` admits can establish it,\nwhatever the type's ``evidence_requirement``. ``stale_after`` is how long an\ninverse stays current (absent: the type's ``evidence_freshness``), so\nabsence can expire sooner than presence. ``description`` says what a none\nmeans for this predicate.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "evidence_rules": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Evidence Rules",
+                "type": "array"
+              },
+              "key": {
+                "discriminator": {
+                  "mapping": {
+                    "object": "#/$defs/ClaimInverseObjectKey",
+                    "object_key": "#/$defs/ClaimInverseObjectKeyPart",
+                    "slot": "#/$defs/ClaimInverseSlotKey"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ClaimInverseSlotKey"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimInverseObjectKey"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimInverseObjectKeyPart"
+                  }
+                ],
+                "title": "Key"
+              },
+              "stale_after": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimFreshnessDuration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tag": {
+                "const": "cruxible-claim-inverse-v1",
+                "default": "cruxible-claim-inverse-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "evidence_rules"
+            ],
+            "title": "ClaimInverse",
+            "type": "object"
+          },
+          "ClaimInverseObjectKey": {
+            "additionalProperties": false,
+            "description": "A many-valued unit is one object: its inverse says that object is not held.",
+            "properties": {
+              "kind": {
+                "const": "object",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "ClaimInverseObjectKey",
+            "type": "object"
+          },
+          "ClaimInverseObjectKeyPart": {
+            "additionalProperties": false,
+            "description": "A many-valued, Subject-valued unit is one key part of the object Subject.\n\n``predicate`` is a key ClaimType of every object SubjectKind; the inverse\nsays no object with that key value is held, whichever Subject has it.",
+            "properties": {
+              "kind": {
+                "const": "object_key",
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "predicate"
+            ],
+            "title": "ClaimInverseObjectKeyPart",
+            "type": "object"
+          },
+          "ClaimInverseSlotKey": {
+            "additionalProperties": false,
+            "description": "A one-valued slot's unit is the whole slot: its inverse says it holds nothing.",
+            "properties": {
+              "kind": {
+                "const": "slot",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "ClaimInverseSlotKey",
+            "type": "object"
+          },
           "ClaimQueryResult": {
             "additionalProperties": false,
             "description": "One replayable canonical read of accepted Claim state.",
@@ -85221,7 +85573,8 @@
                   "playbill-claim-type-v5",
                   "playbill-claim-type-v6",
                   "playbill-claim-type-v7",
-                  "playbill-claim-type-v8"
+                  "playbill-claim-type-v8",
+                  "cruxible-claim-type-v9"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -85343,6 +85696,17 @@
               },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "inverse": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimInverse"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "lifecycle": {
                 "$ref": "#/$defs/ArtifactLifecycle",
@@ -94339,6 +94703,130 @@
             "title": "ClaimFreshnessDuration",
             "type": "object"
           },
+          "ClaimInverse": {
+            "additionalProperties": false,
+            "description": "How a ClaimType v9 states absence: the unit an inverse Claim covers and its evidence.\n\nAn inverse Claim (object ``{kind: none}``) says the unit ``key`` names holds\nno value. Only a Capture one of ``evidence_rules`` admits can establish it,\nwhatever the type's ``evidence_requirement``. ``stale_after`` is how long an\ninverse stays current (absent: the type's ``evidence_freshness``), so\nabsence can expire sooner than presence. ``description`` says what a none\nmeans for this predicate.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "evidence_rules": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Evidence Rules",
+                "type": "array"
+              },
+              "key": {
+                "discriminator": {
+                  "mapping": {
+                    "object": "#/$defs/ClaimInverseObjectKey",
+                    "object_key": "#/$defs/ClaimInverseObjectKeyPart",
+                    "slot": "#/$defs/ClaimInverseSlotKey"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ClaimInverseSlotKey"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimInverseObjectKey"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimInverseObjectKeyPart"
+                  }
+                ],
+                "title": "Key"
+              },
+              "stale_after": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimFreshnessDuration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tag": {
+                "const": "cruxible-claim-inverse-v1",
+                "default": "cruxible-claim-inverse-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "evidence_rules"
+            ],
+            "title": "ClaimInverse",
+            "type": "object"
+          },
+          "ClaimInverseObjectKey": {
+            "additionalProperties": false,
+            "description": "A many-valued unit is one object: its inverse says that object is not held.",
+            "properties": {
+              "kind": {
+                "const": "object",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "ClaimInverseObjectKey",
+            "type": "object"
+          },
+          "ClaimInverseObjectKeyPart": {
+            "additionalProperties": false,
+            "description": "A many-valued, Subject-valued unit is one key part of the object Subject.\n\n``predicate`` is a key ClaimType of every object SubjectKind; the inverse\nsays no object with that key value is held, whichever Subject has it.",
+            "properties": {
+              "kind": {
+                "const": "object_key",
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "predicate"
+            ],
+            "title": "ClaimInverseObjectKeyPart",
+            "type": "object"
+          },
+          "ClaimInverseSlotKey": {
+            "additionalProperties": false,
+            "description": "A one-valued slot's unit is the whole slot: its inverse says it holds nothing.",
+            "properties": {
+              "kind": {
+                "const": "slot",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "ClaimInverseSlotKey",
+            "type": "object"
+          },
           "ClaimQueryResult": {
             "additionalProperties": false,
             "description": "One replayable canonical read of accepted Claim state.",
@@ -94715,7 +95203,8 @@
                   "playbill-claim-type-v5",
                   "playbill-claim-type-v6",
                   "playbill-claim-type-v7",
-                  "playbill-claim-type-v8"
+                  "playbill-claim-type-v8",
+                  "cruxible-claim-type-v9"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -94837,6 +95326,17 @@
               },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "inverse": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimInverse"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "lifecycle": {
                 "$ref": "#/$defs/ArtifactLifecycle",
