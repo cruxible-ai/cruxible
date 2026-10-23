@@ -121,7 +121,8 @@ def test_admission_misuse_is_a_coded_internal_error_without_a_traceback(runner):
 
     result = runner.invoke(misuse)
     assert result.exit_code == 1
-    assert "FloorAdmissionMisuse" in result.output
+    # The message leads with its own code, so the class-name prefix is dropped.
+    assert "FloorAdmissionMisuse" not in result.output
     assert FloorAdmissionMisuse.error_code in result.output
     assert "HTTP request must use async admit with the ticket" in result.output
     assert "Traceback" not in result.output and "RuntimeError" not in result.output

@@ -309,7 +309,7 @@ def test_approve_without_a_key_names_where_to_find_or_make_one(tmp_path, monkeyp
     monkeypatch.setattr(commands, "_server_call", lambda op, **_: op(object(), "inst_x"))
 
     result = CliRunner().invoke(
-        commands.approve_proposal, ["sha256:" + "ab" * 32, "--signer-id", "owner"]
+        commands.approve_proposal, ["sha256:" + "ab" * 32, "--signer-id", "owner", "--yes"]
     )
 
     assert result.exit_code == 2, result.output

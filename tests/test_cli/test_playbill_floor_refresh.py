@@ -211,5 +211,5 @@ def test_activation_renders_malformed_proposal_id_as_typed_refusal(
     )
 
     assert result.exit_code == 1
-    assert "ProposalActivationRequestInvalid" in result.output
+    assert "cruxible.proposal.activation_request_invalid" in result.output
     assert "cruxible.proposal.activation_request_invalid" in result.output
