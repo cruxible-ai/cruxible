@@ -2839,12 +2839,16 @@ class CaptureErasureLookupProtocol(Protocol):
 
     ``body_erasures`` answers every governed erasure record naming any of the
     given body digests, in recorded order. A body is content-addressed, so one
-    Capture's erasure destroys the same bytes for every Capture that holds them.
+    Capture's erasure destroys the same bytes for every Capture that holds them,
+    those that had landed when it was recorded: ``erasure_preceded`` answers that
+    from storage positions (a Capture landed later holds bytes stored again).
     """
 
     def body_erasures(
         self, body_digests: tuple[str, ...]
     ) -> tuple[RecordedCaptureErasure, ...]: ...
+
+    def erasure_preceded(self, capture_digest: str, erasure: RecordedCaptureErasure) -> bool: ...
 
 
 def capture_retained_body_digests(envelope: CaptureEnvelopeAny) -> tuple[str, ...]:

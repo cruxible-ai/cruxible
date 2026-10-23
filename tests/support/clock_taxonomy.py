@@ -183,6 +183,10 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("UploadLimits", "session_seconds"): "VALIDITY WINDOW",
     # When an erasure was recorded: the journal record's own recording instant.
     ("CaptureErasureRecord", "erased_at"): "ASSERTION TIME",
+    # An erasure's erasure journal position, and the landing log's position at
+    # it: storage event order, which decides what a judgment counted.
+    ("RecordedCaptureErasure", "sequence"): "SETTLEMENT ORDER",
+    ("ErasureLandingPosition", "sequence"): "SETTLEMENT ORDER",
     ("GetCaptureErasure", "at"): "ASSERTION TIME",
     ("CaptureVerdictEvidence", "observed_at"): "ASSERTION TIME",
     ("CaptureVerdictEvidence", "source_effective_until"): "VALIDITY WINDOW",

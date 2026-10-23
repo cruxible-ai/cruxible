@@ -92,6 +92,11 @@ _VALUE_COLUMNS = (
 )
 
 
+#: Ordinary value reads select by object kind, never by value: a literal null is
+#: a value, a none is not one.
+_NOT_NONE = "c.object_kind <> 'none'"
+
+
 def _value_of(row: Sequence[Any], source: Any) -> object:
     (
         identity,
@@ -144,10 +149,12 @@ def read_live_values(
     values: list[LiveValue] = []
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
+        # A none (an inverse Claim) states no value: it never enters the value
+        # stream, where it would read as a literal null.
         base = (
             f"SELECT {_VALUE_COLUMNS} FROM claims c "
             "LEFT JOIN subjects s ON s.path = c.object_path "
-            "WHERE c.lifecycle=?"
+            f"WHERE c.lifecycle=? AND {_NOT_NONE}"
         )
         predicate_clause = ""
         predicate_values: tuple[str, ...] = ()
@@ -195,7 +202,8 @@ def claim_values_by_path(projection: Any, paths: Iterable[str]) -> dict[str, Liv
     """The indexed value of each Claim at ``paths`` in a bound projection, by path.
 
     One keyed read per chunk of paths, whatever the Claim's lifecycle; a path the
-    projection does not hold is absent from the result.
+    projection does not hold, or whose Claim states none (an inverse), is absent
+    from the result.
     """
 
     connection = projection.typed.connection
@@ -205,7 +213,7 @@ def claim_values_by_path(projection: Any, paths: Iterable[str]) -> dict[str, Liv
         for row in connection.execute(
             f"SELECT {_VALUE_COLUMNS}, c.path, c.lifecycle FROM claims c "
             "LEFT JOIN subjects s ON s.path = c.object_path "
-            f"WHERE c.path IN ({marks})",
+            f"WHERE c.path IN ({marks}) AND {_NOT_NONE}",
             tuple(chunk),
         ):
             found[str(row[16])] = LiveValue(

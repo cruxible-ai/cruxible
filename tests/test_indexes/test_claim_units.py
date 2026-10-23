@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.claim_types import (
     ClaimInverse,
     ClaimType,
@@ -23,7 +24,9 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import (
+    ClaimArtifact,
     ClaimArtifactV2,
+    ClaimRetirementAttribution,
     LiteralClaimObject,
     NoneClaimObject,
     SubjectClaimObject,
@@ -32,7 +35,9 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.indexes.claim_units import (
+    FLIP_RETIREMENT_REASON,
     FLIP_UNIT_MOVED,
+    INVERSE_DUPLICATE,
     POLARITY_CONFLICT,
     _claim_facts,
     candidate_polarity_issues,
@@ -90,7 +95,10 @@ def claim(
     subject: str = ASSET,
     qualifier: str | None = None,
     live: bool = True,
-) -> ClaimArtifactV2:
+    reason: str = "superseded",
+) -> ClaimArtifactV2 | ClaimArtifact:
+    """A Claim of ``claim_type``; retired (``live=False``) with an attributed ``reason``."""
+
     claim_id = f"CLM-{number:032x}"
     base = _claim(
         claim_id=claim_id,
@@ -108,34 +116,36 @@ def claim(
             "qualifier": qualifier,
         }
     )
-    lifecycle = base.lifecycle.model_dump()
     if not live:
-        lifecycle["state"] = "retired"
+        return ClaimArtifact(
+            identity=base.identity,
+            statement=statement,
+            backing=base.backing,
+            pins=base.pins,
+            lifecycle=ArtifactLifecycle(state="retired", predecessor_digest="sha256:" + "0" * 64),
+            retirement=ClaimRetirementAttribution.model_validate({"reason": reason}),
+        )
     return ClaimArtifactV2.model_validate(
-        {
-            **base.model_dump(),
-            "statement": statement.model_dump(),
-            "lifecycle": lifecycle,
-        }
+        {**base.model_dump(), "statement": statement.model_dump()}
     )
 
 
-def runs(number: int, target: str, **kwargs: Any) -> ClaimArtifactV2:
+def runs(number: int, target: str, **kwargs: Any) -> ClaimArtifactV2 | ClaimArtifact:
     obj = SubjectClaimObject(address=SemanticAddress.whole_artifact(release(target)))
     return claim(number, RUNS_TYPE, obj, **kwargs)
 
 
-def runs_none(number: int, key: str, **kwargs: Any) -> ClaimArtifactV2:
+def runs_none(number: int, key: str, **kwargs: Any) -> ClaimArtifactV2 | ClaimArtifact:
     return claim(number, RUNS_TYPE, NoneClaimObject(of=LiteralClaimObject(value=key)), **kwargs)
 
 
-def product(number: int, target: str, name: str, **kwargs: Any) -> ClaimArtifactV2:
+def product(number: int, target: str, name: str, **kwargs: Any) -> ClaimArtifactV2 | ClaimArtifact:
     return claim(
         number, KEY_TYPE, LiteralClaimObject(value=name), subject=release(target), **kwargs
     )
 
 
-def tree(*members: ClaimArtifactV2 | ClaimType) -> dict[str, bytes]:
+def tree(*members: ClaimArtifactV2 | ClaimArtifact | ClaimType) -> dict[str, bytes]:
     found: dict[str, bytes] = {}
     for member in members:
         if isinstance(member, ClaimType):
@@ -145,13 +155,19 @@ def tree(*members: ClaimArtifactV2 | ClaimType) -> dict[str, bytes]:
     return found
 
 
-def judge(parent: dict[str, bytes], *changed: ClaimArtifactV2 | ClaimType) -> list[str]:
+def judge(
+    parent: dict[str, bytes],
+    *changed: ClaimArtifactV2 | ClaimArtifact | ClaimType,
+    base: dict[str, bytes] | None = None,
+) -> list[str]:
+    """The polarity codes of ``changed`` landing on ``parent``, made against ``base``."""
+
     candidate = {**parent, **tree(*changed)}
     scope = tuple(sorted(tree(*changed)))
     return [
         issue.code
         for issue in candidate_polarity_issues(
-            current_tree=parent, candidate_tree=candidate, scope=scope
+            current_tree=parent, candidate_tree=candidate, scope=scope, base_tree=base
         )
     ]
 
@@ -194,7 +210,7 @@ def _put_type(connection: sqlite3.Connection, claim_type: ClaimType) -> None:
     )
 
 
-def _put_claim(connection: sqlite3.Connection, artifact: ClaimArtifactV2) -> None:
+def _put_claim(connection: sqlite3.Connection, artifact: ClaimArtifactV2 | ClaimArtifact) -> None:
     fields = _claim_fields(artifact)
     fields.update(
         identity=artifact.identity.qualified,
@@ -427,6 +443,76 @@ def test_one_valued_rivals_contend_only_under_an_unresolved_policy() -> None:
     )
 
 
+def test_a_one_valued_dispute_stands_only_against_a_value_its_writer_saw() -> None:
+    """Policy alone is no dispute: a contend is written against the value it read (I2-001)."""
+
+    empty = tree(SLOT_TYPE)
+    value = claim(1, SLOT_TYPE, LiteralClaimObject(value="ready"))
+    none = claim(2, SLOT_TYPE, NoneClaimObject())
+    # Two candidates prepared against the empty slot each pass alone.
+    assert judge(empty, value) == [] and judge(empty, none) == []
+    # Whichever lands second never read the other: it disputes nothing, so it refuses.
+    assert judge({**empty, **tree(value)}, none, base=empty) == [POLARITY_CONFLICT]
+    assert judge({**empty, **tree(none)}, value, base=empty) == [POLARITY_CONFLICT]
+    # Written at (or rebased from) a head that holds the value: a deliberate contend.
+    landed = {**empty, **tree(value)}
+    assert judge(landed, none) == []
+    assert judge(landed, none, base=landed) == []
+    # One change writing both polarities into the slot contends with nothing it read.
+    assert judge(empty, value, none) == [POLARITY_CONFLICT]
+    # The value it read was flipped to none meanwhile: the none it now meets is unseen.
+    flipped = {**empty, **tree(claim(1, SLOT_TYPE, NoneClaimObject()))}
+    rival = claim(3, SLOT_TYPE, LiteralClaimObject(value="blocked"))
+    assert judge(flipped, rival, base=landed) == [POLARITY_CONFLICT]
+    # Rewriting a rival already in an accepted dispute starts no new one.
+    disputed = tree(SLOT_TYPE, value, none)
+    assert judge(disputed, claim(1, SLOT_TYPE, LiteralClaimObject(value="ready"))) == []
+    assert judge(disputed, none, base=disputed) == []
+
+
+def test_a_unit_holds_one_none() -> None:
+    """Values or one none: a second inverse lineage refuses in every unit kind (I2-002)."""
+
+    keyed = tree(*TYPES, product(10, "r1", "gh"))
+    assert judge(keyed, runs_none(1, "gh"), runs_none(2, "gh")) == [INVERSE_DUPLICATE]
+    landed = {**keyed, **tree(runs_none(1, "gh"))}
+    # Concurrent, or rebased behind the first: the second is judged where it lands.
+    assert judge(landed, runs_none(2, "gh")) == [INVERSE_DUPLICATE]
+    assert judge(landed, runs_none(2, "gh"), base=keyed) == [INVERSE_DUPLICATE]
+    # Restating the live none revises it; replacing it retires it in the same change.
+    assert judge(landed, runs_none(1, "gh")) == []
+    assert judge(landed, runs_none(2, "gh"), runs_none(1, "gh", live=False)) == []
+    # Another key, another asset: other units.
+    assert judge(landed, runs_none(2, "git")) == []
+    assert judge(landed, runs_none(2, "gh", subject=OTHER_ASSET)) == []
+    slot = tree(SLOT_TYPE, claim(1, SLOT_TYPE, NoneClaimObject()))
+    assert judge(slot, claim(2, SLOT_TYPE, NoneClaimObject())) == [INVERSE_DUPLICATE]
+    labels = tree(
+        OBJECT_TYPE, claim(1, OBJECT_TYPE, NoneClaimObject(of=LiteralClaimObject(value="a")))
+    )
+    assert judge(
+        labels, claim(2, OBJECT_TYPE, NoneClaimObject(of=LiteralClaimObject(value="a")))
+    ) == [INVERSE_DUPLICATE]
+    assert (
+        judge(labels, claim(2, OBJECT_TYPE, NoneClaimObject(of=LiteralClaimObject(value="b"))))
+        == []
+    )
+
+
+def test_values_a_flip_leaves_behind_retire_as_superseded() -> None:
+    parent = tree(
+        *TYPES, product(10, "r1", "gh"), product(11, "r2", "gh"), product(12, "r3", "git"),
+        runs(1, "r1"), runs(2, "r2"), runs(3, "r3"),
+    )  # fmt: skip
+    assert judge(parent, runs_none(1, "gh"), runs(2, "r2", live=False)) == []
+    wrong = runs(2, "r2", live=False, reason="was-wrong")
+    assert judge(parent, runs_none(1, "gh"), wrong) == [FLIP_RETIREMENT_REASON]
+    # A retirement in another unit, or with no flip at all, keeps its own reason.
+    other = runs(3, "r3", live=False, reason="was-wrong")
+    assert judge(parent, runs_none(1, "gh"), runs(2, "r2", live=False), other) == []
+    assert judge(parent, wrong) == []
+
+
 def test_an_object_unit_is_the_object_itself() -> None:
     parent = tree(OBJECT_TYPE, claim(1, OBJECT_TYPE, LiteralClaimObject(value="a")))
     none_a = claim(2, OBJECT_TYPE, NoneClaimObject(of=LiteralClaimObject(value="a")))
@@ -483,3 +569,46 @@ def test_the_projection_index_judges_as_the_cold_tree_does() -> None:
             scope=tuple(sorted(changed)),
         )
         assert indexed == cold
+
+
+def test_value_reads_never_project_a_none() -> None:
+    """A none is no value: reads skip it by object kind, so a literal null stays (I2-003)."""
+
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from cruxible_core.service.discovery.query_values import (
+        ValueIndex,
+        claim_values_by_path,
+        read_live_values,
+    )
+
+    connection = _database()
+    for claim_type in (SLOT_TYPE, OBJECT_TYPE):
+        _put_type(connection, claim_type)
+    null = claim(1, SLOT_TYPE, LiteralClaimObject(value=None), subject=OTHER_ASSET)
+    nones = (
+        claim(2, SLOT_TYPE, NoneClaimObject()),
+        claim(3, OBJECT_TYPE, NoneClaimObject(of=LiteralClaimObject(value="a"))),
+    )
+    for artifact in (null, *nones):
+        _put_claim(connection, artifact)
+    loaded: list[str] = []
+    projection = SimpleNamespace(
+        typed=SimpleNamespace(
+            connection=connection, source=lambda identity: loaded.append(identity)
+        )
+    )
+
+    @contextmanager
+    def bind(_coordinate: object) -> Any:
+        yield projection
+
+    instance = SimpleNamespace(bind_accepted_projection=bind)
+    values = read_live_values(instance, None, subject_paths=None, predicates=None)  # type: ignore[arg-type]
+    assert [(item.identity, item.value) for item in values] == [(null.identity.qualified, None)]
+    assert loaded == []
+    index = ValueIndex(values)
+    assert index.slot(ASSET, SLOT_TYPE.predicate) == [] and index.subject(ASSET) == []
+    paths = [claim_path(item.identity.name) for item in (null, *nones)]
+    assert set(claim_values_by_path(projection, paths)) == {paths[0]}

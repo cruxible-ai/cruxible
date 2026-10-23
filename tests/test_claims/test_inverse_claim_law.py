@@ -9,7 +9,7 @@ unit and carries exactly the evidence it cites.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -251,7 +251,8 @@ class _World:
         extra_contracts: tuple[Any, ...] = (),
         erasure_records: Any = None,
         erasure_contract: Any = None,
-        prior_heads: frozenset[Any] = frozenset(),
+        erasure_preceded: Any = None,
+        erasure_cutoffs: Any = None,
     ) -> ClaimLawResult:
         shell = _shell()
         contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
@@ -296,8 +297,10 @@ class _World:
             erasure_records=erasure_records,
             erasure_contract=erasure_contract,
             erasure_affects_verdict=erasure_records is not None,
+            erasure_preceded=erasure_preceded,
+            erasure_cutoffs=erasure_cutoffs,
             accepted_coordinate=self.coordinate,
-            accepted_referent_coordinates=frozenset({self.coordinate, *prior_heads}),
+            accepted_referent_coordinates=frozenset({self.coordinate}),
         )
 
 
@@ -542,10 +545,14 @@ PRIOR_HEAD = AcceptedCoordinate(
 )
 
 
-def _shared_erasure(body: str, *, head: AcceptedCoordinate = PRIOR_HEAD) -> tuple[Any, Any]:
-    """An erasable contract and its recorded erasure of ``body``, made under ``head``."""
-
-    from datetime import timedelta
+def _shared_erasure(
+    body: str,
+    *,
+    head: AcceptedCoordinate = PRIOR_HEAD,
+    sequence: int = 1,
+    erased_at: Any = None,
+) -> tuple[Any, Any]:
+    """An erasable contract and its erasure of ``body``, at journal ``sequence`` under ``head``."""
 
     from cruxible_client.contracts.capture_erasure import (
         CaptureErasureRecord,
@@ -563,10 +570,10 @@ def _shared_erasure(body: str, *, head: AcceptedCoordinate = PRIOR_HEAD) -> tupl
         erasure_rule_digest=erasable.retention_erasure_policy.erasure_rule_digest,
         body_digests=(body,),
         erased_by="owner",
-        erased_at=OBSERVED_AT + timedelta(hours=1),
+        erased_at=OBSERVED_AT + timedelta(hours=1) if erased_at is None else erased_at,
         because="The shared bytes held a secret.",
     )
-    return erasable, RecordedCaptureErasure(record=record, coordinate=head)
+    return erasable, RecordedCaptureErasure(record=record, coordinate=head, sequence=sequence)
 
 
 def _retirement(claim: Any, accepted: AcceptedClaim) -> Any:
@@ -637,33 +644,125 @@ def _replayable(result: ClaimLawResult) -> bool:
     return capture.current_replay_available
 
 
-def test_an_erasure_counts_for_a_judgment_by_journal_position_not_by_clock(
+def _through(result: ClaimLawResult) -> int | None:
+    assert result.evidence is not None
+    (capture,) = result.evidence.verdict_captures
+    return capture.erasures_through
+
+
+def test_a_judgment_counts_every_erasure_recorded_before_it_even_under_its_own_head(
+    world: _World,
+) -> None:
+    """Recheck 2, #3.1: the journal position orders them, not the head (no own-head blind spot)."""
+
+    claim_type = _claim_type()
+    positive = world.claim(claim_type, LiteralClaimObject(value="alice"), value="alice")
+    body = _body(positive)
+    (capture,) = positive.backing.capture_digests
+    erasable, own = _shared_erasure(body, head=world.coordinate, sequence=4)
+    _erasable, earlier = _shared_erasure(body, sequence=2)
+    for recorded in (own, earlier):
+        live = world.judge(
+            positive,
+            claim_type,
+            extra_contracts=(erasable,),
+            erasure_records=lambda bodies, recorded=recorded: (recorded,),
+        )
+        # Live, every record the journal holds came first; the evidence names the position.
+        assert not _replayable(live) and _through(live) == recorded.sequence
+        # Replay counts exactly what the judgment recorded, and reproduces it.
+        replayed = world.judge(
+            positive,
+            claim_type,
+            extra_contracts=(erasable,),
+            erasure_records=lambda bodies, recorded=recorded: (recorded,),
+            erasure_cutoffs={capture: recorded.sequence},
+        )
+        assert replayed.evidence == live.evidence
+
+
+def test_replay_counts_only_the_erasures_at_or_before_the_recorded_position(
     world: _World,
 ) -> None:
     claim_type = _claim_type()
     positive = world.claim(claim_type, LiteralClaimObject(value="alice"), value="alice")
     body = _body(positive)
-
-    # Recorded under this judgment's own head (or later): the judgment did not see
-    # it, whatever its timestamp says, so the evidence it recorded reproduces.
-    erasable, current = _shared_erasure(body, head=world.coordinate)
+    (capture,) = positive.backing.capture_digests
+    erasable, first = _shared_erasure(body, sequence=3)
+    _erasable, later = _shared_erasure(body, sequence=7)
+    # A judgment made before any erasure saw none, whatever the journal holds now.
+    before = world.judge(
+        positive, claim_type, extra_contracts=(erasable,), erasure_records=lambda bodies: ()
+    )
     unseen = world.judge(
         positive,
         claim_type,
         extra_contracts=(erasable,),
-        erasure_records=lambda bodies: (current,),
+        erasure_records=lambda bodies: (first, later),
+        erasure_cutoffs={},
     )
-    assert _replayable(unseen)
-    # Recorded under an earlier accepted head: it was there before the judgment.
-    _erasable, earlier = _shared_erasure(body)
-    seen = world.judge(
+    assert _replayable(unseen) and _through(unseen) is None
+    assert unseen.evidence == before.evidence
+    # One made between the two counted the first only: replay stops at its position.
+    between = world.judge(
         positive,
         claim_type,
         extra_contracts=(erasable,),
-        erasure_records=lambda bodies: (earlier,),
-        prior_heads=frozenset({PRIOR_HEAD}),
+        erasure_records=lambda bodies: (first,),
     )
-    assert not _replayable(seen)
+    replayed = world.judge(
+        positive,
+        claim_type,
+        extra_contracts=(erasable,),
+        erasure_records=lambda bodies: (first, later),
+        erasure_cutoffs={capture: 3},
+    )
+    assert _through(between) == 3 and replayed.evidence == between.evidence
+
+
+def test_whether_an_erasure_destroyed_a_captures_material_is_a_storage_position(
+    world: _World,
+) -> None:
+    """Recheck 2, #3.2: the landing order decides, not the observation and erasure clocks."""
+
+    claim_type = _claim_type()
+    positive = world.claim(claim_type, LiteralClaimObject(value="alice"), value="alice")
+    accepted = _accepted(positive)
+    body = _body(positive)
+    # Recorded a microsecond (by the clocks) before the Capture's observation.
+    erasable, skewed = _shared_erasure(body, erased_at=OBSERVED_AT - timedelta(microseconds=1))
+    world.store.erase(body)
+    retirement = _retirement(positive, accepted)
+    landed: list[tuple[str, int]] = []
+
+    def preceded(capture: str, item: Any) -> bool:
+        landed.append((capture, item.sequence))
+        return True
+
+    retired = world.judge(
+        retirement,
+        claim_type,
+        predecessor=accepted,
+        extra_contracts=(erasable,),
+        erasure_records=lambda bodies: (skewed,),
+        erasure_preceded=preceded,
+    )
+    assert retired.verdict == "accepted", retired.diagnostics
+    assert landed == [(positive.backing.capture_digests[0], 1)]
+    # The Capture landed after the erasure: its bytes are its own, so the erasure
+    # explains nothing about them, however late its clock says it was made.
+    late = skewed.model_copy(
+        update={"record": skewed.record.model_copy(update={"erased_at": OBSERVED_AT})}
+    )
+    stranded = world.judge(
+        retirement,
+        claim_type,
+        predecessor=accepted,
+        extra_contracts=(erasable,),
+        erasure_records=lambda bodies: (late,),
+        erasure_preceded=lambda capture, item: False,
+    )
+    assert _code(stranded) == "cruxible.claim.capture_unverified"
 
 
 def test_erasure_authority_is_read_at_the_erasures_own_head(world: _World) -> None:

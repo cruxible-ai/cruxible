@@ -144,17 +144,34 @@ class CaptureErasureRecord(_StrictErasureModel):
         return validate_erasure_because(value)
 
 
+class ErasureLandingPosition(_StrictErasureModel):
+    """Where the body store's landing log stood when an erasure was recorded.
+
+    A Capture whose envelope had landed by then held the bytes the erasure
+    destroys; one that landed later holds bytes stored again, its own. The
+    position is the storage event order; no clock decides it.
+    """
+
+    log: str = Field(min_length=1, description="The landing log's identity.")
+    sequence: int = Field(ge=0, description="The log's last sequence at the record.")
+
+
 class RecordedCaptureErasure(_StrictErasureModel):
     """One erasure as the erasure journal holds it: the record and where it was made.
 
-    ``coordinate`` is the accepted head the erasure was recorded under. A
-    judgment made against a later head saw it; one made against that head or an
-    earlier one did not, whatever the clocks say. The contract authorizing it is
-    resolved as of this coordinate too.
+    ``sequence`` is its position in the erasure journal: a judgment counts the
+    erasures recorded by the time it was made (live, every record the journal
+    holds; on replay, those at or before the position its evidence recorded),
+    whatever the clocks or heads say. ``coordinate`` is the accepted head it was
+    recorded under: the contract authorizing it is resolved as of that head.
+    ``landing`` is the landing log position at the record (None for a record
+    written before positions were kept).
     """
 
     record: CaptureErasureRecord
     coordinate: AcceptedCoordinate
+    sequence: int = Field(ge=1)
+    landing: ErasureLandingPosition | None = None
 
 
 class CaptureEraseRequest(_StrictErasureModel):
@@ -223,6 +240,7 @@ __all__ = [
     "CaptureEraseRequest",
     "CaptureEraseResult",
     "CaptureErasureRecord",
+    "ErasureLandingPosition",
     "RecordedCaptureErasure",
     "validate_capture_ref",
     "validate_erasure_because",

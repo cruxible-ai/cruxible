@@ -125,3 +125,60 @@ def test_the_accepted_change_moved_every_value_of_the_rekeyed_release(root: Path
         (release("target"),),
     ).fetchall()
     assert moved == [('["literal","string","git"]',)] * 3
+
+
+def _crowded(root: Path, values: int) -> sqlite3.Connection:
+    """One unit (ASSET runs, key gh) holding ``values`` values, each a release keyed gh."""
+
+    connection = sqlite3.connect(root / f"crowded-{values}.sqlite3", isolation_level=None)
+    connection.executescript(schema_sql())
+    for claim_type in TYPES:
+        _put_type(connection, claim_type)
+    for index in range(values):
+        _put_claim(connection, product(2000 + index, f"gh-{index}", "gh"))
+        _put_claim(connection, runs(5000 + index, f"gh-{index}"))
+    _put_claim(connection, product(1999, "gh-new", "gh"))
+    refresh_claim_units(connection)
+    return connection
+
+
+def _judge_crowded(connection: sqlite3.Connection, *changed: object) -> list[str]:
+    facts = {
+        artifact.identity.qualified: _claim_facts(  # type: ignore[attr-defined]
+            render_claim(artifact),  # type: ignore[arg-type]
+            claim_path(artifact.identity.name),  # type: ignore[attr-defined]
+        )
+        for artifact in changed
+    }
+    types = {item.identity.qualified: item for item in TYPES}
+    return [
+        issue.code
+        for issue in polarity_issues(
+            connection, claims=facts, claim_types={}, claim_type_of=lambda identity: types[identity]
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        (lambda: (runs(4999, "gh-new"),), []),
+        (lambda: (runs_none(4998, "gh"),), ["cruxible.claim.polarity_conflict"]),
+    ],
+    ids=["value", "none"],
+)
+def test_the_boundary_never_enumerates_a_crowded_unit(root: Path, change) -> None:  # type: ignore[no-untyped-def]
+    """One more value (or one none) beside many values seeks, never scans the unit (I2-004)."""
+
+    build, expected = change
+    steps = []
+    for values in SIZES:
+        connection = _crowded(root, values)
+        with counting(root) as window:
+            assert _judge_crowded(connection, *build()) == expected
+        assert window.unexplained == [], window.unexplained
+        steps.append(window.counts["sql_vm_steps"])
+        connection.close()
+    small, large = steps
+    assert small > 0
+    assert not _grows(small, large), (steps, window.attribution[:3])

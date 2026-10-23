@@ -16,11 +16,16 @@ with no change) yields the same rows.
 
 The candidate boundary (``candidate_polarity_issues``) reads the parent's rows
 for the units a change touches, laid over the units the change itself leaves:
-O(1) seeks per changed Claim, plus the same fan-in. It refuses a change set
-after which a unit holds a live value and a live none
-(``cruxible.claim.polarity_conflict``), and a flip under an ``object_key``
-inverse that leaves its unit (``cruxible.claim.flip_unit_moved``: the Claim law
-cannot read the object's key, the boundary can).
+bounded seeks per changed Claim (a written value seeks the unit's nones, a
+written none the first few values; neither enumerates its own polarity), plus
+the same fan-in. It refuses a change set after which a unit holds a live value
+and a live none (``cruxible.claim.polarity_conflict``; one-valued rivals under
+``conflict_result: unresolved`` may dispute only against opposites live in the
+change's own base, a deliberate contend), more than one none
+(``cruxible.claim.inverse_duplicate``), a flip under an ``object_key`` inverse
+that leaves its unit (``cruxible.claim.flip_unit_moved``: the Claim law cannot
+read the object's key, the boundary can), and a retirement riding along with a
+flip that does not end as superseded (``cruxible.claim.flip_retirement_reason``).
 """
 
 from __future__ import annotations
@@ -60,6 +65,8 @@ SCHEMA_STATEMENTS = (
 
 POLARITY_CONFLICT = "cruxible.claim.polarity_conflict"
 FLIP_UNIT_MOVED = "cruxible.claim.flip_unit_moved"
+INVERSE_DUPLICATE = "cruxible.claim.inverse_duplicate"
+FLIP_RETIREMENT_REASON = "cruxible.claim.flip_retirement_reason"
 
 #: The ``claims`` columns a unit is read from.
 _FACT_COLUMNS = (
@@ -98,11 +105,17 @@ _TYPE_CLAIMS_SQL = (
     "AND claim_type_identity=?"
 )
 _UNIT_HOLDERS_SQL = (
-    "SELECT claim_identity, polarity FROM main.claim_units WHERE subject_path=? AND predicate=? "
-    "AND unit=? AND qualifier IS ? AND unit_kind=?"
+    "SELECT claim_identity FROM main.claim_units WHERE subject_path=? AND predicate=? "
+    "AND unit=? AND qualifier IS ? AND polarity=? AND unit_kind=?"
+)
+_UNIT_OF_SQL = (
+    "SELECT subject_path, predicate, qualifier, unit_kind, unit FROM main.claim_units "
+    "WHERE claim_identity=?"
 )
 
 InverseKey = tuple[str, str | None]
+#: A unit: (subject_path, predicate, qualifier, unit_kind, unit).
+UnitKey = tuple[str, str, str | None, str, str]
 Facts = Mapping[str, SQLValue]
 
 
@@ -176,7 +189,7 @@ class UnitRow:
     object_path: str | None
 
     @property
-    def unit_key(self) -> tuple[str, str, str | None, str, str]:
+    def unit_key(self) -> UnitKey:
         return (self.subject_path, self.predicate, self.qualifier, self.unit_kind, self.unit)
 
     def values(self) -> tuple[SQLValue, ...]:
@@ -408,20 +421,72 @@ def _claim_ref(identity: str) -> str:
     return identity.removeprefix("Claim:")
 
 
+def _polarity_of(facts: Facts) -> str:
+    return "inverse" if facts.get("object_kind") == "none" else "positive"
+
+
+#: The holders a refusal names. A unit's population is never enumerated to judge
+#: a change: each seek stops once it has found what the law asks about.
+_SHOWN = 5
+
+
+def _holders(
+    parent: sqlite3.Connection,
+    unit_key: UnitKey,
+    polarity: str,
+    *,
+    skip: Mapping[str, object],
+    limit: int | None,
+) -> list[str]:
+    """Up to ``limit`` of the parent's ``polarity`` holders of one unit, bar ``skip``.
+
+    One index range, read lazily: the rows of ``skip`` (the Claims the change
+    rewrites) are passed over, so the work is the change's own rows plus
+    ``limit``. ``limit=None`` reads the whole range (a one-valued slot's rivals).
+    """
+
+    subject_path, predicate, qualifier, unit_kind, unit = unit_key
+    found: list[str] = []
+    cursor = parent.execute(
+        _UNIT_HOLDERS_SQL, (subject_path, predicate, unit, qualifier, polarity, unit_kind)
+    )
+    try:
+        for (identity,) in cursor:
+            if str(identity) in skip:
+                continue
+            found.append(str(identity))
+            if limit is not None and len(found) >= limit:
+                break
+    finally:
+        cursor.close()
+    return found
+
+
+def _named(identities: list[str]) -> str:
+    shown = ", ".join(_claim_ref(item) for item in identities[:_SHOWN])
+    return shown + (", ..." if len(identities) > _SHOWN else "")
+
+
 def polarity_issues(
     parent: sqlite3.Connection,
     *,
     claims: Mapping[str, Facts],
     claim_types: Mapping[str, Any],
     claim_type_of: Callable[[str], Any],
+    base_claim: Callable[[str], Facts | None] | None = None,
 ) -> tuple[PolarityIssue, ...]:
     """The polarity law over one change, judged against its parent's unit index.
 
     ``claims`` holds the change's Claims as they stand after it (their
-    ``claims`` columns plus ``identity``, ``path`` and ``lifecycle``);
-    ``claim_types`` the ClaimTypes it writes, by identity (None: removed);
-    ``claim_type_of(identity)`` reads any ClaimType after the change. The
-    parent's own rows are read only for the units the change touches.
+    ``claims`` columns plus ``identity``, ``path``, ``lifecycle`` and, for a
+    retirement, ``retirement_reason``); ``claim_types`` the ClaimTypes it
+    writes, by identity (None: removed); ``claim_type_of(identity)`` reads any
+    ClaimType after the change. ``base_claim(identity)`` reads a Claim as the
+    change's own base held it, when the change was made against an earlier
+    head than ``parent`` (a rebase); None: its base is the parent. The parent's
+    rows are read only for the units the change touches, and only as far as
+    each check needs: a value written into a unit seeks its nones, a none
+    written seeks the values, and neither enumerates its own polarity.
     """
 
     in_scope = set(claims)
@@ -474,29 +539,38 @@ def polarity_issues(
         targets[identity] = facts
         cause[identity] = moved[identity]
 
-    def candidate_key_value(subject_path: str, predicate: str) -> str | None:
-        rows = [
-            row
-            for row in parent.execute(_KEY_VALUES_SQL, (subject_path, predicate))
-            if str(row[0]) not in in_scope
-        ]
-        rows.extend(
-            (
-                identity,
-                facts.get("literal_type"),
-                facts.get("literal_text"),
-                facts.get("literal_integer_text"),
-                facts.get("literal_boolean"),
-            )
-            for identity, facts in claims.items()
-            if facts.get("subject_path") == subject_path
-            and facts.get("predicate") == predicate
-            and facts.get("lifecycle") == "live"
+    # The key values the change itself states, by (Subject, key predicate).
+    change_keys: dict[tuple[str, str], list[tuple[Any, ...]]] = {}
+    for identity, facts in claims.items():
+        if (
+            facts.get("lifecycle") == "live"
             and facts.get("object_kind") == "literal"
             and facts.get("qualifier") is None
             and facts.get("subject_selector_scheme") == "artifact-v1"
-        )
-        return _key_text(rows)
+        ):
+            change_keys.setdefault(
+                (str(facts.get("subject_path")), str(facts.get("predicate"))), []
+            ).append(
+                (
+                    identity,
+                    facts.get("literal_type"),
+                    facts.get("literal_text"),
+                    facts.get("literal_integer_text"),
+                    facts.get("literal_boolean"),
+                )
+            )
+    candidate_keys: dict[tuple[str, str], str | None] = {}
+
+    def candidate_key_value(subject_path: str, predicate: str) -> str | None:
+        if (subject_path, predicate) not in candidate_keys:
+            rows = [
+                row
+                for row in parent.execute(_KEY_VALUES_SQL, (subject_path, predicate))
+                if str(row[0]) not in in_scope
+            ]
+            rows.extend(change_keys.get((subject_path, predicate), ()))
+            candidate_keys[(subject_path, predicate)] = _key_text(rows)
+        return candidate_keys[(subject_path, predicate)]
 
     rows: list[UnitRow] = []
     for identity, facts in sorted(targets.items()):
@@ -507,23 +581,66 @@ def polarity_issues(
         )
         if row is not None:
             rows.append(row)
+
+    def seen(identity: str, polarity: str, slot: tuple[str, str, str | None]) -> bool:
+        """Whether the change's author saw this Claim hold ``polarity`` in ``slot``.
+
+        A one-valued dispute is a deliberate act against a Claim its writer
+        read: the opposite was live, in that slot and polarity, in the base the
+        change was made against. A Claim the change writes was seen only as its
+        base held it; one the parent holds that the change does not touch was
+        seen when the base is the parent.
+        """
+
+        before: Facts | None
+        if base_claim is None:
+            if identity not in claims:
+                return True
+            before = parent_facts.get(identity)
+        else:
+            before = base_claim(identity)
+        return (
+            before is not None
+            and before.get("lifecycle") == "live"
+            and (before.get("subject_path"), before.get("predicate"), before.get("qualifier"))
+            == slot
+            and _polarity_of(before) == polarity
+        )
+
     issues: list[PolarityIssue] = []
-    by_unit: dict[tuple[str, str, str | None, str, str], list[UnitRow]] = {}
+    by_unit: dict[UnitKey, list[UnitRow]] = {}
     for row in rows:
         by_unit.setdefault(row.unit_key, []).append(row)
     for unit_key, written in sorted(by_unit.items(), key=lambda item: repr(item[0])):
         subject_path, predicate, qualifier, unit_kind, unit = unit_key
-        holders = {
-            str(identity): str(polarity)
-            for identity, polarity in parent.execute(
-                _UNIT_HOLDERS_SQL, (subject_path, predicate, unit, qualifier, unit_kind)
+        where = f"{_ref(subject_path)} {predicate}"
+        shown_unit = render_unit(unit_kind, unit)
+        written_values = [row.claim_identity for row in written if row.polarity == "positive"]
+        written_nones = [row.claim_identity for row in written if row.polarity == "inverse"]
+        # At most one none: two are found by a seek of two.
+        nones = written_nones + _holders(parent, unit_key, "inverse", skip=targets, limit=2)
+        if len(nones) > 1:
+            first = written_nones[0] if written_nones else written[0].claim_identity
+            issues.append(
+                PolarityIssue(
+                    INVERSE_DUPLICATE,
+                    cause[first],
+                    f"{where} would hold more than one none ({_named(nones)}) for "
+                    f"{shown_unit}. A unit holds values or one none: restate the live none "
+                    "by revising it, or retire it in the same change.",
+                )
             )
-            if str(identity) not in targets
-        }
-        holders.update((row.claim_identity, row.polarity) for row in written)
-        positives = sorted(item for item, polarity in holders.items() if polarity == "positive")
-        inverses = sorted(item for item, polarity in holders.items() if polarity == "inverse")
-        if not positives or not inverses:
+            continue
+        if not nones:
+            continue
+        # A none in the unit: the values it would sit beside. A written value
+        # needs no seek (it is one); a written none seeks the first few.
+        values = written_values + (
+            _holders(parent, unit_key, "positive", skip=targets, limit=_SHOWN + 1)
+            if written_nones
+            else []
+        )
+        if not values:
             continue
         claim_type = candidate_type(str(targets[written[0].claim_identity]["claim_type_identity"]))
         if (
@@ -531,34 +648,71 @@ def polarity_issues(
             and claim_type is not None
             and claim_type.resolution_policy.conflict_result == "unresolved"
         ):
-            # One-valued rivals: a value and a none contend, and read as disputed.
+            # One-valued rivals may dispute, but only deliberately: each Claim
+            # the change writes into the dispute stands against opposites its
+            # writer saw (a contend), never against one that landed meanwhile.
+            slot = (subject_path, predicate, qualifier)
+            unseen = [row for row in written if not seen(row.claim_identity, row.polarity, slot)]
+            if not unseen:
+                continue
+            every = {
+                "positive": written_values
+                + _holders(parent, unit_key, "positive", skip=targets, limit=None),
+                "inverse": nones,
+            }
+            blind = sorted(
+                {
+                    other
+                    for row in unseen
+                    for other, polarity in (
+                        (item, opposite)
+                        for opposite in ({"positive", "inverse"} - {row.polarity})
+                        for item in every[opposite]
+                    )
+                    if not seen(other, polarity, slot)
+                }
+            )
+            if not blind:
+                continue
+            issues.append(
+                PolarityIssue(
+                    POLARITY_CONFLICT,
+                    cause[unseen[0].claim_identity],
+                    f"{where} would hold both a value and none for {shown_unit}, and "
+                    f"{_named(blind)} was not live there when this change was made. A "
+                    "one-valued field is disputed only by contending with the value its "
+                    "writer read: write the change again at the head, revising the opposite "
+                    "Claim (a flip) or contending with it.",
+                )
+            )
             continue
-        named = ", ".join(_claim_ref(item) for item in positives)
         issues.append(
             PolarityIssue(
                 POLARITY_CONFLICT,
                 cause[written[0].claim_identity],
-                f"{_ref(subject_path)} {predicate} would hold both a value ({named}) and none "
-                f"({', '.join(_claim_ref(item) for item in inverses)}) for "
-                f"{render_unit(unit_kind, unit)}. A unit holds values or one none, never both: "
-                "revise the opposite Claim into this one (a flip), or retire it in the same "
-                "change.",
+                f"{where} would hold both a value ({_named(values)}) and none "
+                f"({_named(nones)}) for {shown_unit}. A unit holds values or one none, never "
+                "both: revise the opposite Claim into this one (a flip), or retire it in the "
+                "same change.",
             )
         )
     # A flip under an object_key inverse stays in its unit: the key value it
     # names is read from state, which the Claim law does not hold.
     by_identity = {row.claim_identity: row for row in rows}
+    flipped_units: set[UnitKey] = set()
     for identity, facts in sorted(claims.items()):
         before = parent_facts.get(identity)
         if before is None or facts.get("lifecycle") != "live":
             continue
-        if (before.get("object_kind") == "none") == (facts.get("object_kind") == "none"):
+        if _polarity_of(before) == _polarity_of(facts):
             continue
+        new = by_identity.get(identity)
+        if new is not None:
+            flipped_units.add(new.unit_key)
         inverse = _inverse_key(candidate_type(str(facts["claim_type_identity"])))
         if inverse is None or inverse[0] != "object_key":
             continue
         old = unit_row({**before, "lifecycle": "live"}, inverse, parent_key_value_of)
-        new = by_identity.get(identity)
         if old is not None and new is not None and old.unit == new.unit:
             continue
         issues.append(
@@ -573,6 +727,29 @@ def polarity_issues(
                 "the other.",
             )
         )
+    # The values a flip leaves behind retire with it, as superseded: the unit's
+    # answer changed, which says nothing about whether they were wrong. Read
+    # only when the change flips a unit: one keyed row per Claim it retires.
+    if flipped_units:
+        for identity, facts in sorted(claims.items()):
+            if facts.get("lifecycle") == "live" or identity not in parent_facts:
+                continue
+            held = parent.execute(_UNIT_OF_SQL, (identity,)).fetchone()
+            if held is None or tuple(held) not in flipped_units:
+                continue
+            reason = facts.get("retirement_reason")
+            if reason == "superseded":
+                continue
+            issues.append(
+                PolarityIssue(
+                    FLIP_RETIREMENT_REASON,
+                    str(facts["path"]),
+                    f"{_claim_ref(identity)} retires beside a flip of "
+                    f"{render_unit(str(held[3]), str(held[4]))}, so it ends as superseded, "
+                    f"not {'unattributed' if reason is None else repr(reason)}: retire it "
+                    "with reason superseded, or in a change of its own.",
+                )
+            )
     return tuple(issues)
 
 
@@ -590,11 +767,13 @@ def _claim_facts(content: bytes, path: str) -> dict[str, Any]:
     from cruxible_core.indexes.typed_state import _claim_fields
 
     claim = parse_claim(content, path=path)
+    retirement = getattr(claim, "retirement", None)
     return {
         **_claim_fields(claim),
         "identity": claim.identity.qualified,
         "path": path,
         "lifecycle": claim.lifecycle.state,
+        "retirement_reason": None if retirement is None else retirement.reason,
     }
 
 
@@ -692,13 +871,16 @@ def candidate_polarity_issues(
     current_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
     scope: tuple[str, ...],
+    base_tree: Mapping[str, bytes] | None = None,
 ) -> tuple[PolarityIssue, ...]:
     """The polarity law of one change set, judged at the candidate boundary.
 
     Admission and settlement both evaluate here, at the head they land on, so
     two changes that each pass alone cannot both land when together they would
     leave a unit holding both polarities: the second is judged against the
-    first's accepted state.
+    first's accepted state. ``base_tree`` is the head the change was made
+    against when that is not ``current_tree`` (a rebase): a one-valued dispute
+    stands only against the opposite Claims live there, the ones its writer saw.
     """
 
     from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
@@ -728,16 +910,31 @@ def candidate_polarity_issues(
         content = candidate_tree.get(path)
         return None if content is None else parse_claim_type(content, path=path)
 
+    base_claim: Callable[[str], Facts | None] | None = None
+    if base_tree is not None:
+        from cruxible_client.contracts.claims import claim_path
+
+        def base_claim(identity: str) -> Facts | None:
+            path = claim_path(identity.removeprefix("Claim:"))
+            content = base_tree.get(path)
+            return None if content is None else _claim_facts(content, path)
+
     with _parent_index(
         current_tree, [item for item in claim_types.values() if item is not None]
     ) as parent:
         return polarity_issues(
-            parent, claims=claims, claim_types=claim_types, claim_type_of=claim_type_of
+            parent,
+            claims=claims,
+            claim_types=claim_types,
+            claim_type_of=claim_type_of,
+            base_claim=base_claim,
         )
 
 
 __all__ = [
+    "FLIP_RETIREMENT_REASON",
     "FLIP_UNIT_MOVED",
+    "INVERSE_DUPLICATE",
     "POLARITY_CONFLICT",
     "PolarityIssue",
     "SCHEMA_STATEMENTS",

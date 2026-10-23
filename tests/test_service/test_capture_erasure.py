@@ -472,3 +472,60 @@ def test_bytes_stored_again_after_an_erasure_do_not_change_a_recorded_verdict(
     # The revision was judged with the Capture erased; replay reads the recorded
     # erasure, not the bytes that are back, so it reproduces the same evidence.
     _full_recovery(world)
+
+
+def _erasure_positions_of_last_generation(world: ErasureWorld) -> dict[str, dict[str, int]]:
+    from cruxible_core.ledger.recovery import candidate_from_change_set_record
+    from cruxible_core.proposals.proposals import erasure_cutoffs_from_candidate
+
+    record = world.instance.accepted_history()[-1].record
+    return erasure_cutoffs_from_candidate(candidate_from_change_set_record(record))
+
+
+def test_a_judgment_under_the_erasures_own_head_counts_it_and_recovers(
+    world: ErasureWorld,
+) -> None:
+    """Recheck 2, #3.1: erased under head H, then judged against H; the journal orders them."""
+
+    head = world.instance.accepted_coordinate()
+    _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+    assert world.instance.accepted_coordinate() == head
+    retired = write(world.instance, {"op": "retire", "target": world.claim}, because="Erased.")
+    assert retired.refusal is None, retired.refusal
+    (recorded,) = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
+    # The retirement counted the erasure recorded under its own parent head, and
+    # its evidence names the journal position replay stops at.
+    assert list(_erasure_positions_of_last_generation(world).values()) == [
+        {world.capture: recorded.sequence}
+    ]
+    _full_recovery(world)
+
+
+def test_erasing_bytes_stored_again_records_another_erasure_and_recovers(
+    world: ErasureWorld,
+) -> None:
+    """Recheck 2, #3.3: a second destruction after the bytes landed again is recorded."""
+
+    from tests.support.capture_erasure_world import cite, run_source
+
+    original = world.instance.body_store().read(world.body, access=READ)
+    _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+    # The same bytes land again, and another Capture observes them.
+    world.instance.body_store().store(original)
+    again = run_source(world.instance, world.root)
+    assert again != world.capture and world.instance.body_store().verify(world.body)
+    revised = cite(world.instance, again, "low")
+    assert revised.refusal is None, revised.refusal
+
+    second = _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+
+    assert second.status == "erased"
+    first, latest = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
+    assert first.record.capture_digest == latest.record.capture_digest == world.capture
+    assert first.sequence < latest.sequence
+    assert first.landing is not None and latest.landing is not None
+    assert first.landing.sequence < latest.landing.sequence
+    assert not world.instance.body_store()._path(world.body).exists()
+    # Only the first erasure preceded the new Capture's landing; the second one
+    # destroyed its bytes too. Every generation still replays exactly.
+    _full_recovery(world)

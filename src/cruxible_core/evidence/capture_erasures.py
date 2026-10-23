@@ -2,10 +2,14 @@
 
 Storage follows the re-observation journal's pattern: a journal
 (``capture-erasure-v1``) is the append-only authority, and a SQLite projection
-keyed by Capture and by body is caught up from its last applied sequence on
-every open. The journal record is written before the bytes are unlinked, so an
-interrupted erasure leaves its record and the body; the retry finds the record
-and finishes the unlink without writing another.
+keyed by journal position, Capture and body is caught up from its last applied
+sequence on every open. The journal record is written before the bytes are
+unlinked, and carries the landing log's position at that moment: an
+interrupted erasure leaves its record and the body, and the retry (the bytes
+last landed at or before that position) finishes the unlink without writing
+another. Bytes stored again after it (landed later) are another Capture's
+material, so erasing them again is another erasure, recorded at its own
+position.
 
 A record outlives the bytes it names. Whether a Capture reads as erased is the
 record together with the body store: the body must also be absent at the read's
@@ -26,7 +30,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.capture_erasure import CaptureErasureRecord, RecordedCaptureErasure
+from cruxible_client.contracts.capture_erasure import (
+    CaptureErasureRecord,
+    ErasureLandingPosition,
+    RecordedCaptureErasure,
+)
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
@@ -55,21 +63,24 @@ _FENCE = "capture-erasure-local-v1"
 _PARTITION = "erasures"
 _EVENT_KIND: JournalEventKindV1 = "capture_erasure"
 _ACCESS = BodyAccessContext(principal_id="capture-erasure", can_read_body=True)
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 ERASURE_DIRECTORY = "capture-erasures"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1), sequence INTEGER NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS erasures (
- capture_digest TEXT PRIMARY KEY, record TEXT NOT NULL, sequence INTEGER NOT NULL,
- coordinate TEXT NOT NULL
+ sequence INTEGER PRIMARY KEY, capture_digest TEXT NOT NULL, record TEXT NOT NULL,
+ coordinate TEXT NOT NULL, landing TEXT
 ) STRICT;
+CREATE INDEX IF NOT EXISTS erasures_by_capture ON erasures(capture_digest, sequence);
 CREATE TABLE IF NOT EXISTS erased_bodies (
- body_digest TEXT NOT NULL, capture_digest TEXT NOT NULL, sequence INTEGER NOT NULL,
- PRIMARY KEY(body_digest, capture_digest)
+ body_digest TEXT NOT NULL, sequence INTEGER NOT NULL, capture_digest TEXT NOT NULL,
+ PRIMARY KEY(body_digest, sequence)
 ) STRICT, WITHOUT ROWID;
 """
+#: The payload key the landing position travels under; the record never restates it.
+_LANDING = "landing"
 
 
 def _root(instance: Any) -> Path:
@@ -84,11 +95,31 @@ def _stream(instance: Any) -> JournalStreamIdentityV1:
     )
 
 
-def _record(payload: object, recorded_at: datetime) -> CaptureErasureRecord:
+def _record(
+    payload: object, recorded_at: datetime
+) -> tuple[CaptureErasureRecord, ErasureLandingPosition | None]:
     if not isinstance(payload, dict):
         raise ValueError("invalid Capture erasure record")
+    fields = dict(payload)
+    raw_landing = fields.pop(_LANDING, None)
+    landing = None if raw_landing is None else ErasureLandingPosition.model_validate(raw_landing)
     # The journal record's own instant is the erasure's: the payload never restates it.
-    return CaptureErasureRecord.model_validate({**payload, "erased_at": recorded_at})
+    return CaptureErasureRecord.model_validate({**fields, "erased_at": recorded_at}), landing
+
+
+def _recorded(row: tuple[Any, ...]) -> RecordedCaptureErasure:
+    """One projection row (sequence, record, coordinate, landing) as the law reads it."""
+
+    sequence, raw, coordinate, landing = row
+    return RecordedCaptureErasure(
+        record=CaptureErasureRecord.model_validate_json(raw),
+        coordinate=AcceptedCoordinate.model_validate_json(coordinate),
+        sequence=int(sequence),
+        landing=None if landing is None else ErasureLandingPosition.model_validate_json(landing),
+    )
+
+
+_ROW = "e.sequence, e.record, e.coordinate, e.landing"
 
 
 class CaptureErasureStore:
@@ -144,10 +175,8 @@ class CaptureErasureStore:
                     conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
                 conn.executescript(_SCHEMA)
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
-                for sequence, record, coordinate in self._read_entries(
-                    journal, 0 if row is None else row[0]
-                ):
-                    self._apply(conn, record, sequence, coordinate)
+                for entry in self._read_entries(journal, 0 if row is None else row[0]):
+                    self._apply(conn, entry)
                 # A preview reads the caught-up projection and leaves the file as it was.
                 keep = conn.rollback if is_previewing() else conn.commit
                 keep()
@@ -161,13 +190,13 @@ class CaptureErasureStore:
     ) -> Iterator[tuple[int, CaptureErasureRecord]]:
         """Each journal record after ``sequence``: one payload read per record."""
 
-        for found, record, _coordinate in self._read_entries(journal, sequence, limit=limit):
-            yield found, record
+        for entry in self._read_entries(journal, sequence, limit=limit):
+            yield entry.sequence, entry.record
 
     def _read_entries(
         self, journal: LocalJournalBackend, sequence: int, *, limit: int | None = None
-    ) -> Iterator[tuple[int, CaptureErasureRecord, AcceptedCoordinate]]:
-        """Each journal record after ``sequence`` with the accepted head it was made under."""
+    ) -> Iterator[RecordedCaptureErasure]:
+        """Each journal record after ``sequence``, with its position and accepted head."""
 
         bodies = self._body_store()
         for count, stored in enumerate(
@@ -180,55 +209,102 @@ class CaptureErasureStore:
             payload = parse_journal_payload(
                 bodies.read(stored.record.payload_digest, access=_ACCESS)
             )
-            yield (
-                stored.record.sequence,
-                _record(payload, stored.record.recorded_at),
-                stored.record.accepted_coordinate,
+            record, landing = _record(payload, stored.record.recorded_at)
+            yield RecordedCaptureErasure(
+                record=record,
+                coordinate=stored.record.accepted_coordinate,
+                sequence=stored.record.sequence,
+                landing=landing,
             )
 
     @staticmethod
-    def _apply(
-        conn: sqlite3.Connection,
-        record: CaptureErasureRecord,
-        sequence: int,
-        coordinate: AcceptedCoordinate,
-    ) -> None:
+    def _apply(conn: sqlite3.Connection, entry: RecordedCaptureErasure) -> None:
+        record, sequence = entry.record, entry.sequence
         conn.execute(
-            "INSERT OR IGNORE INTO erasures VALUES (?,?,?,?)",
+            "INSERT OR IGNORE INTO erasures VALUES (?,?,?,?,?)",
             (
+                sequence,
                 record.capture_digest,
                 record.model_dump_json(),
-                sequence,
-                coordinate.model_dump_json(),
+                entry.coordinate.model_dump_json(),
+                None if entry.landing is None else entry.landing.model_dump_json(),
             ),
         )
         conn.executemany(
             "INSERT OR IGNORE INTO erased_bodies VALUES (?,?,?)",
-            ((body, record.capture_digest, sequence) for body in record.body_digests),
+            ((body, sequence, record.capture_digest) for body in record.body_digests),
         )
         conn.execute("INSERT OR REPLACE INTO progress VALUES (1,?)", (sequence,))
+
+    def _latest(
+        self, conn: sqlite3.Connection, capture_digest: str
+    ) -> RecordedCaptureErasure | None:
+        row = conn.execute(
+            f"SELECT {_ROW} FROM erasures e WHERE e.capture_digest=? "
+            "ORDER BY e.sequence DESC LIMIT 1",
+            (capture_digest,),
+        ).fetchone()
+        return None if row is None else _recorded(row)
+
+    def _relanded(self, entry: RecordedCaptureErasure) -> bool:
+        """Whether a body ``entry`` names landed again after it was recorded.
+
+        The bytes it found were then destroyed and stored anew: erasing them is
+        another erasure. Otherwise (they last landed at or before the record) an
+        unfinished erasure of the same bytes is being retried. A record without
+        a landing position, or a replaced log, cannot tell: such a record is
+        retried, as before positions were kept.
+        """
+
+        landing = entry.landing
+        log = getattr(self._body_store(), "landings", None)
+        if landing is None or log is None:
+            return False
+        head = log.head()
+        if head.identity != landing.log:
+            return False
+        for body in entry.record.body_digests:
+            last = log.last_completion_at(body, identity=head.identity, sequence=head.sequence)
+            if last is not None and last[1] == "stored" and last[0] > landing.sequence:
+                return True
+        return False
+
+    def unfinished(self, capture_digest: str) -> CaptureErasureRecord | None:
+        """The latest erasure of this Capture whose bytes have not landed again since.
+
+        Its retry finishes the unlink under it; None when this Capture was never
+        erased or its bytes were stored again (erasing them is a new erasure).
+        """
+
+        if not self.root.is_dir():
+            return None
+        with self._locked() as conn:
+            if conn is None:
+                return None
+            latest = self._latest(conn, capture_digest)
+        return None if latest is None or self._relanded(latest) else latest.record
 
     # -- writes -------------------------------------------------------------
 
     def record(
         self, record: CaptureErasureRecord, *, actor_id: str, coordinate: AcceptedCoordinate
     ) -> CaptureErasureRecord:
-        """Append one erasure record, or answer the one this Capture already has.
+        """Append one erasure record, or answer the unfinished one these bytes still have.
 
-        Its instant is the instance's recording clock at the append, raised to
-        the last record's, never a caller's. Nothing is written while
-        previewing. The caller unlinks the bytes after this returns.
+        A Capture erased before whose bytes landed again since (stored anew,
+        by any Capture of them) is erased again: a new record at its own journal
+        and landing position. Its instant is the instance's recording clock at
+        the append, raised to the last record's, never a caller's. Nothing is
+        written while previewing. The caller unlinks the bytes after this returns.
         """
 
         if is_previewing():
             raise RuntimeError("a preview records no erasure")
         with self._locked(create=True) as conn:
             assert conn is not None
-            known = conn.execute(
-                "SELECT record FROM erasures WHERE capture_digest=?", (record.capture_digest,)
-            ).fetchone()
-            if known is not None:
-                return CaptureErasureRecord.model_validate_json(known[0])
+            known = self._latest(conn, record.capture_digest)
+            if known is not None and not self._relanded(known):
+                return known.record
             journal = self._journal(create=True)
             assert journal is not None
             from cruxible_core.storage.material_reservations import (
@@ -250,10 +326,17 @@ class CaptureErasureStore:
             now = self.instance.recording_clock()
             last = conn.execute(
                 "SELECT record FROM erasures ORDER BY sequence DESC LIMIT 1"
-            ).fetchone()
+            ).fetchone()  # the newest record (the primary key is the journal position)
             if last is not None:
                 now = max(now, CaptureErasureRecord.model_validate_json(last[0]).erased_at)
-            payload = record.model_dump(mode="json", exclude={"erased_at"})
+            payload: dict[str, Any] = record.model_dump(mode="json", exclude={"erased_at"})
+            # The landing log's position as the record lands, before any byte goes:
+            # a Capture landed by then held what this erasure destroys.
+            landed = bodies.landings.head() if hasattr(bodies, "landings") else None
+            if landed is not None and landed.identity:
+                payload[_LANDING] = ErasureLandingPosition(
+                    log=landed.identity, sequence=landed.sequence
+                ).model_dump(mode="json")
             stored = ProcedureExhaustWriter(
                 journal=journal, bodies=bodies, fencing_token=_FENCE
             ).append(
@@ -273,28 +356,34 @@ class CaptureErasureStore:
                 payload=payload,
                 expected_head=head,
             )
-            written = _record(payload, stored.record.recorded_at)
-            self._apply(conn, written, stored.record.sequence, stored.record.accepted_coordinate)
+            written, landing = _record(payload, stored.record.recorded_at)
+            self._apply(
+                conn,
+                RecordedCaptureErasure(
+                    record=written,
+                    coordinate=stored.record.accepted_coordinate,
+                    sequence=stored.record.sequence,
+                    landing=landing,
+                ),
+            )
             conn.commit()
             return written
 
     # -- reads --------------------------------------------------------------
 
     def for_capture(self, capture_digest: str) -> CaptureErasureRecord | None:
-        """The erasure recorded for this Capture, if any: one indexed row."""
+        """The latest erasure recorded for this Capture, if any: one indexed row."""
 
         if not self.root.is_dir():
             return None
         with self._locked() as conn:
             if conn is None:
                 return None
-            row = conn.execute(
-                "SELECT record FROM erasures WHERE capture_digest=?", (capture_digest,)
-            ).fetchone()
-        return None if row is None else CaptureErasureRecord.model_validate_json(row[0])
+            latest = self._latest(conn, capture_digest)
+        return None if latest is None else latest.record
 
     def for_bodies(self, body_digests: tuple[str, ...]) -> dict[str, CaptureErasureRecord]:
-        """The first erasure recorded for each of these body objects that has one.
+        """The latest erasure recorded for each of these body objects that has one.
 
         A body is content-addressed: erasing one Capture's body erases the same
         bytes for every Capture that holds them, so the record is found by body.
@@ -309,8 +398,8 @@ class CaptureErasureStore:
             for body in dict.fromkeys(body_digests):
                 row = conn.execute(
                     "SELECT e.record FROM erased_bodies b JOIN erasures e "
-                    "ON e.capture_digest=b.capture_digest WHERE b.body_digest=? "
-                    "ORDER BY b.sequence LIMIT 1",
+                    "ON e.sequence=b.sequence WHERE b.body_digest=? "
+                    "ORDER BY b.sequence DESC LIMIT 1",
                     (body,),
                 ).fetchone()
                 if row is not None:
@@ -320,7 +409,7 @@ class CaptureErasureStore:
     def records_for_bodies(
         self, body_digests: tuple[str, ...]
     ) -> tuple[RecordedCaptureErasure, ...]:
-        """Every erasure naming any of these body objects, with its head, in recorded order.
+        """Every erasure naming any of these body objects, each occurrence, in journal order.
 
         One indexed range per body; an instance that never erased anything
         answers without opening a file.
@@ -328,25 +417,19 @@ class CaptureErasureStore:
 
         if not body_digests or not self.root.is_dir():
             return ()
-        found: dict[str, tuple[int, RecordedCaptureErasure]] = {}
+        found: dict[int, RecordedCaptureErasure] = {}
         with self._locked() as conn:
             if conn is None:
                 return ()
             for body in dict.fromkeys(body_digests):
-                for sequence, raw, coordinate in conn.execute(
-                    "SELECT e.sequence, e.record, e.coordinate FROM erased_bodies b "
-                    "JOIN erasures e ON e.capture_digest=b.capture_digest WHERE b.body_digest=?",
+                for row in conn.execute(
+                    f"SELECT {_ROW} FROM erased_bodies b "
+                    "JOIN erasures e ON e.sequence=b.sequence WHERE b.body_digest=?",
                     (body,),
                 ):
-                    record = CaptureErasureRecord.model_validate_json(raw)
-                    found[record.capture_digest] = (
-                        int(sequence),
-                        RecordedCaptureErasure(
-                            record=record,
-                            coordinate=AcceptedCoordinate.model_validate_json(coordinate),
-                        ),
-                    )
-        return tuple(item for _sequence, item in sorted(found.values(), key=lambda x: x[0]))
+                    if int(row[0]) not in found:
+                        found[int(row[0])] = _recorded(row)
+        return tuple(found[sequence] for sequence in sorted(found))
 
     def head_sequence(self) -> int:
         """The journal's newest sequence (0 before any record): where a follower starts."""
@@ -363,6 +446,26 @@ class CaptureErasureStore:
         if journal is None:
             return ()
         return tuple(self._read_after(journal, sequence, limit=limit))
+
+
+def capture_landed_by(bodies: Any, capture_digest: str, erasure: RecordedCaptureErasure) -> bool:
+    """Whether a Capture had landed when ``erasure`` was recorded: it held the bytes destroyed.
+
+    Read from the landing log at the erasure's recorded position: the Capture's
+    envelope present there. A Capture landed later holds bytes stored again, its
+    own. A record without a position, or a store or log that cannot answer at
+    it, counts the erasure (the material is taken to predate it): no clock
+    stands in for the order.
+    """
+
+    landing = erasure.landing
+    log = getattr(bodies, "landings", None)
+    if landing is None or log is None or landing.sequence <= 0:
+        return True
+    try:
+        return bool(log.present(capture_digest, identity=landing.log, sequence=landing.sequence))
+    except (CruxibleError, OSError, ValueError):
+        return True
 
 
 def erasure_journal_present(instance: Any) -> bool:
@@ -475,6 +578,7 @@ __all__ = [
     "OWN_WORDS_CONTRACT_DIGESTS",
     "CaptureErasureStore",
     "capture_erased",
+    "capture_landed_by",
     "citing_live_claims",
     "claims_left_without_evidence",
     "erased_body",
