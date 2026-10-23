@@ -99,14 +99,14 @@ if TYPE_CHECKING:
 
 #: The derivation format. Bump it whenever a row's derivation changes: the
 #: number is part of the schema text, so a new one rebuilds the state (R5).
-FORMAT = 12  # Repair alternatives (re-bind or retire, a contest's options); citation sections.
+FORMAT = 13  # Expiring leads clamped to horizon/4; repair operands; tally `ineligible`.
 #: The one deadline next arms: the earliest instant a stored fact or row stops holding.
 NEXT_EXPIRE = "next.expire"
 #: The daily evidence sweep: each fire compares every consulted body's file identity,
 #: the one change no record carries (a body rewritten in place, R2).
 EVIDENCE_SWEEP = "evidence.sweep"
 #: The statuses ``tally`` counts; ``error`` is a live Claim whose slot did not resolve.
-TALLY_STATUSES = ("accepted", "conflicted", "overturned", "refused", "retired", "error")
+TALLY_STATUSES = ("accepted", "conflicted", "ineligible", "overturned", "retired", "error")
 
 _SCHEMA = (
     f"""
@@ -204,7 +204,7 @@ CREATE TABLE mandate_expiries (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX mandate_expiries_by_expiry ON mandate_expiries(expires_at_us,identity);
 CREATE TABLE tally (status TEXT PRIMARY KEY, count INTEGER NOT NULL) STRICT;
-INSERT INTO tally VALUES ('accepted',0),('conflicted',0),('overturned',0),('refused',0),
+INSERT INTO tally VALUES ('accepted',0),('conflicted',0),('overturned',0),('ineligible',0),
  ('retired',0),('error',0);
 CREATE TRIGGER tally_added AFTER INSERT ON claim_facts BEGIN
  UPDATE tally SET count=count+1 WHERE status=coalesce(new.status,'error'); END;

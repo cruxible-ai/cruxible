@@ -17,6 +17,7 @@ from cruxible_core.consumers.next import (
     facts,
     line_upgrades,
     predictions,
+    run_failures,
     settled_refusals,
 )
 from cruxible_core.consumers.protocol import (
@@ -36,7 +37,8 @@ _PARTS: dict[
     | predictions.PredictionPart
     | curation.CurationPart
     | settled_refusals.SettledRefusalsPart
-    | line_upgrades.LineUpgradesPart,
+    | line_upgrades.LineUpgradesPart
+    | run_failures.RunFailuresPart,
 ] = {
     "facts": facts._PART,
     "line_upgrades": line_upgrades._PART,
@@ -44,6 +46,7 @@ _PARTS: dict[
     "prediction": predictions._PART,
     "curation": curation._PART,
     "settled_refusals": settled_refusals._PART,
+    "run_failures": run_failures._PART,
 }
 
 _CONTROL = DisposableState(

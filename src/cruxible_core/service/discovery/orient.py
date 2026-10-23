@@ -45,6 +45,7 @@ from cruxible_client.contracts.orient import (
     ORIENT_BECAUSE_MAX_CHARS,
     ORIENT_DEFAULT_LIMIT,
     ORIENT_DEFAULT_QUERIES,
+    ORIENT_KIND_FIELDS,
     ORIENT_SAMPLE_SUBJECTS,
     UNDECLARED_KIND_IDENTITY,
     Head,
@@ -58,6 +59,7 @@ from cruxible_client.contracts.orient import (
     OrientInterfaceProvider,
     OrientKind,
     OrientKindDetail,
+    OrientKindSummary,
     OrientPredicate,
     OrientProcedure,
     OrientQuery,
@@ -482,6 +484,19 @@ def _kind_row(state: _State, kind: str) -> OrientKind:
         identity=state.identities.get(kind, UNDECLARED_KIND_IDENTITY),
         evidence=evidence,
         predicates=hoisted,
+    )
+
+
+def _kind_summary(row: OrientKind) -> OrientKindSummary:
+    """The default map's line for one kind: counts and its first fields, by name."""
+
+    names = tuple(item.name for item in row.predicates)
+    return OrientKindSummary(
+        kind=row.kind,
+        subjects=row.subjects,
+        identity=row.identity,
+        fields=names[:ORIENT_KIND_FIELDS],
+        more_fields=max(len(names) - ORIENT_KIND_FIELDS, 0),
     )
 
 
@@ -1058,7 +1073,7 @@ def service_playbill_orient(
             calls.append(_Call("orient", (("cursor", next_cursor),)))
         return OrientResult(
             **base,
-            kinds=kinds_page,
+            kinds=tuple(map(_kind_summary, kinds_page)),
             truncated=next_cursor is not None,
             next_cursor=next_cursor,
             next=tuple(render_orient_call(call, surface) for call in calls),
@@ -1127,7 +1142,7 @@ def service_playbill_orient(
     return OrientResult(
         **base,
         you=_you(caller, instance=instance),
-        kinds=kinds_page,
+        kinds=tuple(map(_kind_summary, kinds_page)),
         artifacts=OrientArtifactCounts(
             claim_types=len(state.claim_types),
             procedures=live_procedures,
@@ -1226,7 +1241,7 @@ def _derived_claim_counts(
         accepted=counts["accepted"],
         conflicted=counts["conflicted"],
         overturned=counts["overturned"],
-        refused=counts["refused"],
+        ineligible=counts["ineligible"],
         retired=counts["retired"],
     )
 

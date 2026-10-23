@@ -74,6 +74,8 @@ ORIENT_SAMPLE_SUBJECTS = 5
 ORIENT_DEFAULT_QUERIES = 10
 #: Attention lines the default answer carries from the ``next`` queue.
 ORIENT_ATTENTION_TOP = 3
+#: How many of a kind's predicates the default map names by short name.
+ORIENT_KIND_FIELDS = 5
 
 
 def _is_none(value: object) -> bool:
@@ -195,6 +197,21 @@ class OrientKind(_StrictOrientModel):
     predicates: tuple[OrientPredicate, ...]
 
 
+class OrientKindSummary(_StrictOrientModel):
+    """One Subject kind in the default map: its live Subjects and first fields.
+
+    ``fields`` names its first predicates by short name (byte order), at most
+    ``ORIENT_KIND_FIELDS``; ``more_fields`` counts the rest. ``identity`` is
+    as on ``OrientKind``. ``orient(kind=...)`` reads every predicate in full.
+    """
+
+    kind: str
+    subjects: int = Field(ge=0)
+    identity: str = UNDECLARED_KIND_IDENTITY
+    fields: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
+    more_fields: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
+
+
 class OrientKindDetail(OrientKind):
     """One kind in full, with a few Subject IDs to read next.
 
@@ -213,7 +230,9 @@ class OrientClaimCounts(_StrictOrientModel):
 
     ``accepted`` Claims answer their slot; ``conflicted`` ones are contenders
     resolution left unresolved; ``overturned`` ones lost their slot to an
-    accepted rival; ``refused`` ones failed their own ClaimType's admission;
+    accepted rival; ``ineligible`` ones are not eligible to resolve under their
+    own ClaimType (a verdict other than supported, or erased evidence read
+    stale);
     ``retired`` ones were withdrawn. ``query(..., status=[...])`` lists the
     non-live ones.
     """
@@ -221,7 +240,7 @@ class OrientClaimCounts(_StrictOrientModel):
     accepted: int = Field(default=0, ge=0)
     conflicted: int = Field(default=0, ge=0)
     overturned: int = Field(default=0, ge=0)
-    refused: int = Field(default=0, ge=0)
+    ineligible: int = Field(default=0, ge=0)
     retired: int = Field(default=0, ge=0)
 
 
@@ -496,7 +515,7 @@ class OrientResult(_StrictOrientModel):
     mirror_url: str | None = Field(default=None, exclude_if=_is_none)
     floor: OrientFloor | None = Field(default=None, exclude_if=_is_none)
     you: OrientYou | None = Field(default=None, exclude_if=_is_none)
-    kinds: tuple[OrientKind, ...] | None = Field(default=None, exclude_if=_is_none)
+    kinds: tuple[OrientKindSummary, ...] | None = Field(default=None, exclude_if=_is_none)
     artifacts: OrientArtifactCounts | None = Field(default=None, exclude_if=_is_none)
     attention: OrientAttention | None = Field(default=None, exclude_if=_is_none)
     kind_detail: OrientKindDetail | None = Field(default=None, exclude_if=_is_none)
@@ -548,6 +567,7 @@ __all__ = [
     "ORIENT_BECAUSE_MAX_CHARS",
     "ORIENT_DEFAULT_LIMIT",
     "ORIENT_DEFAULT_QUERIES",
+    "ORIENT_KIND_FIELDS",
     "ORIENT_MAX_LIMIT",
     "ORIENT_PIN_SOURCE_KINDS",
     "ORIENT_SAMPLE_SUBJECTS",
@@ -569,6 +589,7 @@ __all__ = [
     "OrientInterface",
     "OrientKindDetail",
     "OrientKind",
+    "OrientKindSummary",
     "OrientPredicate",
     "OrientProcedure",
     "OrientQuery",

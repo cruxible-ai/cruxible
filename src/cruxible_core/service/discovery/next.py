@@ -21,6 +21,8 @@ from cruxible_client.contracts import (
     NEXT_DEFAULT_LIMIT,
     NEXT_MAX_LIMIT,
     NextReason,
+    NextRepairGate,
+    NextRepairOperand,
     NextRepairOperation,
     NextSeverity,
     ProviderLaneStatus,
@@ -62,6 +64,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResult,
     ClaimVerdictResultAny,
+    EvidenceFreshnessExpiration,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
@@ -160,6 +163,7 @@ from cruxible_core.service.evidence.evidence import (
 from cruxible_core.service.proposals.proposals import (
     proposals_awaiting_activation,
     proposals_awaiting_approval,
+    stale_proposals_awaiting_approval,
     stale_unreadmitted_proposals,
 )
 from cruxible_core.service.proposals.publications import (
@@ -506,6 +510,13 @@ class PlaybillNextRepairV1(_StrictNextModel):
     alternatives: tuple[PlaybillNextRepairV1, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
+    # Operands only the caller holds -- why (``because``), the new text
+    # (``file``), a fresh observation (``capture``) -- that the command shows as
+    # placeholders (TEXT, FILE#ANCHOR, CAP) to replace. Absent (and out of the
+    # item_id preimage) when the command names every operand.
+    operands_to_add: tuple[NextRepairOperand, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("alternatives")
     @classmethod
@@ -534,8 +545,6 @@ class PlaybillNextRepairV1(_StrictNextModel):
 #: The permission tiers a repair can need, by name (``PermissionMode`` lowercased).
 NextRepairTier: TypeAlias = Literal["read_only", "governed_write", "graph_write", "admin"]
 _TIER_BY_RUNG: tuple[NextRepairTier, ...] = ("read_only", "governed_write", "graph_write", "admin")
-#: Why a repair is withheld from this caller.
-NextRepairGate: TypeAlias = Literal["tier", "profile", "authoring"]
 
 
 class PlaybillNextRepairRequirementV1(_StrictNextModel):
@@ -1171,11 +1180,65 @@ def _role_unadmitted(claim_type: ClaimType | None, role: str) -> tuple[str, ...]
     return tuple(roles) if roles and role not in roles else None
 
 
+def _cited_first(admitted: tuple[str, ...], cited: tuple[str, ...]) -> tuple[str, ...]:
+    """The admitted contracts with the cited Captures' own first, each group in its order."""
+
+    first = tuple(name for name in cited if name in admitted)
+    return (*dict.fromkeys(first), *(name for name in admitted if name not in first))
+
+
+def _capture_contract_names(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    capture_digests: Iterable[str],
+) -> tuple[str, ...]:
+    """The public names of the CaptureContracts these Captures were observed under.
+
+    One keyed projection lookup and one keyed contract-version lookup per
+    Capture; byte order. A Capture the projection does not hold names nothing.
+    """
+
+    digests = tuple(dict.fromkeys(capture_digests))
+    if not digests:
+        return ()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        contract_digests = {
+            str(row[0])
+            for digest in digests
+            if (
+                row := projection.typed.connection.execute(
+                    "SELECT contract_digest FROM captures WHERE capture_digest=?", (digest,)
+                ).fetchone()
+            )
+            is not None
+        }
+    public = AcceptedCoordinate.from_internal(coordinate)
+    names = {
+        public_name(found.contract.identity.name)
+        for digest in contract_digests
+        if (found := instance.accepted_capture_contract_version(public, digest)) is not None
+    }
+    return tuple(sorted(names, key=lambda item: item.encode("utf-8")))
+
+
+def _expiring_lead(expiration: EvidenceFreshnessExpiration, within: CanonicalDuration) -> timedelta:
+    """How long before ``expiration`` next warns: the request's lead, at most horizon/4.
+
+    The horizon runs from the Capture's observation (or the re-observation that
+    set its expiry) to its expiry, so a short-lived Capture is not "expiring"
+    for most of its life under a long default lead.
+    """
+
+    observed = expiration.reobserved_at or expiration.observed_at
+    return min(timedelta(microseconds=within.microseconds), (expiration.expires_at - observed) / 4)
+
+
 def _retire_alternative(target: str, claim_id: str) -> PlaybillNextRepairV1:
     """Retiring the Claim, offered beside a repair that keeps it: the agent judges."""
 
     return PlaybillNextRepairV1(
         operation="cruxible.claim.retire",
+        operands_to_add=("because",),
         target=target,
         required_change="retire_claim_with_attribution",
         arguments={"claim_id": claim_id},
@@ -1190,14 +1253,17 @@ def _evidence_repair(
     claim_id: str,
     claim_type: ClaimType | None,
     set_arguments: Mapping[str, object] | None,
+    cited_contracts: tuple[str, ...] = (),
 ) -> PlaybillNextRepairV1:
     """A repair that restates a Claim on evidence its field admits, or retires it.
 
     A field that requires captured evidence refuses a restatement in the
     writer's own words, so the restating ``set`` cites a Capture: one per
     contract the Claim's role admits (``--evidence-contract``), with retire as
-    the last alternative. Any other field keeps the restating ``set`` (or the
-    authoring door), with retire beside it.
+    the last alternative. ``cited_contracts`` (the expiring or expired
+    Captures' own contracts) come first, then the other admitted ones. Any
+    other field keeps the restating ``set`` (or the authoring door), with
+    retire beside it.
     """
 
     retire = _retire_alternative(target, claim_id)
@@ -1214,7 +1280,7 @@ def _evidence_repair(
                 required_change=required_change,
                 arguments={"claim_id": claim_id, **set_arguments, "evidence_contract": contract},
             )
-            for contract in _role_contracts(claim_type, role)
+            for contract in _cited_first(_role_contracts(claim_type, role), cited_contracts)
         ]
         if options:
             return options[0].model_copy(update={"alternatives": (*options[1:], retire)})
@@ -1263,12 +1329,29 @@ def _contradicting_capture_repair(
     )
 
 
+#: What each operand the caller adds reads as in a command, for it to replace.
+_OPERAND_PLACEHOLDERS: Mapping[NextRepairOperand, str] = {
+    "because": "TEXT",
+    "file": "FILE#ANCHOR",
+    "capture": "CAP",
+}
+
+
+def _because(operands: tuple[NextRepairOperand, ...]) -> dict[str, object]:
+    return {"because": _OPERAND_PLACEHOLDERS["because"]} if "because" in operands else {}
+
+
 def _mcp_call(tool: str, **arguments: object) -> str:
     rendered = ", ".join(f"{key}={json.dumps(value)}" for key, value in arguments.items())
     return f"{tool}({rendered})"
 
 
-def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> str | None:
+def _mcp_repair_call(
+    operation: NextRepairOperation,
+    *,
+    arguments: object,
+    operands: tuple[NextRepairOperand, ...] = (),
+) -> str | None:
     """Render one repair as the MCP tool call that performs it, or None.
 
     A repair whose operands are local files or structured bases the queue does
@@ -1337,7 +1420,7 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         )
     if operation == "cruxible.claim.retire" and text("claim_id"):
         # Why it ends is the retirer's to say: `because` is the argument left to add.
-        return _mcp_call("cruxible_retire", target=text("claim_id"))
+        return _mcp_call("cruxible_retire", target=text("claim_id"), **_because(operands))
     if operation == "cruxible.set" and (restated := _restated_set(values)) is not None:
         # `because` (and the file evidence a recapture needs) is the caller's to add.
         return _mcp_call("cruxible_set", **restated)
@@ -1347,8 +1430,12 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return _mcp_call("cruxible_get", ref=text("ref"))
     if operation == "cruxible.rebind" and (change := _rebind_change(values)) is not None:
         # A re-bind is one change of the typed write; `because` (and a file
-        # citation's new text) is the caller's to add.
-        return _mcp_call("cruxible_write", changes=[change])
+        # citation's new text, or a fresh Capture) is the caller's to add.
+        if "file" in operands:
+            change["evidence"] = {"kind": "file", "file": _OPERAND_PLACEHOLDERS["file"]}
+        elif "capture" in operands:
+            change["evidence"] = {"kind": "capture", "capture": _OPERAND_PLACEHOLDERS["capture"]}
+        return _mcp_call("cruxible_write", changes=[change], **_because(operands))
     return None
 
 
@@ -1385,7 +1472,12 @@ def _sdk_call(target: str, *positional: object, **keywords: object) -> str:
     return f"{target}({', '.join(rendered)})"
 
 
-def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> str | None:
+def _sdk_repair_call(
+    operation: NextRepairOperation,
+    *,
+    arguments: object,
+    operands: tuple[NextRepairOperand, ...] = (),
+) -> str | None:
     """Render one repair as the `Cruxible` SDK call that performs it, or None.
 
     Like the CLI and MCP renderings, an operand only the caller holds -- the
@@ -1437,7 +1529,7 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         handle = _sdk_call("cx.proposal", proposal)
         return f"{handle}.approve(reviewed={handle}.review())"
     if operation == "cruxible.claim.retire" and (claim := text("claim_id")):
-        return _sdk_call("cx.retire", claim)
+        return _sdk_call("cx.retire", claim, **_because(operands))
     if operation == "cruxible.set" and (restated := _restated_set(values)) is not None:
         subject, field, value = (restated.pop(key) for key in ("subject", "field", "value"))
         return _sdk_call("cx.set", subject, field, value, **restated)
@@ -1454,7 +1546,10 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
             options["citation"] = citation
         if (section := _rebind_section(values)) is not None:
             options["section"] = section
-        return _sdk_call("cx.rebind", claim, **options)
+        for operand in ("file", "capture"):
+            if operand in operands:
+                options[operand] = _OPERAND_PLACEHOLDERS[operand]
+        return _sdk_call("cx.rebind", claim, **options, **_because(operands))
     if operation == "cruxible.block.repin" and (source := text("source_id")):
         block = text("block_id")
         if block is None:
@@ -1486,15 +1581,20 @@ def _repair_command(
     *,
     arguments: object,
     surface: NextCallerSurface | None = None,
+    operands: tuple[NextRepairOperand, ...] = (),
 ) -> str | None:
-    """Compose the runnable invocation for one repair operation on this surface."""
+    """Compose the invocation for one repair operation on this surface.
+
+    ``operands`` the caller must add render as their placeholders
+    (``_OPERAND_PLACEHOLDERS``), so the command shows every required operand.
+    """
 
     if operation == "hand_edit":
         return None
     if surface == "mcp":
-        return _mcp_repair_call(operation, arguments=arguments)
+        return _mcp_repair_call(operation, arguments=arguments, operands=operands)
     if surface == "sdk":
-        return _sdk_repair_call(operation, arguments=arguments)
+        return _sdk_repair_call(operation, arguments=arguments, operands=operands)
     parts = ["cruxible", _REPAIR_COMMAND_PATHS[operation]]
     values = arguments if isinstance(arguments, Mapping) else {}
     if operation == "cruxible.block.repin":
@@ -1643,6 +1743,12 @@ def _repair_command(
         section = _rebind_section(values)
         if section is not None:
             parts.extend(["--section", shlex.quote(section)])
+        if "file" in operands:
+            parts.extend(["--file", _OPERAND_PLACEHOLDERS["file"]])
+        if "capture" in operands:
+            parts.extend(["--capture", _OPERAND_PLACEHOLDERS["capture"]])
+        if "because" in operands:
+            parts.extend(["--because", _OPERAND_PLACEHOLDERS["because"]])
     elif operation == "cruxible.files.propose":
         # Without a named file the operator adds --file and --name.
         source = values.get("source_id")
@@ -1656,6 +1762,8 @@ def _repair_command(
         if not isinstance(claim_id, str) or not claim_id:
             return None
         parts.append(shlex.quote(claim_id))
+        if "because" in operands:
+            parts.extend(["--because", _OPERAND_PLACEHOLDERS["because"]])
     elif operation in _REPAIR_COMMAND_OPERANDS:
         parts.extend(_repair_operands(operation, values))
     return " ".join(parts)
@@ -1690,7 +1798,12 @@ def _item(
         )
     # Composed here rather than at each emitting site: a row whose command was
     # forgotten would be indistinguishable from one that has no command.
-    command = _repair_command(repair.operation, arguments=repair.arguments, surface=surface)
+    command = _repair_command(
+        repair.operation,
+        arguments=repair.arguments,
+        surface=surface,
+        operands=repair.operands_to_add,
+    )
     example = (
         _ATTESTATION_REPAIR_EXAMPLES.get(repair.required_change)
         if repair.operation == "cruxible.authoring.example"
@@ -1732,6 +1845,7 @@ def _item(
                             alternative.operation,
                             arguments=alternative.arguments,
                             surface=surface,
+                            operands=alternative.operands_to_add,
                         )
                     }
                 )
@@ -2713,6 +2827,7 @@ def _claim_threshold_rows(
                 repair=(
                     PlaybillNextRepairV1(
                         operation="cruxible.claim.retire",
+                        operands_to_add=("because",),
                         target=claim.identity.qualified,
                         required_change="resolve_attestation_threshold",
                         arguments={
@@ -2977,7 +3092,7 @@ def _claim_slot_rows(
             for expiration in verdict.freshness_expirations:
                 time_boundaries.add(expiration.expires_at)
                 time_boundaries.add(
-                    expiration.expires_at - timedelta(microseconds=expiring_within.microseconds)
+                    expiration.expires_at - _expiring_lead(expiration, expiring_within)
                 )
         if verdict.verdict == "stale_evidence":
             expirations = (
@@ -3006,6 +3121,9 @@ def _claim_slot_rows(
                         claim_id=claim.identity.name,
                         claim_type=claim_type,
                         set_arguments=_claim_set_arguments(claim, claim_type),
+                        cited_contracts=_capture_contract_names(
+                            instance, internal, (item.capture_digest for item in expired)
+                        ),
                     ),
                 )
             )
@@ -3015,21 +3133,21 @@ def _claim_slot_rows(
             "contradicted",
             "unresolved",
         }:
-            lead_end = evaluation_time + timedelta(microseconds=expiring_within.microseconds)
             supporting = set(verdict.supporting_evidence_digests)
             current_support_expirations = tuple(
                 item
                 for item in verdict.freshness_expirations
                 if item.capture_digest in supporting and evaluation_time < item.expires_at
             )
-            expiring = tuple(
-                item
+            # Each Capture is expiring within its own lead (the request's, at
+            # most a quarter of its horizon); the row stands only while every
+            # current support is.
+            within = tuple(
+                item.expires_at - _expiring_lead(item, expiring_within) <= evaluation_time
                 for item in current_support_expirations
-                if evaluation_time < item.expires_at <= lead_end
             )
-            if expiring and not any(
-                item.expires_at > lead_end for item in current_support_expirations
-            ):
+            expiring = current_support_expirations if within and all(within) else ()
+            if expiring:
                 member_rows.append(
                     _item(
                         severity="warning",
@@ -3047,6 +3165,9 @@ def _claim_slot_rows(
                             claim_id=claim.identity.name,
                             claim_type=claim_type,
                             set_arguments=_claim_set_arguments(claim, claim_type),
+                            cited_contracts=_capture_contract_names(
+                                instance, internal, (item.capture_digest for item in expiring)
+                            ),
                         ),
                     )
                 )
@@ -3122,6 +3243,7 @@ def _contest_repair(
         options.append(
             PlaybillNextRepairV1(
                 operation="cruxible.claim.retire",
+                operands_to_add=("because",),
                 target=keep,
                 required_change="choose_contender",
                 arguments={"claim_id": others[0]},
@@ -4295,9 +4417,13 @@ def _citation_drift_item(
             target=commitment.claim_identity,
             required_change="rebind_or_retire_drifted_claim",
             arguments=rebind,
+            # A section citation locates its new text; a file citation's new
+            # anchor is the re-binder's to choose.
+            operands_to_add=("because",) if "section" in rebind else ("file", "because"),
             alternatives=(
                 PlaybillNextRepairV1(
                     operation="cruxible.claim.retire",
+                    operands_to_add=("because",),
                     target=commitment.claim_identity,
                     required_change="retire_claim_with_attribution",
                     arguments={
@@ -4719,9 +4845,25 @@ def _line_upgrade_items(
 ) -> tuple[PlaybillNextItemV1, ...]:
     if not access_profile.permits("instance"):
         return ()
-    from cruxible_core.consumers.next.line_upgrades import disabled_upgrades
+    from cruxible_core.consumers.next.line_upgrades import disabled_upgrades, unenabled_lines
 
-    return tuple(
+    # A Line starts disabled: until its first enablement, name the enable.
+    added = tuple(
+        _item(
+            severity="warning",
+            reason="line_not_enabled",
+            subject_identity=line,
+            detail={"detail": "accepted but never enabled; enable it to run on its Triggers"},
+            repair=PlaybillNextRepairV1(
+                operation="cruxible.line.enable",
+                target=line,
+                required_change="enable_the_line_to_run_it_on_its_triggers",
+                arguments={"line": line.removeprefix("Line:")},
+            ),
+        )
+        for line in unenabled_lines(instance)
+    )
+    return added + tuple(
         _item(
             severity="repair",
             reason="line_disabled_by_upgrade",
@@ -4739,6 +4881,52 @@ def _line_upgrade_items(
         )
         for line, version in disabled_upgrades(instance)
     )
+
+
+def _line_run_failure_items(
+    instance: PlaybillInstance, *, access_profile: CoverageAccessProfile
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Lines whose latest run of a Trigger's occurrence failed, with the failure's cause.
+
+    A manual ``line run`` is never a row (its caller saw the failure); a later
+    succeeded or halted run of the Line clears it. The repair is the declared
+    change for the failure code when there is one: a transport error clears
+    once the target is reachable, an HTTP status is the input's to revise.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_client.contracts.repairs import DECLARED_HAND_EDIT_CHANGES
+    from cruxible_core.consumers.next.run_failures import line_run_failures
+
+    items = []
+    for failure in line_run_failures(instance):
+        detail: dict[str, object] = {
+            "run_id": failure.run_id,
+            "finalized_at": failure.finalized_at,
+            "failure_code": failure.failure_code,
+            "detail": "a run of a Trigger's occurrence failed; the Line's next run that "
+            "succeeds or halts clears this",
+        }
+        if failure.cause is not None:
+            detail["cause"] = failure.cause
+        items.append(
+            _item(
+                severity="repair",
+                reason="line_run_failed",
+                subject_identity=failure.line,
+                detail=detail,
+                repair=PlaybillNextRepairV1(
+                    operation="hand_edit",
+                    target=failure.line,
+                    required_change=DECLARED_HAND_EDIT_CHANGES.get(
+                        failure.failure_code or "",
+                        "read_the_failed_run_fix_its_cause_then_let_the_line_run_again",
+                    ),
+                ),
+            )
+        )
+    return tuple(items)
 
 
 def _line_attention_items(
@@ -5035,6 +5223,7 @@ def _evidence_erased_items(
                         operation="cruxible.rebind",
                         target=row.claim_identity,
                         required_change="rebind_onto_a_fresh_capture_under_the_same_contract",
+                        operands_to_add=("capture", "because"),
                         arguments={
                             "claim_id": claim_id,
                             **(
@@ -5753,6 +5942,69 @@ def _approval_items(
             principal_id=caller_principal_id,
             ordinary_principal_ids=ordinary,
         )
+    ) + _stale_approval_items(
+        instance,
+        coordinate=coordinate,
+        caller_principal_id=caller_principal_id,
+        ordinary=ordinary,
+    )
+
+
+def _stale_approval_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    caller_principal_id: str,
+    ordinary: frozenset[str],
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Stale proposals the caller would approve: stale, awaiting the author's readmit.
+
+    Approvals are signed over the exact candidate, so a stale one is never
+    approvable: the row offers no approve. Its repair, readmit, is withheld
+    from the approver as the author's alone (``because: author``); once the
+    author readmits, the successor shows here as an ordinary approval row.
+    The author's own stale proposals are their ``proposal_stale`` rows.
+    """
+
+    tool = _REPAIR_TOOLS["cruxible.proposal.readmit"]
+    assert tool is not None
+    requires = PlaybillNextRepairRequirementV1(
+        operation="cruxible.proposal.readmit",
+        tool=tool,
+        tier=_TIER_BY_RUNG[min(_tool_rung(tool), len(_TIER_BY_RUNG) - 1)],
+        because=("author",),
+    )
+    return tuple(
+        _item(
+            severity="warning",
+            reason="proposal_stale",
+            subject_identity=proposal.proposal_id,
+            related_identities=(proposal.target_ref,),
+            detail={
+                "actor_id": proposal.actor_id,
+                "admitted_at": proposal.admitted_at,
+                "awaiting": "author_readmit",
+                "candidate_digest": proposal.candidate_digest,
+                "candidate_parent_semantic_root": proposal.candidate_parent_semantic_root,
+                "accepted_semantic_root": coordinate.semantic_root,
+                "signer_id": caller_principal_id,
+                "eligible_approvals": eligible,
+                "minimum_distinct_signers": minimum,
+                "target_ref": proposal.target_ref,
+                "detail": "stale: the head moved past its candidate; it awaits its author's "
+                "readmit, then your review. A stale candidate is never approvable.",
+                **_prior_refusal_detail(instance, proposal.proposal_id),
+            },
+            repair=None,
+            repair_requires=requires,
+        )
+        for proposal, eligible, minimum in stale_proposals_awaiting_approval(
+            instance,
+            AcceptedCoordinate.from_internal(coordinate),
+            principal_id=caller_principal_id,
+            ordinary_principal_ids=ordinary,
+        )
+        if proposal.actor_id != caller_principal_id
     )
 
 
@@ -5797,7 +6049,11 @@ def _activation_items(
             repair=PlaybillNextRepairV1(
                 operation="cruxible.proposal.activate",
                 target=proposal.proposal_id,
-                required_change="activate_your_proposal_its_approvals_are_met",
+                required_change=(
+                    "activate_your_proposal_its_approvals_are_met"
+                    if proposal.approval_required
+                    else "activate_your_proposal_it_needs_no_approval"
+                ),
                 arguments={"proposal_id": proposal.proposal_id},
             ),
         )
@@ -6461,7 +6717,10 @@ class _CallerView:
         if self.surface in {None, "cli"}:
             return health
         command = _repair_command(
-            repair.operation, arguments=repair.arguments, surface=self.surface
+            repair.operation,
+            arguments=repair.arguments,
+            surface=self.surface,
+            operands=repair.operands_to_add,
         )
         return health.model_copy(update={"repair": repair.model_copy(update={"command": command})})
 
@@ -6722,6 +6981,7 @@ def _queue_at(
             instance, coordinate=coordinate, access_profile=request.access_profile
         ),
         *line_upgrade_items,
+        *_line_run_failure_items(instance, access_profile=request.access_profile),
         *_line_inbox_items(instance, access_profile=request.access_profile),
         *_kit_resume_items(instance, access_profile=request.access_profile),
     )

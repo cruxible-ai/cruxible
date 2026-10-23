@@ -109,6 +109,10 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "line_coverage_gap": "evaluate_the_uncovered_range_then_dispatch_what_it_finds",
     "line_work_pending": "dispatch_the_lines_pending_work",
     "line_disabled_by_upgrade": "enable_the_upgraded_line_to_resume",
+    # A Line accepted and never enabled: it runs on its Triggers only once enabled.
+    "line_not_enabled": "enable_the_line_to_run_it_on_its_triggers",
+    # A run of a Trigger's occurrence failed; the row carries the run and its cause.
+    "line_run_failed": "read_the_failed_run_fix_its_cause_then_let_the_line_run_again",
     # Items a Line posted for judgment: read them, then ack, dismiss or link each.
     "line_inbox_unread": "judge_the_lines_unread_inbox_items",
     "evidence_unavailable": "restore_the_capture_from_backup_or_recapture_and_recite_its_claims",

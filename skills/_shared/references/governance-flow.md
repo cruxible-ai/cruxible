@@ -20,9 +20,13 @@ cruxible proposal approve PROPOSAL_ID    # signs; the approval that completes it
 
 - `--hold` signs without activating; someone runs `cruxible proposal activate`
   later.
-- A stale proposal (`proposal_stale` in `next`) is recompiled at the current
-  head when approved; approvals of the old one don't carry over. If what it
-  changes has moved, `cruxible proposal readmit` rebases it for review.
+- A proposal that needs no approval (`proposal_awaiting_activation` in `next`,
+  `activate_your_proposal_it_needs_no_approval`) is activated, not approved:
+  `cruxible proposal activate PROPOSAL_ID`.
+- A stale proposal (`proposal_stale` in `next`) awaits its author's
+  `cruxible proposal readmit`, which recompiles it at the current head for
+  review; approvals of the old one don't carry over. An approver sees it as
+  stale with the repair withheld: only the author readmits.
 - `cruxible proposal withdraw ID --reason "…"` drops your own proposal; a
   reviewer turns one down with `cruxible proposal reject ID --reason "…"`.
 - On MCP, `cruxible_proposal_approve` signs with a key from the server's
