@@ -68,12 +68,12 @@ def uv_executable() -> str:
     """
 
     try:
-        from uv import find_uv_bin
+        packaged = importlib.import_module("uv")
     except ImportError:
         pass
     else:
         try:
-            return str(find_uv_bin())
+            return str(packaged.find_uv_bin())
         except FileNotFoundError:
             pass
     found = shutil.which("uv")
