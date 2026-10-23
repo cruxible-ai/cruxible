@@ -160,6 +160,8 @@
         "line_coverage_gap",
         "line_work_pending",
         "line_disabled_by_upgrade",
+        "line_not_enabled",
+        "line_run_failed",
         "line_settled_prior_refusals",
         "line_inbox_unread",
         "evidence_unavailable",
@@ -173,6 +175,21 @@
     "NextRefusalCode": {
       "values": [
         "cruxible.next.cursor_mismatch"
+      ]
+    },
+    "NextRepairGate": {
+      "values": [
+        "tier",
+        "profile",
+        "authoring",
+        "author"
+      ]
+    },
+    "NextRepairOperand": {
+      "values": [
+        "because",
+        "file",
+        "capture"
       ]
     },
     "NextRepairOperation": {
@@ -33647,6 +33664,8 @@
               "line_coverage_gap",
               "line_work_pending",
               "line_disabled_by_upgrade",
+              "line_not_enabled",
+              "line_run_failed",
               "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
@@ -33850,6 +33869,19 @@
                 "default": null,
                 "title": "Command"
               },
+              "operands_to_add": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "because",
+                    "file",
+                    "capture"
+                  ],
+                  "type": "string"
+                },
+                "title": "Operands To Add",
+                "type": "array"
+              },
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
@@ -33900,7 +33932,7 @@
           },
           "NextRepairRequirement": {
             "additionalProperties": false,
-            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair. ``author``: only the proposal's author runs it.",
             "properties": {
               "authoring_refusal": {
                 "anyOf": [
@@ -33918,7 +33950,8 @@
                   "enum": [
                     "tier",
                     "profile",
-                    "authoring"
+                    "authoring",
+                    "author"
                   ],
                   "type": "string"
                 },
@@ -34054,6 +34087,8 @@
               "line_coverage_gap",
               "line_work_pending",
               "line_disabled_by_upgrade",
+              "line_not_enabled",
+              "line_run_failed",
               "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
@@ -34319,6 +34354,19 @@
                 "default": null,
                 "title": "Command"
               },
+              "operands_to_add": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "because",
+                    "file",
+                    "capture"
+                  ],
+                  "type": "string"
+                },
+                "title": "Operands To Add",
+                "type": "array"
+              },
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
@@ -34369,7 +34417,7 @@
           },
           "NextRepairRequirement": {
             "additionalProperties": false,
-            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair. ``author``: only the proposal's author runs it.",
             "properties": {
               "authoring_refusal": {
                 "anyOf": [
@@ -34387,7 +34435,8 @@
                   "enum": [
                     "tier",
                     "profile",
-                    "authoring"
+                    "authoring",
+                    "author"
                   ],
                   "type": "string"
                 },
@@ -34610,6 +34659,8 @@
               "line_coverage_gap",
               "line_work_pending",
               "line_disabled_by_upgrade",
+              "line_not_enabled",
+              "line_run_failed",
               "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
@@ -34822,6 +34873,8 @@
                   "line_coverage_gap",
                   "line_work_pending",
                   "line_disabled_by_upgrade",
+                  "line_not_enabled",
+                  "line_run_failed",
                   "line_settled_prior_refusals",
                   "line_inbox_unread",
                   "evidence_unavailable",
@@ -34917,6 +34970,19 @@
                 "default": null,
                 "title": "Command"
               },
+              "operands_to_add": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "because",
+                    "file",
+                    "capture"
+                  ],
+                  "type": "string"
+                },
+                "title": "Operands To Add",
+                "type": "array"
+              },
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
@@ -34967,7 +35033,7 @@
           },
           "NextRepairRequirement": {
             "additionalProperties": false,
-            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair. ``author``: only the proposal's author runs it.",
             "properties": {
               "authoring_refusal": {
                 "anyOf": [
@@ -34985,7 +35051,8 @@
                   "enum": [
                     "tier",
                     "profile",
-                    "authoring"
+                    "authoring",
+                    "author"
                   ],
                   "type": "string"
                 },
@@ -35131,6 +35198,8 @@
               "line_coverage_gap",
               "line_work_pending",
               "line_disabled_by_upgrade",
+              "line_not_enabled",
+              "line_run_failed",
               "line_settled_prior_refusals",
               "line_inbox_unread",
               "evidence_unavailable",
@@ -35404,6 +35473,15 @@
           "required": false,
           "schema": {}
         },
+        "operands_to_add": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "operands_to_add",
+          "required": false,
+          "schema": {}
+        },
         "operation": {
           "has_default": false,
           "has_default_factory": false,
@@ -35453,6 +35531,19 @@
                 ],
                 "default": null,
                 "title": "Command"
+              },
+              "operands_to_add": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "because",
+                    "file",
+                    "capture"
+                  ],
+                  "type": "string"
+                },
+                "title": "Operands To Add",
+                "type": "array"
               },
               "operation": {
                 "enum": [
@@ -35542,7 +35633,8 @@
               "enum": [
                 "tier",
                 "profile",
-                "authoring"
+                "authoring",
+                "author"
               ],
               "type": "string"
             },
@@ -35747,7 +35839,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
+        "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair. ``author``: only the proposal's author runs it.",
         "properties": {
           "authoring_refusal": {
             "anyOf": [
@@ -35765,7 +35857,8 @@
               "enum": [
                 "tier",
                 "profile",
-                "authoring"
+                "authoring",
+                "author"
               ],
               "type": "string"
             },
@@ -36180,6 +36273,8 @@
                   "line_coverage_gap",
                   "line_work_pending",
                   "line_disabled_by_upgrade",
+                  "line_not_enabled",
+                  "line_run_failed",
                   "line_settled_prior_refusals",
                   "line_inbox_unread",
                   "evidence_unavailable",
@@ -36345,6 +36440,8 @@
                   "line_coverage_gap",
                   "line_work_pending",
                   "line_disabled_by_upgrade",
+                  "line_not_enabled",
+                  "line_run_failed",
                   "line_settled_prior_refusals",
                   "line_inbox_unread",
                   "evidence_unavailable",
@@ -36441,6 +36538,19 @@
                 "default": null,
                 "title": "Command"
               },
+              "operands_to_add": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "because",
+                    "file",
+                    "capture"
+                  ],
+                  "type": "string"
+                },
+                "title": "Operands To Add",
+                "type": "array"
+              },
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
@@ -36491,7 +36601,7 @@
           },
           "NextRepairRequirement": {
             "additionalProperties": false,
-            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair. ``author``: only the proposal's author runs it.",
             "properties": {
               "authoring_refusal": {
                 "anyOf": [
@@ -36509,7 +36619,8 @@
                   "enum": [
                     "tier",
                     "profile",
-                    "authoring"
+                    "authoring",
+                    "author"
                   ],
                   "type": "string"
                 },
@@ -37129,6 +37240,19 @@
                 "default": null,
                 "title": "Command"
               },
+              "operands_to_add": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "because",
+                    "file",
+                    "capture"
+                  ],
+                  "type": "string"
+                },
+                "title": "Operands To Add",
+                "type": "array"
+              },
               "operation": {
                 "enum": [
                   "cruxible.authoring.example",
@@ -37179,7 +37303,7 @@
           },
           "NextRepairRequirement": {
             "additionalProperties": false,
-            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair. ``author``: only the proposal's author runs it.",
             "properties": {
               "authoring_refusal": {
                 "anyOf": [
@@ -37197,7 +37321,8 @@
                   "enum": [
                     "tier",
                     "profile",
-                    "authoring"
+                    "authoring",
+                    "author"
                   ],
                   "type": "string"
                 },
@@ -37927,7 +38052,7 @@
             "anyOf": [
               {
                 "items": {
-                  "$ref": "#/$defs/OrientKind"
+                  "$ref": "#/$defs/OrientKindSummary"
                 },
                 "type": "array"
               },
@@ -38848,7 +38973,7 @@
           },
           "OrientClaimCounts": {
             "additionalProperties": false,
-            "description": "Every accepted Claim by its status at the coordinate.\n\n``accepted`` Claims answer their slot; ``conflicted`` ones are contenders\nresolution left unresolved; ``overturned`` ones lost their slot to an\naccepted rival; ``refused`` ones failed their own ClaimType's admission;\n``retired`` ones were withdrawn. ``query(..., status=[...])`` lists the\nnon-live ones.",
+            "description": "Every accepted Claim by its status at the coordinate.\n\n``accepted`` Claims answer their slot; ``conflicted`` ones are contenders\nresolution left unresolved; ``overturned`` ones lost their slot to an\naccepted rival; ``ineligible`` ones are not eligible to resolve under their\nown ClaimType (a verdict other than supported, or erased evidence read\nstale);\n``retired`` ones were withdrawn. ``query(..., status=[...])`` lists the\nnon-live ones.",
             "properties": {
               "accepted": {
                 "default": 0,
@@ -38862,16 +38987,16 @@
                 "title": "Conflicted",
                 "type": "integer"
               },
+              "ineligible": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Ineligible",
+                "type": "integer"
+              },
               "overturned": {
                 "default": 0,
                 "minimum": 0,
                 "title": "Overturned",
-                "type": "integer"
-              },
-              "refused": {
-                "default": 0,
-                "minimum": 0,
-                "title": "Refused",
                 "type": "integer"
               },
               "retired": {
@@ -39274,48 +39399,6 @@
             "title": "OrientInterfaceProvider",
             "type": "object"
           },
-          "OrientKind": {
-            "additionalProperties": false,
-            "description": "One Subject kind: how many live Subjects it has and its predicates.\n\nThe most common admitted CaptureContract set is named once as ``evidence``.\nPredicates inheriting it omit their evidence; exceptions carry their own\nset, including an explicit empty list when no contracts are admitted.",
-            "properties": {
-              "evidence": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence",
-                "type": "array"
-              },
-              "identity": {
-                "default": "undeclared",
-                "title": "Identity",
-                "type": "string"
-              },
-              "kind": {
-                "title": "Kind",
-                "type": "string"
-              },
-              "predicates": {
-                "items": {
-                  "$ref": "#/$defs/OrientPredicate"
-                },
-                "title": "Predicates",
-                "type": "array"
-              },
-              "subjects": {
-                "minimum": 0,
-                "title": "Subjects",
-                "type": "integer"
-              }
-            },
-            "required": [
-              "kind",
-              "subjects",
-              "predicates"
-            ],
-            "title": "OrientKind",
-            "type": "object"
-          },
           "OrientKindDetail": {
             "additionalProperties": false,
             "description": "One kind in full, with a few Subject IDs to read next.\n\n``incoming`` names, in full, the Subject-valued predicates of other kinds\nwhose values may name this kind's Subjects: the reverse follows a ``query``\non this kind can take (``follow`` with ``direction: \"reverse\"``). It is\nomitted when nothing points at the kind.",
@@ -39372,6 +39455,46 @@
               "predicates"
             ],
             "title": "OrientKindDetail",
+            "type": "object"
+          },
+          "OrientKindSummary": {
+            "additionalProperties": false,
+            "description": "One Subject kind in the default map: its live Subjects and first fields.\n\n``fields`` names its first predicates by short name (byte order), at most\n``ORIENT_KIND_FIELDS``; ``more_fields`` counts the rest. ``identity`` is\nas on ``OrientKind``. ``orient(kind=...)`` reads every predicate in full.",
+            "properties": {
+              "fields": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Fields",
+                "type": "array"
+              },
+              "identity": {
+                "default": "undeclared",
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "more_fields": {
+                "default": 0,
+                "minimum": 0,
+                "title": "More Fields",
+                "type": "integer"
+              },
+              "subjects": {
+                "minimum": 0,
+                "title": "Subjects",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "subjects"
+            ],
+            "title": "OrientKindSummary",
             "type": "object"
           },
           "OrientLine": {
@@ -40638,7 +40761,7 @@
             "anyOf": [
               {
                 "items": {
-                  "$ref": "#/$defs/OrientKind"
+                  "$ref": "#/$defs/OrientKindSummary"
                 },
                 "type": "array"
               },
@@ -82948,8 +83071,8 @@
             "enum": [
               "accepted",
               "conflicted",
+              "ineligible",
               "overturned",
-              "refused",
               "retired"
             ],
             "title": "Status",
@@ -83178,8 +83301,8 @@
             "enum": [
               "accepted",
               "conflicted",
+              "ineligible",
               "overturned",
-              "refused",
               "retired"
             ],
             "title": "Status",
@@ -91431,12 +91554,12 @@
             "default": [
               "live"
             ],
-            "description": "Which Claims cells show: live (each slot's answer, the default), and opt-in overturned, refused or retired; retired also lists retired Subjects, each row then stating lifecycle (live or retired).",
+            "description": "Which Claims cells show: live (each slot's answer, the default), and opt-in overturned, ineligible or retired; retired also lists retired Subjects, each row then stating lifecycle (live or retired).",
             "items": {
               "enum": [
                 "live",
+                "ineligible",
                 "overturned",
-                "refused",
                 "retired"
               ],
               "type": "string"
@@ -93571,12 +93694,12 @@
             "default": [
               "live"
             ],
-            "description": "Which Claims cells show: live (each slot's answer, the default), and opt-in overturned, refused or retired; retired also lists retired Subjects, each row then stating lifecycle (live or retired).",
+            "description": "Which Claims cells show: live (each slot's answer, the default), and opt-in overturned, ineligible or retired; retired also lists retired Subjects, each row then stating lifecycle (live or retired).",
             "items": {
               "enum": [
                 "live",
+                "ineligible",
                 "overturned",
-                "refused",
                 "retired"
               ],
               "type": "string"
@@ -97610,7 +97733,7 @@
           },
           "QueryClaim": {
             "additionalProperties": false,
-            "description": "One Claim behind a cell value: ``rows[i].claims[column]`` lists them.\n\n``status`` tells a slot's winner (``accepted``) from the Claims resolution\nset aside (``overturned``, ``refused``) and from contenders it left\nunresolved (``conflicted``); ``verdict`` is the Claim's own evidence\nverdict (``retired`` for a withdrawn Claim). ``get(claim)`` reads it.",
+            "description": "One Claim behind a cell value: ``rows[i].claims[column]`` lists them.\n\n``status`` tells a slot's winner (``accepted``) from the Claims resolution\nset aside (``overturned``, ``ineligible``) and from contenders it left\nunresolved (``conflicted``); ``verdict`` is the Claim's own evidence\nverdict (``retired`` for a withdrawn Claim). ``get(claim)`` reads it.",
             "properties": {
               "claim": {
                 "title": "Claim",
@@ -97642,8 +97765,8 @@
                 "enum": [
                   "accepted",
                   "conflicted",
+                  "ineligible",
                   "overturned",
-                  "refused",
                   "retired"
                 ],
                 "title": "Status",
