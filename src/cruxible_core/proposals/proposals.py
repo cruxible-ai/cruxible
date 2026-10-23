@@ -4616,12 +4616,14 @@ def _evaluate_scoped_members(
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
     settle_condition: DelegatedAuthorityVerdict | None = None,
     base_tree: Mapping[str, bytes] | None = None,
+    base_changes: frozenset[str] | None = None,
     replay_erasure_cutoffs: Mapping[str, Mapping[str, int]] | None = None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
     ``base_tree`` is the head the change was made against, for a rebased
-    evaluation (None: its base is ``current_tree``).
+    evaluation (None: its base is ``current_tree``), and ``base_changes`` the
+    paths that differ between the two, when known.
 
     One pipeline, in one order: refuse a member this build cannot parse, close
     the dependency graph, then dispatch each scoped path to the single law
@@ -5017,11 +5019,14 @@ def _evaluate_scoped_members(
                 claim_admission_accounts=claim_admission_accounts,
             )
         # The polarity law (inverse Claims): after the change set no unit holds
-        # a live value and a live none (a one-valued dispute only against an
-        # opposite live in the change's own base) or two nones, and an
-        # object_key flip stays in its unit. Judged here, at the head the change
-        # lands on, so two changes that each pass alone cannot both land; read
-        # from the parent's unit index for the units the change touches.
+        # a live value and a live none, or two nones, and an object_key flip
+        # stays in its unit. A one-valued dispute needs a contend the write
+        # declared; no candidate carries that declaration yet (the none verb
+        # does, slice I3), so every value-beside-none it would start refuses:
+        # seeing the opposite in the base is never the declaration. Judged
+        # here, at the head the change lands on, so two changes that each pass
+        # alone cannot both land; read from the parent's unit index for the
+        # units the change touches.
         from cruxible_core.indexes.claim_units import candidate_polarity_issues
 
         polarity = candidate_polarity_issues(
@@ -5029,6 +5034,7 @@ def _evaluate_scoped_members(
             candidate_tree=candidate_tree,
             scope=scope,
             base_tree=base_tree,
+            base_changes=base_changes,
         )
         if polarity:
             return CandidateEvaluation(
@@ -5588,6 +5594,7 @@ def evaluate_proposal_tree(
             acceptance_laws=acceptance_laws,
             historical_law_coordinates=historical_law_coordinates or {},
             base_tree=base_tree if rebased else None,
+            base_changes=base_changes if rebased else None,
             replay_erasure_cutoffs=replay_erasure_cutoffs,
             replaying_accepted=replaying_accepted,
             retained_tree=retained_tree,

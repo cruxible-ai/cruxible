@@ -182,3 +182,67 @@ def test_the_boundary_never_enumerates_a_crowded_unit(root: Path, change) -> Non
     small, large = steps
     assert small > 0
     assert not _grows(small, large), (steps, window.attribution[:3])
+
+
+def _disputed(root: Path, rivals: int) -> sqlite3.Connection:
+    """One one-valued unresolved slot (ASSET status) holding ``rivals`` positive rivals."""
+
+    connection = sqlite3.connect(root / f"disputed-{rivals}.sqlite3", isolation_level=None)
+    connection.executescript(schema_sql())
+    _put_type(connection, SLOT_TYPE)
+    for index in range(rivals):
+        _put_claim(connection, claim(7000 + index, SLOT_TYPE, LiteralClaimObject(value=f"v{index}")))
+    refresh_claim_units(connection)
+    return connection
+
+
+@pytest.mark.parametrize(
+    ("rebased", "contend", "expected"),
+    [
+        (False, True, []),
+        (True, True, []),
+        (False, False, ["cruxible.claim.polarity_conflict"]),
+    ],
+    ids=["current-base", "rebased", "undeclared"],
+)
+def test_a_one_valued_dispute_never_enumerates_its_rivals(
+    root: Path, rebased: bool, contend: bool, expected: list[str]
+) -> None:
+    """One contending none beside many rivals is judged by seeks, not by its rivals (I2-004).
+
+    Rebased, the paths that changed since the base (one unrelated Claim) bound
+    the read of what landed meanwhile.
+    """
+
+    from cruxible_client.contracts.claims import NoneClaimObject
+
+    none = claim(6999, SLOT_TYPE, NoneClaimObject())
+    facts = {
+        none.identity.qualified: _claim_facts(render_claim(none), claim_path(none.identity.name))
+    }
+    unrelated = claim(6998, SLOT_TYPE, LiteralClaimObject(value="x"), subject=release("other"))
+    steps = []
+    for rivals in SIZES:
+        connection = _disputed(root, rivals)
+        with counting(root) as window:
+            codes = [
+                issue.code
+                for issue in polarity_issues(
+                    connection,
+                    claims=facts,
+                    claim_types={},
+                    claim_type_of=lambda _identity: SLOT_TYPE,
+                    base_claim=(lambda identity: None) if rebased else None,
+                    base_changes=(
+                        frozenset({claim_path(unrelated.identity.name)}) if rebased else None
+                    ),
+                    contending=frozenset(facts) if contend else frozenset(),
+                )
+            ]
+            assert codes == expected
+        assert window.unexplained == [], window.unexplained
+        steps.append(window.counts["sql_vm_steps"])
+        connection.close()
+    small, large = steps
+    assert small > 0
+    assert not _grows(small, large), (steps, window.attribution[:3])

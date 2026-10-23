@@ -159,15 +159,25 @@ def judge(
     parent: dict[str, bytes],
     *changed: ClaimArtifactV2 | ClaimArtifact | ClaimType,
     base: dict[str, bytes] | None = None,
+    contend: tuple[ClaimArtifactV2 | ClaimArtifact, ...] = (),
+    base_changes: frozenset[str] | None = None,
 ) -> list[str]:
-    """The polarity codes of ``changed`` landing on ``parent``, made against ``base``."""
+    """The polarity codes of ``changed`` landing on ``parent``, made against ``base``.
+
+    ``contend`` are the changed Claims whose write declared a contend.
+    """
 
     candidate = {**parent, **tree(*changed)}
     scope = tuple(sorted(tree(*changed)))
     return [
         issue.code
         for issue in candidate_polarity_issues(
-            current_tree=parent, candidate_tree=candidate, scope=scope, base_tree=base
+            current_tree=parent,
+            candidate_tree=candidate,
+            scope=scope,
+            base_tree=base,
+            base_changes=base_changes,
+            contending=frozenset(item.identity.qualified for item in contend),
         )
     ]
 
@@ -429,15 +439,61 @@ def test_a_line_terminal_flip_rejudged_behind_a_write_that_added_a_value() -> No
 def test_one_valued_rivals_contend_only_under_an_unresolved_policy() -> None:
     value = claim(1, SLOT_TYPE, LiteralClaimObject(value="ready"))
     none = claim(2, SLOT_TYPE, NoneClaimObject())
-    assert judge(tree(SLOT_TYPE, value), none) == []
+    assert judge(tree(SLOT_TYPE, value), none, contend=(none,)) == []
     refusing_value = claim(1, REFUSING_SLOT_TYPE, LiteralClaimObject(value="ready"))
     refusing_none = claim(2, REFUSING_SLOT_TYPE, NoneClaimObject())
-    assert judge(tree(REFUSING_SLOT_TYPE, refusing_value), refusing_none) == [POLARITY_CONFLICT]
+    assert judge(
+        tree(REFUSING_SLOT_TYPE, refusing_value), refusing_none, contend=(refusing_none,)
+    ) == [POLARITY_CONFLICT]
     # A qualified slot is another slot.
     assert (
         judge(
             tree(REFUSING_SLOT_TYPE, refusing_value),
             claim(2, REFUSING_SLOT_TYPE, NoneClaimObject(), qualifier="primary"),
+        )
+        == []
+    )
+
+
+def test_a_one_valued_dispute_needs_a_declared_contend() -> None:
+    """Seeing the opposite in the base is not contention: the write declares it (I2-001)."""
+
+    value = claim(1, SLOT_TYPE, LiteralClaimObject(value="ready"))
+    none = claim(2, SLOT_TYPE, NoneClaimObject())
+    landed = tree(SLOT_TYPE, value)
+    # A raw none against a head already holding the value, no contend: refused.
+    assert judge(landed, none) == [POLARITY_CONFLICT]
+    assert judge(landed, none, base=landed) == [POLARITY_CONFLICT]
+    # The same none written with contend disputes the value it read.
+    assert judge(landed, none, contend=(none,)) == []
+    assert judge(landed, none, base=landed, contend=(none,)) == []
+    # A contend declared for another Claim of the change is not this one's.
+    other = claim(3, SLOT_TYPE, LiteralClaimObject(value="x"), subject=OTHER_ASSET)
+    assert judge(landed, none, other, contend=(other,)) == [POLARITY_CONFLICT]
+    # Either polarity: a value written beside a live none needs its own contend.
+    noned = tree(SLOT_TYPE, none)
+    rival = claim(3, SLOT_TYPE, LiteralClaimObject(value="blocked"))
+    assert judge(noned, rival) == [POLARITY_CONFLICT]
+    assert judge(noned, rival, contend=(rival,)) == []
+    # Rejudged after a rebase: the contend stands against what its base held.
+    empty = tree(SLOT_TYPE)
+    assert judge(landed, none, base=empty, contend=(none,)) == [POLARITY_CONFLICT]
+    later = claim(4, SLOT_TYPE, LiteralClaimObject(value="late"))
+    moved = {**landed, **tree(later)}
+    changed = frozenset(tree(later))
+    assert judge(moved, none, base=landed, contend=(none,)) == [POLARITY_CONFLICT]
+    assert judge(moved, none, base=landed, contend=(none,), base_changes=changed) == [
+        POLARITY_CONFLICT
+    ]
+    assert judge(moved, none, base=moved, contend=(none,)) == []
+    # Unrelated paths changed meanwhile: the dispute stands.
+    assert (
+        judge(
+            {**landed, **tree(other)},
+            none,
+            base=landed,
+            contend=(none,),
+            base_changes=frozenset(tree(other)),
         )
         == []
     )
@@ -449,21 +505,22 @@ def test_a_one_valued_dispute_stands_only_against_a_value_its_writer_saw() -> No
     empty = tree(SLOT_TYPE)
     value = claim(1, SLOT_TYPE, LiteralClaimObject(value="ready"))
     none = claim(2, SLOT_TYPE, NoneClaimObject())
+    both = (value, none)
     # Two candidates prepared against the empty slot each pass alone.
     assert judge(empty, value) == [] and judge(empty, none) == []
     # Whichever lands second never read the other: it disputes nothing, so it refuses.
-    assert judge({**empty, **tree(value)}, none, base=empty) == [POLARITY_CONFLICT]
-    assert judge({**empty, **tree(none)}, value, base=empty) == [POLARITY_CONFLICT]
+    assert judge({**empty, **tree(value)}, none, base=empty, contend=both) == [POLARITY_CONFLICT]
+    assert judge({**empty, **tree(none)}, value, base=empty, contend=both) == [POLARITY_CONFLICT]
     # Written at (or rebased from) a head that holds the value: a deliberate contend.
     landed = {**empty, **tree(value)}
-    assert judge(landed, none) == []
-    assert judge(landed, none, base=landed) == []
+    assert judge(landed, none, contend=both) == []
+    assert judge(landed, none, base=landed, contend=both) == []
     # One change writing both polarities into the slot contends with nothing it read.
-    assert judge(empty, value, none) == [POLARITY_CONFLICT]
+    assert judge(empty, value, none, contend=both) == [POLARITY_CONFLICT]
     # The value it read was flipped to none meanwhile: the none it now meets is unseen.
     flipped = {**empty, **tree(claim(1, SLOT_TYPE, NoneClaimObject()))}
     rival = claim(3, SLOT_TYPE, LiteralClaimObject(value="blocked"))
-    assert judge(flipped, rival, base=landed) == [POLARITY_CONFLICT]
+    assert judge(flipped, rival, base=landed, contend=(rival,)) == [POLARITY_CONFLICT]
     # Rewriting a rival already in an accepted dispute starts no new one.
     disputed = tree(SLOT_TYPE, value, none)
     assert judge(disputed, claim(1, SLOT_TYPE, LiteralClaimObject(value="ready"))) == []
