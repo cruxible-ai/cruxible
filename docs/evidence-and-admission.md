@@ -301,9 +301,13 @@ What goes is the body: the bytes replay reads. The Capture's envelope (what was
 observed, when, by which run, under which contract) stays, with an erasure
 record of who erased it, when and why; never put the secret in `--because`.
 If the same bytes are observed again later (a new Capture of them), erasing
-them again records a second erasure. A judgment counts the erasures recorded
-before it, in the erasure journal's order (not by clock or head), and its
-evidence keeps that position, so replaying history reproduces what it saw.
+them again records a second erasure; so does erasing bytes present again under
+an erasure recorded before erasures kept storage positions, which cannot show
+the bytes are the same ones. A judgment counts the erasures recorded before it,
+in the erasure journal's order (not by clock or head), and its evidence keeps
+that position, so replaying history reproduces what it saw. A judgment
+accepted before positions were kept replays by the rule it was made under (an
+erasure recorded under an accepted head before its own).
 Claims citing it keep their history. `get --detail evidence` shows the Capture
 as erased, and their verdicts read it as no longer replayable, with each
 field's own rules deciding what that means: a field that requires current

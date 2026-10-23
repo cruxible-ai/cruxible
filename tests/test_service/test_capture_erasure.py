@@ -529,3 +529,73 @@ def test_erasing_bytes_stored_again_records_another_erasure_and_recovers(
     # Only the first erasure preceded the new Capture's landing; the second one
     # destroyed its bytes too. Every generation still replays exactly.
     _full_recovery(world)
+
+
+def _without_positions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Erasures recorded from here on carry no landing position, as before positions were kept."""
+
+    from cruxible_core.exhaust.writer import ProcedureExhaustWriter
+
+    original = ProcedureExhaustWriter.append
+
+    def append(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["payload"].pop("landing", None)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ProcedureExhaustWriter, "append", append)
+
+
+def test_bytes_present_again_under_an_erasure_without_a_position_are_erased_anew(
+    world: ErasureWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recheck E-002: a record with no position cannot show the bytes are the ones it destroyed."""
+
+    original = world.instance.body_store().read(world.body, access=READ)
+    with monkeypatch.context() as patch:
+        _without_positions(patch)
+        _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+    (legacy,) = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
+    assert legacy.landing is None
+    # The exact bytes are stored again; erasing them is a second destruction.
+    world.instance.body_store().store(original)
+    assert world.instance.body_store().verify(world.body)
+
+    second = _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+
+    assert second.status == "erased" and second.erasure != legacy.record
+    first, latest = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
+    assert first == legacy and latest.sequence > legacy.sequence
+    assert latest.landing is not None and latest.record.because == BECAUSE
+    assert not world.instance.body_store()._path(world.body).exists()
+    _full_recovery(world)
+
+
+def test_an_interrupted_erase_without_a_position_is_finished_under_a_record_of_its_own(
+    world: ErasureWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recheck E-002: an old interrupted erase cannot prove its bytes are the same; it records anew."""
+
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
+
+    preview = _erase(world)
+    with monkeypatch.context() as patch:
+        _without_positions(patch)
+
+        def crash(self, digest):  # type: ignore[no-untyped-def]
+            raise OSError("power cut")
+
+        patch.setattr(ContentAddressedBodyStore, "erase", crash)
+        with pytest.raises(OSError):
+            _erase(world, dry_run=False, at=preview.coordinate.digest)
+    (legacy,) = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
+    assert legacy.landing is None and world.instance.body_store().verify(world.body)
+    assert CaptureErasureStore(world.instance).unfinished(world.capture) is None
+
+    retried = _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
+
+    assert retried.status == "erased"
+    first, latest = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
+    assert first == legacy and latest.landing is not None
+    assert not world.instance.body_store()._path(world.body).exists()
+    # Positioned now: a retry of that one proves it and finishes under it.
+    assert CaptureErasureStore(world.instance).unfinished(world.capture) == latest.record
