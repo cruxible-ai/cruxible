@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from cruxible_client.contracts.uploads import UPLOAD_PART_SIZE
-from cruxible_client.errors import ErrorResponse
+from cruxible_core.server.errors import ErrorResponse
 
 UPLOAD_PART_ROUTE = re.compile(r"^/api/v1/[^/]+/uploads/[0-9a-f]{32}/parts/[0-9]+$")
 PART_TOO_LARGE_CODE = "cruxible.upload.part_too_large"
