@@ -537,3 +537,122 @@ def test_cli_next_keeps_a_row_whose_repair_is_withheld_and_names_what_it_needs(
         "cruxible line enable needs the governed_write tier"
     )
     assert _invoke_next("--brief").splitlines() == ["repair  consumer_stalled  Line:hourly"]
+
+
+def test_cli_next_renders_round3_rows_their_causes_gates_and_placeholders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claim = "CLM-" + "e" * 32
+    rows = [
+        {
+            "item_id": "sha256:" + "1" * 64,
+            "severity": "repair",
+            "reason": "line_run_failed",
+            "subject_identity": "Line:hourly",
+            "detail": {
+                "run_id": "RUN-1",
+                "finalized_at": "2026-08-24T17:00:00Z",
+                "failure_code": "provider_execution_error",
+                "cause": {
+                    "node_id": "fetch",
+                    "provider_code": "provider_execution_error",
+                    "kind": "transport_error",
+                    "message": "connection refused",
+                },
+            },
+            "repair": {
+                "operation": "hand_edit",
+                "target": "Line:hourly",
+                "required_change": "read_the_failed_run_fix_its_cause_then_let_the_line_run_again",
+            },
+        },
+        {
+            "item_id": "sha256:" + "2" * 64,
+            "severity": "warning",
+            "reason": "line_not_enabled",
+            "subject_identity": "Line:daily",
+            "detail": {"detail": "accepted but never enabled; enable it to run on its Triggers"},
+            "repair": {
+                "operation": "cruxible.line.enable",
+                "target": "Line:daily",
+                "required_change": "enable_the_line_to_run_it_on_its_triggers",
+                "arguments": {"line": "daily"},
+                "command": "cruxible line enable daily",
+            },
+        },
+        {
+            "item_id": "sha256:" + "3" * 64,
+            "severity": "repair",
+            "reason": "claim_evidence_erased",
+            "subject_identity": f"Claim:{claim}",
+            "detail": {},
+            "repair": {
+                "operation": "cruxible.rebind",
+                "target": f"Claim:{claim}",
+                "required_change": "rebind_onto_a_fresh_capture_under_the_same_contract",
+                "arguments": {"claim_id": claim},
+                "command": f"cruxible rebind {claim} --capture CAP --because TEXT",
+                "operands_to_add": ["capture", "because"],
+                "alternatives": [
+                    {
+                        "operation": "cruxible.claim.retire",
+                        "target": f"Claim:{claim}",
+                        "required_change": "retire_the_claim",
+                        "arguments": {"claim_id": claim},
+                        "command": f"cruxible retire {claim} --because TEXT",
+                        "operands_to_add": ["because"],
+                    }
+                ],
+            },
+        },
+        {
+            "item_id": "sha256:" + "4" * 64,
+            "severity": "warning",
+            "reason": "proposal_stale",
+            "subject_identity": "PRP-1",
+            "detail": {"actor_id": "alice", "awaiting": "author_readmit"},
+            "repair": None,
+            "repair_requires": {
+                "operation": "cruxible.proposal.readmit",
+                "tool": "cruxible_proposal_readmit",
+                "tier": "governed_write",
+                "because": ["author"],
+            },
+        },
+    ]
+
+    class StubClient:
+        def next(self, instance_id: str, **values: object) -> contracts.NextResult:
+            return contracts.NextResult(
+                coordinate=COORDINATE,
+                evaluation_time="2026-08-24T18:00:00Z",
+                observed_domains=["accepted_state"],
+                unobserved_domains=[],
+                status=HEALTHY_STATUS,
+                items=rows,
+                total_items=len(rows),
+                result_digest="sha256:" + "5" * 64,
+                attestation_head_digest="sha256:" + "9" * 64,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.observe_next_workspace",
+        lambda _root: {},
+    )
+
+    assert _invoke_next().splitlines() == [
+        "repair  line_run_failed  Line:hourly  next=hand_edit",
+        "  run RUN-1 failed (provider_execution_error) at 2026-08-24T17:00:00Z",
+        "  Cause: fetch: transport_error: connection refused",
+        "  repair: hand edit Line:hourly: "
+        "read_the_failed_run_fix_its_cause_then_let_the_line_run_again",
+        "warning  line_not_enabled  Line:daily  next=cruxible.line.enable",
+        "  repair: cruxible line enable daily",
+        f"repair  claim_evidence_erased  Claim:{claim}  next=cruxible.rebind",
+        f"  repair: cruxible rebind {claim} --capture CAP --because TEXT",
+        f"  or: cruxible retire {claim} --because TEXT",
+        "  fill in: CAP (the fresh Capture's handle), TEXT (why, in your words)",
+        "warning  proposal_stale  PRP-1  repair withheld: "
+        "cruxible proposal readmit needs the proposal's author (alice)",
+    ]

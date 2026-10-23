@@ -405,7 +405,7 @@ for a many-valued predicate or a contested slot) and carry `flags` (`stale`,
 shows up to 12 predicates and names the rest in `notes`. Cells show each slot's
 answer as `get` shows it (its accepted and conflicted Claims, or every live
 Claim when resolution accepted none); `status` adds Claims resolution set aside
-(`overturned`, `refused`) or withdrew (`retired`), and `claims: true` answers
+(`overturned`, `ineligible`) or withdrew (`retired`), and `claims: true` answers
 each cell's Claims under `rows[].claims[<column>]` with `claim`, `value`,
 `verdict`, `status` and `role`, so a slot's winner reads apart from its losers.
 `subject`, `subject_id`, `flags` and `claims` are row metadata; a column with one

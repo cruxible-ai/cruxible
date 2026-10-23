@@ -837,7 +837,8 @@ Row `flags` come from `stale`, `contested`, `contradicted`, `uncovered` and
 `unsure_hold`. With `claims=True` each row also carries
 `claims[column]`: a list of `{claim, value, verdict, status, role, qualifier?}`
 (`QueryClaim`), where `status` is `accepted`, `conflicted`,
-`overturned`, `refused` or `retired`. A named query with `receipt="full"`
+`overturned`, `ineligible` (its own verdict does not resolve, such as evidence
+erased and read stale) or `retired`. A named query with `receipt="full"`
 adds `receipt.replay`: `definition_path`, `result` (`ClaimQueryResult`) and
 `execution` (`QueryExecutionReceipt`).
 
@@ -853,7 +854,7 @@ adds `receipt.replay`: `definition_path`, `result` (`ClaimQueryResult`) and
 | `spec` / `name` / `params` | `None` | The spec and named modes. |
 | `at` | `None` | A coordinate or git oid; the connection's otherwise. |
 | `evaluation_time` | `None` | The instant flags are evaluated at; the connection's clock otherwise. |
-| `status` | `("live",)` | Which Claims cells show: `live` (each slot's answer), plus opt-in `overturned`, `refused` or `retired`. Rows list live Subjects; `retired` also lists retired Subjects, each row then stating `lifecycle`. |
+| `status` | `("live",)` | Which Claims cells show: `live` (each slot's answer), plus opt-in `overturned`, `ineligible` or `retired`. Rows list live Subjects; `retired` also lists retired Subjects, each row then stating `lifecycle`. |
 | `claims` | `False` | Also answer each cell's Claims as `rows[].claims[column]`. |
 | `budgets` | `None` | Named query only: `QueryBudgets`, up to the definition's maximum; its own default otherwise. |
 | `receipt` | `"compact"` | `"full"` adds a named query's replay receipt as `receipt.replay`. |
@@ -2595,13 +2596,13 @@ values(
 
 Each live Claim's value, verdict and status for these Subjects, read through
 `query` (one `query(kind, where=subject_id in ..., claims=True,
-status=("live", "overturned", "refused"))` per Subject kind, pinned to this
+status=("live", "overturned", "ineligible"))` per Subject kind, pinned to this
 World's coordinate) and without full Claim views -- the cheaper read when only
 values and verdicts are needed. Every live contender of each selected slot is
-returned, including Claims resolution overturned or refused. Each
+returned, including Claims resolution overturned or found ineligible. Each
 `QueryClaimValue` carries `subject` (the Subject's `kind/id`),
 `predicate`, `claim`, `value`, `verdict`, `status` (`accepted`, `conflicted`,
-`overturned`, `refused` or `retired`), `role` and, when present, `qualifier`.
+`ineligible`, `overturned` or `retired`), `role` and, when present, `qualifier`.
 `value` is a `ShownValue`: a string over 500 characters is a `TruncatedText`
 (`preview`, `length`, `read_whole`), never the value itself;
 `cx.read_whole(item.value)` reads it whole at this World's coordinate;
@@ -8175,7 +8176,7 @@ World attributes return live Claim contenders rather than silently selecting a
 scalar. Use `world.prefetch(subjects=(...), predicates=(...))` for bounded reads
 of known selections, then inspect each Claim's value and verdict; when only
 values and verdicts are needed, `world.values(subjects=(...), predicates=(...))`
-returns them through `query` without full Claim views, overturned and refused
+returns them through `query` without full Claim views, overturned and ineligible
 contenders included. To find something by name across kinds, grep the exported
 floor under `.cruxible/floor/` and pass the reference you find to `cx.get(...)`.
 A returned

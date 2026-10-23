@@ -447,6 +447,8 @@ NextReason: TypeAlias = Literal[
     "line_coverage_gap",
     "line_work_pending",
     "line_disabled_by_upgrade",
+    "line_not_enabled",
+    "line_run_failed",
     "line_settled_prior_refusals",
     "line_inbox_unread",
     "evidence_unavailable",
@@ -457,6 +459,13 @@ NextReason: TypeAlias = Literal[
     "kit_resume_blocked",
 ]
 NextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
+#: An operand only the caller holds, which a repair's command shows as a
+#: placeholder to replace: ``because`` (TEXT), ``file`` (FILE#ANCHOR), ``capture`` (CAP).
+NextRepairOperand: TypeAlias = Literal["because", "file", "capture"]
+#: Why a repair is withheld from this caller: its permission ``tier``, its MCP
+#: tool ``profile``, a caller that cannot author here at all (``authoring``),
+#: or a repair only its ``author`` may run (a stale proposal's readmit).
+NextRepairGate: TypeAlias = Literal["tier", "profile", "authoring", "author"]
 NextRepairOperation: TypeAlias = Literal[
     "cruxible.authoring.example",
     "cruxible.authoring.submit",
@@ -1600,6 +1609,11 @@ class NextRepair(BaseModel):
     #: composed for this caller like the primary; one it cannot run is left out.
     #: Absent on a row with one repair, so its bytes and ``item_id`` hold.
     alternatives: tuple[NextRepair, ...] = Field(default=(), exclude_if=lambda value: not value)
+    #: Operands only the caller holds; ``command`` shows each as a placeholder
+    #: (TEXT, FILE#ANCHOR, CAP) to replace. Absent when it names every operand.
+    operands_to_add: tuple[NextRepairOperand, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("alternatives")
     @classmethod
@@ -1616,7 +1630,7 @@ class NextRepairRequirement(BaseModel):
     the gate: the permission ``tier`` the ``tool`` runs at, the MCP tool
     ``profile`` that advertises it, and/or ``authoring`` when this caller cannot
     author here at all; ``authoring_refusal`` then carries whoami's code,
-    detail and repair.
+    detail and repair. ``author``: only the proposal's author runs it.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1626,7 +1640,7 @@ class NextRepairRequirement(BaseModel):
     tool: str
     tier: Literal["read_only", "governed_write", "graph_write", "admin"]
     profile: Literal["full"] | None = None
-    because: list[Literal["tier", "profile", "authoring"]]
+    because: list[NextRepairGate]
     authoring_refusal: AuthoringRefusal | None = None
 
 
