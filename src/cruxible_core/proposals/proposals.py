@@ -4960,6 +4960,24 @@ def _evaluate_scoped_members(
                 rebased,
                 claim_admission_accounts=claim_admission_accounts,
             )
+        # The polarity law (inverse Claims): after the change set no unit holds
+        # a live value and a live none, and an object_key flip stays in its
+        # unit. Judged here, at the head the change lands on, so two changes
+        # that each pass alone cannot both land; read from the parent's unit
+        # index for the units the change touches.
+        from cruxible_core.indexes.claim_units import candidate_polarity_issues
+
+        polarity = candidate_polarity_issues(
+            current_tree=current_tree, candidate_tree=candidate_tree, scope=scope
+        )
+        if polarity:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(_diagnostic(issue.code, issue.message, issue.path) for issue in polarity),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
     if delegated_mandate_digest is not None:
         # A settle mandate replaces candidate approval only when, read from the
         # parent state, it covers every member and its condition holds for each.

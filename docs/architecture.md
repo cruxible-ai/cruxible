@@ -334,3 +334,17 @@ trigger in the same transaction. `orient(kind=K)`, the `get ClaimType:` and
 `get SubjectKind:` cards and the default map's Capture count read those rows
 by key and never recount. Projection storage schema 20 adds them and rebuilds
 each projection once on first bind; accepted ledger formats are unchanged.
+
+The unit index (`claim_units`) holds each live Claim of a ClaimType that
+declares an inverse, with its unit (the slot, the object, or the object
+Subject's key value) and its polarity (a value or a none). An accepted
+generation recomputes only the rows of the Claims it writes, of the values
+pointing at a Subject whose key Claim it writes, and of a ClaimType whose
+inverse key it changes. The candidate boundary reads those rows for the units a
+change touches and refuses a change set that would leave a unit holding both a
+value and a none (`cruxible.claim.polarity_conflict`), or an `object_key` flip
+that leaves its unit (`cruxible.claim.flip_unit_moved`). Admission and
+settlement both judge there, at the head the change lands on. A none Claim's
+row carries its `of` only in `none_of`, never in the object or literal columns
+value reads project. Projection storage schema 21 adds the index and rebuilds
+each projection once on first bind.

@@ -77,6 +77,8 @@ from cruxible_core.compiler.projection_artifacts import (
     ParsedProjectionTree,
 )
 from cruxible_core.exhaust.promotions import parse_exhaust_promotion
+from cruxible_core.indexes.claim_units import SCHEMA_STATEMENTS as CLAIM_UNITS_SCHEMA
+from cruxible_core.indexes.claim_units import literal_value_digest, object_unit_text
 from cruxible_core.indexes.sql_batch import insert_rows, select_in
 
 SQLValue = str | int | None
@@ -178,6 +180,14 @@ OWNER_CODECS = (
             ("literal_text", "TEXT"),
             ("literal_boolean", "INTEGER CHECK(literal_boolean IN (0,1))"),
             ("literal_integer_text", "TEXT"),
+            # The digest of an array or object literal's canonical value: the
+            # only scalar that names it, so a unit keyed by object can be read.
+            ("literal_digest", "TEXT"),
+            # An inverse Claim's ``of`` in the unit encoding
+            # (``claim_units.object_unit_text``), NULL for every other object:
+            # a none never fills the object or literal columns a value read
+            # projects.
+            ("none_of", "TEXT"),
             ("effective_from_us", "INTEGER"),
             ("effective_until_us", "INTEGER"),
             ("shell_context_digest", "TEXT"),
@@ -282,6 +292,12 @@ OWNER_CODECS = (
             ("object_kind", "TEXT NOT NULL"),
             ("cardinality", "TEXT NOT NULL"),
             ("referent_sensitivity", "TEXT NOT NULL"),
+            # A v9 inverse's unit key (``claim_units``), NULL without one.
+            (
+                "inverse_key",
+                "TEXT CHECK(inverse_key IS NULL OR inverse_key IN ('slot','object','object_key'))",
+            ),
+            ("inverse_key_predicate", "TEXT"),
         ),
     ),
     OwnerCodec(
@@ -399,7 +415,7 @@ def owner_for_identity(identity: str) -> OwnerCodec | None:
 
 
 _CLAIM_CHECK = """
-CHECK(object_kind IN ('literal','subject','exact_content')),
+CHECK(object_kind IN ('literal','subject','exact_content','none')),
 CHECK((object_kind='subject' AND object_path IS NOT NULL AND object_selector_scheme IS NOT NULL
        AND object_selector_value IS NOT NULL AND object_content_digest IS NULL
        AND object_span_start_text IS NULL AND object_span_end_text IS NULL AND literal_type IS NULL)
@@ -412,7 +428,13 @@ CHECK((object_kind='subject' AND object_path IS NOT NULL AND object_selector_sch
        AND object_selector_value IS NULL AND object_content_digest IS NULL
        AND object_span_start_text IS NULL AND object_span_end_text IS NULL
        AND literal_type IS NOT NULL
-       AND literal_type IN ('null','boolean','integer','string','array','object'))),
+       AND literal_type IN ('null','boolean','integer','string','array','object'))
+   OR (object_kind='none' AND object_path IS NULL AND object_selector_scheme IS NULL
+       AND object_selector_value IS NULL AND object_content_digest IS NULL
+       AND object_span_start_text IS NULL AND object_span_end_text IS NULL
+       AND literal_type IS NULL)),
+CHECK((object_kind='none') OR none_of IS NULL),
+CHECK(COALESCE(literal_type IN ('array','object'),0) = (literal_digest IS NOT NULL)),
 CHECK((literal_type='string' AND literal_text IS NOT NULL AND literal_boolean IS NULL AND literal_integer_text IS NULL)
    OR (literal_type='boolean' AND literal_text IS NULL AND literal_boolean IS NOT NULL AND literal_integer_text IS NULL)
    OR (literal_type='integer' AND literal_text IS NULL AND literal_boolean IS NULL AND literal_integer_text IS NOT NULL)
@@ -536,6 +558,10 @@ def schema_sql() -> str:
             subject_path TEXT PRIMARY KEY, kind TEXT NOT NULL, key_encoding TEXT NOT NULL
         ) STRICT""",
             "CREATE INDEX subject_keys_by_key ON subject_keys(kind,key_encoding,subject_path)",
+            # The unit index (inverse Claims): each live Claim of an inverse
+            # ClaimType, with its unit and polarity, kept current at accept
+            # (``claim_units.refresh_claim_units``).
+            *CLAIM_UNITS_SCHEMA,
         ]
     )
     from cruxible_core.indexes.provider_heads import SCHEMA_SQL as PROVIDER_HEADS_SQL
@@ -563,6 +589,20 @@ def _claim_fields(claim: Any) -> dict[str, SQLValue]:
         "shell_context_digest": statement.shell_context_digest,
     }
     obj = statement.object
+    if obj.kind == "none":
+        if obj.of is not None:
+            result["none_of"] = object_unit_text(
+                {"object_kind": obj.of.kind, **_object_fields(obj.of)}
+            )
+        return result
+    result.update(_object_fields(obj))
+    return result
+
+
+def _object_fields(obj: Any) -> dict[str, SQLValue]:
+    """The object and literal columns of a positive Claim object (or an inverse's ``of``)."""
+
+    result: dict[str, SQLValue] = {}
     if obj.kind == "subject":
         result.update(
             object_path=obj.address.artifact_path,
@@ -586,10 +626,11 @@ def _claim_fields(claim: Any) -> dict[str, SQLValue]:
             result.update(literal_type="integer", literal_integer_text=str(value))
         elif isinstance(value, str):
             result.update(literal_type="string", literal_text=value)
-        elif isinstance(value, list):
-            result["literal_type"] = "array"
-        elif isinstance(value, dict):
-            result["literal_type"] = "object"
+        elif isinstance(value, (list, dict)):
+            result.update(
+                literal_type="array" if isinstance(value, list) else "object",
+                literal_digest=literal_value_digest(value),
+            )
         else:
             raise ProjectionIntegrityError("Claim literal escaped its canonical typed contract")
     return result
@@ -653,6 +694,13 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
             "interval_seconds": getattr(source.schedule, "interval_seconds", None),
         }
     result = {name: getattr(source, name) for name, _ in owner.fields if hasattr(source, name)}
+    if owner.kind == "claim-type":
+        inverse = getattr(source, "inverse", None)
+        key = None if inverse is None else inverse.key
+        result.update(
+            inverse_key=None if key is None else key.kind,
+            inverse_key_predicate=getattr(key, "predicate", None),
+        )
     if owner.kind == "procedure":
         result.update(
             definition_format=str(source.definition.graph_format),

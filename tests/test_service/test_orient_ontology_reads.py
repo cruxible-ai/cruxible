@@ -304,7 +304,7 @@ def _claim_row(identity: str, *, predicate: str, subject: str, live: bool = True
         identity, f"claims/{identity}.json", "playbill-claim-v1", "digest", None, 1,
         "live" if live else "retired", "statement", f"ClaimType:{predicate}", "ct", subject,
         "path", "", predicate, None, "observation", "literal", None, None, None, None, None,
-        None, "null", None, None, None, None, None, None,
+        None, "null", None, None, None, None, None, None, None, None,
     )  # fmt: skip
 
 
@@ -343,7 +343,7 @@ def test_predicate_counts_follow_claim_inserts_moves_retirements_and_deletes() -
     connection = sqlite3.connect(":memory:")
     connection.executescript(schema_sql())
     one, two = "subjects/k/one.json", "subjects/k/two.json"
-    insert = "INSERT INTO claims VALUES (" + ",".join("?" * 30) + ")"
+    insert = "INSERT INTO claims VALUES (" + ",".join("?" * 32) + ")"
     connection.execute(insert, _claim_row("a", predicate="p", subject=one))
     connection.execute(insert, _claim_row("b", predicate="p", subject=one))
     connection.execute(insert, _claim_row("c", predicate="p", subject=two))
