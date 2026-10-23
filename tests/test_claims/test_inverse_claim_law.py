@@ -153,6 +153,7 @@ class _World:
         *,
         value: object = "none",
         predecessor: AcceptedClaim | None = None,
+        object_shell: SubjectShell | None = None,
     ) -> ClaimArtifactV2:
         shell = _shell()
         capture, source, length = self.capture(value)
@@ -183,13 +184,16 @@ class _World:
                 ),
                 claim_type=claim_type.identity,
                 claim_type_digest=claim_type_digest(claim_type).tagged,
-                predicate=PREDICATE,
+                predicate=claim_type.predicate,
                 object=obj,
                 role="observation",
             ),
             backing=ClaimBacking(
                 referent_context=ClaimReferentContext(
                     subject_content_digest=subject_digest(shell).tagged,
+                    object_content_digest=(
+                        None if object_shell is None else subject_digest(object_shell).tagged
+                    ),
                     observed_at=OBSERVED_AT,
                 ),
                 capture_digests=captures,
@@ -216,6 +220,17 @@ class _World:
                             target=shell.identity,
                             artifact_digest=subject_digest(shell).tagged,
                         ),
+                        *(
+                            ()
+                            if object_shell is None
+                            else (
+                                ArtifactPin(
+                                    role="object-subject",
+                                    target=object_shell.identity,
+                                    artifact_digest=subject_digest(object_shell).tagged,
+                                ),
+                            )
+                        ),
                     ),
                     key=lambda item: (item.role.encode(), item.target.qualified.encode()),
                 )
@@ -227,13 +242,18 @@ class _World:
 
     def judge(
         self,
-        claim: ClaimArtifactV2,
+        claim: Any,
         claim_type: ClaimType,
         *,
         predecessor: AcceptedClaim | None = None,
+        object_shell: SubjectShell | None = None,
+        retirement_shape_exemption: bool = False,
+        extra_contracts: tuple[Any, ...] = (),
+        erasure_records: Any = None,
     ) -> ClaimLawResult:
         shell = _shell()
         contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+        shells = (shell,) if object_shell is None else (shell, object_shell)
         return evaluate_claim_law(
             claim,
             path=claim_path(CLAIM_ID),
@@ -242,25 +262,27 @@ class _World:
             ),
             predecessor=predecessor,
             subjects={
-                subject_path(shell.subject_kind, shell.subject_id): AcceptedSubject(
-                    path=subject_path(shell.subject_kind, shell.subject_id),
-                    shell=shell,
-                    artifact_digest=subject_digest(shell).tagged,
+                subject_path(item.subject_kind, item.subject_id): AcceptedSubject(
+                    path=subject_path(item.subject_kind, item.subject_id),
+                    shell=item,
+                    artifact_digest=subject_digest(item).tagged,
                 )
+                for item in shells
             },
             claim_types={
                 claim_type.identity.qualified: AcceptedClaimType(
-                    path=claim_type_path(PREDICATE),
+                    path=claim_type_path(claim_type.predicate),
                     claim_type=claim_type,
                     artifact_digest=claim_type_digest(claim_type).tagged,
                 )
             },
             capture_contracts={
-                contract.identity.qualified: AcceptedCaptureContract(
-                    path=capture_contract_path(contract.identity.name),
-                    contract=contract,
-                    artifact_digest=capture_contract_digest(contract).tagged,
+                item.identity.qualified: AcceptedCaptureContract(
+                    path=capture_contract_path(item.identity.name),
+                    contract=item,
+                    artifact_digest=capture_contract_digest(item).tagged,
                 )
+                for item in (contract, *extra_contracts)
             },
             capture_store=self.store,
             law_digest="sha256:" + "ab" * 32,
@@ -268,6 +290,9 @@ class _World:
             claim_type_v7_semantics=True,
             require_new_citation_proof=False,
             claim_rebind=True,
+            allow_claim_type_retirement_shape_exemption=retirement_shape_exemption,
+            erasure_records=erasure_records,
+            erasure_affects_verdict=erasure_records is not None,
         )
 
 
@@ -378,3 +403,193 @@ def test_unit_keys_name_the_slot_the_object_or_the_key_value() -> None:
     assert claim_unit_key(none_of, by_key) == ClaimUnitKey(kind="object_key", value="gh")
     # A positive's key value is read from state; unread, the unit is unknown.
     assert claim_unit_key(statement, by_key) is None
+
+
+def test_a_flip_that_keeps_its_backing_is_still_judged_as_a_flip(world: _World) -> None:
+    # The positive's Capture is admitted by a rule that is not an inverse rule.
+    claim_type = _claim_type().model_copy(
+        update={
+            "inverse": ClaimInverse.model_validate(
+                {"key": {"kind": "slot"}, "evidence_rules": ["other"]}
+            ),
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(rules=(_rule("scan"),)),
+        }
+    )
+    positive = world.claim(claim_type, LiteralClaimObject(value="alice"), value="alice")
+    assert world.judge(positive, claim_type).verdict == "accepted"
+    accepted = _accepted(positive)
+
+    # Same backing, new polarity: not a carry that skips the inverse's checks.
+    flip = positive.model_copy(
+        update={
+            "statement": positive.statement.model_copy(update={"object": NoneClaimObject()}),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=accepted.artifact_digest),
+        }
+    )
+    assert flip.backing == positive.backing
+    assert _code(world.judge(flip, claim_type, predecessor=accepted)) == (
+        "cruxible.claim.inverse_evidence_required"
+    )
+    moved = flip.model_copy(
+        update={"statement": flip.statement.model_copy(update={"qualifier": "elsewhere"})}
+    )
+    assert _code(world.judge(moved, claim_type, predecessor=accepted)) == (
+        "cruxible.claim.flip_unit_moved"
+    )
+
+
+def test_own_words_admitted_origin_only_never_establish_a_none(world: _World) -> None:
+    origin_only = _rule("scan").model_copy(update={"admission": "origin_only"})
+    claim_type = _claim_type().model_copy(
+        update={
+            "evidence_requirement": "none",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
+                rules=(_rule("other"), origin_only)
+            ),
+        }
+    )
+    result = world.judge(world.claim(claim_type, NoneClaimObject()), claim_type)
+    assert _code(result) == "cruxible.claim.inverse_evidence_required"
+
+    from cruxible_client.contracts.claim_types import evaluate_claim_type_law
+
+    refused = evaluate_claim_type_law(
+        claim_type, path=claim_type_path(claim_type.predicate), predecessor=None
+    )
+    assert refused.diagnostics[0].code == "cruxible.claim_type.inverse_rule_not_evidential"
+
+
+def test_retiring_a_subject_inverse_after_the_type_drops_its_inverse(world: _World) -> None:
+    from cruxible_client.contracts.claims import (
+        ClaimArtifact,
+        ClaimRetirementAttribution,
+        SubjectClaimObject,
+    )
+
+    release = SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name="project.release/r-1"),
+        subject_kind="project.release",
+        subject_id="r-1",
+    )
+    blocks = _claim_type().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name="project.work_item.blocks"),
+            "predicate": "project.work_item.blocks",
+            "object_kind": "subject",
+            "literal_schema": None,
+            "allowed_object_subject_kinds": ("project.release",),
+            "cardinality": "many",
+            "resolution_policy": ClaimResolutionPolicy(
+                cardinality="many", eligible_verdicts=("supported",), selector="all"
+            ),
+            "inverse": ClaimInverse.model_validate(
+                {"key": {"kind": "object"}, "evidence_rules": ["scan"]}
+            ),
+        }
+    )
+    none_of = NoneClaimObject(
+        of=SubjectClaimObject(
+            address=SemanticAddress.whole_artifact(subject_path("project.release", "r-1"))
+        )
+    )
+    inverse = world.claim(blocks, none_of, object_shell=release)
+    assert world.judge(inverse, blocks, object_shell=release).verdict == "accepted"
+    accepted = _accepted(inverse)
+
+    # The type's successor drops its inverse; the inverse is retired with it.
+    successor = blocks.model_copy(
+        update={
+            "inverse": None,
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(blocks).tagged),
+        }
+    )
+    successor_digest = claim_type_digest(successor).tagged
+    retirement = ClaimArtifact(
+        identity=inverse.identity,
+        statement=inverse.statement.model_copy(update={"claim_type_digest": successor_digest}),
+        backing=inverse.backing,
+        pins=tuple(
+            pin.model_copy(update={"artifact_digest": successor_digest})
+            if pin.role == "claim-type"
+            else pin
+            for pin in inverse.pins
+        ),
+        lifecycle=ArtifactLifecycle(state="retired", predecessor_digest=accepted.artifact_digest),
+        retirement=ClaimRetirementAttribution(reason="was-rescinded"),
+    )
+
+    result = world.judge(
+        retirement,
+        successor,
+        predecessor=accepted,
+        object_shell=release,
+        retirement_shape_exemption=True,
+    )
+
+    assert result.verdict == "accepted", result.diagnostics
+
+
+def test_an_erasure_of_a_shared_body_counts_for_every_capture_holding_it(world: _World) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
+    from cruxible_client.contracts.captures import authorize_erasure
+    from cruxible_client.contracts.claims import ClaimArtifact, ClaimRetirementAttribution
+    from tests.core_support._pc_c_support import capture_contract
+
+    claim_type = _claim_type()
+    positive = world.claim(claim_type, LiteralClaimObject(value="alice"), value="alice")
+    assert world.judge(positive, claim_type).verdict == "accepted"
+    accepted = _accepted(positive)
+    (body,) = {
+        span.content_digest
+        for mapping in positive.backing.source_mappings
+        for span in mapping.spans
+    }
+    # Another Capture, under a contract that authorizes erasure, held the same bytes
+    # and was erased: the content-addressed body is gone for this Claim's Capture too.
+    erasable = authorize_erasure(capture_contract())
+    assert erasable.retention_erasure_policy.erasure_rule_digest is not None
+    other = CaptureErasureRecord(
+        capture_digest="sha256:" + "ab" * 32,
+        capture_contract=erasable.identity.qualified,
+        capture_contract_digest=capture_contract_digest(erasable).tagged,
+        erasure_rule_digest=erasable.retention_erasure_policy.erasure_rule_digest,
+        body_digests=(body,),
+        erased_by="owner",
+        erased_at=OBSERVED_AT + timedelta(hours=1),
+        because="The shared bytes held a secret.",
+    )
+    world.store.erase(body)
+    retirement = ClaimArtifact(
+        identity=positive.identity,
+        statement=positive.statement,
+        backing=positive.backing,
+        pins=positive.pins,
+        lifecycle=ArtifactLifecycle(state="retired", predecessor_digest=accepted.artifact_digest),
+        retirement=ClaimRetirementAttribution(reason="was-rescinded"),
+    )
+
+    stranded = world.judge(
+        retirement, claim_type, predecessor=accepted, erasure_records=lambda _: ()
+    )
+    assert _code(stranded) == "cruxible.claim.capture_unverified"
+    # The record names the body, not this Capture: it still counts, and only under
+    # the erasing contract's own authority.
+    retired = world.judge(
+        retirement,
+        claim_type,
+        predecessor=accepted,
+        extra_contracts=(erasable,),
+        erasure_records=lambda bodies: (other,) if body in bodies else (),
+    )
+    assert retired.verdict == "accepted", retired.diagnostics
+    forged = other.model_copy(update={"erasure_rule_digest": "sha256:" + "0" * 64})
+    refused = world.judge(
+        retirement,
+        claim_type,
+        predecessor=accepted,
+        extra_contracts=(erasable,),
+        erasure_records=lambda bodies: (forged,),
+    )
+    assert _code(refused) == "cruxible.claim.capture_unverified"

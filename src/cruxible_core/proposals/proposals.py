@@ -87,11 +87,13 @@ from cruxible_client.contracts.claim_attestations import (
 from cruxible_client.contracts.claim_types import (
     CLAIM_TYPE_V9_FORMAT,
     AcceptedClaimType,
+    ClaimInverseObjectKeyPart,
     ClaimType,
     ClaimTypeFormatError,
     ClaimTypeFreshnessHorizonInvalid,
     claim_type_accepts_subject,
     claim_type_digest,
+    claim_type_path,
     evaluate_claim_type_law,
     parse_claim_type,
 )
@@ -2482,6 +2484,22 @@ def _subject_kind_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted SubjectKind law result is incomplete")
+    if predecessor is not None:
+        kept = set(subject_kind.keys) if subject_kind.lifecycle.state == "live" else set()
+        dropped = set(predecessor.subject_kind.keys) - kept
+        stranded = _inverse_key_dependents(context, subject_kind.subject_kind, dropped)
+        if stranded:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.subject_kind.inverse_dependents_not_settled",
+                        "This SubjectKind change drops a key that live inverse ClaimTypes name "
+                        "as their unit; revise their inverse (or retire them) in the same "
+                        "ChangeSet: " + ", ".join(stranded),
+                        context.path,
+                    ),
+                )
+            )
     return _accepted(
         context,
         _installed(context, subject_kind.artifact_format),
@@ -3446,7 +3464,8 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         # Revision 10 alone: a `none` type's origin-only evidence needs no current
         # replay (adjudication rule v3).
         origin_replay_exempt=installed.coordinate == CLAIM_LAW_V2_REVISION_10,
-        erasure_record=_erasure_record(context, installed),
+        erasure_records=_erasure_records(context, installed),
+        erasure_affects_verdict=_erasure_affects_verdict(context, installed),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -3491,6 +3510,48 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _inverse_key_dependents(
+    context: _MemberContext, kind: str, dropped: set[str]
+) -> tuple[str, ...]:
+    """Live inverse ClaimTypes keyed by one of ``dropped`` keys of ``kind``, in the candidate.
+
+    Found through the ClaimType-name index (kind -> the live ClaimTypes naming
+    it), so only ClaimTypes that name the kind are read; a cold replay without
+    the index reads the materialized definitions, as the source-binding read does.
+    """
+
+    if not dropped:
+        return ()
+    from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectedRows
+
+    states = context.candidate_states
+    if isinstance(states, SelectedRows) and states.owner is not None:
+        owner = states.owner
+        identities = (
+            owner.claim_types_naming_subject_kind(kind)
+            if isinstance(owner, EvaluationRows)
+            else owner.call(lambda rows: rows.claim_types_naming_subject_kind(kind))
+        )
+        claim_types: list[ClaimType] = []
+        for identity in identities:
+            path = claim_type_path(identity.removeprefix("ClaimType:"))
+            content = context.candidate_tree.get(path)
+            if content is not None:
+                claim_types.append(parse_claim_type(content, path=path))
+    else:
+        claim_types = [accepted.claim_type for accepted in context.resolved.claim_types.values()]
+    stranded = {
+        claim_type.identity.qualified
+        for claim_type in claim_types
+        if claim_type.lifecycle.state == "live"
+        and claim_type.inverse is not None
+        and isinstance(claim_type.inverse.key, ClaimInverseObjectKeyPart)
+        and claim_type.inverse.key.predicate in dropped
+        and kind in claim_type.allowed_object_subject_kinds
+    }
+    return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
+
+
 def _inverse_subject_kind_keys(
     context: _MemberContext, claim_type: ClaimType
 ) -> dict[str, tuple[str, ...] | None] | None:
@@ -3512,27 +3573,35 @@ def _inverse_subject_kind_keys(
     return keys
 
 
-def _erasure_record(
-    context: _MemberContext, installed: InstalledAcceptanceLaw
-) -> Callable[[str], CaptureErasureRecord | None] | None:
-    """The erasure lookup the Claim law consults for an inherited Capture, under compiler 35.
-
-    A retirement or revision inherits every Capture its predecessor cited; one
-    erased under its contract's authority verifies on its envelope and erasure
-    record (Claim law v2 revision 10 and v3 revision 11, with compiler 35). The
-    verification context answers it, when it can.
-    """
+def _erasure_affects_verdict(context: _MemberContext, installed: InstalledAcceptanceLaw) -> bool:
+    """Whether governed erasures enter the verdict: compiler 35's Claim laws only."""
 
     from cruxible_core.compiler.compiler import admits_claim_rebind
 
-    if not admits_claim_rebind(context.current.compiler) or installed.coordinate not in {
+    return admits_claim_rebind(context.current.compiler) and installed.coordinate in {
         CLAIM_LAW_V2_REVISION_10,
         CLAIM_LAW_V3_REVISION_11,
-    }:
+    }
+
+
+def _erasure_records(
+    context: _MemberContext, installed: InstalledAcceptanceLaw
+) -> Callable[[tuple[str, ...]], tuple[CaptureErasureRecord, ...]] | None:
+    """The erasure lookup the Claim law consults, when it may consult one.
+
+    Under compiler 35's Claim laws (v2 revision 10, v3 revision 11) a retirement
+    or revision of a Claim whose inherited evidence was erased verifies, and the
+    erasure enters its verdict. Replaying accepted history under any law also
+    verifies storage through it (replay only): what an earlier law recorded
+    reproduces exactly, though the bytes it read are gone. The verification
+    context answers it, when it can.
+    """
+
+    if not (_erasure_affects_verdict(context, installed) or context.replaying_accepted):
         return None
     resolver = context.producer_receipt_resolver
     if isinstance(resolver, CaptureErasureLookupProtocol):
-        return resolver.capture_erasure
+        return resolver.body_erasures
     return None
 
 

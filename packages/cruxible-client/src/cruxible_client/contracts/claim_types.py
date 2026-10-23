@@ -962,6 +962,19 @@ def _v9_law_refusal(
             f"{', '.join(sorted(declared)) or 'none'}.",
             path=path,
         )
+    origin_only = sorted(
+        rule.rule_id
+        for rule in claim_type.evidence_admission_policy.rules
+        if rule.rule_id in inverse.evidence_rules and rule.admission == "origin_only"
+    )
+    if origin_only:
+        return _diagnostic(
+            "cruxible.claim_type.inverse_rule_not_evidential",
+            f"inverse.evidence_rules names {', '.join(origin_only)}, whose admission is "
+            "origin_only: a Claim's own words never establish that a unit holds nothing. "
+            "Name rules that admit evidence directly or by derivation.",
+            path=path,
+        )
     key = inverse.key
     if isinstance(key, ClaimInverseObjectKeyPart):
         if subject_kind_keys is None:

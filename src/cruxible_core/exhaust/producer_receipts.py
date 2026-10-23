@@ -149,11 +149,10 @@ class LocalProducerReceiptResolver:
     def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
         self._verified.remember(memo)
 
-    def capture_erasure(self, capture_digest: str) -> CaptureErasureRecord | None:
-        """The governed erasure recorded for one Capture, read from this instance's journal.
+    def body_erasures(self, body_digests: tuple[str, ...]) -> tuple[CaptureErasureRecord, ...]:
+        """Every governed erasure naming these retained bodies, from this instance's journal.
 
-        Asked only when an inherited Capture's body no longer verifies; an
-        instance that never erased anything answers without opening a file.
+        An instance that never erased anything answers without opening a file.
         """
 
         from cruxible_core.evidence.capture_erasures import CaptureErasureStore
@@ -164,7 +163,7 @@ class LocalProducerReceiptResolver:
                 instance_id=self._instance_id,
                 bodies=self._bodies,
             )
-        return self._erasures.for_capture(capture_digest)
+        return self._erasures.records_for_bodies(body_digests)
 
 
 #: The verification context the current request owns, with the instance it serves.

@@ -269,3 +269,87 @@ def test_lint_warns_when_an_enum_member_already_states_the_negative(tmp_path: Pa
         coordinate=instance.accepted_coordinate(),
     )
     assert plain.warnings == ()
+
+
+def test_a_subject_kind_cannot_drop_a_key_an_inverse_names(tmp_path: Path) -> None:
+    from cruxible_client.contracts.authoring.inputs import (
+        ChangeSetInput,
+        ClaimTypeInput,
+        SubjectKindInput,
+        lower_authoring_input,
+    )
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.core_support._identity_support import OWNER, identity_claim_type
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    form = ("nfkc", "trim", "collapse_whitespace", "casefold")
+    slug = identity_claim_type(
+        "slug",
+        canonical_form=form,
+        literal_schema={"type": "string"},
+        predicate="dev.decision.slug",
+        subject_kinds=("dev.decision",),
+    )
+    code = identity_claim_type(
+        "code",
+        canonical_form=form,
+        literal_schema={"type": "string"},
+        predicate="dev.decision.code",
+        subject_kinds=("dev.decision",),
+    )
+    decided_by = identity_claim_type(
+        "decided_by",
+        canonical_form=(),
+        object_kind="subject",
+        cardinality="many",
+        object_kinds=("dev.decision",),
+        predicate="dev.item.decided_by",
+        subject_kinds=("dev.item",),
+    ).model_dump(mode="python")
+    decided_by.update(
+        artifact_format="cruxible-claim-type-v9",
+        inverse={
+            "key": {"kind": "object_key", "predicate": "dev.decision.slug"},
+            "evidence_rules": ["self"],
+        },
+    )
+
+    def submit(*members: object) -> object:
+        return AuthoringIntentCoordinator.for_instance(instance).compile_and_submit(
+            actor=OWNER,
+            payload=lower_authoring_input(ChangeSetInput(kind="change_set", members=members)),
+            canonical_timestamp="2026-10-22T12:00:00.000000Z",
+        )
+
+    submitted = submit(
+        ClaimTypeInput(kind="claim_type", claim_type=slug),
+        ClaimTypeInput(kind="claim_type", claim_type=code),
+        SubjectKindInput(
+            kind="subject_kind",
+            name="dev.decision",
+            keys=("dev.decision.slug",),
+            uniqueness="unique",
+        ),
+        ClaimTypeInput(kind="claim_type", claim_type=ClaimType.model_validate(decided_by)),
+    )
+    assert submitted.status.proposal_id is not None, submitted  # type: ignore[attr-defined]
+    receipt = service_activate_playbill_proposal(
+        instance,
+        proposal_id=submitted.status.proposal_id,  # type: ignore[attr-defined]
+        activated_by="owner",
+    )
+    assert receipt.status == "accepted", receipt
+
+    # Re-keying the kind by code alone would leave the inverse keyed by nothing.
+    rekeyed = submit(
+        SubjectKindInput(
+            kind="subject_kind",
+            name="dev.decision",
+            keys=("dev.decision.code",),
+            uniqueness="unique",
+        )
+    )
+    assert "cruxible.subject_kind.inverse_dependents_not_settled" in repr(rekeyed)
+    assert rekeyed.status.proposal_id is None or "refused" in repr(rekeyed.status)  # type: ignore[attr-defined]

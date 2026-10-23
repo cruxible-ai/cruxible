@@ -820,6 +820,22 @@ def select_claim_type_names(
     return tuple(sorted(owners)), tuple(sorted(kinds))
 
 
+def select_claim_types_naming_subject_kind(
+    connection: sqlite3.Connection, kind: str, *, table: str = "main.claim_type_names"
+) -> tuple[str, ...]:
+    """The live ClaimTypes naming ``kind`` as a subject or object kind: one indexed range."""
+
+    return tuple(
+        sorted(
+            str(row[0])
+            for row in connection.execute(
+                f"SELECT source_identity FROM {table} WHERE name=? AND kind='subject_kind'",
+                (kind,),
+            )
+        )
+    )
+
+
 def insert_owners(
     connection: sqlite3.Connection,
     *,
