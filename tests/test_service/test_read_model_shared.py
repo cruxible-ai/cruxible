@@ -20,6 +20,7 @@ from cruxible_client.contracts.get_reads import (
     GetResult,
     GetSubjectCard,
 )
+from cruxible_client.contracts.orient import ORIENT_KIND_FIELDS
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.get import service_playbill_get
@@ -55,9 +56,9 @@ def test_every_verb_names_the_same_capture_contracts(instance: Any) -> None:
     ).rows
     # The kind's key ClaimType (its slug) sits beside the one under test.
     (query_row,) = [row for row in query_row if not str(row.get("predicate", "")).endswith(".slug")]
-    orient_kind = next(
-        item for item in service_playbill_orient(instance).kinds if item.kind == SUBJECT_KIND
-    )
+    # The default map names fields only; orient(kind=...) carries the descriptors.
+    orient_kind = service_playbill_orient(instance, kind=SUBJECT_KIND).kind_detail
+    assert orient_kind is not None
     orient_evidence = (
         next(item.evidence for item in orient_kind.predicates if item.predicate == PREDICATE)
         or orient_kind.evidence
@@ -307,10 +308,16 @@ def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
         access=_ACCESS,
     ).card
     assert isinstance(subject, GetSubjectCard)
-    orient_kind = next(
-        item for item in service_playbill_orient(instance).kinds if item.kind == SUBJECT_KIND
-    )
+    orient_kind = service_playbill_orient(instance, kind=SUBJECT_KIND).kind_detail
+    assert orient_kind is not None
     advertised = {item.predicate: item.name for item in orient_kind.predicates}
+    # The default map's kind line names the same fields, in byte order, capped.
+    summary = next(
+        item for item in service_playbill_orient(instance).kinds or () if item.kind == SUBJECT_KIND
+    )
+    names = sorted(advertised.values())
+    assert summary.fields == tuple(names[:ORIENT_KIND_FIELDS])
+    assert summary.more_fields == max(len(names) - ORIENT_KIND_FIELDS, 0)
 
     assert advertised == {
         PREDICATE: "status",
