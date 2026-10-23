@@ -512,6 +512,10 @@ has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
 | `provider_repository` | `null` | Operator-configured provider repository used by `provider list` and name-based installs. |
 | `provider_index_urls` | `[]` | Explicit allowed package indexes and download origins, in lookup order. Without these, an install by name and a transferred wheel resolve from PyPI, and a repository install must supply locked dependency wheels. |
 | `workspace_allowed_roots` | `[]` | Canonical absolute roots that widen `workspace.file` beyond an attached workspace; these are daemon-local authority and never come from an environment variable. The daemon state root, its trust, custody, Provider-secret, and instance substrate stay refused inside any allowed root. |
+| `upload_root` | `null` | A daemon-owned directory where evidence uploads are staged; it must not overlap the state, registry, instance or trust directories. Unset, uploads are refused as not configured. |
+| `upload_max_bytes` | `8388608` | The largest file one evidence upload may carry (at most 1 GiB). |
+| `upload_session_seconds` | `3600.0` | How long an upload session stays open before it expires. |
+| `upload_max_open_sessions` | `8` | Open upload sessions one instance may hold at once. |
 
 Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
 paths, and an unreadable file degrade only the Provider lane with a typed cause.

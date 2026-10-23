@@ -630,6 +630,8 @@ def test_l12_every_fence_timeout_is_config_carried() -> None:
         "descendant_tracker_join_timeout_seconds",
         "descendant_tracker_poll_interval_seconds",
         "process_group_termination_timeout_seconds",
+        # An upload session lifetime, carried in the same operational config.
+        "upload_session_seconds",
     }
     text = (SOURCE_ROOT / "providers" / "provider_process_leases.py").read_text("utf-8")
     body = text[text.index("class ProviderProcessLeaseStore") :]
