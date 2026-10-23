@@ -76,12 +76,12 @@ QUERY_FILTER_OPERATORS: tuple[QueryFilterOperator, ...] = (
 QueryFlag = Literal["stale", "contested", "contradicted", "uncovered", "unsure_hold"]
 #: Which Claims a compact query's cells show. ``live`` is each slot's answer as
 #: ``get`` shows it: its accepted and conflicted Claims, or, when resolution
-#: accepted none, every live Claim. ``overturned`` and ``refused`` add live
+#: accepted none, every live Claim. ``overturned`` and ``ineligible`` add live
 #: Claims resolution set aside; ``retired`` adds withdrawn ones, and also lists
 #: retired Subjects, each row then stating its Subject's ``lifecycle``.
-QueryClaimStatus = Literal["live", "overturned", "refused", "retired"]
+QueryClaimStatus = Literal["live", "ineligible", "overturned", "retired"]
 #: One Claim's own status: how resolution placed it in its slot, or ``retired``.
-QueryCellClaimStatus = Literal["accepted", "conflicted", "overturned", "refused", "retired"]
+QueryCellClaimStatus = Literal["accepted", "conflicted", "ineligible", "overturned", "retired"]
 #: How much of what ran a named query's receipt carries.
 QueryReceiptDetail = Literal["compact", "full"]
 QueryFollowDirection = Literal["forward", "reverse"]
@@ -302,7 +302,7 @@ class QueryRequest(BaseModel):
         max_length=4,
         description=(
             "Which Claims cells show: live (each slot's answer, the default), and opt-in "
-            "overturned, refused or retired; retired also lists retired Subjects, each row "
+            "overturned, ineligible or retired; retired also lists retired Subjects, each row "
             "then stating lifecycle (live or retired)."
         ),
     )
@@ -350,7 +350,7 @@ class QueryClaim(BaseModel):
     """One Claim behind a cell value: ``rows[i].claims[column]`` lists them.
 
     ``status`` tells a slot's winner (``accepted``) from the Claims resolution
-    set aside (``overturned``, ``refused``) and from contenders it left
+    set aside (``overturned``, ``ineligible``) and from contenders it left
     unresolved (``conflicted``); ``verdict`` is the Claim's own evidence
     verdict (``retired`` for a withdrawn Claim). ``get(claim)`` reads it.
     """

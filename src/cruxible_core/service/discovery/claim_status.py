@@ -2,8 +2,9 @@
 
 A Claim's status says how resolution placed it in its slot: ``accepted`` (it
 answers the slot), ``conflicted`` (resolution left its contenders unresolved),
-``overturned`` (an accepted rival won), ``refused`` (its own ClaimType's
-admission failed) or ``retired``. ``read_flags``, ``next``, the floor, orient's
+``overturned`` (an accepted rival won), ``ineligible`` (its own verdict, under
+its ClaimType, is not one that resolves: not supported or uncovered, such as
+evidence erased and read stale) or ``retired``. ``read_flags``, ``next``, the floor, orient's
 status counts, projection sync and activation all read statuses here, from one
 memoized derivation over the slots they touch.
 """
@@ -48,7 +49,7 @@ from cruxible_core.service.evidence.evidence import (
 from cruxible_core.storage.read_positions import positioned_read
 
 #: How resolution placed one accepted Claim in its slot, or ``retired``.
-ClaimStatus = Literal["accepted", "conflicted", "overturned", "refused", "retired"]
+ClaimStatus = Literal["accepted", "conflicted", "ineligible", "overturned", "retired"]
 
 
 # Bounded, per-process, and keyed on every input the derivation reads. See
@@ -385,7 +386,7 @@ def _apply_resolution_statuses(
     selected = {item.removeprefix("Claim:") for item in resolution.selected_claim_identities}
     for claim, verdict in zip(resolution.claims, resolution.verdicts, strict=True):
         if verdict.verdict not in {"supported", "uncovered"}:
-            status: ClaimStatus = "refused"
+            status: ClaimStatus = "ineligible"
         elif resolution.status == "unresolved":
             status = (
                 "conflicted"
@@ -399,7 +400,7 @@ def _apply_resolution_statuses(
             # Claim that is not selected lost to nothing: it failed its own
             # ClaimType's admission, and "overturned" would name a rival that
             # does not exist.
-            status = "refused"
+            status = "ineligible"
         else:
             status = "overturned"
         statuses[claim.identity.name] = status

@@ -76,8 +76,12 @@ def test_default_orient_names_each_kind_with_its_predicates_as_values(seeded) ->
     assert result.generation == len(seeded.accepted_history()) - 1
     (kind,) = result.kinds or ()
     assert kind.kind == SUBJECT_KIND and kind.subjects == 2
-    # The kind's key (its slug, which core created each work item by) and status.
-    slug, predicate = kind.predicates
+    # The kind's key (its slug, which core created each work item by) and status,
+    # by short name: one line per kind; orient(kind=...) reads the predicates.
+    assert kind.fields == ("slug", "status") and kind.more_fields == 0
+    detail = service_playbill_orient(seeded, caller=OWNER, kind=SUBJECT_KIND).kind_detail
+    assert detail is not None
+    slug, predicate = detail.predicates
     assert slug.name == "slug" and slug.predicate == f"{SUBJECT_KIND}.slug"
     assert predicate.name == "status" and predicate.predicate == PREDICATE
     assert (predicate.cardinality, predicate.type) == ("one", "enum")
@@ -97,7 +101,7 @@ def test_default_orient_names_each_kind_with_its_predicates_as_values(seeded) ->
     wire = result.model_dump(mode="json")
     # Absent optional parts are left off the wire rather than sent as nulls.
     assert "kind_detail" not in wire and "authoring_refusal" not in wire["you"]
-    assert "description" not in wire["kinds"][0]["predicates"][0]
+    assert "predicates" not in wire["kinds"][0]
     assert "sha256:" not in json.dumps(wire["kinds"])
 
 

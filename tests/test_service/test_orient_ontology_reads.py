@@ -119,10 +119,10 @@ def test_claim_type_reads_carry_contention_format_revision_and_path(
             assert {key: dumped[key] for key in expected} == expected, dumped
         card = _get(instance, f"ClaimType:{predicate}").model_dump(mode="json")
         assert {key: card[key] for key in expected} == expected, card
-    # The compact map's descriptors stay compact.
+    # The default map names a kind's fields only; descriptors are orient(kind=...)'s.
     kinds = service_playbill_orient(instance).kinds
-    compact = next(item for item in kinds if item.kind == KIND).predicates[0]
-    assert compact.contention is None and compact.path is None and compact.format is None
+    summary = next(item for item in kinds if item.kind == KIND).model_dump(mode="json")
+    assert set(summary) <= {"kind", "subjects", "identity", "fields", "more_fields"}
 
 
 def test_contention_counts_admission_requirements() -> None:
@@ -460,10 +460,11 @@ def test_kind_and_claim_type_reads_count_from_the_predicate_counters(
     _write(instance, {"op": "retire", "target": {"subject": f"{KIND}/b", "field": "governs"}})
     card = _get(instance, f"ClaimType:{governs}")
     assert (card.live_claims, card.subjects_with_value) == truth(governs) == (2, 1)
-    # Compact descriptors carry neither count.
+    # The default map's kind line carries field names, neither count.
     kinds = service_playbill_orient(instance).kinds
-    compact = next(item for item in kinds if item.kind == KIND).predicates
-    assert all(item.subjects_with_value is None for item in compact)
+    summary = next(item for item in kinds if item.kind == KIND)
+    assert governs.removeprefix(f"{KIND}.") in summary.fields
+    assert "subjects_with_value" not in summary.model_dump(mode="json")
 
 
 def test_the_predicate_counters_are_key_seeks(instance: PlaybillInstance) -> None:
