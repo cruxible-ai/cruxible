@@ -754,59 +754,6 @@ def claim_admission_accounts_from_candidate(
     return tuple(sorted(accounts.values(), key=claim_admission_account_order_key))
 
 
-def erasure_cutoffs_from_candidate(
-    candidate: CandidateRecordAnyVersion,
-) -> dict[str, dict[str, int | None]]:
-    """The erasure journal position each accepted Claim judgment counted, per Capture.
-
-    Read from the Claim law evidence the candidate commits, per member path
-    (``erasure_cutoffs_from_claim_evidence``).
-    """
-
-    cutoffs: dict[str, dict[str, int | None]] = {}
-    if isinstance(candidate, CandidateRecordV1):
-        return cutoffs
-    for evidence in candidate.law_evidence:
-        raw = evidence.result.get("claim_evidence")
-        if not isinstance(raw, dict):
-            continue
-        found = erasure_cutoffs_from_claim_evidence(raw)
-        if found:
-            cutoffs[evidence.path] = found
-    return cutoffs
-
-
-def erasure_cutoffs_from_claim_evidence(claim_evidence: Mapping[str, Any]) -> dict[str, int | None]:
-    """The erasure journal position one Claim judgment counted, per Capture.
-
-    From ``erasures_through`` on its verdict Captures: replay counts exactly
-    the erasures at or before it, so what the judgment saw reproduces from
-    recorded positions alone. A Capture the judgment found not replayable with
-    no position recorded is None: a judgment accepted before positions were
-    recorded (or one whose Capture was never replayable, which no erasure
-    changes), replayed by the rule it was made under, never read as having
-    counted no erasure. A replayable Capture is absent: it counted none, under
-    either rule.
-    """
-
-    captures = claim_evidence.get("verdict_captures", ())
-    if not isinstance(captures, list | tuple):
-        raise ProposalIntegrityError("candidate Claim law evidence is malformed")
-    cutoffs: dict[str, int | None] = {}
-    for entry in captures:
-        if not isinstance(entry, dict):
-            raise ProposalIntegrityError("candidate Claim law evidence is malformed")
-        through = entry.get("erasures_through")
-        if through is None:
-            if entry.get("current_replay_available") is False:
-                cutoffs[str(entry.get("capture_digest"))] = None
-            continue
-        if not isinstance(through, int) or isinstance(through, bool) or through < 1:
-            raise ProposalIntegrityError("candidate erasure position is malformed")
-        cutoffs[str(entry.get("capture_digest"))] = through
-    return cutoffs
-
-
 def _diagnostic(code: str, message: str, path: str | None = None) -> CompilerDiagnostic:
     return CompilerDiagnostic(
         code=code,
@@ -1909,10 +1856,6 @@ class _MemberContext:
     #: Recovery re-deriving a generation main already holds. Settling a pending
     #: candidate is not this: what it cites for the first time still needs proof.
     replaying_accepted: bool = False
-    #: Replaying, the erasure journal position each Capture's accepted judgment
-    #: counted (absent: none; None: recorded before positions, replayed by its
-    #: own rule); None outside replay, where the journal decides.
-    erasure_cutoffs: Mapping[str, int | None] | None = None
 
     def accepted_coordinate(self) -> AcceptedCoordinate:
         return AcceptedCoordinate.from_internal(self.current)
@@ -3523,9 +3466,6 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         origin_replay_exempt=installed.coordinate == CLAIM_LAW_V2_REVISION_10,
         erasure_records=_erasure_records(context, installed),
         erasure_contract=_erasure_authority(context),
-        erasure_affects_verdict=_erasure_affects_verdict(context, installed),
-        erasure_preceded=_erasure_preceded(context),
-        erasure_cutoffs=((context.erasure_cutoffs or {}) if context.replaying_accepted else None),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -3658,46 +3598,29 @@ def _erasure_authority(
     return authority
 
 
-def _erasure_affects_verdict(context: _MemberContext, installed: InstalledAcceptanceLaw) -> bool:
-    """Whether governed erasures enter the verdict: compiler 35's Claim laws only."""
-
-    from cruxible_core.compiler.compiler import admits_claim_rebind
-
-    return admits_claim_rebind(context.current.compiler) and installed.coordinate in {
-        CLAIM_LAW_V2_REVISION_10,
-        CLAIM_LAW_V3_REVISION_11,
-    }
-
-
 def _erasure_records(
     context: _MemberContext, installed: InstalledAcceptanceLaw
-) -> Callable[[tuple[str, ...]], tuple[RecordedCaptureErasure, ...]] | None:
+) -> Callable[[tuple[str, ...]], Mapping[str, RecordedCaptureErasure]] | None:
     """The erasure lookup the Claim law consults, when it may consult one.
 
     Under compiler 35's Claim laws (v2 revision 10, v3 revision 11) a retirement
-    or revision of a Claim whose inherited evidence was erased verifies, and the
-    erasure enters its verdict. Replaying accepted history under any law also
-    verifies storage through it (replay only): what an earlier law recorded
-    reproduces exactly, though the bytes it read are gone. The verification
-    context answers it, when it can.
+    or revision of a Claim whose inherited evidence was erased verifies.
+    Replaying accepted history under any law also verifies storage through it:
+    what an earlier law recorded reproduces exactly, though the bytes it read
+    are gone. The verification context answers it, when it can.
     """
 
-    if not (_erasure_affects_verdict(context, installed) or context.replaying_accepted):
+    from cruxible_core.compiler.compiler import admits_claim_rebind
+
+    compiler_35 = admits_claim_rebind(context.current.compiler) and installed.coordinate in {
+        CLAIM_LAW_V2_REVISION_10,
+        CLAIM_LAW_V3_REVISION_11,
+    }
+    if not (compiler_35 or context.replaying_accepted):
         return None
     resolver = context.producer_receipt_resolver
     if isinstance(resolver, CaptureErasureLookupProtocol):
         return resolver.body_erasures
-    return None
-
-
-def _erasure_preceded(
-    context: _MemberContext,
-) -> Callable[[str, RecordedCaptureErasure], bool] | None:
-    """Whether a Capture had landed when an erasure was recorded, from storage positions."""
-
-    resolver = context.producer_receipt_resolver
-    if isinstance(resolver, CaptureErasureLookupProtocol):
-        return resolver.erasure_preceded
     return None
 
 
@@ -4639,7 +4562,6 @@ def _evaluate_scoped_members(
     settle_condition: DelegatedAuthorityVerdict | None = None,
     base_tree: Mapping[str, bytes] | None = None,
     base_changes: frozenset[str] | None = None,
-    replay_erasure_cutoffs: Mapping[str, Mapping[str, int | None]] | None = None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -4971,9 +4893,6 @@ def _evaluate_scoped_members(
                 acceptance_laws=acceptance_laws,
                 historical_law_coordinate=historical_law_coordinates.get(path),
                 replaying_accepted=replaying_accepted,
-                erasure_cutoffs=(
-                    (replay_erasure_cutoffs or {}).get(path, {}) if replaying_accepted else None
-                ),
             )
         )
         diagnostics.extend(verdict.diagnostics)
@@ -5448,7 +5367,6 @@ def evaluate_proposal_tree(
     subject_assignment_authority: SubjectAssignmentAuthority | None = None,
     base_changes: frozenset[str] | None = None,
     settle_condition: DelegatedAuthorityVerdict | None = None,
-    replay_erasure_cutoffs: Mapping[str, Mapping[str, int | None]] | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -5479,10 +5397,8 @@ def evaluate_proposal_tree(
 
     `replaying_accepted` is only for recovery, re-deriving a generation main
     already holds: Captures it cites were admitted when it was accepted, so they
-    are not held again to the production proof a new citation needs. Its
-    `replay_erasure_cutoffs` (per member path and Capture) are the erasure
-    journal positions the generation's own law evidence recorded. Settling a
-    pending candidate is not a replay, whatever law coordinates it carries.
+    are not held again to the production proof a new citation needs. Settling
+    a pending candidate is not a replay, whatever law coordinates it carries.
     """
 
     candidate_tree = (
@@ -5617,7 +5533,6 @@ def evaluate_proposal_tree(
             historical_law_coordinates=historical_law_coordinates or {},
             base_tree=base_tree if rebased else None,
             base_changes=base_changes if rebased else None,
-            replay_erasure_cutoffs=replay_erasure_cutoffs,
             replaying_accepted=replaying_accepted,
             retained_tree=retained_tree,
             claim_law_provider=claim_law_provider,

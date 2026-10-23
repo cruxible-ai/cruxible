@@ -11,6 +11,7 @@ from cruxible_client.contracts.capture_erasure import (
     CaptureEraseRefusedError,
     CaptureEraseRequest,
     CaptureEraseResult,
+    CaptureErasureRecord,
 )
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import (
@@ -64,6 +65,12 @@ def _erase(
                 previewing=change.previewing,
                 observe=change.observe,
             )
+
+
+def _records(world: ErasureWorld) -> list[CaptureErasureRecord]:
+    """Every erasure record the journal holds, in order."""
+
+    return [record for _, record in CaptureErasureStore(world.instance).records_after(0, limit=9)]
 
 
 def _evidence(world: ErasureWorld):  # type: ignore[no-untyped-def]
@@ -247,7 +254,7 @@ def test_a_policy_without_its_pin_refuses_naming_authorize_erasure() -> None:
     assert "authorize_erasure(contract)" in diagnostic.message
 
 
-def test_an_interrupted_erase_finishes_under_its_first_record(
+def test_an_interrupted_erase_erased_again_appends_another_record(
     world: ErasureWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cruxible_core.storage.cas import ContentAddressedBodyStore
@@ -267,7 +274,8 @@ def test_an_interrupted_erase_finishes_under_its_first_record(
 
     retried = _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
 
-    assert retried.status == "erased" and retried.erasure == first
+    assert retried.status == "erased"
+    assert _records(world) == [first, retried.erasure]
     assert not world.instance.body_store()._path(world.body).exists()
 
 
@@ -380,17 +388,29 @@ def test_an_erasure_record_that_is_not_the_contracts_own_does_not_verify(
 
     erased = _erase(world, dry_run=False, at=_erase(world).coordinate.digest).erasure
     forged = erased.model_copy(update={"erasure_rule_digest": "sha256:" + "0" * 64})
-    (recorded,) = CaptureErasureStore(world.instance).records_for_bodies(erased.body_digests)
+    recorded = CaptureErasureStore(world.instance).for_bodies(erased.body_digests)[world.body]
     monkeypatch.setattr(
         LocalProducerReceiptResolver,
         "body_erasures",
-        lambda self, bodies: (recorded.model_copy(update={"record": forged}),),
+        lambda self, bodies: {world.body: recorded.model_copy(update={"record": forged})},
     )
 
     retired = write(world.instance, {"op": "retire", "target": world.claim}, because="Erased.")
 
     assert retired.refusal is not None
     assert retired.refusal.code == "cruxible.claim.capture_unverified"
+
+
+def test_a_body_missing_with_no_erasure_record_stays_a_defect(world: ErasureWorld) -> None:
+    # The bytes go from the store (its landing log records it) with no erasure record.
+    world.instance.body_store().erase(world.body)
+
+    retired = write(world.instance, {"op": "retire", "target": world.claim}, because="Gone.")
+
+    assert retired.refusal is not None
+    assert retired.refusal.code == "cruxible.claim.capture_unverified"
+    (cited,) = _evidence(world).captures
+    assert cited.erased is None
 
 
 def _full_recovery(world: ErasureWorld) -> object:
@@ -469,42 +489,26 @@ def test_bytes_stored_again_after_an_erasure_do_not_change_a_recorded_verdict(
     world.instance.body_store().store(original)
     assert world.instance.body_store().verify(world.body)
 
-    # The revision was judged with the Capture erased; replay reads the recorded
-    # erasure, not the bytes that are back, so it reproduces the same evidence.
+    # The revision was judged with the Capture erased; an erasure never enters a
+    # verdict, so replay with the bytes back reproduces the same evidence.
     _full_recovery(world)
 
 
-def _erasure_positions_of_last_generation(world: ErasureWorld) -> dict[str, dict[str, int]]:
-    from cruxible_core.ledger.recovery import candidate_from_change_set_record
-    from cruxible_core.proposals.proposals import erasure_cutoffs_from_candidate
-
-    record = world.instance.accepted_history()[-1].record
-    return erasure_cutoffs_from_candidate(candidate_from_change_set_record(record))
-
-
-def test_a_judgment_under_the_erasures_own_head_counts_it_and_recovers(
-    world: ErasureWorld,
-) -> None:
-    """Recheck 2, #3.1: erased under head H, then judged against H; the journal orders them."""
+def test_a_judgment_under_the_erasures_own_head_recovers(world: ErasureWorld) -> None:
+    """Erased under head H, then judged against H: the judgment replays exactly."""
 
     head = world.instance.accepted_coordinate()
     _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
     assert world.instance.accepted_coordinate() == head
     retired = write(world.instance, {"op": "retire", "target": world.claim}, because="Erased.")
     assert retired.refusal is None, retired.refusal
-    (recorded,) = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
-    # The retirement counted the erasure recorded under its own parent head, and
-    # its evidence names the journal position replay stops at.
-    assert list(_erasure_positions_of_last_generation(world).values()) == [
-        {world.capture: recorded.sequence}
-    ]
     _full_recovery(world)
 
 
 def test_erasing_bytes_stored_again_records_another_erasure_and_recovers(
     world: ErasureWorld,
 ) -> None:
-    """Recheck 2, #3.3: a second destruction after the bytes landed again is recorded."""
+    """A second destruction after the bytes landed again appends a second record."""
 
     from tests.support.capture_erasure_world import cite, run_source
 
@@ -520,82 +524,9 @@ def test_erasing_bytes_stored_again_records_another_erasure_and_recovers(
     second = _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
 
     assert second.status == "erased"
-    first, latest = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
-    assert first.record.capture_digest == latest.record.capture_digest == world.capture
-    assert first.sequence < latest.sequence
-    assert first.landing is not None and latest.landing is not None
-    assert first.landing.sequence < latest.landing.sequence
+    first, latest = _records(world)
+    assert first.capture_digest == latest.capture_digest == world.capture
+    assert latest == second.erasure and first != latest
     assert not world.instance.body_store()._path(world.body).exists()
-    # Only the first erasure preceded the new Capture's landing; the second one
-    # destroyed its bytes too. Every generation still replays exactly.
+    # Every generation still replays exactly.
     _full_recovery(world)
-
-
-def _without_positions(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Erasures recorded from here on carry no landing position, as before positions were kept."""
-
-    from cruxible_core.exhaust.writer import ProcedureExhaustWriter
-
-    original = ProcedureExhaustWriter.append
-
-    def append(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        kwargs["payload"].pop("landing", None)
-        return original(self, *args, **kwargs)
-
-    monkeypatch.setattr(ProcedureExhaustWriter, "append", append)
-
-
-def test_bytes_present_again_under_an_erasure_without_a_position_are_erased_anew(
-    world: ErasureWorld, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Recheck E-002: a record with no position cannot show the bytes are the ones it destroyed."""
-
-    original = world.instance.body_store().read(world.body, access=READ)
-    with monkeypatch.context() as patch:
-        _without_positions(patch)
-        _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
-    (legacy,) = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
-    assert legacy.landing is None
-    # The exact bytes are stored again; erasing them is a second destruction.
-    world.instance.body_store().store(original)
-    assert world.instance.body_store().verify(world.body)
-
-    second = _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
-
-    assert second.status == "erased" and second.erasure != legacy.record
-    first, latest = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
-    assert first == legacy and latest.sequence > legacy.sequence
-    assert latest.landing is not None and latest.record.because == BECAUSE
-    assert not world.instance.body_store()._path(world.body).exists()
-    _full_recovery(world)
-
-
-def test_an_interrupted_erase_without_a_position_is_finished_under_a_record_of_its_own(
-    world: ErasureWorld, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Recheck E-002: an interrupted erase recorded without a position records anew."""
-
-    from cruxible_core.storage.cas import ContentAddressedBodyStore
-
-    preview = _erase(world)
-    with monkeypatch.context() as patch:
-        _without_positions(patch)
-
-        def crash(self, digest):  # type: ignore[no-untyped-def]
-            raise OSError("power cut")
-
-        patch.setattr(ContentAddressedBodyStore, "erase", crash)
-        with pytest.raises(OSError):
-            _erase(world, dry_run=False, at=preview.coordinate.digest)
-    (legacy,) = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
-    assert legacy.landing is None and world.instance.body_store().verify(world.body)
-    assert CaptureErasureStore(world.instance).unfinished(world.capture) is None
-
-    retried = _erase(world, dry_run=False, at=_erase(world).coordinate.digest)
-
-    assert retried.status == "erased"
-    first, latest = CaptureErasureStore(world.instance).records_for_bodies((world.body,))
-    assert first == legacy and latest.landing is not None
-    assert not world.instance.body_store()._path(world.body).exists()
-    # Positioned now: a retry of that one proves it and finishes under it.
-    assert CaptureErasureStore(world.instance).unfinished(world.capture) == latest.record

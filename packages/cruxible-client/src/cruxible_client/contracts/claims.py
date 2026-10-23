@@ -2041,64 +2041,43 @@ def _stored_capture_envelope(
 def _governed_erasures(
     envelope: CaptureEnvelopeAny,
     *,
-    capture_digest: str,
-    records: Callable[[tuple[str, ...]], tuple[RecordedCaptureErasure, ...]],
+    records: Callable[[tuple[str, ...]], Mapping[str, RecordedCaptureErasure]],
     contracts_by_digest: Mapping[str, list[AcceptedCaptureContract]],
     erasure_contract: Callable[[RecordedCaptureErasure], AcceptedCaptureContract | None] | None,
-    preceded: Callable[[str, RecordedCaptureErasure], bool] | None,
-    through: int | None,
-    unpositioned: Callable[[RecordedCaptureErasure], bool] | None = None,
-) -> tuple[frozenset[str], frozenset[str], int | None]:
-    """This Capture's retained bodies governed erasures destroyed: at all, and before this judgment.
+) -> frozenset[str]:
+    """This Capture's retained bodies an authorized erasure record names.
 
-    A recorded erasure counts when it names a body this Capture retains, was made
-    under the erasure authority of the contract version it names (this Capture's
-    own, or, for a body shared with another Capture, that Capture's), resolved as
-    of the erasure's own accepted head (``erasure_contract``) or, failing that, in
-    this judgment's dependencies, and destroyed this Capture's material: the
-    Capture had landed when it was recorded (``preceded``, read from storage
-    positions; bytes stored again by a later Capture are its own). It was there
-    before this judgment by its erasure journal position: live (``through`` None)
-    every record the journal holds; on replay, those at or before ``through``,
-    the position the judgment recorded. Neither a clock nor a head orders them.
-    A replayed judgment that recorded no position though it counted erasures
-    (made before positions were recorded) is replayed by the rule it was made
-    under (``unpositioned``), and reports no position.
-    Returns the bodies destroyed, those destroyed before this judgment, and the
-    last journal position counted for the latter.
+    One keyed lookup per retained body (the latest record naming it: bodies are
+    content-addressed, so one Capture's erasure names the same bytes for every
+    Capture holding them), and one authority check per record found: made
+    under the erasure authority of the contract version it names (this
+    Capture's own, or, for a shared body, another Capture's), resolved as of the
+    erasure's own accepted head (``erasure_contract``) or, failing that, in this
+    judgment's dependencies.
     """
 
     retained = capture_retained_body_digests(envelope)
     if not retained:
-        return frozenset(), frozenset(), None
+        return frozenset()
+    authorized: dict[int, bool] = {}
     destroyed: set[str] = set()
-    before: set[str] = set()
-    counted: int | None = None
-    for item in records(retained):
-        record = item.record
-        if preceded is not None and not preceded(capture_digest, item):
+    for body, item in records(retained).items():
+        if body not in retained:
             continue
-        candidates = list(contracts_by_digest.get(record.capture_contract_digest, ()))
-        if erasure_contract is not None and (authority := erasure_contract(item)) is not None:
-            candidates.append(authority)
-        if not any(
-            capture_erasure_authorized(
-                record, found.contract, contract_digest=found.artifact_digest
+        if item.sequence not in authorized:
+            record = item.record
+            candidates = list(contracts_by_digest.get(record.capture_contract_digest, ()))
+            if erasure_contract is not None and (authority := erasure_contract(item)) is not None:
+                candidates.append(authority)
+            authorized[item.sequence] = any(
+                capture_erasure_authorized(
+                    record, found.contract, contract_digest=found.artifact_digest
+                )
+                for found in candidates
             )
-            for found in candidates
-        ):
-            continue
-        hit = set(record.body_digests) & set(retained)
-        if not hit:
-            continue
-        destroyed |= hit
-        if unpositioned is not None:
-            if unpositioned(item):
-                before |= hit
-        elif through is None or item.sequence <= through:
-            before |= hit
-            counted = item.sequence if counted is None else max(counted, item.sequence)
-    return frozenset(destroyed), frozenset(before), counted
+        if authorized[item.sequence]:
+            destroyed.add(body)
+    return frozenset(destroyed)
 
 
 def _inverse_object_refusal(
@@ -2256,42 +2235,27 @@ def evaluate_claim_law(
     accepted_subject_version: Callable[[str, str], bool] | None = None,
     subject_creation_key: bool = False,
     claim_rebind: bool = False,
-    erasure_records: Callable[[tuple[str, ...]], tuple[RecordedCaptureErasure, ...]] | None = None,
+    erasure_records: Callable[[tuple[str, ...]], Mapping[str, RecordedCaptureErasure]]
+    | None = None,
     erasure_contract: Callable[[RecordedCaptureErasure], AcceptedCaptureContract | None]
     | None = None,
-    erasure_affects_verdict: bool = False,
-    erasure_preceded: Callable[[str, RecordedCaptureErasure], bool] | None = None,
-    erasure_cutoffs: Mapping[str, int | None] | None = None,
     origin_replay_exempt: bool = False,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
 
-    `erasure_records` answers the recorded erasures naming a Capture's retained
-    bodies (one erasure can name bodies other Captures hold too: bodies are
-    content-addressed), each with its erasure journal position and the accepted
-    head it was recorded under. An erasure counts for a Capture when it was made
-    under the erasure authority of the contract version it names, resolved as of
-    the erasure's own head (`erasure_contract`) or in this judgment's
-    dependencies, and destroyed the Capture's own material: `erasure_preceded`
-    answers, from storage positions, whether the Capture had landed when the
-    erasure was recorded (None: it had). A Capture the Claim inherits from its accepted
-    predecessor, or any Capture while replaying accepted history (no
-    new-citation proof), whose bodies such erasures destroyed verifies on its
-    envelope, and its citation keeps the origin and binding verified when it was
-    first accepted; a Capture cited anew still needs its body. With
-    `erasure_affects_verdict` (compiler revision 35: Claim law v2 revision 10
-    and v3 revision 11) a Capture enters the verdict as not replayable when such
-    an erasure was recorded before this judgment, by erasure journal position:
-    live (`erasure_cutoffs` None) every record the journal holds, and the
-    evidence records the last position counted (`erasures_through`); replaying,
-    `erasure_cutoffs` is that recorded position per Capture (absent: none
-    counted), never a clock, a head or what the store holds now. A cutoff of
-    None is a judgment recorded without a position although it counted an
-    erasure (accepted before positions were recorded): it replays by the rule
-    it was made under, an erasure recorded under an accepted head before the
-    judgment's own and not before the Capture was observed. Earlier laws
-    use the erasures only to verify storage while replaying, so their recorded
-    law evidence reproduces exactly.
+    `erasure_records` answers, per retained body, the latest erasure record
+    naming it (one erasure can name bodies other Captures hold too: bodies are
+    content-addressed), with the accepted head it was recorded under. A Capture
+    whose envelope does not verify, which the Claim inherits from its accepted
+    predecessor or which accepted history replays (no new-citation proof), and
+    whose missing bodies an erasure record names that was made under the
+    erasure authority of the contract version it names (resolved as of the
+    erasure's own head, `erasure_contract`, or in this judgment's
+    dependencies), verifies on its envelope, and its citation keeps the origin
+    and binding verified when it was first accepted; a Capture cited anew still
+    needs its body. An erasure never enters the verdict: the Claim stands on its
+    evidence digest and source pointer, and reads derive whether the body is
+    present now, so a judgment reproduces whenever its bytes were erased.
     With `origin_replay_exempt` (revision 10) a ``none`` type compiles
     adjudication rule v3, whose origin-only entries need no current replay.
 
@@ -2946,15 +2910,6 @@ def evaluate_claim_law(
                     path=path,
                 )
     inherited_captures = inherited_capture_digests(claim, path=path, predecessor=predecessor)
-    # A judgment accepted before erasure positions were recorded counted an
-    # erasure recorded under an accepted head before its own (its parent) and
-    # not before the Capture was observed; it replays by exactly that rule.
-    prior_heads = (
-        frozenset()
-        if accepted_coordinate is None
-        else (accepted_referent_coordinates or frozenset({accepted_coordinate}))
-        - {accepted_coordinate}
-    )
 
     # Computed once per law: the producer digests every verification consults,
     # and the contracts grouped by the contract digest a Capture names.
@@ -3026,43 +2981,25 @@ def evaluate_claim_law(
                 + str(production_gap),
                 path=path,
             )
-        erased = False
-        erasures_through: int | None = None
         destroyed: frozenset[str] = frozenset()
-        if erasure_records is not None and named:
+        if (
+            (envelope is None or resolved_contract is None)
+            and erasure_records is not None
+            and named
+            # Inherited (a retirement or revision after the erasure), or accepted
+            # history replayed after it; a Capture cited anew needs its body.
+            and (capture_digest_value in inherited_captures or not require_new_citation_proof)
             # The envelope stays when bodies are erased; read it to name them.
-            examined = envelope or _stored_capture_envelope(capture_store, capture_digest_value)
-            through = (
-                None if erasure_cutoffs is None else erasure_cutoffs.get(capture_digest_value, 0)
+            and (examined := _stored_capture_envelope(capture_store, capture_digest_value))
+            is not None
+        ):
+            destroyed = _governed_erasures(
+                examined,
+                records=erasure_records,
+                contracts_by_digest=contracts_by_digest,
+                erasure_contract=erasure_contract,
             )
-            unpositioned = (
-                None
-                if erasure_cutoffs is None or through is not None or examined is None
-                else lambda item, observed=examined.observed_at: (
-                    item.coordinate in prior_heads and item.record.erased_at >= observed
-                )
-            )
-            destroyed, by_evaluation, counted = (
-                (frozenset(), frozenset(), None)
-                if examined is None
-                else _governed_erasures(
-                    examined,
-                    capture_digest=capture_digest_value,
-                    records=erasure_records,
-                    contracts_by_digest=contracts_by_digest,
-                    erasure_contract=erasure_contract,
-                    preceded=erasure_preceded,
-                    through=through,
-                    unpositioned=unpositioned,
-                )
-            )
-            if (
-                (envelope is None or resolved_contract is None)
-                and destroyed
-                # Inherited (a retirement or revision after the erasure), or accepted
-                # history replayed after it; a Capture cited anew needs its body.
-                and (capture_digest_value in inherited_captures or not require_new_citation_proof)
-            ):
+            if destroyed:
                 for contract_candidate in contracts_by_digest.get(named, []):
                     try:
                         envelope = verify_capture(
@@ -3079,8 +3016,6 @@ def evaluate_claim_law(
                         continue
                     resolved_contract = contract_candidate
                     break
-            erased = erasure_affects_verdict and bool(by_evaluation)
-            erasures_through = counted if erased else None
         if envelope is None or resolved_contract is None:
             return _diagnostic(
                 "cruxible.claim.capture_unverified",
@@ -3269,10 +3204,8 @@ def evaluate_claim_law(
                     else envelope.source_effective_time.effective_until
                 ),
                 current_replay_available=(
-                    not erased
-                    and envelope.commitment.materialization in {"ledger", "cas", "external"}
+                    envelope.commitment.materialization in {"ledger", "cas", "external"}
                 ),
-                erasures_through=erasures_through,
             )
         )
     if (replacing or rebinding) and not capture_contract_pin_digests.issubset(

@@ -89,7 +89,6 @@ from cruxible_core.proposals.proposals import (
     build_tree_state,
     claim_admission_accounts_from_candidate,
     claim_type_expansions_from_candidate,
-    erasure_cutoffs_from_candidate,
     evaluate_proposal_tree,
 )
 from cruxible_core.proposals.settlement import (
@@ -650,7 +649,6 @@ def _verify_successor(
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
         query_facts_provider=query_facts_provider,
         replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
-        replay_erasure_cutoffs=erasure_cutoffs_from_candidate(candidate),
         retained_tree=ledger.read_tree,
         historical_artifact_provider=_LedgerArtifactVersions(ledger),
         promotion_verifier=promotion_verifier,
