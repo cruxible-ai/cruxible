@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pydantic import ValidationError
 
-from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
+from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
 from cruxible_client.contracts.captures import (
     CaptureFormatError,
     CaptureProductionRecord,
@@ -149,7 +149,7 @@ class LocalProducerReceiptResolver:
     def remember_verified(self, memo: VerifiedCaptureMemo) -> None:
         self._verified.remember(memo)
 
-    def body_erasures(self, body_digests: tuple[str, ...]) -> tuple[CaptureErasureRecord, ...]:
+    def body_erasures(self, body_digests: tuple[str, ...]) -> tuple[RecordedCaptureErasure, ...]:
         """Every governed erasure naming these retained bodies, from this instance's journal.
 
         An instance that never erased anything answers without opening a file.

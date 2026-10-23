@@ -42,7 +42,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
+from cruxible_client.contracts.capture_erasure import CaptureErasureRecord, RecordedCaptureErasure
 from cruxible_client.contracts.cas_contracts import (
     BodyAccessContext,
     CasObjectMetadata,
@@ -2842,7 +2842,9 @@ class CaptureErasureLookupProtocol(Protocol):
     Capture's erasure destroys the same bytes for every Capture that holds them.
     """
 
-    def body_erasures(self, body_digests: tuple[str, ...]) -> tuple[CaptureErasureRecord, ...]: ...
+    def body_erasures(
+        self, body_digests: tuple[str, ...]
+    ) -> tuple[RecordedCaptureErasure, ...]: ...
 
 
 def capture_retained_body_digests(envelope: CaptureEnvelopeAny) -> tuple[str, ...]:

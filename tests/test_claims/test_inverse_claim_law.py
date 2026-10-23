@@ -250,6 +250,8 @@ class _World:
         retirement_shape_exemption: bool = False,
         extra_contracts: tuple[Any, ...] = (),
         erasure_records: Any = None,
+        erasure_contract: Any = None,
+        prior_heads: frozenset[Any] = frozenset(),
     ) -> ClaimLawResult:
         shell = _shell()
         contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
@@ -292,7 +294,10 @@ class _World:
             claim_rebind=True,
             allow_claim_type_retirement_shape_exemption=retirement_shape_exemption,
             erasure_records=erasure_records,
+            erasure_contract=erasure_contract,
             erasure_affects_verdict=erasure_records is not None,
+            accepted_coordinate=self.coordinate,
+            accepted_referent_coordinates=frozenset({self.coordinate, *prior_heads}),
         )
 
 
@@ -529,28 +534,29 @@ def test_retiring_a_subject_inverse_after_the_type_drops_its_inverse(world: _Wor
     assert result.verdict == "accepted", result.diagnostics
 
 
-def test_an_erasure_of_a_shared_body_counts_for_every_capture_holding_it(world: _World) -> None:
+PRIOR_HEAD = AcceptedCoordinate(
+    git_oid="11" * 20,
+    semantic_root="sha256:" + "22" * 32,
+    generation_root="sha256:" + "33" * 32,
+    compiler_digest="sha256:" + "44" * 32,
+)
+
+
+def _shared_erasure(body: str, *, head: AcceptedCoordinate = PRIOR_HEAD) -> tuple[Any, Any]:
+    """An erasable contract and its recorded erasure of ``body``, made under ``head``."""
+
     from datetime import timedelta
 
-    from cruxible_client.contracts.capture_erasure import CaptureErasureRecord
+    from cruxible_client.contracts.capture_erasure import (
+        CaptureErasureRecord,
+        RecordedCaptureErasure,
+    )
     from cruxible_client.contracts.captures import authorize_erasure
-    from cruxible_client.contracts.claims import ClaimArtifact, ClaimRetirementAttribution
     from tests.core_support._pc_c_support import capture_contract
 
-    claim_type = _claim_type()
-    positive = world.claim(claim_type, LiteralClaimObject(value="alice"), value="alice")
-    assert world.judge(positive, claim_type).verdict == "accepted"
-    accepted = _accepted(positive)
-    (body,) = {
-        span.content_digest
-        for mapping in positive.backing.source_mappings
-        for span in mapping.spans
-    }
-    # Another Capture, under a contract that authorizes erasure, held the same bytes
-    # and was erased: the content-addressed body is gone for this Claim's Capture too.
     erasable = authorize_erasure(capture_contract())
     assert erasable.retention_erasure_policy.erasure_rule_digest is not None
-    other = CaptureErasureRecord(
+    record = CaptureErasureRecord(
         capture_digest="sha256:" + "ab" * 32,
         capture_contract=erasable.identity.qualified,
         capture_contract_digest=capture_contract_digest(erasable).tagged,
@@ -560,15 +566,40 @@ def test_an_erasure_of_a_shared_body_counts_for_every_capture_holding_it(world: 
         erased_at=OBSERVED_AT + timedelta(hours=1),
         because="The shared bytes held a secret.",
     )
-    world.store.erase(body)
-    retirement = ClaimArtifact(
-        identity=positive.identity,
-        statement=positive.statement,
-        backing=positive.backing,
-        pins=positive.pins,
+    return erasable, RecordedCaptureErasure(record=record, coordinate=head)
+
+
+def _retirement(claim: Any, accepted: AcceptedClaim) -> Any:
+    from cruxible_client.contracts.claims import ClaimArtifact, ClaimRetirementAttribution
+
+    return ClaimArtifact(
+        identity=claim.identity,
+        statement=claim.statement,
+        backing=claim.backing,
+        pins=claim.pins,
         lifecycle=ArtifactLifecycle(state="retired", predecessor_digest=accepted.artifact_digest),
         retirement=ClaimRetirementAttribution(reason="was-rescinded"),
     )
+
+
+def _body(claim: Any) -> str:
+    (body,) = {
+        span.content_digest for mapping in claim.backing.source_mappings for span in mapping.spans
+    }
+    return str(body)
+
+
+def test_an_erasure_of_a_shared_body_counts_for_every_capture_holding_it(world: _World) -> None:
+    claim_type = _claim_type()
+    positive = world.claim(claim_type, LiteralClaimObject(value="alice"), value="alice")
+    assert world.judge(positive, claim_type).verdict == "accepted"
+    accepted = _accepted(positive)
+    body = _body(positive)
+    # Another Capture, under a contract that authorizes erasure, held the same bytes
+    # and was erased: the content-addressed body is gone for this Claim's Capture too.
+    erasable, other = _shared_erasure(body)
+    world.store.erase(body)
+    retirement = _retirement(positive, accepted)
 
     stranded = world.judge(
         retirement, claim_type, predecessor=accepted, erasure_records=lambda _: ()
@@ -584,7 +615,11 @@ def test_an_erasure_of_a_shared_body_counts_for_every_capture_holding_it(world: 
         erasure_records=lambda bodies: (other,) if body in bodies else (),
     )
     assert retired.verdict == "accepted", retired.diagnostics
-    forged = other.model_copy(update={"erasure_rule_digest": "sha256:" + "0" * 64})
+    forged = other.model_copy(
+        update={
+            "record": other.record.model_copy(update={"erasure_rule_digest": "sha256:" + "0" * 64})
+        }
+    )
     refused = world.judge(
         retirement,
         claim_type,
@@ -593,3 +628,158 @@ def test_an_erasure_of_a_shared_body_counts_for_every_capture_holding_it(world: 
         erasure_records=lambda bodies: (forged,),
     )
     assert _code(refused) == "cruxible.claim.capture_unverified"
+
+
+def _replayable(result: ClaimLawResult) -> bool:
+    assert result.verdict == "accepted", result.diagnostics
+    assert result.evidence is not None
+    (capture,) = result.evidence.verdict_captures
+    return capture.current_replay_available
+
+
+def test_an_erasure_counts_for_a_judgment_by_journal_position_not_by_clock(
+    world: _World,
+) -> None:
+    claim_type = _claim_type()
+    positive = world.claim(claim_type, LiteralClaimObject(value="alice"), value="alice")
+    body = _body(positive)
+
+    # Recorded under this judgment's own head (or later): the judgment did not see
+    # it, whatever its timestamp says, so the evidence it recorded reproduces.
+    erasable, current = _shared_erasure(body, head=world.coordinate)
+    unseen = world.judge(
+        positive,
+        claim_type,
+        extra_contracts=(erasable,),
+        erasure_records=lambda bodies: (current,),
+    )
+    assert _replayable(unseen)
+    # Recorded under an earlier accepted head: it was there before the judgment.
+    _erasable, earlier = _shared_erasure(body)
+    seen = world.judge(
+        positive,
+        claim_type,
+        extra_contracts=(erasable,),
+        erasure_records=lambda bodies: (earlier,),
+        prior_heads=frozenset({PRIOR_HEAD}),
+    )
+    assert not _replayable(seen)
+
+
+def test_erasure_authority_is_read_at_the_erasures_own_head(world: _World) -> None:
+    claim_type = _claim_type()
+    positive = world.claim(claim_type, LiteralClaimObject(value="alice"), value="alice")
+    accepted = _accepted(positive)
+    body = _body(positive)
+    # The authorizing contract was accepted after this judgment's dependencies: it
+    # is not among them, only at the head the erasure was recorded under.
+    erasable, later = _shared_erasure(body)
+    world.store.erase(body)
+    retirement = _retirement(positive, accepted)
+
+    unknown = world.judge(
+        retirement, claim_type, predecessor=accepted, erasure_records=lambda bodies: (later,)
+    )
+    assert _code(unknown) == "cruxible.claim.capture_unverified"
+    accepted_erasable = AcceptedCaptureContract(
+        path=capture_contract_path(erasable.identity.name),
+        contract=erasable,
+        artifact_digest=capture_contract_digest(erasable).tagged,
+    )
+    retired = world.judge(
+        retirement,
+        claim_type,
+        predecessor=accepted,
+        erasure_records=lambda bodies: (later,),
+        erasure_contract=lambda item: accepted_erasable if item.coordinate == PRIOR_HEAD else None,
+    )
+    assert retired.verdict == "accepted", retired.diagnostics
+
+
+def test_a_direct_self_source_whose_shared_body_was_erased_can_be_retired(
+    world: _World,
+) -> None:
+    from cruxible_client.contracts.captures import (
+        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+        build_direct_claim_capture,
+    )
+    from tests.test_claims.test_claims import _claim
+    from tests.test_claims.test_claims import _claim_type as _direct_type
+
+    direct_type = _direct_type()
+    built = build_direct_claim_capture(
+        store=world.store,
+        actor_id="owner",
+        claim_id=CLAIM_ID,
+        value="ready",
+        rationale="The work item is ready for review.",
+        observed_at=OBSERVED_AT,
+        accepted_coordinate=world.coordinate,
+    )
+    assert built.envelope.commitment.byte_length is not None
+    claim = _claim(
+        claim_id=CLAIM_ID,
+        capture_digest=built.capture_digest,
+        source_digest=built.source_body_digest,
+        source_length=built.envelope.commitment.byte_length,
+    )
+    shell = SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-42"),
+        subject_kind="project.work_item",
+        subject_id="wi-42",
+    )
+
+    def judge(candidate: Any, **extra: Any) -> ClaimLawResult:
+        contracts = (DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT, *extra.pop("contracts", ()))
+        return evaluate_claim_law(
+            candidate,
+            path=claim_path(CLAIM_ID),
+            principals=world.instance.accepted_principal_registry(
+                world.instance.accepted_coordinate()
+            ),
+            subjects={
+                subject_path(shell.subject_kind, shell.subject_id): AcceptedSubject(
+                    path=subject_path(shell.subject_kind, shell.subject_id),
+                    shell=shell,
+                    artifact_digest=subject_digest(shell).tagged,
+                )
+            },
+            claim_types={
+                direct_type.identity.qualified: AcceptedClaimType(
+                    path=claim_type_path(direct_type.predicate),
+                    claim_type=direct_type,
+                    artifact_digest=claim_type_digest(direct_type).tagged,
+                )
+            },
+            capture_contracts={
+                item.identity.qualified: AcceptedCaptureContract(
+                    path=capture_contract_path(item.identity.name),
+                    contract=item,
+                    artifact_digest=capture_contract_digest(item).tagged,
+                )
+                for item in contracts
+            },
+            capture_store=world.store,
+            law_digest="sha256:" + "ab" * 32,
+            evaluation_time=OBSERVED_AT,
+            require_new_citation_proof=False,
+            accepted_coordinate=world.coordinate,
+            accepted_referent_coordinates=frozenset({world.coordinate}),
+            **extra,
+        )
+
+    first = judge(claim, predecessor=None)
+    assert first.verdict == "accepted", first.diagnostics
+    accepted = _accepted(claim)
+    erasable, shared = _shared_erasure(built.source_body_digest)
+    world.store.erase(built.source_body_digest)
+
+    # The inherited citation keeps the origin and binding its acceptance verified;
+    # re-deriving them would read the destroyed body.
+    retired = judge(
+        _retirement(claim, accepted),
+        predecessor=accepted,
+        contracts=(erasable,),
+        erasure_records=lambda bodies: (shared,),
+    )
+    assert retired.verdict == "accepted", retired.diagnostics

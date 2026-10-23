@@ -501,6 +501,18 @@ def _refuse_number_schema(value: ClaimTypeInputRecord) -> None:
         )
 
 
+#: What a lint warning means, for surfaces that print more than its code.
+CLAIM_TYPE_LINT_TEXT: dict[str, str] = {
+    "cruxible.claim_type.inverse_on_enum_or_boolean": (
+        "an inverse on a one-valued enum or boolean field: a member states the negative"
+    ),
+    "cruxible.claim_type.stale_eligible_never_current": (
+        "eligible_verdicts lists stale while require_current is true: stale contenders "
+        "never resolve"
+    ),
+}
+
+
 class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
     code: Annotated[
         Literal[
@@ -510,6 +522,7 @@ class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
             "cruxible.claim_type.permitted_role_unadmitted",
             "cruxible.claim_type.field_name_reserved",
             "cruxible.claim_type.inverse_on_enum_or_boolean",
+            "cruxible.claim_type.stale_eligible_never_current",
         ],
         CurrentCode,
     ]
@@ -1019,6 +1032,29 @@ def lint_claim_type_input(
                     replacement_rule_fragment={"minimum_independent_control_components": 1},
                 )
             )
+    resolution = effective.resolution_policy
+    eligible = (
+        resolution.get("eligible_verdicts")
+        if isinstance(resolution, dict)
+        else None
+        if resolution is None
+        else resolution.eligible_verdicts
+    )
+    require_current = (
+        resolution.get("require_current", True)
+        if isinstance(resolution, dict)
+        else resolution is not None and resolution.require_current
+    )
+    if isinstance(eligible, list | tuple) and "stale" in eligible and require_current:
+        # require_current keeps stale contenders out of resolution, so listing
+        # stale as eligible admits nothing.
+        warnings.append(
+            ClaimTypeLintWarningV1(
+                code="cruxible.claim_type.stale_eligible_never_current",
+                field_path="$.resolution_policy.eligible_verdicts",
+                replacement_rule_fragment={"require_current": False},
+            )
+        )
     schema = effective.literal_schema
     if (
         effective.inverse is not None
