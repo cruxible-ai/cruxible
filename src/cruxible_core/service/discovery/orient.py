@@ -1,7 +1,7 @@
 """The orient read: a bounded map of accepted state for a caller about to act.
 
-``orient()`` names every Subject kind with its live Subject count and compact
-predicate descriptors, counts each artifact family, lists the named queries,
+``orient()`` names every Subject kind with its live Subject count and its
+first field names, counts each artifact family, lists the named queries,
 says who the caller is and whether it can author, summarizes what the ``next``
 queue holds, and suggests runnable follow-up calls rendered for the caller's
 surface. ``orient(kind=K)`` widens one kind to every predicate in full plus a
@@ -398,18 +398,6 @@ def _short_names(predicates: Iterable[str], kind: str, state: _State) -> dict[st
     return {predicate: short_field_name(predicate, kind, accepted) for predicate in predicates}
 
 
-_COMPACT_DESCRIPTION_CHARS = 160
-
-
-def _compact_description(text: str) -> str:
-    """A description's first sentence, at most 160 characters, for compact descriptors."""
-
-    first = _first_sentence(text) or text
-    if len(first) <= _COMPACT_DESCRIPTION_CHARS:
-        return first
-    return first[: _COMPACT_DESCRIPTION_CHARS - 1].rstrip() + "\u2026"
-
-
 def _descriptor(
     claim_type: ClaimType,
     *,
@@ -429,11 +417,7 @@ def _descriptor(
         cardinality=claim_type.cardinality,
         type=value_type,
         members=members,
-        description=(
-            claim_type.description
-            if full or claim_type.description is None
-            else _compact_description(claim_type.description)
-        ),
+        description=claim_type.description if full else None,
         evidence=evidence,
         evidence_requirement=None if requirement == "self" else requirement,
         subject_kinds=claim_type.allowed_subject_kinds if full else None,

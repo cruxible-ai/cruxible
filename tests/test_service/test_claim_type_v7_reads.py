@@ -34,13 +34,10 @@ def _described() -> object:
     )
 
 
-def _descriptor(world: _V7World, *, full: bool) -> object:
-    result = service_playbill_orient(world.instance, kind=KIND if full else None, caller=OWNER)
-    kinds = (
-        [result.kind_detail] if full else [item for item in result.kinds or () if item.kind == KIND]
-    )
-    (kind,) = kinds
-    (descriptor,) = [item for item in kind.predicates if item.predicate == PREDICATE]
+def _descriptor(world: _V7World) -> object:
+    detail = service_playbill_orient(world.instance, kind=KIND, caller=OWNER).kind_detail
+    assert detail is not None
+    (descriptor,) = [item for item in detail.predicates if item.predicate == PREDICATE]
     return descriptor
 
 
@@ -61,19 +58,27 @@ def world(tmp_path: Path) -> _V7World:
     return _V7World(tmp_path)
 
 
-def test_orient_shows_a_compact_meaning_and_the_full_one_under_kind(world: _V7World) -> None:
+def test_orient_names_fields_only_and_the_full_meaning_under_kind(world: _V7World) -> None:
     world.seed(_described())  # type: ignore[arg-type]
 
-    compact = _descriptor(world, full=False)
-    assert compact.description == (  # type: ignore[attr-defined]
-        "Where the work item stands in its lifecycle, as the tracker last reported it."
-    )
-    assert compact.evidence_requirement == "none"  # type: ignore[attr-defined]
-    wire = compact.model_dump(mode="json")  # type: ignore[attr-defined]
-    assert not {"member_descriptions", "default_role", "revision_evidence"} & set(wire)
+    # The default map's kind line names fields; no descriptor rides it (round-3 3c).
+    (summary,) = [
+        item
+        for item in service_playbill_orient(world.instance, caller=OWNER).kinds or ()
+        if item.kind == KIND
+    ]
+    assert PREDICATE.removeprefix(f"{KIND}.") in summary.fields
+    assert set(summary.model_dump(mode="json")) <= {
+        "kind",
+        "subjects",
+        "identity",
+        "fields",
+        "more_fields",
+    }
 
-    full = _descriptor(world, full=True)
+    full = _descriptor(world)
     assert full.description == DESCRIPTION  # type: ignore[attr-defined]
+    assert full.evidence_requirement == "none"  # type: ignore[attr-defined]
     assert [(item.member, item.description) for item in full.member_descriptions] == [  # type: ignore[attr-defined]
         ("done", "Finished and verified."),
         ("ready", "Can start now."),
@@ -82,20 +87,14 @@ def test_orient_shows_a_compact_meaning_and_the_full_one_under_kind(world: _V7Wo
     assert full.revision_evidence == "replace"  # type: ignore[attr-defined]
 
 
-def test_orient_leaves_a_pre_v7_descriptor_as_it_was_but_names_accumulate_in_full(
+def test_orient_leaves_a_pre_v7_descriptor_as_it_was_but_names_accumulate(
     world: _V7World,
 ) -> None:
     world.seed(_v6_type())
-    wire = _descriptor(world, full=False).model_dump(mode="json")  # type: ignore[attr-defined]
+    full = _descriptor(world)
+    wire = full.model_dump(mode="json")  # type: ignore[attr-defined]
     assert not {"description", "evidence_requirement", "member_descriptions"} & set(wire)
-    assert _descriptor(world, full=True).revision_evidence == "accumulate"  # type: ignore[attr-defined]
-
-
-def test_a_long_first_sentence_is_capped_in_the_compact_descriptor(world: _V7World) -> None:
-    world.seed(v7_type(description="x" * 200 + ". More."))
-    compact = _descriptor(world, full=False)
-    assert len(compact.description) == 160  # type: ignore[attr-defined]
-    assert compact.description.endswith("…")  # type: ignore[attr-defined]
+    assert full.revision_evidence == "accumulate"  # type: ignore[attr-defined]
 
 
 def test_the_get_card_names_roles_rules_members_and_evidence_semantics(world: _V7World) -> None:
