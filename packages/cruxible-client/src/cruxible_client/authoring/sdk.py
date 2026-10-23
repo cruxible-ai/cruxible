@@ -262,6 +262,7 @@ from cruxible_client.contracts.write import (
     DocOp,
     Evidence,
     ExpectedValue,
+    NoneValue,
     RebindChange,
     ReplaceSection,
     RetireChange,
@@ -275,6 +276,7 @@ from cruxible_client.contracts.write import (
     WriteRequest,
     WriteRetireReason,
     WriteRole,
+    WriteValue,
 )
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient, configured_principal_id
@@ -1583,7 +1585,9 @@ def _write_field(field_name: str | ClaimTypeRef) -> str:
     return field_name.address if isinstance(field_name, ClaimTypeRef) else field_name
 
 
-def _write_value(value: ClaimValue | SubjectRef | LiteralValue) -> ClaimValue:
+def _write_value(value: ClaimValue | SubjectRef | LiteralValue | NoneValue) -> WriteValue:
+    if isinstance(value, NoneValue):
+        return value
     if isinstance(value, SubjectRef):
         return value.address
     if isinstance(value, LiteralValue):
@@ -1598,14 +1602,20 @@ WriteExpect = (
 )
 
 
+def _expected_value(value: ClaimValue | SubjectRef | LiteralValue) -> ClaimValue:
+    written = _write_value(value)
+    assert not isinstance(written, NoneValue)
+    return written
+
+
 def _write_expect(expect: WriteExpect | None) -> ExpectedValue | None:
     """``expect`` on the wire: one value, or every live value as a tuple."""
 
     if expect is None:
         return None
     if isinstance(expect, bool | int | float | str | SubjectRef | LiteralValue):
-        return _write_value(expect)
-    return tuple(_write_value(item) for item in expect)
+        return _expected_value(expect)
+    return tuple(_expected_value(item) for item in expect)
 
 
 def _write_target(target: str | ClaimRef | SubjectRef | SlotRef) -> str | SlotRef:
@@ -1618,12 +1628,12 @@ def _write_target(target: str | ClaimRef | SubjectRef | SlotRef) -> str | SlotRe
 
 _WriteSubject = str | SubjectRef
 _WriteField = str | ClaimTypeRef
-_WriteValue = ClaimValue | SubjectRef | LiteralValue
+_WriteValue = ClaimValue | SubjectRef | LiteralValue | NoneValue
 
 
 def _batch_operands(
     verb: str, operands: tuple[Any, ...], subject: _WriteSubject | None
-) -> tuple[str | None, str, ClaimValue]:
+) -> tuple[str | None, str, WriteValue]:
     """``(subject, field, value)`` positionally, or ``(field, value)`` with a default subject."""
 
     if len(operands) == 3:
@@ -3371,7 +3381,7 @@ class Cruxible:
         self,
         subject: str | SubjectRef,
         field: str | ClaimTypeRef,
-        value: ClaimValue | SubjectRef | LiteralValue,
+        value: ClaimValue | SubjectRef | LiteralValue | NoneValue,
         *,
         because: str,
         evidence: Evidence | AuthoredSection | None = None,
@@ -3390,7 +3400,9 @@ class Cruxible:
         writes nothing. By default it refuses when the field changed since this
         context's coordinate; ``expect`` compares by value instead: it refuses
         unless the field holds that value now (a list for several, ``[]`` for
-        none). A refusal raises ``WriteRefusalError``; check
+        none). ``value=NoneValue(none=None)`` states that the field holds
+        nothing (a none, on a ClaimType that declares an inverse; cite evidence
+        its inverse rules admit). A refusal raises ``WriteRefusalError``; check
         ``outcome.warnings`` for a verdict that is not supported.
 
         Next: ``outcome.next`` names what is still needed; ``cx.get(f"{subject}")`` reads
@@ -3444,7 +3456,7 @@ class Cruxible:
         self,
         subject: str | SubjectRef,
         field: str | ClaimTypeRef,
-        value: ClaimValue | SubjectRef | LiteralValue,
+        value: ClaimValue | SubjectRef | LiteralValue | NoneValue,
         *,
         because: str,
         evidence: Evidence | AuthoredSection | None = None,
@@ -3459,7 +3471,9 @@ class Cruxible:
         As ``set`` for the rest: a missing Subject of a known kind is added, it
         accepts in the same call when policy lets you, and ``dry_run`` writes
         nothing. A value already there is answered as done (``expect_absent=True``
-        refuses instead). A refusal raises ``WriteRefusalError``.
+        refuses instead). ``value=NoneValue(none=KEY)`` adds a none: the field
+        does not hold KEY (retire a value it holds in the same ``changes()``
+        batch). A refusal raises ``WriteRefusalError``.
 
         Next: ``outcome.next`` names what is still needed; ``cx.get(f"{subject}")`` reads
         the values back.

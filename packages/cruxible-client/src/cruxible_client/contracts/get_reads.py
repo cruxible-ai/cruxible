@@ -229,16 +229,33 @@ class GetClaimCard(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class GetNone(_StrictGetModel):
+    """One none in a field: a live inverse Claim saying the field holds nothing.
+
+    ``of`` is the unit it covers: absent for a one-valued field's whole slot,
+    else the value (a Subject as kind/id) or key value the field does not hold.
+    """
+
+    claim: str
+    of: ShownValue = Field(default=None, exclude_if=_omit_none)
+    verdict: str
+    flags: tuple[ReadFlag, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+
 class GetSubjectClaim(_StrictGetModel):
     predicate: str
     qualifier: str | None = Field(default=None, exclude_if=_omit_none)
     # The Claim behind the value; a list, aligned with ``value``, when the row
-    # shows several (a many-valued predicate or a contested slot).
+    # shows several (a many-valued predicate or a contested slot). A field that
+    # holds only nones shows no value: ``claim`` and ``value`` are empty lists.
     claim: str | tuple[str, ...]
     value: ShownValue
     # An exact-content row's digests, aligned with ``claim`` the same way.
     content_digest: str | tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
     flags: tuple[ReadFlag, ...] = ()
+    # The field's live nones (ClaimType v9 inverses): never values. A field
+    # with no value and no current none is unknown.
+    nones: tuple[GetNone, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class GetIncomingClaim(_StrictGetModel):
@@ -1000,6 +1017,7 @@ __all__ = [
     "GetRevision",
     "GetSourceAcquisitionPolicyCard",
     "GetSubjectCard",
+    "GetNone",
     "GetSubjectClaim",
     "GetSubjectHistory",
     "ReadFlag",

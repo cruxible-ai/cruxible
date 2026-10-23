@@ -57,6 +57,7 @@ from cruxible_client.contracts.compact_query import (
     QueryFlag,
     QueryFollowDirection,
     QueryMode,
+    QueryNone,
     QueryReceipt,
     QueryReplay,
     QueryRequest,
@@ -115,10 +116,12 @@ from cruxible_core.service.discovery.query import (
     evaluate_accepted_query,
 )
 from cruxible_core.service.discovery.query_values import (
+    LiveNone,
     LiveValue,
     ValueIndex,
     distinct,
     ensure_values,
+    read_live_nones,
     read_live_values,
     subject_labels,
     subject_lifecycles,
@@ -317,15 +320,16 @@ class _InlineFilter:
     value: object
 
 
-ROW_METADATA = frozenset({"subject", "subject_id", "flags", "claims", "lifecycle"})
+ROW_METADATA = frozenset({"subject", "subject_id", "flags", "claims", "lifecycle", "nones"})
 
 
 def _out(name: str) -> str:
     """The row key a column's values are served under.
 
     ``subject``, ``subject_id`` and ``flags`` are row metadata on every Subject
-    row, ``claims`` when a query asks for each cell's Claims, and ``lifecycle``
-    when its ``status`` admits retired Subjects. A column named like one of them
+    row, ``claims`` when a query asks for each cell's Claims, ``nones`` when a
+    field holds live nones, and ``lifecycle`` when its ``status`` admits
+    retired Subjects. A column named like one of them
     keeps its values under ``value.<name>`` instead of overwriting the metadata
     or losing its values.
     ``_column_keys`` then makes the keys unique across the whole column set; a
@@ -1037,10 +1041,33 @@ class _RowRenderer:
                 if path is None or column.field is None or column.field.predicate is None:
                     continue
                 slot_members.extend(self.values.slot(path, column.field.predicate))
+        # The page's nones (inverse Claims), read only for its inverse-bearing
+        # columns' slots: never values, listed beside them under ``nones``.
+        inverse_predicates: dict[str, set[str]] = {}
+        for column in self.columns:
+            info = None if column.field is None else column.field.info
+            if not isinstance(info, str) and info is not None and info.claim_type.inverse:
+                inverse_predicates.setdefault(column.binding, set()).add(info.predicate)
+        nones: dict[tuple[str, str], list[LiveNone]] = {}
+        if inverse_predicates:
+            with self.instance.bind_accepted_projection(self.coordinate) as projection:
+                for binding, wanted in sorted(inverse_predicates.items()):
+                    for found_none in read_live_nones(
+                        projection.typed.connection,
+                        subject_paths=by_binding.get(binding, set()),
+                        predicates=wanted,
+                    ):
+                        nones.setdefault(
+                            (found_none.subject_path, found_none.predicate), []
+                        ).append(found_none)
+        # A none contends in its slot, so each slot's resolution reads it too.
         reads = claim_reads(
             self.instance,
             self.coordinate,
-            identities=[item.identity for item in slot_members],
+            identities=[
+                *(item.identity for item in slot_members),
+                *(item.identity for found in nones.values() for item in found),
+            ],
             evaluation_time=self.evaluation_time,
         )
         rendered: list[dict[str, Any]] = []
@@ -1055,6 +1082,7 @@ class _RowRenderer:
                 out["lifecycle"] = lifecycles.get(root or "", "live")
             row_flags: set[QueryFlag] = set(extra_flags[position]) if extra_flags else set()
             cell_claims: dict[str, list[dict[str, Any]]] = {}
+            cell_nones: dict[str, list[dict[str, Any]]] = {}
             for column in self.columns:
                 path = row.get(column.binding)
                 if column.field is None:
@@ -1091,9 +1119,33 @@ class _RowRenderer:
                         self._cell_claim(item, reads).model_dump(mode="json")
                         for item in (*live, *retired)
                     ]
+                slot_nones = [] if path is None else nones.get((path, info.predicate), [])
+                shown_nones = [
+                    (none, reads[none.identity])
+                    for none in slot_nones
+                    if none.identity in reads
+                    and ("live" in self.status or reads[none.identity].status in self.status)
+                ]
+                for none, read in shown_nones:
+                    row_flags.update(read.flags)
+                    self.served.add(claim_path(none.identity.removeprefix("Claim:")))
+                if shown_nones:
+                    cell_nones[column.name] = [
+                        QueryNone(
+                            claim=none.identity.removeprefix("Claim:"),
+                            of=summary_value(none.of),
+                            verdict=read.verdict,
+                            status=cast(Any, read.status),
+                            flags=read.flags,
+                            qualifier=none.qualifier,
+                        ).model_dump(mode="json")
+                        for none, read in shown_nones
+                    ]
             out["flags"] = ordered_flags(row_flags)
             if self.claims:
                 out["claims"] = cell_claims
+            if cell_nones:
+                out["nones"] = cell_nones
             rendered.append(out)
         return rendered
 
@@ -2661,7 +2713,7 @@ def service_playbill_query(
     # cell's Claims with theirs, already shown.
     rows: list[dict[str, Any]] = [
         {
-            key: value if key in {"flags", "claims"} else summary_value(value)
+            key: value if key in {"flags", "claims", "nones"} else summary_value(value)
             for key, value in row.items()
         }
         for row in answer.render(page)

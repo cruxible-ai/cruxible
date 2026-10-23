@@ -92,7 +92,7 @@ if TYPE_CHECKING:
         ShownObject,
         TruncatedText,
     )
-    from cruxible_client.contracts.write import SlotRef
+    from cruxible_client.contracts.write import NoneValue, SlotRef
     from cruxible_client.transport.http import CruxibleClient
 
 
@@ -153,6 +153,7 @@ __all__ = [
     "QueryRef",
     "QueryResult",
     "ReferentSensitivity",
+    "NoneValue",
     "SlotRef",
     "SourceRef",
     "StateTapNode",
@@ -245,10 +246,10 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.contracts import read_values
 
         return getattr(read_values, name)
-    if name == "SlotRef":
-        from cruxible_client.contracts.write import SlotRef
+    if name in {"NoneValue", "SlotRef"}:
+        from cruxible_client.contracts import write
 
-        return SlotRef
+        return getattr(write, name)
     if name in {
         "KindNamespace",
         "World",

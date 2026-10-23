@@ -93,6 +93,7 @@ from cruxible_client.contracts.get_reads import (
     GetIncoming,
     GetIncomingClaim,
     GetLineRuns,
+    GetNone,
     GetPrincipalCard,
     GetProcedureCard,
     GetProcedureNode,
@@ -1068,9 +1069,22 @@ def _render_proposal_step(surface: ReadSurface, step: str, proposal_id: str) -> 
 
 
 def _claim_value(row: ClaimValueRecord) -> object:
+    if row.object_kind == "none":
+        # A none contending in a one-valued slot is shown as the none it states.
+        return {"none": _none_of(row.object)}
     if row.object_kind == "subject" and isinstance(row.value, str):
         return _subject_ref(row.value)
     return row.value
+
+
+def _none_of(obj: object) -> object:
+    """The unit a none says is empty, as a read shows it: None for a whole slot."""
+
+    assert isinstance(obj, NoneClaimObject)
+    of = obj.of
+    if isinstance(of, SubjectClaimObject):
+        return _subject_ref(of.address.artifact_path)
+    return None if of is None else of.value
 
 
 def _value_key(row: ClaimValueRecord) -> str:
@@ -1269,11 +1283,37 @@ def _subject_card(
         slots[(item.predicate, item.qualifier)].append(item)
     entries: list[GetSubjectClaim] = []
     evidence_steps: list[str] = []
-    for (predicate, qualifier), members in sorted(
+    for (predicate, qualifier), slot_members in sorted(
         slots.items(), key=lambda pair: (pair[0][0], pair[0][1] or "")
     ):
         declared = claim_types.get(predicate)
         many = declared is not None and declared.cardinality == "many"
+        # A none (an inverse Claim) is never a value: it is listed beside them.
+        members = [item for item in slot_members if item.object_kind != "none"]
+        nones = tuple(
+            GetNone(
+                claim=item.claim_id,
+                of=summary_value(_none_of(item.object)),
+                verdict=item.verdict,
+                flags=verdict_flags(
+                    item.verdict, item.status, held=f"Claim:{item.claim_id}" in held
+                ),
+            )
+            for item in slot_members
+            if item.object_kind == "none"
+        )
+        if not members:
+            entries.append(
+                GetSubjectClaim(
+                    predicate=short_field_name(predicate, kind, accepted_predicates),
+                    qualifier=qualifier,
+                    claim=(),
+                    value=[],
+                    flags=tuple(ordered_flags({flag for item in nones for flag in item.flags})),
+                    nones=nones,
+                )
+            )
+            continue
         # The slot's answer: what resolution selected, or every live contender
         # while it is contested. Overturned and refused contenders are not values.
         shown = [item for item in members if item.status in {"accepted", "conflicted"}] or members
@@ -1295,6 +1335,8 @@ def _subject_card(
             marks.update(
                 verdict_flags(item.verdict, item.status, held=f"Claim:{item.claim_id}" in held)
             )
+        for none in nones:
+            marks.update(none.flags)
         listed = many or len(values) > 1
         claims_shown = tuple(item.claim_id for item in shown)
         reads = [whole_value_read(item, coordinate.git_oid) for item in claims_shown]
@@ -1316,6 +1358,7 @@ def _subject_card(
                 value=displayed_value,
                 content_digest=(digests if listed else digests[0]) if digests else None,
                 flags=tuple(ordered_flags(marks)),
+                nones=nones,
             )
         )
     any_claim_flagged = any(entry.flags for entry in entries)

@@ -375,13 +375,32 @@ class QueryClaimValue(QueryClaim):
     predicate: str
 
 
+class QueryNone(BaseModel):
+    """One none behind a cell: ``rows[i].nones[column]`` lists a field's live nones.
+
+    A none (a ClaimType v9 inverse Claim) says the field holds nothing (``of``
+    absent: a one-valued field's whole slot) or does not hold ``of``; it is
+    never a cell value. A cell with no value and no current none is unknown.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    claim: str
+    of: ShownValue = Field(default=None, exclude_if=_is_none)
+    verdict: str
+    status: QueryCellClaimStatus
+    flags: tuple[QueryFlag, ...] = Field(default=(), exclude_if=lambda value: not value)
+    qualifier: str | None = Field(default=None, exclude_if=_is_none)
+
+
 #: One row entry of a query page: a column's value as a summary shows it (a
-#: TruncatedText preview when long), the row's ``subject``/``flags``, or, under
-#: ``claims=True``, ``claims`` -- each column's Claims, typed.
+#: TruncatedText preview when long), the row's ``subject``/``flags``, under
+#: ``claims=True``, ``claims`` -- each column's Claims, typed -- or ``nones``,
+#: each inverse-bearing column's live nones.
 QueryCell = TypeAliasType(
     "QueryCell",
     "TruncatedText | ExactContentRef | ShownObject | str | bool | int | float | None"
-    " | list[QueryCell] | dict[str, list[QueryClaim]]",
+    " | list[QueryCell] | dict[str, list[QueryClaim]] | dict[str, list[QueryNone]]",
 )
 
 
@@ -465,6 +484,7 @@ __all__ = [
     "QueryCell",
     "QueryClaim",
     "QueryClaimValue",
+    "QueryNone",
     "QueryColumn",
     "QueryReceipt",
     "QueryReplay",
