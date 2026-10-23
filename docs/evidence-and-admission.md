@@ -297,27 +297,25 @@ before they run; a Capture under any other contract keeps its bytes. Erasing
 needs `graph_write`, and it cannot be undone, so it commits only with the
 preview's `--at`.
 
-What goes is the body: the bytes replay reads. The Capture's envelope (what was
-observed, when, by which run, under which contract) stays, with an erasure
-record of who erased it, when and why; never put the secret in `--because`.
-If the same bytes are observed again later (a new Capture of them), erasing
-them again records a second erasure; so does erasing bytes present again under
-an erasure recorded before erasures kept storage positions, which cannot show
-the bytes are the same ones. A judgment counts the erasures recorded before it,
-in the erasure journal's order (not by clock or head), and its evidence keeps
-that position, so replaying history reproduces what it saw. A judgment
-accepted before positions were kept replays by the rule it was made under (an
-erasure recorded under an accepted head before its own).
-Claims citing it keep their history. `get --detail evidence` shows the Capture
-as erased, and their verdicts read it as no longer replayable, with each
+What goes is the body: the bytes replay reads. Erasing deletes them and
+appends one erasure record: who erased it, when, why, under which contract,
+and which bodies; never put the secret in `--because`. The Capture's envelope
+(what was observed, when, by which run, under which contract) stays, and a
+Claim citing it keeps standing on its evidence digest and source pointer: its
+history and its accepted judgments are unchanged, and it can still be revised
+or retired. Erasing bytes that are present again (the same bytes observed
+anew, or an erase that was interrupted) appends another record.
+
+A missing body reads as erased when an authorized erasure record names it;
+missing with no record, it is a defect. `get --detail evidence` shows the
+Capture as erased, and verdicts read the body as no longer present, with each
 field's own rules deciding what that means: a field that requires current
-evidence (the default) reads such a Claim `stale`. A live Claim left with no retained
-evidence appears in `next` as `claim_evidence_erased`. Move it onto a fresh
-observation with `cruxible rebind CLAIM --capture CAP-...` (a new Capture under
-the same contract); until then the Claim cannot be revised or retired, since
-both would carry the erased Capture, whose body no longer verifies. The ledger
-and its Git mirror never held these bytes, so nothing there changes; a value a
-Claim states is accepted state and is not erased.
+evidence (the default) reads such a Claim `stale (evidence erased)`. A live
+Claim left with no retained evidence appears in `next` as
+`claim_evidence_erased`; move it onto a fresh observation with
+`cruxible rebind CLAIM --capture CAP-...` (a new Capture under the same
+contract). The ledger and its Git mirror never held these bytes, so nothing
+there changes; a value a Claim states is accepted state and is not erased.
 
 ## Pitfalls
 

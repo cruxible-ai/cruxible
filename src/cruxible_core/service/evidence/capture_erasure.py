@@ -206,10 +206,9 @@ def service_erase_capture(
             )
         rule = _erasure_rule(contract)
         assert rule is not None  # _checked refused otherwise
-        # An unfinished erasure (its bytes never landed again) is retried under its
-        # record; bytes stored again since are erased anew, under a record of their own.
-        resume = None if existing is None else store.unfinished(digest)
-        draft = resume or CaptureErasureRecord(
+        # Bytes present are erased under a new record, whether they were stored
+        # again after an erasure or an interrupted erase left them.
+        draft = CaptureErasureRecord(
             capture_digest=digest,
             capture_contract=contract.identity.qualified,
             capture_contract_digest=envelope.capture_contract_digest,
@@ -225,7 +224,7 @@ def service_erase_capture(
         record = existing if already and existing is not None else draft
         if not previewing and not already:
             # The record lands first: an interrupted erase leaves it and the
-            # bytes, and the retry finishes the unlink under the same record.
+            # bytes, and erasing again appends another record.
             record = store.record(
                 draft, actor_id=actor_id, coordinate=AcceptedCoordinate.from_internal(head)
             )

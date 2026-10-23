@@ -166,20 +166,15 @@ class _ObservedReceipts:
         self._own.add(memo.capture_digest)
         self.source.remember_verified(memo)
 
-    def body_erasures(self, body_digests: tuple[str, ...]) -> tuple[RecordedCaptureErasure, ...]:
+    def body_erasures(self, body_digests: tuple[str, ...]) -> Mapping[str, RecordedCaptureErasure]:
         if not isinstance(self.source, CaptureErasureLookupProtocol):
-            return ()
+            return {}
         found = self.source.body_erasures(body_digests)
         if found:
             # Erasure state is not a body this evaluation observes, so an answer
             # that depends on it is never reused across submits.
             self.scope.ineligible = True
         return found
-
-    def erasure_preceded(self, capture_digest: str, erasure: RecordedCaptureErasure) -> bool:
-        if not isinstance(self.source, CaptureErasureLookupProtocol):
-            return True
-        return self.source.erasure_preceded(capture_digest, erasure)
 
 
 class PreparedEvaluationScope:

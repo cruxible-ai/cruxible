@@ -2837,18 +2837,15 @@ def build_derived_cas_capture(
 class CaptureErasureLookupProtocol(Protocol):
     """A verification context that can also say which retained bodies were erased.
 
-    ``body_erasures`` answers every governed erasure record naming any of the
-    given body digests, in recorded order. A body is content-addressed, so one
-    Capture's erasure destroys the same bytes for every Capture that holds them,
-    those that had landed when it was recorded: ``erasure_preceded`` answers that
-    from storage positions (a Capture landed later holds bytes stored again).
+    ``body_erasures`` answers, for each given body digest an erasure record
+    names, the latest such record: one keyed lookup per body. A body is
+    content-addressed, so one Capture's erasure names the same bytes for every
+    Capture that holds them.
     """
 
     def body_erasures(
         self, body_digests: tuple[str, ...]
-    ) -> tuple[RecordedCaptureErasure, ...]: ...
-
-    def erasure_preceded(self, capture_digest: str, erasure: RecordedCaptureErasure) -> bool: ...
+    ) -> Mapping[str, RecordedCaptureErasure]: ...
 
 
 def capture_retained_body_digests(envelope: CaptureEnvelopeAny) -> tuple[str, ...]:
