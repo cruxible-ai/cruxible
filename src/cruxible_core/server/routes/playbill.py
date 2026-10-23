@@ -330,7 +330,8 @@ def capture_upload_part(
     part: Annotated[int, PathParam(ge=0)],
     content: Annotated[bytes, Body(media_type="application/octet-stream")],
 ) -> CaptureUploadSession:
-    # The part arrives as raw octets: at most 512 KiB, so it stays under a 1 MB edge cap.
+    # The part arrives as raw octets, at most 512 KiB (under a 1 MB edge cap);
+    # UploadPartBodyLimit refuses a larger body before FastAPI buffers it.
     return playbill_api.playbill_capture_upload_part(
         resolve_server_instance_id(instance_id), upload_id, part, content=content
     )

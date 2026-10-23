@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextvars
 import hmac
-import re
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -62,6 +61,7 @@ from cruxible_core.server.route_paths import (
     api_v1_path,
     route_template_matches,
 )
+from cruxible_core.server.upload_part_limit import UPLOAD_PART_ROUTE
 from cruxible_core.service.identity import principal_refusal
 
 _AUTH_CONTEXT: contextvars.ContextVar["ResolvedAuthContext | None"] = contextvars.ContextVar(
@@ -95,7 +95,6 @@ _JSON_MEDIA_TYPE = "application/json"
 # CORS-simple type either, so a browser must preflight it; it is admitted on the
 # part route alone, and every other bodied route stays JSON-only.
 _OCTET_MEDIA_TYPE = "application/octet-stream"
-_UPLOAD_PART_ROUTE = re.compile(r"^/api/v1/[^/]+/uploads/[0-9a-f]{32}/parts/[0-9]+$")
 
 MISSING_BEARER_CREDENTIAL_MESSAGE = (
     "Daemon reachable; credential missing. Supply a bearer token in "
@@ -429,7 +428,7 @@ async def token_auth_middleware(
         and _request_media_type(request) != _JSON_MEDIA_TYPE
         and not (
             _request_media_type(request) == _OCTET_MEDIA_TYPE
-            and _UPLOAD_PART_ROUTE.fullmatch(request.url.path) is not None
+            and UPLOAD_PART_ROUTE.fullmatch(request.url.path) is not None
         )
     ):
         return _forbidden_origin_response(request)

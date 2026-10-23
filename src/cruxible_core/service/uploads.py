@@ -10,12 +10,23 @@ Layout, under the operator's ``upload_root`` (outside the state root)::
 Every directory is created by the daemon (0700) and checked to be a real
 directory, never a link; every file is opened with ``O_NOFOLLOW`` and created
 with ``O_EXCL``. A session is bound to the principal that opened it: another
-principal's upload id reads as not found. Completing claims the session once
-(an atomic ``mkdir``), assembles and verifies the file against the declared
-length and sha256, and removes the whole session directory when the run
-returns or raises, so staging is always transient. Expired sessions of the
-instance are swept when the next one opens: the sweep reads only this
-instance's open sessions, never the instance's state.
+principal's upload id reads as not found.
+
+One lock file per instance (``<upload_root>/<instance_id>/.lock``, an exclusive
+``flock``) serializes every lifecycle decision across stores, threads and
+processes: admission (sweep, count against the open-session cap, create and
+publish the session record), the completion claim, and expiry removal. A
+session is therefore never seen half-initialized, and the cap holds under
+concurrent opens.
+
+Completing claims the session under that lock by creating its ``completing``
+lease with ``O_EXCL`` and holding an exclusive ``flock`` on it for the whole
+run. Expiry never removes a session whose lease is held: an idle session
+expires, a live completion keeps its staged file until its own exit removes the
+whole session directory (however the run exits), and a lease left by a crashed
+process (no holder) is recovered by the next sweep or claim. Expired sessions of
+the instance are swept when the next one opens: the sweep reads only this
+instance's session directories, never the instance's state.
 
 No message here carries uploaded bytes: refusals name lengths, part numbers and
 digests only.
@@ -24,6 +35,7 @@ digests only.
 from __future__ import annotations
 
 import errno
+import fcntl
 import hashlib
 import os
 import re
@@ -61,6 +73,7 @@ UPLOAD_WORKSPACE_NAME = "uploads"
 _SESSION_FILE = "session.json"
 _PARTS = "parts"
 _COMPLETING = "completing"
+_LOCK_FILE = ".lock"
 _INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _FILE_FLAGS = os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
@@ -157,6 +170,22 @@ def _remove_tree(path: Path) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
+def _completion_live(directory: Path) -> bool:
+    """Whether a process holds this session's completion lease right now."""
+
+    try:
+        descriptor = os.open(directory / _COMPLETING, os.O_RDONLY | _FILE_FLAGS)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    finally:
+        os.close(descriptor)
+    return False
+
+
 class CaptureUploadStore:
     """One instance's upload sessions under the daemon's upload root."""
 
@@ -170,6 +199,21 @@ class CaptureUploadStore:
         self.limits = limits
 
     # -- sessions ---------------------------------------------------------------
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """The instance's upload lock: every lifecycle decision is made under it."""
+
+        _make_directory(self.root)
+        _make_directory(self.instance_root)
+        descriptor = os.open(
+            self.instance_root / _LOCK_FILE, os.O_RDWR | os.O_CREAT | _FILE_FLAGS, 0o600
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(descriptor)
 
     def _session_dir(self, value: str) -> Path:
         try:
@@ -187,20 +231,36 @@ class CaptureUploadStore:
             return None
 
     def _owned(
-        self, principal_id: str, value: str, now: datetime
+        self, principal_id: str, value: str, now: datetime, *, held: bool = False
     ) -> tuple[Path, CaptureUploadSessionRecord]:
         directory = self._session_dir(value)
         record = self._record(directory)
         if record is None or record.principal_id != principal_id or record.upload_id != value:
             raise _not_found()
         if record.expires_at <= now:
-            _remove_tree(directory)
-            raise CaptureUploadRefused(
-                "expired",
-                f"Upload {value} expired at {record.expires_at.isoformat()}; open a new upload.",
-                http_status=410,
-            )
+            if held:
+                self._expire(directory, record)
+            else:
+                with self._locked():
+                    self._expire(directory, record)
         return directory, record
+
+    def _expire(self, directory: Path, record: CaptureUploadSessionRecord) -> None:
+        """Remove an expired session, unless its completion is running (lock held)."""
+
+        if _completion_live(directory):
+            raise CaptureUploadRefused(
+                "in_progress",
+                f"Upload {record.upload_id} is completing past its expiry; wait for its result.",
+                http_status=409,
+            )
+        _remove_tree(directory)
+        raise CaptureUploadRefused(
+            "expired",
+            f"Upload {record.upload_id} expired at {record.expires_at.isoformat()}; "
+            "open a new upload.",
+            http_status=410,
+        )
 
     def _received(self, directory: Path, record: CaptureUploadSessionRecord) -> tuple[int, ...]:
         parts = directory / _PARTS
@@ -226,7 +286,11 @@ class CaptureUploadStore:
         )
 
     def _sweep(self, now: datetime) -> int:
-        """Remove this instance's expired or unreadable sessions; count the open ones."""
+        """Remove this instance's expired or unreadable sessions; count the open ones.
+
+        Runs under the instance lock, so no session is mid-initialization. A
+        session whose completion lease is held is live whatever its expiry.
+        """
 
         open_sessions = 0
         try:
@@ -234,6 +298,8 @@ class CaptureUploadStore:
         except FileNotFoundError:
             return 0
         for name in entries:
+            if name == _LOCK_FILE:
+                continue
             directory = self.instance_root / name
             try:
                 is_directory = stat.S_ISDIR(os.lstat(directory).st_mode)
@@ -242,6 +308,9 @@ class CaptureUploadStore:
             if not is_directory:
                 # Nothing but session directories belongs here.
                 os.unlink(directory)
+                continue
+            if _completion_live(directory):
+                open_sessions += 1
                 continue
             record = self._record(directory)
             if record is None or record.expires_at <= now:
@@ -260,15 +329,19 @@ class CaptureUploadStore:
                 f"{request.byte_length}.",
                 http_status=413,
             )
-        _make_directory(self.root)
-        _make_directory(self.instance_root)
-        if self._sweep(now) >= self.limits.max_open_sessions:
-            raise CaptureUploadRefused(
-                "sessions_exhausted",
-                f"This instance already has {self.limits.max_open_sessions} open uploads; "
-                "complete one or let it expire.",
-                http_status=429,
-            )
+        with self._locked():
+            if self._sweep(now) >= self.limits.max_open_sessions:
+                raise CaptureUploadRefused(
+                    "sessions_exhausted",
+                    f"This instance already has {self.limits.max_open_sessions} open uploads; "
+                    "complete one or let it expire.",
+                    http_status=429,
+                )
+            return self._create(principal_id=principal_id, request=request, now=now)
+
+    def _create(
+        self, *, principal_id: str, request: CaptureUploadOpenRequest, now: datetime
+    ) -> CaptureUploadSession:
         value = secrets.token_hex(16)
         directory = self.instance_root / value
         os.mkdir(directory, 0o700)
@@ -317,7 +390,11 @@ class CaptureUploadStore:
             )
         target = directory / _PARTS / str(part)
         staging = directory / _PARTS / f".{part}.{secrets.token_hex(8)}"
-        _write_new(staging, content)
+        try:
+            _write_new(staging, content)
+        except FileNotFoundError:
+            # Completed or expired while this part was in flight.
+            raise _not_found() from None
         try:
             os.link(staging, target, follow_symlinks=False)
         except FileExistsError:
@@ -343,30 +420,49 @@ class CaptureUploadStore:
         however it exits; a second completion of the same upload is refused.
         """
 
-        directory, record = self._owned(principal_id, upload, now)
-        view = self._view(directory, record)
-        if view.missing_parts:
-            shown = ", ".join(str(part) for part in view.missing_parts[:16])
-            raise CaptureUploadRefused(
-                "incomplete",
-                f"Upload {upload} still lacks part(s) {shown}"
-                + (" and more" if len(view.missing_parts) > 16 else "")
-                + "; send them, then complete it.",
-                http_status=409,
-            )
-        try:
-            os.mkdir(directory / _COMPLETING, 0o700)
-        except FileExistsError:
-            raise CaptureUploadRefused(
-                "in_progress", f"Upload {upload} is already completing.", http_status=409
-            ) from None
+        with self._locked():
+            directory, record = self._owned(principal_id, upload, now, held=True)
+            view = self._view(directory, record)
+            if view.missing_parts:
+                shown = ", ".join(str(part) for part in view.missing_parts[:16])
+                raise CaptureUploadRefused(
+                    "incomplete",
+                    f"Upload {upload} still lacks part(s) {shown}"
+                    + (" and more" if len(view.missing_parts) > 16 else "")
+                    + "; send them, then complete it.",
+                    http_status=409,
+                )
+            lease = self._claim(directory, upload)
         try:
             staging_root = directory / UPLOAD_WORKSPACE_NAME
             os.mkdir(staging_root, 0o700)
             self._assemble(directory, record, staging_root / record.filename)
             yield staging_root, view
         finally:
+            # The lease is held until the session is gone, so no sweep or
+            # expiry can take the staged file from under the run.
             _remove_tree(directory)
+            os.close(lease)
+
+    def _claim(self, directory: Path, upload: str) -> int:
+        """Take the completion lease (instance lock held); a crashed one is recovered."""
+
+        lease_path = directory / _COMPLETING
+        if lease_path.exists() or lease_path.is_symlink():
+            if _completion_live(directory):
+                raise CaptureUploadRefused(
+                    "in_progress", f"Upload {upload} is already completing.", http_status=409
+                )
+            # A completion that died without cleaning up: start it over.
+            _remove_tree(directory / UPLOAD_WORKSPACE_NAME)
+            os.unlink(lease_path)
+        lease = os.open(lease_path, os.O_RDWR | os.O_CREAT | os.O_EXCL | _FILE_FLAGS, 0o600)
+        try:
+            fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BaseException:
+            os.close(lease)
+            raise
+        return lease
 
     def _assemble(self, directory: Path, record: CaptureUploadSessionRecord, target: Path) -> None:
         digest = hashlib.sha256()

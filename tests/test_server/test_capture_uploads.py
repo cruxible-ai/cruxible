@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -98,6 +100,12 @@ def _send(store: CaptureUploadStore, session: Any, content: bytes, principal: st
     return session
 
 
+def _sessions(root: Path) -> list[str]:
+    """What the instance's staging area holds besides its lock file."""
+
+    return sorted(name for name in os.listdir(root) if name != ".lock")
+
+
 def _refusal(caught: pytest.ExceptionInfo[CaptureUploadRefused]) -> str:
     assert SECRET not in str(caught.value).encode()
     return caught.value.code
@@ -127,7 +135,7 @@ def test_staging_is_removed_when_the_run_raises(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError):
         with store.staged(principal_id="alice", upload=session.upload_id, now=NOW):
             raise RuntimeError("the run failed")
-    assert os.listdir(store.instance_root) == []
+    assert _sessions(store.instance_root) == []
 
 
 def test_another_principal_never_sees_or_feeds_an_upload(tmp_path: Path) -> None:
@@ -200,7 +208,7 @@ def test_bytes_that_miss_the_declared_sha256_are_refused_and_dropped(tmp_path: P
         with store.staged(principal_id="alice", upload=session.upload_id, now=NOW):
             pytest.fail("a mismatched upload never reaches its run")
     assert _refusal(caught) == "cruxible.upload.digest_mismatch"
-    assert os.listdir(store.instance_root) == []
+    assert _sessions(store.instance_root) == []
 
 
 def test_an_incomplete_upload_stays_open_for_its_missing_parts(tmp_path: Path) -> None:
@@ -260,7 +268,7 @@ def test_sessions_expire_and_are_swept_at_the_next_open(tmp_path: Path) -> None:
         request=CaptureUploadOpenRequest(byte_length=1, sha256=_sha(b"z"), filename="z"),
         now=NOW + timedelta(seconds=200),
     )
-    remaining = os.listdir(store.instance_root)
+    remaining = _sessions(store.instance_root)
     assert stale.upload_id not in remaining and "stray" not in remaining
     assert len(remaining) == 1
 
@@ -277,6 +285,197 @@ def test_a_second_completion_is_refused_while_the_first_runs(tmp_path: Path) -> 
                 principal_id="alice", upload=session.upload_id, part=0, content=SECRET, now=NOW
             )
         assert _refusal(caught) == "cruxible.upload.in_progress"
+
+
+def test_concurrent_opens_never_exceed_the_session_cap(tmp_path: Path, monkeypatch) -> None:
+    """UPLOAD-001: the count and the creation are one decision under the instance lock."""
+
+    from cruxible_core.service import uploads as module
+
+    real_sweep = module.CaptureUploadStore._sweep
+
+    def slow_sweep(self: CaptureUploadStore, now: datetime) -> int:
+        counted = real_sweep(self, now)
+        time.sleep(0.05)  # the window two unlocked openers both saw as free
+        return counted
+
+    monkeypatch.setattr(module.CaptureUploadStore, "_sweep", slow_sweep)
+    start = threading.Barrier(6)
+    outcomes: list[str] = []
+
+    def opener() -> None:
+        # A fresh store per call, as the manager builds them.
+        store = _store(tmp_path, max_open_sessions=2)
+        start.wait()
+        try:
+            _open(store, SECRET)
+            outcomes.append("opened")
+        except CaptureUploadRefused as exc:
+            outcomes.append(exc.code)
+
+    threads = [threading.Thread(target=opener) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(outcomes) == ["cruxible.upload.sessions_exhausted"] * 4 + ["opened"] * 2
+    assert len(_sessions(_store(tmp_path).instance_root)) == 2
+
+
+def test_an_open_mid_initialization_is_never_swept(tmp_path: Path, monkeypatch) -> None:
+    """UPLOAD-001: a second opener cannot see (and delete) a session before its record lands."""
+
+    from cruxible_core.service import uploads as module
+
+    real_write = module._write_new
+    first_writing = threading.Event()
+
+    def slow_write(path: Path, content: bytes) -> None:
+        if path.name == "session.json" and not first_writing.is_set():
+            first_writing.set()
+            time.sleep(0.2)
+        real_write(path, content)
+
+    monkeypatch.setattr(module, "_write_new", slow_write)
+    results: dict[str, object] = {}
+
+    def first() -> None:
+        try:
+            results["first"] = _open(_store(tmp_path), SECRET)
+        except Exception as exc:  # noqa: BLE001 - the regression is any failure here
+            results["first"] = exc
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    assert first_writing.wait(5)
+    second = _open(_store(tmp_path), SECRET, principal="bob")
+    thread.join()
+    first_session = results["first"]
+    assert not isinstance(first_session, Exception), first_session
+    store = _store(tmp_path)
+    assert store.session(principal_id="alice", upload=first_session.upload_id, now=NOW)  # type: ignore[attr-defined]
+    assert store.session(principal_id="bob", upload=second.upload_id, now=NOW)
+
+
+def test_a_completion_that_outlives_its_expiry_keeps_its_staged_file(tmp_path: Path) -> None:
+    """UPLOAD-002: expiry (a sweep or the owner's poll) never takes a live completion's file."""
+
+    store = _store(tmp_path, session_seconds=1.0, max_open_sessions=4)
+    session = _send(store, _open(store, SECRET), SECRET)
+    later = NOW + timedelta(seconds=2)
+    with store.staged(principal_id="alice", upload=session.upload_id, now=NOW) as (root, view):
+        staged = root / view.filename
+        # Another caller's open sweeps after Alice's expiry...
+        _store(tmp_path).open(
+            principal_id="bob",
+            request=CaptureUploadOpenRequest(
+                byte_length=5, sha256=_sha(b"other"), filename="other"
+            ),
+            now=later,
+        )
+        assert staged.read_bytes() == SECRET
+        # ...and so does the owner's own poll and late part.
+        for call in (
+            lambda: store.session(principal_id="alice", upload=session.upload_id, now=later),
+            lambda: store.put_part(
+                principal_id="alice", upload=session.upload_id, part=0, content=SECRET, now=later
+            ),
+        ):
+            with pytest.raises(CaptureUploadRefused) as caught:
+                call()
+            assert _refusal(caught) == "cruxible.upload.in_progress"
+        assert staged.read_bytes() == SECRET
+    assert session.upload_id not in _sessions(store.instance_root)
+
+
+def test_a_lease_a_crashed_completion_left_is_recovered(tmp_path: Path) -> None:
+    """UPLOAD-002: a lease nobody holds is not a live completion."""
+
+    store = _store(tmp_path, session_seconds=60.0)
+    session = _send(store, _open(store, SECRET), SECRET)
+    directory = store.instance_root / session.upload_id
+    (directory / "completing").write_bytes(b"")  # left by a process that died
+    (directory / "uploads").mkdir()
+    with store.staged(principal_id="alice", upload=session.upload_id, now=NOW) as (root, view):
+        assert (root / view.filename).read_bytes() == SECRET
+    abandoned = _send(store, _open(store, SECRET), SECRET)
+    (store.instance_root / abandoned.upload_id / "completing").write_bytes(b"")
+    _open(store, SECRET, principal="bob")  # within its expiry: kept
+    assert abandoned.upload_id in _sessions(store.instance_root)
+    store.open(
+        principal_id="bob",
+        request=CaptureUploadOpenRequest(byte_length=1, sha256=_sha(b"z"), filename="z"),
+        now=NOW + timedelta(seconds=61),
+    )
+    assert abandoned.upload_id not in _sessions(store.instance_root)
+
+
+class _Inner:
+    def __init__(self) -> None:
+        self.reached = False
+        self.body = b""
+
+    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+        self.reached = True
+        while True:
+            message = await receive()
+            self.body += message.get("body", b"")
+            if not message.get("more_body"):
+                break
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+
+def _drive(limiter_app, *, chunks: int, chunk: int, headers=()) -> tuple[int, int]:  # noqa: ANN001
+    """Run one part request through the limiter; return (status, chunks consumed)."""
+
+    import asyncio
+
+    consumed = 0
+    statuses: list[int] = []
+
+    async def receive():  # noqa: ANN202
+        nonlocal consumed
+        consumed += 1
+        return {"type": "http.request", "body": b"\x00" * chunk, "more_body": consumed < chunks}
+
+    async def send(message) -> None:  # noqa: ANN001
+        if message["type"] == "http.response.start":
+            statuses.append(message["status"])
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": f"/api/v1/inst_uploads/uploads/{'a' * 32}/parts/0",
+        "headers": list(headers),
+    }
+    asyncio.run(limiter_app(scope, receive, send))
+    return statuses[0], consumed
+
+
+def test_a_part_body_is_bounded_before_it_is_buffered() -> None:
+    """UPLOAD-003: reading stops at the bound; the handler is never reached."""
+
+    from cruxible_core.server.upload_part_limit import UploadPartBodyLimit
+
+    # A chunked stream with no Content-Length: 64 chunks of 64 KiB offered.
+    inner = _Inner()
+    status, consumed = _drive(UploadPartBodyLimit(inner), chunks=64, chunk=65_536)
+    assert (status, inner.reached) == (413, False)
+    assert consumed == UPLOAD_PART_SIZE // 65_536 + 1  # the bound plus the one chunk past it
+    # A declared length above the bound refuses before reading a byte.
+    inner = _Inner()
+    status, consumed = _drive(
+        UploadPartBodyLimit(inner),
+        chunks=64,
+        chunk=65_536,
+        headers=[(b"content-length", str(64 * 65_536).encode())],
+    )
+    assert (status, consumed, inner.reached) == (413, 0, False)
+    # A body within the bound reaches the handler unchanged.
+    inner = _Inner()
+    status, _consumed = _drive(UploadPartBodyLimit(inner), chunks=8, chunk=65_536)
+    assert (status, inner.reached, len(inner.body)) == (200, True, UPLOAD_PART_SIZE)
 
 
 # -- over HTTP --------------------------------------------------------------------
@@ -532,7 +731,7 @@ def test_an_upload_lands_as_a_capture_through_the_acquire_procedure(
     assert observation.source_read_receipt.relative_path == "advisory.txt"
     assert observation.source_read_receipt.bytes_digest == _sha(ADVISORY)
     # Staging is gone, and the upload with it.
-    assert os.listdir(upload_root / instance_id) == []
+    assert _sessions(upload_root / instance_id) == []
     with pytest.raises(CoreError) as caught:
         transport.capture_upload_status(instance_id, session.upload_id)
     assert getattr(caught.value, "error_code", None) == "cruxible.upload.not_found"
@@ -582,6 +781,29 @@ def test_a_part_travels_as_raw_octets_under_the_edge_cap(
         headers={"content-type": "application/octet-stream", "origin": "https://evil.test"},
     )
     assert hostile.status_code == 403
+
+
+def test_an_oversized_part_is_refused_before_any_handler_or_permission_runs(
+    upload_host: tuple[CruxibleClient, str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """UPLOAD-003 over the real app: the limit runs before the route, so before its gate."""
+
+    from cruxible_core.runtime import playbill_api
+
+    transport, instance_id, _root = upload_host
+
+    def unreachable(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("the part handler ran on an oversized body")
+
+    monkeypatch.setattr(playbill_api, "playbill_capture_upload_part", unreachable)
+    http = transport._client  # type: ignore[attr-defined]
+    route = f"/api/v1/{instance_id}/uploads/{'b' * 32}/parts/0"
+    for body in (b"\x00" * (UPLOAD_PART_SIZE + 1), iter([b"\x00" * 65_536] * 9)):
+        refused = http.post(
+            route, content=body, headers={"content-type": "application/octet-stream"}
+        )
+        assert refused.status_code == 413
+        assert refused.json()["error_code"] == "cruxible.upload.part_too_large"
 
 
 @pytest.mark.parametrize("upload_host", [False], indirect=True)

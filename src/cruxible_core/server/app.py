@@ -66,6 +66,7 @@ from cruxible_core.server.routes.runtime_credentials import (
     router as runtime_credentials_router,
 )
 from cruxible_core.server.state_lock import StateRootLock
+from cruxible_core.server.upload_part_limit import UploadPartBodyLimit
 
 _log = structlog.get_logger("cruxible.server.app")
 
@@ -156,6 +157,9 @@ def create_app() -> FastAPI:
     app = _HTTPRequestContextApp(
         title="cruxible", responses=STANDARD_ERROR_RESPONSES, lifespan=lifespan
     )
+    # Added first, so it sits inside the auth middleware: a part body is bounded
+    # after the caller is authenticated and before FastAPI buffers it.
+    app.add_middleware(UploadPartBodyLimit)
     app.middleware("http")(token_auth_middleware)
 
     @app.exception_handler(CoreError)
