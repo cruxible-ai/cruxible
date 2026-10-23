@@ -756,10 +756,18 @@ def _claim_object_text(statement: Mapping[str, object]) -> str:
     if not isinstance(claim_object, Mapping):
         return "?"
     if claim_object.get("kind") == "subject":
-        return _address_ref(claim_object.get("subject")) or "?"
+        return _address_ref(claim_object.get("address")) or "?"
     if claim_object.get("kind") == "literal":
         value = claim_object.get("value")
         return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    if claim_object.get("kind") == "none":
+        # An inverse Claim: the field holds nothing, or does not hold ``of``.
+        of = claim_object.get("of")
+        return (
+            "none"
+            if not isinstance(of, Mapping)
+            else f"none of {_claim_object_text({'object': of})}"
+        )
     return f"<{claim_object.get('kind')}>"
 
 

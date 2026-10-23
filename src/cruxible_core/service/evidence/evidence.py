@@ -49,6 +49,7 @@ from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactAny,
     ClaimLawEvidenceAny,
+    NoneClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -720,9 +721,13 @@ def _referent_digests(
     claim: ClaimArtifactAny,
 ) -> tuple[str, str | None]:
     subject_digest_value = _referent_digest(tree, claim.statement.subject.artifact_path)
+    named: object = claim.statement.object
+    # A none of a Subject (an object-keyed inverse) is judged as that object.
+    if isinstance(named, NoneClaimObject):
+        named = named.of
     object_digest = (
-        _referent_digest(tree, claim.statement.object.address.artifact_path)
-        if isinstance(claim.statement.object, SubjectClaimObject)
+        _referent_digest(tree, named.address.artifact_path)
+        if isinstance(named, SubjectClaimObject)
         else None
     )
     return subject_digest_value, object_digest
@@ -1113,42 +1118,56 @@ def _reproduced_claim_adjudication_rule(
         (False, True) if law_digest == CLAIM_LAW_V2_REVISION_10.digest else (False,)
     )
 
+    # An inverse Claim (a none) is judged by the rule of its inverse's horizon;
+    # the recorded digest says which one it was, so only a type with an inverse
+    # tries it.
+    inverse_options = (False, True) if claim_type.inverse is not None else (False,)
+
     def reproduces(item: ClaimType, digest: str) -> ClaimAdjudicationRuleAny | None:
         """The current rule this ClaimType version's recorded rule stands for, if any."""
 
-        for exempt in replay_exempt_options:
-            if (
-                claim_adjudication_rule_digest(
-                    claim_adjudication_rule(
-                        item, claim_type_digest=digest, origin_replay_exempt=exempt
+        for inverse in inverse_options:
+            for exempt in replay_exempt_options:
+                if (
+                    claim_adjudication_rule_digest(
+                        claim_adjudication_rule(
+                            item,
+                            claim_type_digest=digest,
+                            origin_replay_exempt=exempt,
+                            inverse=inverse,
+                        )
                     )
-                )
-                == evidence_digest
-            ):
-                return (
-                    claim_adjudication_rule(
-                        claim_type, claim_type_digest=current_digest, origin_replay_exempt=True
+                    == evidence_digest
+                ):
+                    return (
+                        claim_adjudication_rule(
+                            claim_type,
+                            claim_type_digest=current_digest,
+                            origin_replay_exempt=exempt,
+                            inverse=inverse,
+                        )
+                        if exempt or inverse
+                        else current_rule
                     )
-                    if exempt
-                    else current_rule
-                )
-            if creation_covered and (
-                claim_adjudication_rule_digest(
-                    claim_adjudication_rule(
-                        item,
-                        claim_type_digest=digest,
+                if creation_covered and (
+                    claim_adjudication_rule_digest(
+                        claim_adjudication_rule(
+                            item,
+                            claim_type_digest=digest,
+                            origin_supports=True,
+                            origin_replay_exempt=exempt,
+                            inverse=inverse,
+                        )
+                    )
+                    == evidence_digest
+                ):
+                    return claim_adjudication_rule(
+                        claim_type,
+                        claim_type_digest=current_digest,
                         origin_supports=True,
                         origin_replay_exempt=exempt,
+                        inverse=inverse,
                     )
-                )
-                == evidence_digest
-            ):
-                return claim_adjudication_rule(
-                    claim_type,
-                    claim_type_digest=current_digest,
-                    origin_supports=True,
-                    origin_replay_exempt=exempt,
-                )
         return None
 
     def verdict_projection(item: ClaimType) -> dict[str, object]:

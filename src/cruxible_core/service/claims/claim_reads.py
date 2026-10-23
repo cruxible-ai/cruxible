@@ -322,7 +322,11 @@ def service_read_claim_values(
 def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueRecord:
     """One Claim's value row, for every statement object variant."""
 
-    from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
+    from cruxible_client.contracts.claims import (
+        ExactContentClaimObject,
+        NoneClaimObject,
+        SubjectClaimObject,
+    )
 
     statement = claim.statement
     claim_object = statement.object
@@ -330,6 +334,9 @@ def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueR
         value: object = claim_object.address.artifact_path
     elif isinstance(claim_object, ExactContentClaimObject):
         value = claim_object.content_digest
+    elif isinstance(claim_object, NoneClaimObject):
+        # A none states no value: ``object`` carries the unit it says is empty.
+        value = None
     else:
         value = claim_object.value
     subject_path = statement.subject.artifact_path

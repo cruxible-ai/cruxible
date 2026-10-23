@@ -397,3 +397,39 @@ def test_rule_v3_exempts_a_none_types_origin_only_evidence_from_current_replay()
         ).verdict
         == "stale"
     )
+
+
+def test_an_inverse_ages_on_its_own_horizon_and_a_value_on_the_types() -> None:
+    """A none (inverse) is judged by ``effective_inverse_stale_after``; values are not."""
+
+    from tests.test_claims.test_claim_type_v9 import DAY, slot_inverse, v9
+
+    hour = {"microseconds": 3_600_000_000}
+    claim_type = v9(slot_inverse(stale_after=hour))
+    type_digest = claim_type_digest(claim_type).tagged
+    positive = claim_adjudication_rule(claim_type, claim_type_digest=type_digest)
+    inverse = claim_adjudication_rule(claim_type, claim_type_digest=type_digest, inverse=True)
+    assert positive.max_evidence_age == CanonicalDuration(microseconds=DAY.microseconds)
+    assert inverse.max_evidence_age == CanonicalDuration(**hour)
+    assert claim_adjudication_rule_digest(inverse) != claim_adjudication_rule_digest(positive)
+    # Two hours on: the none's evidence is stale, a value on the same Capture is not.
+    evidence = (_capture("inverse-horizon"),)
+    verdicts = {
+        name: evaluate_claim_verdict(
+            claim_statement_digest=STATEMENT_DIGEST,
+            rule=rule,
+            evaluation_time=NOW + timedelta(hours=2),
+            captures=evidence,
+            attestations=(),
+            providers={},
+        )
+        for name, rule in (("positive", positive), ("inverse", inverse))
+    }
+    assert verdicts["inverse"].verdict in {"stale", "stale_evidence"}
+    assert verdicts["positive"].verdict == "supported"
+    # Without its own horizon an inverse compiles the very rule a value does.
+    plain = v9()
+    plain_digest = claim_type_digest(plain).tagged
+    assert claim_adjudication_rule(
+        plain, claim_type_digest=plain_digest, inverse=True
+    ) == claim_adjudication_rule(plain, claim_type_digest=plain_digest)

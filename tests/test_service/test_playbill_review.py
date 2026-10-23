@@ -439,7 +439,11 @@ def test_change_lines_print_claims_as_the_write_verbs_do() -> None:
     def claim(value: object, *, state: str = "live", kind: str = "literal") -> dict[str, object]:
         claim_object: dict[str, object] = {"kind": kind}
         if kind == "subject":
-            claim_object["subject"] = {"artifact_path": f"subjects/{value}.json"}
+            # A SubjectClaimObject names its Subject by ``address``.
+            claim_object["address"] = {"artifact_path": f"subjects/{value}.json"}
+        elif kind == "none":
+            if value is not None:
+                claim_object["of"] = {"kind": "literal", "value": value}
         else:
             claim_object["value"] = value
         return {
@@ -474,6 +478,8 @@ def test_change_lines_print_claims_as_the_write_verbs_do() -> None:
             member(claim("grace"), claim("grace", state="retired")),
             member(claim(True), claim(True)),
             member(None, claim("app.library/libfoo", kind="subject")),
+            member(claim("grace"), claim(None, kind="none")),
+            member(None, claim("ada", kind="none")),
             member(
                 None,
                 None,
@@ -487,12 +493,14 @@ def test_change_lines_print_claims_as_the_write_verbs_do() -> None:
     assert proposal_change_lines(review) == [  # type: ignore[arg-type]
         "Why:",
         "  Reassigned.",
-        "Changes (6):",
+        "Changes (8):",
         "  set app.service/payments owner: ada  [CLM-1]",
         "  set app.service/payments owner: ada -> grace  [CLM-1]",
         "  retire app.service/payments owner: grace  [CLM-1]",
         # A settle fallback re-citing a re-read file: the value did not move.
         "  refresh evidence app.service/payments owner: true (value unchanged)  [CLM-1]",
         "  set app.service/payments owner: app.library/libfoo  [CLM-1]",
+        "  set app.service/payments owner: grace -> none  [CLM-1]",
+        "  set app.service/payments owner: none of ada  [CLM-1]",
         "  add subject subjects/app.service/x.json  (generated successor)",
     ]

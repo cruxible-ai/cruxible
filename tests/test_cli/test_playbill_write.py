@@ -627,3 +627,21 @@ def test_rebind_from_capture_moves_every_citing_claim_in_one_change(
         refused = _run(*args, "--because", "x")
         assert refused.exit_code == 2 and says in refused.output, refused.output
     assert len(served.requests) == 1
+
+
+def test_none_reaches_core_as_a_none_value(served: _ServiceClient) -> None:
+    """``--none`` sends ``{"none": ...}``; on a type without an inverse core refuses it."""
+
+    refused = _run("set", WI1, "status", "--none", "--because", "Closed.")
+    assert refused.exit_code == 1, refused.output
+    assert "cruxible.write.inverse_undeclared" in refused.output
+    request = served.requests[-1]
+    assert isinstance(request, SetRequest) and request.value.model_dump() == {"none": None}
+    added = _run("add", WI1, "governs", f"{KIND}/wi-2", "--none", "--because", "Not it.")
+    assert "cruxible.write.inverse_undeclared" in added.output
+    (change,) = served.requests[-1].changes
+    assert change.value.model_dump() == {"none": f"{KIND}/wi-2"}
+    both = _run("set", WI1, "status", "done", "--none", "--because", "x")
+    assert both.exit_code == 2 and "not both" in both.output
+    neither = _run("set", WI1, "status", "--because", "x")
+    assert neither.exit_code == 2

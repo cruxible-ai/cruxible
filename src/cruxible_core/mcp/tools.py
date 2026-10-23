@@ -71,7 +71,6 @@ from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import (
     AddChange,
     CaptureEvidence,
-    ClaimValue,
     ContractEvidence,
     CreateChange,
     DocOp,
@@ -87,6 +86,7 @@ from cruxible_client.contracts.write import (
     WriteOutcome,
     WriteRetireReason,
     WriteRole,
+    WriteValue,
 )
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
@@ -1123,11 +1123,12 @@ def register_tools(
             Field(description="A field of the Subject's kind, as orient names it."),
         ],
         value: Annotated[
-            ClaimValue,
+            WriteValue,
             Field(
                 description=(
                     "The value: an enum member, text, number or boolean; a Subject as kind/id "
-                    "for a Subject-valued field; the text itself for exact content."
+                    "for a Subject-valued field; the text itself for exact content; "
+                    '{"none": null} when the field holds nothing.'
                 )
             ),
         ],

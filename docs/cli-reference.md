@@ -3520,11 +3520,11 @@ scope, and operational input head remain unchanged.
 ## set, add, retire, rebind and write
 
 ~~~text
-cruxible set SUBJECT FIELD VALUE --because TEXT
+cruxible set SUBJECT FIELD (VALUE | --none) --because TEXT
   [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
   [--role ROLE] [--contend] [--expect VALUE... | --expect-absent]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
-cruxible add SUBJECT FIELD VALUE --because TEXT
+cruxible add SUBJECT FIELD VALUE [--none] --because TEXT
   [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
   [--role ROLE] [--expect-absent]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
@@ -3621,6 +3621,24 @@ value of a many-valued field); `--expect-absent` expects the field to hold
 nothing. Both compose with `--at`. Each change prints
 before and after, its Claim and its verdict; a verdict other than `supported`
 prints a warning with its repair.
+
+A none states that a field holds nothing: an inverse Claim, on a ClaimType
+whose `inverse` declares how (ClaimType v9; any other refuses
+`cruxible.write.inverse_undeclared`). `set SUBJECT FIELD --none` replaces the
+live value of a one-valued field with a none (the same Claim, revised), and
+`set SUBJECT FIELD VALUE` over a none replaces it back. `add SUBJECT FIELD
+VALUE --none` says a many-valued field does not hold VALUE (a Subject as
+`kind/id`, or the key value an `object_key` inverse names); a value of that
+unit still live refuses `cruxible.claim.polarity_conflict`, so retire it in the
+same `write` file (`{"op": "retire", "target": CLAIM, "reason":
+"superseded"}`) beside the add. In a `write` file or over MCP, HTTP and the
+SDK, a none is the value `{"none": null}` (one-valued) or `{"none": VALUE}`
+(SDK: `NoneValue(none=...)`). Only evidence one of the inverse's
+`evidence_rules` admits establishes a none: `--because` alone refuses
+`cruxible.write.none_needs_evidence`, naming the contracts to cite. Reads list
+a field's live nones beside its values (`get`: `nones`, each with its verdict
+and flags; `query`: a row's `nones` by column), never as a value; a field with
+no value and no current none is unknown.
 
 `add` puts one more VALUE in a many-valued FIELD, beside the values already
 there. A value already live in the same role restates that Claim: on evidence

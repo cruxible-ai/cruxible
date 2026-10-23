@@ -5000,10 +5000,17 @@ def _evidence_option_value(
     return observed.model_dump(mode="json")
 
 
+_NONE_HELP = (
+    "Write a none: FIELD holds nothing (an inverse Claim; its ClaimType declares one). "
+    "Cite evidence its inverse rules admit."
+)
+
+
 @playbill_group.command("set")
 @click.argument("subject")
 @click.argument("field")
-@click.argument("value")
+@click.argument("value", required=False)
+@click.option("--none", "none_", is_flag=True, help=_NONE_HELP + " Leave VALUE out.")
 @click.option("--because", required=True, help="Why; also the default evidence.")
 @click.option(
     "--evidence-file",
@@ -5040,7 +5047,8 @@ def _evidence_option_value(
 def set_value(
     subject: str,
     field: str,
-    value: str,
+    value: str | None,
+    none_: bool,
     because: str,
     evidence_file: str | None,
     capture: str | None,
@@ -5060,17 +5068,20 @@ def set_value(
     The Claim it replaces is found for you. SUBJECT may also be kind/<key
     value> as written (kind/CVE-2021-44228): a one-key kind's Subject that does
     not exist yet is added by that key. VALUE is text: an enum member, a number or true/false
-    for such fields, a Subject as kind/id, or the text itself for exact content.
+    for such fields, a Subject as kind/id, or the text itself for exact content. --none
+    instead states that FIELD holds nothing (a none), replacing the live value.
     """
 
     if expect_absent and expect:
         raise click.UsageError("pass --expect or --expect-absent, not both")
+    if none_ == (value is not None):
+        raise click.UsageError("pass VALUE, or --none for a field that holds nothing; not both")
     request = _write_request(
         SetRequest,
         {
             "subject": subject,
             "field": field,
-            "value": value,
+            "value": {"none": None} if none_ else value,
             "because": because,
             "evidence": _evidence_option_value(
                 evidence_file, capture, workspace_root, evidence_contract
@@ -5095,6 +5106,13 @@ def set_value(
 @click.argument("subject")
 @click.argument("field")
 @click.argument("value")
+@click.option(
+    "--none",
+    "none_",
+    is_flag=True,
+    help=_NONE_HELP.replace("holds nothing", "does not hold VALUE")
+    + " VALUE is the value (or key value) it does not hold.",
+)
 @click.option("--because", required=True, help="Why; also the default evidence.")
 @click.option(
     "--evidence-file",
@@ -5130,6 +5148,7 @@ def add_value(
     subject: str,
     field: str,
     value: str,
+    none_: bool,
     because: str,
     evidence_file: str | None,
     capture: str | None,
@@ -5146,7 +5165,8 @@ def add_value(
 
     A value already there is answered as done (--expect-absent refuses instead).
     A Subject of a known kind that does not exist yet is added. VALUE is text, as
-    for set: a Subject as kind/id for a Subject-valued field.
+    for set: a Subject as kind/id for a Subject-valued field. --none adds a none:
+    FIELD does not hold VALUE (retire a value it holds in the same write file).
     """
 
     request = _write_request(
@@ -5157,7 +5177,7 @@ def add_value(
                     "op": "add",
                     "subject": subject,
                     "field": field,
-                    "value": value,
+                    "value": {"none": value} if none_ else value,
                     "evidence": _evidence_option_value(
                         evidence_file, capture, workspace_root, evidence_contract
                     ),
@@ -5804,10 +5824,21 @@ def _emit_get_text(result: Any, *, evidence_erased: bool = False) -> None:
             width = max((len(row["predicate"]) for row in rows), default=0)
             for row in rows:
                 flags = f"  [{', '.join(row['flags'])}]" if row["flags"] else ""
-                click.echo(
-                    f"  {row['predicate'].ljust(width)}  "
-                    f"{_get_value_text(row['value'], claim=row['claim'])}{flags}"
+                # A field holding only nones has no value to show; each none
+                # (an inverse Claim) is listed under it, never as a value.
+                shown = (
+                    _get_value_text(row["value"], claim=row["claim"])
+                    if row["claim"]
+                    else "(no value)"
                 )
+                click.echo(f"  {row['predicate'].ljust(width)}  {shown}{flags}")
+                for none in row.get("nones", ()):
+                    unit = "" if none.get("of") is None else f" of {_get_value_text(none['of'])}"
+                    marks = f", {', '.join(none['flags'])}" if none.get("flags") else ""
+                    click.echo(
+                        f"  {''.ljust(width)}  none{unit}  {none['claim']} "
+                        f"[{none['verdict']}{marks}]"
+                    )
         else:
             for key, value in card.items():
                 if value in (None, [], {}):

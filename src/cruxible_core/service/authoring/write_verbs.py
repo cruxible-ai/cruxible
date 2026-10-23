@@ -51,6 +51,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObject,
     AuthoringExistingClaimDisposition,
     AuthoringIntentV1,
+    AuthoringNoneClaimObject,
     AuthoringReferenceExpectation,
     AuthoringSlotExpectation,
     ChangeSetAuthoringPayload,
@@ -86,6 +87,9 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
+    CLAIM_TYPE_V9_FORMAT,
+    ClaimInverseObjectKey,
+    ClaimInverseObjectKeyPart,
     ClaimType,
     effective_canonical_form,
     effective_evidence_requirement,
@@ -157,6 +161,7 @@ from cruxible_client.contracts.write import (
     ExpectedValue,
     FileEvidence,
     NewerCaptureNotCitableWarning,
+    NoneValue,
     RebindChange,
     RetireChange,
     SectionEvidence,
@@ -210,7 +215,11 @@ from cruxible_core.service.change_preview import compact_coordinate, preview_gua
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import resolve_field_in
-from cruxible_core.service.discovery.query_values import read_live_values, subjects_of_kind
+from cruxible_core.service.discovery.query_values import (
+    read_live_nones,
+    read_live_values,
+    subjects_of_kind,
+)
 from cruxible_core.service.discovery.query_vocabulary import (
     PredicateInfo,
     QueryVocabulary,
@@ -621,6 +630,16 @@ class _Planner:
         wanted = {str(row[0]): str(row[1]) for row in rows}
         if not wanted:
             return ()
+        # A none states no value; it is shown as the none it is ({"none": KEY}).
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            nones = {
+                item.identity: item
+                for item in read_live_nones(
+                    projection.typed.connection,
+                    subject_paths=(subject_path_value,),
+                    predicates=(predicate,),
+                )
+            }
         values = {
             item.identity: item
             for item in read_live_values(
@@ -636,6 +655,8 @@ class _Planner:
             shown: object = None
             if live is not None:
                 shown = self.exact.value(str(live.value), live.span) if live.exact else live.value
+            elif identity in nones:
+                shown = {"none": nones[identity].of}
             found.append(
                 _SlotClaim(
                     claim_id=_bare(identity),
@@ -1545,6 +1566,147 @@ class _Planner:
             )
         return SubjectClaimObject(address=SemanticAddress.whole_artifact(target)), str(value)
 
+    def none_value(
+        self,
+        info: PredicateInfo,
+        value: NoneValue,
+        *,
+        index: int,
+        field_name: str,
+    ) -> AuthoringNoneClaimObject:
+        """The inverse Claim object a none names, in the unit its ClaimType's inverse keys.
+
+        ``{"none": null}`` is a one-valued field's whole slot; ``{"none": KEY}``
+        is a many-valued field's object (``object``) or the key value an
+        object Subject holds (``object_key``).
+        """
+
+        path = f"changes[{index}].value"
+        claim_type = info.claim_type
+        inverse = claim_type.inverse
+        if claim_type.artifact_format != CLAIM_TYPE_V9_FORMAT or inverse is None:
+            raise _refuse(
+                "cruxible.write.inverse_undeclared",
+                f"{field_name} ({claim_type.predicate}) declares no inverse, so a write cannot "
+                "state that it holds none",
+                change=index,
+                repair=(
+                    f"Declare `inverse` on ClaimType {claim_type.predicate} (ClaimType v9: its "
+                    "key and evidence_rules) through claim-type propose; or retire the values "
+                    "that no longer hold"
+                ),
+                field_path=path,
+            )
+        key = inverse.key
+        if isinstance(key, ClaimInverseObjectKey | ClaimInverseObjectKeyPart):
+            if value.none is None:
+                raise _refuse(
+                    "cruxible.write.none_needs_key",
+                    f"{field_name} holds many values, so a none names the one it does not hold",
+                    change=index,
+                    repair=(
+                        'Pass {"none": KEY}: '
+                        + (
+                            f"a value of {key.predicate} the object Subject would hold"
+                            if isinstance(key, ClaimInverseObjectKeyPart)
+                            else "the value (a Subject as kind/id) the field does not hold"
+                        )
+                    ),
+                    field_path=f"{path}.none",
+                )
+            if isinstance(key, ClaimInverseObjectKeyPart):
+                key_info = self.vocabulary.predicates.get(key.predicate)
+                if key_info is None:
+                    raise _refuse(
+                        "cruxible.write.inverse_undeclared",
+                        f"{field_name}'s inverse is keyed by {key.predicate}, which is not a "
+                        "live field",
+                        change=index,
+                        field_path=path,
+                    )
+                return AuthoringNoneClaimObject(
+                    of=self.literal(
+                        key_info,
+                        value.none,
+                        index=index,
+                        field_name=self.field_name(key_info, key_info.subject_kinds[0])
+                        if key_info.subject_kinds
+                        else key.predicate,
+                        path=f"{path}.none",
+                    )
+                )
+            if claim_type.object_kind == "subject":
+                of, _shown = self.subject_value(
+                    info, value.none, index=index, field_name=field_name, added={}
+                )
+                if of.address.selector.scheme != "artifact-v1":
+                    raise _refuse(
+                        "cruxible.write.value_subject_not_found",
+                        f"a none of {field_name} names an existing Subject, not one this "
+                        "write creates",
+                        change=index,
+                        repair="Name an accepted Subject as kind/id",
+                        field_path=f"{path}.none",
+                    )
+                return AuthoringNoneClaimObject(of=of)
+            return AuthoringNoneClaimObject(
+                of=self.literal(
+                    info, value.none, index=index, field_name=field_name, path=f"{path}.none"
+                )
+            )
+        if value.none is not None:
+            raise _refuse(
+                "cruxible.write.none_key_not_admitted",
+                f"{field_name} holds one value, so its none covers the whole field",
+                change=index,
+                repair='Pass {"none": null}',
+                field_path=f"{path}.none",
+            )
+        return AuthoringNoneClaimObject()
+
+    def none_evidence(self, info: PredicateInfo, *, index: int, field_name: str, unit: str) -> None:
+        """Refuse a none backed only by own words, unless an inverse rule admits them.
+
+        Only evidence one of the inverse's ``evidence_rules`` admits establishes
+        that a unit holds nothing; a writer's own words (``because``, self
+        evidence) are admitted only when such a rule names their contract.
+        """
+
+        claim_type = info.claim_type
+        assert claim_type.inverse is not None
+        rules = tuple(
+            rule
+            for rule in claim_type.evidence_admission_policy.rules
+            if rule.rule_id in claim_type.inverse.evidence_rules
+        )
+        restricted = claim_type.model_copy(
+            update={
+                "evidence_admission_policy": claim_type.evidence_admission_policy.model_copy(
+                    update={"rules": rules}
+                )
+            }
+        )
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            admitted = CaptureContractNames(
+                self.instance, self.head, connection=projection.typed.connection
+            ).admitted(restricted)
+        if _OWN_WORDS_CONTRACTS & set(admitted):
+            return
+        shown = tuple(public_name(name) for name in admitted)
+        raise _refuse(
+            "cruxible.write.none_needs_evidence",
+            f"a none says {field_name} holds {unit}, which only evidence can establish; "
+            "your own words cannot back it",
+            change=index,
+            candidates=shown,
+            repair=(
+                f"Cite a Capture under {' or '.join(shown) or 'a contract its inverse rules admit'}"
+                ": contract evidence naming it (--evidence-contract), a Capture handle "
+                "(--capture), or file evidence (--evidence-file PATH#ANCHOR)"
+            ),
+            field_path=f"changes[{index}].evidence",
+        )
+
     # -- evidence ----------------------------------------------------------------
 
     def source(
@@ -1998,7 +2160,17 @@ class _Planner:
         exact: bytes | None = None
         shown_after: object = change.value
         statement_object: Any
-        if claim_type.object_kind == "exact_content":
+        if isinstance(change.value, NoneValue):
+            statement_object = self.none_value(info, change.value, index=index, field_name=name)
+            of = statement_object.of
+            shown_after = {
+                "none": None
+                if of is None
+                else of.value
+                if isinstance(of, LiteralClaimObject)
+                else of.address.artifact_path.removeprefix("subjects/").removesuffix(".json")
+            }
+        elif claim_type.object_kind == "exact_content":
             if not isinstance(change.value, str) or not change.value:
                 raise _refuse(
                     "cruxible.write.value_type_mismatch",
@@ -2050,6 +2222,9 @@ class _Planner:
         source, citation_role = self.source(
             info, change, role=role, index=index, field_name=name, exact=exact, capture=capture
         )
+        if isinstance(change.value, NoneValue) and isinstance(source, SelfSourceBody):
+            unit = "nothing" if change.value.none is None else f"no {_brief(change.value.none)}"
+            self.none_evidence(info, index=index, field_name=name, unit=unit)
         live = (
             self.slot_claims(path, info.predicate)
             if pending is None and self.subject_exists(path)
@@ -3642,7 +3817,7 @@ def _with_verdicts(
             and verdict == "uncovered"
             and not role_unadmitted
             and outcome.subject is not None
-            and not isinstance(change.value, CreatedSubject)
+            and not isinstance(change.value, CreatedSubject | NoneValue)
             else None
         )
         warnings.append(

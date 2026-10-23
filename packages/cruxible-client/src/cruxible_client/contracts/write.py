@@ -141,6 +141,19 @@ def _omit_none(value: object) -> bool:
     return value is None
 
 
+class NoneValue(_StrictWriteModel):
+    """A none: the field holds nothing; needs a ClaimType inverse and its evidence."""
+
+    # ``{"none": null}``: a one-valued field holds no value. ``{"none": KEY}``:
+    # a many-valued field does not hold KEY (the value, a Subject as kind/id,
+    # under an ``object`` inverse; the object's key value under ``object_key``).
+    none: ClaimValue | None = Field(description="null, or the value (key) not held.")
+
+
+#: What a set or add writes: a value, or a none.
+WriteValue: TypeAlias = ClaimValue | NoneValue
+
+
 def _omit_empty(value: object) -> bool:
     return value in (None, (), [])
 
@@ -395,7 +408,7 @@ class SetChange(_StrictWriteModel):
         description="Default: the write's subject.",
     )
     field: FieldName
-    value: ClaimValue | CreatedSubject
+    value: ClaimValue | CreatedSubject | NoneValue
     role: WriteRole | None = Field(
         default=None,
         description="Only when the field permits more than one role.",
@@ -416,7 +429,7 @@ class AddChange(_StrictWriteModel):
         description="Default: the write's subject.",
     )
     field: FieldName
-    value: ClaimValue | CreatedSubject
+    value: ClaimValue | CreatedSubject | NoneValue
     role: WriteRole | None = Field(
         default=None,
         description="Only when the field permits more than one role.",
@@ -546,7 +559,7 @@ class SetRequest(_WriteRequestBase):
     tag: Literal["playbill-set-request-v1"] = "playbill-set-request-v1"
     subject: SubjectRef
     field: FieldName
-    value: ClaimValue
+    value: WriteValue
     role: WriteRole | None = None
     evidence: Evidence | None = None
     contend: bool = False
@@ -851,6 +864,7 @@ __all__ = [
     "FieldName",
     "FileEvidence",
     "NewerCaptureNotCitableWarning",
+    "NoneValue",
     "RetireRequest",
     "SetRequest",
     "WriteRequest",
@@ -873,6 +887,7 @@ __all__ = [
     "WriteRetireReason",
     "WriteRole",
     "WriteStatus",
+    "WriteValue",
     "as_write_request",
     "capture_handle",
 ]

@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import ValidationError
 
@@ -45,6 +45,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     AuthoringExistingClaimDisposition,
     AuthoringIntentV1,
+    AuthoringNoneClaimObject,
     CandidateStatus,
     ChangeSetAuthoringPayload,
     ChangeSetClaimIdentity,
@@ -86,6 +87,7 @@ from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimProposalItemV1,
     ProcedureClaimRetirementItem,
     ProcedureKeyedClaimProposalItem,
+    ProcedureNoneClaimObject,
     ProcedureProposalItemAny,
     ProcedureSubjectProposalItem,
     SubjectKeyClaimObject,
@@ -984,9 +986,15 @@ class _SubjectKeys:
             if isinstance(statement.subject, SemanticAddress)
             else self.address(statement.subject)
         )
-        value = statement.object
+        value: Any = statement.object
         if isinstance(value, SubjectKeyClaimObject):
             value = SubjectClaimObject(address=self.address(value.subject))
+        elif isinstance(value, ProcedureNoneClaimObject):
+            # A none of a Subject named by key resolves as a Subject value does.
+            of = value.of
+            if isinstance(of, SubjectKeyClaimObject):
+                of = SubjectClaimObject(address=self.address(of.subject))
+            value = AuthoringNoneClaimObject(of=of)
         return AuthoringClaimStatement(
             subject=subject,
             predicate=statement.predicate,

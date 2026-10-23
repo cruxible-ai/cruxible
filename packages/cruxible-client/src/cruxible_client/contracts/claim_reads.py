@@ -137,11 +137,12 @@ class ClaimValueRecord(BaseModel):
     predicate: str
     qualifier: str | None
     role: str
-    object_kind: Literal["literal", "subject", "exact_content"]
+    object_kind: Literal["literal", "subject", "exact_content", "none"]
     # The statement's object exactly as accepted.
     object: ClaimObject
     # The literal itself; the object Subject's artifact path; or the exact
-    # content digest. ``object`` carries the selector or span.
+    # content digest. ``object`` carries the selector or span. A none (an
+    # inverse Claim) states no value: null here, its unit in ``object.of``.
     value: Any
     verdict: str
     status: str

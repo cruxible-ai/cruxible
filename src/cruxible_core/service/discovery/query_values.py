@@ -9,6 +9,7 @@ touches.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
@@ -228,6 +229,74 @@ def claim_values_by_path(projection: Any, paths: Iterable[str]) -> dict[str, Liv
                 lifecycle=str(row[17]),
             )
     return found
+
+
+@dataclass(frozen=True)
+class LiveNone:
+    """One live none (an inverse Claim): its slot and the unit it says holds nothing.
+
+    ``of`` is the unit as a read shows it: None for a whole one-valued slot, a
+    Subject as kind/id, or the literal value (or key value) not held.
+    """
+
+    identity: str
+    subject_path: str
+    predicate: str
+    qualifier: str | None
+    of: object
+
+
+def none_of_shown(unit: str | None) -> object:
+    """A none's ``none_of`` unit text (``object_unit_text``) as a read shows it."""
+
+    if unit is None:
+        return None
+    decoded = json.loads(unit)
+    if decoded[0] == "subject":
+        return str(decoded[1]).removeprefix("subjects/").removesuffix(".json")
+    literal_type, value = decoded[1], decoded[2]
+    if literal_type == "integer" and isinstance(value, str):
+        return int(value)
+    if literal_type == "boolean":
+        return bool(value)
+    return value
+
+
+def read_live_nones(
+    connection: sqlite3.Connection,
+    *,
+    subject_paths: Iterable[str],
+    predicates: Iterable[str],
+) -> list[LiveNone]:
+    """The live nones of the given slots, in Claim id order: keyed reads, one per chunk.
+
+    Only the slots named are read (a page's Subjects and its inverse-bearing
+    predicates), never a predicate's whole population.
+    """
+
+    wanted = sorted(set(predicates))
+    if not wanted:
+        return []
+    found: list[LiveNone] = []
+    predicate_marks = ",".join("?" for _ in wanted)
+    for chunk in _chunks(sorted(set(subject_paths))):
+        marks = ",".join("?" for _ in chunk)
+        for identity, path, predicate, qualifier, unit in connection.execute(
+            "SELECT identity, subject_path, predicate, qualifier, none_of FROM claims "
+            f"WHERE subject_path IN ({marks}) AND predicate IN ({predicate_marks}) "
+            "AND lifecycle='live' AND object_kind='none'",
+            (*chunk, *wanted),
+        ):
+            found.append(
+                LiveNone(
+                    identity=str(identity),
+                    subject_path=str(path),
+                    predicate=str(predicate),
+                    qualifier=None if qualifier is None else str(qualifier),
+                    of=none_of_shown(None if unit is None else str(unit)),
+                )
+            )
+    return sorted(found, key=lambda item: item.identity)
 
 
 def distinct(values: Iterable[object]) -> list[object]:

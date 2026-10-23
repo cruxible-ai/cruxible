@@ -46,6 +46,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatement,
     AuthoringExactContentObject,
     AuthoringIntentV1,
+    AuthoringNoneClaimObject,
     AuthoringTriggerSchedule,
     BlueprintAuthoringPayload,
     BlueprintInstantiation,
@@ -143,6 +144,7 @@ from cruxible_client.contracts.claims import (
     ClaimStatement,
     ExactContentClaimObject,
     LiteralClaimObject,
+    NoneClaimObject,
     SubjectClaimObject,
     build_claim_citation,
     claim_artifact_digest,
@@ -688,7 +690,9 @@ def _referent(
 def _exact_object(
     instance: PlaybillInstance,
     value: object,
-) -> LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject:
+) -> LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | NoneClaimObject:
+    if isinstance(value, AuthoringNoneClaimObject):
+        return NoneClaimObject(of=value.of)
     if not isinstance(value, AuthoringExactContentObject):
         assert isinstance(value, LiteralClaimObject | SubjectClaimObject)
         return value
@@ -793,6 +797,11 @@ def _with_aliases_resolved(
         target = resolved(value.address, "statement.object.address")
         if target != value.address:
             value = SubjectClaimObject(address=target)
+    elif isinstance(value, AuthoringNoneClaimObject) and isinstance(value.of, SubjectClaimObject):
+        # A none of a Subject (an object-keyed inverse) names it as a value does.
+        target = resolved(value.of.address, "statement.object.of.address")
+        if target != value.of.address:
+            value = AuthoringNoneClaimObject(of=SubjectClaimObject(address=target))
     if subject == statement.subject and value is statement.object:
         return payload
     return payload.model_copy(
@@ -842,9 +851,9 @@ def _cited_associations(
 
 
 def _canonical_object(
-    value: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject,
+    value: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | NoneClaimObject,
     claim_type: ClaimType,
-) -> LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject:
+) -> LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject | NoneClaimObject:
     """Store a literal in the canonical form its ClaimType declares (v8).
 
     Every Claim lowering path -- a change-set member, a write verb, a Procedure
@@ -1550,7 +1559,10 @@ def _lower_claim(
         candidate_base_tree, payload.statement.subject, descriptor=descriptor
     )
     statement_object = _exact_object(instance, payload.statement.object)
-    if statement_object.kind != claim_type.object_kind:
+    # A none's shape is judged against the ClaimType's inverse by the Claim law.
+    if not isinstance(statement_object, NoneClaimObject) and (
+        statement_object.kind != claim_type.object_kind
+    ):
         _refuse(
             "cruxible.claim.object_kind_mismatch",
             "statement.object",
@@ -1564,8 +1576,12 @@ def _lower_claim(
     statement_object = _canonical_object(statement_object, claim_type)
     qualifier = payload.statement.qualifier
     object_referent: tuple[ArtifactIdentity, str] | None = None
-    if isinstance(statement_object, SubjectClaimObject):
-        object_path = statement_object.address.artifact_path
+    # A none of a Subject (an object-keyed inverse) pins that Subject as its object.
+    named_object = (
+        statement_object.of if isinstance(statement_object, NoneClaimObject) else statement_object
+    )
+    if isinstance(named_object, SubjectClaimObject):
+        object_path = named_object.address.artifact_path
         object_content = candidate_base_tree.get(object_path)
         object_name = object_path.removeprefix("subjects/").removesuffix(".json")
         if object_content is None:
