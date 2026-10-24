@@ -15,14 +15,13 @@ from typing import Any
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     CaptureContract,
-    capture_contract_digest,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.write import WriteOutcome, WriteRequest
@@ -31,7 +30,7 @@ from cruxible_core.service.authoring.write_verbs import service_playbill_write
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
-from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._write_support import KIND, caller, seed_write_vocabulary
 
 FIELD = f"{KIND}.severity"
@@ -52,7 +51,9 @@ class ErasureWorld:
 
 def _severity_type(contract: CaptureContract) -> ClaimType:
     return ClaimType(
-        artifact_format="playbill-claim-type-v1",
+        artifact_format="playbill-claim-type-v7",
+        evidence_requirement="captured",
+        revision_evidence="replace",
         identity=ArtifactIdentity(kind="ClaimType", name=FIELD),
         predicate=FIELD,
         allowed_subject_kinds=(KIND,),
@@ -60,13 +61,12 @@ def _severity_type(contract: CaptureContract) -> ClaimType:
         literal_schema={"type": "string"},
         cardinality="one",
         permitted_roles=("observation",),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(
             rules=(
-                ClaimEvidenceAdmissionRuleV1(
+                ClaimEvidenceAdmissionRule(
                     rule_id="scan",
                     claim_roles=("observation",),
-                    capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                    evidence_kinds=("database_record",),
+                    capture_contracts=(contract.identity.name,),
                     admission="direct",
                     subject_binding="exact_claim_subject",
                 ),
