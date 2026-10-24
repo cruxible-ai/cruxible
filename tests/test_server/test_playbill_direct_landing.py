@@ -111,5 +111,6 @@ def test_adopting_a_builtin_the_instance_already_holds_is_a_typed_refusal(
     )
 
     assert response.status_code == 400, response.text
-    assert response.json()["error_code"] == "cruxible.claim_type.builtin_already_adopted"
+    # Genesis keeps its frozen v3 policy; the current builtin writer is v4.
+    assert response.json()["error_code"] == "cruxible.claim_type.builtin_superseded"
     assert "cruxible get ClaimType:semantic.alias" in response.json()["message"]
