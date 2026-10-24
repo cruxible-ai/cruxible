@@ -68,6 +68,7 @@ nav:
   - Getting started:
       - Quickstart: quickstart.md
       - Concepts: concepts.md
+      - Security walkthrough: security-walkthrough.md
       - Architecture: architecture.md
       - Building team knowledge: building-team-knowledge.md
       - Evidence and admission: evidence-and-admission.md

@@ -51,6 +51,24 @@ Do not bake bootstrap secrets or runtime credentials into the image. Provide
 them at container runtime through environment variables or the future deployment
 secret layer.
 
+### Provider lane precondition
+
+The daemon runs Provider code in child processes it reaches over Unix control
+sockets, and a Unix socket path holds at most 103 bytes. The daemon puts them
+under `<state-root>/c` when that fits, which `/var/lib/cruxible` does;
+otherwise it needs a private per-user runtime directory, `XDG_RUNTIME_DIR` on
+Linux, which containers rarely set. A derived image or a run that moves the
+state root to a longer path (about 80 bytes or more) without one comes up
+with the Provider lane `unavailable`: `server start` prints
+`Warning: Provider lane unavailable; ...` with the cause (byte counts and the
+variable, never a path) and the repair, then serves everything that needs no
+installed Provider code, and `server status` keeps reporting the lane code
+`provider_runtime_directory_unavailable`. Kit add, provider install and
+Provider-backed Procedure and Line runs refuse with that code (HTTP 503; an
+`operational_failed` run). Repair: keep the state root short, or set
+`XDG_RUNTIME_DIR` to a short directory owned by the `cruxible` user with mode
+0700, and restart the container.
+
 ## Publishing the image
 
 `.github/workflows/publish-runtime-image.yml` is the supported way to publish

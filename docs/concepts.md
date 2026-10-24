@@ -1,7 +1,8 @@
 # Concepts
 
 This page explains the ideas Cruxible is built on: what each one is, and what
-it gives you. The [Quickstart](quickstart.md) shows them in use; the [CLI
+it gives you. The [Quickstart](quickstart.md) and the [Security
+walkthrough](security-walkthrough.md) show them in use; the [CLI
 reference](cli-reference.md) and [MCP tools](mcp-tools.md) list every
 operation.
 
@@ -216,9 +217,9 @@ role, the evidence it cites, and the rationale its author gave. A value
 without its reason is a rumor; a Claim says who believed it, why, and on what
 evidence, so a reader can judge it, and a later reader can find out why it was
 believed at the time. A Claim has an ID (`CLM-…`) and a history of revisions.
-Resolution places it in its slot as accepted, conflicted, overturned or
-refused, and retiring it ends it with a reason (`was-rescinded`, `was-wrong`
-or `superseded`). For example, the Claim that brake pads `bp-2210` fit the
+Resolution places it in its slot as accepted, conflicted or overturned (it
+reads ineligible when its own verdict doesn't resolve), and retiring it ends it
+with a reason (`was-rescinded`, `was-wrong` or `superseded`). For example, the Claim that brake pads `bp-2210` fit the
 2019 Civic, and what it rests on, a line of the supplier's catalog:
 
 ~~~text
@@ -249,6 +250,20 @@ verdict only when it is accepted citing a Capture the Claim admits, or when the
 ClaimType's consequence policy says so. When you have evidence against a
 Claim, attest to it or record what you observed instead, rather than minting
 an adjacent inverse concept ("does not fit").
+
+Some absences are facts worth stating: the supplier's fitment list says
+`bp-2210` doesn't fit the 2024 Civic, or a scan shows a host doesn't run some
+package. A ClaimType can declare an `inverse` for that, naming the evidence
+that can establish it, and a Claim stating the absence is a **none**:
+`cruxible set SUBJECT FIELD --none` says a one-valued field holds nothing, and
+`cruxible add SUBJECT FIELD VALUE --none` says a many-valued field doesn't hold
+VALUE (in a write file, `{"none": null}` or `{"none": VALUE}`). A none needs
+evidence one of its inverse's rules admits (your own words count only where a
+rule admits them), and it can go stale sooner than a value: on the inverse's
+own `stale_after` when it declares one. Reads list
+nones beside a field's values, never as one, and a query never follows one as
+a relationship. So a field has three answers: a value, a current none, or,
+with neither, unknown.
 
 [Building team knowledge](building-team-knowledge.md) covers deciding what to
 model and how to shape it.

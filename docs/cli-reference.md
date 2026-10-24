@@ -866,14 +866,20 @@ held in the ledger (`erasure_ledger_material`), a Capture with no retained body
 content (`erasure_body_in_accepted_state`). It needs `graph_write`. It cannot be
 undone, so it previews first: the preview lists the live Claims citing the
 Capture and those it would leave with no retained evidence, and answers a state
-digest; `--commit --at DIGEST` erases exactly what was previewed. A live Claim
-citing an erased Capture can afterwards be changed only by `rebind --capture`
-onto a fresh Capture under the same contract; until then revising or retiring
-it refuses `cruxible.claim.capture_unverified`. Afterwards
-`get --detail evidence` shows the Capture as erased, `capture read` answers
-`body_erased` with the record, verdicts read the evidence as no longer
-replayable, and `next` lists a Claim left with no retained evidence as
-`claim_evidence_erased`. The SDK equivalent is `cx.erase_capture(digest,
+digest; `--commit --at DIGEST` erases exactly what was previewed. Erasing
+bytes that are present again (observed anew, or an interrupted erase) appends
+another record. Afterwards `get --detail evidence` shows the Capture as erased,
+`capture read` answers `body_erased` with the record, verdicts read the
+evidence as no longer present (a field that requires current evidence reads the
+Claim `stale (evidence erased)`, read status `ineligible`), and `next` lists a
+Claim left with no retained evidence as `claim_evidence_erased`. A Claim citing
+the erased Capture keeps its history and accepted judgments and can still be
+revised or retired: it verifies on the Capture's envelope and the erasure
+record. A new citation of the erased Capture refuses
+`cruxible.claim.capture_unverified`; `rebind --capture` (or `rebind
+--from-capture CAP --capture NEW` for every citing Claim) moves Claims onto a
+fresh Capture under the same contract. A body missing with no erasure record is
+a defect, not an erasure. The SDK equivalent is `cx.erase_capture(digest,
 because=...)`; MCP is `cruxible_capture_erase`.
 
 ## body
@@ -2110,7 +2116,7 @@ cap as MCP and HTTP); `--limit` up to 5000, or `--all` (the whole answer, at mos
 the answer read once at the coordinate and evaluation time of its first page.
 `--json` gives the full answer with its receipt, and `remaining` counts the rows
 past the page. Cells show each slot's answer as `get` shows it; `--status` adds Claims
-resolution overturned or refused, or retired ones, and `--claims` names each
+resolution overturned or reads ineligible, or retired ones, and `--claims` names each
 cell's Claims (ID, status, verdict, role) beneath the table. `--spec` runs a
 `QueryDefinitionSpec` file inline; `--name` with `--param` runs an accepted
 named query (`orient --section queries` lists them, `get query:NAME --detail
@@ -3274,10 +3280,9 @@ last check:
   Captures. The row adds no verdict of its own (a field that requires current
   evidence already reads the Claim `stale`). The repair is `cruxible rebind
   CLAIM --citation HEX --capture CAP-...` with a fresh observation under the same
-  contract; once no erased Capture is cited the worker clears the row. Until
-  then a revision or retirement of the Claim refuses
-  `cruxible.claim.capture_unverified`: both carry the erased Capture, whose body
-  no longer verifies.
+  contract; once no erased Capture is cited the worker clears the row. The
+  Claim can also be revised onto new evidence or retired, which clears the
+  row too.
 - `prediction_settleable` names a ResolutionContract with a closed bound window
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
@@ -3375,8 +3380,12 @@ is `stale`: a candidate neither accepted, refused nor withdrawn whose parent is
 no longer the coordinate's semantic root, so it cannot activate. The row names
 the proposal's author in `detail.actor_id`; its repair is
 `cruxible proposal readmit PROPOSAL_ID`, which only that author may
-run, so only the author's queue shows the row (the principal `whoami` reports;
-a read with no principal shows none). `proposal withdraw` is the alternative
+run (the principal `whoami` reports; a read with no principal shows none). An
+approver who would sign it sees the same `proposal_stale` row with
+`detail.awaiting: author_readmit`, no approve, and the readmit withheld as the
+author's (`repair withheld: cruxible proposal readmit needs the proposal's
+author (ID)`); once the author readmits, the successor shows as an ordinary
+approval row. `proposal withdraw` is the alternative
 when the change is no longer wanted. A readmission at the same coordinate, or a
 withdrawal, closes the row; so does a readmission that still carries the
 change: an accepted one supersedes the source for good, and a live one that went
@@ -3647,12 +3656,20 @@ unit still live refuses `cruxible.claim.polarity_conflict`, so retire it in the
 same `write` file (`{"op": "retire", "target": CLAIM, "reason":
 "superseded"}`) beside the add. In a `write` file or over MCP, HTTP and the
 SDK, a none is the value `{"none": null}` (one-valued) or `{"none": VALUE}`
-(SDK: `NoneValue(none=...)`). Only evidence one of the inverse's
-`evidence_rules` admits establishes a none: `--because` alone refuses
-`cruxible.write.none_needs_evidence`, naming the contracts to cite. Reads list
-a field's live nones beside its values (`get`: `nones`, each with its verdict
-and flags; `query`: a row's `nones` by column), never as a value; a field with
-no value and no current none is unknown.
+(SDK: `NoneValue(none=...)`); the shape must fit the inverse's unit, or it
+refuses `cruxible.write.none_needs_key` (a many-valued field's none names the
+VALUE it does not hold) or `cruxible.write.none_key_not_admitted` (a
+one-valued field's none covers the whole field: `{"none": null}`). Only
+evidence one of the inverse's `evidence_rules` admits establishes a none:
+`--because` alone refuses `cruxible.write.none_needs_evidence`, naming the
+contracts to cite, unless such a rule admits own words. A Procedure that
+states a none again for the same unit revises the live one with the fresh
+evidence. A none goes stale on the
+inverse's own `stale_after` when it declares one, else on the type's. Reads
+list a field's live nones beside its values (`get`: `nones`, each with its
+verdict and flags; `query`: a row's `nones` by column), never as a value, and
+`--follow` never traverses a none in either direction; a field with no value
+and no current none is unknown.
 
 `add` puts one more VALUE in a many-valued FIELD, beside the values already
 there. A value already live in the same role restates that Claim: on evidence
@@ -4222,7 +4239,7 @@ middleware in `cruxible_core.coverage.middleware` and passes its own rules.
 ## proposal
 
 ~~~text
-cruxible proposal list [--status open|settled|incomplete] [--limit N]
+cruxible proposal list [--status open|awaiting_readmit|settled|incomplete] [--limit N]
   [--cursor CURSOR] [--json]
 cruxible proposal readmit PROPOSAL_ID [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal withdraw PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
@@ -4254,7 +4271,9 @@ preflighted, rather than at proposal evaluation
 (`cruxible.proposal.creator_principal_invalid`).
 `proposal list` prints a labeled `COORDINATE_TIME` column and deterministically
 separates current open candidates from accepted, refused, and stale terminal
-evidence so retries do not depend on remembered IDs. It returns one page
+evidence so retries do not depend on remembered IDs. `--status
+awaiting_readmit` lists the stale ones: their base moved, so each waits for its
+author's `proposal readmit`. It returns one page
 (default 50, at most 500); a cut page has `truncated: true` and a `next_cursor`
 for `--cursor`, which keeps reading the first page's accepted coordinate. A
 proposal admitted or withdrawn between pages changes the listing, and the
@@ -4280,7 +4299,12 @@ readmitting, withdrawing, or submitting corrected input. Exact-byte origins
 If an exact-byte proposal loses the publication compare-and-swap, activation
 recovers the winner and returns its `lost_cas` receipt without recompiling or retrying.
 
-`proposal approve` signs the reviewed candidate. When that signature completes
+`proposal approve` signs the reviewed candidate. At a terminal it shows the
+change summary and asks first; `--yes` signs without asking and prints one
+counts line plus any earlier refusals (`--full` renders every member). Without
+a terminal to prompt at (an agent, a script, CI) it refuses before calling the
+daemon unless `--yes` is passed, with the repair to review first and then
+approve with `--yes`. When that signature completes
 the candidate's required approvals and your tier may activate (`graph_write`),
 the same command activates it and reports both: the JSON receipt carries
 `activation`, the activation receipt. `--hold` signs only, for a reviewer

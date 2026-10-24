@@ -11,11 +11,14 @@ judgment; Cruxible checks it, records it and serves it back.
 
 ## Start here
 
-- [Quickstart](quickstart.md): in about ten minutes, find out which of your
-  project's dependencies carry a vulnerability attackers are exploiting now,
-  with every answer traced to its source.
+- [Quickstart](quickstart.md): set Cruxible up on a project, let an agent
+  pull in what you ship and run, and find out which of your dependencies carry
+  a vulnerability attackers are exploiting now, with every answer traced to
+  its source.
 - [Concepts](concepts.md): the ideas behind Cruxible, and the words the rest
   of these docs use.
+- [Security walkthrough](security-walkthrough.md): the same by hand, step by
+  step, through to responding to an incident.
 
 ## Guides
 
