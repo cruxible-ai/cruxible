@@ -183,3 +183,44 @@ def test_source_admission_lookup_work_is_independent_of_rule_contract_count():
         compiled = _rule_source_sets(rule)
         assert rule.admits_source(identity="CaptureContract:test.c000", logical_source="osv.record")
         assert _rule_source_sets(rule) is compiled
+
+
+def test_builtin_migration_is_one_successor_and_old_capture_bytes_stay_pinned():
+    from cruxible_client.contracts.captures import (
+        AcceptedCaptureContract,
+        builtin_contract_for_write,
+        capture_contract_digest,
+        evaluate_capture_contract_law,
+    )
+
+    old = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+    successor = builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, old)
+    assert successor.lifecycle.predecessor_digest == capture_contract_digest(old).tagged
+    assert (
+        builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, successor) is successor
+    )
+    accepted = AcceptedCaptureContract(
+        path=capture_contract_path(old.identity.name),
+        contract=old,
+        artifact_digest=capture_contract_digest(old).tagged,
+    )
+    assert (
+        evaluate_capture_contract_law(
+            successor, path=accepted.path, predecessor=accepted, compatible_succession=True
+        ).verdict
+        == "accepted"
+    )
+    assert render_capture_contract(old) == render_capture_contract(
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+    )
+
+
+def test_capture_input_forbids_unknown_shape_and_derived_http():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        CaptureContractInputRecord(name="test.bad", shape="anything")
+    with pytest.raises(ValidationError, match="derived grade"):
+        lower_capture_contract_input(
+            CaptureContractInputRecord(name="test.bad", shape="http_response", grade="derived")
+        )

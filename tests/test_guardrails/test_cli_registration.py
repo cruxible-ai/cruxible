@@ -102,7 +102,7 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     # subject, policy and query groups (query is one command), and the stub leaf
     # replaced the world group; the Claude Code hook group is cut. The Line inbox
     # group adds one. `action` (manual internal-action fire) adds one more.
-    assert len(groups) == 29, f"expected 29 Cruxible/host groups, found {len(groups)}"
+    assert len(groups) == 30, f"expected 30 Cruxible/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:

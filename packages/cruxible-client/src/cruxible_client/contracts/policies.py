@@ -201,9 +201,6 @@ class _EvidenceRuleBase(_StrictPolicyModel):
     def _rule_sets(cls, value: tuple[str, ...], info: object) -> tuple[str, ...]:
         field_name = str(getattr(info, "field_name", "evidence-admission field"))
         _sorted_unique(value, label=field_name, nonempty=True)
-        if field_name == "evidence_kinds":
-            if any(not _EVIDENCE_KIND_RE.fullmatch(item) for item in value):
-                raise ValueError("evidence kinds must be canonical identifiers")
         return value
 
 

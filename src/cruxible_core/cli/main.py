@@ -69,6 +69,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("ledger", "publish"): "active",
     ("document", "propose"): "active",
     ("claim-type", "propose"): "active",
+    ("capture-contract", "propose"): "active",
     ("claim-type", "migrate"): "active",
     ("claim-type", "upgrade"): "active",
     ("block", "depublish"): "active",
@@ -186,7 +187,10 @@ def handle_errors(f: Any) -> Any:
             if ctx is not None:
                 command_path = _command_path(ctx)
                 target_mode = MUTATING_COMMAND_TARGETS.get(command_path)
-                if command_path == ("claim-type", "propose") and kwargs.get("template"):
+                if command_path in {
+                    ("claim-type", "propose"),
+                    ("capture-contract", "propose"),
+                } and kwargs.get("template"):
                     target_mode = None
                 if command_path == ("write",) and kwargs.get("schema"):
                     target_mode = None
@@ -635,6 +639,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         },
         module="playbill",
         attr="proposal_group",
+    ),
+    "capture-contract": _group(
+        "Define captured evidence shapes and policies.",
+        {
+            "propose": _command(
+                "playbill", "propose_capture_contract", "Propose a CaptureContract input."
+            )
+        },
+        module="playbill",
+        attr="capture_contract_group",
     ),
     "claim-type": _group(
         "Propose and upgrade the governed predicate vocabulary.",

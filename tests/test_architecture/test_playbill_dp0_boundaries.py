@@ -400,6 +400,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "propose_file_bundle",
         "propose_builtin_claim_type",
         "propose_claim_type_input",
+        "propose_capture_contract_input",
         "append_claim_attestation",
         "read_claim_batch",
         "get_claim_backings",

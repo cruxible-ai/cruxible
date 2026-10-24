@@ -18,9 +18,10 @@ out and reported for an explicit decision:
 
 from __future__ import annotations
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactRef
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
+    CaptureContractV1,
     capture_contract_successor_break,
 )
 from cruxible_client.contracts.claim_types import (
@@ -32,17 +33,12 @@ from cruxible_client.contracts.evidence_rule_upgrade import (
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    CaptureContractAdmission,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV1,
     ClaimEvidenceAdmissionRuleV2,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionRule as ClaimEvidenceAdmissionRuleV4,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
+    ClaimEvidenceAdmissionRuleV3,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -104,13 +100,13 @@ class _Lineages:
 
 
 def _overlaps(
-    first: ClaimEvidenceAdmissionRule | ClaimEvidenceAdmissionRuleV4,
-    second: ClaimEvidenceAdmissionRule | ClaimEvidenceAdmissionRuleV4,
+    first: ClaimEvidenceAdmissionRuleV3 | ClaimEvidenceAdmissionRule,
+    second: ClaimEvidenceAdmissionRuleV3 | ClaimEvidenceAdmissionRule,
 ) -> bool:
     if not set(first.claim_roles) & set(second.claim_roles):
         return False
-    if isinstance(first, ClaimEvidenceAdmissionRule) and isinstance(
-        second, ClaimEvidenceAdmissionRule
+    if isinstance(first, ClaimEvidenceAdmissionRuleV3) and isinstance(
+        second, ClaimEvidenceAdmissionRuleV3
     ):
         if not set(first.evidence_kinds) & set(second.evidence_kinds):
             return False
@@ -122,6 +118,34 @@ def _overlaps(
             if not a or not b or set(a) & set(b):
                 return True
     return False
+
+
+def _source_admission(
+    identity: str,
+    rule: ClaimEvidenceAdmissionRuleV1 | ClaimEvidenceAdmissionRuleV2,
+    lineages: _Lineages,
+) -> CaptureContractAdmission:
+    versions = lineages.lineage(identity)
+    sources: set[str] = set()
+    unrestricted = False
+    for version in versions:
+        contract = version.contract
+        if isinstance(contract, CaptureContractV1):
+            if not set(contract.evidence_kinds).issubset(rule.evidence_kinds):
+                raise _Refused(
+                    f"rule {rule.rule_id!r} does not cover every legacy kind of {identity}; "
+                    "state a current source rule explicitly"
+                )
+            if set(contract.allowed_source_kinds) - {"external"}:
+                unrestricted = True
+            sources.update(contract.logical_source_identities)
+        else:
+            unrestricted = True
+    return CaptureContractAdmission(
+        role=CAPTURE_CONTRACT_REF_ROLE,
+        target=versions[0].contract.identity,
+        logical_sources=() if unrestricted else tuple(sorted(sources)),
+    )
 
 
 def _convert(
@@ -152,15 +176,11 @@ def _convert(
             ClaimEvidenceAdmissionRule(
                 rule_id=rule.rule_id,
                 claim_roles=rule.claim_roles,
-                evidence_kinds=rule.evidence_kinds,
                 admission=rule.admission,
                 subject_binding=rule.subject_binding,
                 attestation_requirement=rule.attestation_requirement,
                 capture_contracts=tuple(
-                    ArtifactRef(
-                        role=CAPTURE_CONTRACT_REF_ROLE,
-                        target=lineages.lineage(identity)[0].contract.identity,
-                    )
+                    _source_admission(identity, rule, lineages)
                     for identity in sorted(named, key=lambda item: item.encode("utf-8"))
                 ),
             )
