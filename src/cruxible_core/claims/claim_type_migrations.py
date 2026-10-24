@@ -49,7 +49,6 @@ from cruxible_core.claims.artifact_references import (
 )
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputRecord,
-    ClaimTypeLintWarningV1,
     ClaimTypeProposalLintV1,
     identity_rules_supported,
     lint_claim_type_input,
@@ -60,7 +59,7 @@ from cruxible_core.claims.closure import (
     parse_dependency_artifact,
     reverse_pin_closure,
 )
-from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -479,34 +478,6 @@ def _include_migration_dependent(
     """Include the live closure plus retired Claims whose law evidence is still read."""
 
     return lifecycle_state == "live" or artifact_kind == "claim"
-
-
-def lint_claim_type_successors(
-    instance: PlaybillInstance,
-    successors: tuple[ClaimType, ...],
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-) -> ClaimTypeProposalLintV1 | None:
-    """Lint the successors one change set installs, as the operator road lints its one.
-
-    `service_migrate_claim_type` runs `lint_claim_type_input` over the successor
-    it is about to install, so an evidence policy that admits no accepted
-    capture contract is said out loud before the migration lands. A succession
-    authored as a change-set member is the same decision on the agent road and
-    owes the same reading; without this it landed silently. Warnings, never
-    refusals -- an admission policy nothing satisfies yet is a state an instance
-    may legitimately pass through -- and deduplicated, because two successions
-    in one set may owe the same unresolved contract.
-    """
-
-    seen: dict[str, ClaimTypeLintWarningV1] = {}
-    for successor in successors:
-        lint = lint_claim_type_input(instance, successor, coordinate=coordinate)
-        for warning in lint.warnings:
-            seen[json.dumps(warning.model_dump(mode="json"), sort_keys=True)] = warning
-    if not seen:
-        return None
-    return ClaimTypeProposalLintV1(warnings=tuple(seen[key] for key in sorted(seen)))
 
 
 def claim_type_migration_inventory(
@@ -1462,7 +1433,6 @@ __all__ = [
     "ClaimTypeMigrationResultV3",
     "build_claim_type_migration_candidate",
     "claim_type_migration_inventory",
-    "lint_claim_type_successors",
     "resolve_claim_type_succession",
     "service_migrate_claim_type",
 ]
