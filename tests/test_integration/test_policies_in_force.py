@@ -44,6 +44,7 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_core.service.claims.policies import service_playbill_policies_in_force
 from tests.core_support._adoption_fixture import _claim_type, _claim_type_path, _query_definition
+from tests.core_support._light_capture_support import record_contract
 from tests.core_support._support import initialize_local
 from tests.support.lines import action_trigger, trigger_members
 from tests.support.procedures import procedure_artifact
@@ -232,10 +233,8 @@ def complete_policy_inventory(
     for claim_type in (live_claim_type, retired_claim_type):
         tree[_claim_type_path(claim_type)] = render_claim_type(claim_type)
 
-    live_capture = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.model_copy(
-        update={"identity": ArtifactIdentity(kind="CaptureContract", name="policy-live-capture")}
-    )
-    retired_capture = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.model_copy(
+    live_capture = record_contract(name="policy-live-capture")
+    retired_capture = record_contract(name="policy-retired-capture").model_copy(
         update={
             "identity": ArtifactIdentity(
                 kind="CaptureContract",

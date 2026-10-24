@@ -28,8 +28,8 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.errors import GitError, ProjectionIntegrityError
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.exhaust.consumption import consumption_artifacts_for_paths
@@ -487,13 +487,12 @@ def test_a_prose_claim_type_admits_its_own_authored_body_and_a_domain_type_does_
 
     prose_type = domain_type.model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV1(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="authored-prose",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=(accepted.artifact_digest,),
-                        evidence_kinds=accepted.contract.evidence_kinds,
+                        capture_contracts=(accepted.contract.identity.name,),
                         admission="origin_only",
                         subject_binding="exact_claim_subject",
                     ),
