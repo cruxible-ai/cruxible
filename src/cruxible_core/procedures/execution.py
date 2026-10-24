@@ -4290,6 +4290,7 @@ class ProcedureExecutor:
                 input_name=rule.input_name,
                 disposition="refused",
             )
+            details: dict[str, object] = {"input_name": rule.input_name}
             message = f"Source alias {rule.input_name!r} refuses this result. "
             if (
                 result.acquisition is not None
@@ -4302,6 +4303,12 @@ class ProcedureExecutor:
                     else admission.admitted_at
                 )
                 age = (evaluation_time - result.acquisition.envelope.observed_at).total_seconds()
+                delta = evaluation_time - result.acquisition.envelope.observed_at
+                details.update(
+                    age_microseconds=(delta.days * 86_400 + delta.seconds) * 1_000_000
+                    + delta.microseconds,
+                    max_age_microseconds=rule.max_age.microseconds,
+                )
                 message += (
                     f"Capture age is {age}s; max_age is {rule.max_age.microseconds / 1_000_000}s. "
                 )
@@ -4318,6 +4325,7 @@ class ProcedureExecutor:
                 ),
                 message,
                 node_id=node.node_id,
+                details=details,
             )
         if decision.disposition == "omitted":
             marker = _decision_digest(admission.run_id, decision)

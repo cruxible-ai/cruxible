@@ -32,7 +32,12 @@ from cruxible_client.contracts.refusal_receipts import (
     PriorRefusalCoverage,
     PriorRefusalReceipt,
 )
-from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
+from cruxible_client.contracts.repairs import (
+    HandEditInstruction,
+    HandEditRepair,
+    ServedRepair,
+    served_repair_for_refusal,
+)
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.workspace_file import (
     SourceReadReceipt,
@@ -270,6 +275,22 @@ def _with_default_repair(value: object) -> object:
     code = value.get("code")
     if not isinstance(code, str):
         return value
+    details = value.get("details")
+    if code == "cruxible.acquisition.stale" and isinstance(details, dict):
+        alias = details.get("input_name")
+        age = details.get("age_microseconds")
+        if isinstance(alias, str) and isinstance(age, int):
+            repair = HandEditRepair(
+                hand_edit=HandEditInstruction(
+                    target=f"Source:{alias}",
+                    required_change=(
+                        f"Fetch a fresh Capture for alias {alias!r}; the refused "
+                        f"Capture age was {age} microseconds, above max_age "
+                        f"{details.get('max_age_microseconds')} microseconds."
+                    ),
+                )
+            )
+            return {**value, "repair": repair.model_dump(mode="python")}
     return {**value, "repair": served_repair_for_refusal(code).model_dump(mode="python")}
 
 

@@ -184,6 +184,12 @@ def test_stale_input_refusal_names_alias_age_and_repair(tmp_path: Path) -> None:
     assert "advisory" in state.terminal.message
     assert "age" in state.terminal.message
     assert "Repair:" in state.terminal.message
+    from cruxible_client.contracts.repairs import HandEditRepair
+
+    assert isinstance(state.terminal.repair, HandEditRepair)
+    assert state.terminal.repair.hand_edit.target == "Source:advisory"
+    assert "age was" in state.terminal.repair.hand_edit.required_change
+    assert "max_age" in state.terminal.repair.hand_edit.required_change
     assert state.result is None
 
 
