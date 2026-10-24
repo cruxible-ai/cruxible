@@ -57,7 +57,11 @@
         "cruxible.claim_type.anticipated_source_contract_omitted",
         "cruxible.claim_type.attestation_threshold_disabled",
         "cruxible.claim_type.permitted_role_unadmitted",
-        "cruxible.claim_type.field_name_reserved"
+        "cruxible.claim_type.field_name_reserved",
+        "cruxible.claim_type.inverse_on_enum_or_boolean",
+        "cruxible.claim_type.stale_eligible_never_current",
+        "cruxible.claim_type.description_missing",
+        "cruxible.claim_type.subject_kind_undeclared"
       ]
     },
     "FloorExportPart": {
@@ -9623,7 +9627,7 @@
           },
           "SubjectKindInput": {
             "additionalProperties": false,
-            "description": "How core names Subjects of one kind: by key ClaimTypes, or by minted ids.\n\nEvery new Subject is of a kind with an accepted SubjectKind. ``keys`` names\nthe key ClaimTypes (by predicate, in key order): each a ClaimType v8 about\nthis kind only, literal and one-valued, accepted here or earlier; a Subject's\nid is then the readable rendering of its canonical key. ``uniqueness:\nunique`` refuses a second live Subject with the same key; ``hint`` only\nsurfaces it in the duplicates audit. ``minted: true`` has core mint opaque\nids instead. Change it, or retire it, through a successor.",
+            "description": "How core names Subjects of one kind: by key ClaimTypes, or by minted ids.\n\nEvery new Subject is of a kind with an accepted SubjectKind. ``keys`` names\nthe key ClaimTypes (by predicate, in key order): each a ClaimType v8 about\nthis kind only, literal and one-valued, accepted here or earlier; a Subject's\nid is then the readable rendering of its canonical key. The default\n``uniqueness: unique`` refuses a second live Subject with the same key; ``hint`` only\nsurfaces it in the duplicates audit. ``minted: true`` has core mint opaque\nids instead. Change it, or retire it, through a successor.",
             "properties": {
               "description": {
                 "anyOf": [
@@ -9681,7 +9685,7 @@
                   }
                 ],
                 "default": null,
-                "description": "With keys: unique refuses a duplicate key; hint does not.",
+                "description": "With keys: defaults to unique, which refuses a duplicate key; hint does not.",
                 "title": "Uniqueness"
               }
             },
@@ -10601,7 +10605,11 @@
                   "cruxible.claim_type.anticipated_source_contract_omitted",
                   "cruxible.claim_type.attestation_threshold_disabled",
                   "cruxible.claim_type.permitted_role_unadmitted",
-                  "cruxible.claim_type.field_name_reserved"
+                  "cruxible.claim_type.field_name_reserved",
+                  "cruxible.claim_type.inverse_on_enum_or_boolean",
+                  "cruxible.claim_type.stale_eligible_never_current",
+                  "cruxible.claim_type.description_missing",
+                  "cruxible.claim_type.subject_kind_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -11935,7 +11943,11 @@
                   "cruxible.claim_type.anticipated_source_contract_omitted",
                   "cruxible.claim_type.attestation_threshold_disabled",
                   "cruxible.claim_type.permitted_role_unadmitted",
-                  "cruxible.claim_type.field_name_reserved"
+                  "cruxible.claim_type.field_name_reserved",
+                  "cruxible.claim_type.inverse_on_enum_or_boolean",
+                  "cruxible.claim_type.stale_eligible_never_current",
+                  "cruxible.claim_type.description_missing",
+                  "cruxible.claim_type.subject_kind_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -16955,7 +16967,11 @@
                   "cruxible.claim_type.anticipated_source_contract_omitted",
                   "cruxible.claim_type.attestation_threshold_disabled",
                   "cruxible.claim_type.permitted_role_unadmitted",
-                  "cruxible.claim_type.field_name_reserved"
+                  "cruxible.claim_type.field_name_reserved",
+                  "cruxible.claim_type.inverse_on_enum_or_boolean",
+                  "cruxible.claim_type.stale_eligible_never_current",
+                  "cruxible.claim_type.description_missing",
+                  "cruxible.claim_type.subject_kind_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -17310,7 +17326,11 @@
               "cruxible.claim_type.anticipated_source_contract_omitted",
               "cruxible.claim_type.attestation_threshold_disabled",
               "cruxible.claim_type.permitted_role_unadmitted",
-              "cruxible.claim_type.field_name_reserved"
+              "cruxible.claim_type.field_name_reserved",
+              "cruxible.claim_type.inverse_on_enum_or_boolean",
+              "cruxible.claim_type.stale_eligible_never_current",
+              "cruxible.claim_type.description_missing",
+              "cruxible.claim_type.subject_kind_undeclared"
             ],
             "title": "Code",
             "type": "string"
@@ -17408,7 +17428,11 @@
               "cruxible.claim_type.anticipated_source_contract_omitted",
               "cruxible.claim_type.attestation_threshold_disabled",
               "cruxible.claim_type.permitted_role_unadmitted",
-              "cruxible.claim_type.field_name_reserved"
+              "cruxible.claim_type.field_name_reserved",
+              "cruxible.claim_type.inverse_on_enum_or_boolean",
+              "cruxible.claim_type.stale_eligible_never_current",
+              "cruxible.claim_type.description_missing",
+              "cruxible.claim_type.subject_kind_undeclared"
             ],
             "title": "Code",
             "type": "string"
@@ -17620,7 +17644,11 @@
                   "cruxible.claim_type.anticipated_source_contract_omitted",
                   "cruxible.claim_type.attestation_threshold_disabled",
                   "cruxible.claim_type.permitted_role_unadmitted",
-                  "cruxible.claim_type.field_name_reserved"
+                  "cruxible.claim_type.field_name_reserved",
+                  "cruxible.claim_type.inverse_on_enum_or_boolean",
+                  "cruxible.claim_type.stale_eligible_never_current",
+                  "cruxible.claim_type.description_missing",
+                  "cruxible.claim_type.subject_kind_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -18056,7 +18084,11 @@
                   "cruxible.claim_type.anticipated_source_contract_omitted",
                   "cruxible.claim_type.attestation_threshold_disabled",
                   "cruxible.claim_type.permitted_role_unadmitted",
-                  "cruxible.claim_type.field_name_reserved"
+                  "cruxible.claim_type.field_name_reserved",
+                  "cruxible.claim_type.inverse_on_enum_or_boolean",
+                  "cruxible.claim_type.stale_eligible_never_current",
+                  "cruxible.claim_type.description_missing",
+                  "cruxible.claim_type.subject_kind_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -18724,7 +18756,11 @@
                   "cruxible.claim_type.anticipated_source_contract_omitted",
                   "cruxible.claim_type.attestation_threshold_disabled",
                   "cruxible.claim_type.permitted_role_unadmitted",
-                  "cruxible.claim_type.field_name_reserved"
+                  "cruxible.claim_type.field_name_reserved",
+                  "cruxible.claim_type.inverse_on_enum_or_boolean",
+                  "cruxible.claim_type.stale_eligible_never_current",
+                  "cruxible.claim_type.description_missing",
+                  "cruxible.claim_type.subject_kind_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -19392,7 +19428,11 @@
                   "cruxible.claim_type.anticipated_source_contract_omitted",
                   "cruxible.claim_type.attestation_threshold_disabled",
                   "cruxible.claim_type.permitted_role_unadmitted",
-                  "cruxible.claim_type.field_name_reserved"
+                  "cruxible.claim_type.field_name_reserved",
+                  "cruxible.claim_type.inverse_on_enum_or_boolean",
+                  "cruxible.claim_type.stale_eligible_never_current",
+                  "cruxible.claim_type.description_missing",
+                  "cruxible.claim_type.subject_kind_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -19866,7 +19906,11 @@
                   "cruxible.claim_type.anticipated_source_contract_omitted",
                   "cruxible.claim_type.attestation_threshold_disabled",
                   "cruxible.claim_type.permitted_role_unadmitted",
-                  "cruxible.claim_type.field_name_reserved"
+                  "cruxible.claim_type.field_name_reserved",
+                  "cruxible.claim_type.inverse_on_enum_or_boolean",
+                  "cruxible.claim_type.stale_eligible_never_current",
+                  "cruxible.claim_type.description_missing",
+                  "cruxible.claim_type.subject_kind_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -75583,7 +75627,11 @@
                   "cruxible.claim_type.anticipated_source_contract_omitted",
                   "cruxible.claim_type.attestation_threshold_disabled",
                   "cruxible.claim_type.permitted_role_unadmitted",
-                  "cruxible.claim_type.field_name_reserved"
+                  "cruxible.claim_type.field_name_reserved",
+                  "cruxible.claim_type.inverse_on_enum_or_boolean",
+                  "cruxible.claim_type.stale_eligible_never_current",
+                  "cruxible.claim_type.description_missing",
+                  "cruxible.claim_type.subject_kind_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -77014,7 +77062,11 @@
                   "cruxible.claim_type.anticipated_source_contract_omitted",
                   "cruxible.claim_type.attestation_threshold_disabled",
                   "cruxible.claim_type.permitted_role_unadmitted",
-                  "cruxible.claim_type.field_name_reserved"
+                  "cruxible.claim_type.field_name_reserved",
+                  "cruxible.claim_type.inverse_on_enum_or_boolean",
+                  "cruxible.claim_type.stale_eligible_never_current",
+                  "cruxible.claim_type.description_missing",
+                  "cruxible.claim_type.subject_kind_undeclared"
                 ],
                 "title": "Code",
                 "type": "string"

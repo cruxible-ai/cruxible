@@ -340,9 +340,9 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
     assert '"tag"' not in encoded
     assert "identity" not in json.loads(encoded)
     assert "evidence_freshness" not in json.loads(encoded)
-    assert lint.warnings[0].code == (
-        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
-    )
+    assert "cruxible.claim_type.evidence_policy_admits_no_accepted_contract" in {
+        warning.code for warning in lint.warnings
+    }
 
     source_intent = ClaimTypeInputRecord.model_validate(
         {
@@ -380,7 +380,10 @@ def test_claim_type_template_proposes_without_policy_lint_in_a_fresh_world(
     )
 
     assert result.proposal.proposal.candidate is not None
-    assert result.lint.warnings == ()
+    assert {warning.code for warning in result.lint.warnings} == {
+        "cruxible.claim_type.description_missing",
+        "cruxible.claim_type.subject_kind_undeclared",
+    }
     # The minimal template takes the default own-words rule, named publicly.
     expanded = claim_type_input_template(expanded=True)
     assert expanded.evidence_admission_policy is not None
@@ -418,9 +421,10 @@ def test_dead_direct_self_asserted_profile_remains_an_unresolved_contract(
         coordinate=instance.accepted_coordinate(),
     )
 
-    assert [item.code for item in lint.warnings] == [
-        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
-    ]
+    assert {item.code for item in lint.warnings} == {
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+        "cruxible.claim_type.description_missing",
+    }
 
 
 def test_fresh_template_claim_reaches_supported_through_flow_a(
@@ -441,7 +445,10 @@ def test_fresh_template_claim_reaches_supported_through_flow_a(
         proposal_name="template-claim-type",
         timestamp=TIMESTAMP,
     )
-    assert claim_type_proposal.lint.warnings == ()
+    assert {warning.code for warning in claim_type_proposal.lint.warnings} == {
+        "cruxible.claim_type.description_missing",
+        "cruxible.claim_type.subject_kind_undeclared",
+    }
     accept_proposal(instance, owner, claim_type_proposal.proposal)
 
     shell = SubjectShell(
@@ -504,7 +511,7 @@ def test_fresh_template_claim_reaches_supported_through_flow_a(
     assert verdict.verdict.verdict == "supported"
 
 
-def test_claim_type_input_preserves_optional_freshness_in_v7() -> None:
+def test_claim_type_input_preserves_optional_freshness_in_v8() -> None:
     original = claim_type_input_example()
     freshness = ClaimEvidenceFreshness(
         stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
@@ -519,14 +526,14 @@ def test_claim_type_input_preserves_optional_freshness_in_v7() -> None:
     plain = lower_claim_type_input(original, tree={}, identity_rules=True)
     governed = lower_claim_type_input(fresh, tree={}, identity_rules=True)
 
-    assert plain.artifact_format == "playbill-claim-type-v7"
+    assert plain.artifact_format == "playbill-claim-type-v8"
     assert plain.evidence_freshness is None
     assert "evidence_freshness" not in original.model_dump(mode="json")
-    assert governed.artifact_format == "playbill-claim-type-v7"
+    assert governed.artifact_format == "playbill-claim-type-v8"
     assert governed.evidence_freshness == freshness
 
 
-def test_claim_type_input_preserves_attestation_consequences_in_v7() -> None:
+def test_claim_type_input_preserves_attestation_consequences_in_v8() -> None:
     original = claim_type_input_example()
     policy = ClaimAttestationConsequencePolicy(
         rules=(
@@ -548,7 +555,7 @@ def test_claim_type_input_preserves_attestation_consequences_in_v7() -> None:
         identity_rules=True,
     )
 
-    assert governed.artifact_format == "playbill-claim-type-v7"
+    assert governed.artifact_format == "playbill-claim-type-v8"
     assert governed.evidence_freshness is None
     assert governed.attestation_consequence_policy == policy
 
@@ -588,9 +595,15 @@ def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(
         coordinate=instance.accepted_coordinate(),
     )
 
-    assert len(lint.warnings) == 1
-    warning = lint.warnings[0]
-    assert warning.code == "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
+    assert {warning.code for warning in lint.warnings} == {
+        "cruxible.claim_type.description_missing",
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+    }
+    warning = next(
+        w
+        for w in lint.warnings
+        if w.code == "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
+    )
     assert warning.field_path == "$.evidence_admission_policy.rules"
     assert warning.replacement_rule_fragment["capture_contract_digests"] == [
         warning.contract_digest
@@ -699,10 +712,93 @@ def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -
         timestamp=TIMESTAMP,
     )
 
-    (warning,) = result.lint.warnings
+    warning = next(
+        item
+        for item in result.lint.warnings
+        if item.code == "cruxible.claim_type.attestation_threshold_disabled"
+    )
     assert warning.code == "cruxible.claim_type.attestation_threshold_disabled"
     assert warning.field_path == (
         "$.attestation_consequence_policy.rules[0].minimum_independent_control_components"
     )
     assert warning.replacement_rule_fragment == {"minimum_independent_control_components": 1}
     assert warning.contract_identity is None and warning.contract_digest is None
+
+
+def test_subject_kind_omitted_uniqueness_lowers_to_unique(tmp_path: Path) -> None:
+    from cruxible_client.authoring.inputs import ClaimTypeInput, SubjectKindInput
+    from cruxible_client.contracts.subject_kinds import SubjectKindKeys, parse_subject_kind
+
+    instance, _owner = initialize_local(tmp_path)
+    key = lower_claim_type_input(
+        ClaimTypeInputRecord(predicate="catalog.part.name", cardinality="one"),
+        tree={},
+        identity_rules=True,
+    )
+    payload = lower_authoring_input(
+        ChangeSetInput(
+            kind="change_set",
+            members=(
+                ClaimTypeInput(kind="claim_type", claim_type=key),
+                SubjectKindInput(kind="subject_kind", name="catalog.part", keys=(key.predicate,)),
+            ),
+        )
+    )
+    coordinator = _coordinator(instance)
+    intent = coordinator.create(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    )
+    lowered = lower_authoring(instance, intent=intent.intent, actor_id="owner")
+    path, content = next(
+        (path, content)
+        for path, content in lowered.changed_members
+        if path.startswith("subject-kinds/")
+    )
+    assert parse_subject_kind(content, path=path).identity_rule == SubjectKindKeys(
+        keys=(key.predicate,), uniqueness="unique"
+    )
+
+
+def test_subject_kind_and_claim_type_description_lints_reach_preflight(tmp_path: Path) -> None:
+    from cruxible_client.authoring.inputs import ClaimTypeInput, SubjectKindInput
+    from cruxible_core.runtime.playbill_api import _authoring_preflight_result
+
+    instance, _owner = initialize_local(tmp_path)
+    key = lower_claim_type_input(
+        ClaimTypeInputRecord(predicate="catalog.part.name", cardinality="one"),
+        tree={},
+        identity_rules=True,
+    )
+    for described in (False, True):
+        definition = key.model_copy(update={"description": "A part's name."}) if described else key
+        payload = lower_authoring_input(
+            ChangeSetInput(
+                kind="change_set",
+                members=(
+                    ClaimTypeInput(kind="claim_type", claim_type=definition),
+                    SubjectKindInput(
+                        kind="subject_kind",
+                        name="catalog.part",
+                        keys=(key.predicate,),
+                        description="A catalog part." if described else None,
+                    ),
+                ),
+            )
+        )
+        coordinator = AuthoringIntentCoordinator.for_instance(instance)
+        actor = AuthenticatedActor(actor_id="owner")
+        result = coordinator.compile(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP)
+        assert result.verdict == "passed", result
+        served = _authoring_preflight_result(
+            coordinator, actor=actor, result=result, payload=payload
+        )
+        if described:
+            assert served.lint is None
+        else:
+            assert served.lint is not None
+            assert [warning.code for warning in served.lint.warnings] == [
+                "cruxible.claim_type.description_missing"
+            ]
+            assert served.lint.warnings[0].field_path == "$.description"

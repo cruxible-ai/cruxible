@@ -339,14 +339,10 @@ def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypat
     assert result.exit_code == 0, result.output
     rendered = ClaimTypeInputRecord.model_validate(json.loads(result.stdout))
     assert rendered == claim_type_input_template()
-    # Minimal: what no default fills, plus canonical_form so the field can key a kind.
+    # Minimal: only predicate and cardinality; the default string form can key a kind.
     assert set(json.loads(result.stdout)) == {
         "predicate",
-        "allowed_subject_kinds",
-        "object_kind",
-        "literal_schema",
         "cardinality",
-        "canonical_form",
     }
     lowered = lower_claim_type_input(rendered, tree={}, identity_rules=True)
     assert lowered.identity.qualified == "ClaimType:project.work_item.status"

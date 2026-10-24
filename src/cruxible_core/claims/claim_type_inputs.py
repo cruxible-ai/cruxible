@@ -61,6 +61,7 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.compiler import (
@@ -124,8 +125,8 @@ _STRUCTURAL_INPUT_FIELDS = (
     "unsure_hold_for",
 )
 
-#: What a new ClaimType must state: no default says what it is about or holds.
-_REQUIRED_NEW_FIELDS = ("allowed_subject_kinds", "object_kind", "cardinality")
+#: The predicate is required by the model; cardinality has no inferred default.
+_REQUIRED_NEW_FIELDS = ("cardinality",)
 
 #: Fields that always have a value: named or left out, never ``null``.
 _NEVER_NULL_FIELDS = (
@@ -204,10 +205,12 @@ class ClaimInverseInput(_StrictClaimTypeInputModel):
 class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     """One ClaimType, as authored: state what differs from the defaults.
 
-    A new ClaimType states ``predicate``, ``allowed_subject_kinds``,
-    ``object_kind`` and ``cardinality`` (and ``literal_schema`` or
-    ``allowed_object_subject_kinds`` for its object); every other field takes
-    its default, written out in full in the stored ClaimType
+    A new ClaimType states ``predicate`` and ``cardinality``. The predicate's
+    prefix before its last dot supplies ``allowed_subject_kinds``; state it for
+    a multi-kind field. ``literal_schema`` infers a literal object,
+    ``allowed_object_subject_kinds`` a Subject object; state only one. Neither
+    means a string literal. State ``object_kind: exact_content`` explicitly.
+    Every other field takes its default, written out in full in the stored ClaimType
     (``cruxible claim-type propose --template --expanded`` prints them):
 
     - ``permitted_roles``: ``[default_role]`` when one is stated, else
@@ -220,7 +223,11 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     - ``admission_policy``: no corroboration or freeze requirements.
     - ``resolution_policy``: supported, current Claims; ``only_contender``
       (one) or ``all`` (many); a conflict leaves the field unresolved.
-    - ``evidence_requirement`` ``self``, ``revision_evidence`` ``replace``.
+    - ``evidence_requirement``: ``captured`` for exactly ``[observation]``
+      (which requires a source or explicit evidence policy), otherwise ``self``.
+      ``revision_evidence``: ``replace``.
+    - ``canonical_form``: ``[nfc, trim]`` for string literals, enum included;
+      state ``[]`` for no transforms. Other object types have no default form.
 
     An edit (a predicate this instance already holds) follows JSON merge-patch
     (RFC 7396) against the accepted predecessor for every field but
@@ -450,9 +457,30 @@ def claim_type_input_defaults(
             f"{', '.join(missing)}; every other field has a default "
             "(`cruxible claim-type propose --template --expanded` shows them)"
         )
+    if "allowed_subject_kinds" not in stated:
+        data["allowed_subject_kinds"] = [value.predicate.rpartition(".")[0]]
+    if "object_kind" not in stated:
+        if value.literal_schema is not None and value.allowed_object_subject_kinds:
+            raise FormatError(
+                "cruxible.claim_type.input_invalid: state literal_schema or "
+                "allowed_object_subject_kinds, not both; they infer different object kinds"
+            )
+        data["object_kind"] = "subject" if value.allowed_object_subject_kinds else "literal"
+    if data["object_kind"] == "literal" and "literal_schema" not in stated:
+        data["literal_schema"] = {"type": "string"}
+    schema = data.get("literal_schema")
+    if (
+        "canonical_form" not in stated
+        and data["object_kind"] == "literal"
+        and isinstance(schema, dict)
+        and schema.get("type") == "string"
+    ):
+        data["canonical_form"] = ["nfc", "trim"]
     if "permitted_roles" not in stated:
         data["permitted_roles"] = [value.default_role or "normative"]
-    requirement = value.evidence_requirement or "self"
+    requirement = value.evidence_requirement or (
+        "captured" if set(data["permitted_roles"]) == {"observation"} else "self"
+    )
     if "evidence_requirement" not in stated:
         data["evidence_requirement"] = requirement
     if "revision_evidence" not in stated:
@@ -503,6 +531,11 @@ def _refuse_number_schema(value: ClaimTypeInputRecord) -> None:
 
 #: What a lint warning means, for surfaces that print more than its code.
 CLAIM_TYPE_LINT_TEXT: dict[str, str] = {
+    "cruxible.claim_type.description_missing": "state what one value of this field means",
+    "cruxible.claim_type.subject_kind_undeclared": (
+        "the inferred Subject kind has no live SubjectKind: declare it in this change set "
+        "or state allowed_subject_kinds"
+    ),
     "cruxible.claim_type.inverse_on_enum_or_boolean": (
         "an inverse on a one-valued enum or boolean field: a member states the negative"
     ),
@@ -523,6 +556,8 @@ class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
             "cruxible.claim_type.field_name_reserved",
             "cruxible.claim_type.inverse_on_enum_or_boolean",
             "cruxible.claim_type.stale_eligible_never_current",
+            "cruxible.claim_type.description_missing",
+            "cruxible.claim_type.subject_kind_undeclared",
         ],
         CurrentCode,
     ]
@@ -550,19 +585,14 @@ class ClaimTypeInputProposalResultV1(_StrictClaimTypeInputModel):
 def claim_type_input_template(*, expanded: bool = False) -> ClaimTypeInputRecord:
     """The ClaimType input the CLI template surface prints.
 
-    The minimal form states only what no default can fill, plus
-    ``canonical_form: []`` so the literal one-valued field can key a SubjectKind
-    (a key needs ClaimType v8). ``expanded`` states every default the minimal
-    form takes, from the same function lowering applies.
+    The minimal form states only predicate and cardinality. Its string literal
+    takes ``[nfc, trim]`` and can key a SubjectKind (a key needs ClaimType v8).
+    ``expanded`` states every default from the same function lowering applies.
     """
 
     minimal = ClaimTypeInputRecord(
         predicate="project.work_item.status",
-        allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"type": "string"},
         cardinality="one",
-        canonical_form=(),
     )
     return claim_type_input_defaults(minimal, None) if expanded else minimal
 
@@ -857,12 +887,27 @@ def lower_claim_type_input(
         raise ClaimTypeInputValidationError(exc) from exc
 
 
+def lint_description(description: str | None) -> tuple[ClaimTypeLintWarningV1, ...]:
+    """One advisory repair shared by authored ClaimTypes and SubjectKinds."""
+
+    if description is not None and description.strip():
+        return ()
+    return (
+        ClaimTypeLintWarningV1(
+            code="cruxible.claim_type.description_missing",
+            field_path="$.description",
+            replacement_rule_fragment={"description": "<what one value of this field means>"},
+        ),
+    )
+
+
 def lint_claim_type_input(
     instance: PlaybillInstance,
     value: ClaimTypeInputRecord | ClaimType,
     *,
     coordinate: AcceptedProjectionCoordinate,
     anticipated_source_ids: tuple[str, ...] = (),
+    declared_subject_kinds: frozenset[str] = frozenset(),
 ) -> ClaimTypeProposalLintV1:
     accepted_contracts: dict[str, str] = {}
     source_ids = set(anticipated_source_ids)
@@ -881,6 +926,8 @@ def lint_claim_type_input(
         contract = foreign_source_capture_contract(source_id)
         resolvable_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
     effective = value
+    description = value.description
+    undeclared_kind: str | None = None
     with instance.bind_accepted_projection(coordinate) as projection:
         accepted_contracts.update(
             (row.artifact_digest, row.identity)
@@ -890,6 +937,19 @@ def lint_claim_type_input(
             # Lint what lowering writes: the defaults, or the predecessor's
             # values an edit keeps. One read: this predicate's accepted type.
             prior = projection.typed.source(f"ClaimType:{value.predicate}")
+            if isinstance(prior, ClaimType) and not value.states("description"):
+                description = prior.description
+            # Only new inputs infer a kind; edits keep the predecessor's kinds.
+            # One indexed lookup for this kind, never a walk over Subjects or kinds.
+            if prior is None and not value.states("allowed_subject_kinds"):
+                kind = value.predicate.rpartition(".")[0]
+                if kind and kind not in declared_subject_kinds:
+                    declaration = projection.typed.source(f"SubjectKind:{kind}")
+                    if (
+                        not isinstance(declaration, SubjectKind)
+                        or declaration.lifecycle.state != "live"
+                    ):
+                        undeclared_kind = kind
             try:
                 effective = claim_type_input_defaults(
                     value, prior if isinstance(prior, ClaimType) else None
@@ -968,6 +1028,15 @@ def lint_claim_type_input(
                 contract_identity=accepted_contracts[contract_digest],
                 contract_digest=contract_digest,
                 replacement_rule_fragment={"capture_contract_digests": [contract_digest]},
+            )
+        )
+    warnings.extend(lint_description(description))
+    if undeclared_kind is not None:
+        warnings.append(
+            ClaimTypeLintWarningV1(
+                code="cruxible.claim_type.subject_kind_undeclared",
+                field_path="$.allowed_subject_kinds",
+                replacement_rule_fragment={"allowed_subject_kinds": [undeclared_kind]},
             )
         )
     for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
@@ -1092,5 +1161,6 @@ __all__ = [
     "claim_type_input_template",
     "identity_rules_supported",
     "lint_claim_type_input",
+    "lint_description",
     "lower_claim_type_input",
 ]

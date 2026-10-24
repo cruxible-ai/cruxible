@@ -116,7 +116,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:65219585b73377fbec6cd024188e74c0f61ca71384f52a955b49d2f80a78fd49"
+    "sha256:b4ec960489f3af62eab004dfa644b90c62520265c278ae233fcf0ff91f623550"
 )
 
 MAX_DIAGNOSTICS = 128
@@ -1116,9 +1116,9 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
     """One SubjectKind decision: how core names Subjects of one kind.
 
     Exactly one of ``keys`` (the key ClaimTypes by predicate, in key order, with
-    ``uniqueness``) or ``minted``. Lowering writes ``subject-kinds/<name>.json``
-    as the successor of the accepted one when there is one; changing the keys or
-    the uniqueness of an accepted kind is that governed successor, and no
+    optional ``uniqueness``, default ``unique``) or ``minted``. Lowering writes
+    ``subject-kinds/<name>.json`` as the successor of the accepted one when there
+    is one; changing the keys or uniqueness is that governed successor, and no
     existing Subject's id moves.
     """
 
@@ -1145,8 +1145,8 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
     def _one_rule(self) -> "SubjectKindAuthoringPayload":
         if bool(self.keys) == self.minted:
             raise ValueError("a SubjectKind names its keys or is minted: exactly one of them")
-        if bool(self.keys) != (self.uniqueness is not None):
-            raise ValueError("a keyed SubjectKind states its uniqueness (unique or hint)")
+        if self.minted and self.uniqueness is not None:
+            raise ValueError("only a keyed SubjectKind states uniqueness (unique or hint)")
         return self
 
 

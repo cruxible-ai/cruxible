@@ -478,8 +478,8 @@ class SubjectKindInput(_StrictInputModel):
     Every new Subject is of a kind with an accepted SubjectKind. ``keys`` names
     the key ClaimTypes (by predicate, in key order): each a ClaimType v8 about
     this kind only, literal and one-valued, accepted here or earlier; a Subject's
-    id is then the readable rendering of its canonical key. ``uniqueness:
-    unique`` refuses a second live Subject with the same key; ``hint`` only
+    id is then the readable rendering of its canonical key. The default
+    ``uniqueness: unique`` refuses a second live Subject with the same key; ``hint`` only
     surfaces it in the duplicates audit. ``minted: true`` has core mint opaque
     ids instead. Change it, or retire it, through a successor.
     """
@@ -491,7 +491,8 @@ class SubjectKindInput(_StrictInputModel):
         default=(), description="Key ClaimTypes by predicate, in key order; omit when minted."
     )
     uniqueness: Literal["unique", "hint"] | None = Field(
-        default=None, description="With keys: unique refuses a duplicate key; hint does not."
+        default=None,
+        description="With keys: defaults to unique, which refuses a duplicate key; hint does not.",
     )
     minted: bool = Field(default=False, description="Core mints opaque ids; no keys.")
     retire: bool = False

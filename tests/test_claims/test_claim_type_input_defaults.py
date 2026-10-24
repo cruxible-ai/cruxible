@@ -27,6 +27,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.subject_kinds import KeyClaimTypeShape, key_claim_type_problem
 from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 from cruxible_core.claims.claim_type_inputs import (
@@ -102,14 +103,14 @@ def test_defaults_follow_the_stated_role_cardinality_and_sources() -> None:
 
     assert lowered.permitted_roles == ("observation",)
     assert lowered.resolution_policy.selector == "all"
+    assert lowered.evidence_requirement == "captured"
     assert [rule.rule_id for rule in lowered.evidence_admission_policy.rules] == [
-        "self",
         "source-repo.parts",
     ]
 
 
 def test_a_new_claim_type_states_what_no_default_can_fill() -> None:
-    with pytest.raises(ClaimTypeInputIncomplete, match="allowed_subject_kinds, cardinality"):
+    with pytest.raises(ClaimTypeInputIncomplete, match="states cardinality"):
         _lower({"predicate": "catalog.part.price", "object_kind": "literal"})
     with pytest.raises(ClaimTypeEvidenceRulesRequired, match="anticipated_source_ids"):
         _lower({**_MINIMAL, "evidence_requirement": "captured"})
@@ -190,7 +191,7 @@ def test_the_template_is_minimal_and_keys_a_subject_kind() -> None:
     template = claim_type_input_template()
     dumped = template.model_dump(mode="json")
 
-    assert dumped["canonical_form"] == []
+    assert dumped == {"predicate": "project.work_item.status", "cardinality": "one"}
     assert "evidence_admission_policy" not in dumped
     assert "playbill." not in str(claim_type_input_template(expanded=True).model_dump())
     lowered = lower_claim_type_input(template, tree={}, identity_rules=True)
@@ -208,7 +209,7 @@ def test_the_template_is_minimal_and_keys_a_subject_kind() -> None:
     assert "canonical_form ([] for none)" in problem
 
 
-def test_lint_is_quiet_for_own_words_on_a_fresh_instance(tmp_path: Path) -> None:
+def test_lint_only_requests_a_description_for_own_words_on_a_fresh_instance(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
 
     lint = lint_claim_type_input(
@@ -217,7 +218,9 @@ def test_lint_is_quiet_for_own_words_on_a_fresh_instance(tmp_path: Path) -> None
         coordinate=instance.accepted_coordinate(),
     )
 
-    assert lint.warnings == ()
+    assert [warning.code for warning in lint.warnings] == [
+        "cruxible.claim_type.description_missing"
+    ]
 
 
 def test_lint_names_an_unadmitted_role_and_a_reserved_field_name(tmp_path: Path) -> None:
@@ -246,6 +249,7 @@ def test_lint_names_an_unadmitted_role_and_a_reserved_field_name(tmp_path: Path)
 
     by_code = {item.code: item for item in lint.warnings}
     assert set(by_code) == {
+        "cruxible.claim_type.description_missing",
         "cruxible.claim_type.field_name_reserved",
         "cruxible.claim_type.permitted_role_unadmitted",
     }
@@ -346,3 +350,235 @@ def test_unsorted_succession_dependents_are_sorted_and_a_shape_error_is_typed() 
     assert refused.value.code == "cruxible.authoring.input_invalid"
     assert refused.value.field_path == "input.members[0]"
     assert "names the predecessor it succeeds" in refused.value.message
+
+
+def test_only_predicate_and_cardinality_are_required() -> None:
+    minimal = {"predicate": "catalog.part.name", "cardinality": "one"}
+    lowered = _lower(minimal)
+    assert lowered.allowed_subject_kinds == ("catalog.part",)
+    assert lowered.object_kind == "literal"
+    assert lowered.literal_schema == {"type": "string"}
+    assert lowered.canonical_form == ("nfc", "trim")
+    assert lowered.artifact_format == "playbill-claim-type-v8"
+    assert claim_type_digest(lowered) == claim_type_digest(
+        _lower(
+            {
+                **minimal,
+                "allowed_subject_kinds": ["catalog.part"],
+                "object_kind": "literal",
+                "literal_schema": {"type": "string"},
+                "canonical_form": ["nfc", "trim"],
+            }
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "roles",
+    [
+        {"default_role": "observation"},
+        {"permitted_roles": ["observation"]},
+    ],
+)
+def test_observation_only_requires_a_source(roles: dict[str, object]) -> None:
+    with pytest.raises(ClaimTypeEvidenceRulesRequired):
+        _lower({**_MINIMAL, **roles})
+    assert (
+        _lower({**_MINIMAL, **roles, "evidence_requirement": "self"}).evidence_requirement == "self"
+    )
+    explicit = _lower({**_MINIMAL, **roles, "evidence_admission_policy": {"rules": []}})
+    assert explicit.evidence_requirement == "captured"
+
+
+def test_mixed_roles_keep_self_and_explicit_requirement_wins() -> None:
+    assert (
+        _lower({**_MINIMAL, "permitted_roles": ["normative", "observation"]}).evidence_requirement
+        == "self"
+    )
+    assert _lower({**_MINIMAL, "evidence_requirement": "none"}).evidence_requirement == "none"
+
+
+@pytest.mark.parametrize("schema", [{"type": "string"}, {"type": "string", "enum": ["yes", "no"]}])
+def test_string_canonical_form_defaults_and_explicit_overrides(schema: dict[str, object]) -> None:
+    record = {"predicate": "catalog.part.name", "cardinality": "one", "literal_schema": schema}
+    assert _lower(record).canonical_form == ("nfc", "trim")
+    assert _lower({**record, "canonical_form": []}).canonical_form == ()
+    assert _lower({**record, "canonical_form": ["casefold"]}).canonical_form == ("casefold",)
+    assert _lower({**record, "canonical_form": None}).artifact_format == "playbill-claim-type-v7"
+    prior = _lower({**record, "canonical_form": ["casefold"]})
+    tree = {claim_type_path(prior.predicate): render_claim_type(prior)}
+    assert _lower(
+        {"predicate": prior.predicate, "description": "A name."}, tree
+    ).canonical_form == ("casefold",)
+
+
+def test_object_kind_inference_preserves_non_strings_and_explicit_kinds() -> None:
+    minimal = {"predicate": "catalog.part.price", "cardinality": "one"}
+    integer = _lower({**minimal, "literal_schema": {"type": "integer"}})
+    assert integer.object_kind == "literal"
+    assert integer.canonical_form is None
+    assert integer.artifact_format == "playbill-claim-type-v7"
+    subject = _lower({**minimal, "allowed_object_subject_kinds": ["catalog.vendor"]})
+    assert subject.object_kind == "subject"
+    assert subject.literal_schema is None and subject.canonical_form is None
+    exact = _lower({**minimal, "object_kind": "exact_content"})
+    assert exact.object_kind == "exact_content"
+    assert exact.literal_schema is None and exact.canonical_form is None
+    with pytest.raises(FormatError, match="not both"):
+        _lower(
+            {
+                **minimal,
+                "literal_schema": {"type": "string"},
+                "allowed_object_subject_kinds": ["catalog.vendor"],
+            }
+        )
+    assert _lower(
+        {**minimal, "allowed_subject_kinds": ["catalog.other", "catalog.part"]}
+    ).allowed_subject_kinds == ("catalog.other", "catalog.part")
+
+
+def test_security_kit_full_claim_type_keeps_identical_bytes() -> None:
+    # Unmodified security kit 1.3.1 artifact: explicit [trim] must beat [nfc, trim].
+    path = Path(__file__).with_name("fixtures") / "security-release-version.json"
+    original = path.read_bytes()
+    artifact = parse_claim_type(original, path=claim_type_path("security.release.version"))
+    record = ClaimTypeInputRecord.model_validate(
+        artifact.model_dump(
+            mode="json",
+            exclude={"artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"},
+        )
+    )
+    assert (
+        render_claim_type(lower_claim_type_input(record, tree={}, identity_rules=True)) == original
+    )
+
+
+def test_minimal_input_lints_description_and_undeclared_inferred_kind(tmp_path: Path) -> None:
+    from cruxible_client import contracts
+
+    instance, _owner = initialize_local(tmp_path)
+    lint = lint_claim_type_input(
+        instance,
+        ClaimTypeInputRecord(predicate="catalog.part.name", cardinality="one"),
+        coordinate=instance.accepted_coordinate(),
+    )
+    by_code = {warning.code: warning for warning in lint.warnings}
+    assert set(by_code) == {
+        "cruxible.claim_type.description_missing",
+        "cruxible.claim_type.subject_kind_undeclared",
+    }
+    description = by_code["cruxible.claim_type.description_missing"]
+    assert description.field_path == "$.description"
+    assert description.replacement_rule_fragment == {
+        "description": "<what one value of this field means>"
+    }
+    undeclared = by_code["cruxible.claim_type.subject_kind_undeclared"]
+    assert undeclared.field_path == "$.allowed_subject_kinds"
+    assert undeclared.replacement_rule_fragment == {"allowed_subject_kinds": ["catalog.part"]}
+    assert contracts.ClaimTypeProposalLint.model_validate(lint.model_dump(mode="json")).warnings
+
+
+@pytest.mark.parametrize("size", [10, 1000])
+@pytest.mark.parametrize("declaration", ["accepted", "same_set", "absent", "retired"])
+def test_inferred_kind_lint_does_one_indexed_lookup_at_two_sizes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, size: int, declaration: str
+) -> None:
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from tests.core_support._subject_kind_support import minted_subject_kind
+
+    instance, _owner = initialize_local(tmp_path)
+    sources = {
+        f"SubjectKind:catalog.other_{index}": minted_subject_kind(f"catalog.other_{index}")
+        for index in range(size)
+    }
+    if declaration in {"accepted", "retired"}:
+        kind = minted_subject_kind("catalog.part")
+        if declaration == "retired":
+            kind = kind.model_copy(update={"lifecycle": ArtifactLifecycle(state="retired")})
+        sources["SubjectKind:catalog.part"] = kind
+    reads: list[str] = []
+
+    def source(identity: str):  # type: ignore[no-untyped-def]
+        reads.append(identity)
+        return sources.get(identity)
+
+    projection = SimpleNamespace(typed=SimpleNamespace(source=source, envelopes=lambda **_: ()))
+    monkeypatch.setattr(instance, "bind_accepted_projection", lambda _: nullcontext(projection))
+    lint = lint_claim_type_input(
+        instance,
+        ClaimTypeInputRecord(
+            predicate="catalog.part.name", cardinality="one", description="The part's name."
+        ),
+        coordinate=instance.accepted_coordinate(),
+        declared_subject_kinds=frozenset({"catalog.part"})
+        if declaration == "same_set"
+        else frozenset(),
+    )
+    assert reads == ["ClaimType:catalog.part.name"] + (
+        [] if declaration == "same_set" else ["SubjectKind:catalog.part"]
+    )
+    assert [warning.code for warning in lint.warnings] == (
+        ["cruxible.claim_type.subject_kind_undeclared"]
+        if declaration in {"absent", "retired"}
+        else []
+    )
+
+
+def test_lint_keeps_an_accepted_description_on_an_edit(tmp_path: Path) -> None:
+    from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    path = claim_type_path("project.work_item.status")
+    accepted = parse_claim_type(tree[path], path=path)
+    # The existing fixture is undescribed: an edit that supplies a description
+    # quiets the warning, while a supplied null still requests one.
+    for description in ("The work item's status.", None):
+        lint = lint_claim_type_input(
+            instance,
+            ClaimTypeInputRecord(predicate=accepted.predicate, description=description),
+            coordinate=instance.accepted_coordinate(),
+        )
+        assert any(w.code == "cruxible.claim_type.description_missing" for w in lint.warnings) == (
+            description is None
+        )
+    # A new inferred field about the accepted SubjectKind needs no declaration.
+    lint = lint_claim_type_input(
+        instance,
+        ClaimTypeInputRecord(
+            predicate="project.work_item.summary", cardinality="one", description="A summary."
+        ),
+        coordinate=instance.accepted_coordinate(),
+    )
+    assert lint.warnings == ()
+
+
+def test_lint_inherits_an_omitted_description_and_null_clears_it(tmp_path: Path) -> None:
+    from tests.core_support._knowledge_loop_support import accept_proposal
+
+    instance, owner = initialize_local(tmp_path)
+    result = service_propose_playbill_claim_type_input(
+        instance,
+        input=ClaimTypeInputRecord.model_validate({**_MINIMAL, "description": "Price in cents."}),
+        actor_id="owner",
+        proposal_name="part-price",
+        timestamp=TIMESTAMP,
+    )
+    accept_proposal(instance, owner, result.proposal)
+    for record, missing in (
+        ({"predicate": "catalog.part.price"}, False),
+        ({"predicate": "catalog.part.price", "description": None}, True),
+    ):
+        lint = lint_claim_type_input(
+            instance,
+            ClaimTypeInputRecord.model_validate(record),
+            coordinate=instance.accepted_coordinate(),
+        )
+        assert (
+            any(w.code == "cruxible.claim_type.description_missing" for w in lint.warnings)
+            == missing
+        )

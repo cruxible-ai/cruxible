@@ -1392,6 +1392,7 @@ def test_migration_surfaces_nonblocking_policy_and_source_lint(
     assert {warning.code for warning in result.lint.warnings} == {
         "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
         "cruxible.claim_type.anticipated_source_contract_omitted",
+        "cruxible.claim_type.description_missing",
     }
 
 

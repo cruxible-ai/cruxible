@@ -3813,13 +3813,19 @@ _CLAIM_TYPE_INVERSE_HINT = (
     "input_path",
     type=PayloadFile(),
     help=(
-        "A ClaimTypeInputRecord. A new ClaimType states predicate, allowed_subject_kinds, "
-        "object_kind and cardinality (and literal_schema or allowed_object_subject_kinds); "
-        "every other field has a default: permitted_roles [default_role] or [normative]; "
-        "one own-words evidence rule (plus one per anticipated_source_ids entry); no "
+        "A ClaimTypeInputRecord. A new ClaimType states predicate and cardinality. "
+        "allowed_subject_kinds defaults to the predicate prefix before its last dot. "
+        "literal_schema infers a literal object; allowed_object_subject_kinds infers a "
+        "Subject object; neither means a string literal. State only one, or state "
+        "object_kind exact_content. String literals default canonical_form to [nfc, trim]. "
+        "permitted_roles defaults to [default_role] or [normative]; exactly [observation] "
+        "defaults evidence_requirement to captured and needs a source or evidence policy. "
+        "Other roles default to self: one own-words rule, plus one per anticipated_source_ids "
+        "entry. No "
         "admission requirements; supported, current resolution. An edit states only what "
-        "changes: an omitted field keeps the accepted value. State canonical_form ([] for "
-        "none) for a field that keys a SubjectKind. State inverse (key, evidence_rules, "
+        "changes: an omitted field keeps the accepted value. State canonical_form [] for "
+        "no transforms (also needed for a non-string field that keys a SubjectKind). "
+        "State inverse (key, evidence_rules, "
         "optional stale_after) for a type that records absence: a none. Durations take "
         "ISO-8601 (P30D)."
     ),

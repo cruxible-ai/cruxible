@@ -799,7 +799,8 @@ def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(
     assert operator.lint is not None
     expected = [warning.model_dump(mode="json") for warning in operator.lint.warnings]
     assert {str(warning["code"]) for warning in expected} == {
-        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+        "cruxible.claim_type.description_missing",
     }
 
     intent = coordinator.create(

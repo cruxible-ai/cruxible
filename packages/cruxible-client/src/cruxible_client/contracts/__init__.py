@@ -1233,6 +1233,10 @@ ClaimTypeLintCode: TypeAlias = Literal[
     "cruxible.claim_type.permitted_role_unadmitted",
     # The field's short name is reserved, so it always reads by its full predicate.
     "cruxible.claim_type.field_name_reserved",
+    "cruxible.claim_type.inverse_on_enum_or_boolean",
+    "cruxible.claim_type.stale_eligible_never_current",
+    "cruxible.claim_type.description_missing",
+    "cruxible.claim_type.subject_kind_undeclared",
 ]
 
 
