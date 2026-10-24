@@ -9,7 +9,6 @@ from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_interfaces import (
     parse_provider_interface,
-    provider_interface_contract,
     provider_interface_path,
     render_provider_interface,
 )
@@ -26,6 +25,7 @@ from cruxible_client.contracts.providers import (
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.providers.builds import BuildRow, resolve_provider_build
 from tests.core_support._p2b1_support import accepted_interface, provider_v2
+from tests.support.provider_builds import legacy_interface_contract
 
 
 def build() -> ProviderBuild:
@@ -95,7 +95,7 @@ def test_build_law_accepts_add_and_retire_but_refuses_mutation_and_domain_takeov
 
 def test_contract_registration_has_no_classifier_and_legacy_registration_still_reads() -> None:
     old = accepted_interface().registration
-    registration = provider_interface_contract(
+    registration = legacy_interface_contract(
         interface_id=old.interface_id,
         interface_bytes_hex=old.interface_bytes_hex,
         interface_digest_domain=old.interface_digest_domain,
@@ -207,7 +207,7 @@ def test_discovery_lists_builds_under_the_registration_they_actually_pin() -> No
     from cruxible_core.service.discovery.discovery import _provider_interfaces
 
     old = accepted_interface().registration
-    contract = provider_interface_contract(
+    contract = legacy_interface_contract(
         interface_id=old.interface_id,
         interface_bytes_hex=old.interface_bytes_hex,
         interface_digest_domain=old.interface_digest_domain,

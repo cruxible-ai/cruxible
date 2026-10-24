@@ -330,7 +330,8 @@ def analyze_procedure(definition: ProcedureDefinition) -> ProcedureGraph:
             if _node_alias(candidate) in node.sources
         }
         if any(
-            getattr(producer, "contract_out", None) != node.contract_out
+            not isinstance(producer, CallNode)
+            and getattr(producer, "contract_out", None) != node.contract_out
             for producer in producers.values()
         ):
             raise ProcedureGraphFormatError("select producers must share its exact output contract")

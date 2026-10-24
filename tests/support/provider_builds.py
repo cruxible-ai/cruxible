@@ -56,3 +56,21 @@ def capture_provider_build(contract: CaptureContract) -> ProviderBuild:
             ),
         }
     )
+
+
+def legacy_interface_contract(**kwargs):
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.provider_interfaces import (
+        ProviderInterfaceContractV3,
+        provider_interface_contract_key,
+    )
+
+    key = provider_interface_contract_key(
+        **{k: v for k, v in kwargs.items() if k != "interface_bytes_hex"}
+    )
+    return ProviderInterfaceContractV3(
+        identity=ArtifactIdentity(
+            kind="ProviderInterface", name=f"{kwargs['interface_id']}/{key.value}"
+        ),
+        **kwargs,
+    )

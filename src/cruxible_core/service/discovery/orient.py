@@ -71,6 +71,7 @@ from cruxible_client.contracts.orient import (
 )
 from cruxible_client.contracts.policy_rows import PolicyInForce
 from cruxible_client.contracts.provider_contracts import ProviderOperationContract
+from cruxible_client.contracts.provider_interfaces import provider_effect_class
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.types import PrincipalRecord
@@ -272,7 +273,7 @@ def interface_row(item: AcceptedProviderInterface) -> OrientInterface:
         description=_first_sentence(description) if isinstance(description, str) else None,
         input=_contract_fields(sides.get("input"), stub=stub),
         output=_contract_fields(sides.get("output"), stub=stub),
-        effect=registration.effect_class,
+        effect=provider_effect_class(registration),
         providers=tuple(
             OrientInterfaceProvider(
                 provider=provider.provider_identity.removeprefix("Provider:"),

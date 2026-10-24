@@ -371,8 +371,6 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
                 },
                 "interface_digest": registration.interface_digest,
                 "implementation_digest": provider.implementations[0].implementation_digest,
-                "contract_in": carried("contract-in"),
-                "contract_out": carried("contract-out"),
             }
         ],
     }

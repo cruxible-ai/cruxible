@@ -15,8 +15,9 @@ from collections.abc import Callable, Mapping
 
 from cruxible_client.contracts.canonical import file_digest
 from cruxible_client.contracts.provider_interfaces import (
+    ProviderInterfaceContract,
     parse_provider_interface,
-    provider_interface_contract,
+    provider_interface_contract_key,
     provider_interface_digest,
 )
 from cruxible_client.contracts.providers import parse_provider, provider_build_key, provider_digest
@@ -80,13 +81,15 @@ def registration_key(content: bytes, path: str) -> str:
     """Stable runtime identity, unaffected by signing/capture metadata successors."""
     if path.startswith("provider-interfaces/"):
         registration = parse_provider_interface(content, path=path)
-        return provider_interface_contract(
+        if isinstance(registration, ProviderInterfaceContract):
+            return f"v{registration.interface.version}"
+        return provider_interface_contract_key(
             interface_id=registration.interface_id,
-            interface_bytes_hex=registration.interface_bytes_hex,
             interface_digest_domain=registration.interface_digest_domain,
             interface_digest=registration.interface_digest,
             effect_class=registration.effect_class,
-        ).identity.name.partition("/")[2]
+        ).value
+
     provider = parse_provider(content, path=path)
     runtime = getattr(provider, "runtime_artifact", None)
     return "" if runtime is None else provider_build_key(runtime).tagged

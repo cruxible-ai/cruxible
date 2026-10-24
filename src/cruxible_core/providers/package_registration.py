@@ -12,12 +12,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
 from cruxible_client.contracts.provider_interfaces import (
     ProviderBucketConformanceFixture,
     ProviderClassifierCode,
     ProviderInterfaceContract,
+    ProviderInterfaceDefinition,
+    provider_external_interface_definition_digest,
     provider_interface_contract,
     provider_interface_digest,
     provider_vocabulary_document,
@@ -94,29 +94,28 @@ class PackageRegistrationDocumentV1(_Strict):
     def interface_registrations(self) -> tuple[ProviderInterfaceContract, ...]:
         """The contract registration each exported interface binds.
 
-        A registration is the contract alone -- the definition bytes, their digest
-        and the effect class -- named by its contract key, so every package
-        implementing one contract (core's ``web.fetch`` among them) binds the
-        same registration, and none carries the package's bucket data.
+        A registration holds one typed definition under its name and version.
+        Every package implementing those exact bytes binds the same registration;
+        package code and inert bucket metadata never enter that definition.
         """
 
         result: list[ProviderInterfaceContract] = []
         for exported in sorted(self.interfaces, key=lambda item: item.interface_id.encode()):
-            interface_bytes = self._checked_definition(exported)
-            effect_class = exported.definition["effect_class"]
-            result.append(
-                provider_interface_contract(
-                    interface_id=exported.interface_id,
-                    interface_bytes_hex=interface_bytes,
-                    interface_digest_domain="cruxible.interface.stub.v1",
-                    interface_digest=exported.interface_digest,
-                    effect_class="none" if effect_class == "pure" else effect_class,
+            definition = ProviderInterfaceDefinition.model_validate(exported.definition)
+            self._check_definition(exported)
+            registration = provider_interface_contract(interface=definition)
+            if (
+                provider_external_interface_definition_digest(
+                    registration.interface_bytes_hex, domain="cruxible.interface.stub.v1"
                 )
-            )
+                != exported.interface_digest
+            ):
+                raise ValueError("stored interface JSON differs from the wheel's declared digest")
+            result.append(registration)
         return tuple(result)
 
-    def _checked_definition(self, exported: PackageInterfaceExportV1) -> str:
-        """The exported definition's canonical bytes, once it agrees with its implementation."""
+    def _check_definition(self, exported: PackageInterfaceExportV1) -> None:
+        """Check that an exported definition agrees with its implementation."""
 
         implementation = next(
             item
@@ -131,9 +130,6 @@ class PackageRegistrationDocumentV1(_Strict):
             != (definition.get("effect_class") == "external_mutation")
         ):
             raise ValueError("package definition and implementation disagree")
-        interface_bytes = canonical_bytes(definition).hex()
-        read_provider_operation_contract(interface_bytes)
-        return interface_bytes
 
     def provider_definition(
         self,

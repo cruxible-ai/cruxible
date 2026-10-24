@@ -7,6 +7,7 @@ contract; providers return material and Core constructs the Capture.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -61,7 +62,12 @@ def operation_schema_shape(schema: ContractSchema) -> dict[str, object]:
 
 
 def validate_provider_value(
-    contract: ProviderOperationContract, payload: object, *, direction: Literal["input", "output"]
+    contract: ProviderOperationContract,
+    payload: object,
+    *,
+    direction: Literal["input", "output"],
+    max_items: int | None = None,
+    observe_items: Callable[[int, str], None] | None = None,
 ) -> object:
     # Lazy imports keep the interface/Procedure/Capture contract graph acyclic.
     from cruxible_client.contracts.canonical import canonical_bytes
@@ -84,7 +90,27 @@ def validate_provider_value(
                 raise ValueError("Typed acquisition material must use canonical JSON")
             Record(contract.material, material)
     else:
-        validate_contract_schema(schema, payload)
+        from cruxible_client.contracts.procedures.contracts import (
+            validate_contract_schema_with_budget,
+        )
+        from cruxible_client.contracts.records import (
+            record_normalization_schema,
+            validate_record_constraints,
+        )
+
+        normalization = record_normalization_schema(schema, payload)
+        if max_items is None:
+            normalized = validate_contract_schema(normalization, payload)
+        else:
+            result = validate_contract_schema_with_budget(
+                normalization, payload, max_items=max_items
+            )
+            normalized = result.value
+            if observe_items is not None:
+                for observation in result.list_observations:
+                    observe_items(observation.observed, observation.field_path)
+        assert isinstance(normalized, dict)
+        validate_record_constraints(schema, normalized)
     # Interface checks cannot rewrite the exact request or returned bytes: those
     # are already bound by derived-request and invocation commitments. Defaults
     # remain the adapter's responsibility (or the caller's carried Contract).

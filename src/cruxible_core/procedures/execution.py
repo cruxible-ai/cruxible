@@ -5153,9 +5153,26 @@ class ProcedureExecutor:
             try:
                 payload = normalize_canonical(
                     validate_provider_value(
-                        occurrence.operation_contract, payload, direction="input"
+                        occurrence.operation_contract,
+                        payload,
+                        direction="input",
+                        max_items=_effective_max_items(admission),
+                        observe_items=lambda count, path: state.observe_items(
+                            count, f"interface-in:{occurrence.interface_id}", path
+                        ),
                     )
                 )
+            except ProcedureContractItemBudgetExceeded as exc:
+                boundary = "interface-in:" + occurrence.interface_id
+                state.observe_items(exc.observed, boundary, exc.field_path or "")
+                raise _budget_refusal(
+                    budget_kind="max_items",
+                    limit=exc.limit,
+                    observed=exc.observed,
+                    node_id=node_id,
+                    boundary=boundary,
+                    field_path=exc.field_path or "",
+                ) from exc
             except ValueError as exc:
                 raise _RunRefusal("contract_input_refused", str(exc), node_id=node_id) from exc
         if (
@@ -5483,9 +5500,26 @@ class ProcedureExecutor:
             try:
                 output = normalize_canonical(
                     validate_provider_value(
-                        occurrence.operation_contract, output, direction="output"
+                        occurrence.operation_contract,
+                        output,
+                        direction="output",
+                        max_items=_effective_max_items(admission),
+                        observe_items=lambda count, path: state.observe_items(
+                            count, f"interface-out:{occurrence.interface_id}", path
+                        ),
                     )
                 )
+            except ProcedureContractItemBudgetExceeded as exc:
+                boundary = "interface-out:" + occurrence.interface_id
+                state.observe_items(exc.observed, boundary, exc.field_path or "")
+                raise _budget_refusal(
+                    budget_kind="max_items",
+                    limit=exc.limit,
+                    observed=exc.observed,
+                    node_id=node_id,
+                    boundary=boundary,
+                    field_path=exc.field_path or "",
+                ) from exc
             except ValueError as exc:
                 raise _RunRefusal("contract_output_refused", str(exc), node_id=node_id) from exc
         validated = (
@@ -5523,8 +5557,6 @@ class ProcedureExecutor:
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
     ) -> None:
-        contract_in = self._pin(node.contract_in, label=f"provider {node.node_id!r} input")
-        contract_out = self._pin(node.contract_out, label=f"provider {node.node_id!r} output")
         resolved = normalize_canonical(
             _resolve_template(
                 node.input,
@@ -5532,21 +5564,12 @@ class ProcedureExecutor:
                 outputs=state.outputs,
             )
         )
-        payload = _validate_node_contract(
-            self.contract_validator,
-            contract=contract_in,
-            payload=resolved,
-            direction="input",
-            node_id=node.node_id,
-            max_items=_effective_max_items(admission),
-            observe_items=state.observe_items,
-        )
         output, _receipt, _receipt_digest = self._invoke_provider_v4(
             node_id=node.node_id,
             repeat_node_id=None,
             effect_policy=node.effect_policy,
-            payload=payload,
-            contract_out=contract_out,
+            payload=resolved,
+            contract_out=None,
             admission=admission,
             state=state,
             records=records,
@@ -5658,6 +5681,7 @@ class ProcedureExecutor:
             outputs=combined,
         )
         if body.operation == "transform":
+            assert body.contract_in is not None and body.contract_out is not None
             transform_kind = getattr(body, "transform_kind", None)
             if not isinstance(transform_kind, str):
                 raise _RunRefusal(
@@ -5711,23 +5735,12 @@ class ProcedureExecutor:
             )
             return
         if body.operation == "call":
-            contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
-            contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
-            validated_input = _validate_node_contract(
-                self.contract_validator,
-                contract=contract_in,
-                payload=spec,
-                direction="input",
-                node_id=body.node_id,
-                max_items=_effective_max_items(admission),
-                observe_items=state.observe_items,
-            )
             local_outputs[body.as_], _receipt, _receipt_digest = self._invoke_provider_v4(
                 node_id=body.node_id,
                 repeat_node_id=repeat_node_id,
                 effect_policy=body.effect_policy,
-                payload=validated_input,
-                contract_out=contract_out,
+                payload=spec,
+                contract_out=None,
                 admission=admission,
                 state=state,
                 records=records,

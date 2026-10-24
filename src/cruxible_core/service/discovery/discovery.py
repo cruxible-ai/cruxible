@@ -21,13 +21,14 @@ from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.provider_contracts import (
     ProviderOperationContract,
-    read_provider_operation_contract,
 )
 from cruxible_client.contracts.provider_interfaces import (
     ProviderEffectClass,
     ProviderInterfaceRegistrationAny,
     parse_provider_interface,
+    provider_effect_class,
     provider_interface_digest,
+    provider_operation_contract,
 )
 from cruxible_client.contracts.providers import (
     ProviderV2,
@@ -164,11 +165,11 @@ def _provider_interfaces(
             artifact_digest=provider_interface_digest(registration).tagged,
             interface_digest=registration.interface_digest,
             operation_contract=(
-                read_provider_operation_contract(registration.interface_bytes_hex)
+                provider_operation_contract(registration)
                 if "contracts" in json.loads(bytes.fromhex(registration.interface_bytes_hex))
                 else None
             ),
-            effect_class=registration.effect_class,
+            effect_class=provider_effect_class(registration),
         )
         entries.append(
             AcceptedProviderInterface(

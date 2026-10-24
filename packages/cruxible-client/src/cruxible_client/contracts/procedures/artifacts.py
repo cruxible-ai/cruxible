@@ -43,6 +43,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinition,
     ProcedurePinSlotRef,
     RepeatNode,
+    SelectNode,
     SourceNode,
     iter_pin_bindings,
 )
@@ -603,10 +604,10 @@ def check_provider_node_contract(
     contract: the daemon owns that read and its receipt, so a Source over it is
     checked by the host protocol, not here, and has no operation contract.
     """
-    from cruxible_client.contracts.provider_contracts import (
-        ACQUISITION_RESULT,
-        operation_schema_shape,
-        read_provider_operation_contract,
+    from cruxible_client.contracts.provider_contracts import ACQUISITION_RESULT
+    from cruxible_client.contracts.provider_interfaces import (
+        provider_effect_class,
+        provider_operation_contract,
     )
     from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_DIGEST
 
@@ -615,27 +616,11 @@ def check_provider_node_contract(
         and interface.registration.interface_digest == WORKSPACE_FILE_INTERFACE_DIGEST
     ):
         return None
-    contract = read_provider_operation_contract(interface.registration.interface_bytes_hex)
+    contract = provider_operation_contract(interface.registration)
     declared_effect = json.loads(bytes.fromhex(interface.registration.interface_bytes_hex)).get(
         "effect_class"
     )
-    # Package registrations, and core's built-in workspace.file registration over
-    # the same package bytes, retain the provider contract bytes. Those bytes
-    # spell a no-effect operation "pure"; the governed effect class is "none".
-    from cruxible_client.contracts.provider_interfaces import (
-        ProviderInterfaceContract,
-        ProviderInterfaceRegistration,
-    )
-    from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_V2_DIGEST
-
-    if declared_effect == "pure" and (
-        isinstance(
-            interface.registration, ProviderInterfaceRegistration | ProviderInterfaceContract
-        )
-        or interface.registration.interface_digest == WORKSPACE_FILE_INTERFACE_V2_DIGEST
-    ):
-        declared_effect = "none"
-    if declared_effect != interface.registration.effect_class:
+    if declared_effect != provider_effect_class(interface.registration):
         raise ValueError("ProviderInterface effect class differs from its operation declaration")
     if isinstance(node, SourceNode):
         from cruxible_client.contracts.workspace_file import WORKSPACE_FILE_INTERFACE_V2_DIGEST
@@ -651,23 +636,27 @@ def check_provider_node_contract(
         if interface.registration.effect_class == "external_mutation":
             raise ValueError("Source cannot invoke an external mutation")
         return contract
-    owned = {
-        procedure_owned_contract_digest(item).tagged: item for item in procedure.owned_contracts
-    }
-    for field, expected in (("contract_in", contract.input), ("contract_out", contract.output)):
-        binding = getattr(node, field)
-        if isinstance(binding, ProcedurePinSlotRef):
-            continue  # A Blueprint slot: checked when the Blueprint is instantiated.
-        carried = owned.get(binding.artifact_digest)
-        if (
-            carried is None
-            or carried.identity != binding.target
-            or isinstance(expected, str)
-            or operation_schema_shape(carried.contract_schema) != operation_schema_shape(expected)
-        ):
-            raise ValueError(
-                f"Call {field} does not match the ProviderInterface operation contract"
-            )
+    if isinstance(contract.output, str):
+        raise ValueError("Call requires an operation output schema; use Source for acquisition")
+    if isinstance(node, CallNode):
+        from cruxible_client.contracts.provider_contracts import operation_schema_shape
+
+        for consumer in procedure.definition.nodes:
+            if isinstance(consumer, SelectNode) and node.as_ in consumer.sources:
+                expected = next(
+                    (
+                        owned
+                        for owned in procedure.owned_contracts
+                        if isinstance(consumer.contract_out, ArtifactPin)
+                        and procedure_owned_contract_digest(owned).tagged
+                        == consumer.contract_out.artifact_digest
+                    ),
+                    None,
+                )
+                if expected is not None and operation_schema_shape(
+                    expected.contract_schema
+                ) != operation_schema_shape(contract.output):
+                    raise ValueError("Select output does not match the Call's interface output")
     return contract
 
 

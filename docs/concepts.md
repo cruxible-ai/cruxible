@@ -748,7 +748,11 @@ implementing the same definition binds the same registration, and a slot typed
 by it takes any of them; a provider runs only the kinds of input it claims.
 Every instance starts with the built-in `workspace.file` provider. Others
 install with `cruxible provider install`, or arrive with a kit (bundled, or a
-default installed by name); installing grants no permission to run anything.
+default installed by name); installing grants no permission to run anything. New registrations store the typed definition
+at `provider-interfaces/<id>/v<version>.json`, with one effect declaration:
+`pure`, `external_read`, or `external_mutation`. An installed name and version
+has one definition; a changed definition requires a new version. Calls use the
+interface's input and output schemas directly.
 
 In Python, `@procedure` from `cruxible_client.authoring.source` turns a
 decorated function into a `ProcedureSource`, compiled into the same governed

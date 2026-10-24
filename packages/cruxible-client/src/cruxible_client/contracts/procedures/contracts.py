@@ -249,13 +249,24 @@ def _validate_payload_with_budget(
     *,
     max_items: int,
 ) -> ValidatedProcedureContract:
+    return validate_contract_schema_with_budget(
+        contract.contract_schema, payload, max_items=max_items
+    )
+
+
+def validate_contract_schema_with_budget(
+    schema: ContractSchema,
+    payload: object,
+    *,
+    max_items: int,
+) -> ValidatedProcedureContract:
     if not isinstance(payload, Mapping):
         raise ProcedureContractValidationError("Contract payload must be an object")
     observations: list[ProcedureContractListObservation] = []
     normalized = _normalize_fields(
         dict(payload),
-        fields=contract.contract_schema.fields,
-        allow_extra=contract.contract_schema.allow_extra,
+        fields=schema.fields,
+        allow_extra=schema.allow_extra,
         path_prefix="",
         max_items=max_items,
         observations=observations,

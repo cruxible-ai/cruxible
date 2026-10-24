@@ -382,10 +382,9 @@ def _interface_bindings(
 ) -> tuple[tuple[ProviderInterfaceContract, bool], ...]:
     """Each exported interface's contract registration, and whether it is already live.
 
-    A registration is one contract, named by its contract key: a build binds the
-    registration of the contract it implements when one is live here, and
-    adds it otherwise. Nothing replaces a registration, so another build's
-    pins never break.
+    A build reuses the exact definition registered at its interface name and
+    version, or adds it when absent. A different definition at that address
+    refuses before a proposal or deployment is created.
     """
 
     result: list[tuple[ProviderInterfaceContract, bool]] = []
@@ -398,7 +397,22 @@ def _interface_bindings(
         current = parse_provider_interface(current_bytes, path=path)
         if current.lifecycle.state != "live":
             raise ProposalIntegrityError("install cannot silently restore a retired interface")
-        assert isinstance(current, ProviderInterfaceContract)
+        if (
+            not isinstance(current, ProviderInterfaceContract)
+            or current.interface_bytes_hex != desired.interface_bytes_hex
+        ):
+            raise RequestRefusedError(
+                "cruxible.provider_interface.version_conflict",
+                "Install cannot replace an existing interface name and version.",
+                repair=HandEditRepair(
+                    hand_edit=HandEditInstruction(
+                        target="the provider package's interface definition",
+                        required_change=(
+                            "Publish the changed definition under a new interface version."
+                        ),
+                    )
+                ),
+            )
         result.append((current, True))
     return tuple(result)
 

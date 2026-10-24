@@ -790,7 +790,7 @@ class ProcedureProviderBinding(_StrictResultModel):
     provider_artifact_digest: str
     classification_plan: ProviderBucketClassificationPlan
     implementation_digest: str
-    effect_class: Literal["none", "external_read", "external_mutation"]
+    effect_class: Literal["pure", "external_read", "external_mutation", "none"]
     secret_binding_identity_digests: tuple[str, ...]
 
     _binding_digests = field_validator(
@@ -831,7 +831,7 @@ class ProcedureProviderBindingV3(_StrictResultModel):
     interface_digest: str
     provider_artifact_digest: str
     implementation_digest: str
-    effect_class: Literal["none", "external_read", "external_mutation"]
+    effect_class: Literal["pure", "external_read", "external_mutation", "none"]
     secret_binding_identity_digests: tuple[str, ...]
 
     _binding_digests = field_validator(

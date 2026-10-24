@@ -40,7 +40,7 @@ class SourceProviderBinding(_Closed):
     interface_version: str
     interface_digest: str
     implementation_digest: str
-    effect_class: Literal["none", "external_read", "external_mutation"]
+    effect_class: Literal["pure", "external_read", "external_mutation", "none"]
     operation: ProviderOperationContract
 
     _versions = field_validator(
@@ -59,7 +59,7 @@ class SourceSlotBinding(_Closed):
     interface: str
     interface_version: str
     interface_digest: str
-    effect_class: Literal["none", "external_read", "external_mutation"]
+    effect_class: Literal["pure", "external_read", "external_mutation", "none"]
     operation: ProviderOperationContract
 
     _versions = field_validator("interface_version", "interface_digest")(

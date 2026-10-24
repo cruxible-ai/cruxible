@@ -20,6 +20,7 @@ from cruxible_client.contracts.procedures.contract_schema import (
     PropertyType,
 )
 from cruxible_client.contracts.procedures.models import (
+    CallNode,
     PredicateOperand,
     ProcedureBudget,
     ProcedureDefinition,
@@ -937,16 +938,11 @@ class _Compiler:
             self.fail(node, "call accepts only its typed input in this form")
         if not isinstance(binding.operation.output, ContractSchema):
             self.fail(node, "An acquisition interface must be used through source", "binding_kind")
-        input_pin = self.anonymous(binding.operation.input)
-        input_pin["role"] = "contract-in"
-        output_pin = self.anonymous(binding.operation.output)
         emitted = self.append(
             "call",
             node,
             **fields,
             input=self.wire(value, node),
-            contract_in=input_pin,
-            contract_out=output_pin,
             effect_policy=None,
             **{"as": True},
         )
@@ -1846,6 +1842,7 @@ def verify_source_graph(procedure: Any) -> None:
     from cruxible_client.contracts.procedures.artifacts import (
         BlueprintArtifact,
         ProcedureArtifact,
+        ProcedureOwnedContract,
         procedure_owned_contract_digest,
     )
 
@@ -1884,5 +1881,51 @@ def verify_source_graph(procedure: Any) -> None:
         SourceContract(name=c.identity.name, schema=c.contract_schema)
         for c in procedure.owned_contracts
     )
-    if compiled.definition != definition or compiled.contracts != contracts:
+    # Historical source graphs carried anonymous copies of Call I/O. Reproduce
+    # those exact pins for verification only; the source writer never emits them.
+    if len(definition.nodes) != len(compiled.definition.nodes):
+        raise ProjectionFormatError("Retained Procedure source and compiled graph disagree")
+    expected_nodes = []
+    expected_contracts = {contract.name: contract for contract in compiled.contracts}
+    for actual, expected in zip(definition.nodes, compiled.definition.nodes, strict=True):
+        if (
+            isinstance(actual, CallNode)
+            and isinstance(expected, CallNode)
+            and (actual.contract_in is not None or actual.contract_out is not None)
+        ):
+            binding = next(
+                (
+                    binding
+                    for binding in definition.source.bindings.values()
+                    if isinstance(binding, (SourceProviderBinding, SourceSlotBinding))
+                    and binding.interface_version == actual.interface.artifact_digest
+                ),
+                None,
+            )
+            if binding is None or isinstance(binding.operation.output, str):
+                raise ProjectionFormatError("Historical Call has no matching operation binding")
+            pins = {}
+            for side, schema in (
+                ("in", binding.operation.input),
+                ("out", binding.operation.output),
+            ):
+                name = (
+                    "source."
+                    + sha256(canonical_bytes(schema.model_dump(mode="json"))).hexdigest()[:24]
+                )
+                contract = SourceContract(name=name, schema=schema)
+                expected_contracts[name] = contract
+                owned = ProcedureOwnedContract(
+                    identity=ArtifactIdentity(kind="Contract", name=name), schema=schema
+                )
+                pins["contract_" + side] = ArtifactPin(
+                    role="contract-" + side,
+                    target=owned.identity,
+                    artifact_digest=procedure_owned_contract_digest(owned).tagged,
+                )
+            expected = expected.model_copy(update=pins)
+        expected_nodes.append(expected)
+    expected_definition = compiled.definition.model_copy(update={"nodes": tuple(expected_nodes)})
+    expected_contract_tuple = tuple(expected_contracts[name] for name in sorted(expected_contracts))
+    if expected_definition != definition or expected_contract_tuple != contracts:
         raise ProjectionFormatError("Retained Procedure source and compiled graph disagree")

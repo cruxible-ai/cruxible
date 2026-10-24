@@ -315,7 +315,7 @@ class OrientInterface(_StrictOrientModel):
     description: str | None = Field(default=None, exclude_if=_is_none)
     input: tuple[str, ...] = ()
     output: tuple[str, ...] = ()
-    effect: Literal["none", "external_read", "external_mutation"]
+    effect: Literal["pure", "external_read", "external_mutation"]
     providers: tuple[OrientInterfaceProvider, ...] = ()
     interface_digest: str
     operation_contract: ProviderOperationContract | None = Field(default=None, exclude_if=_is_none)

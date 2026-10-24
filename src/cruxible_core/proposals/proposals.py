@@ -428,7 +428,7 @@ _CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,2
 # (compiler revision 34); the path grammar decides which a coordinate admits.
 _PROVIDER_PATH_RE = re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$")
 _PROVIDER_INTERFACE_PATH_RE = re.compile(
-    r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}(?:/[0-9a-f]{64})?\.json$"
+    r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}(?:/(?:[0-9a-f]{64}|v[1-9][0-9]*))?\.json$"
 )
 _SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
     r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.json$"

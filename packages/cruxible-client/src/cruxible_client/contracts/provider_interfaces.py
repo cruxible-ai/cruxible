@@ -1,6 +1,10 @@
 """Governed Provider interface registrations.
 
-A registration (v3) holds one interface contract and nothing else: the
+New registrations (v4) store a typed interface definition under its name and
+version, at ``provider-interfaces/<id>/v<version>.json``. The definition is
+immutable at that address. V1, V2 and V3 remain exact historical read formats.
+
+A historical registration (v3) holds one interface contract and nothing else: the
 definition bytes, their digest domain and digest, and the effect class. It is
 named by that contract (``ProviderInterface:<id>/<contract key>`` at
 ``provider-interfaces/<id>/<contract key>.json``), so every build implementing
@@ -23,9 +27,18 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -43,6 +56,8 @@ from cruxible_client.contracts.content_memo import ParseMemo, sealed_memo
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
+from cruxible_client.contracts.procedures.contract_schema import ContractSchema
+from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _INTERFACE_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -51,7 +66,8 @@ _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HEX_RE = re.compile(r"^(?:[0-9a-f]{2})+$")
 _CONTRACT_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 
-ProviderEffectClass: TypeAlias = Literal["none", "external_read", "external_mutation"]
+ProviderEffectClass: TypeAlias = Literal["pure", "external_read", "external_mutation"]
+LegacyProviderEffectClass: TypeAlias = Literal["none", "external_read", "external_mutation"]
 
 
 class ProviderInterfaceFormatError(FormatError):
@@ -293,7 +309,7 @@ class ProviderInterfaceRegistrationV1(_StrictInterfaceModel):
     classifier_digest: str
     conformance_fixture_set_digest: str
     conformance_proofs: tuple[ProviderBucketConformanceFixtureProof, ...]
-    effect_class: ProviderEffectClass
+    effect_class: LegacyProviderEffectClass
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -475,7 +491,7 @@ def provider_interface_contract_key(
     interface_id: str,
     interface_digest_domain: ProviderInterfaceDigestDomain,
     interface_digest: str,
-    effect_class: ProviderEffectClass,
+    effect_class: LegacyProviderEffectClass,
 ) -> ArtifactDigest:
     """The key one interface contract is registered under."""
 
@@ -491,7 +507,7 @@ def provider_interface_contract_key(
     )
 
 
-class ProviderInterfaceContract(_StrictInterfaceModel):
+class ProviderInterfaceContractV3(_StrictInterfaceModel):
     """One interface contract's registration: the contract and nothing else.
 
     Named by its contract key, so every build implementing this contract binds
@@ -505,7 +521,7 @@ class ProviderInterfaceContract(_StrictInterfaceModel):
     interface_bytes_hex: str
     interface_digest_domain: ProviderInterfaceDigestDomain
     interface_digest: str
-    effect_class: ProviderEffectClass
+    effect_class: LegacyProviderEffectClass
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -530,7 +546,7 @@ class ProviderInterfaceContract(_StrictInterfaceModel):
         return ProviderInterfaceRegistrationV1._pins(value)
 
     @model_validator(mode="after")
-    def _correspondence(self) -> "ProviderInterfaceContract":
+    def _correspondence(self) -> "ProviderInterfaceContractV3":
         expected_interface_digest = (
             provider_interface_definition_digest(self.interface_bytes_hex)
             if self.interface_digest_domain == "playbill-provider-interface-definition-v1"
@@ -557,39 +573,132 @@ class ProviderInterfaceContract(_StrictInterfaceModel):
         ).value
 
 
-def provider_interface_contract(
-    *,
-    interface_id: str,
-    interface_bytes_hex: str,
-    interface_digest_domain: ProviderInterfaceDigestDomain,
-    interface_digest: str,
-    effect_class: ProviderEffectClass,
-) -> ProviderInterfaceContract:
-    """The registration of one contract, named by its key."""
+class ProviderInterfaceDefinition(_StrictInterfaceModel):
+    """The package's typed definition; sparse schema bytes retain their spelling."""
 
-    key = provider_interface_contract_key(
-        interface_id=interface_id,
-        interface_digest_domain=interface_digest_domain,
-        interface_digest=interface_digest,
-        effect_class=effect_class,
-    )
+    interface_id: str
+    version: int = Field(ge=1, strict=True)
+    contracts: ProviderOperationContract
+    effect_class: ProviderEffectClass
+    refusals: tuple[str, ...] = ()
+    description: str | None = None
+    configuration: ContractSchema | None = None
+
+    @field_validator("interface_id")
+    @classmethod
+    def _interface_id(cls, value: str) -> str:
+        if not _INTERFACE_ID_RE.fullmatch(value):
+            raise ValueError("Provider interface id must be canonical")
+        return value
+
+    @model_serializer(mode="wrap")
+    def _definition_bytes(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # Wheels hash sparse ContractSchema JSON, not the engine's filled defaults.
+        result: dict[str, Any] = handler(self)
+        result["contracts"] = self.contracts.model_dump(mode="json", exclude_unset=True)
+        for optional in ("description", "refusals", "configuration"):
+            if optional not in self.model_fields_set:
+                result.pop(optional, None)
+        if self.configuration is not None:
+            result["configuration"] = self.configuration.model_dump(mode="json", exclude_unset=True)
+        return result
+
+
+class ProviderInterfaceContract(_StrictInterfaceModel):
+    """An immutable named and versioned interface, with one typed definition."""
+
+    artifact_format: Literal["cruxible-provider-interface-v4"] = "cruxible-provider-interface-v4"
+    identity: ArtifactIdentity
+    interface: ProviderInterfaceDefinition
+    lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+
+    @model_validator(mode="after")
+    def _identity(self) -> "ProviderInterfaceContract":
+        if self.identity != ArtifactIdentity(
+            kind="ProviderInterface",
+            name=f"{self.interface.interface_id}/v{self.interface.version}",
+        ):
+            raise ValueError("Provider interface identity must name its interface and version")
+        return self
+
+    @property
+    def interface_id(self) -> str:
+        return self.interface.interface_id
+
+    @property
+    def effect_class(self) -> ProviderEffectClass:
+        return self.interface.effect_class
+
+    @property
+    @sealed_memo
+    def interface_bytes_hex(self) -> str:
+        return canonical_bytes(self.interface.model_dump(mode="json")).hex()
+
+    @property
+    def interface_digest_domain(self) -> Literal["cruxible.interface.stub.v1"]:
+        return "cruxible.interface.stub.v1"
+
+    @property
+    @sealed_memo
+    def interface_digest(self) -> str:
+        # Compatibility for existing pin readers; no digest is stored in v4.
+        return provider_external_interface_definition_digest(
+            self.interface_bytes_hex, domain=self.interface_digest_domain
+        )
+
+    @property
+    def pins(self) -> tuple[ArtifactPin, ...]:
+        return ()
+
+
+def provider_interface_contract(
+    *, interface: ProviderInterfaceDefinition
+) -> ProviderInterfaceContract:
+    """Register a typed package definition under its name and version."""
     return ProviderInterfaceContract(
-        identity=ArtifactIdentity(kind="ProviderInterface", name=f"{interface_id}/{key.value}"),
-        interface_id=interface_id,
-        interface_bytes_hex=interface_bytes_hex,
-        interface_digest_domain=interface_digest_domain,
-        interface_digest=interface_digest,
-        effect_class=effect_class,
+        identity=ArtifactIdentity(
+            kind="ProviderInterface", name=f"{interface.interface_id}/v{interface.version}"
+        ),
+        interface=interface,
     )
+
+
+def provider_effect_class(
+    registration: ProviderInterfaceRegistrationV1
+    | ProviderInterfaceContractV3
+    | ProviderInterfaceContract,
+) -> ProviderEffectClass:
+    """Historical no-effect spelling stays frozen in storage, pure in the engine."""
+    return "pure" if registration.effect_class == "none" else registration.effect_class
+
+
+@sealed_memo
+def provider_operation_contract(
+    registration: ProviderInterfaceRegistrationV1
+    | ProviderInterfaceContractV3
+    | ProviderInterfaceContract,
+) -> ProviderOperationContract:
+    if isinstance(registration, ProviderInterfaceContract):
+        return registration.interface.contracts
+    from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
+
+    return read_provider_operation_contract(registration.interface_bytes_hex)
 
 
 ProviderInterfaceRegistrationAny: TypeAlias = Annotated[
-    ProviderInterfaceRegistrationV1 | ProviderInterfaceRegistration | ProviderInterfaceContract,
+    ProviderInterfaceRegistrationV1
+    | ProviderInterfaceRegistration
+    | ProviderInterfaceContractV3
+    | ProviderInterfaceContract,
     Field(discriminator="artifact_format"),
 ]
 #: Every registration format, for isinstance checks (v3 is not a V1 subclass:
 #: it carries none of the inert bucket data).
-PROVIDER_INTERFACE_REGISTRATION_TYPES = (ProviderInterfaceRegistrationV1, ProviderInterfaceContract)
+PROVIDER_INTERFACE_REGISTRATION_TYPES = (
+    ProviderInterfaceRegistrationV1,
+    ProviderInterfaceContractV3,
+    ProviderInterfaceContract,
+)
 _INTERFACE_ADAPTER: TypeAdapter[ProviderInterfaceRegistrationAny] = TypeAdapter(
     ProviderInterfaceRegistrationAny
 )
@@ -603,11 +712,11 @@ def provider_interface_id_of(identity_name: str) -> str:
 
 def provider_interface_path(identity_name: str) -> str:
     """The path of the registration named ``identity_name``: ``<id>`` (v1/v2) or
-    ``<id>/<contract key>`` (v3)."""
+    ``<id>/<contract key>`` (v3) or ``<id>/v<version>`` (v4)."""
 
     interface_id, slash, key = identity_name.partition("/")
     if not _INTERFACE_ID_RE.fullmatch(interface_id) or (
-        slash and not _CONTRACT_KEY_RE.fullmatch(key)
+        slash and not (_CONTRACT_KEY_RE.fullmatch(key) or re.fullmatch(r"v[1-9][0-9]*", key))
     ):
         raise ProviderInterfaceFormatError("Provider interface id is not path-addressable")
     if slash:
@@ -624,7 +733,9 @@ def provider_interface_registrations_prefix(interface_id: str) -> str:
 
 
 def render_provider_interface(
-    registration: ProviderInterfaceRegistrationV1 | ProviderInterfaceContract,
+    registration: ProviderInterfaceRegistrationV1
+    | ProviderInterfaceContractV3
+    | ProviderInterfaceContract,
 ) -> bytes:
     return pretty_canonical_bytes(registration.model_dump(mode="json"))
 
@@ -676,7 +787,9 @@ def _parse_provider_interface(
 
 @sealed_memo
 def provider_interface_digest(
-    registration: ProviderInterfaceRegistrationV1 | ProviderInterfaceContract,
+    registration: ProviderInterfaceRegistrationV1
+    | ProviderInterfaceContractV3
+    | ProviderInterfaceContract,
 ) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
@@ -722,14 +835,16 @@ def _refusal(code: str, message: str, *, path: str) -> ProviderInterfaceLawResul
 
 
 def evaluate_provider_interface_law(
-    registration: ProviderInterfaceRegistrationV1 | ProviderInterfaceContract,
+    registration: ProviderInterfaceRegistrationV1
+    | ProviderInterfaceContractV3
+    | ProviderInterfaceContract,
     *,
     path: str,
     predecessor: AcceptedProviderInterfaceRegistration | None,
 ) -> ProviderInterfaceLawResult:
     """Identity, path and succession. No bucket or proof reproduction: a
     registration's classifier data is inert, so nothing here re-proves it. A
-    contract registration (v3) never changes its contract: a successor only
+    contract registration (v3/v4) never changes its contract: a successor only
     retires it."""
 
     if path != provider_interface_path(registration.identity.name):
@@ -758,9 +873,11 @@ def evaluate_provider_interface_law(
                 "Provider interface successor does not pin its exact predecessor.",
                 path=path,
             )
-        if isinstance(registration, ProviderInterfaceContract) and registration.model_dump(
+        if isinstance(
+            registration, ProviderInterfaceContractV3 | ProviderInterfaceContract
+        ) and registration.model_dump(exclude={"lifecycle"}) != predecessor.registration.model_dump(
             exclude={"lifecycle"}
-        ) != predecessor.registration.model_dump(exclude={"lifecycle"}):
+        ):
             return _refusal(
                 "cruxible.provider_interface.contract_immutable",
                 "A contract registration never changes; a changed contract registers beside it.",
@@ -777,6 +894,10 @@ __all__ = [
     "AcceptedProviderInterfaceRegistration",
     "PROVIDER_INTERFACE_REGISTRATION_TYPES",
     "ProviderInterfaceContract",
+    "ProviderInterfaceContractV3",
+    "ProviderInterfaceDefinition",
+    "provider_effect_class",
+    "provider_operation_contract",
     "ProviderInterfaceDigestDomain",
     "ProviderBucketClass",
     "ProviderBucketConformanceFixtureProof",

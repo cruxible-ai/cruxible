@@ -149,8 +149,6 @@ def _run_call(
                 },
                 "interface_digest": interface["interface_digest"],
                 "implementation_digest": provider["implementation_digest"],
-                "contract_in": carried("request", "contract-in"),
-                "contract_out": carried("result", "contract-out"),
             }
         ],
         "budget": {
@@ -172,10 +170,6 @@ def _run_call(
             "definition": raw,
             "contracts": (
                 next(row for row in example.contracts if row.name == "empty-input"),
-                CarriedContractInput(
-                    name="request",
-                    fields={key: PropertySchema.model_validate(v) for key, v in fields_in.items()},
-                ),
                 CarriedContractInput(
                     name="result",
                     fields={key: PropertySchema.model_validate(v) for key, v in fields_out.items()},

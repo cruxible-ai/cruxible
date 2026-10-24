@@ -20,7 +20,7 @@ from cruxible_client.authoring.procedures import (
     Transform,
 )
 from cruxible_client.authoring.sdk import Cruxible
-from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.models import (
     GuardPredicate,
     PredicateOperand,
@@ -28,6 +28,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureHardCaps,
     TransformAdapterSpec,
 )
+from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from tests.support.procedures import RUN_WALL_CLOCK
 
 EMPTY = CarriedContractInput(name="empty", fields={})
@@ -67,7 +68,7 @@ def sequence(*steps, **kwargs):
 def test_sequence_wires_previous_and_uses_sdk_lowering_without_transport():
     blueprint = sequence(
         Project("first", fields={"count": 1}, contract_out=NUMBER),
-        Call("second", contract_in=NUMBER, contract_out=NUMBER),
+        Call("second"),
     )
     assert not blueprint.preview().ready_for_prepare
     assert "provider" not in blueprint.preview().nodes[1]
@@ -102,7 +103,7 @@ def test_source_project_emit_matches_security_dogfood_shape():
 
 
 def test_unbound_provider_refuses_before_authoring():
-    plan = sequence(Call("call", contract_in=EMPTY, contract_out=NUMBER))
+    plan = sequence(Call("call"))
     with pytest.raises(ProcedureCompositionError, match="Bind an accepted"):
         Cruxible.procedure(object(), definition=plan)
     with pytest.raises(ValueError, match="not a provider-backed"):
@@ -126,9 +127,7 @@ def test_existing_node_identities_survive_sequence_adoption():
     # Existing whole-output wiring still follows aliases, not node identities.
     calls = sequence(
         Project("value", node_id="produce", fields={"count": 1}, contract_out=NUMBER),
-        Call(
-            "answer", node_id="consume", contract_in=NUMBER, contract_out=NUMBER, provider=PROVIDER
-        ),
+        Call("answer", node_id="consume", provider=PROVIDER),
     )
     assert calls.preview().ready_for_prepare
     assert calls.preview().nodes[1]["input"] == "$steps.value"
@@ -143,7 +142,17 @@ def test_auto_wiring_rejects_incompatible_carried_contracts():
     text = CarriedContractInput(name="text", fields={"count": PropertySchema(type="string")})
     plan = sequence(
         Project("first", fields={"count": 1}, contract_out=NUMBER),
-        Call("second", contract_in=text, contract_out=NUMBER, provider=PROVIDER),
+        Call(
+            "second",
+            provider=PROVIDER.model_copy(
+                update={
+                    "operation_contract": ProviderOperationContract(
+                        input=ContractSchema(fields=text.fields),
+                        output=ContractSchema(fields=NUMBER.fields),
+                    )
+                }
+            ),
+        ),
     )
     assert any(d.code == "contract_mismatch" and d.step == "second" for d in plan.preview().errors)
     with pytest.raises(ProcedureCompositionError):
@@ -224,7 +233,7 @@ def test_invalid_graphs_use_shared_validator(steps):
 
 
 def test_new_binding_does_not_mutate_existing_preview():
-    plan = sequence(Call("call", contract_in=EMPTY, contract_out=NUMBER)).bind(call=PROVIDER)
+    plan = sequence(Call("call")).bind(call=PROVIDER)
     before = plan.preview().model_dump(mode="json")
     after = plan.bind(
         call=PROVIDER.model_copy(update={"implementation_digest": "sha256:" + "3" * 64})

@@ -588,7 +588,7 @@ class GetProviderInterfaceCard(_StrictGetModel):
     description: str | None = Field(default=None, exclude_if=_omit_none)
     input: tuple[str, ...] = ()
     output: tuple[str, ...] = ()
-    effect: Literal["none", "external_read", "external_mutation"]
+    effect: Literal["pure", "external_read", "external_mutation"]
     providers: tuple[GetProviderInterfaceProvider, ...] = ()
     interface_digest: str
     next: tuple[str, ...] = ()
