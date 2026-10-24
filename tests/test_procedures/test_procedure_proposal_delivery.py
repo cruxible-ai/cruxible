@@ -2282,6 +2282,101 @@ def test_a_terminal_canonicalizes_each_item_before_taking_its_identity(tmp_path:
     assert egress.target_paths == (first_child.path,)
 
 
+def _inverse_claim_type() -> ClaimType:
+    """The world's ClaimType as a many-valued v9 whose inverse is keyed by the value."""
+
+    base = _canonical_claim_type(())
+    return ClaimType.model_validate(
+        {
+            **base.model_dump(mode="python", exclude={"artifact_format", "inverse"}),
+            "artifact_format": "cruxible-claim-type-v9",
+            "cardinality": "many",
+            "resolution_policy": ClaimResolutionPolicy(
+                cardinality="many", eligible_verdicts=("supported",), selector="all"
+            ),
+            "inverse": {"key": {"kind": "object"}, "evidence_rules": ["workspace-record"]},
+        }
+    )
+
+
+def _none_item() -> dict[str, object]:
+    """An item stating the severity it read is not held: a none keyed by that severity."""
+
+    return item_template(
+        statement={
+            **item_template()["statement"],  # type: ignore[dict-item]
+            "object": {
+                "kind": "none",
+                "of": {"kind": "literal", "value": "$steps.result.severity"},
+            },
+        },
+        rationale="The advisory says this severity does not apply.",
+    )
+
+
+def _live_nones(instance: PlaybillInstance) -> dict[str, Any]:
+    return {
+        claim.statement.object.of.value: claim  # type: ignore[union-attr]
+        for claim in _live_slot_claims(instance)
+        if claim.statement.object.kind == "none"
+    }
+
+
+def test_a_restated_none_revises_its_lineage_and_another_unit_lands_beside_it(
+    tmp_path: Path,
+) -> None:
+    """A none without `revises` restates the live none of its unit, as a value would.
+
+    Re-reading new content for the same unit revises that none's lineage with
+    the fresh evidence; a none of another unit is a second none, not a revision.
+    """
+
+    instance, owner, root, line, _procedure = proposal_world(
+        tmp_path, templates=(_none_item(),), claim_type=_inverse_claim_type()
+    )
+    first = _accept_first_run(instance, owner, root, line)
+    (first_child,) = first.children
+    (held,) = _live_nones(instance).values()
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes(
+            {"advisory_id": "OSV-2026-0001", "severity": "high", "revision": 2}
+        )
+    )
+
+    restated = run_line(instance, root, line, at=NOW + timedelta(hours=1))
+
+    assert restated.status == "succeeded", restated.terminal
+    (egress,) = restated.terminal_egress
+    (child,) = egress.children
+    assert not child.unchanged
+    assert child.path == first_child.path
+    assert egress.target_paths == (first_child.path,)
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+    (revised,) = _live_nones(instance).values()
+    assert revised.identity.name == held.identity.name
+    (observation,) = restated.source_observations
+    assert observation.capture_digest in revised.backing.capture_digests
+    assert observation.capture_digest not in held.backing.capture_digests
+
+    (root / fixtures.RELATIVE_PATH).write_bytes(
+        fixtures.canonical_bytes({"advisory_id": "OSV-2026-0001", "severity": "critical"})
+    )
+    other = run_line(instance, root, line, at=NOW + timedelta(hours=2))
+
+    assert other.status == "succeeded", other.terminal
+    (egress,) = other.terminal_egress
+    (child,) = egress.children
+    assert child.path != first_child.path
+    accept_proposal(
+        instance, owner, service_inspect_playbill_proposal(instance, proposal_id=egress.proposal_id)
+    )
+    nones = _live_nones(instance)
+    assert sorted(nones) == ["critical", "high"]
+    assert nones["high"].identity.name == held.identity.name
+
+
 def test_an_unchanged_terminal_does_not_record_for_a_claim_retired_after_prepare(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -68,6 +68,7 @@ from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, pa
 from cruxible_client.contracts.claims import (
     ClaimRetireDependent,
     LiteralClaimObject,
+    NoneClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -1027,12 +1028,19 @@ def _restated_lineage(tree: SnapshotTree, member: ClaimAuthoringPayload) -> str 
     canonical statement targets that Claim's lineage. Shared lowering then
     decides by content and citation association: new content refreshes the
     evidence by revising it, content it already cites the same way changes
-    nothing (an unchanged receipt child).
+    nothing (an unchanged receipt child). A none restates the inverse Claim of
+    its unit: the same predicate and qualifier with the same inverse key
+    (``of``), as a value restates the Claim with its object.
     """
 
     statement = member.statement
     authored = statement.object
-    if not isinstance(authored, LiteralClaimObject | SubjectClaimObject):
+    expected: LiteralClaimObject | SubjectClaimObject | NoneClaimObject
+    if isinstance(authored, AuthoringNoneClaimObject):
+        expected = NoneClaimObject(of=authored.of)
+    elif isinstance(authored, LiteralClaimObject | SubjectClaimObject):
+        expected = authored
+    else:
         return None
     same = [
         claim
@@ -1041,7 +1049,7 @@ def _restated_lineage(tree: SnapshotTree, member: ClaimAuthoringPayload) -> str 
         and claim.statement.subject == statement.subject
         and claim.statement.predicate == statement.predicate
         and claim.statement.qualifier == statement.qualifier
-        and claim.statement.object == authored
+        and claim.statement.object == expected
         and claim.statement.role == statement.role
         and claim.statement.effective_from == statement.effective_from
         and claim.statement.effective_until == statement.effective_until
