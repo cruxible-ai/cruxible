@@ -474,6 +474,10 @@ def test_kit_mover_discovery_is_flat_with_retained_builds(
         def select():
             movers = _kit_movers(instance.connection, instance.tree, (shipped,), {})
             assert len(movers) == pinners
+            assert all(
+                mover.from_build == old.identity.name and mover.to_build == target.identity.name
+                for mover in movers
+            )
             # Preview and commit share discovery; commit also builds mappings.
             if not preview:
                 assert len(_kit_moves(instance.tree, movers)) == pinners

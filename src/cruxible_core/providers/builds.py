@@ -132,12 +132,16 @@ def indexed_move_pinners(
     The derived relation excludes retired sources and has a name prefix index;
     builds without pinners never enter this read.
     """
+    # Probe the unique identity index, then check the exact digest. The
+    # non-unique by-digest index needs a data-dependent range-end step even
+    # though the identity already determines one row.
     select = (
         "SELECT p.source_identity,coalesce(proc.path,bp.path),p.target_identity "
         "FROM main.provider_pinners p "
         "LEFT JOIN main.procedures proc ON proc.identity=p.source_identity "
         "LEFT JOIN main.blueprints bp ON bp.identity=p.source_identity "
-        "JOIN main.providers b ON b.identity=p.target_identity "
+        "JOIN main.providers b INDEXED BY sqlite_autoindex_providers_1 "
+        "ON b.identity=p.target_identity "
         "AND b.artifact_digest=p.target_digest "
         "WHERE p.provider_name=? AND p.target_identity!=? AND b.lifecycle='live'"
     )
