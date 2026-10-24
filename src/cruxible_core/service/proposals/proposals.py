@@ -1272,8 +1272,13 @@ def _readmit_exact_bytes(
             source_compilation_digest=operation_digest,
             claim_type_expansions=source.admission.claim_type_expansions,
         )
+        # Read as a delta over its accepted base: the bytes this proposal
+        # changed, over a tree the instance already holds, never the whole
+        # tree's blobs (the work follows the change, not the instance).
         candidate_tree = instance.proposal_tree(
-            source.admission.candidate_tree_oid, proposal_id=proposal_id
+            source.admission.candidate_tree_oid,
+            base_oid=request.proposed_base_oid,
+            proposal_id=proposal_id,
         )
         if mode.previewing:
             preview = instance.proposal_service().preview(

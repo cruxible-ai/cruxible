@@ -583,6 +583,30 @@ def _activate_stale(world: World) -> object:
     return result
 
 
+def _prepare_moved_status(world: World) -> None:
+    pending = _worlds.write(
+        world,
+        [{"op": "set", "subject": world.subject(2), "field": "title", "value": "left behind"}],
+        accept="never",
+    )
+    assert pending.proposal is not None
+    world.prepared = pending.proposal.proposal_id
+    _worlds.write(
+        world, [{"op": "set", "subject": world.subject(3), "field": "title", "value": "moved on"}]
+    )
+    settle_advertisement(world.instance)
+
+
+def _moved_status(world: World) -> object:
+    """A proposal behind the head: its overlap is one seek per key, whatever history holds."""
+
+    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+
+    entry = service_playbill_proposal_status(world.instance, proposal_id=world.prepared)
+    assert (entry.status, entry.stale_paths) == ("open", ()), entry
+    return entry
+
+
 def _attestation(basis: str, subject: int) -> Callable[[World], object]:
     """Build and sign the request client-side, before the window."""
 
@@ -843,6 +867,7 @@ def _routes() -> list[Route]:
         Route("read.orient.after_activation", _orient),
         Route("authoring.submit_and_activate", _authoring_claims),
         Route("proposal.stale.activate", _activate_stale, prepare=_prepare_stale_activation),
+        Route("proposal.moved.status", _moved_status, prepare=_prepare_moved_status),
         Route("procedure.propose", _run_line(_worlds.PROPOSE)),
         Route("procedure.propose.activate", _activate_proposal),
         Route("procedure.settle", _run_line(_worlds.SETTLE)),
