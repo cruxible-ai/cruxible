@@ -8,12 +8,12 @@ def test_bare_name_does_not_fall_back_to_old_only_fitting_build():
     old = "Provider:demo/" + "a" * 64
     entry = ProviderInterfaceEntry(
         tag="playbill-provider-interface-entry-v1",
-        identity="ProviderInterface:demo.interface/" + "1" * 64,
+        identity="ProviderInterface:demo.interface/v1",
         artifact_digest="sha256:" + "2" * 64,
         artifact_kind="ProviderInterface",
         pin_role="provider-interface",
         interface_digest="sha256:" + "3" * 64,
-        effect_class="none",
+        effect_class="pure",
         interface_basis="accepted_registration",
         providers=[
             ProviderInterfaceImplementation(
@@ -25,6 +25,8 @@ def test_bare_name_does_not_fall_back_to_old_only_fitting_build():
             )
         ],
     )
+    assert entry.effect_class == "pure"
+    assert entry.identity == "ProviderInterface:demo.interface/v1"
     # The latest build of demo implements another contract, so it is absent
     # from this older registration's inventory. An exact old build is valid.
     assert ProviderBinding.from_interface(entry, provider=old).provider == old
