@@ -583,8 +583,11 @@ def test_k3_the_retry_path_and_the_path_length_refusal(
     monkeypatch.delenv(variable, raising=False)
     with pytest.raises(ProviderLocalRuntimeRefused) as long_refusal:
         ProviderProcessLeaseStore(deep / "l2", control_root=deep / "c2")
-    assert long_refusal.value.code == "provider_process_lease_invalid"
-    assert "private per-user runtime directory" in str(long_refusal.value)
+    # The lane precondition (no short private runtime directory) is the operator's
+    # environment, so it carries its own code and repair, not the fence code.
+    assert long_refusal.value.code == "provider_runtime_directory_unavailable"
+    assert "private" in str(long_refusal.value)
+    assert "--state-root" in str(long_refusal.value)
 
 
 # ---------------------------------------------------------------------- L-8 / L-9 / L-12 / M-11
@@ -656,7 +659,8 @@ def test_m11_the_closed_vocabularies_are_exactly_as_ruled() -> None:
         "provider_process_group_survived_recovery",
     }
     assert set(get_args(ProviderLaneUnavailableCode)) == fence | {
-        "provider_runtime_recovery_failed"
+        "provider_runtime_recovery_failed",
+        "provider_runtime_directory_unavailable",
     }
     import typing
 

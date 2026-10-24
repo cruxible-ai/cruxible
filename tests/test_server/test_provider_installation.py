@@ -951,6 +951,7 @@ def test_a_transferred_wheel_resolves_registry_dependencies_from_the_default_ind
         class Operator:
             config = Config
             state_root = tmp_path
+            process_leases = object()  # the lane holds; this test is about index resolution
 
         return Operator()
 
