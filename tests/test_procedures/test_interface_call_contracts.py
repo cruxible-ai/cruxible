@@ -89,7 +89,9 @@ def test_historical_source_call_copies_still_verify_without_changing_bytes():
     call = compiled.definition.nodes[0].model_copy(update=pins)
     legacy = dataclasses.replace(
         compiled,
-        definition=compiled.definition.model_copy(update={"nodes": (call,)}),
+        definition=compiled.definition.model_copy(
+            update={"nodes": (call, *compiled.definition.nodes[1:])}
+        ),
         contracts=tuple(
             sorted(
                 (*compiled.contracts, SourceContract(name=name, schema=schema)),
@@ -102,7 +104,12 @@ def test_historical_source_call_copies_still_verify_without_changing_bytes():
     verify_source_graph(procedure)
     assert procedure.model_dump(mode="json") == before
     tampered = procedure.definition.model_copy(
-        update={"nodes": (call.model_copy(update={"input": {"value": "changed"}}),)}
+        update={
+            "nodes": (
+                call.model_copy(update={"input": {"value": "changed"}}),
+                *compiled.definition.nodes[1:],
+            )
+        }
     )
     with pytest.raises(ProjectionFormatError, match="disagree"):
         verify_source_graph(procedure.model_copy(update={"definition": tampered}))
