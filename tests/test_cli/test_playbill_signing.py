@@ -74,7 +74,9 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
                     "candidate_digest": "sha256:" + "b" * 64,
                 }
             ),
-            members_identical=True,
+            # Identical members after a pending recompilation are a landing, which
+            # the CLI signs next (``test_cli_approval_signs_the_landed_candidate``).
+            members_identical=recompiled_status != "pending_review",
             accepted_coordinate=contracts.AcceptedCoordinate.from_internal(
                 instance.accepted_coordinate()
             ),
@@ -199,6 +201,99 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     serialized = json.dumps(submitted[0])
     assert str(reviewer.private_key_path) not in serialized
     assert "private_key" not in serialized
+
+
+def test_cli_approval_signs_the_landed_candidate(tmp_path: Path, monkeypatch) -> None:
+    """Nothing it touches changed since its base: one approve lands it and activates it.
+
+    The daemon lands the same change set at the head as a new candidate; an
+    approval signs exactly one candidate, so the CLI signs the landed one next.
+    """
+
+    from cruxible_core.service.proposals.proposals import _proposal_result
+    from tests.core_support._support import client_material
+    from tests.core_support._write_support import KIND, seed_write_surface
+    from tests.test_ledger.test_activation import _sign
+    from tests.test_service.test_write_verbs import _set, _write
+
+    instance, _owner = seed_write_surface(tmp_path, self_approval=False)
+    reviewer = client_material(tmp_path, instance)
+    pending = _write(instance, _set(f"{KIND}/wi-1", "title", "behind"))
+    moving = _write(instance, _set(f"{KIND}/wi-2", "title", "unrelated"))
+    assert pending.proposal is not None and moving.proposal is not None
+    source = _proposal_result(instance, pending.proposal.proposal_id)
+    moved = _proposal_result(instance, moving.proposal.proposal_id)
+    assert source.candidate is not None and moved.candidate is not None
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=moved.admission.proposal_id,
+        attestation=_sign(
+            reviewer,
+            moved.candidate.candidate_digest,
+            moved.candidate.candidate.parent_semantic_root,
+        ).attestation,
+        authenticated_submitter="reviewer",
+        activate_when_complete=True,
+        may_activate=True,
+    )
+    submitted: list[tuple[str, dict[str, Any]]] = []
+
+    class StubClient:
+        def resolve_proposal_selector(self, instance_id: str, selector: str):  # type: ignore[no-untyped-def]
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=selector)
+
+        def prepare_approval(self, instance_id, selected, *, signer_id, include_body=False):  # type: ignore[no-untyped-def]
+            challenge = service_prepare_playbill_approval(
+                instance,
+                proposal_id=selected,
+                signer_id=signer_id,
+                access=BodyAccessContext(principal_id=signer_id, can_read_body=include_body),
+            )
+            return contracts.ApprovalChallenge.model_validate(challenge.model_dump(mode="json"))
+
+        def submit_approval(self, instance_id, selected, *, attestation, hold=False):  # type: ignore[no-untyped-def]
+            submitted.append((selected, attestation))
+            result = service_submit_playbill_approval(
+                instance,
+                proposal_id=selected,
+                attestation=ApprovalAttestation.model_validate(attestation),
+                authenticated_submitter="reviewer",
+                activate_when_complete=not hold,
+                may_activate=True,
+            )
+            if isinstance(result, (contracts.ProposalRecompiled, contracts.ActivationReceipt)):
+                return result
+            return contracts.ApprovalReceipt.model_validate(result.model_dump(mode="json"))
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    head_root = instance.accepted_coordinate().semantic_root
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_cli",
+            "proposal",
+            "approve",
+            source.admission.proposal_id,
+            "--signer-id",
+            "reviewer",
+            "--key",
+            str(reviewer.private_key_path),
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    ((first_id, first), (landed_id, landed)) = submitted
+    assert first_id == source.admission.proposal_id
+    assert first["payload_digest"] == source.candidate.candidate_digest
+    assert landed_id != first_id and landed["payload_digest"] != first["payload_digest"]
+    # The landed candidate sits on the head the approval met.
+    assert landed["signing_semantic_root"] == head_root
+    assert f"Landed at the head as {landed_id}" in result.stdout
+    assert "Activated at" in result.stdout
 
 
 def test_cli_missing_signer_never_falls_back_to_daemon(

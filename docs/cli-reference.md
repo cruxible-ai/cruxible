@@ -3375,9 +3375,15 @@ text output, a row lists its alternatives as `or:` lines under `repair:`, and
 a row about a Claim can carry its Subject and predicate in parentheses after
 the identity.
 
-A `proposal_stale` row is exactly a `proposal list` entry whose terminal reason
-is `stale`: a candidate neither accepted, refused nor withdrawn whose parent is
-no longer the coordinate's semantic root, so it cannot activate. The row names
+A `proposal_stale` row is exactly a `proposal list` entry with status
+`awaiting_readmit`: a candidate neither accepted, refused nor withdrawn whose
+parent is no longer the coordinate's semantic root, AND for which accepted
+history changed, since its base, a path its change set touches or is judged
+under: the Claims it writes or retires and their slots, the Subjects it creates
+or links, its ClaimTypes and pinned definitions, the approval policy, and a
+settle's Mandate. `detail.stale_paths` (and the list entry's `stale_paths`)
+names those paths. A proposal whose base merely moved is `open`: nothing it
+touches changed, and approval or activation lands it at the head. The row names
 the proposal's author in `detail.actor_id`; its repair is
 `cruxible proposal readmit PROPOSAL_ID`, which only that author may
 run (the principal `whoami` reports; a read with no principal shows none). An
@@ -3396,8 +3402,9 @@ did not finish: readmitting it re-evaluates it as an ordinary proposal that
 needs approval, because the mandate authorized the submission it was, not a
 rebased one, so its repair says so.
 
-A `proposal_awaiting_approval` row is an open candidate whose parent is the
-coordinate's semantic root and whose approval requirement is not yet met, and
+A `proposal_awaiting_approval` row is an open candidate (on the coordinate's
+semantic root, or behind it with nothing it touches changed since its base)
+whose approval requirement is not yet met, and
 which you could approve. "You" is the daemon's authenticated caller: the
 principal `whoami` reports. It must be active and `ordinary` in the accepted
 registry, must not be the candidate's author, and must not have approved it
@@ -4282,7 +4289,19 @@ full digest, a unique digest prefix (`sha256:` plus at least 8 hex characters),
 or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
-`proposal activate` and `proposal approve` recompile a stale authoring/write or
+A proposal behind the head is stale only when the head changed what it touches
+since its base (`stale_paths`, above). Otherwise `proposal approve` and
+`proposal activate` land the same change set at the head: its own bytes are
+readmitted there under its author (the admission's `readmits` link names the
+source, proposed at its base, and the head it landed at), the source closes as
+superseded, and the result is the typed `cruxible-proposal-recompiled-v1` with
+`members_identical: true`. An approval signs exactly one candidate, so
+`proposal approve` (CLI and MCP) then signs the landed candidate in the same
+command; the SDK returns the result for a fresh review. A Line's or Procedure's
+proposal re-decides at the head instead, as below. Approving a stale proposal
+refuses `cruxible.proposal.stale` (reason `changed_since_base`, naming the
+paths): only its author's readmit answers it.
+`proposal activate` recompiles a stale authoring/write or
 Procedure proposal from its retained input at the current head, without running
 providers. The fresh proposal supersedes the stale one. Activation lands it
 in the same call when no approval is required; otherwise the typed
@@ -4321,7 +4340,8 @@ links the fresh proposal to its source and records a superseded withdrawal on
 the source, preserving its immutable admission and evaluation. It refuses `cruxible.proposal.readmit_already_accepted` when
 the change is in accepted state -- the proposal itself was accepted, or its
 readmission was (`context.accepted_as`) -- and `cruxible.proposal.readmit_not_stale`
-for an open or refused proposal. A stale ClaimType migration is not
+for a proposal on the head or a refused one. Readmitting an open proposal behind
+the head lands it there, as approval would. A stale ClaimType migration is not
 byte-rebased because its dependent inventory may have changed; run
 `cruxible claim-type migrate` again at the current head instead.
 

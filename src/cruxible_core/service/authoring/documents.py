@@ -411,6 +411,21 @@ def service_submit_playbill_approval(
     instance.require_writable()
     proposal, candidate = _candidate_for_proposal(instance, proposal_id)
     if proposal.evaluation.evaluated_base_oid != instance.accepted_coordinate().git_oid:
+        from cruxible_core.service.proposals.staleness import (
+            render_stale_paths,
+            stale_paths_at_head,
+        )
+
+        # Stale only when history changed what it touches since its base: then
+        # it awaits its author's readmit, and no approval settles it. Otherwise
+        # the approval lands the same change set at the head.
+        stale_paths = stale_paths_at_head(instance, proposal)
+        if stale_paths:
+            raise ProposalStale(
+                proposal_id,
+                reason="changed_since_base",
+                detail="changed at the head since its base: " + render_stale_paths(stale_paths),
+            )
         recompiled = _recompile_for_review(
             instance, proposal, approver=proposal.admission.actor_id != authenticated_submitter
         )
@@ -745,6 +760,18 @@ def _activate_candidate(
         proposal, _candidate = _candidate_for_proposal(instance, proposal_id)
         recompiled = _recompile_for_review(instance, proposal)
         if recompiled is None:
+            from cruxible_core.service.proposals.staleness import (
+                render_stale_paths,
+                stale_paths_at_head,
+            )
+
+            stale_paths = stale_paths_at_head(instance, proposal)
+            if stale_paths:
+                raise ProposalStale(
+                    proposal_id,
+                    reason="changed_since_base",
+                    detail="changed at the head since its base: " + render_stale_paths(stale_paths),
+                )
             raise ProposalStale(proposal_id)
         if recompiled.proposal_id is None:
             return recompiled  # already live at the head: answered, nothing to activate
@@ -873,8 +900,19 @@ def _recompile_for_review(
     a rejection with a reason tells them why. Activation keeps ``ProposalStale``.
     """
     from cruxible_core.service.proposals.proposals import readmit_refused
-    from cruxible_core.service.proposals.recompile import recompile_proposal
+    from cruxible_core.service.proposals.recompile import lowering_origin, recompile_proposal
 
+    try:
+        origin = lowering_origin(instance, source)
+    except ProposalStale:
+        origin = None
+    if origin is None or origin.admission.procedure_operation is None:
+        # Nothing it touches changed since its base: the same change set lands
+        # at the head by its own bytes. A Line's or Procedure's proposal
+        # re-decides at the head instead, as its recompilation always has.
+        landed = _land_exact_bytes_for_review(instance, source)
+        if landed is not None:
+            return landed
     try:
         recompiled = recompile_proposal(instance, source)
     except ProposalStale as exc:
@@ -903,6 +941,52 @@ def _recompile_for_review(
         changed_members=recompiled.changed_members,
         changed_members_truncated=recompiled.changed_members_truncated,
         accepted_coordinate=recompiled.coordinate,
+    )
+
+
+def _land_exact_bytes_for_review(
+    instance: PlaybillInstance, source: ProposalResult
+) -> ProposalRecompiled | None:
+    """Land a moved proposal at the head by its own bytes, when nothing it touches
+    changed since its base; None when something did (it stays stale).
+    """
+    from cruxible_core.service.proposals.proposals import land_exact_bytes
+    from cruxible_core.service.proposals.recompile import _changed_members
+    from cruxible_core.service.proposals.staleness import stale_paths_at_head
+
+    if source.candidate is None or stale_paths_at_head(instance, source):
+        return None
+    successor = land_exact_bytes(instance, source)
+    if successor.candidate is None:
+        raise ProposalStale(
+            source.admission.proposal_id,
+            reason="evaluation_refused",
+            detail="; ".join(item.code for item in successor.evaluation.diagnostics),
+        )
+    before = {
+        member.path: getattr(
+            member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
+        )
+        for member in source.candidate.members
+    }
+    after = {
+        member.path: getattr(
+            member, "candidate_artifact_digest", getattr(member, "artifact_digest", None)
+        )
+        for member in successor.candidate.members
+    }
+    changed, truncated = _changed_members(before, after)
+    return ProposalRecompiled(
+        status=(
+            "pending_review" if successor.candidate.approval_requirements else "ready_to_activate"
+        ),
+        source_proposal_id=source.admission.proposal_id,
+        proposal_id=successor.admission.proposal_id,
+        candidate_digest=successor.candidate.candidate_digest,
+        members_identical=before == after,
+        changed_members=changed,
+        changed_members_truncated=truncated,
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
     )
 
 

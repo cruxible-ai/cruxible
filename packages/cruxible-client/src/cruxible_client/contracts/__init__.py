@@ -830,13 +830,18 @@ class ProposalListEntry(BaseModel):
     admitted_at: str | None
     verdict: Literal["candidate", "refused"] | None
     candidate_digest: str | None = None
-    #: ``awaiting_readmit``: its base moved; it waits for its author's readmit.
+    #: ``awaiting_readmit``: the head changed what it touches since its base
+    #: (``stale_paths``); it waits for its author's readmit. A proposal whose
+    #: base merely moved is ``open``: approval or activation lands it at the head.
     status: Literal["open", "awaiting_readmit", "settled", "incomplete"]
     terminal_reason: Literal["accepted", "refused", "withdrawn", "rejected"] | None = None
     incomplete_reasons: tuple[
         Literal["missing_admission", "missing_evaluation", "missing_candidate"], ...
     ] = ()
     withdrawal_present: bool = False
+    #: ``awaiting_readmit`` only: the paths changed since its base that it touches
+    #: or is judged under, sorted.
+    stale_paths: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class ProposalList(BaseModel):

@@ -5821,12 +5821,15 @@ def _proposal_items(
     caller_principal_id: str | None,
     access_profile: CoverageAccessProfile,
 ) -> tuple[PlaybillNextItemV1, ...]:
-    """Stale proposals: admitted work that can no longer activate where it stands.
+    """Stale proposals: admitted work the head changed what it touches since its base.
 
-    Approve/activate/readmit recompile retained authoring/write or Procedure inputs at
-    the head, then follow ordinary approval policy; exact-byte origins retain
-    byte readmission. Withdraw closes work that should never settle. The queue
-    only explains the repair: it never recompiles while listing a row.
+    A proposal whose base merely moved is not here: nothing it touches changed,
+    so approval or activation lands it at the head, and it shows as open. A
+    stale one names its ``stale_paths``. Readmit recompiles retained
+    authoring/write or Procedure inputs at the head, then follows ordinary
+    approval policy; exact-byte origins retain byte readmission. Withdraw
+    closes work that should never settle. The queue only explains the repair:
+    it never recompiles while listing a row.
 
     Only the author may readmit, so a row shows only to its author: the
     daemon's authenticated caller, never a request field. A queue read
@@ -5847,12 +5850,14 @@ def _proposal_items(
             "candidate_parent_semantic_root": proposal.candidate_parent_semantic_root,
             "accepted_semantic_root": coordinate.semantic_root,
             "target_ref": proposal.target_ref,
+            "stale_paths": list(proposal.stale_paths),
             **_prior_refusal_detail(instance, proposal.proposal_id),
         }
         required_change = "readmit_as_its_author_or_withdraw_the_stale_proposal"
         detail["stale_repair"] = (
-            "Approve, activate, or readmit recompiles at the head when the origin lowers; "
-            "review any new candidate normally, or withdraw."
+            "The head changed what it touches since its base (stale_paths): readmit "
+            "recompiles at the head when the origin lowers; review any new candidate "
+            "normally, or withdraw."
         )
         # A delegated settle re-lowers retained input and re-verifies its
         # mandate and condition at the head before publication. No authority
@@ -5992,8 +5997,10 @@ def _stale_approval_items(
                 "eligible_approvals": eligible,
                 "minimum_distinct_signers": minimum,
                 "target_ref": proposal.target_ref,
-                "detail": "stale: the head moved past its candidate; it awaits its author's "
-                "readmit, then your review. A stale candidate is never approvable.",
+                "stale_paths": list(proposal.stale_paths),
+                "detail": "stale: the head changed what it touches since its base "
+                "(stale_paths); it awaits its author's readmit, then your review. A stale "
+                "candidate is never approvable.",
                 **_prior_refusal_detail(instance, proposal.proposal_id),
             },
             repair=None,

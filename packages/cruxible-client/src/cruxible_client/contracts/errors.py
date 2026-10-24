@@ -398,7 +398,8 @@ class ProposalReadmitNotStale(ProposalAdmissionError):
         self.proposal_id = proposal_id
         self.status = status
         repair = (
-            f"it can still be activated where it stands; run `cruxible get {proposal_id}`"
+            f"it is on the head and can be activated where it stands; run "
+            f"`cruxible get {proposal_id}`"
             if status == "open"
             else "author the change again as a new proposal"
         )

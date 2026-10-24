@@ -1342,8 +1342,13 @@ def _unregistered_projection_block(root: Path, _monkeypatch: pytest.MonkeyPatch)
 
 
 def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.core_support._support import every_moved_base_overlaps
     from tests.test_proposals.test_proposal_readmit import _accept, _shell
 
+    # Documents touch only their own paths: an unrelated acceptance leaves the
+    # overtaken one open (approval lands it). The repair loop under test is the
+    # stale row's, so any moved base counts as stale here.
+    every_moved_base_overlaps(_monkeypatch)
     instance, owner = initialize_local(root)
     alpha = instance.store_document_body(b"alpha\n").digest
     beta = instance.store_document_body(b"beta\n").digest
@@ -1375,9 +1380,11 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     assert row.repair.command == f"cruxible proposal readmit {stale_id}"
     assert row.detail["actor_id"] == "owner"
     assert row.detail["stale_repair"] == (
-        "Approve, activate, or readmit recompiles at the head when the origin lowers; "
-        "review any new candidate normally, or withdraw."
+        "The head changed what it touches since its base (stale_paths): readmit "
+        "recompiles at the head when the origin lowers; review any new candidate "
+        "normally, or withdraw."
     )
+    assert row.detail["stale_paths"] == ["<moved base>"]
     # Only the author may readmit, so only the author's queue carries the row.
     _assert_gone(instance, "proposal_stale", _request(instance), caller_principal_id="reviewer")
     _assert_gone(instance, "proposal_stale", _request(instance))

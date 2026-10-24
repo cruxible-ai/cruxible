@@ -34,7 +34,11 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
-from tests.core_support._support import client_material, initialize_local
+from tests.core_support._support import (
+    client_material,
+    every_moved_base_overlaps,
+    initialize_local,
+)
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world, _successor
 from tests.test_ledger.test_activation import _sign
 
@@ -316,7 +320,9 @@ def test_readmit_refuses_an_accepted_proposal_as_accepted_not_as_unstale(
     assert "was accepted" in str(refusal.value)
 
 
-def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
+def test_an_accepted_readmission_supersedes_its_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Once its readmission is accepted, a stale source is no one's work.
 
     The source stays `stale` in the inventory -- its own tree never activated --
@@ -350,6 +356,7 @@ def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
     def head() -> AcceptedCoordinate:
         return AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
+    every_moved_base_overlaps(monkeypatch)
     instance, owner = initialize_local(tmp_path)
     first, source = _propose(instance, "first"), _propose(instance, "source")
     source_id = source.proposal.admission.proposal_id
@@ -390,7 +397,9 @@ def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
     assert f"its readmission {landed_id} was accepted" in str(refusal.value)
 
 
-def test_a_proposal_that_only_spells_a_readmission_ref_links_nothing(tmp_path: Path) -> None:
+def test_a_proposal_that_only_spells_a_readmission_ref_links_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Review F-002: supersession is read from immutable admission evidence, not a ref.
 
     An unrelated proposal named ``readmit-`` plus the source's expected
@@ -405,6 +414,7 @@ def test_a_proposal_that_only_spells_a_readmission_ref_links_nothing(tmp_path: P
         readmission_operation_digest,
     )
 
+    every_moved_base_overlaps(monkeypatch)
     instance, owner = initialize_local(tmp_path)
     first, source = _propose(instance, "first"), _propose(instance, "source")
     source_id = source.proposal.admission.proposal_id
@@ -495,8 +505,9 @@ def test_a_readmission_keeps_its_link_when_head_moves_before_evaluation(
 
 @pytest.mark.parametrize("target", ["kit-example-123", "provider-move-example"])
 def test_nonlowering_origins_still_refuse_stale_activation_and_readmit_exact_bytes(
-    tmp_path: Path, target: str
+    tmp_path: Path, target: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    every_moved_base_overlaps(monkeypatch)
     from cruxible_client.contracts.documents import document_path, render_document
     from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 

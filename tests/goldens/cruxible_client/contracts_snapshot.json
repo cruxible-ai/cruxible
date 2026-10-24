@@ -76280,6 +76280,14 @@
                 "title": "Proposal Id",
                 "type": "string"
               },
+              "stale_paths": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Stale Paths",
+                "type": "array"
+              },
               "status": {
                 "enum": [
                   "open",
@@ -76511,6 +76519,22 @@
             "type": "string"
           }
         },
+        "stale_paths": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "stale_paths",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Stale Paths",
+            "type": "array"
+          }
+        },
         "status": {
           "has_default": false,
           "has_default_factory": false,
@@ -76672,6 +76696,14 @@
           "proposal_id": {
             "title": "Proposal Id",
             "type": "string"
+          },
+          "stale_paths": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Stale Paths",
+            "type": "array"
           },
           "status": {
             "enum": [

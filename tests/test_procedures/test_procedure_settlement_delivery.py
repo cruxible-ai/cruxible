@@ -1229,9 +1229,14 @@ def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
         assert instance.accepted_coordinate() == base and egress.proposal_id is not None
 
 
-def _stale_row(instance, proposal_id: str):  # type: ignore[no-untyped-def]
+def _stale_row(instance, proposal_id: str, monkeypatch):  # type: ignore[no-untyped-def]
     from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
+    from tests.core_support._support import every_moved_base_overlaps
+
+    # The head moves on with an unrelated Subject: these rows are about what a
+    # stale settle says, so any moved base counts as stale here.
+    every_moved_base_overlaps(monkeypatch)
 
     # Head moves past the proposal's base, so it can no longer activate.
     moved = _subject().model_copy(
@@ -1265,12 +1270,12 @@ def _stale_row(instance, proposal_id: str):  # type: ignore[no-untyped-def]
     return row
 
 
-def test_a_stale_fallback_settle_names_how_it_was_submitted(tmp_path: Path) -> None:
+def test_a_stale_fallback_settle_names_how_it_was_submitted(tmp_path: Path, monkeypatch) -> None:
     instance, root, line = settle_world(tmp_path, only_subject="someone-else")
     egress = _egress(run_settle(instance, root, line))
     assert egress.settle_outcome == "proposed" and egress.proposal_id is not None
 
-    row = _stale_row(instance, egress.proposal_id)
+    row = _stale_row(instance, egress.proposal_id, monkeypatch)
 
     assert row.detail["settle_submission"]["mode"] == "fallback"
     assert row.detail["settle_submission"]["mandate_digest"] == egress.procedure_mandate_digest
@@ -1292,7 +1297,7 @@ def test_a_delegated_settle_that_lost_its_race_says_recompile_reverifies_authori
     ]
     assert pending.settle_submission is not None and pending.settle_submission.mode == "delegated"
 
-    row = _stale_row(instance, pending.proposal_id)
+    row = _stale_row(instance, pending.proposal_id, monkeypatch)
 
     assert row.detail["settle_submission"]["mode"] == "delegated"
     assert row.repair.required_change == (

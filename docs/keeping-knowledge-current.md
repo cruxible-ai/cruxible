@@ -151,9 +151,9 @@ notes](documents-and-notes.md#pages-that-reflect-state-projection-blocks).
 ### Proposals waiting or stale
 
 `proposal_awaiting_approval` waits for someone allowed to approve. A
-proposal that went stale because other changes landed first doesn't need to be
-redone: approving it recompiles it against the current state and lands it if
-it still applies.
+proposal that other changes overtook doesn't need to be redone when they
+touched nothing it touches: it stays open, and approving it lands the same
+change set on the current state.
 
 ~~~text
 $ cruxible proposal approve sha256:d23468f3… --yes
@@ -162,8 +162,9 @@ $ cruxible proposal approve sha256:d23468f3… --yes
 accepted (978e04dc4f9c) by YOUR_ID
 ~~~
 
-If what it changes has itself moved, approval is refused, and `cruxible
-proposal readmit` rebases it as a new proposal to review. [Review and
+If what it changes has itself moved, it is `proposal_stale` (the row names
+the changed paths), approval is refused, and its author's `cruxible proposal
+readmit` rebases it as a new proposal to review. [Review and
 governance](review-and-governance.md) covers reviewing and approving in full.
 
 ### Automation and upgrades

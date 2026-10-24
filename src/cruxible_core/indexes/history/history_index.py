@@ -699,6 +699,25 @@ class HistoryReader:
                 found[str(path)].append(int(sequence))
         return {path: tuple(values) for path, values in found.items()}
 
+    def paths_changed_after(self, paths: Iterable[str], sequence: int) -> frozenset[str]:
+        """Those of ``paths`` a change record in ``(sequence, cutoff]`` touched.
+
+        One seek per path on the path index (``members_by_path``), stopping at
+        that path's first occurrence after ``sequence``: the cost follows the
+        paths asked about, never the history between.
+        """
+
+        found: set[str] = set()
+        for path in dict.fromkeys(paths):
+            row = self._connection.execute(
+                "SELECT 1 FROM accepted_member_locations WHERE member_path=? "
+                "AND sequence>? AND sequence<=? LIMIT 1",
+                (path, sequence, self.sequence),
+            ).fetchone()
+            if row is not None:
+                found.add(path)
+        return frozenset(found)
+
     def member_paths_by_sequence(self, sequences: Iterable[int]) -> dict[int, tuple[str, ...]]:
         """The member paths each of ``sequences`` touched, in member order."""
 
