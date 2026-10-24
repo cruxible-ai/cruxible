@@ -3380,8 +3380,12 @@ is `stale`: a candidate neither accepted, refused nor withdrawn whose parent is
 no longer the coordinate's semantic root, so it cannot activate. The row names
 the proposal's author in `detail.actor_id`; its repair is
 `cruxible proposal readmit PROPOSAL_ID`, which only that author may
-run, so only the author's queue shows the row (the principal `whoami` reports;
-a read with no principal shows none). `proposal withdraw` is the alternative
+run (the principal `whoami` reports; a read with no principal shows none). An
+approver who would sign it sees the same `proposal_stale` row with
+`detail.awaiting: author_readmit`, no approve, and the readmit withheld as the
+author's (`repair withheld: cruxible proposal readmit needs the proposal's
+author (ID)`); once the author readmits, the successor shows as an ordinary
+approval row. `proposal withdraw` is the alternative
 when the change is no longer wanted. A readmission at the same coordinate, or a
 withdrawal, closes the row; so does a readmission that still carries the
 change: an accepted one supersedes the source for good, and a live one that went
@@ -4235,7 +4239,7 @@ middleware in `cruxible_core.coverage.middleware` and passes its own rules.
 ## proposal
 
 ~~~text
-cruxible proposal list [--status open|settled|incomplete] [--limit N]
+cruxible proposal list [--status open|awaiting_readmit|settled|incomplete] [--limit N]
   [--cursor CURSOR] [--json]
 cruxible proposal readmit PROPOSAL_ID [--dry-run|--commit] [--at OID] [--json]
 cruxible proposal withdraw PROPOSAL_ID --reason TEXT [--dry-run|--commit] [--at OID] [--json]
@@ -4267,7 +4271,9 @@ preflighted, rather than at proposal evaluation
 (`cruxible.proposal.creator_principal_invalid`).
 `proposal list` prints a labeled `COORDINATE_TIME` column and deterministically
 separates current open candidates from accepted, refused, and stale terminal
-evidence so retries do not depend on remembered IDs. It returns one page
+evidence so retries do not depend on remembered IDs. `--status
+awaiting_readmit` lists the stale ones: their base moved, so each waits for its
+author's `proposal readmit`. It returns one page
 (default 50, at most 500); a cut page has `truncated: true` and a `next_cursor`
 for `--cursor`, which keeps reading the first page's accepted coordinate. A
 proposal admitted or withdrawn between pages changes the listing, and the
@@ -4293,7 +4299,12 @@ readmitting, withdrawing, or submitting corrected input. Exact-byte origins
 If an exact-byte proposal loses the publication compare-and-swap, activation
 recovers the winner and returns its `lost_cas` receipt without recompiling or retrying.
 
-`proposal approve` signs the reviewed candidate. When that signature completes
+`proposal approve` signs the reviewed candidate. At a terminal it shows the
+change summary and asks first; `--yes` signs without asking and prints one
+counts line plus any earlier refusals (`--full` renders every member). Without
+a terminal to prompt at (an agent, a script, CI) it refuses before calling the
+daemon unless `--yes` is passed, with the repair to review first and then
+approve with `--yes`. When that signature completes
 the candidate's required approvals and your tier may activate (`graph_write`),
 the same command activates it and reports both: the JSON receipt carries
 `activation`, the activation receipt. `--hold` signs only, for a reviewer
