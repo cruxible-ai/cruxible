@@ -51,10 +51,11 @@ from cruxible_client.contracts.repairs import (
     HandEditInstruction,
     HandEditRepair,
     RepairOperation,
+    served_repair_for_refusal,
 )
 from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, PROVIDER_BUILDS_COMPILER
 from cruxible_core.derived.derived_state import fork_tree
-from cruxible_core.errors import ConfigError, RequestRefusedError
+from cruxible_core.errors import ConfigError, ProviderLaneRefusedError, RequestRefusedError
 from cruxible_core.governance.seed_artifacts.workspace_file import (
     is_builtin_workspace_file_registration,
 )
@@ -79,6 +80,9 @@ from cruxible_core.providers.package_registration import PackageRegistrationDocu
 from cruxible_core.providers.provider_local_runtime import (
     verification_format_upgrade,
     verify_provider_installation,
+)
+from cruxible_core.providers.provider_process_leases import (
+    PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
 )
 from cruxible_core.runtime.execution_policy import enforce_customer_code_execution_supported
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -832,6 +836,22 @@ def _preview_installation(
     )
 
 
+def _refuse_unavailable_lane(operator: ProviderRuntimeOperator) -> None:
+    """Refuse with the lane's own cause and repair when it cannot hold deployments."""
+
+    if operator.process_leases is not None:
+        return
+    refusal = operator.lane_refusal()
+    message = refusal.refusal_message
+    if refusal.code != PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE:
+        # The precondition names its cause itself; any other lane failure is
+        # said by the lane reason `server status` also reports.
+        message = f"{message}: {operator.unavailable_reason}"
+    raise ProviderLaneRefusedError(
+        refusal.code, message, repair=served_repair_for_refusal(refusal.code)
+    )
+
+
 def _install_locked(
     instance: PlaybillInstance,
     operator: ProviderRuntimeOperator,
@@ -892,6 +912,9 @@ def _install_locked(
                 deployment = operator._deployment(configured)
                 rewrite_prepared = True
     else:
+        # Before any build: a fresh installation's deployment needs the
+        # Provider lane, so a lane that is down refuses here, naming its cause.
+        _refuse_unavailable_lane(operator)
         custody = directory / "wheels"
         custody.mkdir(exist_ok=True, mode=0o700)
         with package_preparation_errors():
@@ -920,8 +943,6 @@ def _install_locked(
             raise ConfigError("provider installation does not install kit definitions")
         verification = verify_provider_installation(provider, deployment)
         deployment = replace(deployment, installation_verification=verification)
-        if operator.process_leases is None:
-            raise ConfigError("provider process runtime is unavailable")
         configured = ProviderDeploymentConfigV1.model_validate(
             dict(
                 deployment_digest=deployment.deployment_digest,

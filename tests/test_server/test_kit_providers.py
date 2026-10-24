@@ -712,6 +712,55 @@ def test_kit_add_rechecks_each_provider_is_live_before_proposing_definitions(
             pass
 
 
+def test_kit_add_on_a_daemon_without_a_runtime_directory_names_the_cause_and_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_checkout: ProviderCheckout
+) -> None:
+    """Full loop 2, new finding 1: the lane precondition, not a bare ConfigError.
+
+    The consumer daemon starts with TMPDIR and XDG_RUNTIME_DIR unset and a state
+    root too long for its control sockets; its kit add refuses as an operator
+    environment refusal naming the cause and the repair, and never a path.
+    """
+
+    from cruxible_client.contracts.repairs import HandEditRepair
+    from cruxible_core.errors import ProviderLaneRefusedError
+    from cruxible_core.providers.provider_process_leases import (
+        PROVIDER_RUNTIME_DIRECTORY_REPAIR,
+    )
+
+    opened = _worlds(tmp_path / "publish", monkeypatch)
+    publisher, _ = next(opened)
+    try:
+        project = _package(tmp_path / "kit-source", provider_checkout, name="kit-call")
+        _install(publisher, project)
+        _author(publisher)
+        release = _build(publisher, project)
+    finally:
+        for _ in opened:
+            pass
+
+    monkeypatch.delenv("TMPDIR", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    opened = _worlds(tmp_path / ("long-state-root-" + "x" * 110), monkeypatch)
+    _, consumer = next(opened)
+    try:
+        before = _tree(consumer)
+        with pytest.raises(ProviderLaneRefusedError) as refused:
+            _add(consumer, release, dry_run=False)
+        assert _tree(consumer) == before
+    finally:
+        for _ in opened:
+            pass
+
+    message = str(refused.value)
+    assert refused.value.error_code == "provider_runtime_directory_unavailable"
+    assert "is not set, so no private per-user runtime directory is configured" in message
+    assert message.endswith(PROVIDER_RUNTIME_DIRECTORY_REPAIR)
+    assert isinstance(refused.value.repair, HandEditRepair)
+    assert refused.value.repair.hand_edit.required_change == PROVIDER_RUNTIME_DIRECTORY_REPAIR
+    assert "/" not in message and "long-state-root" not in message
+
+
 @pytest.mark.parametrize("prior", ["overlapping kit", "newer release"])
 def test_refusals_the_current_state_decides_come_before_any_provider_install(
     tmp_path: Path,

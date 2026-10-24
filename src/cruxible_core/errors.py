@@ -167,6 +167,24 @@ class HostedProfileUnknownError(CoreError):
         )
 
 
+class ProviderLaneRefusedError(CoreError):
+    """A Provider-backed operation refused because the daemon's Provider lane is down.
+
+    An operator-environment refusal, not a request fault and not an internal
+    one: the HTTP boundary answers 503. ``error_code`` is the lane refusal's own
+    code (``provider_runtime_directory_unavailable`` for the lane precondition,
+    else ``provider_unavailable``), the message carries the lane's cause, and
+    ``repair`` is the served repair the catalog declares for that code.
+    """
+
+    http_status = 503
+
+    def __init__(self, code: str, message: str, *, repair: HandEditRepair | RepairOperation):
+        self.error_code = code
+        self.repair = repair
+        super().__init__(f"{code}: {message}")
+
+
 class IsolatedExecutorDiscoveryError(CoreError):
     """An advertised isolated executor could not be loaded or registered.
 

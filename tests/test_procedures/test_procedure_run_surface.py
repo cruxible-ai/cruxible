@@ -68,6 +68,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV3,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
+from cruxible_client.contracts.repairs import HandEditRepair
 from cruxible_client.contracts.triggers import (
     AcceptedTrigger,
     CadenceSchedule,
@@ -80,7 +81,11 @@ from cruxible_client.contracts.triggers import (
 from cruxible_core.exhaust import ProcedureExhaustWriter, parse_journal_payload
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
+from cruxible_core.providers.provider_process_leases import (
+    PROVIDER_RUNTIME_DIRECTORY_REPAIR,
+    ProviderLocalRuntimeRefused,
+)
+from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from cruxible_core.service.procedures.procedure_runs import (
     DirectProcedureReceiptReducer,
     LineRunIdentityMismatch,
@@ -90,6 +95,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     ProcedureRunNotFound,
     ProcedureRunRecoveryRequired,
     ProcedureRunRequest,
+    ProcedureRunStateV2,
     service_get_playbill_procedure_run,
     service_playbill_procedure_readiness,
     service_run_playbill_procedure,
@@ -1795,12 +1801,11 @@ def test_an_unaccepted_line_identity_refuses_before_any_authority_read(
     assert caught.value.code == "cruxible.line.run.line_not_accepted"
 
 
-def test_a_degraded_provider_lane_refuses_typed_without_granting_authority(
+def _line_run_against_a_degraded_lane(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The diagnostic detail travels as data; the code stays the authority."""
-
+    refusal: ProviderLocalRuntimeRefused,
+) -> ProcedureRunStateV2:
     instance, _owner = initialize_local(tmp_path)
     line, accepted, _interfaces = _line()
     acquisition_pin = ArtifactPin(
@@ -1850,15 +1855,11 @@ def test_a_degraded_provider_lane_refuses_typed_without_granting_authority(
     )
 
     def refuse(*_args, **_kwargs):  # type: ignore[no-untyped-def]
-        raise ProviderLocalRuntimeRefused(
-            "provider_unavailable",
-            "the runtime config is not readable",
-            details={"reason": {"code": "provider_process_lease_invalid", "detail": "unreadable"}},
-        )
+        raise refusal
 
     monkeypatch.setattr(procedure_run_service, "_line_external_occurrences", refuse)
 
-    result = procedure_run_service.service_run_playbill_line(
+    return procedure_run_service.service_run_playbill_line(
         instance,
         path_identity_digest=line_identity_digest(with_policy.identity),
         request=LineRunRequest(
@@ -1870,10 +1871,56 @@ def test_a_degraded_provider_lane_refuses_typed_without_granting_authority(
         daemon_clock=_DAEMON_CLOCK,
     )
 
+
+def test_a_degraded_provider_lane_refuses_typed_without_granting_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The diagnostic detail travels as data; the code stays the authority."""
+
+    result = _line_run_against_a_degraded_lane(
+        tmp_path,
+        monkeypatch,
+        ProviderLocalRuntimeRefused(
+            "provider_unavailable",
+            "the runtime config is not readable",
+            details={"reason": {"code": "provider_process_lease_invalid", "detail": "unreadable"}},
+        ),
+    )
+
     assert result.status == "node_refused"
     assert isinstance(result.terminal, ProcedureNodeRefusal)
     assert result.terminal.code == "provider_unavailable"
     assert result.terminal.details["reason"]["code"] == (  # type: ignore[index]
         "provider_process_lease_invalid"
+    )
+    assert result.run_id is None
+
+
+def test_a_line_run_without_a_runtime_directory_fails_operational_with_the_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lane precondition is the operator's environment: an operational failure
+    carrying the cause and the repair, never a node refusal or an internal one."""
+
+    monkeypatch.delenv("TMPDIR", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    operator = ProviderRuntimeOperator(tmp_path / ("long-state-root-" + "x" * 110))
+
+    workspace = tmp_path / "instance"
+    workspace.mkdir()
+    result = _line_run_against_a_degraded_lane(workspace, monkeypatch, operator.lane_refusal())
+
+    assert result.status == "operational_failed"
+    assert isinstance(result.terminal, ProcedureOperationalFailure)
+    assert result.terminal.code == "provider_runtime_directory_unavailable"
+    assert "is not set" in result.terminal.message
+    assert result.terminal.message.endswith(PROVIDER_RUNTIME_DIRECTORY_REPAIR)
+    assert "/" not in result.terminal.message
+    assert isinstance(result.terminal.repair, HandEditRepair)
+    assert result.terminal.repair.hand_edit.required_change == PROVIDER_RUNTIME_DIRECTORY_REPAIR
+    assert result.terminal.details["reason"]["code"] == (  # type: ignore[index]
+        "provider_runtime_directory_unavailable"
     )
     assert result.run_id is None

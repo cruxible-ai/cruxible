@@ -281,6 +281,9 @@ from cruxible_core.providers.provider_local_runtime import (
     translate_provider_budget,
 )
 from cruxible_core.providers.provider_outcomes import map_provider_refusal
+from cruxible_core.providers.provider_process_leases import (
+    PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.request_scope import projection_request
 from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
@@ -2138,6 +2141,42 @@ def _unavailable_run_state(stored, *, admission=None) -> ProcedureRunStateV2:  #
     )
 
 
+def _provider_admission_terminal(
+    exc: ProviderLocalRuntimeRefused,
+    *,
+    message: str,
+    node_id: str,
+) -> tuple[
+    Literal["operational_failed", "node_refused"],
+    ProcedureOperationalFailure | ProcedureNodeRefusal,
+]:
+    """The status and terminal of a run the Provider lane refused at admission.
+
+    The lane precondition (no private runtime directory) is the operator's
+    environment: an operational failure naming its cause and repair. Any other
+    lane refusal stays the ``provider_unavailable`` node refusal.
+    """
+
+    details = {"reason": {"code": exc.code, "detail": str(exc)}, **exc.details}
+    if exc.code == PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE:
+        return "operational_failed", ProcedureOperationalFailure(
+            code=PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
+            message=str(exc),
+            last_node_id=node_id,
+            details=details,
+            retryable=True,
+            repair=served_repair_for_refusal(PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE),
+        )
+    return "node_refused", ProcedureNodeRefusal(
+        code="provider_unavailable",
+        message=message,
+        node_id=node_id,
+        details=details,
+        retryable=True,
+        repair=served_repair_for_refusal("provider_unavailable"),
+    )
+
+
 def _state_from_records(
     instance: PlaybillInstance,
     *,
@@ -3038,6 +3077,11 @@ def _plan_direct_external_run(
             budget=budget,
         )
     except ProviderLocalRuntimeRefused as exc:
+        status, terminal = _provider_admission_terminal(
+            exc,
+            message="The daemon Provider lane cannot admit this direct Source run.",
+            node_id="direct-admission",
+        )
         return ProcedureRunStateV2(
             run_id=None,
             procedure_identity=accepted.procedure.identity,
@@ -3046,18 +3090,11 @@ def _plan_direct_external_run(
             head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
             lane="current",
             evaluation_time=evaluation_time,
-            status="node_refused",
             pending_inputs=(),
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="terminal"),
-            terminal=ProcedureNodeRefusal(
-                code="provider_unavailable",
-                message="The daemon Provider lane cannot admit this direct Source run.",
-                node_id="direct-admission",
-                details={"reason": {"code": exc.code, "detail": str(exc)}, **exc.details},
-                retryable=True,
-                repair=served_repair_for_refusal("provider_unavailable"),
-            ),
+            status=status,
+            terminal=terminal,
         )
     except ExecutionError as exc:
         return refuse(
@@ -4183,6 +4220,11 @@ def _run_playbill_line(
             budget=budget,
         )
     except ProviderLocalRuntimeRefused as exc:
+        status, terminal = _provider_admission_terminal(
+            exc,
+            message="The daemon Provider lane cannot admit this Line occurrence.",
+            node_id="line-admission",
+        )
         return ProcedureRunStateV2(
             run_id=None,
             procedure_identity=accepted.procedure.identity,
@@ -4191,18 +4233,11 @@ def _run_playbill_line(
             head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
             lane="current",
             evaluation_time=evaluation_time,
-            status="node_refused",
             pending_inputs=(),
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="terminal"),
-            terminal=ProcedureNodeRefusal(
-                code="provider_unavailable",
-                message="The daemon Provider lane cannot admit this Line occurrence.",
-                node_id="line-admission",
-                details={"reason": {"code": exc.code, "detail": str(exc)}, **exc.details},
-                retryable=True,
-                repair=served_repair_for_refusal("provider_unavailable"),
-            ),
+            status=status,
+            terminal=terminal,
         )
     selection = (
         ProcedureSelectionDecision(policy_digest=policy_digest, verdict="selected", decisions=())

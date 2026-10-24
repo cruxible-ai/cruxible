@@ -22,6 +22,7 @@ from typing import Literal, cast
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import ExecutionError
+from cruxible_client.contracts.repairs import DECLARED_HAND_EDIT_CHANGES
 
 DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS = 5.0
 DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS = 5.0
@@ -54,8 +55,34 @@ class ProviderLocalRuntimeRefused(ExecutionError):
         details: dict[str, object] | None = None,
     ) -> None:
         self.code = code
+        self.refusal_message = message
         self.details = {} if details is None else details
         super().__init__(f"{code}: {message}")
+
+
+#: The lane precondition: a private runtime directory short enough to hold the
+#: Provider control sockets. Its absence is the operator's environment, not a
+#: fence fault, so it carries its own code and one repair.
+PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE: Literal["provider_runtime_directory_unavailable"] = (
+    "provider_runtime_directory_unavailable"
+)
+#: The same repair everywhere the precondition refuses (start-up warning,
+#: ``server status``, kit add, Procedure and Line runs): the text the served
+#: refusal catalog declares for the code.
+PROVIDER_RUNTIME_DIRECTORY_REPAIR = DECLARED_HAND_EDIT_CHANGES[
+    PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE
+]
+# The AF_UNIX path budget every control socket must fit.
+_CONTROL_SOCKET_PATH_LIMIT = 103
+
+
+def _runtime_directory_unavailable(cause: str) -> ProviderLocalRuntimeRefused:
+    """The lane precondition refusal: its cause, then its repair; never a path."""
+
+    return ProviderLocalRuntimeRefused(
+        PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
+        f"{cause}. {PROVIDER_RUNTIME_DIRECTORY_REPAIR}",
+    )
 
 
 @dataclass(frozen=True)
@@ -520,30 +547,47 @@ class ProviderProcessLeaseStore:
 
     def _select_control_root(self, requested: Path) -> Path:
         sample = requested / ("0" * 16 + ".sock")
-        if len(os.fsencode(sample)) <= 103:
+        sample_bytes = len(os.fsencode(sample))
+        if sample_bytes <= _CONTROL_SOCKET_PATH_LIMIT:
             self._ensure_private_directory(requested)
             return requested
 
+        # Every refusal below is the lane precondition: the state root is too
+        # long for its control sockets and no usable private runtime directory
+        # stands in. Messages name the variable and byte counts, never a path:
+        # a path would echo a home directory the operator did not type.
+        overlong = (
+            f"the Provider control socket path under the state root needs "
+            f"{sample_bytes} bytes, over the {_CONTROL_SOCKET_PATH_LIMIT}-byte "
+            "Unix socket limit"
+        )
         system = platform.system()
         variable = (
             "XDG_RUNTIME_DIR" if system == "Linux" else "TMPDIR" if system == "Darwin" else ""
         )
         runtime_value = os.environ.get(variable) if variable else None
+        if not variable:
+            raise _runtime_directory_unavailable(
+                f"{overlong}, and this platform reads no private per-user runtime directory"
+            )
         if not runtime_value:
-            raise ProviderLocalRuntimeRefused(
-                "provider_process_lease_invalid",
-                "Provider control path is too long and no private per-user runtime "
-                "directory is configured",
-                details={"required_environment": variable or "XDG_RUNTIME_DIR/TMPDIR"},
+            raise _runtime_directory_unavailable(
+                f"{overlong}, and {variable} is not set, so no private per-user "
+                "runtime directory is configured"
             )
         runtime_root = Path(runtime_value)
         if not runtime_root.exists():
-            raise ProviderLocalRuntimeRefused(
-                "provider_process_lease_invalid",
-                "configured per-user runtime directory does not exist",
-                details={"runtime_environment": variable},
+            raise _runtime_directory_unavailable(
+                f"{overlong}, and {variable} names a directory that does not exist"
             )
-        self._ensure_private_directory(runtime_root)
+        try:
+            self._ensure_private_directory(runtime_root)
+        except ProviderLocalRuntimeRefused as exc:
+            raise _runtime_directory_unavailable(
+                f"{overlong}, and {variable} names a directory that cannot be a private "
+                "runtime directory (it must be a real directory owned by the daemon user "
+                "and not shared)"
+            ) from exc
         state_root = requested.parent.resolve(strict=False)
         state_root_key = hashlib.sha256(str(state_root).encode("utf-8")).hexdigest()[:12]
         current = runtime_root
@@ -560,11 +604,11 @@ class ProviderProcessLeaseStore:
                 ) from exc
             self._ensure_private_directory(current)
         fallback_sample = current / ("0" * 16 + ".sock")
-        if len(os.fsencode(fallback_sample)) > 103:
-            raise ProviderLocalRuntimeRefused(
-                "provider_process_lease_invalid",
-                "private Provider runtime namespace still exceeds the AF_UNIX path limit",
-                details={"runtime_environment": variable},
+        fallback_bytes = len(os.fsencode(fallback_sample))
+        if fallback_bytes > _CONTROL_SOCKET_PATH_LIMIT:
+            raise _runtime_directory_unavailable(
+                f"{overlong}, and the private runtime namespace under {variable} still "
+                f"needs {fallback_bytes} bytes"
             )
         return current
 
@@ -982,6 +1026,8 @@ __all__ = [
     "DEFAULT_PROVIDER_DESCENDANT_TRACKER_JOIN_TIMEOUT_SECONDS",
     "DEFAULT_PROVIDER_DESCENDANT_TRACKER_POLL_INTERVAL_SECONDS",
     "DEFAULT_PROVIDER_PROCESS_GROUP_TERMINATION_TIMEOUT_SECONDS",
+    "PROVIDER_RUNTIME_DIRECTORY_REPAIR",
+    "PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE",
     "ProviderDescendantProcessV1",
     "ProviderLocalRuntimeRefused",
     "ProviderProcessLeaseRemovalV1",

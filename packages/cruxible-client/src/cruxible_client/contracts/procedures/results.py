@@ -210,6 +210,7 @@ ProcedureOperationalFailureCode: TypeAlias = Literal[
     "secret_resolver_not_installed",
     "provider_execution_error",
     "provider_completion_not_durable",
+    "provider_runtime_directory_unavailable",
 ]
 ProcedureInternalFailureCode: TypeAlias = Literal[
     "unexpected_exception",

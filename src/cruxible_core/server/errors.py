@@ -58,6 +58,7 @@ from cruxible_core.errors import (
     InstanceScopeError,
     PermissionDeniedError,
     PrincipalRefusedError,
+    ProviderLaneRefusedError,
     RuntimeCredentialNotFoundError,
 )
 from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
@@ -186,6 +187,10 @@ def _status_for_error(exc: CoreError) -> int:
         # the code and the repair the envelope carries are actionable.
         return exc.http_status
     if isinstance(exc, PrincipalRefusedError):
+        return exc.http_status
+    if isinstance(exc, ProviderLaneRefusedError):
+        # The daemon's environment cannot serve Provider work; the repair is
+        # the operator's, not the caller's request.
         return exc.http_status
     if isinstance(exc, ChangeRefusedError):
         return exc.http_status

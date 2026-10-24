@@ -103,6 +103,13 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "procedure_runtime_policy_absent": "accept_a_procedure_runtime_policy",
     "exhaust_binding_carrier_required": "trigger_through_a_carrier_aware_line_scheduler",
     "environment_divergence": "rematerialize_the_provider_environment_against_its_seal",
+    # The daemon's Provider lane precondition: its state root is too long for
+    # the control sockets and no private runtime directory stands in.
+    "provider_runtime_directory_unavailable": (
+        "Set XDG_RUNTIME_DIR (Linux) or TMPDIR (macOS) to a short private directory "
+        "owned by the daemon user (mode 0700) and restart the daemon, or restart it "
+        "with a shorter --state-root."
+    ),
     "provider_replay_receipt_required": "record_the_durable_provider_completion_before_replay",
     "state_tap_refused": "restore_the_accepted_state_query_backend",
     "consumer_stalled": "restart_the_consumer_through_its_named_repair",

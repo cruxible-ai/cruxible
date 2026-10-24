@@ -490,6 +490,20 @@ ships none. A daemon that could not load an executor an installed distribution
 advertises does not start at all, so an empty list means nothing advertised
 itself, never that something advertised itself and failed.
 
+The lane has one environment precondition: a private directory short enough for
+its control sockets (a Unix socket path holds at most 103 bytes). The daemon
+uses `<state-root>/c` when that fits and otherwise a private namespace under
+`XDG_RUNTIME_DIR` (Linux) or `TMPDIR` (macOS). With a long state root and that
+variable unset, as in many containers, cron jobs and ssh sessions, the lane is
+`unavailable` with code `provider_runtime_directory_unavailable`. `server start`
+prints a `Warning:` line naming the cause and the repair, then serves everything
+that needs no installed Provider code; `server status` keeps reporting it. Kit
+add, provider install and Procedure and Line runs that need the lane refuse
+with the same code, cause and repair, as an operator-environment refusal (HTTP
+503; an `operational_failed` run). Repair: set `XDG_RUNTIME_DIR` or `TMPDIR` to
+a short private directory owned by the daemon user (mode 0700) and restart the
+daemon, or restart it with a shorter `--state-root`.
+
 ### Provider runtime operational configuration
 
 The local operator may write `<state-root>/daemon/provider-runtime.json` while
