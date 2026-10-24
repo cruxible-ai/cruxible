@@ -237,3 +237,88 @@ def test_sdk_payload_preserves_omitted_patch_fields_on_round_trip():
     assert isinstance(parsed.capture_contract, CaptureContractInputRecord)
     assert parsed.capture_contract.model_fields_set == {"name", "shape"}
     assert lower_capture_contract_input(parsed.capture_contract).replay == "attested"
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_v3_rules_keep_each_v1_contract_kind_verdict_and_basis(tmp_path, ambiguous):
+    """Disjoint legacy kinds do not become ambiguous when new formats drop kinds."""
+    from cruxible_client.contracts.artifacts import ArtifactRef
+    from cruxible_client.contracts.captures import (
+        AcceptedCaptureContract,
+        build_cas_capture,
+        capture_contract_digest,
+    )
+    from cruxible_client.contracts.claims import evaluate_capture_evidence_admissions
+    from tests.core_support._pc_c_support import (
+        NOW,
+        body_store,
+        capture_contract,
+        digest,
+        provider,
+        provider_run,
+    )
+    from tests.test_claims.test_claims import _claim, _claim_type
+
+    contract = capture_contract().model_copy(
+        update={"evidence_kinds": ("database_record", "other")}
+    )
+    actor = provider(contract)
+    captured = build_cas_capture(
+        store=body_store(tmp_path),
+        contract=contract,
+        source_body=b"status: ready",
+        run_coordinate=provider_run(actor),
+        run_receipt_digest=digest("receipt", "legacy-kinds"),
+        producer=actor.identity,
+        producer_binding_digest=digest("binding", "legacy-kinds"),
+        observed_at=NOW,
+    )
+    claim = _claim(
+        claim_id="CLM-" + "a7" * 16,
+        capture_digest=captured.capture_digest,
+        source_digest=captured.commitment_digest,
+        source_length=captured.envelope.commitment.byte_length,
+    )
+
+    def rule(name, kind, admission):
+        return ClaimEvidenceAdmissionRuleV3(
+            rule_id=name,
+            claim_roles=("observation",),
+            evidence_kinds=(kind,),
+            capture_contracts=(ArtifactRef(role="capture-contract", target=contract.identity),),
+            admission=admission,
+            subject_binding="exact_claim_subject",
+        )
+
+    rules = [rule("database", "database_record", "direct"), rule("other", "other", "origin_only")]
+    if ambiguous:
+        rules.append(rule("second-database", "database_record", "direct"))
+    policy = ClaimEvidenceAdmissionPolicyV3(rules=tuple(rules))
+    claim_type = _claim_type().model_copy(update={"evidence_admission_policy": policy})
+    accepted = AcceptedCaptureContract(
+        path=capture_contract_path(contract.identity.name),
+        contract=contract,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+    decisions = evaluate_capture_evidence_admissions(
+        claim,
+        claim_type=claim_type,
+        capture_digest=captured.capture_digest,
+        capture_contract=accepted,
+        envelope=captured.envelope,
+        verified_attestations=(),
+    )
+    assert [
+        (
+            item.evidence_kind,
+            item.trace.result.verdict,
+            item.trace.result.admission,
+            item.trace.result.refusal_code,
+        )
+        for item in decisions
+    ] == [
+        ("database_record", "refused", None, "cruxible.evidence.admission_ambiguous")
+        if ambiguous
+        else ("database_record", "eligible", "direct", None),
+        ("other", "eligible", "origin_only", None),
+    ]

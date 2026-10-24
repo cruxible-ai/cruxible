@@ -118,10 +118,11 @@ def _seed_vocabulary(
     query: QueryDefinition | None,
     proposal_name: str = "corroboration-vocabulary",
     timestamp: str = SEED_TIMESTAMP,
+    capture_contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
 ) -> None:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)] = (
-        render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+    tree[capture_contract_path(capture_contract.identity.name)] = render_capture_contract(
+        capture_contract
     )
     subject = _subject()
     from cruxible_client.contracts.subjects import render_subject, subject_path

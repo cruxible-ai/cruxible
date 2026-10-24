@@ -12,6 +12,7 @@ from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
     DirectByteSpanSelection,
@@ -214,7 +215,10 @@ def test_one_capture_can_have_different_roles_on_different_claims() -> None:
 def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     tmp_path,
 ) -> None:
-    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+    from tests.core_support.legacy_capture_builders import (
+        initialize_legacy_local,
+        legacy_core_assigned,
+    )
 
     instance, owner = initialize_legacy_local(tmp_path)
     base = instance.accepted_coordinate()
@@ -236,7 +240,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     )
     shell = _subject()
     claim_type = _claim_type()
-    initial_tree = core_assigned(
+    initial_tree = legacy_core_assigned(
         instance,
         {
             **instance.tree_at(base.git_oid),
@@ -266,6 +270,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
         actor_id="owner",
         claim_id=CLAIM_ID,
         body=b"new v2 backing",
+        accepted_contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
         observed_at=datetime(2026, 8, 20, 12, 1, tzinfo=timezone.utc),
         accepted_coordinate=AcceptedCoordinate.from_internal(accepted_v1),
     )
@@ -347,7 +352,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
                         role="capture-contract",
                         target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
                         artifact_digest=capture_contract_digest(
-                            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+                            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
                         ).tagged,
                     ),
                 ),
@@ -359,7 +364,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     successor_tree = {
         **instance.tree_at(accepted_v1.git_oid),
         capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name): (
-            render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
+            render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1)
         ),
         claim_path(CLAIM_ID): render_claim(v2),
     }
@@ -388,7 +393,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
         {
             **instance.tree_at(accepted_v1.git_oid),
             capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
+                render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1)
             ),
             claim_path(CLAIM_ID): render_claim(forged_origin),
         },
@@ -783,6 +788,7 @@ def _verdict(
     contract: CaptureContract,
     claim_type: ClaimType,
     name: str,
+    assign=core_assigned,
 ):
     """Submit one Claim citing `capture` as a copy, and read the coverage verdict."""
 
@@ -790,7 +796,7 @@ def _verdict(
     claim = _claim_citing(capture, contract=contract, claim_type=claim_type, role="copy")
     proposed = _submit(
         instance,
-        core_assigned(
+        assign(
             instance,
             {
                 **instance.tree_at(base.git_oid),
@@ -924,7 +930,10 @@ def test_a_copy_of_the_compilers_own_self_assertion_never_reaches_a_verdict(tmp_
     with a copy of the value it just authored -- the case the maintainer named.
     """
 
-    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+    from tests.core_support.legacy_capture_builders import (
+        initialize_legacy_local,
+        legacy_core_assigned,
+    )
 
     instance, _owner = initialize_legacy_local(tmp_path)
     base = instance.accepted_coordinate()
@@ -936,6 +945,7 @@ def test_a_copy_of_the_compilers_own_self_assertion_never_reaches_a_verdict(tmp_
         contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
         claim_type=_claim_type(),
         name="direct-copy",
+        assign=legacy_core_assigned,
     )
 
     assert evidence.initial_verdict == "uncovered"

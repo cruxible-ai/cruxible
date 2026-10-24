@@ -249,10 +249,13 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
         )
         == "claim_bound"
     )
+    direct_mapping = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.source_subject_mapping_digest
     mixed_family = contract.model_copy(
         update={
-            "source_subject_mapping_digest": (
-                DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.source_subject_mapping_digest
+            "components": contract.components.model_copy(
+                update={
+                    "source_subject_mapping_digest": direct_mapping,
+                }
             )
         }
     )
@@ -273,7 +276,7 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
         ).verdict
         == "accepted"
     )
-    rewritten = contract.model_copy(update={"allowed_source_kinds": ("file",)})
+    rewritten = contract.model_copy(update={"shape": "http_response"})
     refused = evaluate_capture_contract_law(
         rewritten,
         path="capture-contracts/playbill.coordinator-self-source-v1.json",

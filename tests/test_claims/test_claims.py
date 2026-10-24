@@ -62,9 +62,9 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support.legacy_capture_builders import build_direct_claim_capture
 from tests.core_support.legacy_capture_builders import initialize_legacy_local as initialize_local
+from tests.core_support.legacy_capture_builders import legacy_core_assigned as core_assigned
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-16T18:30:00.000000Z"

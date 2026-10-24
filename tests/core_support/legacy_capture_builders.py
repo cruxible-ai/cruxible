@@ -232,7 +232,7 @@ def build_direct_claim_selection_capture(
     )
 
 
-def initialize_legacy_local(tmp_path, *, object_format="sha256"):
+def initialize_legacy_local(tmp_path, *, object_format="sha256", compiler=None):
     """A revision-35 world for tests constructing old stored contract/Claim pairs."""
     from unittest.mock import patch
 
@@ -241,6 +241,36 @@ def initialize_legacy_local(tmp_path, *, object_format="sha256"):
 
     with patch(
         "cruxible_core.runtime.instance.current_compiler_coordinate",
-        return_value=CLAIM_REBIND_COMPILER,
+        return_value=compiler or CLAIM_REBIND_COMPILER,
     ):
         return initialize_local(tmp_path, object_format=object_format)
+
+
+def legacy_core_assigned(instance, updates, **kwargs):
+    """Create key Claims as the revision-35 builder did, with its frozen v1 profile.
+
+    Historical direct-capture tests still run the real Subject assignment and
+    proposal laws. Only the builder's choice of coordinator profile is frozen;
+    no law or compiler-format refusal is bypassed.
+    """
+    from unittest.mock import patch
+
+    from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, SUBJECT_IDENTITY_COMPILER
+    from tests.core_support._subject_kind_support import core_assigned
+
+    assert instance.accepted_coordinate().compiler in {
+        CLAIM_REBIND_COMPILER,
+        SUBJECT_IDENTITY_COMPILER,
+    }
+    with (
+        patch(
+            "cruxible_core.authoring.lowering.COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT",
+            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
+        ),
+        patch(
+            "cruxible_core.authoring.lowering.builtin_contract_for_write",
+            lambda current, previous: previous if previous is not None else current,
+        ),
+    ):
+        return core_assigned(instance, updates, **kwargs)

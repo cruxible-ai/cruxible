@@ -490,7 +490,6 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
         ),
         parameters={
             "capture_contract": "repo.replace-me",
-            "evidence_kind": "source.observation",
         },
     )
     expanded = expand_claim_type_profile(request)
@@ -517,6 +516,7 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
                     ClaimEvidenceAdmissionRuleV1(
                         **rule.model_dump(exclude={"tag", "capture_contracts"}),
                         capture_contract_digests=("sha256:" + "aa" * 32,),
+                        evidence_kinds=("source.observation",),
                         allowed_reducer_digests=("sha256:" + "bb" * 32,),
                     ),
                 )

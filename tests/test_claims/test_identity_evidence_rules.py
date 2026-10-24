@@ -530,6 +530,7 @@ def test_the_upgrade_refuses_rules_that_would_start_matching_the_same_evidence(
 def test_moving_a_query_a_claim_type_corroborates_through_needs_the_claim_type_too(
     tmp_path: Path,
 ) -> None:
+    from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
     from cruxible_client.contracts.query.definitions import (
         query_definition_digest,
         query_definition_path,
@@ -544,7 +545,13 @@ def test_moving_a_query_a_claim_type_corroborates_through_needs_the_claim_type_t
     world = _World(tmp_path)
     query = _query()
     claim_type = _corroborated_type(query_definition_digest(query).tagged)
-    _seed_vocabulary(world.instance, None, claim_types=(claim_type,), query=query)
+    _seed_vocabulary(
+        world.instance,
+        None,
+        claim_types=(claim_type,),
+        query=query,
+        capture_contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    )
     world.instance.refresh()
     revised = query.model_copy(
         update={
