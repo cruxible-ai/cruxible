@@ -785,7 +785,9 @@ def foreign_source_capture_contract(logical_source_identity: str) -> CaptureCont
 
 def is_coordinator_self_source_contract(contract: CaptureContractAny) -> bool:
     return (
-        contract.model_copy(update={"lifecycle": ArtifactLifecycle()})
+        contract.model_copy(
+            update={"lifecycle": contract.lifecycle.model_copy(update={"predecessor_digest": None})}
+        )
         in COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS
     )
 

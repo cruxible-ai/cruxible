@@ -324,6 +324,61 @@ def test_v3_rules_keep_each_v1_contract_kind_verdict_and_basis(tmp_path, ambiguo
     ]
 
 
+@pytest.mark.parametrize(
+    "contract",
+    [COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1, COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT],
+)
+def test_reserved_coordinator_profile_requires_live_lifecycle(contract):
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.captures import (
+        capture_contract_digest,
+        evaluate_capture_contract_law,
+        is_coordinator_self_source_contract,
+    )
+
+    successor = contract.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=capture_contract_digest(contract).tagged
+            )
+        }
+    )
+    assert is_coordinator_self_source_contract(successor)
+    retired = successor.model_copy(
+        update={"lifecycle": successor.lifecycle.model_copy(update={"state": "retired"})}
+    )
+    assert not is_coordinator_self_source_contract(retired)
+    result = evaluate_capture_contract_law(
+        retired, path=capture_contract_path(contract.identity.name), predecessor=None
+    )
+    assert result.verdict == "refused"
+    assert result.diagnostics[0].code == "cruxible.capture_contract.coordinator_profile_mismatch"
+
+
+def test_capture_contract_proposal_cannot_retire_reserved_coordinator(tmp_path):
+    from cruxible_core.service.evidence.capture_contracts import service_propose_capture_contract
+    from tests.core_support._support import initialize_local
+    from tests.core_support._write_support import KIND, seed_write_vocabulary
+    from tests.test_service.test_write_verbs import _set, _write
+
+    instance, _owner = initialize_local(tmp_path)
+    seed_write_vocabulary(instance)
+    result = service_propose_capture_contract(
+        instance,
+        input=CaptureContractInputRecord(
+            name=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name, lifecycle="retired"
+        ),
+        actor_id="owner",
+        proposal_name="retire-reserved",
+        timestamp="2026-10-24T12:00:00.000000Z",
+    )
+    assert result.proposal.candidate is None
+    assert "cruxible.capture_contract.coordinator_profile_mismatch" in {
+        item.code for item in result.proposal.evaluation.diagnostics
+    }
+    assert _write(instance, _set(f"{KIND}/wi-1", "title", "Still writable")).status == "accepted"
+
+
 @pytest.mark.parametrize("revision", [33, 34, 35, 36])
 @pytest.mark.parametrize("policy_version", [3, 4])
 def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, policy_version):
