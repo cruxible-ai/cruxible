@@ -175,9 +175,18 @@ def test_selection_does_not_restate_contract_replayability(
     assert decision.disposition == "selected"
 
 
-def test_stale_input_refusal_names_alias_age_and_repair(tmp_path: Path) -> None:
+def test_stale_input_refusal_names_alias_age_and_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_read = source.WorkspaceFileReader.read
+
+    def old_read(self, request, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["read_at"] = source.NOW - timedelta(days=1)
+        return original_read(self, request, **kwargs)
+
+    monkeypatch.setattr(source.WorkspaceFileReader, "read", old_read)
     instance, _, _, root, _ = source._world(tmp_path, policy=source._policy())
-    state, invoker = source._run(instance, root, evaluation_time=source.NOW + timedelta(days=365))
+    state, invoker = source._run(instance, root, evaluation_time=source.NOW)
     assert invoker.spawn_calls == 1
     assert state.status == "node_refused", state.terminal
     assert state.terminal.code == "cruxible.acquisition.stale"

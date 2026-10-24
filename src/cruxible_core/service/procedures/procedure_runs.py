@@ -3738,11 +3738,17 @@ def _run_playbill_line(
     providers, interfaces = _line_catalogs(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
+    default_policies = (
+        _accepted_acquisition_policies(instance, coordinate)
+        if accepted_line.line.acquisition_policy is None and _source_input_names(accepted)
+        else ()
+    )
     law = evaluate_line_spec_law(
         accepted_line.line,
         path=accepted_line.path,
         procedure=accepted,
         predecessor=_accepted_line_predecessor(instance, accepted_line, coordinate),
+        default_acquisition_policy=default_policies[0][1] if default_policies else None,
         providers=providers,
         provider_interfaces=interfaces,
     )
@@ -4098,7 +4104,11 @@ def _run_playbill_line(
         policy_format: str = runtime_policy.tag
     else:
         try:
-            policies = _accepted_acquisition_policies(instance, coordinate, pin=line_policy_pin)
+            policies = (
+                default_policies
+                if line_policy_pin is None
+                else _accepted_acquisition_policies(instance, coordinate, pin=line_policy_pin)
+            )
             if not policies:
                 raise SourceAcquisitionPolicyRequired(
                     "The Line's named policy or SourceAcquisitionPolicy:default is not live."
