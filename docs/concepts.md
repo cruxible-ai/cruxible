@@ -217,9 +217,9 @@ role, the evidence it cites, and the rationale its author gave. A value
 without its reason is a rumor; a Claim says who believed it, why, and on what
 evidence, so a reader can judge it, and a later reader can find out why it was
 believed at the time. A Claim has an ID (`CLM-…`) and a history of revisions.
-Resolution places it in its slot as accepted, conflicted, overturned or
-refused, and retiring it ends it with a reason (`was-rescinded`, `was-wrong`
-or `superseded`). For example, the Claim that brake pads `bp-2210` fit the
+Resolution places it in its slot as accepted, conflicted or overturned (it
+reads ineligible when its own verdict doesn't resolve), and retiring it ends it
+with a reason (`was-rescinded`, `was-wrong` or `superseded`). For example, the Claim that brake pads `bp-2210` fit the
 2019 Civic, and what it rests on, a line of the supplier's catalog:
 
 ~~~text

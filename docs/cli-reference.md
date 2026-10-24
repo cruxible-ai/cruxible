@@ -866,14 +866,20 @@ held in the ledger (`erasure_ledger_material`), a Capture with no retained body
 content (`erasure_body_in_accepted_state`). It needs `graph_write`. It cannot be
 undone, so it previews first: the preview lists the live Claims citing the
 Capture and those it would leave with no retained evidence, and answers a state
-digest; `--commit --at DIGEST` erases exactly what was previewed. A live Claim
-citing an erased Capture can afterwards be changed only by `rebind --capture`
-onto a fresh Capture under the same contract; until then revising or retiring
-it refuses `cruxible.claim.capture_unverified`. Afterwards
-`get --detail evidence` shows the Capture as erased, `capture read` answers
-`body_erased` with the record, verdicts read the evidence as no longer
-replayable, and `next` lists a Claim left with no retained evidence as
-`claim_evidence_erased`. The SDK equivalent is `cx.erase_capture(digest,
+digest; `--commit --at DIGEST` erases exactly what was previewed. Erasing
+bytes that are present again (observed anew, or an interrupted erase) appends
+another record. Afterwards `get --detail evidence` shows the Capture as erased,
+`capture read` answers `body_erased` with the record, verdicts read the
+evidence as no longer present (a field that requires current evidence reads the
+Claim `stale (evidence erased)`, read status `ineligible`), and `next` lists a
+Claim left with no retained evidence as `claim_evidence_erased`. A Claim citing
+the erased Capture keeps its history and accepted judgments and can still be
+revised or retired: it verifies on the Capture's envelope and the erasure
+record. A new citation of the erased Capture refuses
+`cruxible.claim.capture_unverified`; `rebind --capture` (or `rebind
+--from-capture CAP --capture NEW` for every citing Claim) moves Claims onto a
+fresh Capture under the same contract. A body missing with no erasure record is
+a defect, not an erasure. The SDK equivalent is `cx.erase_capture(digest,
 because=...)`; MCP is `cruxible_capture_erase`.
 
 ## body
@@ -2110,7 +2116,7 @@ cap as MCP and HTTP); `--limit` up to 5000, or `--all` (the whole answer, at mos
 the answer read once at the coordinate and evaluation time of its first page.
 `--json` gives the full answer with its receipt, and `remaining` counts the rows
 past the page. Cells show each slot's answer as `get` shows it; `--status` adds Claims
-resolution overturned or refused, or retired ones, and `--claims` names each
+resolution overturned or reads ineligible, or retired ones, and `--claims` names each
 cell's Claims (ID, status, verdict, role) beneath the table. `--spec` runs a
 `QueryDefinitionSpec` file inline; `--name` with `--param` runs an accepted
 named query (`orient --section queries` lists them, `get query:NAME --detail
@@ -3274,10 +3280,9 @@ last check:
   Captures. The row adds no verdict of its own (a field that requires current
   evidence already reads the Claim `stale`). The repair is `cruxible rebind
   CLAIM --citation HEX --capture CAP-...` with a fresh observation under the same
-  contract; once no erased Capture is cited the worker clears the row. Until
-  then a revision or retirement of the Claim refuses
-  `cruxible.claim.capture_unverified`: both carry the erased Capture, whose body
-  no longer verifies.
+  contract; once no erased Capture is cited the worker clears the row. The
+  Claim can also be revised onto new evidence or retired, which clears the
+  row too.
 - `prediction_settleable` names a ResolutionContract with a closed bound window
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
