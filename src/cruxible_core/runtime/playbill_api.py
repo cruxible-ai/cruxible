@@ -24,12 +24,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExpectation,
     AuthoringPayload,
     AuthoringProgramStamp,
-    ChangeSetAuthoringPayload,
-    ClaimAuthoringPayload,
-    ClaimAuthoringPayloadV2,
-    ClaimTypeSuccessionMember,
     PreflightResult,
-    WorkingSelectionObservation,
 )
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
@@ -130,10 +125,9 @@ from cruxible_client.contracts.write import (
     as_write_request,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, lint_claim_type_input
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeMigrationRequestAny,
-    lint_claim_type_successors,
     service_migrate_claim_type,
 )
 from cruxible_core.coverage.adapter import WorkingSourceObservation
@@ -198,6 +192,7 @@ from cruxible_core.service.authoring.landing import (
     land_direct_proposal,
     service_land_authoring_submit,
 )
+from cruxible_core.service.authoring.lints import lint_authoring_payload
 from cruxible_core.service.authoring.projection_sync import (
     service_read_playbill_block_sync_backing,
 )
@@ -1935,38 +1930,9 @@ def _authoring_preflight_result(
             compiler_digest=at.compiler_digest,
         )
 
-    if isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayload):
-        claim_type = payload.dependency_drafts.claim_type
-        if claim_type is not None:
-            source_ids = (
-                (payload.source.source_id,)
-                if isinstance(payload.source, WorkingSelectionObservation)
-                else ()
-            )
-            lint = lint_claim_type_input(
-                coordinator.instance,
-                claim_type,
-                coordinate=_at(),
-                anticipated_source_ids=source_ids,
-            )
-            if lint.warnings:
-                values["lint"] = lint.model_dump(mode="json")
-    elif isinstance(payload, ChangeSetAuthoringPayload):
-        # A succession authored as a member is the same decision the operator
-        # road takes, so it owes the same evidence-policy reading.
-        successors = tuple(
-            member.successor
-            for member in payload.members
-            if isinstance(member, ClaimTypeSuccessionMember)
-        )
-        if successors:
-            change_set_lint = lint_claim_type_successors(
-                coordinator.instance,
-                successors,
-                coordinate=_at(),
-            )
-            if change_set_lint is not None:
-                values["lint"] = change_set_lint.model_dump(mode="json")
+    lint = lint_authoring_payload(coordinator.instance, payload, coordinate=_at())
+    if lint is not None:
+        values["lint"] = lint.model_dump(mode="json")
     return contracts.AuthoringPreflightResult.model_validate(values)
 
 

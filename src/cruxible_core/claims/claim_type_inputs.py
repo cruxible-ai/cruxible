@@ -61,6 +61,7 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.repairs import RepairOperation
+from cruxible_client.contracts.subject_kinds import SubjectKind
 from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.compiler import (
@@ -530,6 +531,11 @@ def _refuse_number_schema(value: ClaimTypeInputRecord) -> None:
 
 #: What a lint warning means, for surfaces that print more than its code.
 CLAIM_TYPE_LINT_TEXT: dict[str, str] = {
+    "cruxible.claim_type.description_missing": "state what one value of this field means",
+    "cruxible.claim_type.subject_kind_undeclared": (
+        "the inferred Subject kind has no live SubjectKind: declare it in this change set "
+        "or state allowed_subject_kinds"
+    ),
     "cruxible.claim_type.inverse_on_enum_or_boolean": (
         "an inverse on a one-valued enum or boolean field: a member states the negative"
     ),
@@ -550,6 +556,8 @@ class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
             "cruxible.claim_type.field_name_reserved",
             "cruxible.claim_type.inverse_on_enum_or_boolean",
             "cruxible.claim_type.stale_eligible_never_current",
+            "cruxible.claim_type.description_missing",
+            "cruxible.claim_type.subject_kind_undeclared",
         ],
         CurrentCode,
     ]
@@ -879,12 +887,27 @@ def lower_claim_type_input(
         raise ClaimTypeInputValidationError(exc) from exc
 
 
+def lint_description(description: str | None) -> tuple[ClaimTypeLintWarningV1, ...]:
+    """One advisory repair shared by authored ClaimTypes and SubjectKinds."""
+
+    if description is not None and description.strip():
+        return ()
+    return (
+        ClaimTypeLintWarningV1(
+            code="cruxible.claim_type.description_missing",
+            field_path="$.description",
+            replacement_rule_fragment={"description": "<what one value of this field means>"},
+        ),
+    )
+
+
 def lint_claim_type_input(
     instance: PlaybillInstance,
     value: ClaimTypeInputRecord | ClaimType,
     *,
     coordinate: AcceptedProjectionCoordinate,
     anticipated_source_ids: tuple[str, ...] = (),
+    declared_subject_kinds: frozenset[str] = frozenset(),
 ) -> ClaimTypeProposalLintV1:
     accepted_contracts: dict[str, str] = {}
     source_ids = set(anticipated_source_ids)
@@ -903,6 +926,8 @@ def lint_claim_type_input(
         contract = foreign_source_capture_contract(source_id)
         resolvable_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
     effective = value
+    description = value.description
+    undeclared_kind: str | None = None
     with instance.bind_accepted_projection(coordinate) as projection:
         accepted_contracts.update(
             (row.artifact_digest, row.identity)
@@ -912,6 +937,19 @@ def lint_claim_type_input(
             # Lint what lowering writes: the defaults, or the predecessor's
             # values an edit keeps. One read: this predicate's accepted type.
             prior = projection.typed.source(f"ClaimType:{value.predicate}")
+            if isinstance(prior, ClaimType) and not value.states("description"):
+                description = prior.description
+            # Only new inputs infer a kind; edits keep the predecessor's kinds.
+            # One indexed lookup for this kind, never a walk over Subjects or kinds.
+            if prior is None and not value.states("allowed_subject_kinds"):
+                kind = value.predicate.rpartition(".")[0]
+                if kind and kind not in declared_subject_kinds:
+                    declaration = projection.typed.source(f"SubjectKind:{kind}")
+                    if (
+                        not isinstance(declaration, SubjectKind)
+                        or declaration.lifecycle.state != "live"
+                    ):
+                        undeclared_kind = kind
             try:
                 effective = claim_type_input_defaults(
                     value, prior if isinstance(prior, ClaimType) else None
@@ -990,6 +1028,15 @@ def lint_claim_type_input(
                 contract_identity=accepted_contracts[contract_digest],
                 contract_digest=contract_digest,
                 replacement_rule_fragment={"capture_contract_digests": [contract_digest]},
+            )
+        )
+    warnings.extend(lint_description(description))
+    if undeclared_kind is not None:
+        warnings.append(
+            ClaimTypeLintWarningV1(
+                code="cruxible.claim_type.subject_kind_undeclared",
+                field_path="$.allowed_subject_kinds",
+                replacement_rule_fragment={"allowed_subject_kinds": [undeclared_kind]},
             )
         )
     for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
@@ -1114,5 +1161,6 @@ __all__ = [
     "claim_type_input_template",
     "identity_rules_supported",
     "lint_claim_type_input",
+    "lint_description",
     "lower_claim_type_input",
 ]

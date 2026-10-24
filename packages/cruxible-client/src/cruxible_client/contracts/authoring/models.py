@@ -1116,9 +1116,9 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
     """One SubjectKind decision: how core names Subjects of one kind.
 
     Exactly one of ``keys`` (the key ClaimTypes by predicate, in key order, with
-    optional ``uniqueness``, default ``unique``) or ``minted``. Lowering writes ``subject-kinds/<name>.json``
-    as the successor of the accepted one when there is one; changing the keys or
-    the uniqueness of an accepted kind is that governed successor, and no
+    optional ``uniqueness``, default ``unique``) or ``minted``. Lowering writes
+    ``subject-kinds/<name>.json`` as the successor of the accepted one when there
+    is one; changing the keys or uniqueness is that governed successor, and no
     existing Subject's id moves.
     """
 
