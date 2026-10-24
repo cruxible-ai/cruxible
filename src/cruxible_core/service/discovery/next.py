@@ -5215,10 +5215,11 @@ def _evidence_erased_items(
                         "predicate": claim.statement.predicate,
                         "checked_at": format_datetime(row.checked_at),
                     },
-                    # Claim law v2 revision 10 moves the citation onto a fresh
-                    # Capture under the same contract; a revision or retirement
-                    # still carries the erased Capture, whose body no longer
-                    # verifies, so re-binding is the one exit until it is gone.
+                    # Re-binding moves the citation onto a fresh Capture under
+                    # the same contract. The Claim can also be revised or
+                    # retired as it stands (an erased body verifies on the
+                    # envelope plus the erasure record); re-binding is the
+                    # repair that keeps it current.
                     repair=PlaybillNextRepairV1(
                         operation="cruxible.rebind",
                         target=row.claim_identity,
