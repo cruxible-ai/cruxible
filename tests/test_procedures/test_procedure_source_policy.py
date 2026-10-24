@@ -42,6 +42,7 @@ def test_source_refuses_capture_excluded_by_accepted_replayability(
         "_source_request",
         lambda *args: original_request(*args).model_copy(update={"replayability": "attested_only"}),
     )
+    contract = source.capture_contract(replay="attested")
     policy = source._policy()
     policy = policy.model_copy(
         update={
@@ -49,10 +50,14 @@ def test_source_refuses_capture_excluded_by_accepted_replayability(
         }
     )
     if lane == "direct":
-        instance, _, _, root, _ = source._world(tmp_path, policy=policy, pin_policy=True)
+        instance, _, _, root, _ = source._world(
+            tmp_path, policy=policy, pin_policy=True, contract=contract
+        )
         state, invoker = source._run(instance, root)
     else:
-        instance, root, line = source._line_world(tmp_path, policy=policy, pin_policy=True)
+        instance, root, line = source._line_world(
+            tmp_path, policy=policy, pin_policy=True, contract=contract
+        )
         state, invoker = source._run_line(instance, root, line)
     assert invoker.spawn_calls == 1  # The real result is graded after observation.
     assert state.status == "node_refused", state.terminal

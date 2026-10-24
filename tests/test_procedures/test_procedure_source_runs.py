@@ -255,7 +255,7 @@ def _source_request(instance: PlaybillInstance, root: Path) -> WorkspaceFileSour
     return WorkspaceFileSourceRequestV2(
         logical_source="commerce.production.orders",
         relative_path=RELATIVE_PATH,
-        coordinate_type="postgres-lsn-v1",
+        coordinate_type="database-snapshot-v1",
         coordinate={"lsn": "workspace"},
         selector_type="relation-primary-key-v1",
         selector={"id": 7, "relation": "orders"},
