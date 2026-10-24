@@ -308,6 +308,7 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
         behind.triggers.repair.required_change == "author_a_trigger_aimed_at_the_unscheduled_action"
     )
     # Retain the pre-Trigger compiler's historical repair as well.
+    (tmp_path / "before-triggers").mkdir()
     legacy, _legacy_owner, _legacy_reviewer = old_instance(
         tmp_path / "before-triggers", monkeypatch, TRIGGER_CAPTURE_COMPILER
     )
