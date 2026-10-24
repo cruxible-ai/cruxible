@@ -217,7 +217,6 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
 ) -> None:
     from tests.core_support.legacy_capture_builders import (
         initialize_legacy_local,
-        legacy_core_assigned,
     )
 
     instance, owner = initialize_legacy_local(tmp_path)
@@ -240,7 +239,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     )
     shell = _subject()
     claim_type = _claim_type()
-    initial_tree = legacy_core_assigned(
+    initial_tree = core_assigned(
         instance,
         {
             **instance.tree_at(base.git_oid),
@@ -932,7 +931,6 @@ def test_a_copy_of_the_compilers_own_self_assertion_never_reaches_a_verdict(tmp_
 
     from tests.core_support.legacy_capture_builders import (
         initialize_legacy_local,
-        legacy_core_assigned,
     )
 
     instance, _owner = initialize_legacy_local(tmp_path)
@@ -945,7 +943,7 @@ def test_a_copy_of_the_compilers_own_self_assertion_never_reaches_a_verdict(tmp_
         contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
         claim_type=_claim_type(),
         name="direct-copy",
-        assign=legacy_core_assigned,
+        assign=core_assigned,
     )
 
     assert evidence.initial_verdict == "uncovered"

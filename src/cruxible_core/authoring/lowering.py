@@ -102,6 +102,7 @@ from cruxible_client.contracts.capture_contract_inputs import (
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
     AcceptedCaptureContract,
     CaptureBuildResult,
     CaptureContractAny,
@@ -119,6 +120,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     classify_capture_reuse,
     foreign_source_capture_contract,
+    foreign_source_capture_contract_v1,
     observed_content,
     parse_capture_contract,
     parse_capture_envelope,
@@ -310,6 +312,7 @@ from cruxible_core.claims.claim_type_migrations import (
     resolve_claim_type_succession,
 )
 from cruxible_core.compiler.compiler import (
+    LIGHT_ARTIFACTS_COMPILER,
     artifact_codec_for_compiler,
     artifact_kinds_for_compiler,
     projection_registry_for_compiler,
@@ -1726,16 +1729,27 @@ def _lower_claim(
     accepted_producer_digests: dict[str, str] = {}
     install_contract = True
     contract: CaptureContractAny
+    light_contracts = base.compiler == LIGHT_ARTIFACTS_COMPILER
+    coordinator_contract = (
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+        if light_contracts
+        else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+    )
+    foreign_contract = (
+        foreign_source_capture_contract if light_contracts else foreign_source_capture_contract_v1
+    )
     if isinstance(payload.source, SelfSourceBody):
-        profile_path = capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)
+        profile_path = capture_contract_path(coordinator_contract.identity.name)
         previous_profile_bytes = candidate_base_tree.get(profile_path)
         previous_profile = (
             None
             if previous_profile_bytes is None
             else parse_capture_contract(previous_profile_bytes, path=profile_path)
         )
-        contract = builtin_contract_for_write(
-            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, previous_profile
+        contract = (
+            builtin_contract_for_write(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, previous_profile)
+            if light_contracts
+            else previous_profile or coordinator_contract
         )
         install_contract = previous_profile != contract
         built_capture = build_coordinator_self_source_capture(
@@ -1842,12 +1856,16 @@ def _lower_claim(
         # A source contract improved through a successor is captured under its
         # accepted head, which is then already installed; the first capture of a
         # source installs its deterministic contract.
-        head_path = capture_contract_path(
-            foreign_source_capture_contract(source.source_id).identity.name
-        )
+        head_path = capture_contract_path(foreign_contract(source.source_id).identity.name)
         head_bytes = candidate_base_tree.get(head_path)
         head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
-        if head is not None and head.lifecycle.state == "live":
+        if not light_contracts:
+            head = (
+                head
+                if head is not None and head.lifecycle.state == "live"
+                else foreign_contract(source.source_id)
+            )
+        elif head is not None and head.lifecycle.state == "live":
             successor = builtin_contract_for_write(
                 foreign_source_capture_contract(source.source_id), head
             )
@@ -1966,17 +1984,19 @@ def _lower_claim(
                 repair_kind="observe_section",
                 repair_description="Observe the authored section again.",
             )
-        located_path = capture_contract_path(
-            foreign_source_capture_contract(location.source_id).identity.name
-        )
+        located_path = capture_contract_path(foreign_contract(location.source_id).identity.name)
         previous_contract = candidate_base_tree.get(located_path)
         located_contract = (
             None
             if previous_contract is None
             else parse_capture_contract(previous_contract, path=located_path)
         )
-        located_successor = builtin_contract_for_write(
-            foreign_source_capture_contract(location.source_id), located_contract
+        located_successor = (
+            builtin_contract_for_write(
+                foreign_source_capture_contract(location.source_id), located_contract
+            )
+            if light_contracts
+            else located_contract or foreign_contract(location.source_id)
         )
         located_install = located_successor != located_contract
         located_contract = located_successor

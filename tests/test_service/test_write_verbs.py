@@ -2359,62 +2359,104 @@ def test_rebind_names_the_citation_when_none_of_that_file_is_held(
     assert len(refusal.candidates) == 1 and len(refusal.candidates[0]) == 12
 
 
-def test_rebind_needs_the_claim_rebind_compiler(tmp_path: Path) -> None:
-    """An actually accepted pre-rebind Claim cannot use the new rebind verb."""
-    from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
-    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
-    from cruxible_client.contracts.claims import claim_path, render_claim
-    from cruxible_client.contracts.projection import AcceptedCoordinate
-    from cruxible_client.contracts.subjects import render_subject
-    from cruxible_core.compiler.compiler import SUBJECT_IDENTITY_COMPILER
-    from tests.core_support.legacy_capture_builders import (
-        build_direct_claim_capture,
-        initialize_legacy_local,
-        legacy_core_assigned,
+@pytest.mark.parametrize("revision", [33, 34, 35])
+def test_rebind_needs_the_claim_rebind_compiler(tmp_path: Path, revision: int) -> None:
+    from cruxible_client.contracts.captures import (
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
+        capture_contract_digest,
+        capture_contract_path,
+        foreign_source_capture_contract_v1,
+        parse_capture_contract,
     )
-    from tests.test_claims.test_claims import OBSERVED_AT, TIMESTAMP, _claim, _claim_type, _subject
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_client.contracts.subjects import render_subject
+    from cruxible_core.compiler.compiler import (
+        CLAIM_REBIND_COMPILER,
+        PROVIDER_BUILDS_COMPILER,
+        SUBJECT_IDENTITY_COMPILER,
+    )
+    from tests.core_support._subject_kind_support import core_assigned
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+    from tests.test_claims.test_claims import TIMESTAMP, _claim_type, _subject
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
-    instance, owner = initialize_legacy_local(tmp_path, compiler=SUBJECT_IDENTITY_COMPILER)
-    claim_id = "CLM-" + "c3" * 16
-    capture = build_direct_claim_capture(
-        store=instance.body_store(),
-        actor_id="owner",
-        claim_id=claim_id,
-        value="ready",
-        rationale="Accepted before Claim rebind existed.",
-        observed_at=OBSERVED_AT,
-        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-    )
-    claim = _claim(
-        claim_id=claim_id,
-        capture_digest=capture.capture_digest,
-        source_digest=capture.source_body_digest,
-        source_length=capture.envelope.commitment.byte_length,
-    )
+    compiler = {
+        33: SUBJECT_IDENTITY_COMPILER,
+        34: PROVIDER_BUILDS_COMPILER,
+        35: CLAIM_REBIND_COMPILER,
+    }[revision]
+    instance, owner = initialize_legacy_local(tmp_path, compiler=compiler)
     subject = _subject()
-    tree = legacy_core_assigned(
+    claim_type = _claim_type()
+    policy = claim_type.evidence_admission_policy
+    rule = policy.rules[0].model_copy(
+        update={
+            "capture_contract_digests": (
+                *sorted(
+                    (
+                        capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1).tagged,
+                        capture_contract_digest(
+                            foreign_source_capture_contract_v1("repo.reports")
+                        ).tagged,
+                    )
+                ),
+            )
+        }
+    )
+    claim_type = claim_type.model_copy(
+        update={"evidence_admission_policy": policy.model_copy(update={"rules": (rule,)})}
+    )
+    tree = core_assigned(
         instance,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             subject_path(subject.subject_kind, subject.subject_id): render_subject(subject),
-            claim_type_path(_claim_type().predicate): render_claim_type(_claim_type()),
-            capture_contract_path(capture.contract.identity.name): render_capture_contract(
-                capture.contract
-            ),
-            claim_path(claim_id): render_claim(claim),
+            claim_type_path(claim_type.predicate): render_claim_type(claim_type),
         },
     )
-    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="pre-rebind-claim")
-    assert instance.accepted_coordinate().compiler == SUBJECT_IDENTITY_COMPILER
-    refusal = _refusal(
-        _write(
-            instance,
-            {"op": "rebind", "target": claim_id, "evidence": report_evidence(tmp_path, "ready")},
-        )
+    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="pre-light-vocabulary")
+    written = _write(
+        instance, _set("project.work_item/wi-42", "status", "ready", role="observation")
     )
-    assert refusal.code == "cruxible.write.rebind_requires_compiler_upgrade"
-    assert "cruxible compiler upgrade" in (refusal.repair or "")
+    assert written.status == "accepted", written
+    claim = written.changes[0].claim
+    assert instance.accepted_coordinate().compiler == compiler
+    path = capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1.identity.name)
+    assert (
+        parse_capture_contract(
+            instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+        )
+        == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+    )
+    foreign_write = _write(
+        instance,
+        _set(
+            "project.work_item/wi-42",
+            "status",
+            "done",
+            role="observation",
+            evidence=report_evidence(tmp_path, "ready"),
+        ),
+    )
+    assert foreign_write.status == "accepted", foreign_write
+    foreign = foreign_source_capture_contract_v1("repo.reports")
+    foreign_path = capture_contract_path(foreign.identity.name)
+    assert (
+        parse_capture_contract(
+            instance.tree_at(instance.accepted_coordinate().git_oid)[foreign_path],
+            path=foreign_path,
+        )
+        == foreign
+    )
+    if revision == 33:
+        refusal = _refusal(
+            _write(
+                instance,
+                {"op": "rebind", "target": claim, "evidence": report_evidence(tmp_path, "ready")},
+            )
+        )
+        assert refusal.code == "cruxible.write.rebind_requires_compiler_upgrade"
+        assert "cruxible compiler upgrade" in (refusal.repair or "")
 
 
 _TWO_FILES_CATALOG = """\

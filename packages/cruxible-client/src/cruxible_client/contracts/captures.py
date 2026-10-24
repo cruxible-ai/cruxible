@@ -2771,7 +2771,7 @@ def build_coordinator_self_source_capture(
     body: bytes,
     observed_at: datetime,
     accepted_coordinate: AcceptedCoordinate,
-    accepted_contract: CaptureContract | None = None,
+    accepted_contract: CaptureContractAny | None = None,
 ) -> CaptureBuildResult:
     """Retain exact self-source bytes before minting their coordinator envelope."""
 
