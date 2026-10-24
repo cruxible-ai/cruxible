@@ -18,7 +18,7 @@
   "description": "The release's version string; with product_name, the release's key.",
   "evidence_admission_policy": {
     "rules": [],
-    "tag": "playbill-claim-evidence-admission-policy-v3"
+    "tag": "cruxible-claim-evidence-admission-policy-v4"
   },
   "evidence_freshness": null,
   "evidence_requirement": "none",

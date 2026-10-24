@@ -169,7 +169,6 @@ def test_a_rule_names_a_reserved_contract_by_either_spelling() -> None:
                         "rule_id": "self",
                         "claim_roles": ["normative"],
                         "capture_contracts": [name],
-                        "evidence_kinds": ["self_asserted"],
                         "admission": "direct",
                         "subject_binding": "exact_claim_subject",
                     }
@@ -236,7 +235,6 @@ def test_lint_names_an_unadmitted_role_and_a_reserved_field_name(tmp_path: Path)
                         "rule_id": "self",
                         "claim_roles": ["normative"],
                         "capture_contracts": ["cruxible.coordinator-self-source-v1"],
-                        "evidence_kinds": ["self_asserted"],
                         "admission": "direct",
                         "subject_binding": "exact_claim_subject",
                     }
@@ -438,7 +436,7 @@ def test_object_kind_inference_preserves_non_strings_and_explicit_kinds() -> Non
 
 
 def test_security_kit_full_claim_type_keeps_identical_bytes() -> None:
-    # Unmodified security kit 1.3.1 artifact: explicit [trim] must beat [nfc, trim].
+    # Current security kit declaration: explicit [trim] must beat [nfc, trim].
     path = Path(__file__).with_name("fixtures") / "security-release-version.json"
     original = path.read_bytes()
     artifact = parse_claim_type(original, path=claim_type_path("security.release.version"))
