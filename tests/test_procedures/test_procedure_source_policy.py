@@ -175,18 +175,199 @@ def test_selection_does_not_restate_contract_replayability(
     assert decision.disposition == "selected"
 
 
-def test_stale_input_refusal_names_alias_age_and_repair(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    original_read = source.WorkspaceFileReader.read
+def test_stale_input_refusal_names_alias_age_and_repair(tmp_path: Path) -> None:
+    import base64
 
-    def old_read(self, request, **kwargs):  # type: ignore[no-untyped-def]
-        kwargs["read_at"] = source.NOW - timedelta(days=1)
-        return original_read(self, request, **kwargs)
+    from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+    from cruxible_client.contracts.capture_reads import CaptureReadRequest
+    from cruxible_client.contracts.captures import (
+        ProviderResultToExternalCapture,
+        capture_contract_digest,
+    )
+    from cruxible_client.contracts.procedures.artifacts import (
+        procedure_artifact_digest,
+        procedure_path,
+        render_procedure,
+    )
+    from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
+    from cruxible_client.contracts.provider_interfaces import (
+        provider_interface_digest,
+        provider_interface_path,
+        render_provider_interface,
+    )
+    from cruxible_client.contracts.providers import (
+        ProviderBuild,
+        provider_build_key,
+        provider_digest,
+        provider_expected_implementation_records,
+        provider_manifest_digest,
+        provider_path,
+        render_provider,
+    )
+    from cruxible_client.contracts.source_references import ExternalSourceReference
+    from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
+    from tests.support.provider_builds import capture_provider_build
+    from tests.test_authoring.p2b4_unit1.test_live_capture_consumers import (
+        _acquisition_registration,
+    )
 
-    monkeypatch.setattr(source.WorkspaceFileReader, "read", old_read)
-    instance, _, _, root, _ = source._world(tmp_path, policy=source._policy())
-    state, invoker = source._run(instance, root, evaluation_time=source.NOW)
+    instance, owner, procedure, root, _ = source._world(tmp_path, policy=source._policy())
+    acquired, _ = source._run(instance, root)
+    assert acquired.status == "succeeded", acquired.terminal
+    retained_digest = acquired.source_observations[0].capture_digest
+    assert retained_digest is not None
+    retained = service_read_playbill_capture(
+        instance,
+        request=CaptureReadRequest(capture_digest=retained_digest),
+        access=source.BodyAccessContext(principal_id="test", can_read_body=True),
+    )
+    assert retained.status == "verified"
+    envelope = retained.envelope
+    assert envelope is not None
+    assert envelope.observed_at == source.NOW
+    assert (
+        envelope.capture_contract_digest
+        == capture_contract_digest(source.capture_contract()).tagged
+    )
+    assert isinstance(envelope.source, ExternalSourceReference)
+
+    # A source adapter reads the observation an earlier acquire actually landed.
+    # Its recorded observation time stays intact when the adapter serves it later.
+    registration = _acquisition_registration()
+    adapter = capture_provider_build(source.capture_contract())
+    manifest = adapter.runtime_artifact.manifest.model_copy(
+        update={
+            "implementations": tuple(
+                item.model_copy(update={"interface_digest": registration.interface_digest})
+                for item in adapter.runtime_artifact.manifest.implementations
+            ),
+        }
+    )
+    runtime = adapter.runtime_artifact.model_copy(
+        update={
+            "manifest": manifest,
+            "manifest_digest": provider_manifest_digest(manifest),
+        }
+    )
+    interface_pin = ArtifactPin(
+        role="provider-interface",
+        target=registration.identity,
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
+    adapter = ProviderBuild.model_validate(
+        {
+            **adapter.model_dump(mode="python"),
+            "identity": ArtifactIdentity(
+                kind="Provider",
+                name=adapter.provider_name + "/" + provider_build_key(runtime).value,
+            ),
+            "runtime_artifact": runtime,
+            "implementations": provider_expected_implementation_records(runtime),
+            "pins": tuple(
+                sorted(
+                    (
+                        interface_pin,
+                        *(pin for pin in adapter.pins if pin.role != "provider-interface"),
+                    ),
+                    key=lambda pin: (pin.role, pin.target.qualified),
+                )
+            ),
+        }
+    )
+    provider_pin = ArtifactPin(
+        role="provider", target=adapter.identity, artifact_digest=provider_digest(adapter).tagged
+    )
+    read, shape = procedure.definition.nodes
+    read = read.model_copy(
+        update={
+            "provider": provider_pin,
+            "interface": interface_pin,
+            "interface_digest": registration.interface_digest,
+            "implementation_digest": adapter.implementations[0].implementation_digest,
+            "request": {"capture_digest": retained_digest},
+        }
+    )
+    definition = procedure.definition.model_copy(update={"nodes": (read, shape)})
+    successor = procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest(definition).tagged,
+            "pins": tuple(
+                sorted(
+                    (
+                        provider_pin,
+                        interface_pin,
+                        *(
+                            pin
+                            for pin in procedure.pins
+                            if pin.target.kind not in {"Provider", "ProviderInterface"}
+                        ),
+                    ),
+                    key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
+                )
+            ),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=procedure_artifact_digest(procedure).tagged
+            ),
+        }
+    )
+    source._accept_more(
+        instance,
+        owner,
+        {
+            provider_interface_path(registration.identity.name): render_provider_interface(
+                registration
+            ),
+            provider_path(adapter.identity.name): render_provider(adapter),
+            procedure_path(successor.identity.name): render_procedure(successor),
+        },
+        name="retained-observation-source",
+    )
+
+    class RetainedObservationInvoker(source._WorkspaceInvoker):
+        def invoke_provider(self, *, occurrence, context, invocation_id, bound, deadline):  # type: ignore[no-untyped-def]
+            self.spawn_calls += 1
+            assert context.input == {"capture_digest": retained_digest}
+            body = instance.body_store().read(
+                envelope.commitment.digest,
+                access=source.BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+            native = envelope.source
+            assert isinstance(native, ExternalSourceReference)
+            result = ProviderResultToExternalCapture(
+                source_identity=native.source_identity,
+                coordinate_type=native.coordinate_type,
+                coordinate=native.coordinate,
+                selector_type=native.selector_type,
+                selector=native.selector,
+                replayability=native.replayability,
+                content_base64=base64.b64encode(body).decode("ascii"),
+                byte_length=len(body),
+                bytes_digest=envelope.commitment.digest,
+                observed_at=envelope.observed_at,
+                source_effective_time=envelope.source_effective_time,
+            )
+            return source.ProviderDriverOutcomeV1(
+                envelope=source.ProviderRuntimeResultEnvelopeV1(
+                    protocol_version="1.0",
+                    run_id=context.run_id,
+                    status="ok",
+                    output=result.model_dump(mode="json"),
+                ),
+                stderr="",
+                duration_seconds=0.001,
+                egress=source.ProviderEgressObservation(
+                    observer_backend="test-attribution", observer_grade="attribution"
+                ),
+                verified_binding=bound.binding,
+            )
+
+    state, invoker = source._run(
+        instance,
+        root,
+        invoker=RetainedObservationInvoker(),
+        evaluation_time=source.NOW + timedelta(days=1),
+    )
     assert invoker.spawn_calls == 1
     assert state.status == "node_refused", state.terminal
     assert state.terminal.code == "cruxible.acquisition.stale"
