@@ -118,23 +118,10 @@ def _author(world: Any) -> None:
     slot takes any implementation of web.fetch; its request is an API endpoint."""
 
     from cruxible_client.authoring.examples import procedure_example
-    from cruxible_client.contracts.captures import capture_component_pin
-    from tests.core_support._pc_c_support import capture_contract
+    from tests.core_support._light_capture_support import http_contract
     from tests.test_procedures.test_procedure_source_runs import _policy
 
-    base = capture_contract(name=CONTRACT)
-    contract = base.model_copy(
-        update={
-            "logical_source_identities": ("web.response",),
-            "coordinate_schema_pins": (
-                capture_component_pin("coordinate-schema", "http-response-v1"),
-            ),
-            "selector_schema_pins": (
-                capture_component_pin("selector-schema", "whole-response-v1"),
-            ),
-            "selection_budget": base.selection_budget.model_copy(update={"max_bytes": 1048576}),
-        }
-    )
+    contract = http_contract(name=CONTRACT)
     _accept(
         world,
         world.pb.changes(rationale="Retain fetched observations.")

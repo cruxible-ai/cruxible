@@ -19,7 +19,6 @@ from cruxible_client.authoring.source import (
 from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
-    capture_component_pin,
     capture_contract_digest,
 )
 from cruxible_client.contracts.policies import (
@@ -31,7 +30,7 @@ from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.provider_wheels import install_provider_wheel
-from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._light_capture_support import http_contract
 from tests.core_support._subject_kind_support import declare_by_slug
 from tests.support.provider_checkout import checkout_predates_web_fetch_material
 from tests.test_procedures.test_procedure_proposal_delivery import (
@@ -116,19 +115,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         prepared.submit(accept="never")
         _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
 
-    base = capture_contract(name="test.web")
-    contract = base.model_copy(
-        update={
-            "logical_source_identities": ("web.response",),
-            "coordinate_schema_pins": (
-                capture_component_pin("coordinate-schema", "http-response-v1"),
-            ),
-            "selector_schema_pins": (
-                capture_component_pin("selector-schema", "whole-response-v1"),
-            ),
-            "selection_budget": base.selection_budget.model_copy(update={"max_bytes": 1_048_576}),
-        }
-    )
+    contract = http_contract(name="test.web")
     policy = _policy(name="source-reads", input_name="observation")
     accept(
         pb.changes(rationale="Observe a typed HTTP response.")

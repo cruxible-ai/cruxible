@@ -612,9 +612,8 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     from cruxible_client import Cruxible
     from cruxible_client.authoring.examples import procedure_example
     from cruxible_client.authoring.inputs import CarriedContractInput
-    from cruxible_client.contracts.captures import capture_component_pin
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-    from tests.core_support._pc_c_support import capture_contract
+    from tests.core_support._light_capture_support import http_contract
     from tests.test_procedures.test_procedure_source_runs import _policy
     from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
@@ -652,19 +651,7 @@ def test_installed_web_source_fetches_a_recorded_origin_and_retains_capture(
     ] == render_provider_interface(web_fetch_interface_registration())
     assert len(get_playbill_manager().provider_runtime_operator().config.deployments) == 1
     pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
-    base = capture_contract()
-    contract = base.model_copy(
-        update={
-            "logical_source_identities": ("web.response",),
-            "coordinate_schema_pins": (
-                capture_component_pin("coordinate-schema", "http-response-v1"),
-            ),
-            "selector_schema_pins": (
-                capture_component_pin("selector-schema", "whole-response-v1"),
-            ),
-            "selection_budget": base.selection_budget.model_copy(update={"max_bytes": 1048576}),
-        }
-    )
+    contract = http_contract()
     policy = _policy(name="installed-web-policy", input_name="observation")
     draft = (
         pb.changes(rationale="Retain a fetched observation.")
