@@ -273,7 +273,7 @@ def test_sdk_source_retains_and_reads_acquisition(
     )
     raw["nodes"][1]["fields"] = {"severity": f"$steps.{source.SOURCE_ALIAS}.derived.text"}
     if over_limit:
-        raw["budget"]["max_items"] = 1
+        # With no owned list seam, authoring takes max_items from the hard cap.
         raw["hard_caps"]["max_items"] = 1
     definition = ProcedureDefinition.model_validate(raw)
     procedure = procedure.model_copy(
