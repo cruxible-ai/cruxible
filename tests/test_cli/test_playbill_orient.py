@@ -61,9 +61,10 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     assert mapped["artifacts"]["interfaces"] == 1
     (interface,) = cruxible.json("orient", "--section", "interfaces")["interfaces"]
     assert interface["name"] == "workspace.file"
+    assert interface["effect"] == "pure"
     assert [item["provider"] for item in interface["providers"]] == ["cruxible-builtin"]
     assert (
-        "workspace.file  effect=none  providers=cruxible-builtin"
+        "workspace.file  effect=pure  providers=cruxible-builtin"
         in cruxible.run("orient", "--section", "interfaces").stdout
     )
     assert "floor" not in mapped
@@ -96,7 +97,7 @@ def test_an_interfaces_page_prints_each_contract_and_who_implements_it() -> None
                     "description": "Structure the bytes of one workspace file read.",
                     "input": ["bytes: string", "byte_length: integer"],
                     "output": ["content: object"],
-                    "effect": "none",
+                    "effect": "pure",
                     "providers": [
                         {
                             "provider": "cruxible-builtin",
@@ -109,7 +110,7 @@ def test_an_interfaces_page_prints_each_contract_and_who_implements_it() -> None
         }
     )
 
-    assert "workspace.file  effect=none  providers=cruxible-builtin" in text
+    assert "workspace.file  effect=pure  providers=cruxible-builtin" in text
     assert "  Structure the bytes of one workspace file read." in text
     assert "  in:  bytes: string, byte_length: integer" in text
     assert "  out: content: object" in text

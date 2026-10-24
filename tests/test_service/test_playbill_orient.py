@@ -640,7 +640,7 @@ def test_orient_of_a_new_instance_counts_only_the_built_in_interface(
     section = service_playbill_orient(instance, section="interfaces")
     assert section.interfaces is not None
     (workspace,) = section.interfaces
-    assert (workspace.name, workspace.effect) == ("workspace.file", "none")
+    assert (workspace.name, workspace.effect) == ("workspace.file", "pure")
     assert [item.provider for item in workspace.providers] == ["cruxible-builtin"]
 
 

@@ -115,7 +115,7 @@ def test_contract_compatibility_ignores_documentation_and_type_aliases():
 @pytest.mark.parametrize(
     "case", ["match", "wrong-input", "wrong-output", "source", "effect", "mutation"]
 )
-def test_specialization_and_carried_schemas_match_before_execution(case):
+def test_specialization_and_interface_schemas_match_before_execution(case):
     from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
     from cruxible_client.contracts.procedures.artifacts import (
         ProcedureArtifact,
@@ -124,11 +124,18 @@ def test_specialization_and_carried_schemas_match_before_execution(case):
         procedure_owned_contract_digest,
     )
     from cruxible_client.contracts.procedures.models import SourceNode
-    from tests.core_support._p2b1_support import accepted_interface
+    from cruxible_client.contracts.provider_contracts import validate_provider_value
+    from cruxible_client.contracts.provider_interfaces import (
+        AcceptedProviderInterfaceRegistration,
+        ProviderInterfaceContract,
+        ProviderInterfaceDefinition,
+        provider_interface_contract,
+        provider_interface_digest,
+        provider_interface_path,
+    )
 
-    schema = operation().input
     owned = ProcedureOwnedContract(
-        identity=ArtifactIdentity(kind="Contract", name="size"), schema=schema
+        identity=ArtifactIdentity(kind="Contract", name="size"), schema=operation().input
     )
     pin = ArtifactPin(
         role="contract-in",
@@ -136,28 +143,40 @@ def test_specialization_and_carried_schemas_match_before_execution(case):
         artifact_digest=procedure_owned_contract_digest(owned).tagged,
     )
     out_pin = pin.model_copy(update={"role": "contract-out"})
-    old = call_procedure().procedure
-    node = old.definition.nodes[0].model_copy(update={"contract_in": pin, "contract_out": out_pin})
-    definition = old.definition.model_copy(
-        update={"contract_in": pin, "contract_out": out_pin, "nodes": (node,)}
-    )
-    procedure = ProcedureArtifact(
-        identity=old.identity,
-        definition=definition,
-        definition_digest=compute_procedure_definition_digest(definition).tagged,
-        pins=tuple(
-            sorted(
-                (pin, out_pin, node.provider, node.interface),
-                key=lambda p: (p.role, p.target.qualified),
-            )
-        ),
-        owned_contracts=(owned,),
-        activation_policy="drain",
-    )
-    interface = accepted_interface()
     declaration = operation().model_dump(mode="json")
     if case in {"wrong-input", "wrong-output"}:
         declaration[case.removeprefix("wrong-")] = {"fields": {"size": {"type": "string"}}}
+    if case == "mutation":
+        declaration["output"] = "playbill-provider-result-to-external-capture-v1"
+    effect = "external_mutation" if case == "mutation" else "external_read"
+    registration = provider_interface_contract(
+        interface=ProviderInterfaceDefinition.model_validate(
+            {
+                "interface_id": "demo.interface",
+                "version": 1,
+                "contracts": declaration,
+                "effect_class": effect,
+            }
+        )
+    )
+    interface = AcceptedProviderInterfaceRegistration(
+        registration=registration,
+        path=provider_interface_path(registration.identity.name),
+        artifact_digest=provider_interface_digest(registration).tagged,
+    )
+    old = call_procedure().procedure
+    node = old.definition.nodes[0].model_copy(
+        update={
+            "contract_in": None,
+            "contract_out": None,
+            "interface": ArtifactPin(
+                role="provider-interface",
+                target=registration.identity,
+                artifact_digest=interface.artifact_digest,
+            ),
+            "interface_digest": registration.interface_digest,
+        }
+    )
     if case in {"source", "mutation"}:
         node = SourceNode(
             node_id="source",
@@ -172,28 +191,52 @@ def test_specialization_and_carried_schemas_match_before_execution(case):
                 }
             ),
             request={"size": 1},
-            as_="result",
+            as_=node.as_,
         )
-    if case == "mutation":
-        declaration["output"] = "playbill-provider-result-to-external-capture-v1"
-    effect = "external_mutation" if case == "mutation" else "external_read"
-    interface = interface.model_copy(
+    definition = old.definition.model_copy(
         update={
-            "registration": interface.registration.model_copy(
-                update={
-                    "interface_bytes_hex": canonical_bytes(
-                        {"contracts": declaration, "effect_class": effect}
-                    ).hex(),
-                    "effect_class": "pure" if case == "effect" else effect,
-                }
-            )
+            "contract_in": pin,
+            "contract_out": out_pin,
+            "nodes": (node,),
         }
     )
+    pins = [pin, out_pin, node.provider, node.interface]
+    if isinstance(node, SourceNode):
+        pins.append(node.capture_contract)
+    procedure = ProcedureArtifact(
+        identity=old.identity,
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest(definition).tagged,
+        pins=tuple(sorted(pins, key=lambda p: (p.role, p.target.qualified))),
+        owned_contracts=(owned,),
+        activation_policy="drain",
+    )
+    assert registration.artifact_format == "cruxible-provider-interface-v4"
+    if not isinstance(node, SourceNode):
+        assert node.contract_in is None and node.contract_out is None
     if case == "match":
         assert check_provider_node_contract(node, interface, procedure) == operation()
+    elif case in {"wrong-input", "wrong-output"}:
+        # The interface itself owns the schema now: mismatched values must fail
+        # that boundary, without comparing it to a redundant carried copy.
+        resolved = check_provider_node_contract(node, interface, procedure)
+        assert resolved == ProviderOperationContract.model_validate(declaration)
+        with pytest.raises(ValueError):
+            validate_provider_value(
+                resolved, {"size": 1}, direction=case.removeprefix("wrong-"), normalize_call=True
+            )
     else:
         with pytest.raises(ValueError):
-            check_provider_node_contract(node, interface, procedure)
+            if case == "effect":
+                # A second effect declaration cannot be represented in v4.
+                ProviderInterfaceContract.model_validate(
+                    {
+                        **registration.model_dump(mode="json"),
+                        "effect_class": "pure",
+                    }
+                )
+            else:
+                check_provider_node_contract(node, interface, procedure)
 
 
 def test_previous_compiler_cannot_project_a_graph_v6_procedure():
