@@ -131,3 +131,44 @@ def test_frozen_v1_policy_bytes_digest_and_successor() -> None:
         ).verdict
         == "accepted"
     )
+
+
+def test_new_v1_policy_proposal_refuses_with_a_typed_format_diagnostic(tmp_path: Path) -> None:
+    from cruxible_client.contracts.acquisition_policies import (
+        IndependentCoherence,
+        InputAcquisitionRule,
+    )
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from tests.core_support._support import initialize_local
+
+    instance, _ = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    legacy = SourceAcquisitionPolicyV1(
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="legacy"),
+        inputs=(
+            InputAcquisitionRule(
+                input_name="source",
+                requirement="required",
+                permitted_replayability=("exact",),
+                on_unavailable="refuse",
+                on_stale="refuse",
+                on_oversized="refuse",
+                on_conflict="preserve",
+            ),
+        ),
+        coherence=IndependentCoherence(),
+    )
+    tree = instance.tree_at(base.git_oid)
+    tree[acquisition_policy_path("legacy")] = render_acquisition_policy(legacy)
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/legacy-policy", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp="2026-10-24T12:00:00.000000Z",
+    )
+    assert result.candidate is None
+    assert result.evaluation.diagnostics[0].code == "cruxible.proposal.member_format_invalid"
+    assert "author max_age and overrides" in result.evaluation.diagnostics[0].message
+    assert instance.accepted_coordinate() == base

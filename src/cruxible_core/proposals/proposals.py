@@ -2817,9 +2817,15 @@ def _acquisition_policy_member(context: _MemberContext) -> _MemberVerdict:
     if context.historical_law_coordinate is None:
         light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
         if light == isinstance(policy, SourceAcquisitionPolicyV1):
-            raise FormatError(
-                "new SourceAcquisitionPolicies require v2 on compiler revision 36; "
-                "upgrade the compiler or author max_age and overrides"
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.proposal.member_format_invalid",
+                        "new SourceAcquisitionPolicies require v2 on compiler revision 36; "
+                        "upgrade the compiler or author max_age and overrides",
+                        context.path,
+                    ),
+                )
             )
     predecessor: AcceptedSourceAcquisitionPolicy | None = None
     if context.parent_content is not None:
