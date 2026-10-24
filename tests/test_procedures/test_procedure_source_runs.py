@@ -132,7 +132,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._candidate_support import submit_member_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal
-from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._support import initialize_local
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 
