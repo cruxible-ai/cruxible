@@ -320,8 +320,10 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
     # get is the one proposal read; the typed propose result carries the lint.
     assert pb.get(sdk_proposal.proposal.proposal_id).value.verdict == "candidate"
     assert cli_proposal["lint"]["warnings"]
+    assert len(cli_proposal["lint"]["warnings"]) == 2
     assert {warning["code"] for warning in cli_proposal["lint"]["warnings"]} == {
-        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+        "cruxible.claim_type.description_missing",
     }
     # Warning parity: CLI, HTTP and SDK lint the same draft identically.
     sdk_warnings = [item.model_dump(mode="json") for item in sdk_proposal.lint.warnings]
@@ -367,7 +369,13 @@ def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
     assert proposed.exit_code == 0, proposed.output
     payload = json.loads(proposed.stdout)
     assert payload["proposal"]["proposal"]["evaluation"]["verdict"] == "candidate"
-    assert payload["lint"]["warnings"] == []
+    assert payload["proposal"]["outcome"]["status"] == "landed"
+    (warning,) = payload["lint"]["warnings"]
+    assert warning["code"] == "cruxible.claim_type.description_missing"
+    assert warning["field_path"] == "$.description"
+    assert warning["replacement_rule_fragment"] == {
+        "description": "<what one value of this field means>"
+    }
 
 
 def _assess_procedure(query: str) -> ProcedureInput:

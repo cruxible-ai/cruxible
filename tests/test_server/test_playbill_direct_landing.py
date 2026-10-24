@@ -41,7 +41,12 @@ def test_a_minimal_claim_type_lands_in_the_propose_call(
 
     outcome = body["proposal"]["outcome"]
     assert outcome["status"] == "landed", outcome
-    assert body["lint"]["warnings"] == []
+    (warning,) = body["lint"]["warnings"]
+    assert warning["code"] == "cruxible.claim_type.description_missing"
+    assert warning["field_path"] == "$.description"
+    assert warning["replacement_rule_fragment"] == {
+        "description": "<what one value of this field means>"
+    }
     read = client.post(
         f"/api/v1/{instance_id}/query",
         json={
