@@ -38,7 +38,7 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import PreflightResult
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -199,7 +199,7 @@ def _install_direct_capture_contract(
     instance = get_playbill_manager().get(instance_id)
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
-    contract = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
     tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
     submitted = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="operator"),
@@ -346,7 +346,7 @@ def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
     # The rule also names the accepted direct contract, by identity.
     rule = example_payload["evidence_admission_policy"]["rules"][0]
     rule["capture_contracts"] = sorted(
-        [*rule["capture_contracts"], DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.qualified]
+        [*rule["capture_contracts"], COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.qualified]
     )
     input_path = tmp_path / "claim-type-input.json"
     input_path.write_text(json.dumps(example_payload), encoding="utf-8")

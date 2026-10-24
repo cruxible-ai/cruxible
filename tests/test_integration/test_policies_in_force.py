@@ -15,7 +15,7 @@ from cruxible_client.contracts.builtin_claim_types import (
     builtin_claim_type_files,
 )
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     capture_contract_path,
     render_capture_contract,
 )
@@ -69,8 +69,8 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
     claim_type = _claim_type(0)
     query = _query_definition(0, claim_type)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)] = (
-        render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+    tree[capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)] = (
+        render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
     )
     tree[_claim_type_path(claim_type)] = render_claim_type(claim_type)
     tree[query_definition_path(query.identity.name)] = render_query_definition(query)
@@ -166,8 +166,8 @@ def test_policy_inventory_skips_the_cards_an_accepted_change_leaves(tmp_path) ->
     instance, owner = initialize_local(tmp_path)
     claim_type = _claim_type(0)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)] = (
-        render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+    tree[capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)] = (
+        render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
     )
     tree[_claim_type_path(claim_type)] = render_claim_type(claim_type)
     _accept_tree(
@@ -232,10 +232,10 @@ def complete_policy_inventory(
     for claim_type in (live_claim_type, retired_claim_type):
         tree[_claim_type_path(claim_type)] = render_claim_type(claim_type)
 
-    live_capture = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.model_copy(
+    live_capture = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.model_copy(
         update={"identity": ArtifactIdentity(kind="CaptureContract", name="policy-live-capture")}
     )
-    retired_capture = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.model_copy(
+    retired_capture = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.model_copy(
         update={
             "identity": ArtifactIdentity(
                 kind="CaptureContract",

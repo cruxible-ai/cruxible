@@ -16,7 +16,7 @@ import pytest
 
 import cruxible_core.ledger.activation as activation_module
 import cruxible_core.runtime.instance as instance_module
-from cruxible_client.contracts.captures import DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.indexes.serving import (
@@ -96,7 +96,7 @@ def test_a_read_at_the_head_answers_while_the_next_pointer_is_published(
         return manifest
 
     monkeypatch.setattr(activation_module, "publish_serving_manifest", publish_then_read)
-    _seed_claim_surface(instance, owner, contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+    _seed_claim_surface(instance, owner, contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
 
     head = seen["head"]
     assert seen["serving_oid"] != head.git_oid, "the hook ran inside the publish window"
