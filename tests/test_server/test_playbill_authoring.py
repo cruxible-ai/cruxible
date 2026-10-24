@@ -555,9 +555,20 @@ def test_http_claim_type_input_proposal_delivers_actionable_source_lint(
 
     assert response.status_code == 200, response.text
     warnings = response.json()["lint"]["warnings"]
-    assert len(warnings) == 1
-    assert warnings[0]["code"] == "cruxible.claim_type.anticipated_source_contract_omitted"
-    assert warnings[0]["source_id"] == "corpus.runbook"
+    by_code = {warning["code"]: warning for warning in warnings}
+    assert len(warnings) == len(by_code) == 2
+    assert set(by_code) == {
+        "cruxible.claim_type.anticipated_source_contract_omitted",
+        "cruxible.claim_type.description_missing",
+    }
+    assert by_code["cruxible.claim_type.anticipated_source_contract_omitted"]["source_id"] == (
+        "corpus.runbook"
+    )
+    description = by_code["cruxible.claim_type.description_missing"]
+    assert description["field_path"] == "$.description"
+    assert description["replacement_rule_fragment"] == {
+        "description": "<what one value of this field means>"
+    }
 
 
 @pytest.mark.parametrize("operation", ["builtin_propose", "migrate"])
