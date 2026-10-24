@@ -178,8 +178,12 @@ def _level_kind_members(*, rules: bool = True) -> dict[str, bytes]:
     from cruxible_client.contracts.artifacts import ArtifactRef
     from cruxible_client.contracts.policies import (
         CAPTURE_CONTRACT_REF_ROLE,
-        ClaimEvidenceAdmissionPolicy,
-        ClaimEvidenceAdmissionRule,
+    )
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+    )
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
     )
     from cruxible_client.contracts.subject_kinds import render_subject_kind, subject_kind_path
     from tests.core_support._subject_kind_support import keyed_subject_kind, slug_claim_type

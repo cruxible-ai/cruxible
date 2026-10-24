@@ -73,6 +73,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
+    CaptureContractV1,
     CaptureErasureLookupProtocol,
     CaptureFormatError,
     CaptureObjectStoreProtocol,
@@ -3165,6 +3166,7 @@ def _capture_contract_dependents(
     identity: str,
     previous_digest: str,
     successor_digest: str | None,
+    previous_contract: CaptureContractV1 | None = None,
 ) -> tuple[str, ...]:
     """Live definitions a CaptureContract change would silently strand.
 
@@ -3205,36 +3207,46 @@ def _capture_contract_dependents(
             # Every (role, evidence kind) the rule admits must be admitted under the
             # replacing version by exactly one rule with the same requirements;
             # a stricter or ambiguous successor rule refuses what used to pass.
+            old_kinds = getattr(rule, "evidence_kinds", ())
+            if (
+                previous_contract is not None
+                and old_kinds
+                and not set(previous_contract.evidence_kinds).issubset(old_kinds)
+            ):
+                stranded.add(claim_type.identity.qualified)
+            sources = next(
+                (
+                    getattr(item, "logical_sources", ())
+                    for item in getattr(rule, "capture_contracts", ())
+                    if item.target.qualified == identity
+                ),
+                (),
+            )
             for role in rule.claim_roles:
-                sources = next(
-                    (
-                        getattr(item, "logical_sources", ())
-                        for item in getattr(rule, "capture_contracts", ())
-                        if item.target.qualified == identity
-                    ),
-                    (),
-                )
-                old_kinds = getattr(rule, "evidence_kinds", ())
-                covering = []
-                for other in rules:
-                    if not follows(other) or role not in other.claim_roles:
-                        continue
-                    other_sources = next(
-                        (
-                            getattr(item, "logical_sources", ())
-                            for item in getattr(other, "capture_contracts", ())
-                            if item.target.qualified == identity
-                        ),
-                        (),
-                    )
-                    other_kinds = getattr(other, "evidence_kinds", ())
-                    if other_sources and (not sources or not set(sources).issubset(other_sources)):
-                        continue
-                    if old_kinds and other_kinds and not set(old_kinds).issubset(other_kinds):
-                        continue
-                    covering.append(other)
-                if len(covering) != 1 or not _same_admission(rule, covering[0]):
-                    stranded.add(claim_type.identity.qualified)
+                # Check each admitted legacy kind or explicit source separately.
+                # Empty source sets mean all sources, including CAS (None).
+                values = old_kinds or sources or (None,)
+                for value in values:
+                    covering = []
+                    for other in rules:
+                        if not follows(other) or role not in other.claim_roles:
+                            continue
+                        other_sources = next(
+                            (
+                                getattr(item, "logical_sources", ())
+                                for item in getattr(other, "capture_contracts", ())
+                                if item.target.qualified == identity
+                            ),
+                            (),
+                        )
+                        other_kinds = getattr(other, "evidence_kinds", ())
+                        if old_kinds and other_kinds and value not in other_kinds:
+                            continue
+                        if other_sources and (not sources or value not in other_sources):
+                            continue
+                        covering.append(other)
+                    if len(covering) != 1 or not _same_admission(rule, covering[0]):
+                        stranded.add(claim_type.identity.qualified)
     for resolution in context.resolved.resolution_contracts.values():
         window = resolution.window
         if (
@@ -3255,7 +3267,8 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
         light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
         if light != (contract.artifact_format == "cruxible-capture-contract-v2"):
             raise FormatError(
-                "new CaptureContracts require v2 on compiler revision 36; upgrade the compiler or use a new v2 artifact"
+                "new CaptureContracts require v2 on compiler revision 36; "
+                "upgrade the compiler or use a new v2 artifact"
             )
     predecessor: AcceptedCaptureContract | None = None
     if context.parent_content is not None:
@@ -3287,6 +3300,12 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
             previous_digest=predecessor.artifact_digest,
             successor_digest=(
                 None if contract.lifecycle.state == "retired" else law.artifact_digest
+            ),
+            previous_contract=(
+                predecessor.contract
+                if isinstance(predecessor.contract, CaptureContractV1)
+                and not isinstance(contract, CaptureContractV1)
+                else None
             ),
         )
         if stranded:

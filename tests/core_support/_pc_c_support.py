@@ -11,7 +11,9 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
-    CaptureContract,
+    CaptureContractV1 as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
     CaptureRetentionErasurePolicy,
     CaptureRunCoordinateV1,
     CaptureSelectionBudget,

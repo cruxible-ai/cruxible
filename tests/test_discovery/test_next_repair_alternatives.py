@@ -14,9 +14,13 @@ from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.service.discovery.next import (

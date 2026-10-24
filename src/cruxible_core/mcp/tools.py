@@ -20,6 +20,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
+from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.captures import CanonicalDuration
@@ -749,6 +750,26 @@ def register_tools(
             proposal_name,
             dry_run=dry_run,
             at=at,
+        )
+
+    @_tool
+    def cruxible_capture_contract_propose(
+        instance_id: InstanceId = None,
+        *,
+        input: CaptureContractInputRecord,
+        proposal_name: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
+        accept: AuthoringAccept = "if_allowed",
+    ) -> contracts.ProposalInspection:
+        """Propose a CaptureContract: name and shape, optional policy or budget; edits merge."""
+        return handlers.handle_playbill_propose_capture_contract(
+            require_instance_id(instance_id),
+            input.model_dump(mode="json", exclude_unset=True),
+            proposal_name,
+            dry_run=dry_run,
+            at=at,
+            accept=accept,
         )
 
     @_tool

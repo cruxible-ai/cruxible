@@ -2210,8 +2210,12 @@ def _canonical_claim_type(form: tuple[str, ...]) -> ClaimType:
     from cruxible_client.contracts.artifacts import ArtifactRef
     from cruxible_client.contracts.policies import (
         CAPTURE_CONTRACT_REF_ROLE,
-        ClaimEvidenceAdmissionPolicy,
-        ClaimEvidenceAdmissionRule,
+    )
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+    )
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
     )
 
     return ClaimType.model_validate(

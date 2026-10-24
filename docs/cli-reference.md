@@ -1401,8 +1401,10 @@ minimal record for a literal `project.work_item.status` without contacting the
 daemon, and `--template --expanded` prints every default it takes. A proposal
 lands when policy and the caller's tier allow (`--no-accept` only proposes),
 and an edit carries the Claims that use the field to the new version.
-An evidence rule names the CaptureContracts it admits by identity, in
-`capture_contracts` (`CaptureContract:<name>` or just the name); it admits
+An evidence rule names contracts in `capture_contracts`: a bare name, or
+`{contract: NAME, logical_sources: [SOURCE]}` to require a recorded source
+label. Empty or omitted `logical_sources` accepts any source; CAS evidence
+requires an unrestricted entry. It admits
 evidence captured under every accepted version of those contracts, so improving
 a contract through a compatible successor needs no ClaimType change. Replace
 `anticipated_source_ids` with the logical source used by `authoring bind`;
@@ -1612,12 +1614,31 @@ filtering and deduplicating items -- values compare exactly as produced, since
 those items name no predicate; case-insensitive deduplication there belongs in
 a provider step.
 
-A CaptureContract successor must be compatible with its predecessor: it may
-widen the sources, modes, identities and evidence kinds it accepts and raise its
-budgets, and nothing else. A breaking change is a new contract identity. A
+A CaptureContract successor must preserve its shape, replay promise, grade,
+components and retention policy; it may raise its byte budget. A breaking change is a new contract identity. A
 contract cannot be retired while live evidence rules name it, and cannot move
 while exact-digest rules or ResolutionContract windows still name its previous
 version; the refusal names them.
+
+## capture-contract
+
+~~~text
+cruxible capture-contract propose --input FILE [--name NAME] [--no-accept]
+  [--dry-run [--at COORDINATE]] [--json]
+cruxible capture-contract propose --template [--expanded]
+~~~
+
+The authored input is `{name: catalog.fetched, shape: http_response}`.
+`shape` is `http_response`, `procedure_output`, `foreign_span` or
+`database_snapshot`. Optional fields: `grade` (`observed` by default;
+`derived` requires `procedure_output`), `replay` (`attested` for HTTP,
+`exact` otherwise), `retention` (`P30D`), `erasable` (`false`), `max_bytes`
+(16777216) and `selector_privacy` (`direct_allowed` or `pseudonymous_required`).
+The engine expands the shape into stored components. The template requires no
+daemon. An edit names the held contract and states only changed fields;
+omitted fields keep their accepted values. It may raise `max_bytes` or set
+`lifecycle: retired`; incompatible edits require a new name. The proposal lands
+when policy and your tier allow; `--no-accept` keeps it for review.
 
 ## claim
 
@@ -2070,8 +2091,8 @@ costs the ontology's size: it never reads the Claims, Subjects or Captures.
   `description`, `subjects` (the kind's live Subjects, from the counts Subject
   writes keep), `kit` and `lifecycle`:
   `cruxible query SubjectKind --where 'subjects>0' --order-by -subjects`.
-- `query CaptureContract` lists `name`, `version`, `lifecycle`, `sources`,
-  `source_kinds` (`ledger`, `cas` or `external`), `evidence_kinds`, `grade`
+- `query CaptureContract` lists `name`, `version`, `lifecycle`,
+  `source_kinds` (`ledger`, `cas` or `external`), `grade`
   (`observed`, `derived` or `predicted`), `admitted_by` (the live ClaimTypes
   whose evidence rules admit it) and `required_by` (those of them that require
   a Capture): `cruxible query CaptureContract --where 'required_by>=1'`.

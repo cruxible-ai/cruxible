@@ -68,6 +68,7 @@ from cruxible_core.compiler.compiler import (
     AUTHORITY_VERBS_COMPILER,
     CLAIM_REBIND_COMPILER,
     GOVERNED_TRIGGERS_COMPILER,
+    LIGHT_ARTIFACTS_COMPILER,
     PROVIDER_BUILDS_COMPILER,
     SUBJECT_IDENTITY_COMPILER,
     current_compiler_coordinate,
@@ -575,6 +576,7 @@ def identity_rules_supported(compiler: CompilerCoordinate) -> bool:
         SUBJECT_IDENTITY_COMPILER,
         PROVIDER_BUILDS_COMPILER,
         CLAIM_REBIND_COMPILER,
+        LIGHT_ARTIFACTS_COMPILER,
     )
 
 
@@ -665,6 +667,12 @@ def _identity_evidence_policy(
             unique[key].model_dump(mode="json")
             for key in sorted(unique, key=lambda item: item.encode("utf-8"))
         ]
+        if raw.get("tag") in {
+            "playbill-claim-evidence-admission-policy-v1",
+            "playbill-claim-evidence-admission-policy-v2",
+            "playbill-claim-evidence-admission-policy-v3",
+        }:
+            rule.pop("evidence_kinds", None)
         rule.pop("tag", None)
         rules.append(rule)
     return {**{k: v for k, v in raw.items() if k not in {"rules", "tag"}}, "rules": rules}

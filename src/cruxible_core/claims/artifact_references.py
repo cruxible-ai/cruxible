@@ -47,6 +47,22 @@ _REQUIRED_CLAIM_PIN = ("*!role=capture-contract", "artifact_digest")
 # Documents only the fields naming other artifacts are, never content digests.
 REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
     "capture-contracts/": (
+        ("components", "pins", *_PIN),
+        ("components", "coordinate_schema_pins", *_PIN),
+        ("components", "selector_schema_pins", *_PIN),
+        ("components", "commitment_canonicalizer", "artifact_digest"),
+        (
+            "components",
+            "replay_policy_digest",
+        ),
+        (
+            "components",
+            "provenance_rule_digest",
+        ),
+        (
+            "components",
+            "source_subject_mapping_digest",
+        ),
         ("pins", *_PIN),
         ("coordinate_schema_pins", *_PIN),
         ("selector_schema_pins", *_PIN),

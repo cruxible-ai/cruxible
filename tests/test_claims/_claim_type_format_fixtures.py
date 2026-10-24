@@ -11,7 +11,9 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
-    foreign_source_capture_contract,
+)
+from cruxible_client.contracts.captures import (
+    foreign_source_capture_contract_v1 as foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicy,
@@ -23,13 +25,17 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV1,
     ClaimEvidenceAdmissionRuleV2,
     ClaimResolutionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 
 _PREDICATE = "project.work_item.status"

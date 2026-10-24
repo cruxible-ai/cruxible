@@ -34,8 +34,12 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionRule,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from tests.test_claims._claim_type_format_fixtures import fingerprints, historical_claim_types
 from tests.test_claims.test_claim_verdicts import (

@@ -34,6 +34,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
+from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
@@ -255,6 +256,7 @@ from cruxible_core.service.discovery.since import (
     service_playbill_since,
     validate_playbill_since_request,
 )
+from cruxible_core.service.evidence.capture_contracts import service_propose_capture_contract
 from cruxible_core.service.evidence.capture_erasure import service_erase_capture
 from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
@@ -1586,6 +1588,37 @@ def playbill_propose_builtin_claim_type(
             update={"proposal": _land_direct(instance_id, instance, result.proposal, accept=accept)}
         )
         return contracts.ClaimTypeInputProposalResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_propose_capture_contract(
+    instance_id: str,
+    *,
+    input: CaptureContractInputRecord,
+    proposal_name: str,
+    base: AcceptedCoordinate | None = None,
+    dry_run: bool | None = None,
+    at: str | None = None,
+    accept: AuthoringAccept = "if_allowed",
+) -> contracts.ProposalInspection:
+    check_permission("cruxible_capture_contract_propose", instance_id=instance_id)
+    with change_entry(dry_run, "direct"):
+        instance = get_playbill_manager().get(instance_id)
+        result = _proposal_validation_boundary(
+            "capture contract input",
+            lambda: service_propose_capture_contract(
+                instance,
+                input=input,
+                base=base,
+                actor_id=_actor_id(instance_id),
+                proposal_name=proposal_name,
+                timestamp=canonical_candidate_timestamp(utc_now()),
+                dry_run=dry_run,
+                at=at,
+            ),
+        )
+        return contracts.ProposalInspection.model_validate(
+            _land_direct(instance_id, instance, result, accept=accept).model_dump(mode="json")
+        )
 
 
 def playbill_propose_claim_type_input(

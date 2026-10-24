@@ -56,9 +56,13 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.subjects import (
@@ -69,6 +73,7 @@ from cruxible_client.contracts.subjects import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from tests.core_support._support import initialize_local
+from tests.core_support.legacy_capture_builders import build_direct_claim_capture
 
 OBSERVED_AT = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
 CLAIM_ID = "CLM-0123456789abcdef0123456789abcdef"
@@ -703,7 +708,6 @@ def test_a_direct_self_source_whose_shared_body_was_erased_can_be_retired(
 ) -> None:
     from cruxible_client.contracts.captures import (
         DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-        build_direct_claim_capture,
     )
     from tests.test_claims.test_claims import _claim
     from tests.test_claims.test_claims import _claim_type as _direct_type

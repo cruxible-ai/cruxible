@@ -8,15 +8,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     CanonicalDuration,
     CaptureContract,
     CaptureContractAny,
+    CaptureContractV1,
     CaptureFormatError,
     CaptureReplay,
     CaptureRetentionErasurePolicy,
     CaptureSelectionBudget,
     CaptureShape,
     authorize_erasure,
+    builtin_contract_for_write,
     capture_contract_digest,
     capture_contract_path,
     capture_contract_successor_break,
@@ -105,10 +108,40 @@ def lower_capture_contract_input(
             assert isinstance(erased, CaptureContract)
             contract = erased
         return contract
-    if not isinstance(predecessor, CaptureContract):
-        raise CaptureFormatError(
-            "edit a historical v1 contract through its compatible v2 successor first"
-        )
+    previous: CaptureContractAny = predecessor
+    if isinstance(predecessor, CaptureContractV1):
+        if predecessor.identity == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity:
+            previous = predecessor
+            predecessor = builtin_contract_for_write(
+                COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, previous
+            )
+        else:
+            converted = None
+            for shape in ("http_response", "procedure_output", "foreign_span", "database_snapshot"):
+                for replay in ("exact", "attested"):
+                    components = capture_shape_components(shape, replay)
+                    if all(
+                        getattr(predecessor, field) == getattr(components, field)
+                        for field in components.model_fields
+                    ):
+                        converted = CaptureContract(
+                            identity=predecessor.identity,
+                            shape=shape,
+                            replay=replay,
+                            components=components,
+                            selection_budget=predecessor.selection_budget,
+                            retention_erasure_policy=predecessor.retention_erasure_policy,
+                            epistemic_grade=predecessor.epistemic_grade,
+                            lifecycle=predecessor.lifecycle,
+                        )
+            if converted is None:
+                raise CaptureFormatError(
+                    "historical components have no compatible light shape; use a new name"
+                )
+            previous = predecessor
+            predecessor = converted
+    else:
+        previous = predecessor
     if record.name != predecessor.identity.name:
         raise CaptureFormatError("a CaptureContract edit must retain its name")
     updates = {
@@ -145,7 +178,7 @@ def lower_capture_contract_input(
         retention_erasure_policy=policy,
         lifecycle=ArtifactLifecycle(
             state=record.lifecycle or predecessor.lifecycle.state,
-            predecessor_digest=capture_contract_digest(predecessor).tagged,
+            predecessor_digest=capture_contract_digest(previous).tagged,
         ),
     )
     contract = CaptureContract.model_validate({**predecessor.model_dump(mode="python"), **updates})

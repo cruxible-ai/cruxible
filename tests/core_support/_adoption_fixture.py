@@ -51,7 +51,6 @@ from cruxible_client.contracts.candidates import (
 from cruxible_client.contracts.canonical import semantic_projection
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    build_direct_claim_capture,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -121,6 +120,7 @@ from cruxible_core.proposals.settlement import (
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._subject_kind_support import history_before_identity
 from tests.core_support._support import client_material
+from tests.core_support.legacy_capture_builders import build_direct_claim_capture
 
 SUBJECT_KIND = "project.work_item"
 EPOCH = datetime(2026, 1, 1, tzinfo=timezone.utc)

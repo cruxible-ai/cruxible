@@ -85,6 +85,10 @@ from cruxible_client.contracts.authoring.models import BlockSyncResult
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BUILTIN_CLAIM_TYPES, BuiltinClaimTypeName
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.capture_contract_inputs import (
+    CaptureContractInputRecord,
+    capture_contract_input_template,
+)
 from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
     PreparedClaimAttestationRequest,
@@ -3805,6 +3809,64 @@ _CLAIM_TYPE_INVERSE_HINT = (
     '{"kind": "object"} or {"kind": "object_key", "predicate": KEY}; "stale_after": "P7D" '
     "overrides its freshness."
 )
+
+
+@playbill_group.group("capture-contract")
+def capture_contract_group() -> None:
+    """Author the shape and policies of captured evidence."""
+
+
+@capture_contract_group.command("propose")
+@click.option(
+    "--input",
+    "input_path",
+    type=PayloadFile(),
+    help="CaptureContractInputRecord: name and shape; edits state only what changes.",
+)
+@click.option(
+    "--template", is_flag=True, help="Print a minimal input without contacting the daemon."
+)
+@click.option("--expanded", is_flag=True, help="With --template, include the defaults.")
+@click.option("--name", "proposal_name")
+@click.option("--no-accept", is_flag=True, help="Propose only; do not land the change.")
+@change_control_options
+@json_option
+@handle_errors
+def propose_capture_contract(
+    input_path: str | None,
+    template: bool,
+    expanded: bool,
+    proposal_name: str | None,
+    no_accept: bool,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
+    """Propose one CaptureContract; it lands when policy and your tier allow."""
+    if (input_path is None) == (not template):
+        raise click.UsageError("provide exactly one of --input or --template")
+    if expanded and not template:
+        raise click.UsageError("--expanded applies only to --template")
+    if template:
+        _emit_json(capture_contract_input_template(expanded=expanded))
+        return
+    assert input_path is not None
+    record = CaptureContractInputRecord.model_validate(_read_mapping(input_path))
+    result = _server_call(
+        lambda client, instance_id: client.propose_capture_contract_input(
+            instance_id,
+            input=record.model_dump(mode="json", exclude_unset=True),
+            proposal_name=proposal_name or record.name,
+            dry_run=dry_run,
+            at=at,
+            accept="never" if no_accept else "if_allowed",
+        ),
+        command_name="cruxible capture-contract propose",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_proposal(result, None)
 
 
 @claim_type_group.command("propose")

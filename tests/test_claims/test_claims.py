@@ -15,7 +15,6 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    build_direct_claim_capture,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -64,7 +63,8 @@ from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmiss
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._subject_kind_support import core_assigned
-from tests.core_support._support import initialize_local
+from tests.core_support.legacy_capture_builders import build_direct_claim_capture
+from tests.core_support.legacy_capture_builders import initialize_legacy_local as initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-16T18:30:00.000000Z"

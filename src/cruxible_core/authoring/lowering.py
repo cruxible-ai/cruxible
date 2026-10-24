@@ -96,10 +96,15 @@ from cruxible_client.contracts.canonical_forms import (
     CanonicalFormDidNotConverge,
     canonicalize_literal,
 )
+from cruxible_client.contracts.capture_contract_inputs import (
+    CaptureContractInputRecord,
+    lower_capture_contract_input,
+)
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
     CaptureBuildResult,
+    CaptureContractAny,
     CaptureEnvelopeAny,
     CaptureFormatError,
     CaptureObjectStoreProtocol,
@@ -3224,7 +3229,18 @@ def _render_non_procedure_member(
             attestation_artifact_digest(value).tagged,
         )
     if isinstance(payload, CaptureContractAuthoringPayload):
-        contract = payload.capture_contract
+        if isinstance(payload.capture_contract, CaptureContractInputRecord):
+            record = payload.capture_contract
+            path = capture_contract_path(record.name)
+            previous_bytes = None if tree is None else tree.get(path)
+            previous = (
+                None
+                if previous_bytes is None
+                else parse_capture_contract(previous_bytes, path=path)
+            )
+            contract = lower_capture_contract_input(record, predecessor=previous)
+        else:
+            contract = payload.capture_contract
         return (
             capture_contract_path(contract.identity.name),
             render_capture_contract(contract),

@@ -18,6 +18,7 @@ from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInput
 from cruxible_client.contracts.authoring_landing import AuthoringAccept
 from cruxible_client.contracts.builtin_claim_types import BuiltinClaimTypeName
+from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.declared_blocks import (
     DeclaredBlockPageObservation,
@@ -186,6 +187,15 @@ class ProposeBuiltinClaimTypeRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
     #: if_allowed: land the change when policy and the caller allow it;
     #: never: keep the proposal.
+    accept: AuthoringAccept = "if_allowed"
+
+
+class ProposeCaptureContractRequest(_StrictPlaybillRequest):
+    input: CaptureContractInputRecord
+    proposal_name: str
+    base: AcceptedCoordinate | None = None
+    dry_run: DryRun = None
+    at: PreviewAt = None
     accept: AuthoringAccept = "if_allowed"
 
 

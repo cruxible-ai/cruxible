@@ -323,8 +323,10 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
     from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
     from cruxible_client.contracts.claim_types import ClaimType
     from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicy,
-        ClaimEvidenceAdmissionRule,
+        ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+    )
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
     )
     from cruxible_core.service.discovery.contract_names import CaptureContractNames
     from tests.test_claims.test_claims import _claim_type

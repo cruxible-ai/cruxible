@@ -46,7 +46,7 @@ from tests.core_support._pc_c_support import (
     provider_run,
 )
 from tests.core_support._subject_kind_support import core_assigned
-from tests.core_support._support import initialize_local
+from tests.core_support.legacy_capture_builders import initialize_legacy_local as initialize_local
 from tests.support.capture_receipts import admit_legacy_v1_citations
 from tests.support.provider_builds import capture_provider_build
 from tests.test_claims.test_claims import TIMESTAMP, _claim, _claim_type, _subject

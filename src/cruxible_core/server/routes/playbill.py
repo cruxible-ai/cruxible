@@ -110,6 +110,7 @@ from cruxible_core.server.playbill_request_models import (
     ProposalRejectRequest,
     ProposalWithdrawRequest,
     ProposeBuiltinClaimTypeRequest,
+    ProposeCaptureContractRequest,
     ProposeClaimTypeInputRequest,
     ProposeDocumentRequest,
     ProposePrincipalRequest,
@@ -693,6 +694,23 @@ def propose_files(
         bundle=req.bundle,
         file=req.file,
         proposal_name=req.proposal_name,
+        dry_run=req.dry_run,
+        at=req.at,
+        accept=req.accept,
+    )
+
+
+@router.post(
+    "/{instance_id}/capture-contracts/proposals", response_model=contracts.ProposalInspection
+)
+def propose_capture_contract(
+    instance_id: str, req: ProposeCaptureContractRequest
+) -> contracts.ProposalInspection:
+    return playbill_api.playbill_propose_capture_contract(
+        resolve_server_instance_id(instance_id),
+        input=req.input,
+        proposal_name=req.proposal_name,
+        base=req.base,
         dry_run=req.dry_run,
         at=req.at,
         accept=req.accept,

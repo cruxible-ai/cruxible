@@ -58,6 +58,9 @@ from cruxible_client.contracts.authoring_landing import (
     AuthoringProposed as AuthoringProposed,
 )
 from cruxible_client.contracts.canonical import Sha256Value
+from cruxible_client.contracts.capture_contract_inputs import (
+    CaptureContractInputRecord as CaptureContractInputRecord,
+)
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claims import ClaimStatementCard as ClaimStatementCard
 from cruxible_client.contracts.codes import CurrentCode
@@ -1358,7 +1361,7 @@ class CaptureEvidenceAdmission(BaseModel):
 class CaptureAdmissionAccount(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-capture-admission-account-v1"]
+    tag: Literal["cruxible-capture-admission-account-v2"]
     citation_id: str
     capture_digest: str
     citation_role: Literal["evidence", "copy", "legacy"]

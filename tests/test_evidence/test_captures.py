@@ -19,6 +19,8 @@ from cruxible_client.contracts.captures import (
     capture_contract_is_self_asserted,
     capture_is_coordinator_self_source,
     classify_capture_reuse,
+    contract_materialization_modes,
+    contract_source_kinds,
     evaluate_capture_contract_law,
     verify_capture,
 )
@@ -212,9 +214,9 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
     )
 
     assert contract.identity.qualified == ("CaptureContract:playbill.coordinator-self-source-v1")
-    assert contract.logical_source_identities == ("playbill.coordinator-authoring",)
-    assert contract.allowed_source_kinds == ("cas",)
-    assert contract.allowed_materialization_modes == ("cas",)
+    assert "logical_source_identities" not in contract.model_dump()
+    assert contract_source_kinds(contract) == ("cas",)
+    assert contract_materialization_modes(contract) == ("cas",)
     assert contract.retention_erasure_policy.erasure == "prohibited"
     assert capture_contract_is_self_asserted(contract)
     assert result.source_body_materialized is True

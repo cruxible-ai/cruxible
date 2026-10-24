@@ -114,7 +114,7 @@ class CaptureEvidenceAdmissionV1(_StrictClaimServiceModel):
 
 
 class CaptureAdmissionAccountV1(_StrictClaimServiceModel):
-    tag: Literal["playbill-capture-admission-account-v1"] = "playbill-capture-admission-account-v1"
+    tag: Literal["cruxible-capture-admission-account-v2"] = "cruxible-capture-admission-account-v2"
     citation_id: str
     capture_digest: str
     citation_role: Literal["evidence", "copy", "legacy"]

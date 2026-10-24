@@ -44,8 +44,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cruxible_client.contracts.builtin_claim_types import concrete_subject_kinds
+from cruxible_client.contracts.captures import CaptureContract as CaptureContractV2
 from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
-from cruxible_client.contracts.captures import contract_materialization_modes, contract_source_kinds
+from cruxible_client.contracts.captures import (
+    CaptureContractV1,
+    contract_materialization_modes,
+    contract_source_kinds,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     ClaimTypeFormatError,
@@ -516,7 +521,9 @@ class _Owners:
         return f"kit={kit_id} edited" if self.edited(path, entry) else f"kit={kit_id}"
 
 
-def _live_values(state: OntologyState, paths: Iterable[str], kind: type) -> list[tuple[str, Any]]:
+def _live_values(
+    state: OntologyState, paths: Iterable[str], kind: type | tuple[type, ...]
+) -> list[tuple[str, Any]]:
     found = []
     for path in paths:
         value = state.value(path)

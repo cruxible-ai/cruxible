@@ -14,18 +14,18 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
-    CaptureContract,
     DirectByteSpanSelection,
     DirectForeignSourceSelection,
     build_coordinator_self_source_capture,
-    build_direct_claim_capture,
-    build_direct_claim_selection_capture,
     build_foreign_source_capture,
     capture_contract_digest,
     capture_contract_path,
     classify_capture_reuse,
     foreign_source_capture_contract,
     render_capture_contract,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractV1 as CaptureContract,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
@@ -57,6 +57,10 @@ from cruxible_core.service.discovery.coverage import build_accepted_evidence_ind
 from tests.core_support._pc_c_support import capture_contract as _capture_contract
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
+from tests.core_support.legacy_capture_builders import (
+    build_direct_claim_capture,
+    build_direct_claim_selection_capture,
+)
 from tests.test_claims.test_claims import _claim, _claim_type, _subject
 from tests.test_ledger.test_activation import _sign
 
@@ -210,7 +214,9 @@ def test_one_capture_can_have_different_roles_on_different_claims() -> None:
 def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     tmp_path,
 ) -> None:
-    instance, owner = initialize_local(tmp_path)
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+
+    instance, owner = initialize_legacy_local(tmp_path)
     base = instance.accepted_coordinate()
     first_capture = build_direct_claim_capture(
         store=instance.body_store(),
@@ -438,10 +444,10 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     read = service_get_playbill_claim(instance, identity=CLAIM_ID)
     accounts = {item.citation_id: item for item in read.admission_accounts}
     assert accounts[copy_citation.citation_id].status == "not_evidence"
-    assert accounts[copy_citation.citation_id].decisions == ()
+    assert accounts[copy_citation.citation_id].decision is None
     assert accounts[citation.citation_id].status == "not_admitted"
-    assert accounts[citation.citation_id].decisions[0].closest_rule_id is None
-    assert accounts[citation.citation_id].decisions[0].refusal_code == (
+    assert accounts[citation.citation_id].decision.closest_rule_id is None
+    assert accounts[citation.citation_id].decision.refusal_code == (
         "cruxible.evidence.undeclared_contract_kind"
     )
     coverage_index = build_accepted_evidence_index_v2(
@@ -565,7 +571,7 @@ def _type_admitting(contract: CaptureContract) -> ClaimType:
                         rule_id="page-copy",
                         claim_roles=("normative", "observation"),
                         capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                        evidence_kinds=contract.evidence_kinds,
+                        evidence_kinds=getattr(contract, "evidence_kinds", ("self_asserted",)),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),
@@ -705,7 +711,7 @@ def _type_naming(contract: CaptureContract) -> ClaimType:
                         rule_id="page-copy",
                         claim_roles=("normative", "observation"),
                         capture_contract_digests=(capture_contract_digest(contract).tagged,),
-                        evidence_kinds=contract.evidence_kinds,
+                        evidence_kinds=getattr(contract, "evidence_kinds", ("self_asserted",)),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),
@@ -904,7 +910,7 @@ def test_a_copy_the_rule_admits_reads_admitted_in_the_claims_accounts(tmp_path) 
         )
         assert account.citation_role == "copy"
         assert account.citation_origin == "independent"
-        statuses[name] = (account.status, tuple(item.rule_id for item in account.decisions))
+        statuses[name] = (account.status, ((account.decision.rule_id,) if account.decision else ()))
 
     assert statuses["named"][0] == "admitted"
     assert "page-copy" in statuses["named"][1]
@@ -918,7 +924,9 @@ def test_a_copy_of_the_compilers_own_self_assertion_never_reaches_a_verdict(tmp_
     with a copy of the value it just authored -- the case the maintainer named.
     """
 
-    instance, _owner = initialize_local(tmp_path)
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+
+    instance, _owner = initialize_legacy_local(tmp_path)
     base = instance.accepted_coordinate()
 
     evidence = _verdict(

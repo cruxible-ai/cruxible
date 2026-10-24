@@ -626,8 +626,12 @@ def _move_to_v7(
     )
     from cruxible_client.contracts.policies import (
         CAPTURE_CONTRACT_REF_ROLE,
-        ClaimEvidenceAdmissionPolicy,
-        ClaimEvidenceAdmissionRule,
+    )
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+    )
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
     )
     from cruxible_core.proposals.proposals import ProposalAdmissionRequest
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal

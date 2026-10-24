@@ -1119,7 +1119,8 @@ def evaluate_capture_contract_law(
                 diagnostics=(
                     _diagnostic(
                         "cruxible.capture_contract.shape_components_mismatch",
-                        "Components must be the engine expansion of shape and replay; author the input record.",
+                        "Components must be the engine expansion of shape and replay; "
+                        "author the input record.",
                         path=path,
                     ),
                 ),

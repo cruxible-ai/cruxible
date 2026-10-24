@@ -49,11 +49,15 @@ from cruxible_client.contracts.kits import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
@@ -86,7 +90,6 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
-from tests.core_support._pc_c_support import capture_contract
 from tests.core_support._subject_kind_support import declare_by_slug
 from tests.core_support._support import build_inputs, restamp_state_root
 from tests.core_support._world_templates import TEMPLATES, copy_template
@@ -1216,7 +1219,16 @@ def test_a_build_with_nothing_owned_is_refused(worlds: tuple[_World, _World]) ->
 
 
 def _contract(name: str, *, max_rows: int = 4, predecessor: str | None = None) -> CaptureContract:
-    base = capture_contract(name=name)
+    from cruxible_client.contracts.capture_contract_inputs import (
+        CaptureContractInputRecord,
+        lower_capture_contract_input,
+    )
+
+    base = lower_capture_contract_input(
+        CaptureContractInputRecord(
+            name=name, shape="database_snapshot", replay="exact", max_bytes=4096
+        )
+    )
     return base.model_copy(
         update={
             "selection_budget": base.selection_budget.model_copy(update={"max_rows": max_rows}),
@@ -1620,7 +1632,12 @@ def test_the_reference_table_names_every_digest_field_of_each_kit_family(
     prefix: str, model: type[BaseModel]
 ) -> None:
     table = {tuple(s for s in steps if not s.startswith("*")) for steps in REFERENCE_FIELDS[prefix]}
-    assert table == _digest_fields(model)
+    if prefix == "capture-contracts/":
+        from cruxible_client.contracts.captures import CaptureContractV1
+
+        assert table == _digest_fields(model) | _digest_fields(CaptureContractV1)
+    else:
+        assert table == _digest_fields(model)
 
 
 @pytest.mark.parametrize(

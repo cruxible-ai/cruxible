@@ -37,6 +37,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.captures import CaptureContract, capture_contract_path
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claim_attestations import ClaimAttestation
@@ -987,7 +988,7 @@ class CaptureContractAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-capture-contract-authoring-payload-v1"] = (
         "playbill-capture-contract-authoring-payload-v1"
     )
-    capture_contract: CaptureContract
+    capture_contract: CaptureContract | CaptureContractInputRecord
 
 
 class SourceAcquisitionPolicyAuthoringPayload(_StrictAuthoringModel):
@@ -1531,7 +1532,12 @@ def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
     if isinstance(payload, ProcedureMandateAuthoringPayload):
         return f"ProcedureMandate:{payload.name}"
     if isinstance(payload, CaptureContractAuthoringPayload):
-        return f"CaptureContract:{payload.capture_contract.identity.name}"
+        name = (
+            payload.capture_contract.name
+            if isinstance(payload.capture_contract, CaptureContractInputRecord)
+            else payload.capture_contract.identity.name
+        )
+        return f"CaptureContract:{name}"
     if isinstance(payload, SourceAcquisitionPolicyAuthoringPayload):
         return f"SourceAcquisitionPolicy:{payload.acquisition_policy.identity.name}"
     if isinstance(payload, LineAuthoringPayload):

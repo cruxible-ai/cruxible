@@ -6,13 +6,13 @@ from cruxible_client.contracts import claims
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
-    build_direct_claim_capture,
     capture_contract_digest,
     capture_contract_path,
 )
 from cruxible_client.contracts.content_memo import artifact_request
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from tests.core_support._support import initialize_local
+from tests.core_support.legacy_capture_builders import build_direct_claim_capture
 from tests.test_claims.test_claims import OBSERVED_AT, _claim, _claim_type
 
 

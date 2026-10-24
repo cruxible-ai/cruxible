@@ -11,8 +11,10 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionRule,
+    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery import orient as orient_module

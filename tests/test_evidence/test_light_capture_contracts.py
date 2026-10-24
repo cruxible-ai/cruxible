@@ -135,3 +135,51 @@ def test_v4_unrestricted_contract_admits_cas_and_v3_keeps_kind_gate_only_for_v1(
         == "refused"
     )
     assert evaluate_claim_evidence_admission(policy, _evidence()).verdict == "eligible"
+
+
+def test_contract_proposal_lowers_against_exact_base(tmp_path):
+    from cruxible_core.service.evidence.capture_contracts import service_propose_capture_contract
+    from tests.core_support._support import initialize_local
+
+    instance, _owner = initialize_local(tmp_path)
+    result = service_propose_capture_contract(
+        instance,
+        input=CaptureContractInputRecord(name="test.http", shape="http_response"),
+        actor_id="owner",
+        proposal_name="new-http-contract",
+        timestamp="2026-10-24T12:00:00.000000Z",
+    )
+    assert result.proposal.candidate is not None, result.proposal.evaluation.diagnostics
+
+
+def test_source_overlap_is_per_contract_and_empty_means_all():
+    from cruxible_core.service.claims.evidence_rule_upgrade import _overlaps
+
+    def rule(source):
+        return ClaimEvidenceAdmissionRule(
+            **_rule(capture_contracts=[{"contract": "test.capture", "logical_sources": source}])
+        )
+
+    assert not _overlaps(rule(["osv.record"]), rule(["kev.record"]))
+    assert _overlaps(rule([]), rule(["osv.record"]))
+    assert _overlaps(rule(["osv.record"]), rule(["osv.record"]))
+
+
+def test_source_admission_lookup_work_is_independent_of_rule_contract_count():
+    """One immutable compilation, then one keyed lookup per Capture."""
+    from cruxible_client.contracts.content_memo import seal
+    from cruxible_client.contracts.policies import _rule_source_sets
+
+    for size in (10, 100):
+        rule = ClaimEvidenceAdmissionRule(
+            **_rule(
+                capture_contracts=[
+                    {"contract": f"test.c{i:03d}", "logical_sources": ["osv.record"]}
+                    for i in range(size)
+                ]
+            )
+        )
+        assert seal(rule)
+        compiled = _rule_source_sets(rule)
+        assert rule.admits_source(identity="CaptureContract:test.c000", logical_source="osv.record")
+        assert _rule_source_sets(rule) is compiled

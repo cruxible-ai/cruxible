@@ -152,6 +152,7 @@ from cruxible_client.contracts.canonical import (
     CanonicalValue,
     normalize_canonical,
 )
+from cruxible_client.contracts.capture_contract_inputs import CaptureContractInputRecord
 from cruxible_client.contracts.capture_erasure import CaptureEraseRequest, CaptureEraseResult
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import (
@@ -1134,7 +1135,9 @@ class ChangeSetDraft:
             coordinate=self._playbill.coordinate,
         )
 
-    def capture_contract(self, contract: CaptureContract) -> ChangeSetDraft:
+    def capture_contract(
+        self, contract: CaptureContract | CaptureContractInputRecord
+    ) -> ChangeSetDraft:
         """Define one CaptureContract inside this changeset.
 
         Next: more members, then ``.submit()``.
@@ -1145,7 +1148,12 @@ class ChangeSetDraft:
                 payload=CaptureContractAuthoringPayload(capture_contract=contract),
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
-                decisions={"kind": "capture_contract", "name": contract.identity.name},
+                decisions={
+                    "kind": "capture_contract",
+                    "name": contract.name
+                    if isinstance(contract, CaptureContractInputRecord)
+                    else contract.identity.name,
+                },
             )
         )
         return self

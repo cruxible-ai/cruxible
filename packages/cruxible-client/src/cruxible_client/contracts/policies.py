@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -16,6 +17,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimCardinality, ClaimRole
+from cruxible_client.contracts.content_memo import sealed_memo
 from cruxible_client.contracts.governance import governance_identifier
 
 ClaimVerdict = Literal[
@@ -319,7 +321,7 @@ class CaptureContractAdmission(ArtifactRef):
     @classmethod
     def _sources(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         _sorted_unique(value, label="logical_sources")
-        if any(not _EVIDENCE_KIND_RE.fullmatch(item) for item in value):
+        if any(not re.fullmatch(r"[a-z][a-z0-9_.-]{0,255}", item) for item in value):
             raise ValueError("logical_sources must be canonical identifiers")
         return value
 
@@ -364,11 +366,17 @@ class ClaimEvidenceAdmissionRule(_EvidenceRuleBase):
         return any(item.target.qualified == identity for item in self.capture_contracts)
 
     def admits_source(self, *, identity: str | None, logical_source: str | None) -> bool:
-        return any(
-            item.target.qualified == identity
-            and (not item.logical_sources or logical_source in item.logical_sources)
-            for item in self.capture_contracts
-        )
+        if identity is None:
+            return False
+        sources = _rule_source_sets(self).get(identity)
+        return sources is not None and (not sources or logical_source in sources)
+
+
+@sealed_memo
+def _rule_source_sets(rule: ClaimEvidenceAdmissionRule) -> Mapping[str, frozenset[str]]:
+    return MappingProxyType(
+        {item.target.qualified: frozenset(item.logical_sources) for item in rule.capture_contracts}
+    )
 
 
 ClaimEvidenceAdmissionIdentityRule = ClaimEvidenceAdmissionRuleV3 | ClaimEvidenceAdmissionRule
