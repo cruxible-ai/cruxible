@@ -298,3 +298,16 @@ def test_unmoved_blueprint_slot_keeps_its_exact_registration():
     assert occurrence.provider.target == held.provider.identity
     assert occurrence.interface == proc.definition.nodes[1].interface
     assert moved.definition.nodes[0].interface != occurrence.interface
+
+
+@pytest.mark.usefixtures("contracted_demo")
+@pytest.mark.parametrize("source", [False, True])
+def test_blueprint_build_move_preserves_a_named_acquisition_override(source):
+    old, _new, _bp, procedure, path, tree, move = legacy_blueprint_move(source)
+    procedure = procedure.model_copy(update={"acquisition_policy": "custom-ages"})
+    tree[path] = render_procedure(procedure)
+    moved = parse_procedure(
+        _reinstantiated(tree, {}, path, {old.provider.identity.qualified: move}), path=path
+    )
+    assert moved.acquisition_policy == "custom-ages"
+    assert all(pin.target.kind != "SourceAcquisitionPolicy" for pin in moved.pins)
