@@ -48,6 +48,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("ledger", "publish"): "active",
     ("document", "propose"): "active",
     ("claim-type", "propose"): "active",
+    ("capture-contract", "propose"): "active",
     ("claim-type", "migrate"): "active",
     ("claim-type", "upgrade"): "active",
     ("block", "depublish"): "active",

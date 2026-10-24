@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+)
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.captures import (
@@ -31,7 +38,7 @@ from cruxible_client.contracts.temporal import parse_iso_duration_microseconds
 class CaptureContractInputRecord(BaseModel):
     """A new name and shape, or a merge patch of an accepted contract."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
     name: str
     shape: CaptureShape | None = None
     grade: Literal["observed", "derived", "predicted"] | None = None
@@ -41,6 +48,11 @@ class CaptureContractInputRecord(BaseModel):
     max_bytes: int | None = Field(default=None, ge=1)
     selector_privacy: Literal["direct_allowed", "pseudonymous_required"] | None = None
     lifecycle: Literal["live", "retired"] | None = None
+
+    @model_serializer(mode="wrap")
+    def _merge_patch_wire(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+        payload = cast(dict[str, object], handler(self))
+        return {name: value for name, value in payload.items() if name in self.model_fields_set}
 
     @field_validator("name")
     @classmethod

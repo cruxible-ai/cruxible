@@ -5069,6 +5069,33 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
+          "CaptureContractAdmission": {
+            "additionalProperties": false,
+            "description": "One named contract, optionally restricted to provider-declared sources.",
+            "properties": {
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target"
+            ],
+            "title": "CaptureContractAdmission",
+            "type": "object"
+          },
           "CaptureEventByNameWindow": {
             "additionalProperties": false,
             "description": "An observation window anchored on a named CaptureContract's landings.",
@@ -5405,8 +5432,8 @@
                 "type": "array"
               },
               "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v3",
-                "default": "playbill-claim-evidence-admission-policy-v3",
+                "const": "cruxible-claim-evidence-admission-policy-v4",
+                "default": "cruxible-claim-evidence-admission-policy-v4",
                 "title": "Tag",
                 "type": "string"
               }
@@ -5456,9 +5483,29 @@
             "title": "ClaimEvidenceAdmissionPolicyV2",
             "type": "object"
           },
+          "ClaimEvidenceAdmissionPolicyV3": {
+            "additionalProperties": false,
+            "properties": {
+              "rules": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV3"
+                },
+                "title": "Rules",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-policy-v3",
+                "default": "playbill-claim-evidence-admission-policy-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ClaimEvidenceAdmissionPolicyV3",
+            "type": "object"
+          },
           "ClaimEvidenceAdmissionRule": {
             "additionalProperties": false,
-            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
             "properties": {
               "admission": {
                 "enum": [
@@ -5482,7 +5529,7 @@
               },
               "capture_contracts": {
                 "items": {
-                  "$ref": "#/$defs/ArtifactRef"
+                  "$ref": "#/$defs/CaptureContractAdmission"
                 },
                 "title": "Capture Contracts",
                 "type": "array"
@@ -5500,13 +5547,6 @@
                 "title": "Claim Roles",
                 "type": "array"
               },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
               "rule_id": {
                 "title": "Rule Id",
                 "type": "string"
@@ -5520,8 +5560,8 @@
                 "type": "string"
               },
               "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v3",
-                "default": "playbill-claim-evidence-admission-rule-v3",
+                "const": "cruxible-claim-evidence-admission-rule-v4",
+                "default": "cruxible-claim-evidence-admission-rule-v4",
                 "title": "Tag",
                 "type": "string"
               }
@@ -5529,7 +5569,6 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "evidence_kinds",
               "admission",
               "subject_binding",
               "capture_contracts"
@@ -5618,9 +5657,9 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "evidence_kinds",
               "admission",
               "subject_binding",
+              "evidence_kinds",
               "capture_contract_digests"
             ],
             "title": "ClaimEvidenceAdmissionRuleV1",
@@ -5699,12 +5738,93 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "evidence_kinds",
               "admission",
               "subject_binding",
+              "evidence_kinds",
               "capture_contract_digests"
             ],
             "title": "ClaimEvidenceAdmissionRuleV2",
+            "type": "object"
+          },
+          "ClaimEvidenceAdmissionRuleV3": {
+            "additionalProperties": false,
+            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
+            "properties": {
+              "admission": {
+                "enum": [
+                  "origin_only",
+                  "direct",
+                  "derivational"
+                ],
+                "title": "Admission",
+                "type": "string"
+              },
+              "attestation_requirement": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "verified_provider",
+                  "verified_principal",
+                  "any_verified"
+                ],
+                "title": "Attestation Requirement",
+                "type": "string"
+              },
+              "capture_contracts": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactRef"
+                },
+                "title": "Capture Contracts",
+                "type": "array"
+              },
+              "claim_roles": {
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Claim Roles",
+                "type": "array"
+              },
+              "evidence_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence Kinds",
+                "type": "array"
+              },
+              "rule_id": {
+                "title": "Rule Id",
+                "type": "string"
+              },
+              "subject_binding": {
+                "enum": [
+                  "exact_claim_subject",
+                  "contract_source_mapping"
+                ],
+                "title": "Subject Binding",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-rule-v3",
+                "default": "playbill-claim-evidence-admission-rule-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_id",
+              "claim_roles",
+              "admission",
+              "subject_binding",
+              "evidence_kinds",
+              "capture_contracts"
+            ],
+            "title": "ClaimEvidenceAdmissionRuleV3",
             "type": "object"
           },
           "ClaimEvidenceFreshness": {
@@ -6326,6 +6446,9 @@
                   },
                   {
                     "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV2"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV3"
                   },
                   {
                     "$ref": "#/$defs/ClaimEvidenceAdmissionPolicy"
@@ -15485,17 +15608,20 @@
             "type": "string"
           }
         },
-        "decisions": {
+        "decision": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "decisions",
+          "json_name": "decision",
           "required": true,
           "schema": {
-            "items": {
-              "$ref": "#/$defs/CaptureEvidenceKindAdmission"
-            },
-            "title": "Decisions",
-            "type": "array"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CaptureEvidenceAdmission"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "status": {
@@ -15519,7 +15645,7 @@
           "json_name": "tag",
           "required": true,
           "schema": {
-            "const": "playbill-capture-admission-account-v1",
+            "const": "cruxible-capture-admission-account-v2",
             "title": "Tag",
             "type": "string"
           }
@@ -15527,7 +15653,7 @@
       },
       "json_schema": {
         "$defs": {
-          "CaptureEvidenceKindAdmission": {
+          "CaptureEvidenceAdmission": {
             "additionalProperties": false,
             "properties": {
               "admission": {
@@ -15558,10 +15684,6 @@
                 ],
                 "default": null,
                 "title": "Closest Rule Id"
-              },
-              "evidence_kind": {
-                "title": "Evidence Kind",
-                "type": "string"
               },
               "refusal_code": {
                 "anyOf": [
@@ -15596,17 +15718,16 @@
                 "type": "string"
               },
               "tag": {
-                "const": "playbill-capture-evidence-kind-admission-v1",
+                "const": "cruxible-capture-evidence-admission-v2",
                 "title": "Tag",
                 "type": "string"
               }
             },
             "required": [
               "tag",
-              "evidence_kind",
               "status"
             ],
-            "title": "CaptureEvidenceKindAdmission",
+            "title": "CaptureEvidenceAdmission",
             "type": "object"
           }
         },
@@ -15646,12 +15767,15 @@
             "title": "Citation Role",
             "type": "string"
           },
-          "decisions": {
-            "items": {
-              "$ref": "#/$defs/CaptureEvidenceKindAdmission"
-            },
-            "title": "Decisions",
-            "type": "array"
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CaptureEvidenceAdmission"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "enum": [
@@ -15663,7 +15787,7 @@
             "type": "string"
           },
           "tag": {
-            "const": "playbill-capture-admission-account-v1",
+            "const": "cruxible-capture-admission-account-v2",
             "title": "Tag",
             "type": "string"
           }
@@ -15677,7 +15801,7 @@
           "capture_contract_identity",
           "capture_contract_digest",
           "status",
-          "decisions"
+          "decision"
         ],
         "title": "CaptureAdmissionAccount",
         "type": "object"
@@ -15689,12 +15813,348 @@
         "citation_id",
         "citation_origin",
         "citation_role",
-        "decisions",
+        "decision",
         "status",
         "tag"
       ]
     },
-    "CaptureEvidenceKindAdmission": {
+    "CaptureContractInputRecord": {
+      "fields": {
+        "erasable": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "erasable",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Erasable"
+          }
+        },
+        "grade": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "grade",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "observed",
+                  "derived",
+                  "predicted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Grade"
+          }
+        },
+        "lifecycle": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lifecycle",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lifecycle"
+          }
+        },
+        "max_bytes": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "max_bytes",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Bytes"
+          }
+        },
+        "name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "name",
+          "required": true,
+          "schema": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "replay": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "replay",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "exact",
+                  "attested"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Replay"
+          }
+        },
+        "retention": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "retention",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retention"
+          }
+        },
+        "selector_privacy": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "selector_privacy",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "direct_allowed",
+                  "pseudonymous_required"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Selector Privacy"
+          }
+        },
+        "shape": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "shape",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "http_response",
+                  "procedure_output",
+                  "foreign_span",
+                  "database_snapshot"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Shape"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "A new name and shape, or a merge patch of an accepted contract.",
+        "properties": {
+          "erasable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Erasable"
+          },
+          "grade": {
+            "anyOf": [
+              {
+                "enum": [
+                  "observed",
+                  "derived",
+                  "predicted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Grade"
+          },
+          "lifecycle": {
+            "anyOf": [
+              {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lifecycle"
+          },
+          "max_bytes": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Bytes"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "replay": {
+            "anyOf": [
+              {
+                "enum": [
+                  "exact",
+                  "attested"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Replay"
+          },
+          "retention": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retention"
+          },
+          "selector_privacy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "direct_allowed",
+                  "pseudonymous_required"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Selector Privacy"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "enum": [
+                  "http_response",
+                  "procedure_output",
+                  "foreign_span",
+                  "database_snapshot"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Shape"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CaptureContractInputRecord",
+        "type": "object"
+      },
+      "required_fields": [
+        "name"
+      ]
+    },
+    "CaptureEvidenceAdmission": {
       "fields": {
         "admission": {
           "default": null,
@@ -15739,16 +16199,6 @@
             ],
             "default": null,
             "title": "Closest Rule Id"
-          }
-        },
-        "evidence_kind": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "evidence_kind",
-          "required": true,
-          "schema": {
-            "title": "Evidence Kind",
-            "type": "string"
           }
         },
         "refusal_code": {
@@ -15811,7 +16261,7 @@
           "json_name": "tag",
           "required": true,
           "schema": {
-            "const": "playbill-capture-evidence-kind-admission-v1",
+            "const": "cruxible-capture-evidence-admission-v2",
             "title": "Tag",
             "type": "string"
           }
@@ -15849,10 +16299,6 @@
             "default": null,
             "title": "Closest Rule Id"
           },
-          "evidence_kind": {
-            "title": "Evidence Kind",
-            "type": "string"
-          },
           "refusal_code": {
             "anyOf": [
               {
@@ -15886,21 +16332,19 @@
             "type": "string"
           },
           "tag": {
-            "const": "playbill-capture-evidence-kind-admission-v1",
+            "const": "cruxible-capture-evidence-admission-v2",
             "title": "Tag",
             "type": "string"
           }
         },
         "required": [
           "tag",
-          "evidence_kind",
           "status"
         ],
-        "title": "CaptureEvidenceKindAdmission",
+        "title": "CaptureEvidenceAdmission",
         "type": "object"
       },
       "required_fields": [
-        "evidence_kind",
         "status",
         "tag"
       ]
@@ -20251,12 +20695,15 @@
                 "title": "Citation Role",
                 "type": "string"
               },
-              "decisions": {
-                "items": {
-                  "$ref": "#/$defs/CaptureEvidenceKindAdmission"
-                },
-                "title": "Decisions",
-                "type": "array"
+              "decision": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CaptureEvidenceAdmission"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "status": {
                 "enum": [
@@ -20268,7 +20715,7 @@
                 "type": "string"
               },
               "tag": {
-                "const": "playbill-capture-admission-account-v1",
+                "const": "cruxible-capture-admission-account-v2",
                 "title": "Tag",
                 "type": "string"
               }
@@ -20282,12 +20729,12 @@
               "capture_contract_identity",
               "capture_contract_digest",
               "status",
-              "decisions"
+              "decision"
             ],
             "title": "CaptureAdmissionAccount",
             "type": "object"
           },
-          "CaptureEvidenceKindAdmission": {
+          "CaptureEvidenceAdmission": {
             "additionalProperties": false,
             "properties": {
               "admission": {
@@ -20318,10 +20765,6 @@
                 ],
                 "default": null,
                 "title": "Closest Rule Id"
-              },
-              "evidence_kind": {
-                "title": "Evidence Kind",
-                "type": "string"
               },
               "refusal_code": {
                 "anyOf": [
@@ -20356,17 +20799,16 @@
                 "type": "string"
               },
               "tag": {
-                "const": "playbill-capture-evidence-kind-admission-v1",
+                "const": "cruxible-capture-evidence-admission-v2",
                 "title": "Tag",
                 "type": "string"
               }
             },
             "required": [
               "tag",
-              "evidence_kind",
               "status"
             ],
-            "title": "CaptureEvidenceKindAdmission",
+            "title": "CaptureEvidenceAdmission",
             "type": "object"
           },
           "ClaimStatementCard": {
@@ -84695,6 +85137,33 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
+          "CaptureContractAdmission": {
+            "additionalProperties": false,
+            "description": "One named contract, optionally restricted to provider-declared sources.",
+            "properties": {
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target"
+            ],
+            "title": "CaptureContractAdmission",
+            "type": "object"
+          },
           "CaptureEgressNode": {
             "additionalProperties": false,
             "properties": {
@@ -84895,8 +85364,8 @@
                 "type": "array"
               },
               "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v3",
-                "default": "playbill-claim-evidence-admission-policy-v3",
+                "const": "cruxible-claim-evidence-admission-policy-v4",
+                "default": "cruxible-claim-evidence-admission-policy-v4",
                 "title": "Tag",
                 "type": "string"
               }
@@ -84946,9 +85415,29 @@
             "title": "ClaimEvidenceAdmissionPolicyV2",
             "type": "object"
           },
+          "ClaimEvidenceAdmissionPolicyV3": {
+            "additionalProperties": false,
+            "properties": {
+              "rules": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV3"
+                },
+                "title": "Rules",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-policy-v3",
+                "default": "playbill-claim-evidence-admission-policy-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ClaimEvidenceAdmissionPolicyV3",
+            "type": "object"
+          },
           "ClaimEvidenceAdmissionRule": {
             "additionalProperties": false,
-            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
             "properties": {
               "admission": {
                 "enum": [
@@ -84972,7 +85461,7 @@
               },
               "capture_contracts": {
                 "items": {
-                  "$ref": "#/$defs/ArtifactRef"
+                  "$ref": "#/$defs/CaptureContractAdmission"
                 },
                 "title": "Capture Contracts",
                 "type": "array"
@@ -84990,13 +85479,6 @@
                 "title": "Claim Roles",
                 "type": "array"
               },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
               "rule_id": {
                 "title": "Rule Id",
                 "type": "string"
@@ -85010,8 +85492,8 @@
                 "type": "string"
               },
               "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v3",
-                "default": "playbill-claim-evidence-admission-rule-v3",
+                "const": "cruxible-claim-evidence-admission-rule-v4",
+                "default": "cruxible-claim-evidence-admission-rule-v4",
                 "title": "Tag",
                 "type": "string"
               }
@@ -85019,7 +85501,6 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "evidence_kinds",
               "admission",
               "subject_binding",
               "capture_contracts"
@@ -85108,9 +85589,9 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "evidence_kinds",
               "admission",
               "subject_binding",
+              "evidence_kinds",
               "capture_contract_digests"
             ],
             "title": "ClaimEvidenceAdmissionRuleV1",
@@ -85189,12 +85670,93 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "evidence_kinds",
               "admission",
               "subject_binding",
+              "evidence_kinds",
               "capture_contract_digests"
             ],
             "title": "ClaimEvidenceAdmissionRuleV2",
+            "type": "object"
+          },
+          "ClaimEvidenceAdmissionRuleV3": {
+            "additionalProperties": false,
+            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
+            "properties": {
+              "admission": {
+                "enum": [
+                  "origin_only",
+                  "direct",
+                  "derivational"
+                ],
+                "title": "Admission",
+                "type": "string"
+              },
+              "attestation_requirement": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "verified_provider",
+                  "verified_principal",
+                  "any_verified"
+                ],
+                "title": "Attestation Requirement",
+                "type": "string"
+              },
+              "capture_contracts": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactRef"
+                },
+                "title": "Capture Contracts",
+                "type": "array"
+              },
+              "claim_roles": {
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Claim Roles",
+                "type": "array"
+              },
+              "evidence_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence Kinds",
+                "type": "array"
+              },
+              "rule_id": {
+                "title": "Rule Id",
+                "type": "string"
+              },
+              "subject_binding": {
+                "enum": [
+                  "exact_claim_subject",
+                  "contract_source_mapping"
+                ],
+                "title": "Subject Binding",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-rule-v3",
+                "default": "playbill-claim-evidence-admission-rule-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_id",
+              "claim_roles",
+              "admission",
+              "subject_binding",
+              "evidence_kinds",
+              "capture_contracts"
+            ],
+            "title": "ClaimEvidenceAdmissionRuleV3",
             "type": "object"
           },
           "ClaimEvidenceFreshness": {
@@ -85823,6 +86385,9 @@
                   },
                   {
                     "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV2"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV3"
                   },
                   {
                     "$ref": "#/$defs/ClaimEvidenceAdmissionPolicy"
@@ -94325,6 +94890,33 @@
             "title": "CanonicalDuration",
             "type": "object"
           },
+          "CaptureContractAdmission": {
+            "additionalProperties": false,
+            "description": "One named contract, optionally restricted to provider-declared sources.",
+            "properties": {
+              "logical_sources": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Logical Sources",
+                "type": "array"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target"
+            ],
+            "title": "CaptureContractAdmission",
+            "type": "object"
+          },
           "CaptureEgressNode": {
             "additionalProperties": false,
             "properties": {
@@ -94525,8 +95117,8 @@
                 "type": "array"
               },
               "tag": {
-                "const": "playbill-claim-evidence-admission-policy-v3",
-                "default": "playbill-claim-evidence-admission-policy-v3",
+                "const": "cruxible-claim-evidence-admission-policy-v4",
+                "default": "cruxible-claim-evidence-admission-policy-v4",
                 "title": "Tag",
                 "type": "string"
               }
@@ -94576,9 +95168,29 @@
             "title": "ClaimEvidenceAdmissionPolicyV2",
             "type": "object"
           },
+          "ClaimEvidenceAdmissionPolicyV3": {
+            "additionalProperties": false,
+            "properties": {
+              "rules": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV3"
+                },
+                "title": "Rules",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-policy-v3",
+                "default": "playbill-claim-evidence-admission-policy-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ClaimEvidenceAdmissionPolicyV3",
+            "type": "object"
+          },
           "ClaimEvidenceAdmissionRule": {
             "additionalProperties": false,
-            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
             "properties": {
               "admission": {
                 "enum": [
@@ -94602,7 +95214,7 @@
               },
               "capture_contracts": {
                 "items": {
-                  "$ref": "#/$defs/ArtifactRef"
+                  "$ref": "#/$defs/CaptureContractAdmission"
                 },
                 "title": "Capture Contracts",
                 "type": "array"
@@ -94620,13 +95232,6 @@
                 "title": "Claim Roles",
                 "type": "array"
               },
-              "evidence_kinds": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence Kinds",
-                "type": "array"
-              },
               "rule_id": {
                 "title": "Rule Id",
                 "type": "string"
@@ -94640,8 +95245,8 @@
                 "type": "string"
               },
               "tag": {
-                "const": "playbill-claim-evidence-admission-rule-v3",
-                "default": "playbill-claim-evidence-admission-rule-v3",
+                "const": "cruxible-claim-evidence-admission-rule-v4",
+                "default": "cruxible-claim-evidence-admission-rule-v4",
                 "title": "Tag",
                 "type": "string"
               }
@@ -94649,7 +95254,6 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "evidence_kinds",
               "admission",
               "subject_binding",
               "capture_contracts"
@@ -94738,9 +95342,9 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "evidence_kinds",
               "admission",
               "subject_binding",
+              "evidence_kinds",
               "capture_contract_digests"
             ],
             "title": "ClaimEvidenceAdmissionRuleV1",
@@ -94819,12 +95423,93 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "evidence_kinds",
               "admission",
               "subject_binding",
+              "evidence_kinds",
               "capture_contract_digests"
             ],
             "title": "ClaimEvidenceAdmissionRuleV2",
+            "type": "object"
+          },
+          "ClaimEvidenceAdmissionRuleV3": {
+            "additionalProperties": false,
+            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
+            "properties": {
+              "admission": {
+                "enum": [
+                  "origin_only",
+                  "direct",
+                  "derivational"
+                ],
+                "title": "Admission",
+                "type": "string"
+              },
+              "attestation_requirement": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "verified_provider",
+                  "verified_principal",
+                  "any_verified"
+                ],
+                "title": "Attestation Requirement",
+                "type": "string"
+              },
+              "capture_contracts": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactRef"
+                },
+                "title": "Capture Contracts",
+                "type": "array"
+              },
+              "claim_roles": {
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Claim Roles",
+                "type": "array"
+              },
+              "evidence_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence Kinds",
+                "type": "array"
+              },
+              "rule_id": {
+                "title": "Rule Id",
+                "type": "string"
+              },
+              "subject_binding": {
+                "enum": [
+                  "exact_claim_subject",
+                  "contract_source_mapping"
+                ],
+                "title": "Subject Binding",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-rule-v3",
+                "default": "playbill-claim-evidence-admission-rule-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_id",
+              "claim_roles",
+              "admission",
+              "subject_binding",
+              "evidence_kinds",
+              "capture_contracts"
+            ],
+            "title": "ClaimEvidenceAdmissionRuleV3",
             "type": "object"
           },
           "ClaimEvidenceFreshness": {
@@ -95453,6 +96138,9 @@
                   },
                   {
                     "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV2"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV3"
                   },
                   {
                     "$ref": "#/$defs/ClaimEvidenceAdmissionPolicy"

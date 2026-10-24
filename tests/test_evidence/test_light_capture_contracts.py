@@ -224,3 +224,16 @@ def test_capture_input_forbids_unknown_shape_and_derived_http():
         lower_capture_contract_input(
             CaptureContractInputRecord(name="test.bad", shape="http_response", grade="derived")
         )
+
+
+def test_sdk_payload_preserves_omitted_patch_fields_on_round_trip():
+    from cruxible_client.contracts.authoring.models import CaptureContractAuthoringPayload
+
+    record = CaptureContractInputRecord(name="test.http", shape="http_response")
+    payload = CaptureContractAuthoringPayload(capture_contract=record)
+    encoded = payload.model_dump(mode="json")
+    assert encoded["capture_contract"] == {"name": "test.http", "shape": "http_response"}
+    parsed = CaptureContractAuthoringPayload.model_validate(encoded)
+    assert isinstance(parsed.capture_contract, CaptureContractInputRecord)
+    assert parsed.capture_contract.model_fields_set == {"name", "shape"}
+    assert lower_capture_contract_input(parsed.capture_contract).replay == "attested"
