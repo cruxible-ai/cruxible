@@ -92,6 +92,7 @@ def _historical_v5(value: ClaimTypeInputRecord, tree: dict[str, bytes]) -> Claim
         rule["capture_contract_digests"] = sorted(
             digests[item] for item in rule.pop("capture_contracts")
         )
+        rule["evidence_kinds"] = ["self_asserted"]
         rules.append(rule)
     path = claim_type_path(value.predicate)
     predecessor = None if path not in tree else parse_claim_type(tree[path], path=path)

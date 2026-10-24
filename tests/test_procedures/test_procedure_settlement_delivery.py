@@ -64,7 +64,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_get_playbill_procedure_run,
     service_run_playbill_line,
 )
-from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.test_procedures import test_procedure_source_runs as fixtures
 from tests.test_procedures.test_procedure_proposal_delivery import (
     PREDICATE,
@@ -178,12 +178,8 @@ def _level_kind_members(*, rules: bool = True) -> dict[str, bytes]:
     from cruxible_client.contracts.artifacts import ArtifactRef
     from cruxible_client.contracts.policies import (
         CAPTURE_CONTRACT_REF_ROLE,
-    )
-    from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
-    )
-    from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
     )
     from cruxible_client.contracts.subject_kinds import render_subject_kind, subject_kind_path
     from tests.core_support._subject_kind_support import keyed_subject_kind, slug_claim_type
@@ -201,7 +197,6 @@ def _level_kind_members(*, rules: bool = True) -> dict[str, bytes]:
                                 target=capture_contract().identity,
                             ),
                         ),
-                        evidence_kinds=("database_record",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),
@@ -292,7 +287,7 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
     if capture_triggered:
         # Landing a Capture of the trigger contract makes an armed Line due.
         from cruxible_client.contracts.captures import (
-            DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
             capture_contract_path,
             render_capture_contract,
         )
@@ -311,8 +306,8 @@ def settle_world(  # type: ignore[no-untyped-def]  # noqa: PLR0913
             )
         )
         trigger_members[
-            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)
-        ] = render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+            capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)
+        ] = render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
         PROCEDURES[root] = with_terminal
     claim_types = {
         predicate: _predicate_claim_type(predicate)

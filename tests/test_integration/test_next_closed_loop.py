@@ -13,7 +13,7 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     CanonicalDuration,
     DirectForeignSourceSelection,
     capture_contract_digest,
@@ -373,7 +373,7 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
     instance, owner = initialize_local(root)
     source_id = "corpus.closed-loop"
     foreign_contract = foreign_source_capture_contract(source_id)
-    direct_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+    direct_digest = capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT).tagged
     foreign_digest = capture_contract_digest(foreign_contract).tagged
     base_type = _claim_type()
     claim_type = base_type.model_copy(
@@ -407,8 +407,8 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
             {
                 subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
                 claim_type_path(claim_type.predicate): render_claim_type(claim_type),
-                capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-                    render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+                capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name): (
+                    render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
                 ),
                 capture_contract_path(foreign_contract.identity.name): render_capture_contract(
                     foreign_contract
@@ -2560,13 +2560,13 @@ def test_a_compiler_upgrade_offers_signing_before_activation(
     """
 
     from cruxible_core.compiler.compiler import (
-        RESOURCE_BUDGET_COMPILER,
+        CLAIM_REBIND_COMPILER,
         current_compiler_coordinate,
     )
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.test_ledger.test_compiler_upgrade import old_instance, propose
 
-    instance, owner, _reviewer = old_instance(tmp_path, monkeypatch, RESOURCE_BUDGET_COMPILER)
+    instance, owner, _reviewer = old_instance(tmp_path, monkeypatch, CLAIM_REBIND_COMPILER)
     proposal = propose(instance, current_compiler_coordinate())
     assert proposal.candidate is not None
     assert proposal.candidate.approval_requirements == ()

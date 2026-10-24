@@ -45,9 +45,15 @@ READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
 
 def _instance_with_query(tmp_path: Path):
     instance, owner = seed_claims(tmp_path)
+    from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+
+    path = claim_type_path(PREDICATE)
+    claim_type = parse_claim_type(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
     inspection = submit_query_definition_candidate(
         instance,
-        query=work_item_query(),
+        query=work_item_query(claim_type=claim_type),
         actor_id="owner",
         proposal_name="work-item-query",
         timestamp=TIMESTAMP,

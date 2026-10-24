@@ -15,6 +15,7 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    CaptureContractAny,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -82,8 +83,10 @@ def _subject() -> SubjectShell:
     )
 
 
-def _claim_type() -> ClaimType:
-    contract_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+def _claim_type(
+    *, contract: CaptureContractAny = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+) -> ClaimType:
+    contract_digest = capture_contract_digest(contract).tagged
     return ClaimType(
         artifact_format="playbill-claim-type-v1",
         identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
@@ -120,9 +123,10 @@ def _claim(
     capture_digest: str,
     source_digest: str,
     source_length: int,
+    contract: CaptureContractAny = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
 ) -> ClaimArtifactV2:
     shell = _subject()
-    claim_type = _claim_type()
+    claim_type = _claim_type(contract=contract)
     path = claim_path(claim_id)
     return ClaimArtifactV2(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
@@ -168,10 +172,8 @@ def _claim(
                 (
                     ArtifactPin(
                         role="capture-contract",
-                        target=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity,
-                        artifact_digest=capture_contract_digest(
-                            DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
-                        ).tagged,
+                        target=contract.identity,
+                        artifact_digest=capture_contract_digest(contract).tagged,
                     ),
                     ArtifactPin(
                         role="claim-type",

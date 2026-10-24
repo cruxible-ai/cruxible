@@ -20,7 +20,6 @@ from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     ProviderResultToExternalCapture,
-    capture_component_pin,
     capture_contract_path,
     render_capture_contract,
 )
@@ -44,8 +43,8 @@ from cruxible_core.providers.web_fetch import (
     web_fetch_interface_registration,
 )
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from tests.core_support._light_capture_support import http_contract
 from tests.core_support._p2b1_support import provider_v2
-from tests.core_support._pc_c_support import capture_contract
 from tests.support.provider_builds import as_build
 from tests.test_procedures import test_procedure_source_runs as source
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
@@ -218,20 +217,7 @@ def test_sdk_source_retains_and_reads_acquisition(
         )
         request.update(rows=[{"n": 1}, {"n": 2}], unchecked=0)
     provider = web_provider(registration)
-    contract = capture_contract().model_copy(
-        update={
-            "logical_source_identities": ("web.response",),
-            "coordinate_schema_pins": (
-                capture_component_pin("coordinate-schema", "http-response-v1"),
-            ),
-            "selector_schema_pins": (
-                capture_component_pin("selector-schema", "whole-response-v1"),
-            ),
-            "selection_budget": capture_contract().selection_budget.model_copy(
-                update={"max_bytes": 1_000_000}
-            ),
-        }
-    )
+    contract = http_contract(max_bytes=1_000_000)
     policy = source._policy()
     proposal = source.submit_member_candidate(
         instance,

@@ -143,7 +143,7 @@ def _verifies_without_proof(world: ProducedCaptures, digest: str) -> bool:
     verify_capture(
         digest,
         store=world.instance.body_store(),
-        contract=world.contract,
+        contract=world.contract_for(envelope),
         producer_artifact_digests=producers,
         producer_receipt_resolver=world.instance.capture_verification_context(),
         require_production_proof=False,
@@ -158,7 +158,7 @@ def world(tmp_path: Path, acquisition_demo: None) -> ProducedCaptures:  # noqa: 
 
 def test_forged_envelopes_are_refused_through_authoring_submit(world: ProducedCaptures) -> None:
     instance = world.instance
-    contract_digest = capture_contract_digest(world.contract).tagged
+    contract_digest = capture_contract_digest(world.terminal_contract).tagged
     source_capture, terminal_capture = _genuine(world)
     body = instance.body_store().store(b'{"attacker":"chosen"}')
 
@@ -177,7 +177,7 @@ def test_forged_envelopes_are_refused_through_authoring_submit(world: ProducedCa
             run_kind="provider",
             run_id="forged-run",
             bound_generation=instance.accepted_coordinate().generation_root,
-            executable_identity=world.contract.identity,
+            executable_identity=world.terminal_contract.identity,
             executable_digest=contract_digest,
         ),
         run_receipt_digest=body.digest,
@@ -434,7 +434,7 @@ def _verifies_with_proof(world: ProducedCaptures, digest: str) -> bool:
     verified = verify_capture(
         digest,
         store=world.instance.body_store(),
-        contract=world.contract,
+        contract=world.contract_for(envelope),
         producer_artifact_digests={
             envelope.producer.qualified: envelope.run_coordinate.executable_digest
         },
@@ -523,7 +523,7 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
     # module's imported single-path accepted_provider is not that build.
     legacy = build_cas_capture(
         store=instance.body_store(),
-        contract=world.contract,
+        contract=world.terminal_contract,
         source_body=b'{"status":"released"}',
         run_coordinate=CaptureRunCoordinateV1(
             run_kind="provider",
@@ -532,9 +532,9 @@ def test_an_accepted_v1_citation_stays_valid_and_no_new_one_is_admitted(
             executable_identity=produced.run_coordinate.executable_identity,
             executable_digest=produced.run_coordinate.executable_digest,
         ),
-        run_receipt_digest=capture_contract_digest(world.contract).tagged,
+        run_receipt_digest=capture_contract_digest(world.terminal_contract).tagged,
         producer=produced.producer,
-        producer_binding_digest=capture_contract_digest(world.contract).tagged,
+        producer_binding_digest=capture_contract_digest(world.terminal_contract).tagged,
         observed_at=datetime(2026, 9, 2, 11, tzinfo=UTC),
     ).capture_digest
 
@@ -808,7 +808,10 @@ def test_a_capture_provable_only_by_its_delivered_terminal_is_found_by_contract(
 
     inventory = contract_captures(
         instance,
-        contract_digests=(capture_contract_digest(world.contract).tagged,),
+        contract_digests=(
+            capture_contract_digest(world.contract).tagged,
+            capture_contract_digest(world.terminal_contract).tagged,
+        ),
         budget=16,
     )
     assert inventory.complete

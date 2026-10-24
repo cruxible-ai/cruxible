@@ -169,7 +169,7 @@ def _accepted_one_provider(
     interface_pin = pin(
         "provider-interface",
         "ProviderInterface",
-        "demo.interface",
+        interface.registration.identity.name,
         value=interface.artifact_digest,
     )
     contract_in = pin("contract-in", "Contract", "provider-input")

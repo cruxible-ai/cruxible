@@ -1172,7 +1172,7 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
                 ),
                 admission_accounts=[
                     api.CaptureAdmissionAccount(
-                        tag="playbill-capture-admission-account-v1",
+                        tag="cruxible-capture-admission-account-v2",
                         citation_id="sha256:" + "6" * 64,
                         capture_digest="sha256:" + "7" * 64,
                         citation_role="evidence",
@@ -1180,7 +1180,9 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
                         capture_contract_identity="CaptureContract:repo.work-items",
                         capture_contract_digest="sha256:" + "8" * 64,
                         status="admitted",
-                        decisions=[],
+                        decision=api.CaptureEvidenceAdmission(
+                            tag="cruxible-capture-evidence-admission-v2", status="admitted"
+                        ),
                     )
                 ],
             )

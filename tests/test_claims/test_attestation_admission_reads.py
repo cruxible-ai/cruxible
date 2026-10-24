@@ -266,18 +266,14 @@ def test_new_capture_admission_reads_only_the_cited_contract_and_producers(
 def _with_unrelated_contracts(source, size: int):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.captures import (
         capture_contract_path,
-        parse_capture_contract,
         render_capture_contract,
     )
+    from tests.core_support._light_capture_support import record_contract
 
-    path = next(p for p in source if p.startswith("capture-contracts/"))
-    contract = parse_capture_contract(source[path], path=path)
     rows = dict(source)
     for number in range(size):
         name = f"zz-unrelated-{number:03d}"
-        copied = contract.model_copy(
-            update={"identity": contract.identity.model_copy(update={"name": name})}
-        )
+        copied = record_contract(name=name)
         rows[capture_contract_path(name)] = render_capture_contract(copied)
     return rows
 
@@ -345,8 +341,13 @@ def test_a_located_contract_is_current_only_with_its_exact_bytes_at_the_referent
     assert verification._current_contract(source, digest, lambda _d: accepted) == accepted
     assert verification._current_contract({}, digest, lambda _d: accepted) is None
     assert verification._current_contract(source, "sha256:" + "f" * 64, lambda _d: accepted) is None
-    other = "e" if accepted.contract.replay_policy_digest != "sha256:" + "e" * 64 else "d"
-    changed = accepted.contract.model_copy(update={"replay_policy_digest": "sha256:" + other * 64})
+    changed = accepted.contract.model_copy(
+        update={
+            "selection_budget": accepted.contract.selection_budget.model_copy(
+                update={"max_bytes": accepted.contract.selection_budget.max_bytes + 1}
+            )
+        }
+    )
     rows = dict(source)
     rows[accepted.path] = render_capture_contract(changed)
     assert capture_contract_digest(changed).tagged != digest

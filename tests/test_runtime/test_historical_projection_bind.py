@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.captures import DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 
@@ -16,7 +16,7 @@ def test_a_historical_bind_builds_no_coordinate_per_generation(
 ) -> None:
     instance, owner = initialize_local(tmp_path)
     behind = instance.accepted_coordinate()
-    _seed_claim_surface(instance, owner, contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+    _seed_claim_surface(instance, owner, contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
     assert instance.accepted_coordinate() != behind
 
     built = 0

@@ -109,7 +109,7 @@ from cruxible_client.contracts.policies import (
     EvidenceAdmissionInput,
     VerifiedAttestationGrade,
     evaluate_claim_evidence_admission_trace,
-    evidence_rule_matches_source,
+    evidence_rule_matches_capture_source,
 )
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -1707,16 +1707,11 @@ def evaluate_capture_evidence_admissions(
                 digest=capture_contract.artifact_digest,
                 identity=capture_contract.contract.identity.qualified,
             )
-            and evidence_rule_matches_source(
+            and evidence_rule_matches_capture_source(
                 rule,
-                EvidenceAdmissionInput(
-                    claim_role=claim.statement.role,
-                    capture_contract_digest=capture_contract.artifact_digest,
-                    capture_contract_identity=capture_contract.contract.identity.qualified,
-                    evidence_kind=kind,
-                    logical_source=logical_source,
-                    source_subject_bound=True,
-                ),
+                identity=capture_contract.contract.identity.qualified,
+                evidence_kind=kind,
+                logical_source=logical_source,
             )
         )
         source_bound = any(subject_binding_by_rule[rule.rule_id] for rule in matching_rules)

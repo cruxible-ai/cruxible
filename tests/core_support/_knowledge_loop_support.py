@@ -14,6 +14,7 @@ from cruxible_client.contracts.captures import (
     DirectForeignSourceSelection,
     capture_contract_digest,
     foreign_source_capture_contract,
+    foreign_source_capture_contract_v1,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
@@ -174,11 +175,18 @@ def seed_claims_into(
 ) -> None:
     """Accept the Claim surface and two work-item status Claims into ``instance``."""
 
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
     source_id = "fixture.work-items"
+    contract_factory = (
+        foreign_source_capture_contract
+        if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER
+        else foreign_source_capture_contract_v1
+    )
     _seed_claim_surface(
         instance,
         owner,
-        contract=foreign_source_capture_contract(source_id),
+        contract=contract_factory(source_id),
         claim_type_override=claim_type_override,
         # A Claim never creates its Subject: both work items land with the surface.
         additional_subjects=(subject_shell("wi-43"),),

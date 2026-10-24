@@ -258,31 +258,70 @@ def test_a_decommissioned_instance_blocks_in_the_status_header(tmp_path: Path) -
         instance.decommission(reason="a second reason", decommissioned_by="owner")
 
 
+def _retire_seeded_triggers(instance, owner):
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.triggers import parse_trigger, render_trigger, trigger_digest
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    for path in tuple(tree):
+        if path.startswith("triggers/"):
+            trigger = parse_trigger(tree[path], path=path)
+            tree[path] = render_trigger(
+                trigger.model_copy(
+                    update={
+                        "lifecycle": ArtifactLifecycle(
+                            state="retired", predecessor_digest=trigger_digest(trigger).tagged
+                        )
+                    }
+                )
+            )
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-16T20:00:00.000000Z", proposal_name="no-triggers"
+    )
+
+
 def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, TRIGGER_CAPTURE_COMPILER
+    from cruxible_core.compiler.compiler import (
+        CLAIM_REBIND_COMPILER,
+        LIGHT_ARTIFACTS_COMPILER,
+        TRIGGER_CAPTURE_COMPILER,
+    )
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.test_ledger.test_compiler_upgrade import approve, old_instance, propose
 
-    instance, _owner, reviewer = old_instance(tmp_path, monkeypatch, TRIGGER_CAPTURE_COMPILER)
+    instance, owner, reviewer = old_instance(tmp_path, monkeypatch, CLAIM_REBIND_COMPILER)
+    _retire_seeded_triggers(instance, owner)
     behind = _status(instance, _request(instance))
     assert behind.compiler.state == "upgrade_available"
     assert behind.compiler.repair is not None
     # The bare command targets the compiler the daemon runs, which the detail names.
     assert behind.compiler.repair.command == "cruxible compiler upgrade"
-    assert behind.compiler.detail["running_compiler_digest"] == CLAIM_REBIND_COMPILER.rule_digest
-    assert behind.compiler.detail["running_compiler_revision"] == "claim-rebind-v1"
-    # A compiler before Trigger artifacts schedules no internal action at all.
+    assert behind.compiler.detail["running_compiler_digest"] == LIGHT_ARTIFACTS_COMPILER.rule_digest
+    assert behind.compiler.detail["running_compiler_revision"] == "light-artifacts-v1"
+    # With its seeded Triggers retired, the instance schedules no internal action.
     assert behind.triggers.state == "unscheduled"
     assert behind.triggers.repair is not None
-    assert behind.triggers.repair.required_change.startswith("upgrade_the_compiler")
+    assert (
+        behind.triggers.repair.required_change == "author_a_trigger_aimed_at_the_unscheduled_action"
+    )
+    # Retain the pre-Trigger compiler's historical repair as well.
+    (tmp_path / "before-triggers").mkdir()
+    legacy, _legacy_owner, _legacy_reviewer = old_instance(
+        tmp_path / "before-triggers", monkeypatch, TRIGGER_CAPTURE_COMPILER
+    )
+    legacy_status = _status(legacy, _request(legacy))
+    assert legacy_status.compiler.state == "no_upgrade_path"
+    assert legacy_status.triggers.repair is not None
+    assert legacy_status.triggers.repair.required_change.startswith("upgrade_the_compiler")
     assert _attention(behind) == (
         ("compiler", behind.compiler),
         ("triggers", behind.triggers),
     )
 
-    proposal = propose(instance, CLAIM_REBIND_COMPILER)
+    proposal = propose(instance, LIGHT_ARTIFACTS_COMPILER)
     approve(instance, proposal, reviewer)
     assert (
         service_activate_playbill_proposal(
@@ -305,10 +344,10 @@ def test_a_status_repair_the_caller_cannot_perform_keeps_the_facet_but_not_the_r
 ) -> None:
     """R07 for the status header: a compiler upgrade is an ADMIN act."""
 
-    from cruxible_core.compiler.compiler import TRIGGER_CAPTURE_COMPILER
+    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER
     from tests.test_ledger.test_compiler_upgrade import old_instance
 
-    instance, _owner, _reviewer = old_instance(tmp_path, monkeypatch, TRIGGER_CAPTURE_COMPILER)
+    instance, _owner, _reviewer = old_instance(tmp_path, monkeypatch, CLAIM_REBIND_COMPILER)
     request = _request(instance)
 
     admin = _status(instance, request, caller_rung=3)

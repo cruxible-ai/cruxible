@@ -137,6 +137,42 @@ def test_v4_unrestricted_contract_admits_cas_and_v3_keeps_kind_gate_only_for_v1(
     assert evaluate_claim_evidence_admission(policy, _evidence()).verdict == "eligible"
 
 
+@pytest.mark.parametrize("sources", [(), ("osv.record",)])
+def test_claim_type_edit_preserves_expanded_contract_source_admission(sources):
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, lower_claim_type_input
+
+    original = lower_claim_type_input(
+        ClaimTypeInputRecord(
+            predicate="security.advisory.severity",
+            cardinality="one",
+            evidence_admission_policy={
+                "rules": [
+                    _rule(
+                        capture_contracts=[
+                            {
+                                "contract": "cruxible.coordinator-self-source-v1",
+                                "logical_sources": sources,
+                            }
+                        ]
+                    )
+                ]
+            },
+        ),
+        tree={},
+        identity_rules=True,
+    )
+    edited = lower_claim_type_input(
+        ClaimTypeInputRecord(predicate=original.predicate, description="Observed severity."),
+        tree={claim_type_path(original.predicate): render_claim_type(original)},
+        identity_rules=True,
+    )
+    assert edited.evidence_admission_policy == original.evidence_admission_policy
+    (ref,) = edited.evidence_admission_policy.rules[0].capture_contracts
+    assert ref.target.name == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name
+    assert ref.logical_sources == sources
+
+
 def test_contract_proposal_lowers_against_exact_base(tmp_path):
     from cruxible_core.service.evidence.capture_contracts import service_propose_capture_contract
     from tests.core_support._support import initialize_local

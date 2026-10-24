@@ -26,7 +26,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     capture_contract_digest,
     foreign_source_capture_contract,
 )
@@ -385,7 +385,7 @@ def _update_seed_bundle() -> None:
     for rule in evidence_policy["rules"]:
         if rule["rule_id"] == "direct-self-asserted":
             rule["capture_contract_digests"] = [
-                capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+                capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT).tagged
             ]
         elif rule["rule_id"] == "foreign-working-sources":
             rule["capture_contract_digests"] = sorted(

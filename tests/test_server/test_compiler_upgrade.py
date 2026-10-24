@@ -176,7 +176,7 @@ def _cli_world(tmp_path, monkeypatch, host_client, *, independent=False):
     from types import SimpleNamespace
 
     from cruxible_core.cli.commands import playbill as commands
-    from cruxible_core.compiler.compiler import TRIGGER_CAPTURE_COMPILER
+    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER
 
     if independent:
         from cruxible_core.runtime.instance import PlaybillInstance
@@ -192,7 +192,7 @@ def _cli_world(tmp_path, monkeypatch, host_client, *, independent=False):
         with monkeypatch.context() as patch:
             patch.setattr(
                 "cruxible_core.runtime.instance.current_compiler_coordinate",
-                lambda: TRIGGER_CAPTURE_COMPILER,
+                lambda: CLAIM_REBIND_COMPILER,
             )
             instance = PlaybillInstance.initialize(
                 managed,
@@ -203,7 +203,7 @@ def _cli_world(tmp_path, monkeypatch, host_client, *, independent=False):
                 timestamp=FIXED_TIMESTAMP,
             )
     else:
-        instance, owner, _reviewer = old_instance(tmp_path, monkeypatch, TRIGGER_CAPTURE_COMPILER)
+        instance, owner, _reviewer = old_instance(tmp_path, monkeypatch, CLAIM_REBIND_COMPILER)
     instance_id = instance.descriptor.instance_id
     get_registry().create_governed_instance_with_id(instance_id)
     monkeypatch.setattr(playbill_api.get_playbill_manager(), "get", lambda _: instance)

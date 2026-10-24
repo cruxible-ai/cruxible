@@ -116,7 +116,7 @@ def interface_registration() -> ProviderInterfaceRegistrationV1:
 def accepted_interface() -> AcceptedProviderInterfaceRegistration:
     registration = interface_registration()
     return AcceptedProviderInterfaceRegistration(
-        path=provider_interface_path(registration.interface_id),
+        path=provider_interface_path(registration.identity.name),
         registration=registration,
         artifact_digest=provider_interface_digest(registration).tagged,
     )
@@ -180,7 +180,7 @@ def provider_v2() -> ProviderV2:
             pin(
                 "provider-interface",
                 "ProviderInterface",
-                registration.interface_id,
+                registration.identity.name,
                 value=interface.artifact_digest,
             ),
         ),

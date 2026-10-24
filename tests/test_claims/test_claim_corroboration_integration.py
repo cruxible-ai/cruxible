@@ -8,8 +8,11 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    DirectClaimSource,
+    build_coordinator_self_source_capture,
     capture_contract_path,
     render_capture_contract,
 )
@@ -46,7 +49,6 @@ from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._subject_kind_support import core_assigned
 from tests.core_support._support import client_material, initialize_local
-from tests.core_support.legacy_capture_builders import build_direct_claim_capture
 from tests.test_claims.test_claims import _claim, _claim_type, _subject
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
@@ -91,7 +93,7 @@ def _corroborated_type(
     min_count: int = 1,
     predecessor_digest: str | None = None,
 ) -> ClaimType:
-    base = _claim_type()
+    base = _claim_type(contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
     return base.model_copy(
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
@@ -118,7 +120,7 @@ def _seed_vocabulary(
     query: QueryDefinition | None,
     proposal_name: str = "corroboration-vocabulary",
     timestamp: str = SEED_TIMESTAMP,
-    capture_contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    capture_contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
 ) -> None:
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[capture_contract_path(capture_contract.identity.name)] = render_capture_contract(
@@ -149,12 +151,18 @@ def _claim_for_type(
     claim_id: str,
     value: str = "ready",
 ) -> ClaimArtifactV2:
-    capture = build_direct_claim_capture(
+    capture = build_coordinator_self_source_capture(
         store=instance.body_store(),
         actor_id="owner",
         claim_id=claim_id,
-        value=value,
-        rationale="The governed work item is ready.",
+        body=canonical_bytes(
+            DirectClaimSource(
+                authored_by="owner",
+                claim_id=claim_id,
+                value=value,
+                rationale="The governed work item is ready.",
+            ).model_dump(mode="json")
+        ),
         observed_at=OBSERVED_AT,
         accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
     )
@@ -163,8 +171,9 @@ def _claim_for_type(
     claim = _claim(
         claim_id=claim_id,
         capture_digest=capture.capture_digest,
-        source_digest=capture.source_body_digest,
+        source_digest=capture.commitment_digest,
         source_length=length,
+        contract=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     )
     type_digest = claim_type_digest(claim_type).tagged
     return claim.model_copy(

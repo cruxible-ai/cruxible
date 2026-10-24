@@ -66,6 +66,7 @@ __all__ = [
 def claim_type_input_from_artifact(claim_type, *, source_ids=()):
     """Translate historical test fixtures into fresh, identity-based authoring input."""
     from cruxible_client.contracts.captures import (
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
         DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
         capture_contract_digest,
     )
@@ -77,7 +78,7 @@ def claim_type_input_from_artifact(claim_type, *, source_ids=()):
     for name in ("evidence_requirement", "revision_evidence", "canonical_form"):
         if value.get(name) is None:
             value.pop(name, None)
-    contracts = [DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT]
+    contracts = [DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT, COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT]
     contracts.extend(foreign_source_capture_contract(source) for source in source_ids)
     identities = {
         capture_contract_digest(item).tagged: item.identity.qualified for item in contracts

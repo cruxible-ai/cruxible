@@ -296,6 +296,7 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         return proposal
 
     from cruxible_client.contracts.captures import (
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
         DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
         capture_contract_digest,
         foreign_source_capture_contract,
@@ -306,7 +307,7 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         json.loads(path.read_text())["source"]["source_id"]
         for path in (bundle_dir / "claims").glob("*.json")
     }
-    contracts = [DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT]
+    contracts = [DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT, COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT]
     contracts.extend(foreign_source_capture_contract(source) for source in sorted(source_ids))
     identities = {
         capture_contract_digest(item).tagged: item.identity.qualified for item in contracts

@@ -26,7 +26,8 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    CaptureContract,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
+    CaptureContractAny,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -74,10 +75,18 @@ def _seed_claim_surface(
     instance: PlaybillInstance,
     _owner: object,
     *,
-    contract: CaptureContract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    contract: CaptureContractAny | None = None,
     claim_type_override: ClaimType | None = None,
     additional_subjects: tuple[SubjectShell, ...] = (),
 ) -> None:
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+    if contract is None:
+        contract = (
+            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+            if instance.accepted_coordinate().compiler == LIGHT_ARTIFACTS_COMPILER
+            else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
+        )
     shell = _subject()
     claim_type = (claim_type_override or _claim_type()).model_copy(
         update={

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +16,10 @@ from cruxible_client.contracts.authoring.models import (
     ClaimDependencyDrafts,
     ExistingCaptureCitationSource,
 )
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.capture_contract_inputs import (
+    CaptureContractInputRecord,
+    lower_capture_contract_input,
+)
 from cruxible_client.contracts.captures import (
     CaptureContract,
     capture_contract_digest,
@@ -32,8 +34,9 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.provider_contracts import ACQUISITION_RESULT
 from cruxible_client.contracts.provider_interfaces import (
-    ProviderInterfaceRegistrationV1,
-    provider_interface_definition_digest,
+    ProviderInterfaceContract,
+    ProviderInterfaceDefinition,
+    provider_interface_contract,
     render_provider_interface,
 )
 from cruxible_client.contracts.providers import provider_path, render_provider
@@ -51,11 +54,11 @@ from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
+from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._p2b1_support import (
     accepted_interface,
     accepted_provider,
 )
-from tests.core_support._pc_c_support import capture_contract
 from tests.core_support._support import generate_client
 from tests.support.procedures import PERMISSIVE_CONTRACT
 from tests.support.provider_builds import accepted_build
@@ -101,23 +104,21 @@ def _instance(root: Path) -> tuple[PlaybillInstance, object]:
 _DEMO_INTERFACE_REGISTRATION = p2b1_support.interface_registration
 
 
-def _acquisition_registration() -> ProviderInterfaceRegistrationV1:
-    """The demo interface, declaring the acquisition result a Source is checked against."""
-
+def _acquisition_registration() -> ProviderInterfaceContract:
+    """A current typed demo interface with the Source acquisition result schema."""
     base = _DEMO_INTERFACE_REGISTRATION()
-    definition = json.loads(bytes.fromhex(base.interface_bytes_hex))
-    definition["contracts"] = {
-        "input": PERMISSIVE_CONTRACT.model_dump(mode="json"),
-        "output": ACQUISITION_RESULT,
-    }
-    definition["effect_class"] = base.effect_class
-    interface_hex = canonical_bytes(definition).hex()
-    return ProviderInterfaceRegistrationV1.model_validate(
-        {
-            **base.model_dump(mode="json"),
-            "interface_bytes_hex": interface_hex,
-            "interface_digest": provider_interface_definition_digest(interface_hex),
-        }
+    return provider_interface_contract(
+        interface=ProviderInterfaceDefinition.model_validate(
+            {
+                "interface_id": base.interface_id,
+                "version": 1,
+                "contracts": {
+                    "input": PERMISSIVE_CONTRACT.model_dump(mode="json"),
+                    "output": ACQUISITION_RESULT,
+                },
+                "effect_class": base.effect_class,
+            }
+        )
     )
 
 
@@ -159,9 +160,17 @@ class ProducedCaptures:
     instance: PlaybillInstance
     owner: object
     contract: CaptureContract
+    terminal_contract: CaptureContract
     records: tuple[Any, ...]
     payloads: tuple[Any, ...]
     run_id: str
+
+    def contract_for(self, envelope):
+        return (
+            self.contract
+            if envelope.capture_contract_digest == capture_contract_digest(self.contract).tagged
+            else self.terminal_contract
+        )
 
     def payload(self, event_kind: str) -> dict[str, Any]:
         kinds = [stored.record.event_kind for stored in self.records]
@@ -185,6 +194,11 @@ def run_capture_producers(
 
     instance, owner = _instance(tmp_path)
     contract = capture_contract()
+    terminal_contract = lower_capture_contract_input(
+        CaptureContractInputRecord(
+            name="test.procedure-output", shape="procedure_output", max_bytes=4096
+        )
+    )
     contract_digest = capture_contract_digest(contract).tagged
     shell = _subject()
     claim_type = _claim_type().model_copy(
@@ -194,8 +208,12 @@ def run_capture_producers(
                     ClaimEvidenceAdmissionRuleV1(
                         rule_id="live-v2-capture",
                         claim_roles=("normative", "observation"),
-                        capture_contract_digests=(contract_digest,),
-                        evidence_kinds=contract.evidence_kinds,
+                        capture_contract_digests=tuple(
+                            sorted(
+                                (contract_digest, capture_contract_digest(terminal_contract).tagged)
+                            )
+                        ),
+                        evidence_kinds=("database_record",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),
@@ -207,6 +225,9 @@ def run_capture_producers(
     tree[subject_path(shell.subject_kind, shell.subject_id)] = render_subject(shell)
     tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
+    tree[capture_contract_path(terminal_contract.identity.name)] = render_capture_contract(
+        terminal_contract
+    )
     _accept_tree(
         instance,
         owner,
@@ -221,6 +242,8 @@ def run_capture_producers(
         runtime_root,
         include_terminal=include_terminal,
         rule=rule,
+        contract=contract,
+        terminal_contract=terminal_contract,
     )
     interface = accepted_interface()
     provider = accepted_provider()
@@ -269,14 +292,21 @@ def run_capture_producers(
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
         provider_runtime_invoker=_SourceInvoker(
-            observed_at=prepared.admission.occurrence_evaluation_time
+            observed_at=prepared.admission.occurrence_evaluation_time,
+            coordinate_type=contract.coordinate_schema_pins[0].target.name,
         ),
-        capture_contracts={contract_digest: contract},
+        capture_contracts={
+            contract_digest: contract,
+            capture_contract_digest(terminal_contract).tagged: terminal_contract,
+        },
         acquisition_policy=policy,
         effective_rung=rung,
         egress_sink=CaptureTerminalEgressSink(
             store=fixture.bodies,
-            contracts={contract_digest: contract},
+            contracts={
+                contract_digest: contract,
+                capture_contract_digest(terminal_contract).tagged: terminal_contract,
+            },
             producer=accepted.procedure.identity,
             producer_binding_digest=accepted.artifact_digest,
         ),
@@ -288,6 +318,7 @@ def run_capture_producers(
         instance=instance,
         owner=owner,
         contract=contract,
+        terminal_contract=terminal_contract,
         records=tuple(records),
         payloads=tuple(payloads),
         run_id=prepared.admission.run_id,

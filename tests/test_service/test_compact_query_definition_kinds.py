@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from cruxible_client.contracts.captures import contract_source_kinds
 from cruxible_client.contracts.claim_types import ClaimEvidenceFreshness, ClaimFreshnessDuration
 from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_core.indexes.query_selection import LIVE_SUBJECT_COUNT_SQL
@@ -158,18 +159,16 @@ def test_capture_contracts_list_what_they_capture_and_who_relies_on_them(instanc
         "name",
         "version",
         "lifecycle",
-        "sources",
         "source_kinds",
-        "evidence_kinds",
         "grade",
         "admitted_by",
         "required_by",
     ]
     by_name = {row["name"]: row for row in result.rows}
     reports = by_name[REPORTS.identity.name]
-    assert reports["sources"] == list(REPORTS.logical_source_identities)
-    assert reports["source_kinds"] == list(REPORTS.allowed_source_kinds)
-    assert reports["evidence_kinds"] == list(REPORTS.evidence_kinds)
+    assert "sources" not in reports
+    assert reports["source_kinds"] == list(contract_source_kinds(REPORTS))
+    assert "evidence_kinds" not in reports
     assert reports["grade"] == REPORTS.epistemic_grade
     # labels and measured admit it; only measured (v7, captured) requires a Capture.
     assert reports["admitted_by"] == 2 and reports["required_by"] == 1
@@ -198,7 +197,7 @@ def test_capture_contracts_filter_on_grade_reliance_and_source_kinds(instance: A
     assert {row["name"] for row in graded.rows} == {
         row["name"] for row in every if row["grade"] == grade
     }
-    (kind,) = REPORTS.allowed_source_kinds[:1]
+    (kind,) = contract_source_kinds(REPORTS)[:1]
     sourced = _query(
         instance,
         kind="CaptureContract",

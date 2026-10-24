@@ -48,9 +48,11 @@ from cruxible_client.contracts.candidates import (
     PRODUCED_CANDIDATE_VERSION,
     CandidateWireVersion,
 )
-from cruxible_client.contracts.canonical import semantic_projection
+from cruxible_client.contracts.canonical import canonical_bytes, semantic_projection
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    DirectClaimSource,
+    build_coordinator_self_source_capture,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -120,7 +122,6 @@ from cruxible_core.proposals.settlement import (
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._subject_kind_support import history_before_identity
 from tests.core_support._support import client_material
-from tests.core_support.legacy_capture_builders import build_direct_claim_capture
 
 SUBJECT_KIND = "project.work_item"
 EPOCH = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -162,7 +163,7 @@ class AdoptionFixtureProfile:
             + self.generations * self.claims_per_generation
             + 1  # the governed approval-policy singleton
             + 1  # the governed Procedure runtime-policy singleton
-            + 1  # the direct self-asserted capture contract
+            + 1  # the coordinator self-source capture contract
             + 3  # the daemon, owner, and independent reviewer principal records
             # The default evidence.sweep, floor.refresh and prediction.anchor_retry
             # Triggers (curation.detect is opt-in, never seeded).
@@ -245,7 +246,7 @@ def _subject(index: int) -> SubjectShell:
 
 
 def _claim_type(index: int) -> ClaimType:
-    contract_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+    contract_digest = capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT).tagged
     predicate = _predicate(index)
     return ClaimType(
         artifact_format="playbill-claim-type-v1",
@@ -389,9 +390,9 @@ def _claim(
                 (
                     ArtifactPin(
                         role="capture-contract",
-                        target=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity,
+                        target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
                         artifact_digest=capture_contract_digest(
-                            DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+                            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
                         ).tagged,
                     ),
                     ArtifactPin(
@@ -656,12 +657,18 @@ def build_fixture(
         subject = subjects[index % len(subjects)]
         claim_type = claim_types[index % len(claim_types)]
         value = CLAIM_VALUES[index % len(CLAIM_VALUES)]
-        capture = build_direct_claim_capture(
+        capture = build_coordinator_self_source_capture(
             store=instance.body_store(),
             actor_id="owner",
             claim_id=claim_id,
-            value=value,
-            rationale=f"Deterministic adoption observation {index:07d}.",
+            body=canonical_bytes(
+                DirectClaimSource(
+                    authored_by="owner",
+                    claim_id=claim_id,
+                    value=value,
+                    rationale=f"Deterministic adoption observation {index:07d}.",
+                ).model_dump(mode="json")
+            ),
             observed_at=_observed_at(index),
             accepted_coordinate=AcceptedCoordinate.from_internal(builder.base),
         )
@@ -675,7 +682,7 @@ def build_fixture(
             value=value,
             observed_at=_observed_at(index),
             capture_digest=capture.capture_digest,
-            source_digest=capture.source_body_digest,
+            source_digest=capture.commitment_digest,
             source_length=length,
         )
         return claim_path(claim_id), render_claim(claim)
@@ -683,8 +690,8 @@ def build_fixture(
     if accepted_claims == 0:
         started = time.monotonic()
         vocabulary: dict[str, bytes] = {
-            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
-                render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+            capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name): (
+                render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
             )
         }
         for claim_type in claim_types:

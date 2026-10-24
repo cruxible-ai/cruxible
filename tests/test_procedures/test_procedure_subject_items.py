@@ -31,7 +31,7 @@ from cruxible_client.contracts.subject_kinds import render_subject_kind, subject
 from cruxible_client.contracts.subjects import parse_subject
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from tests.core_support._knowledge_loop_support import accept_proposal
-from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, keyed_subject_kind
 from tests.test_procedures import test_procedure_proposal_delivery as delivery
 from tests.test_procedures import test_procedure_source_runs as fixtures

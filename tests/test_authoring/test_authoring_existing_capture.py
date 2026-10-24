@@ -54,7 +54,10 @@ from cruxible_core.service.authoring.documents import (
 )
 from tests.core_support._pc_c_support import artifact_digest, capture_contract, digest
 from tests.core_support._support import client_material, initialize_local
-from tests.core_support.legacy_capture_builders import build_direct_claim_selection_capture
+from tests.core_support.legacy_capture_builders import (
+    build_direct_claim_selection_capture,
+    initialize_legacy_local,
+)
 from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
     _coordinator,
@@ -197,7 +200,7 @@ def _direct_selection_intent(
     *,
     claim_id: str = "CLM-" + "a" * 32,
 ):  # type: ignore[no-untyped-def]
-    instance, owner = initialize_local(root)
+    instance, owner = initialize_legacy_local(root)
     _seed_claim_surface(instance, owner, contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
     selected = instance.body_store().store(b"status: ready")
     capture = build_direct_claim_selection_capture(
@@ -350,7 +353,7 @@ def test_existing_capture_shareability_and_admission_refusals_are_reachable(
     grade: str,
     expected_code: str,
 ) -> None:
-    instance, owner = initialize_local(tmp_path)
+    instance, owner = initialize_legacy_local(tmp_path)
     # A proposer-asserted contract: a version-1 envelope under any other is
     # refused as new evidence before shareability is judged.
     contract = _self_asserted(

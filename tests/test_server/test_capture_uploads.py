@@ -48,7 +48,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from cruxible_core.service.uploads import CaptureUploadRefused, CaptureUploadStore, UploadLimits
-from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
 from tests.test_server.test_playbill_procedure_rung2_public import _authored, _policy
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
@@ -549,7 +549,7 @@ def _definition(interface: dict[str, Any], provider: dict[str, Any], contract_pi
     request = WorkspaceFileSourceRequestV2(
         logical_source="commerce.production.orders",
         relative_path="placeholder",
-        coordinate_type="postgres-lsn-v1",
+        coordinate_type="database-snapshot-v1",
         coordinate={"lsn": "workspace"},
         selector_type="relation-primary-key-v1",
         selector={"id": 7, "relation": "orders"},
