@@ -2420,6 +2420,7 @@ def test_rebind_needs_the_claim_rebind_compiler(tmp_path: Path, revision: int) -
         )
         == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1
     )
+    observed = report_evidence(tmp_path, "ready")
     foreign_write = _write(
         instance,
         _set(
@@ -2427,7 +2428,7 @@ def test_rebind_needs_the_claim_rebind_compiler(tmp_path: Path, revision: int) -
             "status",
             "done",
             role="observation",
-            evidence=report_evidence(tmp_path, "ready"),
+            evidence=observed,
         ),
     )
     assert foreign_write.status == "accepted", foreign_write
@@ -2444,7 +2445,7 @@ def test_rebind_needs_the_claim_rebind_compiler(tmp_path: Path, revision: int) -
         refusal = _refusal(
             _write(
                 instance,
-                {"op": "rebind", "target": claim, "evidence": report_evidence(tmp_path, "ready")},
+                {"op": "rebind", "target": claim, "evidence": observed},
             )
         )
         assert refusal.code == "cruxible.write.rebind_requires_compiler_upgrade"
