@@ -299,7 +299,8 @@
         "provider_process_lease_echo_failed",
         "provider_process_lease_echo_mismatch",
         "provider_process_group_survived_recovery",
-        "provider_runtime_recovery_failed"
+        "provider_runtime_recovery_failed",
+        "provider_runtime_directory_unavailable"
       ]
     },
     "RuntimeCredentialPermissionMode": {
@@ -56487,7 +56488,8 @@
                   "secret_epoch_unavailable",
                   "secret_resolver_not_installed",
                   "provider_execution_error",
-                  "provider_completion_not_durable"
+                  "provider_completion_not_durable",
+                  "provider_runtime_directory_unavailable"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -59187,7 +59189,8 @@
                   "secret_epoch_unavailable",
                   "secret_resolver_not_installed",
                   "provider_execution_error",
-                  "provider_completion_not_durable"
+                  "provider_completion_not_durable",
+                  "provider_runtime_directory_unavailable"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -61331,7 +61334,8 @@
                   "secret_epoch_unavailable",
                   "secret_resolver_not_installed",
                   "provider_execution_error",
-                  "provider_completion_not_durable"
+                  "provider_completion_not_durable",
+                  "provider_runtime_directory_unavailable"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -63807,7 +63811,8 @@
                   "secret_epoch_unavailable",
                   "secret_resolver_not_installed",
                   "provider_execution_error",
-                  "provider_completion_not_durable"
+                  "provider_completion_not_durable",
+                  "provider_runtime_directory_unavailable"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -66387,7 +66392,8 @@
                   "secret_epoch_unavailable",
                   "secret_resolver_not_installed",
                   "provider_execution_error",
-                  "provider_completion_not_durable"
+                  "provider_completion_not_durable",
+                  "provider_runtime_directory_unavailable"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -69249,7 +69255,8 @@
                   "secret_epoch_unavailable",
                   "secret_resolver_not_installed",
                   "provider_execution_error",
-                  "provider_completion_not_durable"
+                  "provider_completion_not_durable",
+                  "provider_runtime_directory_unavailable"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -81191,7 +81198,8 @@
                   "provider_process_lease_echo_failed",
                   "provider_process_lease_echo_mismatch",
                   "provider_process_group_survived_recovery",
-                  "provider_runtime_recovery_failed"
+                  "provider_runtime_recovery_failed",
+                  "provider_runtime_directory_unavailable"
                 ],
                 "type": "string"
               },
@@ -81277,7 +81285,8 @@
                   "provider_process_lease_echo_failed",
                   "provider_process_lease_echo_mismatch",
                   "provider_process_group_survived_recovery",
-                  "provider_runtime_recovery_failed"
+                  "provider_runtime_recovery_failed",
+                  "provider_runtime_directory_unavailable"
                 ],
                 "type": "string"
               },
@@ -105282,7 +105291,8 @@
                       "provider_process_lease_echo_failed",
                       "provider_process_lease_echo_mismatch",
                       "provider_process_group_survived_recovery",
-                      "provider_runtime_recovery_failed"
+                      "provider_runtime_recovery_failed",
+                      "provider_runtime_directory_unavailable"
                     ],
                     "type": "string"
                   },

@@ -226,8 +226,16 @@ def test_a_degraded_lane_refusal_preserves_its_typed_reason_at_projection(
     from cruxible_core.runtime.provider_runtime import _UnavailableProviderRuntimeInvoker
 
     invoker = _UnavailableProviderRuntimeInvoker(
-        code="provider_process_lease_invalid",
-        detail="provider_process_lease_invalid: too long",
+        refusal=ProviderLocalRuntimeRefused(
+            "provider_unavailable",
+            "Provider runtime is unavailable until operator recovery",
+            details={
+                "reason": {
+                    "code": "provider_process_lease_invalid",
+                    "detail": "provider_process_lease_invalid: too long",
+                }
+            },
+        )
     )
 
     accepted = _accepted_one_provider()

@@ -74,6 +74,8 @@ _MAPPING: dict[str, tuple[str, str]] = {
 }
 _LOCAL_MAPPING: dict[str, tuple[str, str]] = {
     "provider_unavailable": ("node_refusal", "executor"),
+    # The lane precondition is the operator's environment, not a fence fault.
+    "provider_runtime_directory_unavailable": ("operational", "deployment"),
     "secret_epoch_unavailable": ("operational", "custody"),
     "secret_resolver_not_installed": ("operational", "custody"),
     "secret_reference_invalid": ("node_refusal", "binding_input"),

@@ -514,6 +514,7 @@ ProviderLaneUnavailableCode: TypeAlias = Literal[
     "provider_process_lease_echo_mismatch",
     "provider_process_group_survived_recovery",
     "provider_runtime_recovery_failed",
+    "provider_runtime_directory_unavailable",
 ]
 
 

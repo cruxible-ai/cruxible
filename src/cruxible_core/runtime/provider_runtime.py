@@ -50,6 +50,7 @@ from cruxible_core.providers.provider_process_leases import (
     DEFAULT_PROVIDER_RECOVERY_AGGREGATE_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_SECRET_WRITER_JOIN_TIMEOUT_SECONDS,
     DEFAULT_PROVIDER_STDIN_WRITER_JOIN_TIMEOUT_SECONDS,
+    PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE,
     ProviderLocalRuntimeRefused,
     ProviderProcessFenceCodeV1,
     ProviderProcessLeaseStore,
@@ -351,6 +352,10 @@ class ProviderRuntimeOperator:
         self._last_observation_diagnostic: tuple[ProviderProcessFenceCodeV1, str] | None = None
         self.unavailable_code: ProviderLaneUnavailableCode | None = None
         self.unavailable_reason: str | None = None
+        # The lane precondition refusal, while the process lease store cannot
+        # find a private runtime directory: every Provider-backed refusal
+        # carries it (cause and repair) rather than the generic one.
+        self.environment_refusal: ProviderLocalRuntimeRefused | None = None
         self._lane_status_snapshot: tuple[
             Literal["available", "unavailable", "not_applicable"],
             ProviderLaneUnavailableCode | None,
@@ -417,8 +422,15 @@ class ProviderRuntimeOperator:
                 process_leases.paths("sha256:" + "0" * 64)
                 self.process_leases = process_leases
             except (OSError, ProviderLocalRuntimeRefused) as exc:
+                self.environment_refusal = (
+                    exc
+                    if isinstance(exc, ProviderLocalRuntimeRefused)
+                    and exc.code == PROVIDER_RUNTIME_DIRECTORY_UNAVAILABLE
+                    else None
+                )
                 self._mark_construction_failure("process lease store", exc)
             else:
+                self.environment_refusal = None
                 self._clear_construction_failure("process lease store")
         if "secret store" in selected:
             try:
@@ -494,7 +506,7 @@ class ProviderRuntimeOperator:
         exc: OSError | ProviderLocalRuntimeRefused,
     ) -> None:
         code = (
-            cast(ProviderProcessFenceCodeV1, exc.code)
+            cast(ProviderLaneUnavailableCode, exc.code)
             if isinstance(exc, ProviderLocalRuntimeRefused)
             else "provider_process_lease_invalid"
         )
@@ -761,10 +773,7 @@ class ProviderRuntimeOperator:
             if self.unavailable_reason is not None:
                 # Core built-ins run in-process and need none of what failed.
                 return BuiltinDispatchingInvoker(
-                    _UnavailableProviderRuntimeInvoker(
-                        code=self.unavailable_code or "provider_runtime_recovery_failed",
-                        detail=self.unavailable_reason,
-                    )
+                    _UnavailableProviderRuntimeInvoker(refusal=self.lane_refusal())
                 )
             assert self.process_leases is not None
         selected = tuple(
@@ -807,16 +816,7 @@ class ProviderRuntimeOperator:
         with self._lock:
             self._lazy_rearm_locked()
             if self.unavailable_reason is not None:
-                raise ProviderLocalRuntimeRefused(
-                    "provider_unavailable",
-                    "Provider runtime is unavailable until operator recovery",
-                    details={
-                        "reason": {
-                            "code": self.unavailable_code or "provider_runtime_recovery_failed",
-                            "detail": self.unavailable_reason,
-                        }
-                    },
-                )
+                raise self.lane_refusal()
             candidates = tuple(
                 deployment
                 for _digest, deployment in sorted(self.deployments.items())
@@ -840,20 +840,37 @@ class ProviderRuntimeOperator:
             "No operator deployment matches the accepted Line environment closure.",
         )
 
+    def lane_refusal(self) -> ProviderLocalRuntimeRefused:
+        """The refusal a Provider-backed operation carries while the lane is down.
+
+        The lane precondition (no private runtime directory) refuses as itself,
+        an operator-environment refusal naming its cause and repair; any other
+        failure refuses as ``provider_unavailable``. Both carry the lane reason.
+        """
+
+        with self._lock:
+            reason = {
+                "code": self.unavailable_code or "provider_runtime_recovery_failed",
+                "detail": self.unavailable_reason or "Provider process leases are unavailable",
+            }
+            environment = self.environment_refusal
+        if environment is not None:
+            return ProviderLocalRuntimeRefused(
+                environment.code,
+                environment.refusal_message,
+                details={"reason": reason},
+            )
+        return ProviderLocalRuntimeRefused(
+            "provider_unavailable",
+            "Provider runtime is unavailable until operator recovery",
+            details={"reason": reason},
+        )
+
     def _begin_invocation(self) -> None:
         with self._lock:
             self._lazy_rearm_locked()
             if self.unavailable_reason is not None:
-                raise ProviderLocalRuntimeRefused(
-                    "provider_unavailable",
-                    "Provider runtime is unavailable until operator recovery",
-                    details={
-                        "reason": {
-                            "code": self.unavailable_code or "provider_runtime_recovery_failed",
-                            "detail": self.unavailable_reason,
-                        }
-                    },
-                )
+                raise self.lane_refusal()
             self._in_flight += 1
 
     def _end_invocation(self) -> None:
@@ -963,27 +980,25 @@ class _OperatorBoundProviderRuntimeInvoker:
 class _UnavailableProviderRuntimeInvoker:
     """Refusing invoker used when startup fences degrade the Provider lane."""
 
-    def __init__(self, *, code: ProviderLaneUnavailableCode, detail: str) -> None:
-        self.code = code
-        self.detail = detail
+    def __init__(self, *, refusal: ProviderLocalRuntimeRefused) -> None:
+        self.refusal = refusal
 
     @property
-    def reason(self) -> dict[str, str]:
-        return {"code": self.code, "detail": self.detail}
+    def reason(self) -> object:
+        return self.refusal.details["reason"]
+
+    def _refuse(self) -> ProviderLocalRuntimeRefused:
+        return ProviderLocalRuntimeRefused(
+            self.refusal.code,
+            self.refusal.refusal_message,
+            details=dict(self.refusal.details),
+        )
 
     def bind_provider(self, *, occurrence: object) -> object:
-        raise ProviderLocalRuntimeRefused(
-            "provider_unavailable",
-            "Provider runtime is unavailable until operator recovery",
-            details={"reason": self.reason},
-        )
+        raise self._refuse()
 
     def invoke_provider(self, **_kwargs: object) -> object:
-        raise ProviderLocalRuntimeRefused(
-            "provider_unavailable",
-            "Provider runtime is unavailable until operator recovery",
-            details={"reason": self.reason},
-        )
+        raise self._refuse()
 
 
 __all__ = [

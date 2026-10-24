@@ -708,6 +708,26 @@ def _sigterm_unwinds() -> Iterator[None]:
         signal.signal(signal.SIGTERM, previous)
 
 
+def provider_lane_start_warning() -> str | None:
+    """Say, at start, that the Provider lane's precondition is unmet, with its repair.
+
+    The precondition is checked once, when ``create_app`` builds the Provider
+    operator: a private runtime directory short enough for the control
+    sockets. The daemon still starts (a warning, not a refusal) because only
+    installed Provider code needs the lane; reads, writes, proposals and the
+    core built-ins are served without it. ``server status`` keeps reporting it.
+    """
+
+    operator = get_playbill_manager().cached_provider_runtime_operator()
+    refusal = operator.environment_refusal
+    if refusal is None or operator.lane_status()[0] != "unavailable":
+        return None
+    return (
+        "Provider lane unavailable; Provider-backed kit add and Procedure and Line "
+        f"runs will refuse until it is repaired, everything else is served: {refusal}"
+    )
+
+
 def _serve(resolved_socket: str | None, *, bootstrap_secret_file: Path | None = None) -> None:
     """Start uvicorn under an already-held state-root lock."""
     enable_fatal_fault_handler()
@@ -755,6 +775,9 @@ def _serve(resolved_socket: str | None, *, bootstrap_secret_file: Path | None = 
         "daemon_start", instance_id=None, instances=len(registry.list_instances())
     ):
         app = create_app()
+    lane_warning = provider_lane_start_warning()
+    if lane_warning is not None:
+        print(f"Warning: {lane_warning}", file=sys.stderr)
 
     if resolved_socket:
         socket_file = Path(resolved_socket)
