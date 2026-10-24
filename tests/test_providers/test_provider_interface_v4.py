@@ -197,3 +197,34 @@ def test_v3_read_format_retains_its_original_bytes_and_none_effect():
     assert provider_interface_digest(parsed) == digest
     assert parsed.effect_class == "none"
     assert provider_effect_class(parsed) == "pure"
+
+
+def test_install_name_version_lookup_does_not_grow_with_instance():
+    from collections.abc import Mapping
+
+    current = registration()
+    path = provider_interface_path(current.identity.name)
+    document = package_document(definition())
+    observed = []
+
+    class CountedTree(Mapping):
+        def __init__(self, size):
+            self.values = {f"unrelated/{index}.json": b"unread" for index in range(size)}
+            self.values[path] = render_provider_interface(current)
+            self.reads = []
+
+        def __len__(self):
+            return len(self.values)
+
+        def __iter__(self):
+            raise AssertionError("install must seek the named version without scanning the tree")
+
+        def __getitem__(self, key):
+            self.reads.append(key)
+            return self.values[key]
+
+    for size in (32, 320):
+        tree = CountedTree(size)
+        assert _interface_bindings(tree, document) == ((current, True),)
+        observed.append(tree.reads)
+    assert observed == [[path], [path]]

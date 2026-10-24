@@ -73,6 +73,7 @@ from cruxible_client.contracts.laws import (
     PROVIDER_INTERFACE_ACCEPTANCE_LAW,
     PROVIDER_INTERFACE_CONTRACT_ACCEPTANCE_LAW,
     PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
+    PROVIDER_INTERFACE_V4_ACCEPTANCE_LAW,
     PROVIDER_PACKAGE_UPGRADE_LAW,
     PROVIDER_V2_ACCEPTANCE_LAW,
     PROVIDER_V3_ACCEPTANCE_LAW,
@@ -130,6 +131,13 @@ LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        PROVIDER_INTERFACE_V4_ACCEPTANCE_LAW,
+        "cruxible.provider-interface.v4",
+        "cruxible-provider-interface-v4",
+        1,
+        "sha256:aa12a794aa6509ec4cd4c23d6c55156dbd00d20904efee2677e719227d2ed2d3",
+    ),
     (
         PROVIDER_BUILD_ACCEPTANCE_LAW,
         "cruxible.provider.v4",
