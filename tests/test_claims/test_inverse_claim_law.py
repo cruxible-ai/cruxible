@@ -56,13 +56,9 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.subjects import (
@@ -97,7 +93,6 @@ def _rule(rule_id: str) -> ClaimEvidenceAdmissionRule:
                 role="capture-contract", target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity
             ),
         ),
-        evidence_kinds=("self_asserted",),
         admission="direct",
         subject_binding="exact_claim_subject",
     )

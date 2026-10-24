@@ -49,15 +49,11 @@ from cruxible_client.contracts.kits import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicy,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
@@ -940,7 +936,6 @@ def _identity_rule_type(predicate: str, contract: CaptureContract) -> ClaimType:
                         capture_contracts=(
                             ArtifactRef(role="capture-contract", target=contract.identity),
                         ),
-                        evidence_kinds=("database_record",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

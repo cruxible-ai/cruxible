@@ -52,16 +52,12 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV2,
+    ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV2,
     EvidenceAdmissionInput,
     evaluate_claim_evidence_admission,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.proposal_models import ProposalResult
 from cruxible_client.contracts.subjects import render_subject, subject_path
@@ -112,7 +108,6 @@ def _identity_rule(*identities: ArtifactIdentity) -> ClaimEvidenceAdmissionRule:
         capture_contracts=tuple(
             ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=identity) for identity in identities
         ),
-        evidence_kinds=("self_asserted",),
         admission="direct",
         subject_binding="exact_claim_subject",
     )
