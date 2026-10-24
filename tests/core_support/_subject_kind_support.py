@@ -110,7 +110,21 @@ def core_assigned(
                 continue
             predicate = f"{kind}.slug"
             if claim_type_path(predicate) not in tree and claim_type_path(predicate) not in updates:
-                members.append(ClaimTypeAuthoringPayload(claim_type=slug_claim_type(kind)))
+                slug = slug_claim_type(kind)
+                from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+                if head.compiler != LIGHT_ARTIFACTS_COMPILER:
+                    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
+
+                    policy = slug.evidence_admission_policy.model_dump(mode="json")
+                    policy["tag"] = "playbill-claim-evidence-admission-policy-v3"
+                    for rule in policy["rules"]:
+                        rule["evidence_kinds"] = ["self_asserted"]
+                        for ref in rule["capture_contracts"]:
+                            ref.pop("logical_sources", None)
+                    legacy_policy = ClaimEvidenceAdmissionPolicyV3.model_validate(policy)
+                    slug = slug.model_copy(update={"evidence_admission_policy": legacy_policy})
+                members.append(ClaimTypeAuthoringPayload(claim_type=slug))
             members.append(
                 SubjectKindAuthoringPayload(name=kind, keys=(predicate,), uniqueness="unique")
             )

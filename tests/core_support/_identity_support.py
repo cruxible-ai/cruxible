@@ -26,13 +26,9 @@ from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, re
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
-)
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -87,7 +83,6 @@ def identity_claim_type(
                                 target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
                             ),
                         ),
-                        evidence_kinds=("self_asserted",),
                         admission="direct",
                         subject_binding="exact_claim_subject",
                     ),

@@ -322,3 +322,85 @@ def test_v3_rules_keep_each_v1_contract_kind_verdict_and_basis(tmp_path, ambiguo
         else ("database_record", "eligible", "direct", None),
         ("other", "eligible", "origin_only", None),
     ]
+
+
+@pytest.mark.parametrize("revision", [33, 34, 35, 36])
+@pytest.mark.parametrize("policy_version", [3, 4])
+def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, policy_version):
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_client.contracts.errors import FormatError
+    from cruxible_core.compiler.compiler import (
+        CLAIM_REBIND_COMPILER,
+        LIGHT_ARTIFACTS_COMPILER,
+        PROVIDER_BUILDS_COMPILER,
+        SUBJECT_IDENTITY_COMPILER,
+    )
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from tests.core_support.legacy_capture_builders import initialize_legacy_local
+    from tests.test_claims.test_claims import TIMESTAMP, _claim_type
+
+    compiler = {
+        33: SUBJECT_IDENTITY_COMPILER,
+        34: PROVIDER_BUILDS_COMPILER,
+        35: CLAIM_REBIND_COMPILER,
+        36: LIGHT_ARTIFACTS_COMPILER,
+    }[revision]
+    instance, _owner = initialize_legacy_local(tmp_path, compiler=compiler)
+    if policy_version == 4:
+        policy = ClaimEvidenceAdmissionPolicy(
+            rules=(
+                ClaimEvidenceAdmissionRule(
+                    **_rule(
+                        capture_contracts=[
+                            {"contract": "test.capture", "logical_sources": ["osv.record"]}
+                        ]
+                    )
+                ),
+            )
+        )
+    else:
+        policy = ClaimEvidenceAdmissionPolicyV3(
+            rules=(
+                ClaimEvidenceAdmissionRuleV3(
+                    **_rule(
+                        capture_contracts=[
+                            {
+                                "role": "capture-contract",
+                                "target": {"kind": "CaptureContract", "name": "test.capture"},
+                            }
+                        ],
+                        evidence_kinds=("observed",),
+                    )
+                ),
+            )
+        )
+    claim_type = _claim_type().model_copy(
+        update={
+            "artifact_format": "playbill-claim-type-v7",
+            "evidence_requirement": "captured",
+            "revision_evidence": "replace",
+            "evidence_admission_policy": policy,
+        }
+    )
+    base = instance.accepted_coordinate()
+    tree = {
+        **instance.tree_at(base.git_oid),
+        claim_type_path(claim_type.predicate): render_claim_type(claim_type),
+    }
+
+    def submit():
+        return instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=ProposalAdmissionRequest(
+                target_ref="refs/proposals/owner/policy-format", proposed_base_oid=base.git_oid
+            ),
+            candidate_tree=tree,
+            timestamp=TIMESTAMP,
+        )
+
+    if (revision == 36) != (policy_version == 4):
+        with pytest.raises(FormatError, match="upgrade the compiler"):
+            submit()
+    else:
+        result = submit()
+        assert result.candidate is not None, result.evaluation.diagnostics

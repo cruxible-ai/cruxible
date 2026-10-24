@@ -608,7 +608,7 @@ def _move_to_v7(
 ) -> None:
     """Accept a ClaimType v7 successor of one write-vocabulary field."""
 
-    from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactRef
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.captures import capture_contract_digest
     from cruxible_client.contracts.claim_types import (
         ClaimType,
@@ -617,13 +617,8 @@ def _move_to_v7(
         render_claim_type,
     )
     from cruxible_client.contracts.policies import (
-        CAPTURE_CONTRACT_REF_ROLE,
-    )
-    from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
-    )
-    from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
     )
     from cruxible_core.proposals.proposals import ProposalAdmissionRequest
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
@@ -644,10 +639,7 @@ def _move_to_v7(
                     ClaimEvidenceAdmissionRule(
                         rule_id=rule.rule_id,
                         claim_roles=rule.claim_roles,
-                        capture_contracts=(
-                            ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=contract.identity),
-                        ),
-                        evidence_kinds=rule.evidence_kinds,
+                        capture_contracts=({"contract": contract.identity.name},),
                         admission=rule.admission,
                         subject_binding=rule.subject_binding,
                     ),

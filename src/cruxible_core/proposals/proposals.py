@@ -3720,6 +3720,21 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         TRIGGER_CAPTURE_COMPILER,
     )
 
+    if context.historical_law_coordinate is None and claim_type.evidence_admission_policy.tag in {
+        "playbill-claim-evidence-admission-policy-v3",
+        "cruxible-claim-evidence-admission-policy-v4",
+    }:
+        light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+        if light != (
+            claim_type.evidence_admission_policy.tag
+            == "cruxible-claim-evidence-admission-policy-v4"
+        ):
+            raise FormatError(
+                "new identity evidence policies require v4 on compiler revision 36 "
+                "and v3 below it; "
+                "upgrade the compiler and state evidence_admission_policy explicitly"
+            )
+
     if context.historical_law_coordinate is None and context.current.compiler in {
         CLAIM_EVIDENCE_COMPILER,
         SOURCE_CHECKED_COMPILER,
