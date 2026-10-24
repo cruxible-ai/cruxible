@@ -29,3 +29,9 @@ def http_contract(
             name=name, shape="http_response", replay=replay, max_bytes=max_bytes
         )
     )
+
+
+def procedure_contract(*, name="test.procedure-output", max_bytes=4096) -> CaptureContract:
+    return lower_capture_contract_input(
+        CaptureContractInputRecord(name=name, shape="procedure_output", max_bytes=max_bytes)
+    )

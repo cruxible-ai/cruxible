@@ -65,6 +65,7 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
+from tests.core_support._light_capture_support import procedure_contract
 from tests.core_support._light_capture_support import record_contract as capture_contract
 from tests.core_support._subject_kind_support import bare_slug_claim_type, create_by_key
 from tests.support.procedures import MAX_WALL_CLOCK, RUN_WALL_CLOCK
@@ -212,6 +213,7 @@ def _procedure_definition(
     interface: dict[str, Any],
     provider: dict[str, Any],
     contract_pin: ArtifactPin,
+    output_contract_pin: ArtifactPin,
     workspace: Path,
     terminal_kind: str = "propose_change_set",
 ) -> ProcedureDefinition:
@@ -229,7 +231,7 @@ def _procedure_definition(
     request = WorkspaceFileSourceRequestV2(
         logical_source="commerce.production.orders",
         relative_path=RELATIVE_PATH,
-        coordinate_type="postgres-lsn-v1",
+        coordinate_type="database-snapshot-v1",
         coordinate={"lsn": "workspace"},
         selector_type="relation-primary-key-v1",
         selector={"id": 7, "relation": "orders"},
@@ -277,7 +279,7 @@ def _procedure_definition(
             (
                 CaptureEgressNode(
                     node_id="propose",
-                    capture_contract=contract_pin,
+                    capture_contract=output_contract_pin,
                     input="$steps.result",
                     result="$steps.result",
                 )
@@ -421,10 +423,17 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         target=contract.identity,
         artifact_digest=capture_contract_digest(contract).tagged,
     )
+    emission_contract = procedure_contract()
+    output_contract_pin = ArtifactPin(
+        role="capture-contract",
+        target=emission_contract.identity,
+        artifact_digest=capture_contract_digest(emission_contract).tagged,
+    )
     definition = _procedure_definition(
         interface=interface,
         provider=provider,
         contract_pin=contract_pin,
+        output_contract_pin=output_contract_pin,
         workspace=workspace,
         terminal_kind=terminal_kind,
     )
@@ -440,7 +449,11 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         },
         {
             "tag": "playbill-claim-type-authoring-payload-v1",
-            "claim_type": _claim_type(contract_pin.artifact_digest).model_dump(mode="json"),
+            "claim_type": _claim_type(
+                output_contract_pin.artifact_digest
+                if terminal_kind == "emit_capture"
+                else contract_pin.artifact_digest
+            ).model_dump(mode="json"),
         },
         # Advisories are named by their slug; core creates this one by it.
         {
@@ -486,6 +499,14 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         AuthoringChangeSetMember,
         authoring_member_identity,
     )
+
+    if terminal_kind == "emit_capture":
+        members.append(
+            {
+                "tag": "playbill-capture-contract-authoring-payload-v1",
+                "capture_contract": emission_contract.model_dump(mode="json"),
+            }
+        )
 
     adapter = TypeAdapter(AuthoringChangeSetMember)
     members.sort(

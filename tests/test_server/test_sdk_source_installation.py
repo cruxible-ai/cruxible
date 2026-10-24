@@ -30,7 +30,7 @@ from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.provider_wheels import install_provider_wheel
-from tests.core_support._light_capture_support import http_contract
+from tests.core_support._light_capture_support import http_contract, procedure_contract
 from tests.core_support._subject_kind_support import declare_by_slug
 from tests.support.provider_checkout import checkout_predates_web_fetch_material
 from tests.test_procedures.test_procedure_proposal_delivery import (
@@ -116,10 +116,12 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
 
     contract = http_contract(name="test.web")
+    output_contract = procedure_contract(name="test.web-output", max_bytes=1_048_576)
     policy = _policy(name="source-reads", input_name="observation")
     accept(
         pb.changes(rationale="Observe a typed HTTP response.")
         .capture_contract(contract)
+        .capture_contract(output_contract)
         .acquisition_policy(policy)
     )
 
@@ -162,7 +164,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         )
         return emit_capture(
             observation,
-            capture_contract="test.web",
+            capture_contract="test.web-output",
             result=Result.value(
                 status=observation.retrieved.status_code, text=observation.derived.text
             ),
@@ -179,7 +181,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
     # Core assigns a new Subject's id from its declared kind's key (identity D1).
     declare_by_slug(knowledge, SUBJECT_KIND)
     knowledge.subject(pb.new_subject(SUBJECT_KIND, key=SUBJECT_ID))
-    definition = _claim_type(capture_contract_digest(contract).tagged)
+    definition = _claim_type(capture_contract_digest(output_contract).tagged)
     observed_rule = ClaimEvidenceAdmissionRuleV2.model_validate(
         definition.evidence_admission_policy.rules[0].model_dump(
             exclude={"tag", "allowed_reducer_digests"}
