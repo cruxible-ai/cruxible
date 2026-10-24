@@ -284,7 +284,7 @@ def test_journal_proof_payloads_are_rechecked_warm_as_cold(
         return verify_capture(
             capture,
             store=store,
-            contract=world.contract,
+            contract=world.contract_for(envelope),
             producer_artifact_digests={
                 envelope.producer.qualified: envelope.run_coordinate.executable_digest
             },
@@ -334,7 +334,7 @@ def test_a_refusal_is_never_kept_past_its_proof_body_returning(
         return verify_capture(
             capture,
             store=store,
-            contract=world.contract,
+            contract=world.contract_for(envelope),
             producer_artifact_digests={
                 envelope.producer.qualified: envelope.run_coordinate.executable_digest
             },
@@ -396,7 +396,7 @@ def test_request_reuses_proof_closure_until_a_recorded_body_change(
         return verify_capture(
             capture,
             store=store,
-            contract=world.contract,
+            contract=world.contract_for(envelope),
             producer_artifact_digests={
                 envelope.producer.qualified: envelope.run_coordinate.executable_digest
             },

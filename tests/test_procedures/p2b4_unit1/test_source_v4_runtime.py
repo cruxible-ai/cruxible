@@ -108,8 +108,11 @@ from tests.test_providers.test_provider_invocation_journal import (
 
 
 class _SourceInvoker:
-    def __init__(self, *, observed_at, result_size: int = 3) -> None:  # type: ignore[no-untyped-def]
+    def __init__(
+        self, *, observed_at, result_size: int = 3, coordinate_type="postgres-lsn-v1"
+    ) -> None:  # type: ignore[no-untyped-def]
         self.observed_at = observed_at
+        self.coordinate_type = coordinate_type
         self.result_size = result_size
         self.bind_calls = 0
         self.spawn_calls = 0
@@ -131,7 +134,7 @@ class _SourceInvoker:
         body = canonical_bytes({"size": self.result_size})
         output = ProviderResultToExternalCapture(
             source_identity="commerce.production.orders",
-            coordinate_type="postgres-lsn-v1",
+            coordinate_type=self.coordinate_type,
             coordinate={"lsn": "0/16B6C50"},
             selector_type="relation-primary-key-v1",
             selector={"id": self.result_size, "relation": "orders"},
@@ -164,6 +167,8 @@ def _source_fixture(
     rule: InputAcquisitionRule | None = None,
     include_terminal: bool = False,
     capture_budget: int | None = None,
+    contract=None,
+    terminal_contract=None,
 ) -> tuple[
     AcceptedProcedure,
     PreparedProcedureRunV9,
@@ -178,11 +183,17 @@ def _source_fixture(
     provider_prepared, fixture = _prepared_acquisition_run(provider_accepted, tmp_path)
     provider_node = provider_accepted.procedure.definition.nodes[0]
     assert isinstance(provider_node, CallNode)
-    contract = capture_contract()
+    contract = capture_contract() if contract is None else contract
     contract_pin = ArtifactPin(
         role="capture-contract",
         target=contract.identity,
         artifact_digest=capture_contract_digest(contract).tagged,
+    )
+    terminal_contract = contract if terminal_contract is None else terminal_contract
+    terminal_pin = ArtifactPin(
+        role="capture-contract",
+        target=terminal_contract.identity,
+        artifact_digest=capture_contract_digest(terminal_contract).tagged,
     )
     source_node = SourceNode(
         node_id=provider_node.node_id,
@@ -200,7 +211,7 @@ def _source_fixture(
             source_node,
             CaptureEgressNode(
                 node_id="capture-output",
-                capture_contract=contract_pin,
+                capture_contract=terminal_pin,
                 input="$steps.source_result",
                 result="$steps.source_result",
             ),
@@ -213,7 +224,11 @@ def _source_fixture(
     )
     pins = tuple(
         sorted(
-            (*provider_accepted.procedure.pins, contract_pin),
+            (
+                *provider_accepted.procedure.pins,
+                contract_pin,
+                *((terminal_pin,) if terminal_pin != contract_pin else ()),
+            ),
             key=lambda pin: (
                 pin.role.encode("utf-8"),
                 pin.target.qualified.encode("utf-8"),
