@@ -60,6 +60,7 @@ from cruxible_client.contracts.laws import (
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
     GOVERNED_TRIGGERS_UPGRADE_LAW,
+    LIGHT_ACQUISITION_POLICY_LAW,
     LIGHT_ARTIFACTS_UPGRADE_LAW,
     LIGHT_CAPTURE_CONTRACT_LAW,
     LINE_V6_ACCEPTANCE_LAW,
@@ -342,6 +343,13 @@ LAW_COORDINATES: tuple[
         "playbill-provider-interface-v1",
         1,
         "sha256:f42b09db7656931ac3c42d4f1ac526877bc3346bb83da79547e696f9c01f1636",
+    ),
+    (
+        LIGHT_ACQUISITION_POLICY_LAW,
+        "playbill.source-acquisition-policy.v2",
+        "playbill-source-acquisition-policy-v2",
+        1,
+        "sha256:6b6ed113d242a73474b40c7b73aa6be6ddccdaefad3bf1d4054fc7120bc9b33a",
     ),
     (
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
