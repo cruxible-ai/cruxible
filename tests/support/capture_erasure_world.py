@@ -53,7 +53,7 @@ def _severity_type(contract: CaptureContract) -> ClaimType:
     return ClaimType(
         artifact_format="playbill-claim-type-v7",
         evidence_requirement="captured",
-        revision_evidence="replace",
+        revision_evidence="accumulate",
         identity=ArtifactIdentity(kind="ClaimType", name=FIELD),
         predicate=FIELD,
         allowed_subject_kinds=(KIND,),
