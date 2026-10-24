@@ -42,13 +42,17 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContract,
+    CaptureContractAny as CaptureContract,
+)
+from cruxible_client.contracts.captures import (
     CaptureObjectStoreProtocol,
     CaptureRunCoordinate,
     CaptureRunCoordinateV1,
     build_cas_capture,
     build_procedure_capture_v2,
     capture_contract_digest,
+    contract_materialization_modes,
+    contract_source_kinds,
 )
 from cruxible_client.contracts.errors import FormatError, ProjectionIntegrityError
 from cruxible_client.contracts.procedure_mandates import (
@@ -1541,10 +1545,9 @@ class CaptureTerminalEgressSink:
         contract = self.contracts.get(pin.artifact_digest)
         if contract is None or capture_contract_digest(contract).tagged != pin.artifact_digest:
             raise TerminalEgressError("no accepted CaptureContract reproduces this egress pin")
-        if (
-            "cas" not in contract.allowed_source_kinds
-            or "cas" not in contract.allowed_materialization_modes
-        ):
+        if "cas" not in contract_source_kinds(
+            contract
+        ) or "cas" not in contract_materialization_modes(contract):
             raise TerminalEgressError("emit_capture requires a CaptureContract permitting CAS")
         if len(request.items) > contract.selection_budget.max_items or any(
             len(canonical_bytes(item.value)) > contract.selection_budget.max_bytes

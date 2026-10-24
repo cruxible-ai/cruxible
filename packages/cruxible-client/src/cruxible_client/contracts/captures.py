@@ -210,7 +210,7 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes]:
     return pin.role.encode("utf-8"), pin.target.qualified.encode("utf-8")
 
 
-class CaptureContract(_StrictCaptureModel):
+class CaptureContractV1(_StrictCaptureModel):
     artifact_format: Literal["playbill-capture-contract-v1"] = "playbill-capture-contract-v1"
     identity: ArtifactIdentity
     allowed_source_kinds: tuple[Literal["ledger", "cas", "external"], ...]
@@ -275,7 +275,7 @@ class CaptureContract(_StrictCaptureModel):
         return value
 
     @model_validator(mode="after")
-    def _contract_shape(self) -> "CaptureContract":
+    def _contract_shape(self) -> "CaptureContractV1":
         if self.identity.kind != "CaptureContract":
             raise ValueError("CaptureContract identity kind must be CaptureContract")
         if not _CONTRACT_ID_RE.fullmatch(self.identity.name):
@@ -292,6 +292,200 @@ class CaptureContract(_StrictCaptureModel):
         ):
             raise ValueError("external/none materialization requires an external source kind")
         return self
+
+
+CaptureShape = Literal["http_response", "procedure_output", "foreign_span", "database_snapshot"]
+CaptureReplay = Literal["exact", "attested"]
+
+
+class CaptureContractComponents(_StrictCaptureModel):
+    coordinate_schema_pins: tuple[ArtifactPin, ...]
+    selector_schema_pins: tuple[ArtifactPin, ...]
+    commitment_canonicalizer: ArtifactPin
+    replay_policy_digest: str
+    provenance_rule_digest: str
+    source_subject_mapping_digest: str
+    pins: tuple[ArtifactPin, ...] = ()
+
+    @field_validator("coordinate_schema_pins", "selector_schema_pins", "pins")
+    @classmethod
+    def _pins(cls, value: tuple[ArtifactPin, ...], info: object) -> tuple[ArtifactPin, ...]:
+        return CaptureContractV1._pins(value, info)
+
+    @field_validator(
+        "replay_policy_digest", "provenance_rule_digest", "source_subject_mapping_digest"
+    )
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return CaptureContractV1._digest(value)
+
+
+class CaptureContract(_StrictCaptureModel):
+    """Current stored contract: shape and policy, with frozen expanded components."""
+
+    artifact_format: Literal["cruxible-capture-contract-v2"] = "cruxible-capture-contract-v2"
+    identity: ArtifactIdentity
+    shape: CaptureShape | Literal["coordinator_self_source"]
+    replay: CaptureReplay
+    components: CaptureContractComponents
+    selection_budget: CaptureSelectionBudget
+    retention_erasure_policy: CaptureRetentionErasurePolicy
+    epistemic_grade: Literal["observed", "derived", "predicted"] = "observed"
+    lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+
+    @model_validator(mode="after")
+    def _shape(self) -> "CaptureContract":
+        if self.identity.kind != "CaptureContract" or not _CONTRACT_ID_RE.fullmatch(
+            self.identity.name
+        ):
+            raise ValueError(
+                "CaptureContract identity must name a path-addressable CaptureContract"
+            )
+        if (
+            self.shape == "coordinator_self_source"
+            and self.identity.name != COORDINATOR_SELF_SOURCE_CONTRACT_ID
+        ):
+            raise ValueError(
+                "coordinator self-source is a reserved constant, not an authored shape"
+            )
+        if self.epistemic_grade == "derived" and self.shape != "procedure_output":
+            raise ValueError("derived grade requires procedure_output")
+        return self
+
+    @property
+    def coordinate_schema_pins(self) -> tuple[ArtifactPin, ...]:
+        return self.components.coordinate_schema_pins
+
+    @property
+    def selector_schema_pins(self) -> tuple[ArtifactPin, ...]:
+        return self.components.selector_schema_pins
+
+    @property
+    def commitment_canonicalizer(self) -> ArtifactPin:
+        return self.components.commitment_canonicalizer
+
+    @property
+    def replay_policy_digest(self) -> str:
+        return self.components.replay_policy_digest
+
+    @property
+    def provenance_rule_digest(self) -> str:
+        return self.components.provenance_rule_digest
+
+    @property
+    def source_subject_mapping_digest(self) -> str:
+        return self.components.source_subject_mapping_digest
+
+    @property
+    def pins(self) -> tuple[ArtifactPin, ...]:
+        return self.components.pins
+
+
+CaptureContractAny = CaptureContractV1 | CaptureContract
+
+
+def contract_source_kinds(contract: CaptureContractAny) -> tuple[str, ...]:
+    if isinstance(contract, CaptureContractV1):
+        return contract.allowed_source_kinds
+    return {
+        "http_response": ("external",),
+        "procedure_output": ("cas",),
+        "foreign_span": ("external",),
+        "database_snapshot": ("external", "ledger"),
+        "coordinator_self_source": ("cas",),
+    }[contract.shape]
+
+
+def contract_materialization_modes(contract: CaptureContractAny) -> tuple[str, ...]:
+    if isinstance(contract, CaptureContractV1):
+        return contract.allowed_materialization_modes
+    return ("cas", "ledger") if contract.shape == "database_snapshot" else ("cas",)
+
+
+def capture_shape_components(
+    shape: CaptureShape, replay: CaptureReplay
+) -> CaptureContractComponents:
+    """Lower the closed engine vocabulary once; accepted bytes keep the expansion."""
+    coordinate, selector, canonicalizer, provenance, mapping = {
+        "http_response": (
+            ("http-response-v1",),
+            ("whole-response-v1",),
+            "canonical-json-v1",
+            "playbill.external.daemon-fetched-v1",
+            "playbill.external.record-subject-v1",
+        ),
+        "procedure_output": (
+            (),
+            (),
+            "canonical-json-v1",
+            "playbill.external.daemon-fetched-v1",
+            "playbill.external.record-subject-v1",
+        ),
+        "foreign_span": (
+            (FOREIGN_SOURCE_COORDINATE_TYPE,),
+            (FOREIGN_SOURCE_SELECTOR_TYPE,),
+            "sha256-bytes-v1",
+            FOREIGN_SOURCE_PROVENANCE_RULE,
+            FOREIGN_SOURCE_SUBJECT_MAPPING,
+        ),
+        "database_snapshot": (
+            ("database-snapshot-v1",),
+            ("query-result-v1", "relation-primary-key-v1"),
+            "canonical-json-v1",
+            "playbill.external.daemon-fetched-v1",
+            "playbill.external.record-subject-v1",
+        ),
+    }[shape]
+    replay_name = (
+        "playbill.external.exact-replay-v1" if replay == "exact" else FOREIGN_SOURCE_REPLAY_POLICY
+    )
+    pins = [
+        capture_component_pin("replay-policy", replay_name),
+        capture_component_pin("provenance-rule", provenance),
+        capture_component_pin("source-subject-mapping", mapping),
+    ]
+    if shape == "database_snapshot":
+        pins.extend(
+            (
+                capture_component_pin(
+                    "coordinate-grammar", "playbill.database-snapshot-coordinate-v1"
+                ),
+                capture_component_pin("proof-adapter", "playbill.database-snapshot-proof-v1"),
+            )
+        )
+    return CaptureContractComponents(
+        coordinate_schema_pins=tuple(
+            capture_component_pin("coordinate-schema", name) for name in coordinate
+        ),
+        selector_schema_pins=tuple(
+            capture_component_pin("selector-schema", name) for name in selector
+        ),
+        commitment_canonicalizer=capture_component_pin("commitment-canonicalizer", canonicalizer),
+        replay_policy_digest=pins[0].artifact_digest,
+        provenance_rule_digest=pins[1].artifact_digest,
+        source_subject_mapping_digest=pins[2].artifact_digest,
+        pins=tuple(sorted(pins, key=_pin_key)),
+    )
+
+
+def _light_builtin(
+    contract: CaptureContractV1,
+    *,
+    shape: CaptureShape | Literal["coordinator_self_source"],
+    replay: CaptureReplay,
+) -> CaptureContract:
+    return CaptureContract(
+        identity=contract.identity,
+        shape=shape,
+        replay=replay,
+        components=CaptureContractComponents.model_validate(
+            {name: getattr(contract, name) for name in CaptureContractComponents.model_fields}
+        ),
+        selection_budget=contract.selection_budget,
+        retention_erasure_policy=contract.retention_erasure_policy,
+        epistemic_grade=contract.epistemic_grade,
+        lifecycle=contract.lifecycle,
+    )
 
 
 def capture_component_pin(role: str, name: str) -> ArtifactPin:
@@ -358,7 +552,7 @@ CAPTURE_COMPONENTS = CaptureComponentRegistry(
 _ERASURE_RULE_PIN = capture_component_pin("erasure-rule", "playbill.capture-erasure-authority-v1")
 
 
-def authorize_erasure(contract: CaptureContract) -> CaptureContract:
+def authorize_erasure(contract: CaptureContractAny) -> CaptureContractAny:
     """Return ``contract`` declaring that its Captures' retained bodies may be erased.
 
     This is the one way to opt a CaptureContract into ``cruxible capture erase``:
@@ -382,16 +576,19 @@ def authorize_erasure(contract: CaptureContract) -> CaptureContract:
             key=_pin_key,
         )
     )
-    return CaptureContract.model_validate(
-        {
-            **contract.model_dump(mode="python"),
-            "retention_erasure_policy": policy.model_dump(mode="python"),
-            "pins": [pin.model_dump(mode="python") for pin in pins],
-        }
+    if isinstance(contract, CaptureContract):
+        return contract.model_copy(
+            update={
+                "retention_erasure_policy": policy,
+                "components": contract.components.model_copy(update={"pins": pins}),
+            }
+        )
+    return CaptureContractV1.model_validate(
+        {**contract.model_dump(mode="python"), "retention_erasure_policy": policy, "pins": pins}
     )
 
 
-DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContract(
+DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContractV1(
     identity=ArtifactIdentity(
         kind="CaptureContract",
         name=DIRECT_SELF_ASSERTED_CONTRACT_ID,
@@ -454,7 +651,7 @@ _COORDINATOR_MAPPING_PIN = capture_component_pin(
     COORDINATOR_SELF_SOURCE_SUBJECT_MAPPING,
 )
 
-COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT = CaptureContract(
+COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1 = CaptureContractV1(
     identity=ArtifactIdentity(
         kind="CaptureContract",
         name=COORDINATOR_SELF_SOURCE_CONTRACT_ID,
@@ -516,7 +713,7 @@ def foreign_source_contract_id(logical_source_identity: str) -> str:
     return contract_id
 
 
-def foreign_source_capture_contract(logical_source_identity: str) -> CaptureContract:
+def foreign_source_capture_contract_v1(logical_source_identity: str) -> CaptureContractV1:
     """Build the self-asserted CaptureContract governing one foreign logical source.
 
     Every component this contract names is registered in the compiler registry
@@ -532,7 +729,7 @@ def foreign_source_capture_contract(logical_source_identity: str) -> CaptureCont
     replay_pin = capture_component_pin("replay-policy", FOREIGN_SOURCE_REPLAY_POLICY)
     provenance_pin = capture_component_pin("provenance-rule", FOREIGN_SOURCE_PROVENANCE_RULE)
     mapping_pin = capture_component_pin("source-subject-mapping", FOREIGN_SOURCE_SUBJECT_MAPPING)
-    return CaptureContract(
+    return CaptureContractV1(
         identity=ArtifactIdentity(
             kind="CaptureContract",
             name=foreign_source_contract_id(logical_source_identity),
@@ -569,6 +766,52 @@ def foreign_source_capture_contract(logical_source_identity: str) -> CaptureCont
     )
 
 
+COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT = _light_builtin(
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1, shape="coordinator_self_source", replay="exact"
+)
+COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS = (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+)
+
+
+def foreign_source_capture_contract(logical_source_identity: str) -> CaptureContract:
+    return _light_builtin(
+        foreign_source_capture_contract_v1(logical_source_identity),
+        shape="foreign_span",
+        replay="attested",
+    )
+
+
+def is_coordinator_self_source_contract(contract: CaptureContractAny) -> bool:
+    return (
+        contract.model_copy(update={"lifecycle": ArtifactLifecycle()})
+        in COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS
+    )
+
+
+def builtin_contract_for_write(
+    current: CaptureContract, previous: CaptureContractAny | None
+) -> CaptureContract:
+    """Install a compatible v2 successor once; never rewrite evidence or Claims."""
+    if previous is None:
+        return current
+    if isinstance(previous, CaptureContract):
+        return previous
+    broken = capture_contract_successor_break(previous, current)
+    if broken is not None or previous.lifecycle.state != "live":
+        raise CaptureFormatError(
+            f"built-in contract cannot succeed {broken or 'retired profile'}; use a new name"
+        )
+    return current.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=capture_contract_digest(previous).tagged
+            )
+        }
+    )
+
+
 _SELF_ASSERTED_PROVENANCE_RULE_DIGESTS: frozenset[str] = frozenset(
     {
         DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.provenance_rule_digest,
@@ -578,7 +821,7 @@ _SELF_ASSERTED_PROVENANCE_RULE_DIGESTS: frozenset[str] = frozenset(
 )
 
 
-def capture_contract_is_self_asserted(contract: CaptureContract) -> bool:
+def capture_contract_is_self_asserted(contract: CaptureContractAny) -> bool:
     """Whether a contract's declared provenance rule is proposer-supplied.
 
     The grade follows the contract's own registered provenance rule rather than
@@ -599,7 +842,7 @@ def capture_contract_path(contract_id: str) -> str:
 
 
 def validate_capture_contract_path(
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     path: str,
     *,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
@@ -613,11 +856,11 @@ def validate_capture_contract_path(
     return path
 
 
-def render_capture_contract(contract: CaptureContract) -> bytes:
+def render_capture_contract(contract: CaptureContractAny) -> bytes:
     return pretty_canonical_bytes(contract.model_dump(mode="json"))
 
 
-_CAPTURE_CONTRACT_PARSES: ParseMemo[CaptureContract] = ParseMemo(
+_CAPTURE_CONTRACT_PARSES: ParseMemo[CaptureContractAny] = ParseMemo(
     capacity=1024, max_bytes=16 * 1024 * 1024
 )
 
@@ -627,7 +870,7 @@ def parse_capture_contract(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> CaptureContract:
+) -> CaptureContractAny:
     """Parse once per exact (path, codec, bytes); see ``content_memo``."""
     return _CAPTURE_CONTRACT_PARSES.parse(
         content, path, codec, lambda: _parse_capture_contract(content, path=path, codec=codec)
@@ -639,20 +882,20 @@ def _parse_capture_contract(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> CaptureContract:
+) -> CaptureContractAny:
     try:
         payload = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
         raise CaptureFormatError("CaptureContract is not strict JSON") from exc
-    if not isinstance(payload, dict) or payload.get("artifact_format") != (
-        "playbill-capture-contract-v1"
+    if not isinstance(payload, dict) or payload.get("artifact_format") not in (
+        {"playbill-capture-contract-v1", "cruxible-capture-contract-v2"}
     ):
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise CaptureFormatError(f"unsupported CaptureContract artifact format: {declared!r}")
     try:
-        contract = CaptureContract.model_validate(payload)
+        contract: CaptureContractAny = TypeAdapter(CaptureContractAny).validate_python(payload)
     except ValidationError as exc:
-        raise CaptureFormatError("CaptureContract failed strict v1 validation") from exc
+        raise CaptureFormatError("CaptureContract failed strict contract validation") from exc
     validate_capture_contract_path(contract, path, codec=codec)
     if artifact_bytes_for_path(render_capture_contract(contract), path, codec=codec) != content:
         raise CaptureFormatError("CaptureContract is not in canonical wire form")
@@ -660,7 +903,7 @@ def _parse_capture_contract(
 
 
 @sealed_memo
-def capture_contract_digest(contract: CaptureContract) -> ArtifactDigest:
+def capture_contract_digest(contract: CaptureContractAny) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
@@ -670,7 +913,7 @@ def capture_contract_digest(contract: CaptureContract) -> ArtifactDigest:
 
 class AcceptedCaptureContract(_StrictCaptureModel):
     path: str
-    contract: CaptureContract
+    contract: CaptureContractAny
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -729,8 +972,8 @@ _WIDEN_ON_SUCCESSION: tuple[str, ...] = (
 
 
 def capture_contract_successor_break(
-    previous: CaptureContract,
-    successor: CaptureContract,
+    previous: CaptureContractAny,
+    successor: CaptureContractAny,
 ) -> str | None:
     """Name the first field a live successor changes incompatibly, or None.
 
@@ -744,9 +987,19 @@ def capture_contract_successor_break(
     for name in _EQUAL_ON_SUCCESSION:
         if getattr(previous, name) != getattr(successor, name):
             return name
-    for name in _WIDEN_ON_SUCCESSION:
-        if not set(getattr(previous, name)).issubset(getattr(successor, name)):
-            return name
+    if isinstance(previous, CaptureContract) and isinstance(successor, CaptureContractV1):
+        return "artifact_format"
+    if isinstance(previous, CaptureContract) and isinstance(successor, CaptureContract):
+        if previous.shape != successor.shape or previous.replay != successor.replay:
+            return "shape/replay"
+    if isinstance(previous, CaptureContractV1) and isinstance(successor, CaptureContractV1):
+        for name in _WIDEN_ON_SUCCESSION:
+            if not set(getattr(previous, name)).issubset(getattr(successor, name)):
+                return name
+    elif contract_source_kinds(previous) != contract_source_kinds(successor):
+        return "allowed_source_kinds"
+    elif contract_materialization_modes(previous) != contract_materialization_modes(successor):
+        return "allowed_materialization_modes"
     for name in ("max_bytes", "max_rows", "max_items"):
         if getattr(successor.selection_budget, name) < getattr(previous.selection_budget, name):
             return f"selection_budget.{name}"
@@ -754,7 +1007,7 @@ def capture_contract_successor_break(
 
 
 def evaluate_capture_contract_law(
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     *,
     path: str,
     predecessor: AcceptedCaptureContract | None,
@@ -778,7 +1031,7 @@ def evaluate_capture_contract_law(
         )
     if (
         contract.identity.name == COORDINATOR_SELF_SOURCE_CONTRACT_ID
-        and contract != COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+        and not is_coordinator_self_source_contract(contract)
     ):
         return CaptureContractLawResult(
             verdict="refused",
@@ -853,6 +1106,24 @@ def evaluate_capture_contract_law(
                         ),
                     ),
                 )
+    if isinstance(contract, CaptureContract) and contract.shape != "coordinator_self_source":
+        expected = capture_shape_components(contract.shape, contract.replay)
+        if contract.retention_erasure_policy.erasure == "authorized_by_rule":
+            expected = expected.model_copy(
+                update={"pins": tuple(sorted((*expected.pins, _ERASURE_RULE_PIN), key=_pin_key))}
+            )
+        # Built-in foreign contracts retain their original identical decomposition.
+        if contract.components != expected:
+            return CaptureContractLawResult(
+                verdict="refused",
+                diagnostics=(
+                    _diagnostic(
+                        "cruxible.capture_contract.shape_components_mismatch",
+                        "Components must be the engine expansion of shape and replay; author the input record.",
+                        path=path,
+                    ),
+                ),
+            )
     registry_roles = {
         (pin.role, pin.artifact_digest)
         for pin in (
@@ -900,7 +1171,7 @@ def evaluate_capture_contract_law(
                 ),
             ),
         )
-    if "external" in contract.allowed_source_kinds and (
+    if "external" in contract_source_kinds(contract) and (
         not contract.coordinate_schema_pins or not contract.selector_schema_pins
     ):
         return CaptureContractLawResult(
@@ -1714,7 +1985,7 @@ class LedgerMaterialResolverProtocol(Protocol):
 
 
 class DirectCaptureBuildResult(_StrictCaptureModel):
-    contract: CaptureContract
+    contract: CaptureContractAny
     contract_digest: str
     envelope: CaptureEnvelopeV1
     capture_digest: str
@@ -1725,7 +1996,7 @@ class DirectCaptureBuildResult(_StrictCaptureModel):
 def capture_is_direct_self_source(
     envelope: CaptureEnvelopeAny,
     *,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     store: CaptureObjectStoreProtocol,
     claim_id: str,
 ) -> bool:
@@ -1761,13 +2032,13 @@ def capture_is_direct_self_source(
 def capture_is_coordinator_self_source(
     envelope: CaptureEnvelopeAny,
     *,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     claim_id: str,
 ) -> bool:
     """Recognize the mandatory-retained coordinator profile at its Claim binding."""
 
     return (
-        contract == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+        is_coordinator_self_source_contract(contract)
         and isinstance(envelope.source, CasSourceReference)
         and envelope.commitment.materialization == "cas"
         and envelope.run_coordinate.run_id == f"coordinator-self-source:{claim_id.casefold()}"
@@ -1779,7 +2050,7 @@ def capture_is_coordinator_self_source(
 def capture_is_direct_selection_bound(
     envelope: CaptureEnvelopeAny,
     *,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     claim_id: str,
 ) -> bool:
     """Recognize the direct-selection builder's Claim binding.
@@ -1814,7 +2085,7 @@ CaptureReuseClassification = Literal[
 def classify_capture_reuse(
     envelope: CaptureEnvelopeAny,
     *,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     store: CaptureObjectStoreProtocol,
     claim_id: str,
 ) -> CaptureReuseClassification:
@@ -1911,7 +2182,7 @@ def _direct_binding_digest(
 def _store_capture_envelope(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     envelope: CaptureEnvelopeV1,
     source_body_digest: str,
     source_body_materialized: bool,
@@ -1928,204 +2199,6 @@ def _store_capture_envelope(
         capture_digest=expected_capture_digest,
         source_body_digest=source_body_digest,
         source_body_materialized=source_body_materialized,
-    )
-
-
-def build_direct_claim_capture(
-    *,
-    store: CaptureObjectStoreProtocol,
-    actor_id: str,
-    claim_id: str,
-    value: object,
-    rationale: str,
-    observed_at: datetime,
-    accepted_coordinate: AcceptedCoordinate,
-    materialize_source: bool = True,
-) -> DirectCaptureBuildResult:
-    """Create one bounded self-asserted Capture from authenticated service inputs."""
-
-    source = DirectClaimSource(
-        authored_by=actor_id,
-        claim_id=claim_id,
-        value=value,
-        rationale=rationale,
-    )
-    source_bytes = _direct_source_bytes(source)
-    if len(source_bytes) > DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.selection_budget.max_bytes:
-        raise CaptureFormatError("direct Claim source exceeds its accepted byte budget")
-    source_digest = CasDigest(hashlib.sha256(source_bytes).hexdigest()).tagged
-    contract_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
-    binding_digest = _direct_binding_digest(
-        actor_id=actor_id,
-        accepted_coordinate=accepted_coordinate,
-    )
-    receipt_digest = typed_digest(
-        Sha256Value,
-        "playbill-direct-capture-receipt-v1",
-        {
-            "actor_id": actor_id,
-            "claim_id": claim_id,
-            "observed_at": _canonical_datetime(observed_at),
-            "source_digest": source_digest,
-        },
-    ).tagged
-    if materialize_source:
-        stored = store.store(source_bytes)
-        if stored.digest != source_digest:
-            raise CasError("direct source CAS digest did not reproduce")
-        source_reference: CasSourceReference | ExternalSourceReference = CasSourceReference(
-            content_digest=source_digest
-        )
-        commitment = EvidenceCommitment(
-            digest_kind="exact_bytes",
-            digest=source_digest,
-            byte_length=len(source_bytes),
-            materialization="cas",
-        )
-    else:
-        source_reference = ExternalSourceReference(
-            source_identity=DIRECT_SOURCE_IDENTITY,
-            producer_binding_digest=binding_digest,
-            coordinate_type="authenticated-request-v1",
-            coordinate={
-                "accepted_coordinate": accepted_coordinate.model_dump(mode="json"),
-                "observed_at": _canonical_datetime(observed_at),
-            },
-            selector_type="direct-claim-source-v1",
-            selector={"claim_id": claim_id},
-            replayability="attested_only",
-        )
-        commitment = EvidenceCommitment(
-            digest_kind="canonical_value",
-            digest=source_digest,
-            materialization="none",
-        )
-    envelope = CaptureEnvelopeV1(
-        capture_contract_digest=contract_digest,
-        source=source_reference,
-        commitment=commitment,
-        run_coordinate=CaptureRunCoordinateV1(
-            run_kind="provider",
-            run_id=f"direct:{claim_id.casefold()}",
-            bound_generation=accepted_coordinate.generation_root,
-            executable_identity=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity,
-            executable_digest=contract_digest,
-        ),
-        run_receipt_digest=receipt_digest,
-        producer=ArtifactIdentity(kind="Principal", name=actor_id),
-        producer_binding_digest=binding_digest,
-        observed_at=observed_at,
-    )
-    return _store_capture_envelope(
-        store=store,
-        contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-        envelope=envelope,
-        source_body_digest=source_digest,
-        source_body_materialized=materialize_source,
-    )
-
-
-def build_direct_claim_selection_capture(
-    *,
-    store: CaptureObjectStoreProtocol,
-    actor_id: str,
-    claim_id: str,
-    rationale: str,
-    observed_at: datetime,
-    accepted_coordinate: AcceptedCoordinate,
-    selection: DirectByteSpanSelection | DirectExternalSelection,
-) -> DirectCaptureBuildResult:
-    """Bind one exact span or typed external selector as self-asserted evidence.
-
-    Both forms this builder accepts are content-addressed or unmaterialized, so
-    neither names a logical source. A foreign-source selection does name one and
-    is built by :func:`build_foreign_source_capture` under its own contract; it
-    is refused here rather than being quietly signed under this one.
-    """
-
-    if not isinstance(selection, DirectByteSpanSelection | DirectExternalSelection):
-        raise CaptureFormatError(
-            "a logical-source selection is not admissible under the direct CaptureContract"
-        )
-    binding_digest = _direct_binding_digest(
-        actor_id=actor_id,
-        accepted_coordinate=accepted_coordinate,
-    )
-    contract_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
-    if isinstance(selection, DirectByteSpanSelection):
-        if not store.verify(selection.span.content_digest):
-            raise CaptureFormatError("selected span content is unavailable in CAS")
-        source_bytes = store.read(
-            selection.span.content_digest,
-            access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
-        )
-        if selection.span.end_byte > len(source_bytes):
-            raise CaptureFormatError("selected span exceeds its exact CAS body")
-        source_reference: CasSourceReference | ExternalSourceReference = CasSourceReference(
-            content_digest=selection.span.content_digest
-        )
-        commitment = EvidenceCommitment(
-            digest_kind="exact_bytes",
-            digest=selection.span.content_digest,
-            byte_length=len(source_bytes),
-            materialization="cas",
-        )
-        source_digest = selection.span.content_digest
-        materialized = True
-    else:
-        source_reference = ExternalSourceReference(
-            source_identity=DIRECT_SOURCE_IDENTITY,
-            producer_binding_digest=binding_digest,
-            coordinate_type=DIRECT_EXTERNAL_COORDINATE_TYPE,
-            coordinate={
-                "logical_source_identity": selection.logical_source_identity,
-                "source_coordinate": selection.coordinate,
-                "source_coordinate_type": selection.coordinate_type,
-            },
-            selector_type=DIRECT_EXTERNAL_SELECTOR_TYPE,
-            selector={
-                "claim_id": claim_id,
-                "source_selector": selection.selector,
-                "source_selector_type": selection.selector_type,
-            },
-            replayability="attested_only",
-        )
-        commitment = selection.commitment
-        source_digest = selection.commitment.digest
-        materialized = False
-    receipt_digest = typed_digest(
-        Sha256Value,
-        "playbill-direct-selection-capture-receipt-v1",
-        {
-            "actor_id": actor_id,
-            "claim_id": claim_id,
-            "observed_at": _canonical_datetime(observed_at),
-            "rationale": rationale,
-            "selection": selection.model_dump(mode="json"),
-        },
-    ).tagged
-    envelope = CaptureEnvelopeV1(
-        capture_contract_digest=contract_digest,
-        source=source_reference,
-        commitment=commitment,
-        run_coordinate=CaptureRunCoordinateV1(
-            run_kind="provider",
-            run_id=f"direct-selection:{claim_id.casefold()}",
-            bound_generation=accepted_coordinate.generation_root,
-            executable_identity=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity,
-            executable_digest=contract_digest,
-        ),
-        run_receipt_digest=receipt_digest,
-        producer=ArtifactIdentity(kind="Principal", name=actor_id),
-        producer_binding_digest=binding_digest,
-        observed_at=observed_at,
-    )
-    return _store_capture_envelope(
-        store=store,
-        contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-        envelope=envelope,
-        source_body_digest=source_digest,
-        source_body_materialized=materialized,
     )
 
 
@@ -2238,7 +2311,7 @@ def build_working_selection_capture(
     coordinate: object,
     selector: object,
     selected_content: bytes,
-    accepted_contract: CaptureContract | None = None,
+    accepted_contract: CaptureContractAny | None = None,
 ) -> DirectCaptureBuildResult:
     """Commit the bounded bytes from one typed proposer-observed working selection.
 
@@ -2251,7 +2324,7 @@ def build_working_selection_capture(
     Without it the Capture uses the source's deterministic first version.
     """
 
-    contract = foreign_source_capture_contract(source_id)
+    contract: CaptureContractAny = foreign_source_capture_contract(source_id)
     if accepted_contract is not None:
         if accepted_contract.identity != contract.identity:
             raise CaptureFormatError("accepted contract is not this source's contract")
@@ -2321,7 +2394,7 @@ def build_working_selection_capture(
 def _store_general_capture(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     envelope: CaptureEnvelopeV1 | CaptureEnvelope,
     source_body_materialized: bool,
 ) -> CaptureBuildResult:
@@ -2435,7 +2508,7 @@ def _web_fetch_body_digest(content: bytes) -> str:
 def build_provider_external_capture_v2(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     result: ProviderResultToExternalCapture,
     receipt: ProviderInvocationReceipt,
     occurrence: ProviderExternalOccurrencePlan,
@@ -2447,9 +2520,9 @@ def build_provider_external_capture_v2(
 
     if occurrence.occurrence_kind != "source":
         raise CaptureFormatError("Provider Capture conversion requires a Source occurrence")
-    if "external" not in contract.allowed_source_kinds:
+    if "external" not in contract_source_kinds(contract):
         raise CaptureFormatError("CaptureContract does not permit external observations")
-    if "cas" not in contract.allowed_materialization_modes:
+    if "cas" not in contract_materialization_modes(contract):
         raise CaptureFormatError("CaptureContract does not permit CAS materialization")
     contract_digest_value = capture_contract_digest(contract).tagged
     if (
@@ -2465,7 +2538,10 @@ def build_provider_external_capture_v2(
         output_commitment = ProviderInvocationOutputDigest.model_validate(receipt.output)
     except ValidationError as exc:
         raise CaptureFormatError("Provider Source receipt lacks its output digest") from exc
-    if result.source_identity not in contract.logical_source_identities:
+    if (
+        isinstance(contract, CaptureContractV1)
+        and result.source_identity not in contract.logical_source_identities
+    ):
         raise CaptureFormatError("Provider Capture logical source is not admitted by its contract")
     if result.coordinate_type not in {
         pin.target.name for pin in contract.coordinate_schema_pins
@@ -2486,6 +2562,12 @@ def build_provider_external_capture_v2(
         or source_read_receipt.resolved_max_bytes != contract.selection_budget.max_bytes
     ):
         raise CaptureFormatError("workspace.file source-read receipt does not correspond")
+    if isinstance(contract, CaptureContract) and result.replayability != (
+        "exact" if contract.replay == "exact" else "attested_only"
+    ):
+        raise CaptureFormatError(
+            "Provider replayability differs from the CaptureContract replay promise"
+        )
     content = base64.b64decode(result.content_base64, validate=True)
     try:
         provider_output = (
@@ -2588,7 +2670,7 @@ def build_provider_external_capture_v2(
 def build_procedure_capture_v2(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     source_body: bytes,
     run_coordinate: CaptureRunCoordinate,
     producer_receipt_digest: str,
@@ -2602,8 +2684,8 @@ def build_procedure_capture_v2(
         raise CaptureFormatError("procedure Capture requires its producing Procedure identity")
     if run_coordinate.executable_digest != producer_binding_digest:
         raise CaptureFormatError("procedure Capture binding differs from its executable digest")
-    if "cas" not in contract.allowed_source_kinds or "cas" not in (
-        contract.allowed_materialization_modes
+    if "cas" not in contract_source_kinds(contract) or "cas" not in (
+        contract_materialization_modes(contract)
     ):
         raise CaptureFormatError("CaptureContract does not permit CAS observations")
     if len(source_body) > contract.selection_budget.max_bytes:
@@ -2638,7 +2720,7 @@ def build_procedure_capture_v2(
 def build_cas_capture(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     source_body: bytes,
     run_coordinate: CaptureRunCoordinateV1,
     run_receipt_digest: str,
@@ -2649,8 +2731,8 @@ def build_cas_capture(
 ) -> CaptureBuildResult:
     """Create an exact bounded CAS observation under one accepted contract."""
 
-    if "cas" not in contract.allowed_source_kinds or "cas" not in (
-        contract.allowed_materialization_modes
+    if "cas" not in contract_source_kinds(contract) or "cas" not in (
+        contract_materialization_modes(contract)
     ):
         raise CaptureFormatError("CaptureContract does not permit CAS observations")
     if len(source_body) > contract.selection_budget.max_bytes:
@@ -2688,13 +2770,16 @@ def build_coordinator_self_source_capture(
     body: bytes,
     observed_at: datetime,
     accepted_coordinate: AcceptedCoordinate,
+    accepted_contract: CaptureContract | None = None,
 ) -> CaptureBuildResult:
     """Retain exact self-source bytes before minting their coordinator envelope."""
 
     governance_identifier(actor_id, label="coordinator self-source actor")
     if not re.fullmatch(r"CLM-[0-9a-f]{32}", claim_id):
         raise CaptureFormatError("coordinator self-source requires a Claim identity")
-    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    contract = accepted_contract or COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    if not is_coordinator_self_source_contract(contract):
+        raise CaptureFormatError("coordinator self-source requires its fixed contract profile")
     contract_digest_value = capture_contract_digest(contract).tagged
     body_digest = CasDigest(hashlib.sha256(body).hexdigest()).tagged
     producer_binding_digest = typed_digest(
@@ -2737,7 +2822,7 @@ def build_coordinator_self_source_capture(
 def build_ledger_capture(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     source: LedgerSourceReference,
     source_body: bytes,
     run_coordinate: CaptureRunCoordinateV1,
@@ -2749,8 +2834,8 @@ def build_ledger_capture(
 ) -> CaptureBuildResult:
     """Bind exact accepted ledger bytes without copying them into the body CAS."""
 
-    if "ledger" not in contract.allowed_source_kinds or "ledger" not in (
-        contract.allowed_materialization_modes
+    if "ledger" not in contract_source_kinds(contract) or "ledger" not in (
+        contract_materialization_modes(contract)
     ):
         raise CaptureFormatError("CaptureContract does not permit ledger observations")
     if len(source_body) > contract.selection_budget.max_bytes:
@@ -2783,7 +2868,7 @@ def build_ledger_capture(
 def build_derived_cas_capture(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     output_body: bytes,
     manifest: InputReceiptSetManifest,
     reducer_digest: str,
@@ -2860,7 +2945,7 @@ def capture_retained_body_digests(envelope: CaptureEnvelopeAny) -> tuple[str, ..
 
 
 def capture_erasure_authorized(
-    erasure: CaptureErasureRecord, contract: CaptureContract, *, contract_digest: str
+    erasure: CaptureErasureRecord, contract: CaptureContractAny, *, contract_digest: str
 ) -> bool:
     """Whether ``erasure`` was made under ``contract``'s own erasure authority.
 
@@ -2880,7 +2965,7 @@ def verify_capture(
     digest: str,
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     ledger_resolver: LedgerMaterialResolverProtocol | None = None,
     producer_artifact_digests: Mapping[str, str] | None = None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
@@ -3030,7 +3115,7 @@ def _memo_answers(
     memo: VerifiedCaptureMemo,
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     contract_digest: str,
     producer_artifact_digests: Mapping[str, str] | None,
     require_production_proof: bool,
@@ -3094,7 +3179,7 @@ def _verify_capture_once(
     digest: str,
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContract,
+    contract: CaptureContractAny,
     ledger_resolver: LedgerMaterialResolverProtocol | None,
     producer_artifact_digests: Mapping[str, str] | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
@@ -3253,12 +3338,19 @@ def _verify_capture_once(
             or resolved_receipt.capture_contract_digest != envelope.capture_contract_digest
         ):
             raise CaptureFormatError("procedure Capture producer receipt does not correspond")
-    if envelope.source.kind not in contract.allowed_source_kinds:
+    if envelope.source.kind not in contract_source_kinds(contract):
         raise CaptureFormatError("Capture source kind is not permitted by its contract")
-    if envelope.commitment.materialization not in contract.allowed_materialization_modes:
+    if envelope.commitment.materialization not in contract_materialization_modes(contract):
         raise CaptureFormatError("Capture materialization is not permitted by its contract")
     if isinstance(envelope.source, ExternalSourceReference):
-        if envelope.source.source_identity not in contract.logical_source_identities:
+        if isinstance(contract, CaptureContract) and envelope.source.replayability != (
+            "exact" if contract.replay == "exact" else "attested_only"
+        ):
+            raise CaptureFormatError("Capture replayability differs from its CaptureContract")
+        if (
+            isinstance(contract, CaptureContractV1)
+            and envelope.source.source_identity not in contract.logical_source_identities
+        ):
             raise CaptureFormatError("Capture logical source is not declared by its contract")
         if contract == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT:
             schemas = (
@@ -3416,6 +3508,19 @@ __all__ = [
     "CanonicalDuration",
     "CaptureContractLawResult",
     "CaptureContract",
+    "CaptureContractV1",
+    "CaptureContractAny",
+    "is_coordinator_self_source_contract",
+    "builtin_contract_for_write",
+    "CaptureContractComponents",
+    "CaptureShape",
+    "CaptureReplay",
+    "capture_shape_components",
+    "contract_source_kinds",
+    "contract_materialization_modes",
+    "COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT_V1",
+    "COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS",
+    "foreign_source_capture_contract_v1",
     "CaptureBuildResult",
     "CaptureComponentRegistry",
     "CaptureEnvelopeAny",
@@ -3463,8 +3568,6 @@ __all__ = [
     "ProviderInvocationCaptureEvidence",
     "LedgerMaterialResolverProtocol",
     "SourceEffectiveTime",
-    "build_direct_claim_capture",
-    "build_direct_claim_selection_capture",
     "build_coordinator_self_source_capture",
     "build_cas_capture",
     "build_procedure_capture_v2",

@@ -109,6 +109,7 @@ from cruxible_client.contracts.captures import (
     VerifiedCaptureMemo,
     build_coordinator_self_source_capture,
     build_working_selection_capture,
+    builtin_contract_for_write,
     capture_contract_digest,
     capture_contract_path,
     classify_capture_reuse,
@@ -1719,16 +1720,28 @@ def _lower_claim(
     accepted_contract: AcceptedCaptureContract | None = None
     accepted_producer_digests: dict[str, str] = {}
     install_contract = True
+    contract: CaptureContractAny
     if isinstance(payload.source, SelfSourceBody):
+        profile_path = capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name)
+        previous_profile_bytes = candidate_base_tree.get(profile_path)
+        previous_profile = (
+            None
+            if previous_profile_bytes is None
+            else parse_capture_contract(previous_profile_bytes, path=profile_path)
+        )
+        contract = builtin_contract_for_write(
+            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, previous_profile
+        )
+        install_contract = previous_profile != contract
         built_capture = build_coordinator_self_source_capture(
             store=instance.body_store(),
             actor_id=actor_id,
             claim_id=claim_id,
             body=payload.source.content,
+            accepted_contract=contract,
             observed_at=observed_at,
             accepted_coordinate=public_base,
         )
-        contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
         citation_role: CitationRole = "copy"
         citation_origin: CitationOrigin = "self_source"
     elif isinstance(payload.source, ExistingCaptureCitationSource):
@@ -1830,7 +1843,11 @@ def _lower_claim(
         head_bytes = candidate_base_tree.get(head_path)
         head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
         if head is not None and head.lifecycle.state == "live":
-            install_contract = False
+            successor = builtin_contract_for_write(
+                foreign_source_capture_contract(source.source_id), head
+            )
+            install_contract = successor != head
+            head = successor
         try:
             built_selection = build_working_selection_capture(
                 accepted_contract=None if head is None or head.lifecycle.state != "live" else head,
@@ -1953,7 +1970,11 @@ def _lower_claim(
             if previous_contract is None
             else parse_capture_contract(previous_contract, path=located_path)
         )
-        located_install = located_contract is None or located_contract.lifecycle.state != "live"
+        located_successor = builtin_contract_for_write(
+            foreign_source_capture_contract(location.source_id), located_contract
+        )
+        located_install = located_successor != located_contract
+        located_contract = located_successor
         try:
             located = build_working_selection_capture(
                 store=instance.body_store(),
@@ -1966,7 +1987,7 @@ def _lower_claim(
                 coordinate=location.coordinate.model_dump(mode="json"),
                 selector=location.selector.model_dump(mode="json"),
                 selected_content=location.selected_content,
-                accepted_contract=None if located_install else located_contract,
+                accepted_contract=located_contract,
             )
         except (CruxibleError, ValueError) as exc:
             _refuse(

@@ -92,7 +92,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityError
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate, ProcedureMandateV1
@@ -1158,7 +1158,7 @@ def _role_contracts(claim_type: ClaimType, role: str) -> tuple[str, ...]:
     names = {
         item.target.name
         for rule in claim_type.evidence_admission_policy.rules
-        if isinstance(rule, ClaimEvidenceAdmissionRule) and role in rule.claim_roles
+        if isinstance(rule, ClaimEvidenceAdmissionIdentityRule) and role in rule.claim_roles
         for item in rule.capture_contracts
     }
     return tuple(

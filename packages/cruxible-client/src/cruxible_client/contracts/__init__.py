@@ -1344,11 +1344,10 @@ ClaimTypeMigrationResponse: TypeAlias = (
 )
 
 
-class CaptureEvidenceKindAdmission(BaseModel):
+class CaptureEvidenceAdmission(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-capture-evidence-kind-admission-v1"]
-    evidence_kind: str
+    tag: Literal["cruxible-capture-evidence-admission-v2"]
     status: Literal["admitted", "not_admitted"]
     rule_id: str | None = None
     admission: Literal["origin_only", "direct", "derivational"] | None = None
@@ -1367,7 +1366,7 @@ class CaptureAdmissionAccount(BaseModel):
     capture_contract_identity: str
     capture_contract_digest: str
     status: Literal["admitted", "not_admitted", "not_evidence"]
-    decisions: list[CaptureEvidenceKindAdmission]
+    decision: CaptureEvidenceAdmission | None
 
 
 class ClaimViewRecord(BaseModel):

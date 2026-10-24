@@ -33,7 +33,9 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import (
     CanonicalDuration,
-    CaptureContract,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
 )
 from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.errors import (

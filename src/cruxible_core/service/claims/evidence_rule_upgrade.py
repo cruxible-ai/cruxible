@@ -32,10 +32,17 @@ from cruxible_client.contracts.evidence_rule_upgrade import (
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV1,
     ClaimEvidenceAdmissionRuleV2,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionRule as ClaimEvidenceAdmissionRuleV4,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -96,15 +103,25 @@ class _Lineages:
         return self._lineage[identity]
 
 
-def _overlaps(first: ClaimEvidenceAdmissionRule, second: ClaimEvidenceAdmissionRule) -> bool:
-    return (
-        bool(set(first.claim_roles) & set(second.claim_roles))
-        and bool(set(first.evidence_kinds) & set(second.evidence_kinds))
-        and bool(
-            {item.target.qualified for item in first.capture_contracts}
-            & {item.target.qualified for item in second.capture_contracts}
-        )
-    )
+def _overlaps(
+    first: ClaimEvidenceAdmissionRule | ClaimEvidenceAdmissionRuleV4,
+    second: ClaimEvidenceAdmissionRule | ClaimEvidenceAdmissionRuleV4,
+) -> bool:
+    if not set(first.claim_roles) & set(second.claim_roles):
+        return False
+    if isinstance(first, ClaimEvidenceAdmissionRule) and isinstance(
+        second, ClaimEvidenceAdmissionRule
+    ):
+        if not set(first.evidence_kinds) & set(second.evidence_kinds):
+            return False
+    for left in first.capture_contracts:
+        for right in second.capture_contracts:
+            if left.target != right.target:
+                continue
+            a, b = getattr(left, "logical_sources", ()), getattr(right, "logical_sources", ())
+            if not a or not b or set(a) & set(b):
+                return True
+    return False
 
 
 def _convert(

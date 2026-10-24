@@ -36,12 +36,11 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.canonical_forms import is_canonical_literal
 from cruxible_client.contracts.capture_erasure import RecordedCaptureErasure
 from cruxible_client.contracts.captures import (
-    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
     DIRECT_SELF_ASSERTED_CONTRACT_ID,
     FOREIGN_SOURCE_COORDINATE_TYPE,
     AcceptedCaptureContract,
-    CaptureContract,
+    CaptureContractV1,
     CaptureEnvelopeAny,
     CaptureObjectStoreProtocol,
     CaptureProductionUnproven,
@@ -56,8 +55,12 @@ from cruxible_client.contracts.captures import (
     capture_is_direct_self_source,
     capture_retained_body_digests,
     classify_capture_reuse,
+    is_coordinator_self_source_contract,
     parse_capture_envelope,
     verify_capture,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_attestations import (
@@ -106,6 +109,7 @@ from cruxible_client.contracts.policies import (
     EvidenceAdmissionInput,
     VerifiedAttestationGrade,
     evaluate_claim_evidence_admission_trace,
+    evidence_rule_matches_source,
 )
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -1509,7 +1513,7 @@ def _self_source_capture_admitted_by_rule(
 
     if isinstance(claim.backing, ClaimBackingV1):
         return False
-    if capture_contract.contract != COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT:
+    if not is_coordinator_self_source_contract(capture_contract.contract):
         return False
     associations = tuple(
         item for item in claim.backing.citations if item.capture_digest == capture_digest
@@ -1626,7 +1630,7 @@ def capture_citation_eligible(
 
 @dataclass(frozen=True)
 class CaptureEvidenceKindEvaluation:
-    evidence_kind: str
+    evidence_kind: str | None
     trace: ClaimEvidenceAdmissionTrace
 
 
@@ -1682,7 +1686,19 @@ def evaluate_capture_evidence_admissions(
     else:
         attestation_grade = "none"
     decisions: list[CaptureEvidenceKindEvaluation] = []
-    for kind in capture_contract.contract.evidence_kinds:
+    # Legacy pairs retain every historical kind verdict. New contracts have one
+    # admission question, keyed by the source already present in the envelope.
+    kinds: tuple[str | None, ...] = (
+        capture_contract.contract.evidence_kinds
+        if isinstance(capture_contract.contract, CaptureContractV1)
+        else (None,)
+    )
+    logical_source = (
+        envelope.source.source_identity
+        if isinstance(envelope.source, ExternalSourceReference)
+        else None
+    )
+    for kind in kinds:
         matching_rules = tuple(
             rule
             for rule in claim_type.evidence_admission_policy.rules
@@ -1691,7 +1707,17 @@ def evaluate_capture_evidence_admissions(
                 digest=capture_contract.artifact_digest,
                 identity=capture_contract.contract.identity.qualified,
             )
-            and kind in rule.evidence_kinds
+            and evidence_rule_matches_source(
+                rule,
+                EvidenceAdmissionInput(
+                    claim_role=claim.statement.role,
+                    capture_contract_digest=capture_contract.artifact_digest,
+                    capture_contract_identity=capture_contract.contract.identity.qualified,
+                    evidence_kind=kind,
+                    logical_source=logical_source,
+                    source_subject_bound=True,
+                ),
+            )
         )
         source_bound = any(subject_binding_by_rule[rule.rule_id] for rule in matching_rules)
         # The law and lowering can ask the same policy question, and many
@@ -1705,6 +1731,7 @@ def evaluate_capture_evidence_admissions(
             capture_contract.artifact_digest,
             capture_contract.contract.identity.qualified,
             kind,
+            logical_source,
             claim.backing.reducer_digest,
             claim.backing.input_claim_digests,
             attestation_grade,
@@ -1713,7 +1740,7 @@ def evaluate_capture_evidence_admissions(
         )
 
         def derive(
-            kind: str = kind, source_bound: bool = source_bound
+            kind: str | None = kind, source_bound: bool = source_bound
         ) -> CaptureEvidenceKindEvaluation:
             trace = evaluate_claim_evidence_admission_trace(
                 claim_type.evidence_admission_policy,
@@ -1722,6 +1749,7 @@ def evaluate_capture_evidence_admissions(
                     capture_contract_digest=capture_contract.artifact_digest,
                     capture_contract_identity=capture_contract.contract.identity.qualified,
                     evidence_kind=kind,
+                    logical_source=logical_source,
                     reducer_digest=claim.backing.reducer_digest,
                     input_claim_artifact_digests=claim.backing.input_claim_digests,
                     attestation_grade=attestation_grade,
@@ -1783,7 +1811,7 @@ def _citation_origin_refusal(
         contract=contract,
         claim_id=claim.identity.name,
     )
-    coordinator_contract = contract == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    coordinator_contract = is_coordinator_self_source_contract(contract)
     coordinator_self_source = capture_is_coordinator_self_source(
         envelope,
         contract=contract,

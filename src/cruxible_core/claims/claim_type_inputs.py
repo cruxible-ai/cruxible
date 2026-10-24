@@ -57,6 +57,7 @@ from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    CaptureContractAdmission,
     ClaimEvidenceAdmissionPolicy,
 )
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
@@ -366,7 +367,6 @@ def _default_evidence_policy(
                 "rule_id": "self",
                 "claim_roles": claim_roles,
                 "capture_contracts": [public_name(COORDINATOR_SELF_SOURCE_CONTRACT_ID)],
-                "evidence_kinds": ["self_asserted"],
                 "admission": "direct",
                 "subject_binding": "exact_claim_subject",
             }
@@ -379,7 +379,6 @@ def _default_evidence_policy(
                     "rule_id": f"source-{source_id}",
                     "claim_roles": claim_roles,
                     "capture_contracts": [public_name(contract.identity.name)],
-                    "evidence_kinds": ["self_asserted"],
                     "admission": "direct",
                     "subject_binding": "exact_claim_subject",
                 }
@@ -584,8 +583,10 @@ def _contract_identities(tree: Mapping[str, bytes], source_ids: tuple[str, ...])
 
     identities: dict[str, str] = {}
     for source_id in source_ids:
-        contract = foreign_source_capture_contract(source_id)
-        identities[capture_contract_digest(contract).tagged] = contract.identity.qualified
+        source_contract = foreign_source_capture_contract(source_id)
+        identities[capture_contract_digest(source_contract).tagged] = (
+            source_contract.identity.qualified
+        )
     for path in tree:
         if path.startswith("capture-contracts/") and path.endswith(".json"):
             contract = parse_capture_contract(tree[path], path=path)
@@ -630,7 +631,23 @@ def _identity_evidence_policy(
             rules.append(raw_rule)
             continue
         rule = dict(raw_rule)
-        refs = [_contract_ref(item) for item in rule.pop("capture_contracts", []) or []]
+        refs = []
+        for item in rule.pop("capture_contracts", []) or []:
+            if isinstance(item, dict) and "contract" in item:
+                ref = _contract_ref(item["contract"])
+                refs.append(
+                    CaptureContractAdmission(
+                        **ref.model_dump(mode="python"),
+                        logical_sources=tuple(item.get("logical_sources", ())),
+                    )
+                )
+            else:
+                ref = _contract_ref(item)
+                refs.append(
+                    CaptureContractAdmission.model_validate(
+                        ref.model_dump(mode="python") if not isinstance(item, dict) else item
+                    )
+                )
         for digest in rule.pop("capture_contract_digests", []) or []:
             identity = identities.get(digest) if isinstance(digest, str) else None
             if identity is None:
@@ -638,7 +655,11 @@ def _identity_evidence_policy(
                     f"capture contract digest {digest!r} is not an accepted CaptureContract; "
                     "name the contract in capture_contracts instead"
                 )
-            refs.append(_contract_ref(identity))
+            refs.append(
+                CaptureContractAdmission.model_validate(
+                    _contract_ref(identity).model_dump(mode="python")
+                )
+            )
         unique = {item.target.qualified: item for item in refs}
         rule["capture_contracts"] = [
             unique[key].model_dump(mode="json")

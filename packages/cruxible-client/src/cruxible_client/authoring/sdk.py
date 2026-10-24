@@ -100,7 +100,6 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
-    ArtifactRef,
 )
 from cruxible_client.contracts.authoring.inputs import (
     BlueprintInput,
@@ -218,6 +217,7 @@ from cruxible_client.contracts.get_reads import (
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    CaptureContractAdmission,
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionRule,
@@ -3101,12 +3101,11 @@ class Cruxible:
                 rule_id=f"source-{source_id}-{admission}",
                 claim_roles=rule_roles,
                 capture_contracts=(
-                    ArtifactRef(
+                    CaptureContractAdmission(
                         role=CAPTURE_CONTRACT_REF_ROLE,
                         target=foreign_source_capture_contract(source_id).identity,
                     ),
                 ),
-                evidence_kinds=("self_asserted",),
                 admission=admission,
                 subject_binding="exact_claim_subject",
             )

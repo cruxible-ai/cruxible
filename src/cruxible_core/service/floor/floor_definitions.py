@@ -40,7 +40,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.kits import KIT_RECEIPT_DOCUMENT_KIND, KitReceipt
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionIdentityRule
 from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate_any
 from cruxible_client.contracts.procedures.line_specs import parse_line_spec
 from cruxible_client.contracts.query.definitions import parse_query_definition
@@ -162,7 +162,7 @@ def _contract_names(claim_type: ClaimType) -> tuple[str, ...]:
 
     names: set[str] = set()
     for rule in claim_type.evidence_admission_policy.rules:
-        if isinstance(rule, ClaimEvidenceAdmissionRule):
+        if isinstance(rule, ClaimEvidenceAdmissionIdentityRule):
             names.update(item.target.name for item in rule.capture_contracts)
         else:
             names.update(rule.capture_contract_digests)

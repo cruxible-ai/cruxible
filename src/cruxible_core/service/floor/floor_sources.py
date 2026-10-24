@@ -33,9 +33,11 @@ from weakref import WeakKeyDictionary
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     FOREIGN_SOURCE_COORDINATE_TYPE,
-    CaptureContract,
     capture_contract_digest,
     parse_capture_envelope,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
 )
 from cruxible_client.contracts.claims import ClaimArtifactAny
 from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError

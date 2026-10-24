@@ -24,9 +24,13 @@ from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     AttestationRequirement,
     ClaimAdmissionPolicy,
-    ClaimEvidenceAdmissionPolicy,
-    ClaimEvidenceAdmissionRule,
     ClaimResolutionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV3 as ClaimEvidenceAdmissionPolicy,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionRuleV3 as ClaimEvidenceAdmissionRule,
 )
 from cruxible_client.contracts.public_names import stored_contract_name
 

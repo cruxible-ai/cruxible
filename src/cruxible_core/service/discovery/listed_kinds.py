@@ -40,7 +40,8 @@ from datetime import datetime
 from typing import Any, Literal, cast
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.captures import CaptureContract
+from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
+from cruxible_client.contracts.captures import contract_source_kinds
 from cruxible_client.contracts.claim_types import effective_evidence_requirement
 from cruxible_client.contracts.compact_query import QueryColumn, QueryRequest
 from cruxible_client.contracts.procedure_mandates import (
@@ -207,7 +208,6 @@ _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
             QueryColumn(name="lifecycle", type="enum", members=_LIFECYCLES),
             index_column="lifecycle",
         ),
-        ListedField(QueryColumn(name="sources", type="string", cardinality="many")),
         ListedField(
             QueryColumn(
                 name="source_kinds",
@@ -216,7 +216,6 @@ _FIELDS: Mapping[ListedKind, tuple[ListedField, ...]] = {
                 cardinality="many",
             )
         ),
-        ListedField(QueryColumn(name="evidence_kinds", type="string", cardinality="many")),
         ListedField(
             QueryColumn(name="grade", type="enum", members=("derived", "observed", "predicted")),
             index_column="epistemic_grade",
@@ -735,9 +734,7 @@ def _capture_contract_row(context: _RowContext) -> Callable[[Any], dict[str, Any
         identity = contract.identity.qualified
         return {
             "name": contract.identity.name,
-            "sources": list(contract.logical_source_identities),
-            "source_kinds": list(contract.allowed_source_kinds),
-            "evidence_kinds": list(contract.evidence_kinds),
+            "source_kinds": list(contract_source_kinds(contract)),
             "grade": contract.epistemic_grade,
             "admitted_by": admitted.get(identity, 0),
             "required_by": required.get(identity, 0),

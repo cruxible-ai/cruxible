@@ -43,14 +43,16 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from cruxible_client.contracts.captures import (
-    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    CaptureContract,
     CaptureRetentionErasurePolicy,
     capture_contract_digest,
     foreign_source_capture_contract,
     parse_capture_contract,
     parse_capture_envelope,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import CruxibleError
@@ -236,7 +238,7 @@ _BUILT_IN_CONTRACTS = {
     capture_contract_digest(contract).tagged: contract
     for contract in (
         DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+        *COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACTS,
     )
 }
 

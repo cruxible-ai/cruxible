@@ -13,7 +13,7 @@ from cruxible_client.contracts.acquisition_policies import (
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
-from cruxible_client.contracts.captures import CaptureContract
+from cruxible_client.contracts.captures import CaptureContractAny as CaptureContract
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpec,

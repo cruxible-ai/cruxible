@@ -154,6 +154,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V3_REVISION_9,
     CLAIM_LAW_V3_REVISION_10,
     CLAIM_LAW_V3_REVISION_11,
+    LIGHT_CAPTURE_CONTRACT_LAW,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     QUERY_DEFINITION_LAW,
@@ -172,7 +173,7 @@ from cruxible_client.contracts.policies import (
     ClaimAdmissionEvaluationAccount,
     ClaimAdmissionPolicy,
     ClaimCorroborationResult,
-    ClaimEvidenceAdmissionRule,
+    ClaimEvidenceAdmissionIdentityRule,
     evaluate_claim_admission_candidate,
 )
 from cruxible_client.contracts.principals import (
@@ -2703,10 +2704,15 @@ def _sibling_control_domains(
 
 def _provider_member(context: _MemberContext) -> _MemberVerdict:
     provider = parse_provider(context.content, path=context.path)
-    from cruxible_core.compiler.compiler import CLAIM_REBIND_COMPILER, PROVIDER_BUILDS_COMPILER
+    from cruxible_core.compiler.compiler import (
+        CLAIM_REBIND_COMPILER,
+        LIGHT_ARTIFACTS_COMPILER,
+        PROVIDER_BUILDS_COMPILER,
+    )
 
     if (
-        context.current.compiler in {PROVIDER_BUILDS_COMPILER, CLAIM_REBIND_COMPILER}
+        context.current.compiler
+        in {PROVIDER_BUILDS_COMPILER, CLAIM_REBIND_COMPILER, LIGHT_ARTIFACTS_COMPILER}
         and context.parent_content is None
         and "/" not in provider.identity.name
         and provider.identity.name != "cruxible-builtin"
@@ -3184,14 +3190,14 @@ def _capture_contract_dependents(
 
             if successor_digest is None:
                 return False
-            if isinstance(rule, ClaimEvidenceAdmissionRule):
+            if isinstance(rule, ClaimEvidenceAdmissionIdentityRule):
                 return any(item.target.qualified == identity for item in rule.capture_contracts)
             return successor_digest in getattr(rule, "capture_contract_digests", ())
 
         for rule in rules:
             names_moving = (
                 any(item.target.qualified == identity for item in rule.capture_contracts)
-                if isinstance(rule, ClaimEvidenceAdmissionRule)
+                if isinstance(rule, ClaimEvidenceAdmissionIdentityRule)
                 else previous_digest in rule.capture_contract_digests
             )
             if not names_moving:
@@ -3200,16 +3206,35 @@ def _capture_contract_dependents(
             # replacing version by exactly one rule with the same requirements;
             # a stricter or ambiguous successor rule refuses what used to pass.
             for role in rule.claim_roles:
-                for kind in rule.evidence_kinds:
-                    covering = [
-                        other
-                        for other in rules
-                        if follows(other)
-                        and role in other.claim_roles
-                        and kind in other.evidence_kinds
-                    ]
-                    if len(covering) != 1 or not _same_admission(rule, covering[0]):
-                        stranded.add(claim_type.identity.qualified)
+                sources = next(
+                    (
+                        getattr(item, "logical_sources", ())
+                        for item in getattr(rule, "capture_contracts", ())
+                        if item.target.qualified == identity
+                    ),
+                    (),
+                )
+                old_kinds = getattr(rule, "evidence_kinds", ())
+                covering = []
+                for other in rules:
+                    if not follows(other) or role not in other.claim_roles:
+                        continue
+                    other_sources = next(
+                        (
+                            getattr(item, "logical_sources", ())
+                            for item in getattr(other, "capture_contracts", ())
+                            if item.target.qualified == identity
+                        ),
+                        (),
+                    )
+                    other_kinds = getattr(other, "evidence_kinds", ())
+                    if other_sources and (not sources or not set(sources).issubset(other_sources)):
+                        continue
+                    if old_kinds and other_kinds and not set(old_kinds).issubset(other_kinds):
+                        continue
+                    covering.append(other)
+                if len(covering) != 1 or not _same_admission(rule, covering[0]):
+                    stranded.add(claim_type.identity.qualified)
     for resolution in context.resolved.resolution_contracts.values():
         window = resolution.window
         if (
@@ -3224,6 +3249,14 @@ def _capture_contract_dependents(
 
 def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     contract = parse_capture_contract(context.content, path=context.path)
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+    if context.historical_law_coordinate is None:
+        light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+        if light != (contract.artifact_format == "cruxible-capture-contract-v2"):
+            raise FormatError(
+                "new CaptureContracts require v2 on compiler revision 36; upgrade the compiler or use a new v2 artifact"
+            )
     predecessor: AcceptedCaptureContract | None = None
     if context.parent_content is not None:
         previous = parse_capture_contract(context.parent_content, path=context.path)
@@ -3233,7 +3266,10 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
             artifact_digest=capture_contract_digest(previous).tagged,
         )
     installed = _installed(context, contract.artifact_format)
-    revision_4 = installed.coordinate == CAPTURE_CONTRACT_LAW_REVISION_4
+    revision_4 = installed.coordinate in {
+        CAPTURE_CONTRACT_LAW_REVISION_4,
+        LIGHT_CAPTURE_CONTRACT_LAW.coordinate,
+    }
     law = evaluate_capture_contract_law(
         contract,
         path=context.path,
@@ -3658,6 +3694,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         CLAIM_EVIDENCE_COMPILER,
         CLAIM_REBIND_COMPILER,
         GOVERNED_TRIGGERS_COMPILER,
+        LIGHT_ARTIFACTS_COMPILER,
         PROVIDER_BUILDS_COMPILER,
         SOURCE_CHECKED_COMPILER,
         SUBJECT_IDENTITY_COMPILER,
@@ -3673,6 +3710,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         SUBJECT_IDENTITY_COMPILER,
         PROVIDER_BUILDS_COMPILER,
         CLAIM_REBIND_COMPILER,
+        LIGHT_ARTIFACTS_COMPILER,
     }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())

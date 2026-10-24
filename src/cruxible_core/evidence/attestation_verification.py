@@ -9,7 +9,6 @@ from typing import Callable, Iterator, Literal, Mapping, NoReturn, Protocol
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
-    CaptureContract,
     CaptureObjectStoreProtocol,
     CaptureProductionUnproven,
     ProducerReceiptResolverProtocol,
@@ -19,6 +18,9 @@ from cruxible_client.contracts.captures import (
     parse_capture_contract,
     parse_capture_envelope,
     verify_capture,
+)
+from cruxible_client.contracts.captures import (
+    CaptureContractAny as CaptureContract,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_attestations import (
