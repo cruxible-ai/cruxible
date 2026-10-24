@@ -23,6 +23,7 @@ from cruxible_client.contracts.claims import (
     ClaimReferentContext,
     ClaimStatement,
     LiteralClaimObject,
+    NoneClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -130,12 +131,13 @@ def claim_fact(
     *,
     subject_row: AcceptedSubject,
     predicate: str,
-    obj: LiteralClaimObject | SubjectClaimObject,
+    obj: LiteralClaimObject | SubjectClaimObject | NoneClaimObject,
     supported: bool = True,
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
 ) -> ClaimFactRowV1:
-    object_kind = "subject" if isinstance(obj, SubjectClaimObject) else "literal"
+    held = obj.of if isinstance(obj, NoneClaimObject) else obj
+    object_kind = "subject" if isinstance(held, SubjectClaimObject) else "literal"
     contract = claim_type(predicate, object_kind=object_kind)
     digest = claim_type_digest(contract).tagged
     claim_id = f"CLM-{index:032x}"
@@ -216,6 +218,21 @@ def reviewer_claim(index: int, item: str, person: str, **overrides: object) -> C
             address=SemanticAddress.whole_artifact(subject_path("project.person", person))
         ),
         **overrides,  # type: ignore[arg-type]
+    )
+
+
+def no_reviewer_claim(index: int, item: str, person: str) -> ClaimFactRowV1:
+    """An inverse Claim: the work item's reviewer unit keyed by ``person`` holds nothing."""
+
+    return claim_fact(
+        index,
+        subject_row=subject("project.work_item", item),
+        predicate=REVIEWER_PREDICATE,
+        obj=NoneClaimObject(
+            of=SubjectClaimObject(
+                address=SemanticAddress.whole_artifact(subject_path("project.person", person))
+            )
+        ),
     )
 
 
@@ -537,6 +554,73 @@ def test_a_hidden_relation_claim_removes_its_edge_without_removing_the_entry_row
         ("item_id", "present"),
         ("reviewer_id", "absent"),
     ]
+
+
+def test_a_none_on_a_traversed_predicate_is_not_an_edge_in_either_direction() -> None:
+    # wi-1 holds a reviewer and a none of grace; wi-2 holds only a none of ada.
+    held = facts(
+        (
+            status_claim(1, "wi-1", "ready"),
+            status_claim(2, "wi-2", "ready"),
+            reviewer_claim(3, "wi-1", "ada"),
+            no_reviewer_claim(4, "wi-1", "grace"),
+            no_reviewer_claim(5, "wi-2", "ada"),
+        )
+    )
+    forward = run(active_work_query(includes=()), held, parameters={"status": "ready"})
+    assert forward.verdict == "completed", forward.refusal
+    assert [tuple(item.value for item in row.fields) for row in forward.rows] == [("wi-1", "ada")]
+    assert forward.truncation.evaluated_path_count == 1
+
+    reviewer_only = (claim_type_pin_for(REVIEWER_PREDICATE, object_kind="subject"),)
+    reverse_step = (
+        active_work_query()
+        .traversal[0]
+        .model_copy(
+            update={
+                "binding": "item",
+                "from_binding": "reviewer",
+                "direction": "reverse",
+                "target_subject_kinds": ("project.work_item",),
+            }
+        )
+    )
+    reverse = run(
+        active_work_query(
+            identity=ArtifactIdentity(kind="QueryDefinition", name="project.reviewer_work"),
+            entry=QueryEntry(binding="reviewer", subject_kinds=("project.person",)),
+            traversal=(reverse_step,),
+            result_binding="item",
+            orderings=(),
+            includes=(),
+            where=None,
+            parameters=(),
+            pins=reviewer_only,
+        ),
+        held,
+    )
+    assert reverse.verdict == "completed", reverse.refusal
+    assert [(row.bindings[0].subject_id, row.result_subject_identity) for row in reverse.rows] == [
+        ("ada", "Subject:project.work_item/wi-1")
+    ]
+
+    # Presence still reads every held Claim on the predicate, nones included:
+    # the `!exists` treatment of an inverse is deferred (inverse-v1-cut-1023).
+    optional = active_work_query().traversal[0].model_copy(update={"required": False})
+    absent = run(
+        active_work_query(
+            traversal=(optional,),
+            where=QueryClaimPresenceFilter(
+                binding="item", predicate=REVIEWER_PREDICATE, negated=True
+            ),
+            includes=(),
+            parameters=(),
+            pins=reviewer_only,
+        ),
+        held,
+    )
+    assert absent.verdict == "completed", absent.refusal
+    assert [row.fields[0].value for row in absent.rows] == ["wi-3"]
 
 
 # -- cardinality and conflict --------------------------------------------

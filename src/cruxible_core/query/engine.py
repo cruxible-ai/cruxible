@@ -41,7 +41,11 @@ from cruxible_client.contracts.canonical_forms import (
     canonicalize_literal,
 )
 from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdictV1
-from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
+from cruxible_client.contracts.claims import (
+    ExactContentClaimObject,
+    NoneClaimObject,
+    SubjectClaimObject,
+)
 from cruxible_client.contracts.content_memo import request_derive
 from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError
 from cruxible_client.contracts.query.definitions import (
@@ -253,6 +257,10 @@ def _refuse(
 # -- derived relation traversal -------------------------------------------
 
 
+def _is_none(claim: VisibleClaimRow) -> bool:
+    return isinstance(claim.row.accepted.claim.statement.object, NoneClaimObject)
+
+
 def relation_edges(
     backend: ClaimQueryBackendV1,
     artifact_path: str,
@@ -262,12 +270,16 @@ def relation_edges(
     """Return the visible relation-Claim edges leaving one bound Subject.
 
     Traversal is derived from the backend primitives rather than stored, so no
-    backend can answer with an edge its Claim rows do not carry.
+    backend can answer with an edge its Claim rows do not carry. An inverse
+    Claim (a ``none`` object) is not an edge in either direction: it states the
+    unit holds nothing, and the Subject its ``of`` names is not a target.
     """
 
     edges: list[tuple[VisibleClaimRow, str]] = []
     if direction == "forward":
         for claim in backend.claims_on(artifact_path, predicate):
+            if _is_none(claim):
+                continue
             target = claim.object_subject_path
             if target is None:
                 raise _refuse(
@@ -278,7 +290,9 @@ def relation_edges(
             edges.append((claim, target))
     else:
         edges.extend(
-            (claim, claim.subject_path) for claim in backend.claims_to(artifact_path, predicate)
+            (claim, claim.subject_path)
+            for claim in backend.claims_to(artifact_path, predicate)
+            if not _is_none(claim)
         )
     for claim, target in edges:
         if backend.subject(target) is None:
