@@ -404,3 +404,70 @@ def test_new_identity_policy_format_follows_base_compiler(tmp_path, revision, po
     else:
         result = submit()
         assert result.candidate is not None, result.evaluation.diagnostics
+
+
+def test_inherited_disjoint_v3_kind_rules_require_explicit_policy_on_edit():
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_core.claims.claim_type_inputs import (
+        ClaimTypeInputRecord,
+        ClaimTypeInputReferenceError,
+        lower_claim_type_input,
+    )
+    from tests.core_support._pc_c_support import capture_contract
+    from tests.test_claims.test_claims import _claim_type
+
+    contract = capture_contract().model_copy(
+        update={"evidence_kinds": ("database_record", "other")}
+    )
+
+    def rule(name, kind):
+        return ClaimEvidenceAdmissionRuleV3(
+            **{
+                **_rule(),
+                "rule_id": name,
+                "capture_contracts": [{"role": "capture-contract", "target": contract.identity}],
+                "evidence_kinds": (kind,),
+            }
+        )
+
+    predecessor = _claim_type().model_copy(
+        update={
+            "artifact_format": "playbill-claim-type-v7",
+            "evidence_requirement": "captured",
+            "revision_evidence": "replace",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3(
+                rules=(rule("database", "database_record"), rule("other", "other"))
+            ),
+        }
+    )
+    tree = {
+        claim_type_path(predecessor.predicate): render_claim_type(predecessor),
+        capture_contract_path(contract.identity.name): render_capture_contract(contract),
+    }
+    with pytest.raises(
+        ClaimTypeInputReferenceError, match="state evidence_admission_policy explicitly"
+    ):
+        lower_claim_type_input(
+            ClaimTypeInputRecord(predicate=predecessor.predicate, description="An unrelated edit"),
+            tree=tree,
+            identity_rules=True,
+        )
+    # Covering the contract is lossless; an inherited legacy policy still upgrades.
+    covered = predecessor.model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3(
+                rules=(
+                    rule("both", "database_record").model_copy(
+                        update={"evidence_kinds": ("database_record", "other")}
+                    ),
+                )
+            )
+        }
+    )
+    tree[claim_type_path(predecessor.predicate)] = render_claim_type(covered)
+    result = lower_claim_type_input(
+        ClaimTypeInputRecord(predicate=predecessor.predicate, description="An unrelated edit"),
+        tree=tree,
+        identity_rules=True,
+    )
+    assert isinstance(result.evidence_admission_policy, ClaimEvidenceAdmissionPolicy)

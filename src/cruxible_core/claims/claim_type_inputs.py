@@ -30,7 +30,9 @@ from cruxible_client.contracts.canonical_forms import CanonicalTransform
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     COORDINATOR_SELF_SOURCE_CONTRACT_ID,
+    CaptureContractV1,
     capture_contract_digest,
+    capture_contract_path,
     foreign_source_capture_contract,
     parse_capture_contract,
 )
@@ -59,6 +61,7 @@ from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     CaptureContractAdmission,
     ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicyV3,
 )
 from cruxible_client.contracts.public_names import public_name, stored_contract_name
 from cruxible_client.contracts.repairs import RepairOperation
@@ -836,6 +839,25 @@ def lower_claim_type_input(
     if path in tree:
         predecessor = parse_claim_type(tree[path], path=path)
     _refuse_number_schema(value)
+    if (
+        predecessor is not None
+        and isinstance(predecessor.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV3)
+        and not value.states("evidence_admission_policy")
+    ):
+        for rule in predecessor.evidence_admission_policy.rules:
+            for ref in rule.capture_contracts:
+                contract_path = capture_contract_path(ref.target.name)
+                content = tree.get(contract_path)
+                if content is None:
+                    continue
+                contract = parse_capture_contract(content, path=contract_path)
+                if isinstance(contract, CaptureContractV1) and not set(
+                    contract.evidence_kinds
+                ).issubset(rule.evidence_kinds):
+                    raise ClaimTypeInputReferenceError(
+                        f"rule {rule.rule_id!r} does not cover every legacy kind of "
+                        f"{ref.target.qualified}; state evidence_admission_policy explicitly"
+                    )
     value = claim_type_input_defaults(value, predecessor)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
