@@ -341,16 +341,16 @@ def trigger_example() -> TriggerInput:
 
 
 def acquisition_policy_example() -> AcquisitionPolicyInput:
-    """A SourceAcquisitionPolicy with one required input, for a Line with Source nodes.
+    """An instance default age bound, with optional per-Source alias overrides.
 
-    Each rule's `input_name` is one Source node's output alias (`as`); a Line
-    names this policy in `acquisition_policy_name`.
+    Name it ``default`` to govern Lines and Procedures that omit a policy name.
+    Every input is required; unavailable, stale and oversized reads refuse.
     """
 
     return AcquisitionPolicyInput(
         kind="acquisition_policy",
         acquisition_policy=SourceAcquisitionPolicy(
-            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="replace-me"),
+            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="default"),
             max_age=CanonicalDuration(microseconds=86_400_000_000),
         ),
     )

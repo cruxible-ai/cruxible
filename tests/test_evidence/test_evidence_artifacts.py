@@ -27,7 +27,7 @@ from tests.core_support._pc_c_support import capture_contract
 from tests.core_support._support import client_material, initialize_local
 from tests.support.provider_builds import capture_provider_build
 from tests.test_claims.test_claims import _claim_type
-from tests.test_integration.test_acquisition_policies import _policy, _rule
+from tests.test_integration.test_acquisition_policies import _policy
 from tests.test_ledger.test_activation import _sign
 
 TIMESTAMP = "2026-08-16T20:00:00.000000Z"
@@ -38,7 +38,7 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
     base = instance.accepted_coordinate()
     contract = capture_contract()
     provider_artifact = capture_provider_build(contract)
-    policy = _policy(_rule("orders"))
+    policy = _policy()
     claim_type = _claim_type()
     candidate_tree = {
         **instance.tree_at(base.git_oid),

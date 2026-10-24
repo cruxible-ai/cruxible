@@ -16,6 +16,7 @@ from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherence,
     InputAcquisitionRule,
     SourceAcquisitionPolicy,
+    SourceAcquisitionPolicyV1,
     acquisition_policy_digest,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -169,6 +170,7 @@ def _source_fixture(
     PreparedProcedureRunV9,
     object,
     SourceAcquisitionPolicy,
+    SourceAcquisitionPolicyV1,
     object,
 ]:
     # Runs on the real clock: a budget a loaded CI runner cannot run out.
@@ -233,22 +235,17 @@ def _source_fixture(
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
-    policy = SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="runtime-source"),
-        inputs=(
-            rule
-            or InputAcquisitionRule(
-                input_name=source_node.as_,
-                requirement="required",
-                permitted_replayability=("attested_only", "exact"),
-                max_age=CanonicalDuration(microseconds=60_000_000),
-                on_unavailable="refuse",
-                on_stale="refuse",
-                on_oversized="refuse",
-                on_conflict="preserve",
-            ),
-        ),
-        coherence=IndependentCoherence(),
+    policy = (
+        SourceAcquisitionPolicyV1(
+            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="runtime-source"),
+            inputs=(rule,),
+            coherence=IndependentCoherence(),
+        )
+        if rule is not None
+        else SourceAcquisitionPolicy(
+            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="runtime-source"),
+            max_age=CanonicalDuration(microseconds=60_000_000),
+        )
     )
     policy_digest = acquisition_policy_digest(policy).tagged
     old_plan = provider_prepared.acquisition_plan

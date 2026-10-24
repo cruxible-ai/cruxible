@@ -5,9 +5,6 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
-import pytest
-
-from cruxible_client.contracts.acquisition_policies import AcquisitionCandidate, select_sources
 from cruxible_client.contracts.capture_journal import (
     CaptureLandingEvent,
     CaptureLandingEventV1,
@@ -19,11 +16,9 @@ from cruxible_client.contracts.captures import (
     CaptureEnvelopeV1,
     CaptureRunCoordinateV1,
     build_provider_external_capture_v2,
-    capture_digest,
 )
 from tests.core_support._pc_c_support import NOW
 from tests.core_support.p2b4_unit1._support import provider_capture_fixture
-from tests.test_integration.test_acquisition_policies import _policy, _rule
 
 
 def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
@@ -99,56 +94,3 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
     assert replayed.events_after() == original
     assert replayed.events_after()[0].model_dump(mode="json") == first.model_dump(mode="json")
     replayed.verify()
-
-    selected = select_sources(
-        _policy(_rule("orders")),
-        (
-            AcquisitionCandidate(
-                input_name="orders",
-                envelope=envelope_v1,
-                capture_digest=first.capture_digest,
-                landing_event=first,
-                current_replay_available=True,
-                selection_budget=fixture.contract.selection_budget,
-                selected_bytes=envelope_v1.commitment.byte_length or 0,
-                selected_rows=1,
-                selected_items=1,
-            ),
-            AcquisitionCandidate(
-                input_name="orders",
-                envelope=envelope_v2,
-                capture_digest=second.capture_digest,
-                landing_event=second,
-                current_replay_available=True,
-                selection_budget=fixture.contract.selection_budget,
-                selected_bytes=envelope_v2.commitment.byte_length or 0,
-                selected_rows=1,
-                selected_items=1,
-            ),
-        ),
-        anchor=second,
-        evaluation_time=NOW + timedelta(seconds=2),
-    )
-    assert selected.decisions[0].selected_capture_digests == (
-        first.capture_digest,
-        second.capture_digest,
-    )
-
-    crossed = second.model_copy(
-        update={
-            "capture_digest": capture_digest(envelope_v1).tagged,
-            "run_coordinate": envelope_v1.run_coordinate,
-        }
-    )
-    with pytest.raises(ValueError, match="crosses Capture landing versions"):
-        AcquisitionCandidate(
-            input_name="orders",
-            envelope=envelope_v1,
-            capture_digest=capture_digest(envelope_v1).tagged,
-            landing_event=crossed,
-            current_replay_available=True,
-            selection_budget=fixture.contract.selection_budget,
-            selected_bytes=envelope_v1.commitment.byte_length or 0,
-            selected_rows=1,
-            selected_items=1,
-        )

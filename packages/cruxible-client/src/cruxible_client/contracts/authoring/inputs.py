@@ -235,9 +235,7 @@ class ProcedureInput(_StrictInputModel):
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     retire: bool = False
     contracts: tuple[CarriedContractInput, ...] = ()
-    #: Semantic name of the SourceAcquisitionPolicy this Procedure's envelope
-    #: pins. Lowering resolves it against the accepted tree (or this change
-    #: set's own candidates) and declares the exact pin.
+    #: Optional policy name; omitted uses SourceAcquisitionPolicy:default at admission.
     acquisition_policy: str | None = None
 
     @field_validator("definition", mode="before")
@@ -425,9 +423,7 @@ class LineInput(_StrictInputModel):
     procedure_name: str
     acquisition_policy_name: str | None = Field(
         default=None,
-        description=(
-            "SourceAcquisitionPolicy name; required only when the Procedure has Source nodes."
-        ),
+        description=("SourceAcquisitionPolicy name; omitted uses the instance default."),
     )
     max_authority: Literal["observe", "propose", "settle"] | None = Field(
         default=None,

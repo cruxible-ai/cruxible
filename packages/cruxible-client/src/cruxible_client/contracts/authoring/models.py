@@ -1152,16 +1152,11 @@ class SubjectKindAuthoringPayload(_StrictAuthoringModel):
 
 
 class ProcedureAuthoringPayload(_StrictAuthoringModel):
-    """A Procedure envelope input, plus the acquisition policy that envelope pins.
+    """A Procedure input with an optional acquisition policy name.
 
-    `acquisition_policy` is the SEMANTIC NAME of an accepted (or same-change-set
-    candidate) `SourceAcquisitionPolicy`, never a digest: lowering resolves it
-    the way every other Procedure reference resolves, and declares the resolved
-    exact pin under role `acquisition-policy` on the artifact envelope. The
-    definition never mentions it, so the definition digest is untouched -- this
-    is a Procedure-level binding the way a Line's policy pin is a Line-level
-    one, and the closure evaluator holds it to the same standard as any other
-    non-deferred pin.
+    Omitted names inherit SourceAcquisitionPolicy:default. An explicit name is
+    checked at authoring and resolved at run admission; the envelope does not
+    pin policy bytes. The admission records the resolved digest for replay.
     """
 
     tag: Literal["playbill-procedure-authoring-payload-v2"] = (

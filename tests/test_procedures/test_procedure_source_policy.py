@@ -6,9 +6,14 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.acquisition_policies import (
-    BoundedWindowCoherence,
+    AcquisitionRule,
+    IndependentCoherence,
     InputAcquisitionRule,
-    acquisition_policy_digest,
+    SourceAcquisitionPolicyV1,
+    acquisition_policy_path,
+    acquisition_rule,
+    parse_acquisition_policy,
+    render_acquisition_policy,
 )
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_core.evidence.source_readers import (
@@ -20,7 +25,6 @@ from cruxible_core.procedures.acquisition import (
     ProcedureSourceAcquisitionResultV1,
     apply_acquisition_result,
 )
-from cruxible_core.service.procedures import procedure_runs as runs
 from tests.core_support._pc_c_support import (
     NOW,
     body_store,
@@ -30,84 +34,6 @@ from tests.core_support._pc_c_support import (
     provider_run,
 )
 from tests.test_procedures import test_procedure_source_runs as source
-
-
-@pytest.mark.parametrize("lane", ["direct", "line"])
-def test_source_refuses_capture_excluded_by_accepted_replayability(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lane: str
-) -> None:
-    original_request = source._source_request
-    monkeypatch.setattr(
-        source,
-        "_source_request",
-        lambda *args: original_request(*args).model_copy(update={"replayability": "attested_only"}),
-    )
-    policy = source._policy()
-    policy = policy.model_copy(
-        update={
-            "inputs": (policy.inputs[0].model_copy(update={"permitted_replayability": ("exact",)}),)
-        }
-    )
-    if lane == "direct":
-        instance, _, _, root, _ = source._world(tmp_path, policy=policy, pin_policy=True)
-        state, invoker = source._run(instance, root)
-    else:
-        instance, root, line = source._line_world(tmp_path, policy=policy, pin_policy=True)
-        state, invoker = source._run_line(instance, root, line)
-    assert invoker.spawn_calls == 1  # The real result is graded after observation.
-    assert state.status == "node_refused", state.terminal
-    assert state.terminal is not None
-    assert state.terminal.code == "cruxible.acquisition.unavailable"
-    assert state.result is None
-    assert state.source_observations[0].source_read_receipt is not None
-    assert state.source_observations[0].capture_digest is None
-    retained = source.service_get_playbill_procedure_run(instance, run_id=state.run_id or "")
-    assert retained.status == state.status
-    assert retained.source_observations == state.source_observations
-
-
-@pytest.mark.parametrize("lane", ["direct", "line"])
-def test_source_refuses_unsupported_coherence_before_read_or_provider(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lane: str
-) -> None:
-    policy = source._policy().model_copy(
-        update={
-            "coherence": BoundedWindowCoherence(
-                max_cross_source_skew=CanonicalDuration(microseconds=1_000_000)
-            )
-        }
-    )
-    invoker = source._WorkspaceInvoker()
-    if lane == "direct":
-        instance, _, _, root, _ = source._world(tmp_path, policy=policy, pin_policy=True)
-    else:
-        instance, root, line = source._line_world(tmp_path, policy=policy, pin_policy=True)
-
-    def unexpected_read(*args, **kwargs):  # type: ignore[no-untyped-def]
-        raise AssertionError("unsupported coherence must refuse before reading")
-
-    monkeypatch.setattr(source.WorkspaceFileReader, "read", unexpected_read)
-    if lane == "direct":
-        state, _ = source._run(instance, root, invoker=invoker)
-    else:
-        state, _ = source._run_line(instance, root, line, invoker=invoker)
-    assert invoker.spawn_calls == 0
-    assert state.status == "admission_refused"
-    assert state.run_id is None
-    assert state.terminal is not None
-    assert state.terminal.code == "source_acquisition_refused"
-    assert "cruxible.acquisition.coherence_unsupported" in str(state.terminal.details)
-    if lane == "direct":
-        assert not (instance.root / instance.descriptor.storage.exhaust / "procedure-runs").exists()
-    else:
-        journal, _ = runs._journal(instance)
-        assert (
-            journal.all_records(
-                runs.procedure_line_journal_stream(instance.descriptor.instance_id),
-                runs.procedure_line_partition(line.identity),
-            )
-            == ()
-        )
 
 
 @pytest.fixture
@@ -184,6 +110,18 @@ def test_acquired_eligibility_applies_declared_failure_and_default_authority(
             else None,
         }
     )
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+
+    policy = SourceAcquisitionPolicyV1(
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="legacy"),
+        inputs=(rule,),
+        coherence=IndependentCoherence(),
+    )
+    parsed = parse_acquisition_policy(
+        render_acquisition_policy(policy), path=acquisition_policy_path("legacy")
+    )
+    assert isinstance(parsed, SourceAcquisitionPolicyV1)
+    assert parsed.inputs[0] == rule
     decision = apply_acquisition_result(
         rule,
         acquired,
@@ -201,35 +139,78 @@ def test_acquired_eligibility_applies_declared_failure_and_default_authority(
     )
 
 
-def test_nonindependent_policy_does_not_refuse_source_free_plan() -> None:
-    policy = source._policy().model_copy(
-        update={
-            "coherence": BoundedWindowCoherence(
-                max_cross_source_skew=CanonicalDuration(microseconds=1)
-            )
-        }
-    )
-    selection = runs._plan_selection_decision(
-        policy,
-        policy_digest=acquisition_policy_digest(policy).tagged,
-        occurrences=(),
-        capture_contracts={},
-    )
-    assert selection.verdict == "selected"
-    assert selection.decisions == ()
-
-
 def test_capture_at_maximum_age_remains_eligible(
     acquired: ProcedureSourceAcquisitionResultV1,
 ) -> None:
-    rule = (
-        source._policy()
-        .inputs[0]
-        .model_copy(update={"max_age": CanonicalDuration(microseconds=1_000_000)})
-    )
+    rule = AcquisitionRule(input_name="advisory", max_age=CanonicalDuration(microseconds=1_000_000))
     decision = apply_acquisition_result(
         rule, acquired, default_authorized=False, evaluation_time=NOW + timedelta(seconds=1)
     )
     assert decision.disposition == "selected"
     assert acquired.acquisition is not None
     assert decision.selected_capture_digests == (acquired.acquisition.capture_digest,)
+
+
+@pytest.mark.parametrize("outcome", ["unavailable", "stale", "oversized", "refused"])
+def test_current_policy_refuses_every_failed_fetch(outcome: str) -> None:
+    rule = acquisition_rule(source._policy(), "advisory")
+    assert rule is not None
+    result = ProcedureSourceAcquisitionResultV1.model_validate(
+        {
+            "node_id": "source",
+            "input_name": "advisory",
+            "outcome": outcome,
+            "reason_code": "cruxible.acquisition." + outcome,
+        }
+    )
+    assert apply_acquisition_result(rule, result, evaluation_time=NOW).disposition == "refused"
+
+
+def test_selection_does_not_restate_contract_replayability(
+    acquired: ProcedureSourceAcquisitionResultV1,
+) -> None:
+    decision = apply_acquisition_result(
+        AcquisitionRule(input_name="advisory"), acquired, evaluation_time=NOW
+    )
+    assert decision.disposition == "selected"
+
+
+def test_stale_input_refusal_names_alias_age_and_repair(tmp_path: Path) -> None:
+    instance, _, _, root, _ = source._world(tmp_path, policy=source._policy())
+    state, invoker = source._run(instance, root, evaluation_time=source.NOW + timedelta(days=365))
+    assert invoker.spawn_calls == 1
+    assert state.status == "node_refused", state.terminal
+    assert state.terminal.code == "cruxible.acquisition.stale"
+    assert "advisory" in state.terminal.message
+    assert "age" in state.terminal.message
+    assert "Repair:" in state.terminal.message
+    assert state.result is None
+
+
+def test_line_without_named_policy_runs_with_the_instance_default(tmp_path: Path) -> None:
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_path,
+        render_line_spec,
+    )
+
+    instance, owner, procedure, root, policy = source._world(tmp_path)
+    line = source._served_line(procedure, policy)
+    line = line.model_copy(
+        update={
+            "acquisition_policy": None,
+            "pins": tuple(pin for pin in line.pins if pin.target.kind != "SourceAcquisitionPolicy"),
+        }
+    )
+    source._accept_more(
+        instance,
+        owner,
+        {line_spec_path(line.identity.name): render_line_spec(line)},
+        name="inherited-line",
+    )
+    state, invoker = source._run_line(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    assert invoker.spawn_calls == 1
+    assert (
+        source._admission(instance, state).acquisition_policy_digest
+        == source.acquisition_policy_digest(policy).tagged
+    )

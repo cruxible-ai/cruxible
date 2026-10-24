@@ -8,8 +8,6 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherence,
-    InputAcquisitionRule,
     SourceAcquisitionPolicy,
     acquisition_policy_digest,
 )
@@ -396,19 +394,7 @@ def test_a_declared_input_with_no_planned_occurrence_is_not_scored(tmp_path: Pat
 
     plan, _admission = _plan_and_admission(tmp_path)
     strict = SourceAcquisitionPolicy(
-        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="tally-reads"),
-        inputs=(
-            InputAcquisitionRule(
-                input_name="tally",
-                requirement="required",
-                permitted_replayability=("exact",),
-                on_unavailable="refuse",
-                on_stale="refuse",
-                on_oversized="refuse",
-                on_conflict="refuse",
-            ),
-        ),
-        coherence=IndependentCoherence(),
+        identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="tally-reads")
     )
     assert all(item.occurrence_kind != "source" for item in plan.external_occurrences)
 

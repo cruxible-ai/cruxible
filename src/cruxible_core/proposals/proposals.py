@@ -20,7 +20,9 @@ from pydantic import (
 from cruxible_client.contracts.acquisition_policies import (
     AcceptedSourceAcquisitionPolicy,
     SourceAcquisitionPolicyError,
+    SourceAcquisitionPolicyV1,
     acquisition_policy_digest,
+    acquisition_policy_path,
     evaluate_acquisition_policy_law,
     parse_acquisition_policy,
 )
@@ -2109,6 +2111,7 @@ def _blueprint_origin_refusal(
         )
     except (BlueprintInstantiationError, ValueError) as exc:
         return _diagnostic("cruxible.procedure.blueprint_origin_mismatch", str(exc), context.path)
+    expected = expected.model_copy(update={"acquisition_policy": procedure.acquisition_policy})
     if expected != procedure:
         return _diagnostic(
             "cruxible.procedure.blueprint_origin_mismatch",
@@ -2346,11 +2349,20 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             line=previous,
             artifact_digest=line_spec_digest(previous).tagged,
         )
+    default_policy_name = accepted_procedure.procedure.acquisition_policy or "default"
+    default_policy_path = acquisition_policy_path(default_policy_name)
+    default_policy_content = context.candidate_tree.get(default_policy_path)
+    default_policy = (
+        parse_acquisition_policy(default_policy_content, path=default_policy_path)
+        if default_policy_content is not None
+        else None
+    )
     law = evaluate_line_spec_law(
         line,
         path=context.path,
         procedure=accepted_procedure,
         predecessor=predecessor,
+        default_acquisition_policy=default_policy,
         providers={
             accepted.artifact_digest: accepted for accepted in context.resolved.providers.values()
         },
@@ -2800,6 +2812,15 @@ def _provider_interface_member(context: _MemberContext) -> _MemberVerdict:
 
 def _acquisition_policy_member(context: _MemberContext) -> _MemberVerdict:
     policy = parse_acquisition_policy(context.content, path=context.path)
+    from cruxible_core.compiler.compiler import LIGHT_ARTIFACTS_COMPILER
+
+    if context.historical_law_coordinate is None:
+        light = context.current.compiler == LIGHT_ARTIFACTS_COMPILER
+        if light == isinstance(policy, SourceAcquisitionPolicyV1):
+            raise FormatError(
+                "new SourceAcquisitionPolicies require v2 on compiler revision 36; "
+                "upgrade the compiler or author max_age and overrides"
+            )
     predecessor: AcceptedSourceAcquisitionPolicy | None = None
     if context.parent_content is not None:
         previous = parse_acquisition_policy(context.parent_content, path=context.path)

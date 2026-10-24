@@ -1375,8 +1375,6 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
 
 def _accepted_authoring_trio(tmp_path):
     from cruxible_client.contracts.acquisition_policies import (
-        IndependentCoherence,
-        InputAcquisitionRule,
         SourceAcquisitionPolicy,
     )
     from cruxible_client.contracts.authoring.models import (
@@ -1393,19 +1391,7 @@ def _accepted_authoring_trio(tmp_path):
     name = procedure.definition["name"]
     policy = SourceAcquisitionPolicyAuthoringPayload(
         acquisition_policy=SourceAcquisitionPolicy(
-            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="demo"),
-            inputs=(
-                InputAcquisitionRule(
-                    input_name="status",
-                    requirement="optional",
-                    permitted_replayability=("exact",),
-                    on_unavailable="omit_optional",
-                    on_stale="omit_optional",
-                    on_oversized="omit_optional",
-                    on_conflict="refuse",
-                ),
-            ),
-            coherence=IndependentCoherence(),
+            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="demo")
         )
     )
     line = LineAuthoringPayload(

@@ -40,7 +40,6 @@ from cruxible_core.indexes.typed_state import TypedStateReader
 from cruxible_core.service.evidence.evidence import accepted_claim_providers
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunNotAccepted,
-    SourceAcquisitionPolicyRequired,
     _accepted_acquisition_policies,
     _accepted_capture_contracts,
     _accepted_line_by_reference,
@@ -53,7 +52,7 @@ from tests.core_support._p2b1_support import accepted_interface, accepted_provid
 from tests.core_support._pc_c_support import capture_contract, provider
 from tests.core_support._projection_support import MemoryLedger, accepted_coordinate
 from tests.core_support._support import initialize_local
-from tests.test_integration.test_acquisition_policies import _policy, _rule
+from tests.test_integration.test_acquisition_policies import _policy
 from tests.test_procedures.test_line_specs import _line
 from tests.test_procedures.test_procedure_run_surface import (
     READ_TIME,
@@ -272,7 +271,7 @@ def test_line_identity_and_closure_select_only_bound_sources(tmp_path, monkeypat
 @pytest.mark.parametrize("unrelated", (2, 17))
 def test_source_catalogs_select_exact_contract_and_policy_pins(tmp_path, monkeypatch, unrelated):
     contract = capture_contract()
-    policy = _policy(_rule("orders"))
+    policy = _policy()
     contracts = [contract, *(capture_contract(name=f"other-{i}") for i in range(unrelated))]
     policies = [
         policy,
@@ -327,11 +326,10 @@ def test_source_catalogs_select_exact_contract_and_policy_pins(tmp_path, monkeyp
     )
     assert reads == []
     procedure = _slotless_procedure("policy-procedure").procedure
-    with pytest.raises(SourceAcquisitionPolicyRequired, match="accepted SourceAcquisitionPolicy"):
-        _direct_acquisition_policy(
-            instance, coordinate=coordinate, procedure=procedure, input_names=("orders",)
-        )
-    assert len(reads) == unrelated + 1
+    assert _direct_acquisition_policy(
+        instance, coordinate=coordinate, procedure=procedure, input_names=("orders",)
+    ) == (policy_pin.artifact_digest, policy)
+    assert reads == [acquisition_policy_path("default")]
     reads.clear()
     pinned = procedure.model_copy(update={"pins": (*procedure.pins, policy_pin)})
     assert _direct_acquisition_policy(

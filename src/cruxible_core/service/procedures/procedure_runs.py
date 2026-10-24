@@ -18,9 +18,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
+    DEFAULT_ACQUISITION_POLICY_NAME,
     AcquisitionInputDecision,
     IndependentCoherence,
     InputAcquisitionRule,
+    SourceAcquisitionPolicyV1,
+    acquisition_rule,
+)
+from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyAny as SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -1546,6 +1551,8 @@ def _policy_coverage_refusal(
     policy, not one per alias set). The refusal names each uncovered alias.
     """
 
+    if not isinstance(policy, SourceAcquisitionPolicyV1):
+        return None
     declared = tuple(rule.input_name for rule in policy.inputs)
     uncovered = tuple(name for name in input_names if name not in declared)
     if not uncovered:
@@ -1599,6 +1606,7 @@ def _accepted_acquisition_policies(
     coordinate: AcceptedProjectionCoordinate,
     *,
     pin: ArtifactPin | None = None,
+    name: str | None = None,
 ) -> tuple[tuple[str, SourceAcquisitionPolicy], ...]:
     policies: list[tuple[str, SourceAcquisitionPolicy]] = []
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -1606,9 +1614,15 @@ def _accepted_acquisition_policies(
             "SELECT identity,artifact_digest FROM source_acquisition_policies "
             "WHERE lifecycle='live'"
         )
-        parameters: tuple[str, ...] = ()
+        sql += " AND identity=?"
+        parameters: tuple[str, ...] = (
+            "SourceAcquisitionPolicy:" + (name or DEFAULT_ACQUISITION_POLICY_NAME),
+        )
         if pin is not None:
-            sql += " AND identity=? AND artifact_digest=?"
+            sql = (
+                "SELECT identity,artifact_digest FROM source_acquisition_policies "
+                "WHERE lifecycle='live' AND identity=? AND artifact_digest=?"
+            )
             parameters = (pin.target.qualified, pin.artifact_digest)
         for identity, digest in projection.typed.connection.execute(
             sql + " ORDER BY artifact_digest", parameters
@@ -1641,30 +1655,12 @@ def _direct_acquisition_policy(
     procedure: ProcedureArtifact,
     input_names: tuple[str, ...],
 ) -> tuple[str, SourceAcquisitionPolicy]:
-    """Resolve the accepted policy that governs this direct run's inputs.
-
-    The DURABLE binding is the Procedure envelope's own `acquisition-policy`
-    pin, the way a Line's is the LineSpec's: an exact digest, authored with the
-    Procedure, closure-checked at acceptance, and immune to what anyone accepts
-    afterwards. A pinned Procedure never falls back and never consults the rest
-    of the tree, so two Procedures whose Source aliases happen to agree are
-    governed separately, and accepting an unrelated policy cannot take a running
-    Procedure offline.
-
-    A pinned policy must COVER the Procedure's Source aliases (a rule for each;
-    extra rules allowed), the same law the Line lane applies to its own pin.
-
-    Resolve-from-accepted-state is the FALLBACK, for a Procedure authored before
-    the pin existed or without one: exactly one live SourceAcquisitionPolicy
-    whose declared inputs are exactly this Procedure's Source aliases. Zero or
-    several is a typed refusal naming the repair, never a silently chosen
-    default. That binding is keyed on an alias SET, which is Procedure-local
-    naming, so it is ambiguous across Procedures and non-monotonic under
-    acceptance -- which is why it is the fallback and not the law.
-    """
+    """Resolve one named/default policy, retaining exact pins on historical envelopes."""
 
     pin = _procedure_acquisition_policy_pin(procedure)
-    accepted_policies = _accepted_acquisition_policies(instance, coordinate, pin=pin)
+    accepted_policies = _accepted_acquisition_policies(
+        instance, coordinate, pin=pin, name=procedure.acquisition_policy
+    )
     if pin is not None:
         pinned = next(
             (policy for digest, policy in accepted_policies if digest == pin.artifact_digest),
@@ -1683,22 +1679,21 @@ def _direct_acquisition_policy(
         if refusal is not None:
             raise refusal
         return pin.artifact_digest, pinned
-    covering = tuple(
-        item
-        for item in accepted_policies
-        if tuple(rule.input_name for rule in item[1].inputs) == input_names
-    )
-    if len(covering) != 1:
+    if not accepted_policies:
+        name = procedure.acquisition_policy or DEFAULT_ACQUISITION_POLICY_NAME
         raise SourceAcquisitionPolicyRequired(
-            f"{SourceAcquisitionPolicyRequired.code}: "
-            f"{len(covering)} accepted SourceAcquisitionPolicy artifacts declare exactly the "
-            f"inputs {list(input_names)}",
+            f"{SourceAcquisitionPolicyRequired.code}: SourceAcquisitionPolicy:{name} is not live; "
+            "accept the instance default policy or name a live policy.",
             details={
                 "required_input_names": list(input_names),
-                "matching_policy_digests": [digest for digest, _policy in covering],
+                "policy_identity": f"SourceAcquisitionPolicy:{name}",
             },
         )
-    return covering[0]
+    digest, policy = accepted_policies[0]
+    refusal = _policy_coverage_refusal(policy, input_names)
+    if refusal is not None:
+        raise refusal
+    return digest, policy
 
 
 def _plan_selection_decision(
@@ -1734,7 +1729,11 @@ def _plan_selection_decision(
     }
     # Produced Source captures have no cross-source proof/vector reducer yet.
     # Do not silently treat an accepted coherence requirement as independent.
-    if sources and not isinstance(policy.coherence, IndependentCoherence):
+    if (
+        sources
+        and isinstance(policy, SourceAcquisitionPolicyV1)
+        and not isinstance(policy.coherence, IndependentCoherence)
+    ):
         return ProcedureSelectionDecision(
             policy_digest=policy_digest,
             verdict="refused",
@@ -1747,17 +1746,15 @@ def _plan_selection_decision(
             ),
         )
     decisions: list[AcquisitionInputDecision] = []
-    for rule in policy.inputs:
-        occurrence = sources.get(rule.input_name)
-        if occurrence is None:
+    for alias, occurrence in sources.items():
+        rule = acquisition_rule(policy, alias)
+        if rule is None:
             continue
         contract = capture_contracts.get(occurrence.capture_contract_digest or "")
         if contract is None:
             decisions.append(
-                _plan_failure_decision(
-                    rule,
-                    behavior="refuse",
-                    reason=ACQUISITION_REFUSED,
+                AcquisitionInputDecision(
+                    input_name=alias, disposition="refused", reason_codes=(ACQUISITION_REFUSED,)
                 )
             )
             continue
@@ -1765,10 +1762,23 @@ def _plan_selection_decision(
             occurrence.budget_translation.policy_output_bytes_cap
         ):
             decisions.append(
-                _plan_failure_decision(
-                    rule,
-                    behavior=rule.on_oversized,
-                    reason=ACQUISITION_OVERSIZED,
+                AcquisitionInputDecision(
+                    input_name=rule.input_name,
+                    disposition=(
+                        "omitted"
+                        if isinstance(rule, InputAcquisitionRule)
+                        and rule.requirement == "optional"
+                        and rule.on_oversized == "omit_optional"
+                        else "defaulted"
+                        if isinstance(rule, InputAcquisitionRule)
+                        and rule.on_oversized == "declared_conservative_default"
+                        else "refused"
+                    ),
+                    default_value=rule.conservative_default
+                    if isinstance(rule, InputAcquisitionRule)
+                    and rule.on_oversized == "declared_conservative_default"
+                    else None,
+                    reason_codes=(ACQUISITION_OVERSIZED,),
                 )
             )
             continue
@@ -1784,34 +1794,6 @@ def _plan_selection_decision(
             "refused" if any(item.disposition == "refused" for item in ordered) else "selected"
         ),
         decisions=ordered,
-    )
-
-
-def _plan_failure_decision(
-    rule: InputAcquisitionRule,
-    *,
-    behavior: str,
-    reason: str,
-) -> AcquisitionInputDecision:
-    """Apply one declared failure behaviour to a plan-time authorization miss."""
-
-    if behavior == "omit_optional" and rule.requirement == "optional":
-        return AcquisitionInputDecision(
-            input_name=rule.input_name,
-            disposition="omitted",
-            reason_codes=(reason,),
-        )
-    if behavior == "declared_conservative_default":
-        return AcquisitionInputDecision(
-            input_name=rule.input_name,
-            disposition="defaulted",
-            default_value=rule.conservative_default,
-            reason_codes=(reason,),
-        )
-    return AcquisitionInputDecision(
-        input_name=rule.input_name,
-        disposition="refused",
-        reason_codes=(reason,),
     )
 
 
@@ -3060,9 +3042,8 @@ def _plan_direct_external_run(
                 details={
                     **cast(dict[str, object], exc.details),
                     "repair": (
-                        "Pin a SourceAcquisitionPolicy with a rule for each Source alias on the "
-                        "Procedure, or accept exactly one whose inputs are this Procedure's "
-                        "Source aliases."
+                        "Accept SourceAcquisitionPolicy:default or name a live policy "
+                        "on the Procedure."
                     ),
                 },
             )
@@ -4103,17 +4084,6 @@ def _run_playbill_line(
             details={"repair": "Trigger through a carrier-aware Line scheduler."},
         )
     line_policy_pin = accepted_line.line.acquisition_policy
-    if line_policy_pin is None and _source_input_names(accepted):
-        return _line_refusal_state(
-            accepted,
-            accepted_line,
-            coordinate=coordinate,
-            head_at_admission=head_at_admission,
-            evaluation_time=evaluation_time,
-            code="artifact_binding_mismatch",
-            message="A Line whose Procedure has Source nodes requires an acquisition-policy pin.",
-            details={"repair": "Accept a Line successor with an acquisition policy."},
-        )
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
     budget = _line_budget(accepted_line, accepted)
     capture_contracts = _accepted_capture_contracts(
@@ -4123,27 +4093,38 @@ def _run_playbill_line(
     # Its plan binds the accepted runtime policy instead, exactly as a direct
     # run of a Source-free Procedure does.
     line_policy: SourceAcquisitionPolicy | None = None
-    if line_policy_pin is None:
+    if line_policy_pin is None and not _source_input_names(accepted):
         policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
         policy_format: str = runtime_policy.tag
     else:
-        policy_digest = line_policy_pin.artifact_digest
-        policy_format = "playbill-source-acquisition-policy-v1"
-        accepted_policies = dict(
-            _accepted_acquisition_policies(instance, coordinate, pin=line_policy_pin)
-        )
-        line_policy = accepted_policies.get(line_policy_pin.artifact_digest)
-    if line_policy_pin is not None and line_policy is None:
-        return _line_refusal_state(
-            accepted,
-            accepted_line,
-            coordinate=coordinate,
-            head_at_admission=head_at_admission,
-            evaluation_time=evaluation_time,
-            code="artifact_binding_mismatch",
-            message="The Line's pinned acquisition policy is not accepted at this coordinate.",
-            details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
-        )
+        try:
+            if line_policy_pin is None:
+                policy_digest, line_policy = _direct_acquisition_policy(
+                    instance,
+                    coordinate=coordinate,
+                    procedure=accepted.procedure,
+                    input_names=_source_input_names(accepted),
+                )
+            else:
+                policies = _accepted_acquisition_policies(instance, coordinate, pin=line_policy_pin)
+                if not policies:
+                    raise PinnedAcquisitionPolicyUnresolved("The Line's named policy is not live.")
+                policy_digest, line_policy = policies[0]
+            policy_format = line_policy.artifact_format
+        except (SourceAcquisitionPolicyRequired, PinnedAcquisitionPolicyUnresolved) as exc:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="source_acquisition_policy_required",
+                message=str(exc),
+                details={
+                    "repair": "Accept SourceAcquisitionPolicy:default or name a live "
+                    "policy on the Line."
+                },
+            )
     uncovered = (
         None
         if line_policy is None

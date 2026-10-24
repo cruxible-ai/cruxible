@@ -49,7 +49,7 @@ from tests.support.lines import action_trigger, trigger_members
 from tests.support.procedures import procedure_artifact
 from tests.test_indexes.test_projection_next import _accepted_procedure
 from tests.test_indexes.test_resolution_contracts import _accept_tree
-from tests.test_integration.test_acquisition_policies import _policy, _rule
+from tests.test_integration.test_acquisition_policies import _policy
 from tests.test_service.test_typed_source_catalogs import _published_sources
 
 # Each seeded builtin ClaimType's three embedded policies, in field-path order.
@@ -194,8 +194,8 @@ def complete_policy_inventory(
     instance, _owner = initialize_local(root)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
 
-    live_acquisition = _policy(_rule("live-input"))
-    retired_acquisition = _policy(_rule("retired-input")).model_copy(
+    live_acquisition = _policy()
+    retired_acquisition = _policy().model_copy(
         update={
             "identity": ArtifactIdentity(
                 kind="SourceAcquisitionPolicy",

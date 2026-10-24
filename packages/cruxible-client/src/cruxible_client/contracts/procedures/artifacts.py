@@ -245,6 +245,15 @@ class ProcedureArtifact(_GraphEnvelope):
     """
 
     artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
+    acquisition_policy: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("acquisition_policy")
+    @classmethod
+    def _policy_name(cls, value: str | None) -> str | None:
+        if value is not None and not _PROCEDURE_NAME_RE.fullmatch(value):
+            raise ValueError("acquisition_policy must be a canonical policy name")
+        return value
+
     blueprint: BlueprintOrigin | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")

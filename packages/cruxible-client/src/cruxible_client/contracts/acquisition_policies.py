@@ -17,7 +17,6 @@ from cruxible_client.contracts.canonical import (
     CURRENT_ARTIFACT_CODEC,
     ArtifactCodec,
     ArtifactDigest,
-    Sha256Value,
     artifact_bytes_for_path,
     artifact_path_matches,
     normalize_canonical,
@@ -59,6 +58,8 @@ def _sorted_unique(values: tuple[str, ...], *, label: str) -> tuple[str, ...]:
 
 
 class InputAcquisitionRule(_StrictAcquisitionModel):
+    """Frozen v1 rule, used only to read and execute historical policies."""
+
     tag: Literal["playbill-input-acquisition-rule-v1"] = "playbill-input-acquisition-rule-v1"
     input_name: str
     requirement: Literal["required", "optional", "conservative_default"]
@@ -127,13 +128,13 @@ class IndependentCoherence(_StrictAcquisitionModel):
     kind: Literal["independent"] = "independent"
 
 
-class BoundedWindowCoherence(_StrictAcquisitionModel):
+class BoundedWindowCoherenceV1(_StrictAcquisitionModel):
     tag: Literal["playbill-bounded-window-coherence-v1"] = "playbill-bounded-window-coherence-v1"
     kind: Literal["bounded_window"] = "bounded_window"
     max_cross_source_skew: CanonicalDuration
 
 
-class DeclaredSnapshotGroupCoherence(_StrictAcquisitionModel):
+class DeclaredSnapshotGroupCoherenceV1(_StrictAcquisitionModel):
     tag: Literal["playbill-declared-snapshot-group-coherence-v1"] = (
         "playbill-declared-snapshot-group-coherence-v1"
     )
@@ -149,7 +150,7 @@ class DeclaredSnapshotGroupCoherence(_StrictAcquisitionModel):
 
 
 SourceCoherence = Annotated[
-    IndependentCoherence | BoundedWindowCoherence | DeclaredSnapshotGroupCoherence,
+    IndependentCoherence | BoundedWindowCoherenceV1 | DeclaredSnapshotGroupCoherenceV1,
     Field(discriminator="kind"),
 ]
 
@@ -213,14 +214,18 @@ class SourceAcquisitionPolicy(_StrictAcquisitionModel):
     overrides: dict[str, CanonicalDuration | None] = Field(default_factory=dict)
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
-    @field_validator("max_age", mode="before")
+    @field_validator(
+        "max_age", mode="before", json_schema_input_type=CanonicalDuration | str | None
+    )
     @classmethod
     def _duration(cls, value: object) -> object:
         if isinstance(value, str):
             return CanonicalDuration(microseconds=parse_iso_duration_microseconds(value))
         return value
 
-    @field_validator("overrides", mode="before")
+    @field_validator(
+        "overrides", mode="before", json_schema_input_type=dict[str, CanonicalDuration | str | None]
+    )
     @classmethod
     def _overrides(cls, value: object) -> object:
         if not isinstance(value, dict):
@@ -277,6 +282,8 @@ def parse_acquisition_policy(
 ) -> SourceAcquisitionPolicyAny:
     try:
         payload = json.loads(content)
+        if not isinstance(payload, dict):
+            raise ValueError("a SourceAcquisitionPolicy must be an object")
         model = (
             SourceAcquisitionPolicyV1
             if payload.get("artifact_format") == "playbill-source-acquisition-policy-v1"
@@ -363,7 +370,7 @@ def evaluate_acquisition_policy_law(
                 path=path,
             )
     if isinstance(policy, SourceAcquisitionPolicyV1) and isinstance(
-        policy.coherence, DeclaredSnapshotGroupCoherence
+        policy.coherence, DeclaredSnapshotGroupCoherenceV1
     ):
         required = (
             ("coordinate-grammar", policy.coherence.coordinate_grammar_digest),
