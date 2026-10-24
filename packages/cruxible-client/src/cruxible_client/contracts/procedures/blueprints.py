@@ -449,6 +449,7 @@ def _recompile_source(
         SourceProviderBinding,
         SourceSlotBinding,
     )
+    from cruxible_client.contracts.provider_interfaces import provider_effect_class
     from cruxible_client.contracts.providers import provider_digest
 
     definition = blueprint.definition
@@ -468,7 +469,7 @@ def _recompile_source(
             interface_version=interface.artifact_digest,
             interface_digest=value.interface_digest,
             implementation_digest=implementations[slot_name],
-            effect_class=value.effect_class,
+            effect_class=provider_effect_class(value),
             operation=value.operation,
         )
 

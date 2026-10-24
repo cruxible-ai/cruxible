@@ -27,7 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, Protocol, TypeAlias
 
 from pydantic import (
     BaseModel,
@@ -663,11 +663,12 @@ def provider_interface_contract(
     )
 
 
-def provider_effect_class(
-    registration: ProviderInterfaceRegistrationV1
-    | ProviderInterfaceContractV3
-    | ProviderInterfaceContract,
-) -> ProviderEffectClass:
+class _EffectDeclaration(Protocol):
+    @property
+    def effect_class(self) -> ProviderEffectClass | LegacyProviderEffectClass: ...
+
+
+def provider_effect_class(registration: _EffectDeclaration) -> ProviderEffectClass:
     """Historical no-effect spelling stays frozen in storage, pure in the engine."""
     return "pure" if registration.effect_class == "none" else registration.effect_class
 
